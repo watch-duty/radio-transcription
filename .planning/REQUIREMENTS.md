@@ -105,24 +105,63 @@
 
 ## Traceability
 
-Traceability will be filled when the roadmap is approved.
-
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| INPT-01..INPT-04 | TBD | Pending |
-| SRC-01..SRC-06 | TBD | Pending |
-| SPLT-01..SPLT-08 | TBD | Pending |
-| ARTF-01..ARTF-06 | TBD | Pending |
-| AUD-01..AUD-06 | TBD | Pending |
-| MODL-01..MODL-08 | TBD | Pending |
-| CLI-01..CLI-05 | TBD | Pending |
-| TEST-01..TEST-06 | TBD | Pending |
+| INPT-01 | Phase 1 | Pending |
+| INPT-02 | Phase 1 | Pending |
+| INPT-03 | Phase 1 | Pending |
+| INPT-04 | Phase 1 | Pending |
+| SRC-01 | Phase 1 | Pending |
+| SRC-02 | Phase 1 | Pending |
+| SRC-03 | Phase 1 | Pending |
+| SRC-04 | Phase 1 | Pending |
+| SRC-05 | Phase 1 | Pending |
+| SRC-06 | Phase 1 | Pending |
+| TEST-01 | Phase 1 | Pending |
+| SPLT-01 | Phase 2 | Pending |
+| SPLT-02 | Phase 2 | Pending |
+| SPLT-03 | Phase 2 | Pending |
+| SPLT-04 | Phase 2 | Pending |
+| SPLT-05 | Phase 2 | Pending |
+| SPLT-06 | Phase 2 | Pending |
+| SPLT-07 | Phase 2 | Pending |
+| SPLT-08 | Phase 2 | Pending |
+| TEST-02 | Phase 2 | Pending |
+| TEST-03 | Phase 2 | Pending |
+| TEST-04 | Phase 2 | Pending |
+| ARTF-01 | Phase 3 | Pending |
+| ARTF-02 | Phase 3 | Pending |
+| ARTF-03 | Phase 3 | Pending |
+| ARTF-04 | Phase 3 | Pending |
+| ARTF-05 | Phase 3 | Pending |
+| ARTF-06 | Phase 3 | Pending |
+| MODL-01 | Phase 3 | Pending |
+| MODL-02 | Phase 3 | Pending |
+| MODL-03 | Phase 3 | Pending |
+| MODL-04 | Phase 3 | Pending |
+| MODL-05 | Phase 3 | Pending |
+| MODL-06 | Phase 3 | Pending |
+| MODL-07 | Phase 3 | Pending |
+| MODL-08 | Phase 3 | Pending |
+| TEST-05 | Phase 3 | Pending |
+| TEST-06 | Phase 3 | Pending |
+| AUD-01 | Phase 4 | Pending |
+| AUD-02 | Phase 4 | Pending |
+| AUD-03 | Phase 4 | Pending |
+| AUD-04 | Phase 4 | Pending |
+| AUD-05 | Phase 4 | Pending |
+| AUD-06 | Phase 4 | Pending |
+| CLI-01 | Phase 5 | Pending |
+| CLI-02 | Phase 5 | Pending |
+| CLI-03 | Phase 5 | Pending |
+| CLI-04 | Phase 5 | Pending |
+| CLI-05 | Phase 5 | Pending |
 
 **Coverage:**
 - v1 requirements: 49 total
-- Mapped to phases: 0
-- Unmapped: 49
+- Mapped to phases: 49
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-05-27*
-*Last updated: 2026-05-27 after initial definition*
+*Last updated: 2026-05-27 after roadmap draft*
