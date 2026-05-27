@@ -104,7 +104,6 @@ describe('FeedConfigurationView', () => {
     expect(screen.getByLabelText('Display Name')).toBeInTheDocument();
     expect(screen.getByLabelText('Source Type')).toBeInTheDocument();
     expect(screen.getByLabelText('Source Feed ID')).toBeInTheDocument();
-    expect(screen.getByLabelText('External ID')).toBeInTheDocument();
 
     // Verify existing feeds list renders active items and their tag chips
     await waitFor(() => {
@@ -125,7 +124,6 @@ describe('FeedConfigurationView', () => {
     // Verify validation errors are populated on screen
     expect(screen.getByText('Display name is required.')).toBeInTheDocument();
     expect(screen.getByText('Source feed ID is required.')).toBeInTheDocument();
-    expect(screen.getByText('External ID is required.')).toBeInTheDocument();
 
     expect(createFeed).not.toHaveBeenCalled();
   });
@@ -213,9 +211,6 @@ describe('FeedConfigurationView', () => {
     fireEvent.change(screen.getByLabelText('Source Feed ID'), {
       target: { value: '9988-77' },
     });
-    fireEvent.change(screen.getByLabelText('External ID'), {
-      target: { value: 'ca-nap-amb' },
-    });
 
     // Submit
     const submitBtn = screen.getByRole('button', {
@@ -231,7 +226,7 @@ describe('FeedConfigurationView', () => {
           name: 'Napa Ambulance Dispatch',
           sourceType: 'bcfy_calls',
           sourceFeedId: '9988-77',
-          externalId: 'ca-nap-amb',
+          externalId: '',
           tags: undefined,
         },
         'fake-jwt-token-xyz'
@@ -245,7 +240,6 @@ describe('FeedConfigurationView', () => {
       // Verify state clears on success
       expect(screen.getByLabelText('Display Name')).toHaveValue('');
       expect(screen.getByLabelText('Source Feed ID')).toHaveValue('');
-      expect(screen.getByLabelText('External ID')).toHaveValue('');
     });
   });
 
@@ -289,7 +283,6 @@ describe('FeedConfigurationView', () => {
       'Marin Fire Dispatch'
     );
     expect(screen.getByLabelText('Source Feed ID')).toHaveValue('33156');
-    expect(screen.getByLabelText('External ID')).toHaveValue('ca-mrn-fire');
 
     // Verify registered tag row is populated in input fields
     expect(screen.getAllByLabelText('Tag Key')[0]).toHaveValue('');
@@ -324,9 +317,6 @@ describe('FeedConfigurationView', () => {
     fireEvent.change(screen.getByLabelText('Display Name'), {
       target: { value: 'Marin Unified Fire Dispatch' },
     });
-    fireEvent.change(screen.getByLabelText('External ID'), {
-      target: { value: 'ca-mrn-fire-v2' },
-    });
 
     // Submit update changes
     const submitBtn = screen.getByRole('button', {
@@ -341,7 +331,7 @@ describe('FeedConfigurationView', () => {
         'feed-1',
         {
           name: 'Marin Unified Fire Dispatch',
-          externalId: 'ca-mrn-fire-v2',
+          externalId: '',
           tags: [{ key: 'county', value: 'Marin' }],
         },
         'fake-jwt-token-xyz'
@@ -405,9 +395,6 @@ describe('FeedConfigurationView', () => {
     fireEvent.change(screen.getByLabelText('Source Feed ID'), {
       target: { value: '9988-77' },
     });
-    fireEvent.change(screen.getByLabelText('External ID'), {
-      target: { value: 'ca-nap-amb' },
-    });
 
     // Fill in the tag inputs, but DO NOT click the plus button!
     fireEvent.change(screen.getByLabelText('Tag Key'), {
@@ -431,7 +418,7 @@ describe('FeedConfigurationView', () => {
           name: 'Napa Ambulance Dispatch',
           sourceType: 'bcfy_calls',
           sourceFeedId: '9988-77',
-          externalId: 'ca-nap-amb',
+          externalId: '',
           tags: undefined,
         },
         'fake-jwt-token-xyz'

@@ -7,12 +7,12 @@ import EditIcon from '@mui/icons-material/Edit';
 import RssFeedIcon from '@mui/icons-material/RssFeed';
 import SearchIcon from '@mui/icons-material/Search';
 import Box from '@mui/material/Box';
+import Card from '@mui/material/Card';
 import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
 import Divider from '@mui/material/Divider';
 import IconButton from '@mui/material/IconButton';
 import InputAdornment from '@mui/material/InputAdornment';
-import Card from '@mui/material/Card';
 import Stack from '@mui/material/Stack';
 import Table from '@mui/material/Table';
 import TableBody from '@mui/material/TableBody';
@@ -23,6 +23,8 @@ import TableRow from '@mui/material/TableRow';
 import TableSortLabel from '@mui/material/TableSortLabel';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
+import { useTheme } from '@mui/material/styles';
+import useMediaQuery from '@mui/material/useMediaQuery';
 import type { Feed } from '@transcription/common';
 
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
@@ -120,6 +122,9 @@ export function FeedConfigurationTable({
   onEditFeed,
   isSubmitting,
 }: FeedConfigurationTableProps) {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+
   // Search filter query for existing feeds column
   const [feedSearchQuery, setFeedSearchQuery] = useState('');
 
@@ -172,6 +177,164 @@ export function FeedConfigurationTable({
     return result;
   }, [feeds, feedSearchQuery, sortBy, sortDirection]);
 
+  const tableHeader = (
+    <TableRow
+      component="div"
+      sx={{
+        display: 'grid',
+        gridTemplateColumns: GRID_TEMPLATE_COLUMNS,
+        width: '100%',
+        bgcolor: 'background.paper',
+      }}
+    >
+      <TableCell
+        component="div"
+        sx={{
+          fontWeight: 'bold',
+          bgcolor: 'background.paper',
+        }}
+        sortDirection={sortBy === 'name' ? sortDirection : false}
+      >
+        <TableSortLabel
+          active={sortBy === 'name'}
+          direction={sortBy === 'name' ? sortDirection : 'asc'}
+          onClick={() => handleRequestSort('name')}
+        >
+          Name
+        </TableSortLabel>
+      </TableCell>
+      <TableCell
+        component="div"
+        sx={{
+          fontWeight: 'bold',
+          bgcolor: 'background.paper',
+        }}
+        sortDirection={sortBy === 'type' ? sortDirection : false}
+      >
+        <TableSortLabel
+          active={sortBy === 'type'}
+          direction={sortBy === 'type' ? sortDirection : 'asc'}
+          onClick={() => handleRequestSort('type')}
+        >
+          Type
+        </TableSortLabel>
+      </TableCell>
+      <TableCell
+        component="div"
+        sx={{
+          fontWeight: 'bold',
+          bgcolor: 'background.paper',
+        }}
+        sortDirection={sortBy === 'status' ? sortDirection : false}
+      >
+        <TableSortLabel
+          active={sortBy === 'status'}
+          direction={sortBy === 'status' ? sortDirection : 'asc'}
+          onClick={() => handleRequestSort('status')}
+        >
+          Status
+        </TableSortLabel>
+      </TableCell>
+
+      <TableCell
+        component="div"
+        align="right"
+        sx={{
+          fontWeight: 'bold',
+          bgcolor: 'background.paper',
+        }}
+      />
+    </TableRow>
+  );
+
+  const renderRowContent = (feed: Feed) => {
+    const isCurrentlyEditingThis = editingFeedId === feed.id;
+
+    return (
+      <>
+        {/* Name & ID Metadata */}
+        <TableCell
+          component="div"
+          sx={{
+            py: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            borderBottom: 'none',
+            minWidth: 0,
+          }}
+        >
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+            {feed.name}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            <b>Source ID:</b> {feed.sourceFeedId}
+          </Typography>
+        </TableCell>
+
+        {/* Source Type Chip */}
+        <TableCell component="div" sx={{ borderBottom: 'none', minWidth: 0 }}>
+          <Chip label={feed.sourceType} size="small" variant="outlined" />
+        </TableCell>
+
+        {/* Status Indicator */}
+        <TableCell component="div" sx={{ borderBottom: 'none', minWidth: 0 }}>
+          <FeedStatusIndicator
+            status={feed.status}
+            lastHeartbeat={feed.lastHeartbeat}
+          />
+        </TableCell>
+
+        {/* Actions Buttons */}
+        <TableCell align="right" component="div" sx={{ borderBottom: 'none' }}>
+          <IconButton
+            size="small"
+            onClick={() => onEditFeed(feed)}
+            disabled={isSubmitting || isCurrentlyEditingThis}
+            sx={{
+              border: '1px solid',
+              borderRadius: 1.5,
+              p: 0.5,
+              '&:hover': {
+                borderColor: 'primary.main',
+                bgcolor: 'primary.soft',
+                color: 'primary.main',
+              },
+            }}
+            aria-label={`Edit ${feed.name}`}
+          >
+            <EditIcon fontSize="small" />
+          </IconButton>
+        </TableCell>
+
+        {feed.tags && feed.tags.length > 0 && (
+          <TableCell
+            component="div"
+            sx={{
+              gridColumn: '1 / -1',
+              borderBottom: 'none',
+              pt: 0,
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 0.75,
+            }}
+          >
+            {feed.tags.map((tag, i) => (
+              <Chip
+                key={i}
+                label={
+                  <Box>
+                    <b>{tag.key}</b>: {tag.value}
+                  </Box>
+                }
+                size="small"
+              />
+            ))}
+          </TableCell>
+        )}
+      </>
+    );
+  };
+
   return (
     <Card
       variant="outlined"
@@ -180,7 +343,7 @@ export function FeedConfigurationTable({
         display: 'flex',
         flexDirection: 'column',
         flexGrow: 1,
-        minHeight: 0,
+        minHeight: { xs: 'auto', sm: 0 },
         overflow: 'hidden',
       }}
     >
@@ -230,7 +393,10 @@ export function FeedConfigurationTable({
               ),
               endAdornment: feedSearchQuery ? (
                 <InputAdornment position="end">
-                  <IconButton size="small" onClick={() => setFeedSearchQuery('')}>
+                  <IconButton
+                    size="small"
+                    onClick={() => setFeedSearchQuery('')}
+                  >
                     <ClearIcon fontSize="small" />
                   </IconButton>
                 </InputAdornment>
@@ -288,6 +454,28 @@ export function FeedConfigurationTable({
               : 'Register feeds on the left to start listening.'}
           </Typography>
         </Box>
+      ) : isMobile ? (
+        <TableContainer
+          component="div"
+          sx={{ flexGrow: 1, overflowY: 'visible' }}
+        >
+          <Table component="div" sx={{ display: 'block', width: '100%' }}>
+            <TableHead component="div" sx={{ display: 'block' }}>
+              {tableHeader}
+            </TableHead>
+            <TableBody component="div" sx={{ display: 'block' }}>
+              {filteredFeeds.map((feed) => (
+                <VirtuosoTableRow
+                  key={feed.id}
+                  item={feed}
+                  context={{ editingFeedId }}
+                >
+                  {renderRowContent(feed)}
+                </VirtuosoTableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
       ) : (
         <TableVirtuoso
           data={filteredFeeds}
@@ -295,176 +483,8 @@ export function FeedConfigurationTable({
           computeItemKey={(_index, feed) => feed.id}
           components={VIRTUOSO_COMPONENTS}
           style={{ flexGrow: 1, minHeight: 0 }}
-          fixedHeaderContent={() => (
-            <TableRow
-              component="div"
-              sx={{
-                display: 'grid',
-                gridTemplateColumns: GRID_TEMPLATE_COLUMNS,
-                width: '100%',
-                bgcolor: 'background.paper',
-              }}
-            >
-              <TableCell
-                component="div"
-                sx={{
-                  fontWeight: 'bold',
-                  bgcolor: 'background.paper',
-                }}
-                sortDirection={sortBy === 'name' ? sortDirection : false}
-              >
-                <TableSortLabel
-                  active={sortBy === 'name'}
-                  direction={sortBy === 'name' ? sortDirection : 'asc'}
-                  onClick={() => handleRequestSort('name')}
-                >
-                  Name
-                </TableSortLabel>
-              </TableCell>
-              <TableCell
-                component="div"
-                sx={{
-                  fontWeight: 'bold',
-                  bgcolor: 'background.paper',
-                }}
-                sortDirection={sortBy === 'type' ? sortDirection : false}
-              >
-                <TableSortLabel
-                  active={sortBy === 'type'}
-                  direction={sortBy === 'type' ? sortDirection : 'asc'}
-                  onClick={() => handleRequestSort('type')}
-                >
-                  Type
-                </TableSortLabel>
-              </TableCell>
-              <TableCell
-                component="div"
-                sx={{
-                  fontWeight: 'bold',
-                  bgcolor: 'background.paper',
-                }}
-                sortDirection={sortBy === 'status' ? sortDirection : false}
-              >
-                <TableSortLabel
-                  active={sortBy === 'status'}
-                  direction={sortBy === 'status' ? sortDirection : 'asc'}
-                  onClick={() => handleRequestSort('status')}
-                >
-                  Status
-                </TableSortLabel>
-              </TableCell>
-
-              <TableCell
-                component="div"
-                align="right"
-                sx={{
-                  fontWeight: 'bold',
-                  bgcolor: 'background.paper',
-                }}
-              />
-            </TableRow>
-          )}
-          itemContent={(_index, feed) => {
-            const isCurrentlyEditingThis = editingFeedId === feed.id;
-
-            return (
-              <>
-                {/* Name & ID Metadata */}
-                <TableCell
-                  component="div"
-                  sx={{
-                    py: 1,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    borderBottom: 'none',
-                    minWidth: 0,
-                  }}
-                >
-                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                    {feed.name}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    <b>Source ID:</b> {feed.sourceFeedId}
-                  </Typography>
-                </TableCell>
-
-                {/* Source Type Chip */}
-                <TableCell
-                  component="div"
-                  sx={{ borderBottom: 'none', minWidth: 0 }}
-                >
-                  <Chip
-                    label={feed.sourceType}
-                    size="small"
-                    variant="outlined"
-                  />
-                </TableCell>
-
-                {/* Status Indicator */}
-                <TableCell
-                  component="div"
-                  sx={{ borderBottom: 'none', minWidth: 0 }}
-                >
-                  <FeedStatusIndicator
-                    status={feed.status}
-                    lastHeartbeat={feed.lastHeartbeat}
-                  />
-                </TableCell>
-
-                {/* Actions Buttons */}
-                <TableCell
-                  align="right"
-                  component="div"
-                  sx={{ borderBottom: 'none' }}
-                >
-                  <IconButton
-                    size="small"
-                    onClick={() => onEditFeed(feed)}
-                    disabled={isSubmitting || isCurrentlyEditingThis}
-                    sx={{
-                      border: '1px solid',
-                      borderRadius: 1.5,
-                      p: 0.5,
-                      '&:hover': {
-                        borderColor: 'primary.main',
-                        bgcolor: 'primary.soft',
-                        color: 'primary.main',
-                      },
-                    }}
-                    aria-label={`Edit ${feed.name}`}
-                  >
-                    <EditIcon fontSize="small" />
-                  </IconButton>
-                </TableCell>
-
-                {feed.tags && feed.tags.length > 0 && (
-                  <TableCell
-                    component="div"
-                    sx={{
-                      gridColumn: '1 / -1',
-                      borderBottom: 'none',
-                      pt: 0,
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      gap: 0.75,
-                    }}
-                  >
-                    {feed.tags.map((tag, i) => (
-                      <Chip
-                        key={i}
-                        label={
-                          <Box>
-                            <b>{tag.key}</b>: {tag.value}
-                          </Box>
-                        }
-                        size="small"
-                      />
-                    ))}
-                  </TableCell>
-                )}
-              </>
-            );
-          }}
+          fixedHeaderContent={() => tableHeader}
+          itemContent={(_index, feed) => renderRowContent(feed)}
         />
       )}
     </Card>

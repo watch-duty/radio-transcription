@@ -116,10 +116,17 @@ export function FeedConfigurationView({
         flexGrow: 1,
         minHeight: 0,
         gap: 2,
-        overflow: 'scroll',
+        overflow: { xs: 'visible', sm: 'hidden' },
       }}
     >
-      <Box sx={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 1 }}>
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 1,
+        }}
+      >
         <AppRegistrationIcon
           sx={{
             fontSize: 32,
@@ -137,7 +144,6 @@ export function FeedConfigurationView({
         sx={{
           flexGrow: 1,
           minHeight: 0,
-          overflow: 'scroll',
         }}
       >
         <Grid
@@ -145,8 +151,8 @@ export function FeedConfigurationView({
           sx={{
             display: 'flex',
             flexDirection: 'column',
-            height: '100%',
-            minHeight: 0,
+            height: { xs: 'auto', sm: '100%' },
+            minHeight: { xs: 'auto', sm: 0 },
           }}
         >
           <FeedConfigurationEdit
@@ -163,8 +169,8 @@ export function FeedConfigurationView({
           sx={{
             display: 'flex',
             flexDirection: 'column',
-            height: '100%',
-            minHeight: 0,
+            height: { xs: 'auto', sm: '100%' },
+            minHeight: { xs: 'auto', sm: 0 },
           }}
         >
           <FeedConfigurationTable

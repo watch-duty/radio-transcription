@@ -303,18 +303,14 @@ export function FeedConfigurationEdit({
               onChange={(e) => setName(e.target.value)}
               error={!!validationErrors.name}
               helperText={
-                validationErrors.name ||
-                'Concise and readable name of the feed'
+                validationErrors.name || 'Concise and readable name of the feed'
               }
               disabled={isSubmitting}
             />
 
             <Grid container spacing={2}>
               <Grid size={{ xs: 12, sm: 6 }}>
-                <FormControl
-                  fullWidth
-                  disabled={!!editingFeed || isSubmitting}
-                >
+                <FormControl fullWidth disabled={!!editingFeed || isSubmitting}>
                   <InputLabel id="source-type-select-label">
                     Source Type
                   </InputLabel>
@@ -351,8 +347,7 @@ export function FeedConfigurationEdit({
                   onChange={(e) => setSourceFeedId(e.target.value)}
                   error={!!validationErrors.sourceFeedId}
                   helperText={
-                    validationErrors.sourceFeedId ||
-                    'Unique ID of the source'
+                    validationErrors.sourceFeedId || 'Unique ID of the source'
                   }
                   disabled={!!editingFeed || isSubmitting}
                   slotProps={{
