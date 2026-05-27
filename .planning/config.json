@@ -43,5 +43,6 @@
   "quick_branch_template": null,
   "resolve_model_ids": "omit",
   "mode": "interactive",
-  "granularity": "standard"
+  "granularity": "standard",
+  "runtime": "codex"
 }
