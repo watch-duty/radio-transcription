@@ -22,7 +22,10 @@ WORKDIR /app
 
 # Copy lockfiles and manifests
 COPY pyproject.toml uv.lock ./
-COPY backend/pipeline/normalization/pyproject.toml ./backend/pipeline/normalization/pyproject.toml
+COPY backend/pipeline/normalization/pyproject.toml ./backend/pipeline/normalization/
+COPY backend/pipeline/transcription/pyproject.toml ./backend/pipeline/transcription/
+COPY backend/pipeline/evaluation/pyproject.toml ./backend/pipeline/evaluation/
+COPY backend/pipeline/notification/pyproject.toml ./backend/pipeline/notification/
 
 # Set environment variables for uv to use system python
 ENV UV_PROJECT_ENVIRONMENT="/usr/local/"
