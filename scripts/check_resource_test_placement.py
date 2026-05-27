@@ -38,7 +38,7 @@ def main() -> int:
         return 0
 
     sys.stderr.write(
-        "Resource-heavy test helpers are only allowed under integration_tests/ or in "
+        "Resource test helpers are only allowed under integration_tests/ or in "
         "*_integration.py files:\n"
     )
     for offender in offenders:

@@ -99,7 +99,7 @@ uv run ruff format --check model/colabs
 [tasks."lint:python"]
 description = "Run all Python code quality and type checks"
 depends = ["lint:ruff", "lint:ty", "lint:notebooks"]
-run = "uv run python scripts/check_heavy_test_placement.py"
+run = "uv run python scripts/check_resource_test_placement.py"
 
 [tasks.format]
 depends = ["format:ruff", "format:terraform", "format:frontend"]
