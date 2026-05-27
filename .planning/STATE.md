@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: ready_to_plan
-stopped_at: Phase 1 context gathered
+stopped_at: Phase 1 complete; ready to plan Phase 2
 last_updated: "2026-05-27T21:15:01.545Z"
-last_activity: 2026-05-27
+last_activity: 2026-05-27 - Phase 1 completed and verified.
 progress:
   total_phases: 5
-  completed_phases: 2
+  completed_phases: 1
   total_plans: 3
   completed_plans: 3
-  percent: 40
+  percent: 20
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-27)
 
 **Core value:** Every SFT run must train and compare models on the same auditable dataset version without source leakage between train and SFT Eval Split.
-**Current focus:** Phase 01 — manifest-and-source-identity
+**Current focus:** Phase 2: Split Engine And Leakage Gates
 
 ## Current Position
 
 Phase: 2
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-05-27
+Last activity: 2026-05-27 - Phase 1 completed and verified.
 
-Progress: [██████████] 100%
+Progress: [----------] 0%
 
 ## Performance Metrics
 

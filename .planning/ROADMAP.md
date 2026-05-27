@@ -10,7 +10,7 @@ This roadmap builds the SFT dataset-versioning layer in dependency order: first 
 - Integer phases (1, 2, 3): Planned milestone work
 - Decimal phases (2.1, 2.2): Urgent insertions, if needed
 
-- [ ] **Phase 1: Manifest And Source Identity** - Normalize input manifests and resolve leak-safe Source Groups for every supported dataset family.
+- [x] **Phase 1: Manifest And Source Identity** - Normalize input manifests and resolve leak-safe Source Groups for every supported dataset family.
 - [ ] **Phase 2: Split Engine And Leakage Gates** - Generate deterministic 80:20 source-group splits with hard leak checks and balance reports.
 - [ ] **Phase 3: GCS Artifacts And Model Writers** - Write immutable canonical artifacts plus NeMo, Whisper, and Gemini inputs/configs.
 - [ ] **Phase 4: Audio Derivation And Provenance** - Reuse or derive clips with minimal transformation and complete provenance.
@@ -108,7 +108,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Manifest And Source Identity | 0/3 | Not started | - |
+| 1. Manifest And Source Identity | 3/3 | Complete | 2026-05-27 |
 | 2. Split Engine And Leakage Gates | 0/3 | Not started | - |
 | 3. GCS Artifacts And Model Writers | 0/4 | Not started | - |
 | 4. Audio Derivation And Provenance | 0/3 | Not started | - |
