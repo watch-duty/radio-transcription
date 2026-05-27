@@ -20,8 +20,14 @@ To ensure absolute consistency with Watch Duty's development guidelines, always 
 2. **Protobuf Generation**:
    - Run `mise run generate:protos` to regenerate Python Protobuf/gRPC bindings after making changes to any `.proto` schemas.
 
-3. **Unit Tests**:
-   - Run `mise run test` (or `mise run test:unit`) to verify the local Python unit test suite.
+3. **Python Test Safety**:
+   - Do not treat `mise run test` as a cheap unit-test command. In this repo it maps to the full local pytest suite and may include Docker/testcontainers or service-stack tests.
+   - For a safe backend verification pass, prefer `uv run python -m pytest backend/ -q -n auto --ignore-glob='**/test_*_integration.py'`.
+   - For resource-safety changes, prefer `uv run pytest backend/tests/test_pytest_resource_safety.py -q`.
+   - Do not proactively run local E2E or full integration-stack commands such as `mise run test:e2e`, `mise run test:e2e:local`, `docker compose ... integration-tests`, `uv run pytest integration_tests/`, or `uv run pytest integration_tests/api/ integration_tests/e2e/` unless the user explicitly asks and confirms the machine is prepared.
+   - Prefer GitHub Actions for E2E validation: push the branch, check `gh pr checks`, and inspect failing remote logs with `gh run view`.
+   - If the user explicitly requests a large local test, run the narrowest path possible, keep it serial with `-n 0`, and avoid `-n auto` for Docker/testcontainers, component, API, or E2E tests unless xdist fanout is specifically requested.
+   - Reason: local E2E/resource-stack tests can start many containers and emulators, including AlloyDB Omni and pipeline services, and have previously exhausted local machine resources. CI runners isolate those resource costs.
 
 4. **Git Commits**:
    - Use descriptive semantic commit prefixes (e.g., `feat(transcription):`, `fix(pipeline):`, `style(transcription):`, `docs:`).
