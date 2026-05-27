@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 @functools.lru_cache(maxsize=1024)
 def _get_compiled_keyword_regex(
     keywords: tuple[str, ...],
+    *,
     case_sensitive: bool,
     operator: models.LogicalOperator,
 ) -> re.Pattern | list[re.Pattern]:
@@ -107,16 +108,18 @@ class BaseTextEvaluator(ABC):
             # 2. Retrieve cached/compiled regex for precise word boundary verification
             compiled = _get_compiled_keyword_regex(
                 tuple(conditions.keywords),
-                conditions.case_sensitive,
-                conditions.operator,
+                case_sensitive=conditions.case_sensitive,
+                operator=conditions.operator,
             )
 
             if conditions.operator == models.LogicalOperator.ANY:
                 # compiled is a single compiled Pattern matching any of the keywords
-                return bool(compiled.search(text))
-            if conditions.operator == models.LogicalOperator.ALL:
+                if isinstance(compiled, re.Pattern):
+                    return bool(compiled.search(text))
+            elif conditions.operator == models.LogicalOperator.ALL:
                 # compiled is a list of compiled Patterns
-                return all(bool(p.search(text)) for p in compiled)
+                if isinstance(compiled, list):
+                    return all(bool(p.search(text)) for p in compiled)
 
         # For now, we skip GroupConditions as it requires a rule lookup
         return False
