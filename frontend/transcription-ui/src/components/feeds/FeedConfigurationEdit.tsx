@@ -404,7 +404,7 @@ export function FeedConfigurationEdit({
               >
                 <TextField
                   size="small"
-                  label="Tag Key"
+                  label="Key"
                   placeholder="county"
                   value={newTagKey}
                   onChange={(e) => setNewTagKey(e.target.value)}
@@ -414,7 +414,7 @@ export function FeedConfigurationEdit({
                 />
                 <TextField
                   size="small"
-                  label="Tag Value"
+                  label="Value"
                   placeholder="Ventura"
                   value={newTagValue}
                   onChange={(e) => setNewTagValue(e.target.value)}
@@ -465,7 +465,7 @@ export function FeedConfigurationEdit({
                     color="text.secondary"
                     sx={{ mx: 'auto', py: 2, fontStyle: 'italic' }}
                   >
-                    No custom tags added.
+                    No tags added.
                   </Typography>
                 ) : (
                   tags.map((tag, index) => (
@@ -477,7 +477,7 @@ export function FeedConfigurationEdit({
                     >
                       <TextField
                         size="small"
-                        label="Tag Key"
+                        label="Key"
                         value={tag.key}
                         onChange={(e) =>
                           handleUpdateTag(index, 'key', e.target.value)
@@ -487,7 +487,7 @@ export function FeedConfigurationEdit({
                       />
                       <TextField
                         size="small"
-                        label="Tag Value"
+                        label="Value"
                         value={tag.value}
                         onChange={(e) =>
                           handleUpdateTag(index, 'value', e.target.value)

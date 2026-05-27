@@ -131,8 +131,8 @@ describe('FeedConfigurationView', () => {
   it('supports interactive key-value tags generation, adding, and deletion', async () => {
     renderView();
 
-    const tagKeyInput = screen.getByLabelText('Tag Key');
-    const tagValInput = screen.getByLabelText('Tag Value');
+    const tagKeyInput = screen.getByLabelText('Key');
+    const tagValInput = screen.getByLabelText('Value');
     const addTagBtn = screen.getByRole('button', { name: 'Add Tag' });
 
     // Try adding empty tag (should show error)
@@ -147,10 +147,10 @@ describe('FeedConfigurationView', () => {
     fireEvent.click(addTagBtn);
 
     // Verify tag row is registered and populated as input values
-    expect(screen.getAllByLabelText('Tag Key')[0]).toHaveValue('');
-    expect(screen.getAllByLabelText('Tag Value')[0]).toHaveValue('');
-    expect(screen.getAllByLabelText('Tag Key')[1]).toHaveValue('agency');
-    expect(screen.getAllByLabelText('Tag Value')[1]).toHaveValue('CHP');
+    expect(screen.getAllByLabelText('Key')[0]).toHaveValue('');
+    expect(screen.getAllByLabelText('Value')[0]).toHaveValue('');
+    expect(screen.getAllByLabelText('Key')[1]).toHaveValue('agency');
+    expect(screen.getAllByLabelText('Value')[1]).toHaveValue('CHP');
 
     // Clear tag fields on success
     expect(tagKeyInput).toHaveValue('');
@@ -285,10 +285,10 @@ describe('FeedConfigurationView', () => {
     expect(screen.getByLabelText('Source Feed ID')).toHaveValue('33156');
 
     // Verify registered tag row is populated in input fields
-    expect(screen.getAllByLabelText('Tag Key')[0]).toHaveValue('');
-    expect(screen.getAllByLabelText('Tag Value')[0]).toHaveValue('');
-    expect(screen.getAllByLabelText('Tag Key')[1]).toHaveValue('county');
-    expect(screen.getAllByLabelText('Tag Value')[1]).toHaveValue('Marin');
+    expect(screen.getAllByLabelText('Key')[0]).toHaveValue('');
+    expect(screen.getAllByLabelText('Value')[0]).toHaveValue('');
+    expect(screen.getAllByLabelText('Key')[1]).toHaveValue('county');
+    expect(screen.getAllByLabelText('Value')[1]).toHaveValue('Marin');
 
     // Verify permanent fields are disabled in update mode
     expect(screen.getByLabelText('Source Type')).toHaveAttribute(
@@ -397,10 +397,10 @@ describe('FeedConfigurationView', () => {
     });
 
     // Fill in the tag inputs, but DO NOT click the plus button!
-    fireEvent.change(screen.getByLabelText('Tag Key'), {
+    fireEvent.change(screen.getByLabelText('Key'), {
       target: { value: 'county' },
     });
-    fireEvent.change(screen.getByLabelText('Tag Value'), {
+    fireEvent.change(screen.getByLabelText('Value'), {
       target: { value: 'Napa' },
     });
 
