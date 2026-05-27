@@ -1,7 +1,0 @@
-syntax = "proto3";
-
-enum EvaluationErrorType {
-  ERROR_UNSPECIFIED = 0;
-  ERROR_FEED_ID_MISSING = 1;
-  ERROR_RULES_FETCH_FAILED = 2;
-}

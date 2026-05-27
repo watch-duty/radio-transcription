@@ -10,7 +10,7 @@ from backend.pipeline.common.auth import get_id_token
 from backend.pipeline.common.env import is_gcp_env
 from backend.pipeline.common.rules import models
 from backend.pipeline.schema_types import (
-    evaluation_error_pb2,
+    evaluated_transcribed_audio_pb2 as evaluated_pb2,
 )
 
 logger = logging.getLogger(__name__)
@@ -188,7 +188,9 @@ class RemoteTextEvaluator(BaseTextEvaluator):
             return {
                 "is_flagged": False,
                 "triggered_rules": [],
-                "errors": [evaluation_error_pb2.ERROR_FEED_ID_MISSING],
+                "errors": [
+                    evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_FEED_ID_MISSING
+                ],
             }
         try:
             rules = self._fetch_rules()
@@ -197,7 +199,9 @@ class RemoteTextEvaluator(BaseTextEvaluator):
             return {
                 "is_flagged": False,
                 "triggered_rules": [],
-                "errors": [evaluation_error_pb2.ERROR_RULES_FETCH_FAILED],
+                "errors": [
+                    evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_RULES_FETCH_FAILED
+                ],
             }
 
         return self._evaluate_ruleset(rules, text, feed_id)

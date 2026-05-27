@@ -1,7 +1,6 @@
 syntax = "proto3";
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/duration.proto";
-import "evaluation_error.proto";
 
 // Identifiers, timestamps, transcript, and evaluation decisions for transcribed audio.
 message EvaluatedTranscribedAudio {
@@ -54,6 +53,16 @@ message EvaluatedTranscribedAudio {
   // --- Decisions ---
   // The list of rule IDs triggered by this transcript during evaluation.
   repeated string evaluation_decisions = 13;
+
+  // WARNING: This enum is duplicated between alert_notification.proto and
+  // evaluated_transcribed_audio.proto to avoid cross-import python packaging issues
+  // in standard container builds. If you add a new error type, make sure to keep
+  // them completely in sync!
+  enum EvaluationErrorType {
+    ERROR_UNSPECIFIED = 0;
+    ERROR_FEED_ID_MISSING = 1;
+    ERROR_RULES_FETCH_FAILED = 2;
+  }
 
   // The list of errors encountered during evaluation.
   repeated EvaluationErrorType evaluation_errors = 14;
