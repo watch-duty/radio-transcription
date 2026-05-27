@@ -11,7 +11,9 @@ Refer to these guidelines to ensure consistency with project standards.
 
 ## Agent Action Standards
 
-To ensure absolute consistency with Watch Duty's development guidelines, always utilize the project's **mise** task runner instead of running ad-hoc commands:
+Prefer the project's **mise** task runner for standard formatting, linting, and
+generation tasks. For test execution, follow the Python Test Safety section
+below; do not replace targeted safe pytest commands with broader mise tasks.
 
 1. **Code Formatting & Linting**:
    - Run `mise run format` locally to automatically format all modified files (Python, Terraform, Frontend) before submitting.
@@ -22,12 +24,13 @@ To ensure absolute consistency with Watch Duty's development guidelines, always 
 
 3. **Python Test Safety**:
    - Do not treat `mise run test` as a cheap unit-test command. In this repo it maps to the full local pytest suite and may include Docker/testcontainers or service-stack tests.
+   - If the user asks to "run tests" without specifying scope, choose a targeted low-resource check and state that full E2E validation should run remotely.
    - For a safe backend verification pass, prefer `uv run python -m pytest backend/ -q -n auto --ignore-glob='**/test_*_integration.py'`.
    - For resource-safety changes, prefer `uv run pytest backend/tests/test_pytest_resource_safety.py -q`.
    - Do not proactively run local E2E or full integration-stack commands such as `mise run test:e2e`, `mise run test:e2e:local`, `docker compose ... integration-tests`, `uv run pytest integration_tests/`, or `uv run pytest integration_tests/api/ integration_tests/e2e/` unless the user explicitly asks and confirms the machine is prepared.
-   - Prefer GitHub Actions for E2E validation: push the branch, check `gh pr checks`, and inspect failing remote logs with `gh run view`.
+   - Prefer GitHub Actions for E2E validation: push the branch, check `gh pr checks <pr-number> --repo watch-duty/radio-transcription`, and inspect failures with `gh run view <run-id> --repo watch-duty/radio-transcription --log`.
    - If the user explicitly requests a large local test, run the narrowest path possible, keep it serial with `-n 0`, and avoid `-n auto` for Docker/testcontainers, component, API, or E2E tests unless xdist fanout is specifically requested.
-   - Reason: local E2E/resource-stack tests can start many containers and emulators, including AlloyDB Omni and pipeline services, and have previously exhausted local machine resources. CI runners isolate those resource costs.
+   - Reason: local E2E/resource-stack tests can start many containers and emulators, including AlloyDB Omni, Pub/Sub, GCS, Redis, and pipeline services. These runs have previously exhausted local machine resources; CI runners isolate those resource costs.
 
 4. **Git Commits**:
    - Use descriptive semantic commit prefixes (e.g., `feat(transcription):`, `fix(pipeline):`, `style(transcription):`, `docs:`).
