@@ -98,4 +98,4 @@ async def test_audio_segment_store_lifecycle_integration(
 
     # 5. Idempotent POST: post duplicate segment checks that no error is thrown
     inserted_dup = await store.bulk_add_audio_segments([segment])
-    assert inserted_dup == 1
+    assert inserted_dup == 0
