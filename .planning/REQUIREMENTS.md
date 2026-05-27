@@ -7,7 +7,7 @@
 
 ### Input Registry
 
-- [x] **INPT-01**: User can define one dataset-version job with `dataset_version_id`, random seed, train/eval ratio, output GCS prefix, and one or more input datasets.
+- [x] **INPT-01**: User can define one dataset-version job with `dataset_version_id`, train/eval ratio, output GCS prefix, and one or more input datasets.
 - [x] **INPT-02**: User can configure each input dataset with dataset name, dataset family, manifest `gs://` URI, source-key strategy, and optional sidecar source map `gs://` URI.
 - [x] **INPT-03**: The splitter can read configured JSON/JSONL manifests and sidecar source maps from `gs://` URIs using existing repository GCS helpers where practical; tests may use fake readers to cover success and failure classes without real GCS access.
 - [x] **INPT-04**: Rows with empty or missing normalized text are excluded from SFT examples and counted in the CLI/log validation summary.
@@ -24,12 +24,12 @@
 ### Split And Leakage
 
 - [x] **SPLT-01**: User can generate an 80:20 train/SFT Eval Split by assigning whole Source Groups to exactly one split.
-- [x] **SPLT-02**: Split generation is deterministic for the same input manifests, config, and seed.
+- [x] **SPLT-02**: Split generation emits the chosen Source Group assignment, score report, config, and algorithm metadata needed to audit the selected split.
 - [x] **SPLT-03**: Split validation fails if any Source Group appears in both train and SFT Eval Split.
 - [x] **SPLT-04**: Split validation fails if any original source audio appears in both train and SFT Eval Split.
 - [x] **SPLT-05**: Split validation fails if any model-ready audio URI appears in both train and SFT Eval Split.
 - [x] **SPLT-06**: Split validation fails when a configured dataset produces zero valid SFT examples.
-- [x] **SPLT-07**: Split optimization considers dataset family, source count, row count, duration, month/date/hour where available, duration buckets, and transcript-length buckets.
+- [x] **SPLT-07**: Split optimization considers dataset family, source count, row count, duration, duration buckets, and transcript-length buckets, while month/date/hour distributions are report-only when available.
 - [x] **SPLT-08**: Split reports show requested ratio, actual row ratio, duration ratio, source ratio, and balance deltas by correlated factor.
 
 ### GCS Artifacts
@@ -72,7 +72,7 @@
 ### Tests
 
 - [x] **TEST-01**: Tests cover all dataset-specific source-key extractors.
-- [x] **TEST-02**: Tests cover deterministic split output for a fixed seed.
+- [x] **TEST-02**: Tests cover Source Group split assignment, per-dataset train/eval coverage, and the seed-free config contract.
 - [x] **TEST-03**: Tests cover leakage-gate failures for source overlap, original-audio overlap, and model-ready URI overlap.
 - [x] **TEST-04**: Tests cover balance scoring and report contents.
 - [ ] **TEST-05**: Tests cover NeMo, Whisper, and Gemini model-writer output shapes.
