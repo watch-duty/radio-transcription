@@ -108,7 +108,9 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             feed_id=str(_FEED_ID),
             classification=AudioClassification.SPEECH_DETECTED,
             start_timestamp=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
-            end_timestamp=datetime.datetime(2026, 1, 1, 0, 1, tzinfo=datetime.UTC),
+            end_timestamp=datetime.datetime(
+                2026, 1, 1, 0, 1, tzinfo=datetime.UTC
+            ),
             missing_prior_context=False,
             missing_post_context=False,
             source_audio_uris=["gs://bucket/audio1.ogg"],
@@ -140,8 +142,12 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             await self.store.create_audio_segment(
                 feed_id="invalid-uuid",
                 classification=AudioClassification.SPEECH_DETECTED,
-                start_timestamp=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
-                end_timestamp=datetime.datetime(2026, 1, 1, 0, 1, tzinfo=datetime.UTC),
+                start_timestamp=datetime.datetime(
+                    2026, 1, 1, tzinfo=datetime.UTC
+                ),
+                end_timestamp=datetime.datetime(
+                    2026, 1, 1, 0, 1, tzinfo=datetime.UTC
+                ),
                 missing_prior_context=False,
                 missing_post_context=False,
                 source_audio_uris=["gs://bucket/audio1.ogg"],

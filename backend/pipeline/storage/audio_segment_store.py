@@ -116,9 +116,7 @@ class AudioSegmentStore:
             msg = "Unable to create audio segment."
             raise ValueError(msg)
 
-        return AudioSegment.model_validate(
-            self._prepare_audio_segment_row(row)
-        )
+        return AudioSegment.model_validate(self._prepare_audio_segment_row(row))
 
     async def list_audio_segments(
         self, feed_ids: list[str] | None = None
