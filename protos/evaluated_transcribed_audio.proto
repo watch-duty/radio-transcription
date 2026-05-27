@@ -5,11 +5,6 @@ import "google/protobuf/duration.proto";
 // Identifiers, timestamps, transcript, and evaluation decisions for transcribed audio.
 message EvaluatedTranscribedAudio {
 
-  enum EvaluationErrorType {
-    ERROR_UNSPECIFIED = 0;
-    ERROR_FEED_ID_MISSING = 1;
-    ERROR_RULES_FETCH_FAILED = 2;
-  }
 
   // --- Identifiers ---
   // The unique identifier of the radio feed this transmission originated from (formatted as a RFC 4122 UUID).
@@ -60,7 +55,7 @@ message EvaluatedTranscribedAudio {
   repeated string evaluation_decisions = 13;
 
   // The list of errors encountered during evaluation.
-  repeated EvaluationErrorType evaluation_errors = 14;
+  repeated string evaluation_errors = 14;
 
   // The human-readable name of the radio feed as stored in the database.
   string feed_name = 15;
