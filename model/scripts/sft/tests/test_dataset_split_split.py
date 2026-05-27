@@ -130,6 +130,8 @@ class TestAssignTrainEvalSplit(unittest.TestCase):
         self.assertGreaterEqual(result.metadata.objective_value, 0.0)
         self.assertEqual(result.metadata.solver_time_limit_seconds, 2.0)
         self.assertIn("dataset_row_count", result.metadata.weights)
+        self.assertIsNotNone(result.balance_report)
+        self.assertIn("weighted_score", result.balance_report or {})
 
     def test_assignment_does_not_require_random_seed(self) -> None:
         result = assign_train_eval_split(

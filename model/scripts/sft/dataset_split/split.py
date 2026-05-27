@@ -4,31 +4,31 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, replace
 
+from dataset_split.balance import (
+    DEFAULT_BALANCE_WEIGHTS,
+    DURATION_BUCKETS_SECONDS,
+    TRANSCRIPT_WORD_BUCKETS,
+    bucket_duration_seconds,
+    bucket_transcript_words,
+    build_balance_report,
+)
 from dataset_split.types import LabeledSegment
 
-DURATION_BUCKETS_SECONDS = (
-    (0.0, 5.0, "0_5s"),
-    (5.0, 15.0, "5_15s"),
-    (15.0, 30.0, "15_30s"),
-    (30.0, None, "30s_plus"),
-)
-TRANSCRIPT_WORD_BUCKETS = (
-    (0, 3, "0_3_words"),
-    (4, 10, "4_10_words"),
-    (11, 25, "11_25_words"),
-    (26, None, "26_plus_words"),
-)
 _OBJECTIVE_WEIGHTS = {
-    "dataset_row_count": 1000,
-    "dataset_duration": 1000,
-    "dataset_source_count": 750,
-    "family_row_count": 500,
-    "family_duration": 500,
-    "global_row_count": 250,
-    "global_duration": 250,
-    "global_source_count": 250,
-    "duration_bucket_count": 400,
-    "transcript_bucket_count": 400,
+    "dataset_row_count": int(DEFAULT_BALANCE_WEIGHTS["dataset_rows"]),
+    "dataset_duration": int(DEFAULT_BALANCE_WEIGHTS["dataset_duration"]),
+    "dataset_source_count": int(DEFAULT_BALANCE_WEIGHTS["dataset_sources"]),
+    "family_row_count": int(DEFAULT_BALANCE_WEIGHTS["family_rows"]),
+    "family_duration": int(DEFAULT_BALANCE_WEIGHTS["family_duration"]),
+    "global_row_count": int(DEFAULT_BALANCE_WEIGHTS["global_rows"]),
+    "global_duration": int(DEFAULT_BALANCE_WEIGHTS["global_duration"]),
+    "global_source_count": int(DEFAULT_BALANCE_WEIGHTS["global_sources"]),
+    "duration_bucket_count": int(
+        DEFAULT_BALANCE_WEIGHTS["duration_bucket_rows"]
+    ),
+    "transcript_bucket_count": int(
+        DEFAULT_BALANCE_WEIGHTS["transcript_bucket_rows"]
+    ),
 }
 
 
@@ -62,6 +62,7 @@ class SplitResult:
     segments: tuple[LabeledSegment, ...]
     source_group_splits: dict[str, str]
     metadata: SplitAlgorithmMetadata
+    balance_report: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -141,11 +142,12 @@ def assign_train_eval_split(
         source_group: "eval" if solver.Value(variable) else "train"
         for source_group, variable in is_eval.items()
     }
+    assigned_segments = tuple(
+        replace(segment, split=source_group_splits[segment.source_group])
+        for segment in segments
+    )
     return SplitResult(
-        segments=tuple(
-            replace(segment, split=source_group_splits[segment.source_group])
-            for segment in segments
-        ),
+        segments=assigned_segments,
         source_group_splits=source_group_splits,
         metadata=SplitAlgorithmMetadata(
             algorithm="ortools_cp_sat_source_group_v1",
@@ -155,6 +157,11 @@ def assign_train_eval_split(
             wall_time_seconds=float(solver.WallTime()),
             weights=dict(_OBJECTIVE_WEIGHTS),
         ),
+        balance_report=build_balance_report(
+            assigned_segments,
+            train_ratio=train_ratio,
+            eval_ratio=eval_ratio,
+        ).to_dict(),
     )
 
 
@@ -383,21 +390,6 @@ def _component_for_source_scope(
         total=sum(values_by_source_group.values()),
         values_by_source_group=values_by_source_group,
     )
-
-
-def bucket_duration_seconds(duration: float) -> str:
-    for lower, upper, name in DURATION_BUCKETS_SECONDS:
-        if duration >= lower and (upper is None or duration < upper):
-            return name
-    return DURATION_BUCKETS_SECONDS[0][2]
-
-
-def bucket_transcript_words(text: str) -> str:
-    word_count = len(text.strip().split())
-    for lower, upper, name in TRANSCRIPT_WORD_BUCKETS:
-        if word_count >= lower and (upper is None or word_count <= upper):
-            return name
-    return TRANSCRIPT_WORD_BUCKETS[0][2]
 
 
 def _duration_ms(segment: LabeledSegment) -> int:
