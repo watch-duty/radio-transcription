@@ -82,7 +82,7 @@ class TestEvaluationService(unittest.TestCase):
         self.assertIsNotNone(result_proto)
         assert result_proto is not None
         self.assertEqual(
-            list(result_proto.evaluation_errors),
+            list(result_proto.errors),
             [EvaluationErrorType.ERROR_FEED_ID_MISSING],
         )
 
