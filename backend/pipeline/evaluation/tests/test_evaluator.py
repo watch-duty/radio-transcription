@@ -511,6 +511,34 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         self.assertEqual(mock_make_request.call_count, 4)
         self.assertEqual(mock_sleep.call_count, 2)
 
+    @patch("requests.Session.get")
+    def test_keyword_match_word_boundaries(self, mock_get) -> None:
+        """Test that KEYWORD_MATCH rules enforce word boundaries."""
+        mock_rule = {
+            "rule_id": "field_fire_rule",
+            "rule_name": "Field Fire Rule",
+            "is_active": True,
+            "scope": {"level": "GLOBAL", "target_feeds": []},
+            "conditions": {
+                "evaluation_type": "KEYWORD_MATCH",
+                "operator": "ANY",
+                "keywords": ["field fire"],
+                "case_sensitive": False,
+            },
+        }
+        mock_get.return_value.json.return_value = [mock_rule]
+        mock_get.return_value.status_code = 200
+
+        # Should NOT match Fairfield Fire because "field fire" is inside a word
+        text = "Fairfield Fire, Fairfield Fire, Tavolack and Flower Hill Road"
+        result = self.remote_evaluator.evaluate(text, feed_id="test_feed")
+        self.assertFalse(result["is_flagged"], "Should not match substring 'Fairfield Fire'")
+
+        # Should match standalone "field fire"
+        text2 = "There is a field fire on Flower Hill Road"
+        result2 = self.remote_evaluator.evaluate(text2, feed_id="test_feed")
+        self.assertTrue(result2["is_flagged"], "Should match standalone 'field fire'")
+
 
 if __name__ == "__main__":
     unittest.main()
