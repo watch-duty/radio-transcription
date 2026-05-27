@@ -42,6 +42,6 @@
   "branching_strategy": "none",
   "quick_branch_template": null,
   "resolve_model_ids": "omit",
-  "mode": "yolo",
+  "mode": "interactive",
   "granularity": "standard"
 }
