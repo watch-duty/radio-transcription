@@ -1,0 +1,128 @@
+# Requirements: SFT Dataset Versioning
+
+**Defined:** 2026-05-27
+**Core Value:** Every SFT run must train and compare models on the same auditable dataset version without source leakage between train and SFT Eval Split.
+
+## v1 Requirements
+
+### Input Registry
+
+- [ ] **INPT-01**: User can define one dataset-version job with `dataset_version_id`, random seed, train/eval ratio, output GCS prefix, and one or more input datasets.
+- [ ] **INPT-02**: User can configure each input dataset with dataset name, dataset family, manifest URI/path, source-key strategy, and optional sidecar source map.
+- [ ] **INPT-03**: The splitter can read existing JSON/JSONL manifests from local disk or GCS using existing repository GCS helpers where practical.
+- [ ] **INPT-04**: Rows with empty or missing normalized text are excluded from SFT examples and counted in an exclusion report.
+
+### Source Identity
+
+- [ ] **SRC-01**: Broadcastify Calls rows resolve Source Group as `bcfy_calls:<groupId>`.
+- [ ] **SRC-02**: Broadcastify Feeds rows resolve Source Group as `bcfy_feeds:<feedId>`.
+- [ ] **SRC-03**: Echo rows resolve Source Group as `echo:<area_code>/<echo_name>` using explicit fields, URL/S3 key parsing, sidecar source map, or unique CSV match.
+- [ ] **SRC-04**: Echo rows fail source-key validation when `area_code` is missing and `echo_name` is ambiguous across area codes.
+- [ ] **SRC-05**: Fire Notification rows resolve Source Group from stream path/location, not collection day UUID.
+- [ ] **SRC-06**: Every source-key extractor has focused tests for valid, missing, and ambiguous inputs.
+
+### Split And Leakage
+
+- [ ] **SPLT-01**: User can generate an 80:20 train/SFT Eval Split by assigning whole Source Groups to exactly one split.
+- [ ] **SPLT-02**: Split generation is deterministic for the same input manifests, config, and seed.
+- [ ] **SPLT-03**: Split validation fails if any Source Group appears in both train and SFT Eval Split.
+- [ ] **SPLT-04**: Split validation fails if any original source audio appears in both train and SFT Eval Split.
+- [ ] **SPLT-05**: Split validation fails if any model-ready audio URI appears in both train and SFT Eval Split.
+- [ ] **SPLT-06**: Split validation fails when a configured dataset produces zero valid SFT examples.
+- [ ] **SPLT-07**: Split optimization considers dataset family, source count, row count, duration, month/date/hour where available, duration buckets, and transcript-length buckets.
+- [ ] **SPLT-08**: Split reports show requested ratio, actual row ratio, duration ratio, source ratio, and balance deltas by correlated factor.
+
+### GCS Artifacts
+
+- [ ] **ARTF-01**: User can write a dataset version under `gs://wd-transcription-data/sft/{dataset_version_id}/`.
+- [ ] **ARTF-02**: Generation fails if the dataset version path already exists unless an explicit force flag is provided and recorded.
+- [ ] **ARTF-03**: The generator writes canonical train/eval JSONL manifests.
+- [ ] **ARTF-04**: The generator writes per-dataset train/eval JSONL slices.
+- [ ] **ARTF-05**: The generator writes machine-readable JSON reports and a human-readable Markdown summary.
+- [ ] **ARTF-06**: Generated manifests and derived audio are not committed to Git.
+
+### Audio And Provenance
+
+- [ ] **AUD-01**: The planner reuses an existing standalone supported clip when a row already points to one utterance clip.
+- [ ] **AUD-02**: The planner derives a clip only when a labeled row points into a longer source audio file by offset/duration.
+- [ ] **AUD-03**: Derived clips preserve the least-transforming reliable audio format accepted by target writers, with WAV fallback when exact source-format slicing is unreliable.
+- [ ] **AUD-04**: Multichannel input is mixed to mono when deriving clips.
+- [ ] **AUD-05**: The generator does not add padding and does not resample by default unless a target-specific writer requires it.
+- [ ] **AUD-06**: Every SFT example records provenance for original audio URI, offset, duration, source group, split, reuse/derived decision, and transformation metadata.
+
+### Model Inputs
+
+- [ ] **MODL-01**: NeMo writer emits train/eval manifests with `audio_filepath`, `text`, and `duration`.
+- [ ] **MODL-02**: NeMo writer emits a config fragment that references train and validation manifest paths.
+- [ ] **MODL-03**: Whisper writer emits train/eval loader-friendly manifests with audio URI/path, text, duration, source metadata, and preprocessing recommendations.
+- [ ] **MODL-04**: Whisper writer records or enforces the sub-30-second example constraint needed to avoid Whisper feature-extractor truncation.
+- [ ] **MODL-05**: Gemini writer emits Vertex SFT JSONL with `systemInstruction`, `contents`, `fileData`, `mimeType`, and target transcript text.
+- [ ] **MODL-06**: Gemini writer emits a tuning config with train dataset URI, validation dataset URI, base model name, region, adapter size, epoch count, and learning-rate multiplier.
+- [ ] **MODL-07**: Gemini base model is configurable and not hard-coded to an unsupported model name.
+- [ ] **MODL-08**: Existing benchmark/eval manifests remain unchanged.
+
+### CLI And Reports
+
+- [ ] **CLI-01**: User can run a dry run that validates inputs, computes split assignment, and writes local reports without uploading derived audio.
+- [ ] **CLI-02**: User can run a generation command that writes canonical/model inputs and reports to GCS.
+- [ ] **CLI-03**: The CLI exits nonzero on hard validation failures and prints the report path or failure report location.
+- [ ] **CLI-04**: The report bundle includes leakage, balance, source-key failures, excluded rows, and transformations.
+- [ ] **CLI-05**: Documentation explains the terms Source Group, Labeled Segment, SFT Example, SFT Eval Split, and Dataset Version.
+
+### Tests
+
+- [ ] **TEST-01**: Tests cover all dataset-specific source-key extractors.
+- [ ] **TEST-02**: Tests cover deterministic split output for a fixed seed.
+- [ ] **TEST-03**: Tests cover leakage-gate failures for source overlap, original-audio overlap, and model-ready URI overlap.
+- [ ] **TEST-04**: Tests cover balance scoring and report contents.
+- [ ] **TEST-05**: Tests cover NeMo, Whisper, and Gemini model-writer output shapes.
+- [ ] **TEST-06**: Tests cover existing-path protection for dataset versions.
+
+## v2 Requirements
+
+### Training Execution
+
+- **RUN-01**: Submit NeMo custom-training jobs from generated dataset artifacts.
+- **RUN-02**: Submit Whisper custom-training jobs from generated dataset artifacts.
+- **RUN-03**: Submit Gemini SFT jobs and post-run evaluation from generated dataset artifacts.
+- **RUN-04**: Track model-run metadata and compare model outputs across dataset versions.
+
+### Scaling
+
+- **SCAL-01**: Emit tarred/WebDataset NeMo artifacts for large training runs.
+- **SCAL-02**: Support sharded canonical/model manifests for very large datasets.
+- **SCAL-03**: Add a dashboard or report index for comparing dataset versions.
+
+## Out of Scope
+
+| Feature | Reason |
+|---------|--------|
+| Sampling new upstream API audio | This project consumes existing labeled manifests; sampling belongs in dataset acquisition workflows. |
+| Replacing historical benchmark/eval manifests | SFT dataset versions are separate artifacts. |
+| Hidden holdout creation | The requested eval side is an SFT Eval Split that may be used for validation and model selection. |
+| Perfect balancing across every correlated factor | Source-group leakage prevention is the hard constraint; balance is optimized and reported. |
+| Committing generated manifests/audio to Git | Generated proprietary artifacts belong in GCS. |
+
+## Traceability
+
+Traceability will be filled when the roadmap is approved.
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| INPT-01..INPT-04 | TBD | Pending |
+| SRC-01..SRC-06 | TBD | Pending |
+| SPLT-01..SPLT-08 | TBD | Pending |
+| ARTF-01..ARTF-06 | TBD | Pending |
+| AUD-01..AUD-06 | TBD | Pending |
+| MODL-01..MODL-08 | TBD | Pending |
+| CLI-01..CLI-05 | TBD | Pending |
+| TEST-01..TEST-06 | TBD | Pending |
+
+**Coverage:**
+- v1 requirements: 49 total
+- Mapped to phases: 0
+- Unmapped: 49
+
+---
+*Requirements defined: 2026-05-27*
+*Last updated: 2026-05-27 after initial definition*
