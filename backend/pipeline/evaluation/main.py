@@ -61,7 +61,6 @@ def _get_rules_cache_ttl_seconds() -> float:
     return ttl_seconds
 
 
-
 # 2. Container for lazy initialization (for performance on warm starts)
 class EvaluationServiceContainer:
     def __init__(self) -> None:

@@ -10,9 +10,6 @@ from backend.pipeline.common.tracing_utils import (
     with_tracer_context,
 )
 from backend.pipeline.schema_types import (
-    evaluated_transcribed_audio_pb2 as evaluated_pb2,
-)
-from backend.pipeline.schema_types import (
     transcribed_audio_pb2 as transcribed_pb2,
 )
 from backend.services.audio_segments.models import AnnotationType
@@ -121,12 +118,7 @@ class EvaluationEventProcessor:
             try:
                 annotation_data = {
                     "decisions": list(evaluated_payload.evaluation_decisions),
-                    "errors": [
-                        evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.Name(
-                            e
-                        )
-                        for e in evaluated_payload.evaluation_errors
-                    ],
+                    "errors": list(evaluated_payload.errors),
                 }
                 await self.audio_segment_store.add_annotation(
                     segment_id=new_audio.transmission_id,
