@@ -444,7 +444,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                     if not audio_url or audio_url in seen_urls:
                         continue
 
-                    outcome.attempted += 1
+                    outcome.record_item_attempt()
                     chunk = await _create_chunk_from_call(
                         session,
                         result,
@@ -472,7 +472,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
 
                     # Only mark as seen and update pagination after a successful
                     # yield, confirming the chunk was handed off to the pipeline.
-                    outcome.produced += 1
+                    outcome.record_chunk_produced()
                     seen_urls.append(audio_url)
                     # Reset consecutive failures on successful yield
                     consecutive_failures = 0

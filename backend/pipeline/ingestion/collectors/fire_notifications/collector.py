@@ -195,7 +195,7 @@ async def _process_file_list(
         s3_url = f"{s3_base_url.rstrip('/')}/{file_uuid}.mp3"
         receipt_time = datetime.datetime.now(datetime.UTC)
 
-        outcome.attempted += 1
+        outcome.record_item_attempt()
         mp3_bytes = await _download_audio(session, s3_url, shutdown_event)
         if mp3_bytes is None:
             if not shutdown_event.is_set():
@@ -242,7 +242,7 @@ async def _process_file_list(
         )
         # Only mark as processed after a successful yield, confirming
         # the chunk was handed off to the pipeline.
-        outcome.produced += 1
+        outcome.record_chunk_produced()
         processed_uuids.append(file_uuid)
 
 

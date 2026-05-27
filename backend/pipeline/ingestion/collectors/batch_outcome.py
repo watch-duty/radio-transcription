@@ -21,6 +21,12 @@ class BatchOutcome:
     attempted: int = 0
     produced: int = 0
 
+    def record_item_attempt(self) -> None:
+        self.attempted += 1
+
+    def record_chunk_produced(self) -> None:
+        self.produced += 1
+
     @property
     def is_unproductive(self) -> bool:
         return self.attempted > 0 and self.produced == 0

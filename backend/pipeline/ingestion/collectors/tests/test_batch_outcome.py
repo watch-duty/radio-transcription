@@ -14,6 +14,20 @@ from backend.pipeline.ingestion.slo_contract import (
 
 
 class TestBatchOutcome(unittest.TestCase):
+    def test_records_item_attempt(self) -> None:
+        outcome = BatchOutcome()
+
+        outcome.record_item_attempt()
+
+        self.assertEqual(outcome.attempted, 1)
+
+    def test_records_chunk_produced(self) -> None:
+        outcome = BatchOutcome()
+
+        outcome.record_chunk_produced()
+
+        self.assertEqual(outcome.produced, 1)
+
     def test_attempted_without_produced_is_unproductive(self) -> None:
         outcome = BatchOutcome(attempted=2, produced=0)
 
