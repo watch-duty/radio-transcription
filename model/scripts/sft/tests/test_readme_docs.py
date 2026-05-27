@@ -34,6 +34,12 @@ class TestGeminiSftReadme(unittest.TestCase):
             readme,
         )
 
+    def test_cost_section_mentions_confirm_for_automation(self) -> None:
+        readme = _README.read_text()
+
+        self.assertIn("non-interactive automation", readme)
+        self.assertIn("--confirm", readme)
+
     def test_docker_runtime_is_documented_as_default(self) -> None:
         readme = _README.read_text()
 

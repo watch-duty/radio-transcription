@@ -80,7 +80,8 @@ populated after the cluster-split script runs (Phase 4 prerequisite, DESIGN.md #
 
 ## Cost
 
-- `tune` requires `--confirm` to prevent accidental paid runs.
+- `tune` prompts for confirmation unless `--confirm` is passed to prevent accidental paid runs.
+- Use `--confirm` in non-interactive automation; otherwise the command waits for stdin.
 - The `$55-175/run` planning ballpark came from the Gemini 3.1 Flash-Lite supervised fine-tuning
   rate: training tokens = dataset tokens x epochs, priced at $3 per 1M training tokens
   at the time of the estimate. That implies roughly 18-58M billable training tokens for

@@ -203,6 +203,29 @@ class TestPollTuningJob(unittest.TestCase):
                 timeout_hours=0,
             )
 
+    @unittest.mock.patch("common.vertex.time.sleep")
+    @unittest.mock.patch("common.vertex.genai")
+    def test_poll_retries_transient_get_error(self, mock_genai, mock_sleep):
+        """poll_tuning_job retries a transient tunings.get failure."""
+        mock_client = _make_mock_client()
+        success = mock_client.tunings.get.return_value
+        mock_client.tunings.get.side_effect = [
+            RuntimeError("temporary network failure"),
+            success,
+        ]
+        mock_genai.Client.return_value = mock_client
+        from common.vertex import poll_tuning_job
+
+        result = poll_tuning_job(
+            name="projects/p/locations/l/tuningJobs/123",
+            project="p",
+            location="us-central1",
+        )
+
+        self.assertIn("endpoints", result)
+        self.assertEqual(mock_client.tunings.get.call_count, 2)
+        mock_sleep.assert_called_once()
+
 
 class TestAdapterEnum(unittest.TestCase):
     """Guard against silent miskeys in _ADAPTER_ENUM."""
