@@ -6,7 +6,7 @@ import urllib.parse
 from collections.abc import Mapping
 from pathlib import Path
 
-from dataset_versioning.types import SourceIdentityError
+from dataset_split.types import SourceIdentityError
 
 DEFAULT_ECHO_REGISTRY_PATH = (
     Path(__file__).resolve().parents[3]

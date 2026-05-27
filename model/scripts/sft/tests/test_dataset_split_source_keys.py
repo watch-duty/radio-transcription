@@ -8,8 +8,8 @@ _SFT_DIR = str(Path(__file__).resolve().parent.parent)
 if _SFT_DIR not in sys.path:
     sys.path.insert(0, _SFT_DIR)
 
-from dataset_versioning.source_keys import resolve_source_group  # noqa: E402
-from dataset_versioning.types import SourceIdentityError  # noqa: E402
+from dataset_split.source_keys import resolve_source_group  # noqa: E402
+from dataset_split.types import SourceIdentityError  # noqa: E402
 
 
 class TestDatasetVersionSourceKeys(unittest.TestCase):

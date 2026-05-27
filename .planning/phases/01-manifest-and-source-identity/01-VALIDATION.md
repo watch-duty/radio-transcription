@@ -19,8 +19,8 @@ created: 2026-05-27
 |----------|-------|
 | **Framework** | pytest via Python 3.13 |
 | **Config file** | `pyproject.toml` |
-| **Quick run command** | `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_version_config.py model/scripts/sft/tests/test_dataset_version_gcs_io.py model/scripts/sft/tests/test_dataset_version_source_keys.py model/scripts/sft/tests/test_dataset_version_normalize.py model/scripts/sft/tests/test_dataset_version_validate.py -q` |
-| **Full suite command** | `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_version_config.py model/scripts/sft/tests/test_dataset_version_gcs_io.py model/scripts/sft/tests/test_dataset_version_source_keys.py model/scripts/sft/tests/test_dataset_version_normalize.py model/scripts/sft/tests/test_dataset_version_validate.py -q` |
+| **Quick run command** | `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_split_config.py model/scripts/sft/tests/test_dataset_split_gcs_io.py model/scripts/sft/tests/test_dataset_split_source_keys.py model/scripts/sft/tests/test_dataset_split_normalize.py model/scripts/sft/tests/test_dataset_split_validate.py -q` |
+| **Full suite command** | `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_split_config.py model/scripts/sft/tests/test_dataset_split_gcs_io.py model/scripts/sft/tests/test_dataset_split_source_keys.py model/scripts/sft/tests/test_dataset_split_normalize.py model/scripts/sft/tests/test_dataset_split_validate.py -q` |
 | **Estimated runtime** | ~5 seconds |
 
 ---
@@ -38,11 +38,11 @@ created: 2026-05-27
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 01-01-01 | 01 | 1 | INPT-01 | T-01-01 | Config rejects unsafe/non-GCS input paths | unit | `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_version_config.py -q` | ✅ W0 | ⬜ pending |
-| 01-01-02 | 01 | 1 | INPT-02, INPT-03 | T-01-02 | GCS loader fails fast on missing/malformed configured inputs | unit | `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_version_gcs_io.py -q` | ✅ W0 | ⬜ pending |
-| 01-02-01 | 02 | 2 | SRC-01, SRC-02, SRC-03, SRC-04, SRC-05 | T-01-03 | Ambiguous source identity fails rather than guessing | unit | `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_version_source_keys.py -q` | ✅ W0 | ⬜ pending |
-| 01-02-02 | 02 | 2 | INPT-04 | T-01-04 | Empty labels are excluded, not sent to SFT writers | unit | `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_version_normalize.py -q` | ✅ W0 | ⬜ pending |
-| 01-03-01 | 03 | 3 | SRC-06, TEST-01 | T-01-05 | All extractor families have valid/missing/ambiguous test coverage | unit | `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_version_validate.py -q` | ✅ W0 | ⬜ pending |
+| 01-01-01 | 01 | 1 | INPT-01 | T-01-01 | Config rejects unsafe/non-GCS input paths | unit | `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_split_config.py -q` | ✅ W0 | ⬜ pending |
+| 01-01-02 | 01 | 1 | INPT-02, INPT-03 | T-01-02 | GCS loader fails fast on missing/malformed configured inputs | unit | `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_split_gcs_io.py -q` | ✅ W0 | ⬜ pending |
+| 01-02-01 | 02 | 2 | SRC-01, SRC-02, SRC-03, SRC-04, SRC-05 | T-01-03 | Ambiguous source identity fails rather than guessing | unit | `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_split_source_keys.py -q` | ✅ W0 | ⬜ pending |
+| 01-02-02 | 02 | 2 | INPT-04 | T-01-04 | Empty labels are excluded, not sent to SFT writers | unit | `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_split_normalize.py -q` | ✅ W0 | ⬜ pending |
+| 01-03-01 | 03 | 3 | SRC-06, TEST-01 | T-01-05 | All extractor families have valid/missing/ambiguous test coverage | unit | `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_split_validate.py -q` | ✅ W0 | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 

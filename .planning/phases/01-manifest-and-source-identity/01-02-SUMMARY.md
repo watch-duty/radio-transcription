@@ -18,11 +18,11 @@ tech-stack:
     - Empty normalized text is a counted soft exclusion and does not call source resolution.
 key-files:
   created:
-    - model/scripts/sft/dataset_versioning/types.py
-    - model/scripts/sft/dataset_versioning/source_keys.py
-    - model/scripts/sft/dataset_versioning/normalize.py
-    - model/scripts/sft/tests/test_dataset_version_source_keys.py
-    - model/scripts/sft/tests/test_dataset_version_normalize.py
+    - model/scripts/sft/dataset_split/types.py
+    - model/scripts/sft/dataset_split/source_keys.py
+    - model/scripts/sft/dataset_split/normalize.py
+    - model/scripts/sft/tests/test_dataset_split_source_keys.py
+    - model/scripts/sft/tests/test_dataset_split_normalize.py
   modified: []
 key-decisions:
   - "Preserved model/colabs/common/manifest.py and CanonicalRow unchanged."
@@ -66,11 +66,11 @@ Each task was committed atomically:
 
 ## Files Created/Modified
 
-- `model/scripts/sft/dataset_versioning/types.py` - Internal source-aware row and validation dataclasses.
-- `model/scripts/sft/dataset_versioning/source_keys.py` - Source group extractors and Echo registry loader.
-- `model/scripts/sft/dataset_versioning/normalize.py` - Row normalization and empty-text exclusion.
-- `model/scripts/sft/tests/test_dataset_version_source_keys.py` - Source group extraction tests.
-- `model/scripts/sft/tests/test_dataset_version_normalize.py` - Normalization and exclusion tests.
+- `model/scripts/sft/dataset_split/types.py` - Internal source-aware row and validation dataclasses.
+- `model/scripts/sft/dataset_split/source_keys.py` - Source group extractors and Echo registry loader.
+- `model/scripts/sft/dataset_split/normalize.py` - Row normalization and empty-text exclusion.
+- `model/scripts/sft/tests/test_dataset_split_source_keys.py` - Source group extraction tests.
+- `model/scripts/sft/tests/test_dataset_split_normalize.py` - Normalization and exclusion tests.
 
 ## Decisions Made
 
@@ -91,7 +91,7 @@ None.
 
 ## Self-Check: PASSED
 
-- `python3 -m py_compile model/scripts/sft/dataset_versioning/types.py` passed.
+- `python3 -m py_compile model/scripts/sft/dataset_split/types.py` passed.
 - Source-key extractor tests passed.
 - Normalization tests passed.
 - Combined source/normalization suite passed.

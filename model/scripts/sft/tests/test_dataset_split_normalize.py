@@ -9,12 +9,12 @@ _SFT_DIR = str(Path(__file__).resolve().parent.parent)
 if _SFT_DIR not in sys.path:
     sys.path.insert(0, _SFT_DIR)
 
-from dataset_versioning.config import InputDatasetConfig  # noqa: E402
-from dataset_versioning.normalize import (  # noqa: E402
+from dataset_split.config import InputDatasetConfig  # noqa: E402
+from dataset_split.normalize import (  # noqa: E402
     normalize_manifest_rows,
     normalize_text,
 )
-from dataset_versioning.types import RowValidationError  # noqa: E402
+from dataset_split.types import RowValidationError  # noqa: E402
 
 
 def _dataset() -> InputDatasetConfig:
@@ -56,7 +56,7 @@ class TestDatasetVersionNormalize(unittest.TestCase):
 
     def test_source_group_resolved_for_non_empty_rows(self) -> None:
         with unittest.mock.patch(
-            "dataset_versioning.normalize.resolve_source_group",
+            "dataset_split.normalize.resolve_source_group",
             return_value="bcfy_calls:123",
         ) as mock_resolve:
             result = normalize_manifest_rows(
@@ -75,7 +75,7 @@ class TestDatasetVersionNormalize(unittest.TestCase):
 
     def test_source_group_not_resolved_for_empty_text(self) -> None:
         with unittest.mock.patch(
-            "dataset_versioning.normalize.resolve_source_group"
+            "dataset_split.normalize.resolve_source_group"
         ) as mock_resolve:
             normalize_manifest_rows(
                 _dataset(),

@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import argparse
 
-from dataset_versioning.config import (
+from dataset_split.config import (
     ConfigValidationError,
     parse_dataset_version_config_toml,
 )
-from dataset_versioning.gcs_io import GcsInputError, GoogleCloudTextReader
-from dataset_versioning.validate import (
+from dataset_split.gcs_io import GcsInputError, GoogleCloudTextReader
+from dataset_split.validate import (
     DatasetValidationError,
-    validate_dataset_version,
+    validate_dataset,
 )
 
 
@@ -37,7 +37,7 @@ def main(argv: list[str] | None = None) -> int:
         config = parse_dataset_version_config_toml(
             config_text, source=config_uri
         )
-        summaries = validate_dataset_version(config, reader=reader)
+        summaries = validate_dataset(config, reader=reader)
     except (ConfigValidationError, GcsInputError, DatasetValidationError) as exc:
         print(str(exc))
         return 1

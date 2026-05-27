@@ -16,14 +16,14 @@ if _SFT_DIR not in sys.path:
 if _COLABS_DIR not in sys.path:
     sys.path.insert(0, _COLABS_DIR)
 
-from dataset_versioning.config import (  # noqa: E402
+from dataset_split.config import (  # noqa: E402
     DatasetVersionConfig,
     InputDatasetConfig,
 )
-from dataset_versioning.validate import (  # noqa: E402
+from dataset_split.validate import (  # noqa: E402
     DatasetValidationError,
     load_source_map,
-    validate_dataset_version,
+    validate_dataset,
 )
 
 
@@ -83,7 +83,7 @@ class TestDatasetVersionValidate(unittest.TestCase):
             }
         )
 
-        summaries = validate_dataset_version(config, reader=reader)
+        summaries = validate_dataset(config, reader=reader)
 
         self.assertEqual(len(summaries), 2)
         self.assertEqual(summaries[0].dataset_name, "calls")
@@ -135,7 +135,7 @@ class TestDatasetVersionValidate(unittest.TestCase):
             }
         )
 
-        summaries = validate_dataset_version(config, reader=reader)
+        summaries = validate_dataset(config, reader=reader)
 
         self.assertEqual(summaries[0].valid_rows, 1)
 
@@ -159,7 +159,7 @@ class TestDatasetVersionValidate(unittest.TestCase):
             "dataset=feeds .*manifest=gs://manifests/feeds.jsonl "
             ".*source_strategy=bcfy_feeds .*bcfy_feeds",
         ):
-            validate_dataset_version(config, reader=reader)
+            validate_dataset(config, reader=reader)
 
     def test_zero_valid_examples_is_hard_failure(self) -> None:
         config = _config(
@@ -179,7 +179,7 @@ class TestDatasetVersionValidate(unittest.TestCase):
             "dataset=calls .*manifest=gs://manifests/calls.jsonl "
             ".*source_strategy=bcfy_calls .*produced zero valid examples",
         ):
-            validate_dataset_version(config, reader=reader)
+            validate_dataset(config, reader=reader)
 
     def test_all_four_source_strategies_are_represented(self) -> None:
         config = _config(
@@ -216,7 +216,7 @@ class TestDatasetVersionValidate(unittest.TestCase):
             }
         )
 
-        summaries = validate_dataset_version(config, reader=reader)
+        summaries = validate_dataset(config, reader=reader)
 
         self.assertEqual(
             [summary.dataset_name for summary in summaries],
@@ -226,7 +226,7 @@ class TestDatasetVersionValidate(unittest.TestCase):
 
 class TestDatasetVersionValidateCli(unittest.TestCase):
     def test_cli_prints_dataset_summary(self) -> None:
-        import validate_dataset_version as cli
+        import validate_dataset as cli
 
         config_uri = "gs://configs/radio.toml"
         reader = FakeTextReader(
@@ -270,7 +270,7 @@ source_strategy = "bcfy_calls"
         )
 
     def test_cli_rejects_non_gs_config_uri(self) -> None:
-        import validate_dataset_version as cli
+        import validate_dataset as cli
 
         out = StringIO()
         with (
@@ -284,7 +284,7 @@ source_strategy = "bcfy_calls"
         make_reader.assert_not_called()
 
     def test_cli_returns_one_for_validation_error(self) -> None:
-        import validate_dataset_version as cli
+        import validate_dataset as cli
 
         config_uri = "gs://configs/radio.toml"
         reader = FakeTextReader(

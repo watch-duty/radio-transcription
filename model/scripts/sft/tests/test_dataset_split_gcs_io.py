@@ -13,7 +13,7 @@ if _SFT_DIR not in sys.path:
 if _COLABS_DIR not in sys.path:
     sys.path.insert(0, _COLABS_DIR)
 
-from dataset_versioning.gcs_io import (  # noqa: E402
+from dataset_split.gcs_io import (  # noqa: E402
     GcsInputError,
     read_json_or_jsonl,
     require_gs_uri,

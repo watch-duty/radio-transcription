@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 
-from dataset_versioning.config import InputDatasetConfig
-from dataset_versioning.source_keys import resolve_source_group
-from dataset_versioning.types import (
+from dataset_split.config import InputDatasetConfig
+from dataset_split.source_keys import resolve_source_group
+from dataset_split.types import (
     ExcludedRow,
     LabeledSegment,
     NormalizationResult,

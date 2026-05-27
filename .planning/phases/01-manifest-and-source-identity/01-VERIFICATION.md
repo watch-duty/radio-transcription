@@ -17,9 +17,9 @@ Phase 1 achieves its goal: configured dataset-version manifests can be loaded fr
 
 ## Automated Checks
 
-- `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_version_config.py model/scripts/sft/tests/test_dataset_version_gcs_io.py model/scripts/sft/tests/test_dataset_version_source_keys.py model/scripts/sft/tests/test_dataset_version_normalize.py model/scripts/sft/tests/test_dataset_version_validate.py -q`
+- `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_split_config.py model/scripts/sft/tests/test_dataset_split_gcs_io.py model/scripts/sft/tests/test_dataset_split_source_keys.py model/scripts/sft/tests/test_dataset_split_normalize.py model/scripts/sft/tests/test_dataset_split_validate.py -q`
   - Result: passed, 46 tests.
-- `python3 -m py_compile model/scripts/sft/validate_dataset_version.py`
+- `python3 -m py_compile model/scripts/sft/validate_dataset.py`
   - Result: passed.
 - `git diff --check`
   - Result: passed.

@@ -3,10 +3,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from dataset_versioning.config import DatasetVersionConfig
-from dataset_versioning.gcs_io import GcsInputError, TextReader, read_json_or_jsonl
-from dataset_versioning.normalize import normalize_manifest_rows
-from dataset_versioning.types import RowValidationError, SourceIdentityError
+from dataset_split.config import DatasetVersionConfig
+from dataset_split.gcs_io import GcsInputError, TextReader, read_json_or_jsonl
+from dataset_split.normalize import normalize_manifest_rows
+from dataset_split.types import RowValidationError, SourceIdentityError
 
 
 @dataclass(frozen=True)
@@ -42,7 +42,7 @@ def load_source_map(
     return source_map
 
 
-def validate_dataset_version(
+def validate_dataset(
     config: DatasetVersionConfig,
     *,
     reader: TextReader,

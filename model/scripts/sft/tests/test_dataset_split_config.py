@@ -8,7 +8,7 @@ _SFT_DIR = str(Path(__file__).resolve().parent.parent)
 if _SFT_DIR not in sys.path:
     sys.path.insert(0, _SFT_DIR)
 
-from dataset_versioning.config import (  # noqa: E402
+from dataset_split.config import (  # noqa: E402
     ConfigValidationError,
     parse_dataset_version_config_toml,
 )

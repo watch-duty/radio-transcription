@@ -20,9 +20,9 @@ tech-stack:
     - Expected validation failures return code 1 with short contextual messages, not tracebacks.
 key-files:
   created:
-    - model/scripts/sft/dataset_versioning/validate.py
-    - model/scripts/sft/validate_dataset_version.py
-    - model/scripts/sft/tests/test_dataset_version_validate.py
+    - model/scripts/sft/dataset_split/validate.py
+    - model/scripts/sft/validate_dataset.py
+    - model/scripts/sft/tests/test_dataset_split_validate.py
   modified: []
 key-decisions:
   - "Phase 1 validation reports loaded, valid, and excluded_empty_text counts only."
@@ -49,8 +49,8 @@ completed: 2026-05-27
 
 ## Accomplishments
 
-- Added `validate_dataset_version` orchestration across config, GCS input loading, source maps, source extraction, and row normalization.
-- Added `validate_dataset_version.py` CLI with `--config-uri`, clean expected-error handling, and loaded/valid/excluded summaries.
+- Added `validate_dataset` orchestration across config, GCS input loading, source maps, source extraction, and row normalization.
+- Added `validate_dataset.py` CLI with `--config-uri`, clean expected-error handling, and loaded/valid/excluded summaries.
 - Ran the full Phase 1 no-network validation suite successfully.
 
 ## Task Commits
@@ -65,9 +65,9 @@ Each code task was committed atomically:
 
 ## Files Created/Modified
 
-- `model/scripts/sft/dataset_versioning/validate.py` - Validation summaries, source-map loading, and dataset validation orchestration.
-- `model/scripts/sft/validate_dataset_version.py` - Minimal CLI for validating a GCS dataset-version config.
-- `model/scripts/sft/tests/test_dataset_version_validate.py` - Orchestrator and CLI tests with fake readers.
+- `model/scripts/sft/dataset_split/validate.py` - Validation summaries, source-map loading, and dataset validation orchestration.
+- `model/scripts/sft/validate_dataset.py` - Minimal CLI for validating a GCS dataset-version config.
+- `model/scripts/sft/tests/test_dataset_split_validate.py` - Orchestrator and CLI tests with fake readers.
 
 ## Decisions Made
 
@@ -88,9 +88,9 @@ One test fixture source-map JSON string initially had an extra closing brace. Th
 
 ## Self-Check: PASSED
 
-- `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_version_validate.py -q` passed.
-- `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_version_config.py model/scripts/sft/tests/test_dataset_version_gcs_io.py model/scripts/sft/tests/test_dataset_version_source_keys.py model/scripts/sft/tests/test_dataset_version_normalize.py model/scripts/sft/tests/test_dataset_version_validate.py -q` passed.
-- `python3 -m py_compile model/scripts/sft/validate_dataset_version.py` passed.
+- `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_split_validate.py -q` passed.
+- `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_split_config.py model/scripts/sft/tests/test_dataset_split_gcs_io.py model/scripts/sft/tests/test_dataset_split_source_keys.py model/scripts/sft/tests/test_dataset_split_normalize.py model/scripts/sft/tests/test_dataset_split_validate.py -q` passed.
+- `python3 -m py_compile model/scripts/sft/validate_dataset.py` passed.
 - `git status --short --untracked-files=all` showed no generated train/eval/model manifests or audio files after the test run.
 
 ## User Setup Required

@@ -20,7 +20,7 @@ What does Phase 1 need so implementation can safely load configured dataset-vers
 
 ### Module Placement
 
-Create a small package under `model/scripts/sft/dataset_versioning/` rather than extending `pipeline.py`. This keeps dataset-version input validation separate from the existing Gemini-oriented SFT build/tune/eval CLI.
+Create a small package under `model/scripts/sft/dataset_split/` rather than extending `pipeline.py`. This keeps dataset-version input validation separate from the existing Gemini-oriented SFT build/tune/eval CLI.
 
 Suggested modules:
 
@@ -69,10 +69,10 @@ Phase 1 should use focused unit tests with fake GCS readers. No test should requ
 
 ### Commands
 
-- Config/loading tests: `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_version_config.py model/scripts/sft/tests/test_dataset_version_gcs_io.py -q`
-- Source/normalization tests: `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_version_source_keys.py model/scripts/sft/tests/test_dataset_version_normalize.py -q`
-- Phase 1 validation tests: `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_version_validate.py -q`
-- Full Phase 1 suite: `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_version_config.py model/scripts/sft/tests/test_dataset_version_gcs_io.py model/scripts/sft/tests/test_dataset_version_source_keys.py model/scripts/sft/tests/test_dataset_version_normalize.py model/scripts/sft/tests/test_dataset_version_validate.py -q`
+- Config/loading tests: `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_split_config.py model/scripts/sft/tests/test_dataset_split_gcs_io.py -q`
+- Source/normalization tests: `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_split_source_keys.py model/scripts/sft/tests/test_dataset_split_normalize.py -q`
+- Phase 1 validation tests: `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_split_validate.py -q`
+- Full Phase 1 suite: `PYTHONPATH=model/scripts/sft:model/colabs python3 -m pytest model/scripts/sft/tests/test_dataset_split_config.py model/scripts/sft/tests/test_dataset_split_gcs_io.py model/scripts/sft/tests/test_dataset_split_source_keys.py model/scripts/sft/tests/test_dataset_split_normalize.py model/scripts/sft/tests/test_dataset_split_validate.py -q`
 
 ### Hard Failure Cases
 

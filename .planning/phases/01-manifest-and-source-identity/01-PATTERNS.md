@@ -53,26 +53,26 @@
 
 ### Package
 
-- `model/scripts/sft/dataset_versioning/__init__.py`
-- `model/scripts/sft/dataset_versioning/config.py`
-- `model/scripts/sft/dataset_versioning/gcs_io.py`
-- `model/scripts/sft/dataset_versioning/types.py`
-- `model/scripts/sft/dataset_versioning/source_keys.py`
-- `model/scripts/sft/dataset_versioning/normalize.py`
-- `model/scripts/sft/dataset_versioning/validate.py`
-- `model/scripts/sft/validate_dataset_version.py`
+- `model/scripts/sft/dataset_split/__init__.py`
+- `model/scripts/sft/dataset_split/config.py`
+- `model/scripts/sft/dataset_split/gcs_io.py`
+- `model/scripts/sft/dataset_split/types.py`
+- `model/scripts/sft/dataset_split/source_keys.py`
+- `model/scripts/sft/dataset_split/normalize.py`
+- `model/scripts/sft/dataset_split/validate.py`
+- `model/scripts/sft/validate_dataset.py`
 
 ### Tests
 
-- `model/scripts/sft/tests/test_dataset_version_config.py`
-- `model/scripts/sft/tests/test_dataset_version_gcs_io.py`
-- `model/scripts/sft/tests/test_dataset_version_source_keys.py`
-- `model/scripts/sft/tests/test_dataset_version_normalize.py`
-- `model/scripts/sft/tests/test_dataset_version_validate.py`
+- `model/scripts/sft/tests/test_dataset_split_config.py`
+- `model/scripts/sft/tests/test_dataset_split_gcs_io.py`
+- `model/scripts/sft/tests/test_dataset_split_source_keys.py`
+- `model/scripts/sft/tests/test_dataset_split_normalize.py`
+- `model/scripts/sft/tests/test_dataset_split_validate.py`
 
 ## Data Flow
 
-1. `validate_dataset_version.py` receives a TOML `--config-uri` argument. The config URI, dataset manifests, and source maps must be `gs://`; tests use fake readers rather than real GCS.
+1. `validate_dataset.py` receives a TOML `--config-uri` argument. The config URI, dataset manifests, and source maps must be `gs://`; tests use fake readers rather than real GCS.
 2. `config.py` parses TOML into `DatasetVersionConfig` and `InputDatasetConfig`.
 3. `gcs_io.py` reads each configured manifest/source map from GCS through an injectable reader.
 4. `normalize.py` converts raw rows to `LabeledSegment` or a soft exclusion.

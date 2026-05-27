@@ -16,11 +16,11 @@ tech-stack:
     - GCS reads are injectable so tests use fake readers instead of real buckets.
 key-files:
   created:
-    - model/scripts/sft/dataset_versioning/__init__.py
-    - model/scripts/sft/dataset_versioning/config.py
-    - model/scripts/sft/dataset_versioning/gcs_io.py
-    - model/scripts/sft/tests/test_dataset_version_config.py
-    - model/scripts/sft/tests/test_dataset_version_gcs_io.py
+    - model/scripts/sft/dataset_split/__init__.py
+    - model/scripts/sft/dataset_split/config.py
+    - model/scripts/sft/dataset_split/gcs_io.py
+    - model/scripts/sft/tests/test_dataset_split_config.py
+    - model/scripts/sft/tests/test_dataset_split_gcs_io.py
   modified: []
 key-decisions:
   - "Kept dataset-version config separate from model/scripts/sft/datasets.toml."
@@ -62,11 +62,11 @@ Each task was committed atomically:
 
 ## Files Created/Modified
 
-- `model/scripts/sft/dataset_versioning/__init__.py` - Dataset-versioning package marker.
-- `model/scripts/sft/dataset_versioning/config.py` - TOML config dataclasses and validation.
-- `model/scripts/sft/dataset_versioning/gcs_io.py` - Injectable text reader, GCS production reader, and JSON/JSONL parsing.
-- `model/scripts/sft/tests/test_dataset_version_config.py` - Config parser contract tests.
-- `model/scripts/sft/tests/test_dataset_version_gcs_io.py` - GCS input parser tests using fake readers.
+- `model/scripts/sft/dataset_split/__init__.py` - Dataset splitting package marker.
+- `model/scripts/sft/dataset_split/config.py` - TOML config dataclasses and validation.
+- `model/scripts/sft/dataset_split/gcs_io.py` - Injectable text reader, GCS production reader, and JSON/JSONL parsing.
+- `model/scripts/sft/tests/test_dataset_split_config.py` - Config parser contract tests.
+- `model/scripts/sft/tests/test_dataset_split_gcs_io.py` - GCS input parser tests using fake readers.
 
 ## Decisions Made
 
