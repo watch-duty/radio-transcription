@@ -54,8 +54,6 @@ message EvaluatedTranscribedAudio {
   // The list of rule IDs triggered by this transcript during evaluation.
   repeated string evaluation_decisions = 13;
 
-  reserved 14;
-
   // The list of errors encountered during evaluation.
   repeated string evaluation_errors = 17;
 
@@ -64,4 +62,7 @@ message EvaluatedTranscribedAudio {
 
   // The ID used to map the feed ID within the application.
   string external_id = 16;
+
+  // Reserved old enum field for backward compatibility in Pub/Sub schemas
+  reserved 14;
 }
