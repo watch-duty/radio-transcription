@@ -627,6 +627,40 @@ async def test_progress_update_fails_with_wrong_worker(
     assert result is False
 
 
+async def test_progress_update_succeeds_for_deactivated_owned_feed(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """An in-flight bookmark write may finish after admin deactivation."""
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool,
+        "Deactivated In Flight Feed",
+        status="deactivated",
+        worker_id=worker,
+        last_heartbeat_age_seconds=10,
+        failure_count=1,
+    )
+
+    result = await store.update_feed_progress(
+        feed_id,
+        worker,
+        "gs://bucket/path/deactivated.ogg",
+        0,
+        None,
+    )
+
+    assert result is True
+    row = await db_pool.fetchrow(
+        "SELECT status, failure_count, last_processed_filename "
+        "FROM feeds WHERE id = $1::uuid",
+        str(feed_id),
+    )
+    assert row is not None
+    assert row["status"] == "deactivated"
+    assert row["failure_count"] == 0
+    assert row["last_processed_filename"] == "gs://bucket/path/deactivated.ogg"
+
+
 # -- Tests: report_feed_failure ---------------------------------------
 
 
@@ -670,6 +704,29 @@ async def test_failure_escalation_to_quarantine(
     row = await _get_feed_status(db_pool, feed_id)
     assert row["status"] == "quarantined"
     assert row["failure_count"] == 5
+
+
+async def test_failure_preserves_deactivated_feed(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """Failure reporting must not move an admin-deactivated feed."""
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool,
+        "Deactivated Failure Feed",
+        status="deactivated",
+        worker_id=worker,
+        last_heartbeat_age_seconds=10,
+        failure_count=2,
+    )
+
+    result = await store.report_feed_failure(feed_id, worker, 0)
+
+    assert result is None
+    row = await _get_feed_status(db_pool, feed_id)
+    assert row["status"] == "deactivated"
+    assert row["failure_count"] == 2
+    assert row["worker_id"] == worker
 
 
 async def test_failing_feed_not_leased_before_retry_after(
@@ -935,6 +992,58 @@ async def test_release_feed_fails_with_wrong_worker(
     result = await store.release_feed(feed_id, uuid.uuid4(), 0)
 
     assert result is False
+
+
+async def test_release_feed_preserves_deactivated_feed(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """Normal task release must not make a deactivated feed claimable."""
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool,
+        "Deactivated Release Feed",
+        status="deactivated",
+        worker_id=worker,
+        last_heartbeat_age_seconds=10,
+    )
+
+    result = await store.release_feed(feed_id, worker, 0)
+
+    assert result is False
+    row = await _get_feed_status(db_pool, feed_id)
+    assert row["status"] == "deactivated"
+    assert row["worker_id"] == worker
+
+
+async def test_batch_release_preserves_deactivated_feeds(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """Shutdown batch release skips deactivated rows owned by the worker."""
+    worker = uuid.uuid4()
+    active_id = await _insert_feed(
+        db_pool,
+        "Active Batch Release Feed",
+        status="active",
+        worker_id=worker,
+        last_heartbeat_age_seconds=10,
+    )
+    deactivated_id = await _insert_feed(
+        db_pool,
+        "Deactivated Batch Release Feed",
+        status="deactivated",
+        worker_id=worker,
+        last_heartbeat_age_seconds=10,
+    )
+
+    result = await store.release_feeds_batch(worker)
+
+    assert result == 1
+    active_row = await _get_feed_status(db_pool, active_id)
+    assert active_row["status"] == "unclaimed"
+    assert active_row["worker_id"] is None
+    deactivated_row = await _get_feed_status(db_pool, deactivated_id)
+    assert deactivated_row["status"] == "deactivated"
+    assert deactivated_row["worker_id"] == worker
 
 
 # -- Tests: fencing_token ------------------------------------------------

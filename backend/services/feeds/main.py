@@ -146,7 +146,7 @@ async def deactivate_feed(
     request: Request,
     feed_id: str,
 ) -> None:
-    """Deactivate a feed (soft delete)."""
+    """Deactivate a feed until an explicit reset."""
     service: FeedService = request.app.state.feed_service
     success = await service.deactivate_feed(feed_id)
     if not success:
