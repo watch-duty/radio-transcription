@@ -120,7 +120,7 @@ def convert_to_notification(
         missing_prior_context=evaluated_transcribed_audio.missing_prior_context,
         missing_post_context=evaluated_transcribed_audio.missing_post_context,
         evaluation_decisions=evaluated_transcribed_audio.evaluation_decisions,
-        evaluation_errors=evaluated_transcribed_audio.evaluation_errors,
+        evaluation_errors=evaluated_transcribed_audio.errors,
         canonical_audio_uri=evaluated_transcribed_audio.canonical_audio_uri,
         playback_audio_uri=evaluated_transcribed_audio.playback_audio_uri,
         feed_name=evaluated_transcribed_audio.feed_name,

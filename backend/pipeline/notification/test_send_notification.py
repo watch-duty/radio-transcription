@@ -137,7 +137,7 @@ class TestSendNotification(TestCase):
             source_audio_uris=["gs://foo/bar.flac"],
             feed_name="asdf",
             external_id="ext-id",
-            evaluation_errors=[EvaluationErrorType.ERROR_RULES_FETCH_FAILED],
+            errors=[EvaluationErrorType.ERROR_RULES_FETCH_FAILED],
         )
         evaluated_payload.start_audio_offset.seconds = 10
         evaluated_payload.end_audio_offset.seconds = 20
