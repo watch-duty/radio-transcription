@@ -3,10 +3,14 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
+from common.sft import build_example, validate_example
+
 from dataset_split.leakage import validate_split_integrity
 from dataset_split.types import LabeledSegment
 
 _SPLITS = ("train", "eval")
+DEFAULT_GEMINI_BASE_MODEL = "gemini-3.1-flash-lite"
+DEFAULT_GEMINI_REGION = "us-central1"
 _WHISPER_RECOMMENDED_MAX_DURATION_SECONDS = 30.0
 _WHISPER_PREPROCESSING = {
     "recommendation": "preserve_original_uri_with_offset_duration",
@@ -46,6 +50,7 @@ class ModelWriterResult:
     rows_by_split: dict[str, tuple[dict[str, object], ...]]
     config: dict[str, object] | None
     warnings: tuple[WriterWarning, ...]
+    summary_by_split: dict[str, dict[str, float | int]]
 
     def jsonl_by_split(self) -> dict[str, str]:
         return {
@@ -58,6 +63,24 @@ class ModelWriterResult:
         for warning in self.warnings:
             grouped.setdefault(warning.writer, []).append(warning.to_dict())
         return grouped
+
+
+def summarize_model_writer_result(
+    result: ModelWriterResult,
+) -> dict[str, object]:
+    splits = {
+        split: _count_duration(result.summary_by_split.get(split, {}))
+        for split in _SPLITS
+    }
+    return {
+        "splits": splits,
+        "total": {
+            "count": sum(int(value["count"]) for value in splits.values()),
+            "duration_seconds": sum(
+                float(value["duration_seconds"]) for value in splits.values()
+            ),
+        },
+    }
 
 
 def build_nemo_inputs(
@@ -84,6 +107,7 @@ def build_nemo_inputs(
             "manifest_format": "nemo_jsonl",
         },
         warnings=(),
+        summary_by_split=_summary_by_split(segment_tuple),
     )
 
 
@@ -124,6 +148,90 @@ def build_whisper_inputs(
         rows_by_split=_freeze_rows(rows_by_split),
         config=None,
         warnings=tuple(warnings),
+        summary_by_split=_summary_by_split(segment_tuple),
+    )
+
+
+def infer_audio_mime_type(audio_uri: str) -> str:
+    normalized = _require_text(audio_uri, label="audio_uri").lower()
+    if normalized.endswith(".flac"):
+        return "audio/flac"
+    if normalized.endswith(".mp3"):
+        return "audio/mpeg"
+    raise ModelWriterError(f"unsupported audio MIME type for uri={audio_uri}")
+
+
+def build_gemini_tuning_config(
+    *,
+    training_dataset_uri: str,
+    validation_dataset_uri: str | None = None,
+    base_model: str = DEFAULT_GEMINI_BASE_MODEL,
+    region: str = DEFAULT_GEMINI_REGION,
+    adapter_size: str = "ONE",
+    epoch_count: int = 5,
+    learning_rate_multiplier: float = 1.0,
+) -> dict[str, object]:
+    config: dict[str, object] = {
+        "trainingDatasetUri": _require_text(
+            training_dataset_uri, label="training_dataset_uri"
+        ),
+        "baseModel": _require_text(base_model, label="base_model"),
+        "region": _require_text(region, label="region"),
+        "adapterSize": _require_text(adapter_size, label="adapter_size"),
+        "epochCount": int(epoch_count),
+        "learningRateMultiplier": float(learning_rate_multiplier),
+    }
+    if validation_dataset_uri is not None:
+        config["validationDatasetUri"] = _require_text(
+            validation_dataset_uri, label="validation_dataset_uri"
+        )
+    return config
+
+
+def build_gemini_inputs(
+    segments: tuple[LabeledSegment, ...],
+    *,
+    system_prompt: str,
+    user_prompt: str,
+    training_dataset_uri: str,
+    validation_dataset_uri: str | None = None,
+    base_model: str = DEFAULT_GEMINI_BASE_MODEL,
+    region: str = DEFAULT_GEMINI_REGION,
+    adapter_size: str = "ONE",
+    epoch_count: int = 5,
+    learning_rate_multiplier: float = 1.0,
+) -> ModelWriterResult:
+    segment_tuple = tuple(segments)
+    validate_split_integrity(segment_tuple)
+    rows_by_split = _empty_rows_by_split()
+
+    for segment in segment_tuple:
+        row = build_example(
+            audio_uri=segment.audio_uri,
+            gt_text=segment.text,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            mime_type=_infer_audio_mime_type_for_segment(segment),
+        )
+        if not validate_example(row):
+            raise ModelWriterError(
+                f"row_index={segment.row_index} failed Gemini validation"
+            )
+        rows_by_split[_require_split(segment)].append(row)
+
+    return ModelWriterResult(
+        rows_by_split=_freeze_rows(rows_by_split),
+        config=build_gemini_tuning_config(
+            training_dataset_uri=training_dataset_uri,
+            validation_dataset_uri=validation_dataset_uri,
+            base_model=base_model,
+            region=region,
+            adapter_size=adapter_size,
+            epoch_count=epoch_count,
+            learning_rate_multiplier=learning_rate_multiplier,
+        ),
+        warnings=(),
+        summary_by_split=_summary_by_split(segment_tuple),
     )
 
 
@@ -158,6 +266,28 @@ def _empty_rows_by_split() -> dict[str, list[dict[str, object]]]:
     return {split: [] for split in _SPLITS}
 
 
+def _summary_by_split(
+    segments: tuple[LabeledSegment, ...],
+) -> dict[str, dict[str, float | int]]:
+    summary: dict[str, dict[str, float | int]] = {
+        split: {"count": 0, "duration_seconds": 0.0} for split in _SPLITS
+    }
+    for segment in segments:
+        split = _require_split(segment)
+        summary[split]["count"] = int(summary[split]["count"]) + 1
+        summary[split]["duration_seconds"] = float(
+            summary[split]["duration_seconds"]
+        ) + float(segment.duration)
+    return summary
+
+
+def _count_duration(value: dict[str, float | int]) -> dict[str, object]:
+    return {
+        "count": int(value.get("count", 0)),
+        "duration_seconds": float(value.get("duration_seconds", 0.0)),
+    }
+
+
 def _freeze_rows(
     rows_by_split: dict[str, list[dict[str, object]]],
 ) -> dict[str, tuple[dict[str, object], ...]]:
@@ -175,6 +305,15 @@ def _require_text(value: str, *, label: str) -> str:
     if not text:
         raise ModelWriterError(f"{label} must not be empty")
     return text
+
+
+def _infer_audio_mime_type_for_segment(segment: LabeledSegment) -> str:
+    try:
+        return infer_audio_mime_type(segment.audio_uri)
+    except ModelWriterError as exc:
+        raise ModelWriterError(
+            f"row_index={segment.row_index} unsupported audio_uri={segment.audio_uri}"
+        ) from exc
 
 
 def _serialize_jsonl(rows: tuple[dict[str, object], ...]) -> str:

@@ -289,11 +289,20 @@ class TestWriterSafety(unittest.TestCase):
             eval_manifest_uri="gs://wd-transcription-data/sft/v1/model_inputs/nemo/eval.jsonl",
         )
         whisper = build_whisper_inputs(segments)
+        gemini = build_gemini_inputs(
+            segments,
+            system_prompt="sys",
+            user_prompt="user",
+            training_dataset_uri="gs://wd-transcription-data/sft/v1/model_inputs/gemini/train.jsonl",
+            validation_dataset_uri="gs://wd-transcription-data/sft/v1/model_inputs/gemini/eval.jsonl",
+        )
         output = json.dumps(
             {
                 "nemo_rows": nemo.rows_by_split,
                 "nemo_config": nemo.config,
                 "whisper_rows": whisper.rows_by_split,
+                "gemini_rows": gemini.rows_by_split,
+                "gemini_config": gemini.config,
                 "warnings": whisper.warnings_by_writer(),
             },
             sort_keys=True,

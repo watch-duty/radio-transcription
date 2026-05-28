@@ -285,9 +285,7 @@ class TestDatasetPublisher(unittest.TestCase):
         ]
         payload = json.loads(report_upload["text"])
         self.assertEqual(
-            payload["model_writer_summary"]["nemo"]["splits"]["train"][
-                "count"
-            ],
+            payload["model_writer_summary"]["nemo"]["splits"]["train"]["count"],
             2,
         )
         self.assertEqual(
