@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 class CanonicalRow:
     """Canonical per-segment row — the single contract between dataset adapters and pipeline stages.
 
-    This is a fan-in dependency: sft.build_example, the Phase 3 gcs_manifest /
-    hf_dataset adapters, and the test suite all consume this exact shape.
+    This is a fan-in dependency: SFT example builders, dataset adapters, and
+    the test suite all consume this exact shape.
     """
 
     audio_filepath: str  # gs:// URI to the segment audio

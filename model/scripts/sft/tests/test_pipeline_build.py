@@ -786,7 +786,7 @@ class TestGcsManifestAdapter(unittest.TestCase):
 
 
 class TestPreflightTokenCap(unittest.TestCase):
-    """PREFLIGHT_TOKEN_CAP is 131_072 per D-14."""
+    """PREFLIGHT_TOKEN_CAP is 131_072."""
 
     def test_token_cap_value(self) -> None:
         from preflight import PREFLIGHT_TOKEN_CAP

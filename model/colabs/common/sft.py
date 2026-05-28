@@ -1,8 +1,8 @@
 """Vertex AI audio-SFT JSONL builder and schema validator.
 
-Provides ``build_example`` (LIB-04) — the current Vertex AI audio-SFT JSONL schema
+Provides ``build_example`` for the current Vertex AI audio-SFT JSONL schema
 with ``systemInstruction`` sibling of ``contents`` — and ``validate_example`` for local
-schema-shape validation before submitting a paid tuning job (Pitfall 1).
+schema-shape validation before submitting a paid tuning job.
 
 No GCP project or bucket constants are defined in this module. All GCP identifiers are
 caller-supplied parameters.
@@ -22,10 +22,8 @@ def build_example(
 ) -> dict[str, Any]:
     """Build a single Vertex AI audio-SFT JSONL example.
 
-    Ported from ``autoresearch-gemini-sft/src/build_e3_sft_jsonl.py`` (lines 60-76)
-    with the ``system_prompt`` and ``user_prompt`` parameters added (the source
-    hardcoded prompt text — the canonical prompts now live in
-    ``scripts/sft/prompts.py``).
+    The caller supplies ``system_prompt`` and ``user_prompt`` so prompt text stays
+    centralized instead of being hardcoded here.
 
     Args:
         audio_uri: GCS URI (gs://...) to the audio segment; must be audio/flac.
@@ -66,7 +64,7 @@ def build_example(
 def validate_example(example: dict[str, Any]) -> bool:
     """Return True if the example matches the Vertex AI audio-SFT JSONL schema.
 
-    Validates the shape locally before submitting a paid tuning job (Pitfall 1).
+    Validates the shape locally before submitting a paid tuning job.
     Rejects legacy ``{input_text, output_text}`` and flat ``{prompt, response}`` shapes.
 
     Args:

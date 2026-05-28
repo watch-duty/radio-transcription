@@ -1,9 +1,4 @@
-"""Tests for common.vertex — no real GCP calls (all genai.Client mocked).
-
-PR3 splits submit_tuning_job (submit + return job.name) and poll_tuning_job
-(re-fetch by name, poll to terminal, return endpoint). The batch output URI
-bug (cur.dest as object not str) is also fixed in PR3.
-"""
+"""Tests for common.vertex — no real GCP calls (all genai.Client mocked)."""
 
 import builtins
 import importlib.util
@@ -32,7 +27,7 @@ def _make_mock_client(
 
 
 class TestSubmitTuningJob(unittest.TestCase):
-    """Tests for common.vertex.submit_tuning_job (PR3: submit-only, returns job.name)."""
+    """Tests for common.vertex.submit_tuning_job."""
 
     @unittest.mock.patch("common.vertex.genai")
     def test_defaults_to_gemini_31_flash_lite(self, mock_genai):
@@ -53,7 +48,7 @@ class TestSubmitTuningJob(unittest.TestCase):
 
     @unittest.mock.patch("common.vertex.genai")
     def test_returns_job_name_not_endpoint(self, mock_genai):
-        """PR3: submit_tuning_job now returns job.name (str), not endpoint."""
+        """submit_tuning_job returns job.name (str), not endpoint."""
         mock_genai.Client.return_value = _make_mock_client()
         from common.vertex import submit_tuning_job
 
@@ -82,7 +77,7 @@ class TestSubmitTuningJob(unittest.TestCase):
 
     @unittest.mock.patch("common.vertex.genai")
     def test_submit_does_not_poll(self, mock_genai):
-        """PR3: submit_tuning_job must NOT call tunings.get (no polling)."""
+        """submit_tuning_job must NOT call tunings.get (no polling)."""
         mock_genai.Client.return_value = _make_mock_client()
         from common.vertex import submit_tuning_job
 
@@ -127,7 +122,7 @@ class TestSubmitTuningJob(unittest.TestCase):
 
 
 class TestPollTuningJob(unittest.TestCase):
-    """Tests for common.vertex.poll_tuning_job (new in PR3)."""
+    """Tests for common.vertex.poll_tuning_job."""
 
     @unittest.mock.patch("common.vertex.genai")
     def test_poll_returns_endpoint(self, mock_genai):
@@ -405,7 +400,7 @@ class TestBuildRequest(unittest.TestCase):
 
 
 class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
-    """PR3 bug fix: cur.dest.gcs_uri replaces getattr(cur, 'dest', ...)."""
+    """Batch inference returns the destination GCS URI."""
 
     @unittest.mock.patch("common.vertex.genai")
     def test_returns_dest_gcs_uri(self, mock_genai):

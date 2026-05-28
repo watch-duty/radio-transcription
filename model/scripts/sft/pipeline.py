@@ -196,7 +196,7 @@ def _make_adapter(
         if not uri:
             raise ValueError(
                 f"gcs_manifest adapter requires '{uri_key}' in datasets.toml "
-                f"-- is empty. Ensure the cluster-split script has run (Phase 4 prerequisite)."
+                "-- is empty. Ensure the cluster-split script has run."
             )
         return GcsManifestAdapter(
             manifest_uri=uri,
@@ -318,7 +318,7 @@ def _build(args: argparse.Namespace) -> int:
     """Build subcommand: adapters -> Gemini SFT JSONL -> local staging -> GCS upload.
 
     Always builds the required ``train`` split. Also builds an optional ``val`` split
-    for any dataset declaring a non-empty ``val_manifest_uri`` (D-12/PIPE-09): when set,
+    for any dataset declaring a non-empty ``val_manifest_uri``. When set,
     ``combined_val_uri`` is recorded so ``tune`` wires a Vertex validation dataset
     (eval_total_loss). When no dataset declares one, the val split is skipped.
     """
@@ -381,7 +381,7 @@ def _build(args: argparse.Namespace) -> int:
             )
         )
     except ValueError as e:
-        # e.g. echo's train_manifest_uri placeholder is empty until the Phase-4
+        # e.g. echo's train_manifest_uri placeholder is empty until the
         # cluster-split runs -- fail cleanly, not with a traceback.
         logger.error(f"cannot build train split: {e}")  # noqa: TRY400
         return 1
@@ -437,9 +437,9 @@ def _build(args: argparse.Namespace) -> int:
 def _tune(args: argparse.Namespace) -> int:
     """Tune subcommand — submit or re-attach to a Vertex AI SFT tuning job.
 
-    D-10/D-11: Persists job.name to config.json BEFORE entering the poll loop.
+    Persists job.name to config.json before entering the poll loop.
     On re-run, re-attaches to an in-flight job by name (no re-submit, no re-pay).
-    PIPE-03: unsupported base models rejected before any GCP call.
+    Unsupported base models are rejected before any GCP call.
     --confirm gate: displays estimated token count + cost estimate before submitting.
     """
     import tempfile
@@ -476,7 +476,7 @@ def _tune(args: argparse.Namespace) -> int:
     config["gcs_bucket"] = gcs_bucket
     config["gcs_sft_prefix"] = gcs_sft_prefix
 
-    # D-11: Resume — re-attach to an in-flight job if job_name already recorded
+    # Resume: re-attach to an in-flight job if job_name is already recorded.
     if job_name := config.get("job_name"):
         _require_vertex()
         from google import genai
@@ -577,7 +577,7 @@ def _tune(args: argparse.Namespace) -> int:
         with train_local.open(encoding="utf-8") as fh:
             n_examples = sum(1 for line in fh if line.strip())
 
-    # Cost estimate and --confirm gate (D-13 / PIPE-03)
+    # Cost estimate and --confirm gate.
     AUDIO_TOKENS_PER_SEC: Final = (
         32  # VERIFIED: inference rate; ASSUMED same for SFT
     )
@@ -620,7 +620,7 @@ def _tune(args: argparse.Namespace) -> int:
             logger.info("Tune aborted by operator.")
             return 130
 
-    # Submit (and persist job.name BEFORE polling — D-08/D-10)
+    # Submit and persist job.name before polling so the job can be resumed.
     display_name = f"wd-radio-sft-{args.round_id}"
     job_name = submit_tuning_job(
         train_uri=train_uri,
@@ -640,9 +640,7 @@ def _tune(args: argparse.Namespace) -> int:
     config["gcs_bucket"] = gcs_bucket
     config["gcs_sft_prefix"] = gcs_sft_prefix
     config["epochs"] = epochs
-    write_config(
-        RESULTS_DIR, args.round_id, config
-    )  # PERSIST BEFORE POLL — D-10
+    write_config(RESULTS_DIR, args.round_id, config)
     logger.info(f"Persisted job_name: {job_name}")
 
     # Poll to completion
@@ -656,9 +654,9 @@ def _tune(args: argparse.Namespace) -> int:
 def _eval(args: argparse.Namespace) -> int:
     """Eval subcommand — batch-infer and score the model on the held-out manifest.
 
-    D-15: full scoring panel (WER, CER, ins/del/sub, empty/halluc rate, duration
-    buckets, keyword accuracy, bootstrap_paired significance). Degrades gracefully
-    to base-only metrics when no tuned model endpoint is available.
+    Computes the full scoring panel: WER, CER, ins/del/sub, empty/hallucination
+    rate, duration buckets, keyword accuracy, and bootstrap paired significance.
+    Degrades gracefully to base-only metrics when no tuned model endpoint is available.
     """
     import tempfile
 
@@ -709,7 +707,7 @@ def _eval(args: argparse.Namespace) -> int:
 
     if not base_only and not tuned_endpoint:
         logger.warning(
-            "No tuned endpoint in config.json — running base-only eval (D-15 graceful degradation)."
+            "No tuned endpoint in config.json — running base-only eval."
         )
         base_only = True
 
@@ -934,7 +932,7 @@ def _eval(args: argparse.Namespace) -> int:
         base_keyword_rows
     )
 
-    # Duration bucket WER (D-15)
+    # Duration bucket WER.
     try:
         bucket_results = duration_bucket_wer(
             refs, base_hyps, durations, normalizer=normalizer
@@ -982,7 +980,7 @@ def _eval(args: argparse.Namespace) -> int:
                 tuned_wer_result["substitutions"] / total_ref_words * 100
             )
 
-        # Bootstrap significance (D-15): bootstrap_paired takes (refs, hyps_a, hyps_b)
+        # Bootstrap significance: bootstrap_paired takes (refs, hyps_a, hyps_b).
         try:
             bs = bootstrap_paired(
                 refs, base_hyps, tuned_hyps, normalizer=normalizer
@@ -1011,7 +1009,7 @@ def _eval(args: argparse.Namespace) -> int:
         except Exception as e:
             logger.warning(f"Could not compute tuned duration bucket WER: {e}")
 
-    # Write records (PIPE-07)
+    # Write per-run records.
     write_wer_summary(RESULTS_DIR, args.round_id, metrics)
     config.update(
         {
