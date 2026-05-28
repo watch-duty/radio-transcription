@@ -34,6 +34,7 @@ import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 import { MultiSelectFilter } from '../common/MultiSelectFilter';
 
 export interface FeedTableProps {
+  title?: string;
   feeds: Feed[];
   isLoading: boolean;
   allowEdit?: boolean;
@@ -141,6 +142,7 @@ const VIRTUOSO_COMPONENTS = {
 };
 
 export function FeedTable({
+  title = 'Feeds',
   feeds,
   isLoading,
   allowEdit = false,
@@ -527,24 +529,7 @@ export function FeedTable({
               <FeedTagChip key={`feed-${feed.id}-tag-${i}`} tag={tag} />
             ))}
           </TableCell>
-        ) : (
-          /* Hidden block containing '-' to keep tests passing without cluttering the UI */
-          <TableCell
-            component="div"
-            role="cell"
-            sx={{
-              gridColumn: '1 / -1',
-              borderBottom: 'none',
-              height: 0,
-              pt: 0,
-              pb: 0,
-              visibility: 'hidden',
-              display: 'none',
-            }}
-          >
-            -
-          </TableCell>
-        )}
+        ) : null}
       </>
     );
   };
@@ -584,7 +569,7 @@ export function FeedTable({
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <TroubleshootIcon color="primary" fontSize="small" />
             <Typography variant="h6" sx={{ fontWeight: 600 }}>
-              Feeds
+              {title}
             </Typography>
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>

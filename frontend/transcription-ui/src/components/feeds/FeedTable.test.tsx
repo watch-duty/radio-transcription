@@ -68,7 +68,17 @@ describe('FeedTable', () => {
 
     expect(screen.getByText(/Marin/i)).toBeTruthy();
     expect(screen.getByText(/Fire/i)).toBeTruthy();
-    expect(screen.getAllByText('-')[0]).toBeTruthy();
+
+    // Verify Bravo Scanner row details (no tags cell should render, and renders a fallback hyphen for links)
+    const bravoRow = screen
+      .getByText('Bravo Scanner')
+      .closest('[role="row"]') as HTMLElement;
+    expect(bravoRow).toBeTruthy();
+    if (bravoRow) {
+      expect(within(bravoRow).getByText('-')).toBeInTheDocument();
+      const tagChips = bravoRow.querySelectorAll('.MuiChip-filled');
+      expect(tagChips).toHaveLength(0);
+    }
   });
 
   it('shows loading indicator when isLoading is true', () => {
@@ -181,14 +191,24 @@ describe('FeedTable', () => {
   it('does not render source and archive links if they are not present, and renders a fallback hyphen', () => {
     renderFeedTable({ feeds: mockFeeds, isLoading: false });
 
-    // Bravo Scanner has neither URL
+    // Verify Alpha Radio has its links rendered correctly
     const links = screen.queryAllByRole('link', {
       name: /https:\/\/example\.com/i,
     });
     expect(links).toHaveLength(2); // Only the 2 links of Alpha Radio exist!
 
-    const hyphens = screen.getAllByText('-');
-    expect(hyphens.length).toBeGreaterThanOrEqual(2);
+    // Verify Bravo Scanner has no source/archive URLs and falls back to rendering a hyphen inside its row context
+    const bravoRow = screen
+      .getByText('Bravo Scanner')
+      .closest('[role="row"]') as HTMLElement;
+    expect(bravoRow).toBeTruthy();
+    if (bravoRow) {
+      const bravoSourceLinks = within(bravoRow).queryAllByRole('link', {
+        name: /https:/i,
+      });
+      expect(bravoSourceLinks).toHaveLength(0);
+      expect(within(bravoRow).getByText('-')).toBeInTheDocument();
+    }
   });
 
   it('displays grouped tags and applies tag filtering', () => {
