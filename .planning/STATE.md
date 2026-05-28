@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: milestone_complete
+status: completed
 stopped_at: Completed 05-03-PLAN.md
-last_updated: "2026-05-28T14:21:41.821Z"
-last_activity: 2026-05-28 -- Phase 05 complete; milestone complete
+last_updated: "2026-05-28T15:20:22.414Z"
+last_activity: 2026-05-28
 progress:
   total_phases: 5
   completed_phases: 5
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-28)
 
 **Core value:** Every SFT run must train and compare models on the same auditable dataset version without source leakage between train and SFT Eval Split.
-**Current focus:** Milestone complete
+**Current focus:** Planning next milestone
 
 ## Current Position
 
 Phase: 05
 Plan: Not started
 Status: Milestone complete
-Last activity: 2026-05-28 -- Phase 05 complete; milestone complete
+Last activity: 2026-05-28
 
 Progress: [██████████] 100%
 
@@ -101,6 +101,7 @@ None yet.
 ### Blockers/Concerns
 
 - Older Vertex AI tuning docs had a stale supported-model list, but current Gemini Enterprise Agent Platform docs list Gemini 3.1 Flash-Lite as supported for supervised tuning; keep the base model configurable and validate at tuning time.
+- v1.0 closed with one acknowledged live-service verification gap: Phase 3's real GCS publication smoke test remains pending because automated verification used fake storage clients.
 
 ## Deferred Items
 
@@ -108,6 +109,8 @@ None yet.
 |----------|------|--------|-------------|
 | Training execution | Submit actual NeMo, Whisper, and Gemini tuning jobs | v2 | Initialization |
 | Scaling | Tarred/sharded large-dataset artifacts | v2 | Initialization |
+| UAT gap | Phase 03 live GCS publication smoke test | deferred | 2026-05-28 milestone close |
+| Verification gap | Phase 03 verification remains human_needed for real GCS/IAM boundary | deferred | 2026-05-28 milestone close |
 
 ## Session Continuity
 

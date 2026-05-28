@@ -39,6 +39,20 @@ No active v1 requirements remain for this milestone.
 
 ## Context
 
+### Current State
+
+v1.0 shipped the dataset-versioning layer: configured manifests are loaded from GCS, normalized into leak-safe Source Groups, split into train/SFT Eval Split, transformed into model-ready audio when needed, and published as immutable GCS artifacts for NeMo, Whisper, and Gemini consumers. The runbook CLI is `model/scripts/sft/split_dataset.py` with `dry-run` and `generate` subcommands.
+
+Known closeout debt: Phase 3's live GCS publication smoke test is still human-needed; fake-client tests cover create-only and prefix-guard behavior, but real bucket/IAM publication remains deferred.
+
+### Next Milestone Goals
+
+- Submit or orchestrate actual NeMo, Whisper, and Gemini tuning jobs from generated dataset-version artifacts.
+- Track SFT run metadata separately from reusable dataset-version artifacts.
+- Add large-dataset scaling support such as sharded manifests or tarred/WebDataset NeMo artifacts when needed.
+
+### Background
+
 The current codebase already includes transcription backends, batch processing, evaluation notebooks/scripts, shared manifest/scoring helpers, and an early `model/scripts/sft` pipeline. The SFT path is currently Echo-oriented and has stubs around tuning/eval execution; this project should add dataset-versioning primitives that can be reused by that pipeline rather than hard-coding one dataset shape.
 
 Validated dataset observations from the prior exploration:
@@ -72,8 +86,8 @@ Glossary:
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
 | Use `dataset_version_id` as the primary artifact identifier | Dataset artifacts are reused across model runs and should not be coupled to one training run | Validated in Phase 3 |
-| Split Source Groups before slicing or deriving SFT examples | Prevents same-feed leakage even when multiple clips come from one long source recording | Pending |
-| Call the evaluation side `SFT Eval Split` | It may be used for validation and selection, so "holdout" would overstate isolation | Pending |
+| Split Source Groups before slicing or deriving SFT examples | Prevents same-feed leakage even when multiple clips come from one long source recording | Validated in Phase 2 and Phase 4 |
+| Call the evaluation side `SFT Eval Split` | It may be used for validation and selection, so "holdout" would overstate isolation | Validated in Phase 5 |
 | Use `area_code` + `echo_name` for Echo source identity | `echo_name` alone is ambiguous; validated CSV has duplicate names across areas | Validated in Phase 1 |
 | Use `bcfy_calls:<groupId>` for Broadcastify Calls | Filenames and metadata expose stable group IDs, and actual manifests parse cleanly | Validated in Phase 1 |
 | Use `bcfy_feeds:<feedId>` for Broadcastify Feeds | Archive URLs include feed IDs, and actual manifests parse cleanly | Validated in Phase 1 |
@@ -101,4 +115,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-28 after Phase 5 completion*
+*Last updated: 2026-05-28 after v1.0 milestone*
