@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import datetime
 import unittest
-import unittest.mock
 import uuid
 
 from backend.pipeline.storage import audio_segment_queries
