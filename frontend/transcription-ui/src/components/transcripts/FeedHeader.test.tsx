@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanup, fireEvent, screen } from '@testing-library/react';
 import type { Feed } from '@transcription/common';
+import { SourceType } from '@transcription/common';
 
 import { renderWithRouter } from '../../test/testUtils';
 import FeedHeader from './FeedHeader';
@@ -16,7 +17,7 @@ describe('FeedHeader', () => {
     lastHeartbeat: new Date().toISOString(),
     sourceUrl: 'https://test.example/source',
     archiveUrl: 'https://test.example/archives',
-    sourceType: 'bcfy_calls',
+    sourceType: SourceType.BCFY_CALLS,
   };
 
   beforeEach(() => {

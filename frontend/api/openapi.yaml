@@ -270,13 +270,13 @@ components:
       type: object
       additionalProperties: false
     SourceType:
-      type: string
       enum:
         - bcfy_feeds
         - bcfy_calls
         - echo
         - openmhz
         - fire_notifications
+      type: string
     Feed:
       properties:
         name:
