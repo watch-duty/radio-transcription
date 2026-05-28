@@ -194,7 +194,9 @@ class TestDatasetArtifacts(unittest.TestCase):
                 content_type="application/json",
             )
 
-        blob = client.fake_bucket.blobs["sft/dv-001/config/resolved_config.json"]
+        blob = client.fake_bucket.blobs[
+            "sft/dv-001/config/resolved_config.json"
+        ]
         self.assertEqual(blob.uploads[0]["if_generation_match"], 0)
 
     def test_generation_targets_only_new_artifacts(self) -> None:
