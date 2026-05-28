@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import shutil
 import sys
 import tomllib
@@ -31,10 +32,12 @@ if TYPE_CHECKING:
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-GCP_PROJECT: Final = "automatic-hawk-481415-m9"
-GCS_BUCKET: Final = "wd-transcription-data"
-GCS_SFT_PREFIX: Final = f"gs://{GCS_BUCKET}/sft"
+DEFAULT_GCP_PROJECT: Final = "automatic-hawk-481415-m9"
+DEFAULT_GCS_BUCKET: Final = "wd-transcription-data"
+GCP_PROJECT_ENV_VAR: Final = "SFT_GCP_PROJECT"
+GCS_BUCKET_ENV_VAR: Final = "SFT_GCS_BUCKET"
 DEFAULT_BASE_MODEL: Final = "gemini-3.1-flash-lite"
+FALLBACK_SEGMENT_DURATION_SECONDS: Final = 15.0
 SUPPORTED_SFT_BASE_MODELS: Final = frozenset(
     {
         "gemini-3.1-flash-lite",
@@ -73,7 +76,7 @@ def _load_registry() -> dict:
 def _load_round_config(round_id: str) -> dict:
     cfg_path = RESULTS_DIR / round_id / "config.json"
     if cfg_path.exists():
-        return json.loads(cfg_path.read_text())
+        return json.loads(cfg_path.read_text(encoding="utf-8"))
     return {}
 
 
@@ -82,10 +85,46 @@ def _parse_dataset_names(value: str) -> list[str]:
     return list(dict.fromkeys(d.strip() for d in value.split(",")))
 
 
+def _resolve_gcp_project(
+    args: argparse.Namespace, config: dict | None = None
+) -> str:
+    """Resolve the GCP project for storage and Vertex calls.
+
+    Precedence is CLI > saved round config > environment > Watch Duty default.
+    Saved config keeps tune/eval reruns attached to the same project used by build.
+    """
+    config = config or {}
+    return (
+        str(getattr(args, "gcp_project", "") or "").strip()
+        or str(config.get("gcp_project") or "").strip()
+        or os.environ.get(GCP_PROJECT_ENV_VAR, "").strip()
+        or DEFAULT_GCP_PROJECT
+    )
+
+
+def _resolve_gcs_bucket(
+    args: argparse.Namespace, config: dict | None = None
+) -> str:
+    """Resolve the GCS bucket for SFT staging output."""
+    config = config or {}
+    return (
+        str(getattr(args, "gcs_bucket", "") or "").strip()
+        or str(config.get("gcs_bucket") or "").strip()
+        or os.environ.get(GCS_BUCKET_ENV_VAR, "").strip()
+        or DEFAULT_GCS_BUCKET
+    )
+
+
+def _gcs_sft_prefix(bucket: str) -> str:
+    return f"gs://{bucket}/sft"
+
+
 def _save_round_config(round_id: str, config: dict) -> None:
     cfg_path = RESULTS_DIR / round_id / "config.json"
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg_path.write_text(json.dumps(config, indent=2, default=str))
+    cfg_path.write_text(
+        json.dumps(config, indent=2, default=str), encoding="utf-8"
+    )
 
 
 def _load_prompt_override(value: str, label: str) -> str:
@@ -93,7 +132,7 @@ def _load_prompt_override(value: str, label: str) -> str:
         return value
     path = Path(value[1:]).expanduser()
     try:
-        return path.read_text()
+        return path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
         raise PromptOverrideError(
             f"{label} prompt file not found: {path}"
@@ -188,6 +227,7 @@ def _build_split_jsonl(
     system_prompt: str,
     user_prompt: str,
     round_id: str,
+    gcs_sft_prefix: str,
 ) -> tuple[dict[str, str], str, float]:
     """Build per-dataset + combined Gemini SFT JSONL for one split and upload to GCS.
 
@@ -228,14 +268,14 @@ def _build_split_jsonl(
             total_duration_seconds += row.duration
 
         out_path = staging_dir / f"{split}_{ds_name}.jsonl"
-        with open(out_path, "w") as f:
+        with out_path.open("w", encoding="utf-8") as f:
             for ex in examples:
                 f.write(json.dumps(ex) + "\n")
         logger.info(
             f"[{ds_name}/{split}] wrote {len(examples)} examples -> {out_path}"
         )
 
-        gcs_uri = f"{GCS_SFT_PREFIX}/{round_id}/{split}_{ds_name}.jsonl"
+        gcs_uri = f"{gcs_sft_prefix}/{round_id}/{split}_{ds_name}.jsonl"
         bucket_name, blob_path = parse_gcs_uri(gcs_uri)
         upload_file_to_blob(
             storage_client, bucket_name, blob_path, str(out_path)
@@ -259,7 +299,7 @@ def _build_split_jsonl(
             if ds_path.exists():
                 with ds_path.open("rb") as infile:
                     shutil.copyfileobj(infile, f)
-    combined_uri = f"{GCS_SFT_PREFIX}/{round_id}/{split}_{combined_name}.jsonl"
+    combined_uri = f"{gcs_sft_prefix}/{round_id}/{split}_{combined_name}.jsonl"
     bucket_name, blob_path = parse_gcs_uri(combined_uri)
     upload_file_to_blob(
         storage_client, bucket_name, blob_path, str(combined_path)
@@ -288,6 +328,10 @@ def _build(args: argparse.Namespace) -> int:
 
     registry = _load_registry()
     dataset_names = _parse_dataset_names(args.datasets)
+    config = _load_round_config(args.round_id)
+    gcp_project = _resolve_gcp_project(args, config)
+    gcs_bucket = _resolve_gcs_bucket(args, config)
+    gcs_sft_prefix = _gcs_sft_prefix(gcs_bucket)
 
     # Validate requested datasets exist in registry
     for ds_name in dataset_names:
@@ -298,7 +342,7 @@ def _build(args: argparse.Namespace) -> int:
             )
             return 1
 
-    storage_client = storage.Client(project=GCP_PROJECT)
+    storage_client = storage.Client(project=gcp_project)
     staging_dir = (
         Path(args.staging_dir)
         if getattr(args, "staging_dir", None)
@@ -321,6 +365,7 @@ def _build(args: argparse.Namespace) -> int:
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 round_id=args.round_id,
+                gcs_sft_prefix=gcs_sft_prefix,
             )
         )
     except ValueError as e:
@@ -348,17 +393,20 @@ def _build(args: argparse.Namespace) -> int:
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 round_id=args.round_id,
+                gcs_sft_prefix=gcs_sft_prefix,
             )
         except ValueError as e:
             logger.error(f"cannot build val split: {e}")  # noqa: TRY400
             return 1
 
     # Write/update config.json
-    config = _load_round_config(args.round_id)
     config.update(
         {
             "round_id": args.round_id,
             "datasets": dataset_names,
+            "gcp_project": gcp_project,
+            "gcs_bucket": gcs_bucket,
+            "gcs_sft_prefix": gcs_sft_prefix,
             "system_prompt": system_prompt,
             "user_prompt": user_prompt,
             "train_uris": per_dataset_uris,
@@ -405,6 +453,12 @@ def _tune(args: argparse.Namespace) -> int:
 
     config = _load_round_config(args.round_id)
     location = getattr(args, "location", "us-central1")
+    gcp_project = _resolve_gcp_project(args, config)
+    gcs_bucket = _resolve_gcs_bucket(args, config)
+    gcs_sft_prefix = _gcs_sft_prefix(gcs_bucket)
+    config["gcp_project"] = gcp_project
+    config["gcs_bucket"] = gcs_bucket
+    config["gcs_sft_prefix"] = gcs_sft_prefix
 
     # D-11: Resume — re-attach to an in-flight job if job_name already recorded
     if job_name := config.get("job_name"):
@@ -412,7 +466,7 @@ def _tune(args: argparse.Namespace) -> int:
         from google import genai
 
         client = genai.Client(
-            vertexai=True, project=GCP_PROJECT, location=location
+            vertexai=True, project=gcp_project, location=location
         )
         cur = client.tunings.get(name=job_name)
         state = getattr(cur.state, "name", str(cur.state))
@@ -450,7 +504,7 @@ def _tune(args: argparse.Namespace) -> int:
             logger.info(
                 f"Re-attaching to in-flight job {job_name} (state: {state})"
             )
-            endpoint = poll_tuning_job(job_name, GCP_PROJECT, location)
+            endpoint = poll_tuning_job(job_name, gcp_project, location)
             config["endpoint"] = endpoint
             write_config(RESULTS_DIR, args.round_id, config)
             return 0
@@ -465,7 +519,7 @@ def _tune(args: argparse.Namespace) -> int:
         logger.error("No combined_train_uri in config.json. Run `build` first.")
         return 1
 
-    storage_client = storage.Client(project=GCP_PROJECT)
+    storage_client = storage.Client(project=gcp_project)
 
     # Download train JSONL for preflight and cost estimate (local temp)
     with tempfile.TemporaryDirectory() as tmp:
@@ -504,7 +558,7 @@ def _tune(args: argparse.Namespace) -> int:
             return 1
 
         # Count examples for cost estimate
-        with open(str(train_local)) as fh:
+        with train_local.open(encoding="utf-8") as fh:
             n_examples = sum(1 for line in fh if line.strip())
 
     # Cost estimate and --confirm gate (D-13 / PIPE-03)
@@ -522,7 +576,7 @@ def _tune(args: argparse.Namespace) -> int:
     else:
         # No recorded durations (older build) -- worst-case fallback so the estimate
         # does not under-state cost (Echo segments run ~3-30s; avg ~15s).
-        avg_secs = 15.0
+        avg_secs = FALLBACK_SEGMENT_DURATION_SECONDS
         total_secs = n_examples * avg_secs
         basis = f"{n_examples} x {avg_secs:.1f}s avg (estimated)"
     estimated_tokens = total_secs * AUDIO_TOKENS_PER_SEC * epochs
@@ -552,7 +606,7 @@ def _tune(args: argparse.Namespace) -> int:
     job_name = submit_tuning_job(
         train_uri=train_uri,
         display_name=display_name,
-        project=GCP_PROJECT,
+        project=gcp_project,
         location=location,
         base_model=args.base_model,
         val_uri=val_uri or None,
@@ -563,6 +617,9 @@ def _tune(args: argparse.Namespace) -> int:
     config["job_name"] = job_name
     config["display_name"] = display_name
     config["base_model"] = args.base_model
+    config["gcp_project"] = gcp_project
+    config["gcs_bucket"] = gcs_bucket
+    config["gcs_sft_prefix"] = gcs_sft_prefix
     config["epochs"] = epochs
     write_config(
         RESULTS_DIR, args.round_id, config
@@ -570,7 +627,7 @@ def _tune(args: argparse.Namespace) -> int:
     logger.info(f"Persisted job_name: {job_name}")
 
     # Poll to completion
-    endpoint = poll_tuning_job(job_name, GCP_PROJECT, location)
+    endpoint = poll_tuning_job(job_name, gcp_project, location)
     config["endpoint"] = endpoint
     write_config(RESULTS_DIR, args.round_id, config)
     logger.info(f"Tune complete. Endpoint: {endpoint}")
@@ -614,7 +671,11 @@ def _eval(args: argparse.Namespace) -> int:
         )
         return 1
 
-    storage_client = storage.Client(project=GCP_PROJECT)
+    gcp_project = _resolve_gcp_project(args, config)
+    gcs_bucket = _resolve_gcs_bucket(args, config)
+    gcs_sft_prefix = _gcs_sft_prefix(gcs_bucket)
+
+    storage_client = storage.Client(project=gcp_project)
     location = getattr(args, "location", "us-central1")
     system_prompt = config.get("system_prompt", "")
     user_prompt = config.get("user_prompt", "")
@@ -664,13 +725,13 @@ def _eval(args: argparse.Namespace) -> int:
                 user_prompt=user_prompt,
             )
             lines.append(json.dumps(req))
-        batch_input_path.write_text("\n".join(lines) + "\n")
+        batch_input_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
         batch_input_gcs = (
-            f"{GCS_SFT_PREFIX}/{args.round_id}/eval_batch_{label}_input.jsonl"
+            f"{gcs_sft_prefix}/{args.round_id}/eval_batch_{label}_input.jsonl"
         )
         batch_output_gcs = (
-            f"{GCS_SFT_PREFIX}/{args.round_id}/eval_batch_{label}_output/"
+            f"{gcs_sft_prefix}/{args.round_id}/eval_batch_{label}_output/"
         )
         in_bucket, in_blob = parse_gcs_uri(batch_input_gcs)
         upload_file_to_blob(
@@ -728,7 +789,7 @@ def _eval(args: argparse.Namespace) -> int:
                 input_uri=batch_input_gcs,
                 output_uri=batch_output_gcs,
                 model=model_id,
-                project=GCP_PROJECT,
+                project=gcp_project,
                 location=location,
             )
 
@@ -756,7 +817,9 @@ def _eval(args: argparse.Namespace) -> int:
                 download_blob_to_file(
                     storage_client, out_bucket, blob.name, str(local_path)
                 )
-                preds.update(_parse_batch_output(local_path.read_text()))
+                preds.update(
+                    _parse_batch_output(local_path.read_text(encoding="utf-8"))
+                )
             missing = len(eval_rows) - len(preds)
             if missing > 0:
                 logger.warning(
@@ -894,6 +957,9 @@ def _eval(args: argparse.Namespace) -> int:
     config.update(
         {
             "base_model": base_model,
+            "gcp_project": gcp_project,
+            "gcs_bucket": gcs_bucket,
+            "gcs_sft_prefix": gcs_sft_prefix,
             "base_wer": metrics.get("base_wer"),
             "tuned_wer": metrics.get("tuned_wer"),
         }
@@ -928,6 +994,7 @@ def _all(args: argparse.Namespace) -> int:
 
 
 def _add_build_args(p: argparse.ArgumentParser) -> None:
+    _add_gcp_args(p)
     p.add_argument(
         "--datasets",
         required=True,
@@ -955,7 +1022,27 @@ def _add_build_args(p: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_gcp_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--gcp-project",
+        default="",
+        help=(
+            f"GCP project for Storage and Vertex calls "
+            f"(default: ${GCP_PROJECT_ENV_VAR} or {DEFAULT_GCP_PROJECT})"
+        ),
+    )
+    p.add_argument(
+        "--gcs-bucket",
+        default="",
+        help=(
+            f"GCS bucket for SFT staging output "
+            f"(default: ${GCS_BUCKET_ENV_VAR} or {DEFAULT_GCS_BUCKET})"
+        ),
+    )
+
+
 def _add_tune_args(p: argparse.ArgumentParser) -> None:
+    _add_gcp_args(p)
     p.add_argument(
         "--round-id",
         required=True,
@@ -991,6 +1078,7 @@ def _add_tune_args(p: argparse.ArgumentParser) -> None:
 
 
 def _add_eval_args(p: argparse.ArgumentParser) -> None:
+    _add_gcp_args(p)
     p.add_argument("--round-id", required=True, help="Round identifier")
     p.add_argument(
         "--base-only",

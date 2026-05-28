@@ -10,6 +10,7 @@ import argparse
 import contextlib
 import io
 import json
+import os
 import sys
 import tempfile
 import types
@@ -118,6 +119,84 @@ class TestPipelineCLI(unittest.TestCase):
         args = mock_tune.call_args.args[0]
         self.assertEqual(args.base_model, "gemini-3.1-flash-lite")
 
+    def test_tune_accepts_gcp_overrides(self) -> None:
+        """Tune CLI accepts sandbox GCP project/bucket overrides."""
+        import pipeline
+
+        with unittest.mock.patch("pipeline._tune") as mock_tune:
+            mock_tune.return_value = 0
+            with unittest.mock.patch(
+                "sys.argv",
+                [
+                    "pipeline.py",
+                    "tune",
+                    "--round-id",
+                    "2026-06-01-echo",
+                    "--gcp-project",
+                    "sandbox-project",
+                    "--gcs-bucket",
+                    "sandbox-bucket",
+                ],
+            ):
+                pipeline.main()
+
+        args = mock_tune.call_args.args[0]
+        self.assertEqual(args.gcp_project, "sandbox-project")
+        self.assertEqual(args.gcs_bucket, "sandbox-bucket")
+
+    def test_gcp_settings_prefer_cli_then_config_then_env(self) -> None:
+        """GCP settings resolve consistently across build/tune/eval reruns."""
+        import pipeline
+
+        with unittest.mock.patch.dict(
+            os.environ,
+            {
+                "SFT_GCP_PROJECT": "env-project",
+                "SFT_GCS_BUCKET": "env-bucket",
+            },
+            clear=False,
+        ):
+            self.assertEqual(
+                pipeline._resolve_gcp_project(
+                    argparse.Namespace(gcp_project="cli-project"),
+                    {"gcp_project": "config-project"},
+                ),
+                "cli-project",
+            )
+            self.assertEqual(
+                pipeline._resolve_gcs_bucket(
+                    argparse.Namespace(gcs_bucket="cli-bucket"),
+                    {"gcs_bucket": "config-bucket"},
+                ),
+                "cli-bucket",
+            )
+            self.assertEqual(
+                pipeline._resolve_gcp_project(
+                    argparse.Namespace(gcp_project=""),
+                    {"gcp_project": "config-project"},
+                ),
+                "config-project",
+            )
+            self.assertEqual(
+                pipeline._resolve_gcs_bucket(
+                    argparse.Namespace(gcs_bucket=""),
+                    {"gcs_bucket": "config-bucket"},
+                ),
+                "config-bucket",
+            )
+            self.assertEqual(
+                pipeline._resolve_gcp_project(
+                    argparse.Namespace(gcp_project=""), {}
+                ),
+                "env-project",
+            )
+            self.assertEqual(
+                pipeline._resolve_gcs_bucket(
+                    argparse.Namespace(gcs_bucket=""), {}
+                ),
+                "env-bucket",
+            )
+
     def test_tune_accepts_gemini_31_flash_lite_before_gcp_calls(self) -> None:
         """Gemini 3.1 Flash-Lite is supported for SFT and must not hit old gemini-3 rejection."""
         import pipeline
@@ -125,6 +204,8 @@ class TestPipelineCLI(unittest.TestCase):
         args = argparse.Namespace(
             round_id="2026-06-01-echo",
             base_model="gemini-3.1-flash-lite",
+            gcp_project="",
+            gcs_bucket="",
             location="us-central1",
             epochs=1,
             adapter_size="EIGHT",
@@ -148,6 +229,7 @@ class TestPipelineCLI(unittest.TestCase):
         import pipeline
 
         self.assertEqual(pipeline.DEFAULT_BASE_MODEL, "gemini-3.1-flash-lite")
+        self.assertEqual(pipeline.FALLBACK_SEGMENT_DURATION_SECONDS, 15.0)
         self.assertEqual(
             pipeline.SFT_TRAINING_COST_PER_MILLION["gemini-3.1-flash-lite"],
             3.00,
@@ -181,6 +263,8 @@ class TestPipelineCLI(unittest.TestCase):
         args = argparse.Namespace(
             round_id="2026-06-01-echo",
             base_model="gemini-3.1-flash-lite",
+            gcp_project="",
+            gcs_bucket="",
             location="us-central1",
             epochs=1,
             adapter_size="EIGHT",
@@ -211,6 +295,8 @@ class TestPipelineCLI(unittest.TestCase):
         args = argparse.Namespace(
             round_id="2026-06-01-echo",
             base_model="gemini-3.1-flash-lite",
+            gcp_project="",
+            gcs_bucket="",
             location="us-central1",
             epochs=1,
             adapter_size="EIGHT",
@@ -250,6 +336,60 @@ class TestPipelineCLI(unittest.TestCase):
 
         self.assertEqual(rc, 130)
         submit.assert_not_called()
+
+    def test_tune_fallback_duration_constant_is_used_in_cost_estimate(
+        self,
+    ) -> None:
+        """Older build configs without recorded durations use the named fallback."""
+        import pipeline
+
+        args = argparse.Namespace(
+            round_id="2026-06-01-echo",
+            base_model="gemini-3.1-flash-lite",
+            gcp_project="",
+            gcs_bucket="",
+            location="us-central1",
+            epochs=1,
+            adapter_size="EIGHT",
+            lr_multiplier=1.0,
+            confirm=False,
+        )
+
+        def fake_download_blob_to_file(
+            _client, _bucket: str, _blob: str, local_path: str
+        ) -> None:
+            Path(local_path).write_text('{"ok": true}\n{"ok": true}\n')
+
+        stdout = io.StringIO()
+        with (
+            unittest.mock.patch(
+                "pipeline._load_round_config",
+                return_value={
+                    "combined_train_uri": "gs://bucket/train.jsonl",
+                    "combined_val_uri": "",
+                    "system_prompt": "sys",
+                    "user_prompt": "user",
+                },
+            ),
+            unittest.mock.patch("google.cloud.storage.Client"),
+            unittest.mock.patch(
+                "common.gcs_utils.download_blob_to_file",
+                side_effect=fake_download_blob_to_file,
+            ),
+            unittest.mock.patch(
+                "preflight.run_preflight",
+                return_value=types.SimpleNamespace(passed=True, failures=[]),
+            ),
+            unittest.mock.patch("builtins.input", return_value="no"),
+            contextlib.redirect_stdout(stdout),
+        ):
+            rc = pipeline._tune(args)
+
+        self.assertEqual(rc, 130)
+        self.assertIn(
+            f"2 x {pipeline.FALLBACK_SEGMENT_DURATION_SECONDS:.1f}s avg",
+            stdout.getvalue(),
+        )
 
 
 class TestPreflightEmptyTarget(unittest.TestCase):
@@ -622,6 +762,7 @@ class TestBuildSplitJsonl(unittest.TestCase):
                     system_prompt="sys",
                     user_prompt="transcribe",
                     round_id="r1",
+                    gcs_sft_prefix="gs://custom-sft-bucket/sft",
                 )
 
             # Per-dataset staging file written with one line per example -- and NOT
@@ -634,6 +775,9 @@ class TestBuildSplitJsonl(unittest.TestCase):
             self.assertIn("echo", per_uris)
             # Single dataset: combined URI reuses the per-dataset URI (no empty re-concat)
             self.assertEqual(combined_uri, per_uris["echo"])
+            self.assertEqual(
+                combined_uri, "gs://custom-sft-bucket/sft/r1/train_echo.jsonl"
+            )
             self.assertTrue(combined_uri.endswith("train_echo.jsonl"))
             self.assertEqual(total, 5.0)
             # Single dataset uploads once (per-dataset only; combined is the same file)
