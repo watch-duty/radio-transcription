@@ -119,6 +119,15 @@ def validate_model_ready_audio(segments: tuple[LabeledSegment, ...]) -> None:
                 "transformation_metadata.action",
                 "is invalid",
             )
+        if action == "reused" and model_ready_uri != _normalized_uri(
+            segment.audio_uri
+        ):
+            raise _model_ready_error(
+                segment,
+                action,
+                "model_ready_audio_uri",
+                "must equal source audio_uri for reused action",
+            )
 
         missing_keys = sorted(
             key for key in TRANSFORMATION_METADATA_KEYS if key not in metadata

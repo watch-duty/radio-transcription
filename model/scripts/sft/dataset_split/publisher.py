@@ -4,6 +4,7 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+import tempfile
 
 from dataset_split.artifacts import (
     DATASET_VERSION_ROOT,
@@ -11,7 +12,10 @@ from dataset_split.artifacts import (
     ensure_dataset_version_absent,
     upload_text_create_only,
 )
-from dataset_split.audio import prepare_audio_for_publication
+from dataset_split.audio import (
+    prepare_audio_for_publication,
+    upload_prepared_audio,
+)
 from dataset_split.canonical import canonical_manifests, per_dataset_manifests
 from dataset_split.model_writers import (
     DEFAULT_GEMINI_BASE_MODEL,
@@ -91,7 +95,32 @@ def publish_dataset_version_artifacts(
     gemini_learning_rate_multiplier: float = 1.0,
     scratch_dir: str | Path | None = None,
     audio_preparer=prepare_audio_for_publication,
+    audio_uploader=upload_prepared_audio,
 ) -> DatasetPublicationResult:
+    if scratch_dir is None:
+        with tempfile.TemporaryDirectory(
+            prefix="sft-audio-"
+        ) as temporary_scratch:
+            return publish_dataset_version_artifacts(
+                storage_client,
+                dataset_version_id=dataset_version_id,
+                segments=segments,
+                resolved_config=resolved_config,
+                leakage_validation=leakage_validation,
+                balance_report=balance_report,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                root_prefix=root_prefix,
+                gemini_base_model=gemini_base_model,
+                gemini_region=gemini_region,
+                gemini_adapter_size=gemini_adapter_size,
+                gemini_epoch_count=gemini_epoch_count,
+                gemini_learning_rate_multiplier=gemini_learning_rate_multiplier,
+                scratch_dir=temporary_scratch,
+                audio_preparer=audio_preparer,
+                audio_uploader=audio_uploader,
+            )
+
     segment_tuple = tuple(segments)
     _reject_sft_run_fields(resolved_config)
     layout = DatasetArtifactLayout.for_dataset_version(
@@ -104,8 +133,12 @@ def publish_dataset_version_artifacts(
         layout=layout,
         segments=segment_tuple,
         scratch_dir=scratch_dir,
+        upload=False,
     )
     enriched_segments = tuple(audio_result.segments)
+    planned_uploaded_audio_uris = tuple(
+        task.uri for task in audio_result.upload_tasks
+    )
 
     canonical = canonical_manifests(enriched_segments)
     per_dataset = per_dataset_manifests(enriched_segments)
@@ -137,7 +170,7 @@ def publish_dataset_version_artifacts(
     artifact_inventory = _artifact_inventory(
         layout,
         per_dataset,
-        uploaded_audio_uris=audio_result.uploaded_audio_uris,
+        uploaded_audio_uris=planned_uploaded_audio_uris,
     )
     metadata = build_dataset_version_metadata(
         layout.dataset_version_id,
@@ -167,6 +200,12 @@ def publish_dataset_version_artifacts(
         markdown=render_dataset_version_markdown(report),
     )
 
+    uploaded_audio_uris = tuple(audio_uploader(storage_client, audio_result))
+    if uploaded_audio_uris != planned_uploaded_audio_uris:
+        raise DatasetPublicationError(
+            "audio uploader returned unexpected uploaded URIs"
+        )
+
     for artifact in planned:
         upload_text_create_only(
             storage_client,
@@ -189,7 +228,7 @@ def publish_dataset_version_artifacts(
         artifact_inventory=artifact_inventory,
         writer_warnings=writer_warnings,
         audio_action_counts=dict(audio_result.action_counts),
-        uploaded_audio_uris=tuple(audio_result.uploaded_audio_uris),
+        uploaded_audio_uris=uploaded_audio_uris,
     )
 
 

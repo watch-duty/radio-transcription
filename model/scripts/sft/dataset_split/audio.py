@@ -32,12 +32,21 @@ AUDIO_ACTIONS = ("reused", "copied", "derived", "transcoded")
 GENERATED_AUDIO_SUFFIX = ".flac"
 SOURCE_DURATION_TOLERANCE_SECONDS = 0.5
 SOURCE_DURATION_TOLERANCE_RATIO = 0.02
+GENERATED_OUTPUT_DURATION_TOLERANCE_SECONDS = 0.05
+GENERATED_OUTPUT_DURATION_TOLERANCE_RATIO = 0.001
 EXTERNAL_DOWNLOAD_TIMEOUT = (10, 120)
 EXTERNAL_DOWNLOAD_CHUNK_SIZE = 1024 * 1024
 EXTERNAL_DOWNLOAD_MAX_BYTES = 512 * 1024 * 1024
 FFPROBE_TIMEOUT_SECONDS = 60
 FFMPEG_TIMEOUT_SECONDS = 300
 PROGRAM_VERSION_TIMEOUT_SECONDS = 10
+ALLOWED_EXTERNAL_AUDIO_HOSTS = frozenset(
+    {
+        "archives.broadcastify.com",
+        "echo-recordings.s3.us-east-1.amazonaws.com",
+        "player.textmefires.info",
+    }
+)
 _SUPPORTED_SOURCE_SCHEMES = frozenset({"gs", "https"})
 _NEAR_ZERO_OFFSET_SECONDS = 1e-6
 _ENRICHED_FIELD_NAMES = (
@@ -69,11 +78,19 @@ class AudioActionPlan:
 
 
 @dataclass(frozen=True)
+class AudioUploadTask:
+    uri: str
+    local_path: Path
+    content_type: str
+
+
+@dataclass(frozen=True)
 class AudioPreparationResult:
     segments: tuple[LabeledSegment, ...]
     plans: tuple[AudioActionPlan, ...]
     uploaded_audio_uris: tuple[str, ...]
     action_counts: dict[str, int]
+    upload_tasks: tuple[AudioUploadTask, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -249,7 +266,13 @@ def prepare_audio_for_publication(
     segments: tuple[LabeledSegment, ...],
     scratch_dir: str | Path | None = None,
     runner=subprocess.run,
+    upload: bool = True,
 ) -> AudioPreparationResult:
+    if scratch_dir is None and not upload:
+        raise AudioDerivationError(
+            "scratch_dir is required when upload=False so prepared audio "
+            "upload tasks remain valid"
+        )
     if scratch_dir is None:
         with tempfile.TemporaryDirectory() as temporary_scratch:
             return _prepare_audio_for_publication(
@@ -258,6 +281,7 @@ def prepare_audio_for_publication(
                 segments=segments,
                 scratch_dir=temporary_scratch,
                 runner=runner,
+                upload=upload,
             )
     return _prepare_audio_for_publication(
         storage_client,
@@ -265,7 +289,24 @@ def prepare_audio_for_publication(
         segments=segments,
         scratch_dir=scratch_dir,
         runner=runner,
+        upload=upload,
     )
+
+
+def upload_prepared_audio(
+    storage_client: object,
+    preparation_result: AudioPreparationResult,
+) -> tuple[str, ...]:
+    uploaded_audio_uris: list[str] = []
+    for task in preparation_result.upload_tasks:
+        _upload_audio_file(
+            storage_client,
+            uri=task.uri,
+            local_path=task.local_path,
+            content_type=task.content_type,
+        )
+        uploaded_audio_uris.append(task.uri)
+    return tuple(uploaded_audio_uris)
 
 
 def _plan_audio_action(
@@ -356,6 +397,7 @@ def _prepare_audio_for_publication(
     segments: tuple[LabeledSegment, ...],
     scratch_dir: str | Path,
     runner,
+    upload: bool,
 ) -> AudioPreparationResult:
     plans = plan_audio_actions(
         storage_client,
@@ -382,7 +424,7 @@ def _prepare_audio_for_publication(
         action_counts[plan.action] += 1
         local_results.append(local_result)
 
-    uploaded_audio_uris: list[str] = []
+    upload_tasks: list[AudioUploadTask] = []
     for local_result in local_results:
         if local_result.upload_uri is None:
             continue
@@ -390,18 +432,26 @@ def _prepare_audio_for_publication(
             raise AudioDerivationError(
                 f"missing local output path for upload uri={local_result.upload_uri}"
             )
-        _upload_audio_file(
-            storage_client,
-            uri=local_result.upload_uri,
-            local_path=local_result.local_output_path,
+        upload_tasks.append(
+            AudioUploadTask(
+                uri=local_result.upload_uri,
+                local_path=local_result.local_output_path,
+                content_type=infer_audio_mime_type(local_result.upload_uri),
+            )
         )
-        uploaded_audio_uris.append(local_result.upload_uri)
 
-    return AudioPreparationResult(
+    result = AudioPreparationResult(
         segments=tuple(result.segment for result in local_results),
         plans=plans,
-        uploaded_audio_uris=tuple(uploaded_audio_uris),
+        uploaded_audio_uris=(),
         action_counts=action_counts,
+        upload_tasks=tuple(upload_tasks),
+    )
+    if not upload:
+        return result
+    return replace(
+        result,
+        uploaded_audio_uris=upload_prepared_audio(storage_client, result),
     )
 
 
@@ -530,14 +580,18 @@ def _run_ffmpeg(command: list[str], *, runner) -> None:
 
 
 def _upload_audio_file(
-    storage_client: object, *, uri: str, local_path: Path
+    storage_client: object,
+    *,
+    uri: str,
+    local_path: Path,
+    content_type: str | None = None,
 ) -> None:
     try:
         upload_file_create_only(
             storage_client,
             uri,
             local_path,
-            content_type=infer_audio_mime_type(uri),
+            content_type=content_type or infer_audio_mime_type(uri),
         )
     except Exception as exc:
         raise AudioDerivationError(f"failed to upload audio uri={uri}") from exc
@@ -628,7 +682,10 @@ def _program_version(program: str, *, runner) -> str:
         )
     except Exception:
         return "unavailable"
-    first_line = str(result.stdout).splitlines()[0].strip()
+    lines = str(result.stdout or "").splitlines()
+    if not lines:
+        return "unavailable"
+    first_line = lines[0].strip()
     return first_line or "unavailable"
 
 
@@ -661,7 +718,7 @@ def _validate_source_bounds(segment: LabeledSegment, probe: AudioProbe) -> None:
 def _validate_output_duration(
     segment: LabeledSegment, output_probe: AudioProbe
 ) -> None:
-    tolerance = _duration_tolerance(segment.duration)
+    tolerance = _generated_output_duration_tolerance(segment.duration)
     if abs(output_probe.duration - segment.duration) > tolerance:
         raise AudioDerivationError(
             "generated audio duration mismatch "
@@ -677,13 +734,24 @@ def _validate_external_url(source_uri: str) -> None:
         raise AudioDerivationError(
             f"external source audio must use https source_uri={source_uri}"
         )
-    if not parsed.hostname:
+    hostname = parsed.hostname
+    if not hostname:
         raise AudioDerivationError(
             f"external source audio host is required source_uri={source_uri}"
         )
+    if parsed.port not in (None, 443):
+        raise AudioDerivationError(
+            "external source audio must use the default https port "
+            f"source_uri={source_uri}"
+        )
+    if hostname not in ALLOWED_EXTERNAL_AUDIO_HOSTS:
+        raise AudioDerivationError(
+            "external source audio host is not allowed "
+            f"host={hostname} source_uri={source_uri}"
+        )
     try:
         addresses = socket.getaddrinfo(
-            parsed.hostname,
+            hostname,
             parsed.port or 443,
             type=socket.SOCK_STREAM,
         )
@@ -693,18 +761,10 @@ def _validate_external_url(source_uri: str) -> None:
         ) from exc
     for address in addresses:
         ip_address = ipaddress.ip_address(address[4][0])
-        if (
-            ip_address.is_private
-            or ip_address.is_loopback
-            or ip_address.is_link_local
-            or ip_address.is_multicast
-            or ip_address.is_reserved
-            or ip_address.is_unspecified
-        ):
+        if not ip_address.is_global:
             raise AudioDerivationError(
-                "external source audio host must not resolve to private, "
-                f"loopback, link-local, multicast, reserved, or unspecified "
-                f"address source_uri={source_uri}"
+                "external source audio host must resolve only to global "
+                f"addresses source_uri={source_uri}"
             )
 
 
@@ -720,6 +780,13 @@ def _duration_tolerance(duration: float) -> float:
     return max(
         SOURCE_DURATION_TOLERANCE_SECONDS,
         duration * SOURCE_DURATION_TOLERANCE_RATIO,
+    )
+
+
+def _generated_output_duration_tolerance(duration: float) -> float:
+    return max(
+        GENERATED_OUTPUT_DURATION_TOLERANCE_SECONDS,
+        duration * GENERATED_OUTPUT_DURATION_TOLERANCE_RATIO,
     )
 
 

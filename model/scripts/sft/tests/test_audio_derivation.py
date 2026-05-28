@@ -27,12 +27,15 @@ from dataset_split.audio import (  # noqa: E402
     EXTERNAL_DOWNLOAD_TIMEOUT,
     FFMPEG_TIMEOUT_SECONDS,
     FFPROBE_TIMEOUT_SECONDS,
+    GENERATED_OUTPUT_DURATION_TOLERANCE_SECONDS,
+    PROGRAM_VERSION_TIMEOUT_SECONDS,
     AudioDerivationError,
     AudioProbe,
     plan_audio_actions,
     prepare_audio_for_publication,
     probe_audio,
     stage_source_audio,
+    upload_prepared_audio,
 )
 from dataset_split.types import LabeledSegment  # noqa: E402
 
@@ -343,7 +346,10 @@ class TestAudioActionPlanning(unittest.TestCase):
         mock_get.return_value = FakeResponse((b"fake",))
 
         plan = _plan(
-            _segment("https://example.test/audio/source.mp3", duration=8.0),
+            _segment(
+                "https://archives.broadcastify.com/119/20260114/source.mp3",
+                duration=8.0,
+            ),
             probe_duration=8.1,
             codec_name="mp3",
             format_name="mp3",
@@ -615,7 +621,7 @@ class TestAudioPreparation(unittest.TestCase):
                 layout=_layout(),
                 segments=(
                     _segment(
-                        "https://example.test/audio/source.mp3",
+                        "https://archives.broadcastify.com/119/20260114/source.mp3",
                         duration=8.0,
                     ),
                 ),
@@ -665,6 +671,101 @@ class TestAudioPreparation(unittest.TestCase):
                 )
 
         self.assertEqual(_all_uploads(client), [])
+
+    def test_prepare_audio_can_defer_uploads(self) -> None:
+        client = FakeStorageClient()
+        runner = FakeAudioRunner(
+            (
+                AudioProbe(30.0, "flac", 1, 16000, "flac"),
+                AudioProbe(6.0, "flac", 1, 16000, "flac"),
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as scratch_dir:
+            result = prepare_audio_for_publication(
+                client,
+                layout=_layout(),
+                segments=(
+                    _segment(
+                        "gs://source-bucket/audio/source.flac",
+                        offset=2.0,
+                        duration=6.0,
+                    ),
+                ),
+                scratch_dir=scratch_dir,
+                runner=runner,
+                upload=False,
+            )
+            self.assertEqual(result.uploaded_audio_uris, ())
+            self.assertEqual(len(result.upload_tasks), 1)
+            self.assertTrue(result.upload_tasks[0].local_path.exists())
+            self.assertEqual(_all_uploads(client), [])
+
+            uploaded = upload_prepared_audio(client, result)
+
+        self.assertEqual(uploaded, (result.upload_tasks[0].uri,))
+        self.assertEqual(len(_all_uploads(client)), 1)
+
+    def test_deferred_upload_requires_caller_owned_scratch_dir(self) -> None:
+        with self.assertRaisesRegex(
+            AudioDerivationError, "scratch_dir is required"
+        ):
+            prepare_audio_for_publication(
+                FakeStorageClient(),
+                layout=_layout(),
+                segments=(),
+                upload=False,
+            )
+
+    def test_generated_output_duration_uses_tight_tolerance(self) -> None:
+        self.assertEqual(GENERATED_OUTPUT_DURATION_TOLERANCE_SECONDS, 0.05)
+        client = FakeStorageClient()
+        runner = FakeAudioRunner(
+            (
+                AudioProbe(30.0, "flac", 1, 16000, "flac"),
+                AudioProbe(6.4, "flac", 1, 16000, "flac"),
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as scratch_dir:
+            with self.assertRaisesRegex(
+                AudioDerivationError, "generated audio duration mismatch"
+            ):
+                prepare_audio_for_publication(
+                    client,
+                    layout=_layout(),
+                    segments=(
+                        _segment(
+                            "gs://source-bucket/audio/source.flac",
+                            offset=2.0,
+                            duration=6.0,
+                        ),
+                    ),
+                    scratch_dir=scratch_dir,
+                    runner=runner,
+                )
+
+        self.assertEqual(_all_uploads(client), [])
+
+    def test_program_version_empty_stdout_is_unavailable(self) -> None:
+        from dataset_split import audio as audio_module
+
+        calls: list[dict[str, object]] = []
+
+        def runner(
+            args: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess:
+            calls.append({"args": args, "kwargs": kwargs})
+            return subprocess.CompletedProcess(
+                args=args, returncode=0, stdout="", stderr=""
+            )
+
+        version = audio_module._program_version("ffmpeg", runner=runner)
+
+        self.assertEqual(version, "unavailable")
+        self.assertEqual(
+            calls[0]["kwargs"]["timeout"], PROGRAM_VERSION_TIMEOUT_SECONDS
+        )
 
     def test_local_materialization_failure_happens_before_any_upload(
         self,
@@ -760,12 +861,12 @@ class TestAudioPreparation(unittest.TestCase):
         with tempfile.TemporaryDirectory() as scratch_dir:
             local_path = stage_source_audio(
                 FakeStorageClient(),
-                "https://example.test/audio/source.mp3",
+                "https://archives.broadcastify.com/119/20260114/source.mp3",
                 scratch_dir,
             )
 
         mock_get.assert_called_once_with(
-            "https://example.test/audio/source.mp3",
+            "https://archives.broadcastify.com/119/20260114/source.mp3",
             stream=True,
             timeout=EXTERNAL_DOWNLOAD_TIMEOUT,
             allow_redirects=False,
@@ -792,7 +893,7 @@ class TestAudioPreparation(unittest.TestCase):
             ):
                 stage_source_audio(
                     FakeStorageClient(),
-                    "https://example.test/audio/source.mp3",
+                    "https://archives.broadcastify.com/119/20260114/source.mp3",
                     scratch_dir,
                 )
 
@@ -801,7 +902,18 @@ class TestAudioPreparation(unittest.TestCase):
             with self.assertRaisesRegex(AudioDerivationError, "must use https"):
                 stage_source_audio(
                     FakeStorageClient(),
-                    "http://example.test/audio/source.mp3",
+                    "http://archives.broadcastify.com/119/20260114/source.mp3",
+                    scratch_dir,
+                )
+
+    def test_external_url_staging_rejects_unknown_hosts(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch_dir:
+            with self.assertRaisesRegex(
+                AudioDerivationError, "host is not allowed"
+            ):
+                stage_source_audio(
+                    FakeStorageClient(),
+                    "https://example.test/audio/source.mp3",
                     scratch_dir,
                 )
 
@@ -814,11 +926,11 @@ class TestAudioPreparation(unittest.TestCase):
     ) -> None:
         with tempfile.TemporaryDirectory() as scratch_dir:
             with self.assertRaisesRegex(
-                AudioDerivationError, "must not resolve to private"
+                AudioDerivationError, "must resolve only to global"
             ):
                 stage_source_audio(
                     FakeStorageClient(),
-                    "https://metadata.google.internal/audio/source.mp3",
+                    "https://archives.broadcastify.com/119/20260114/source.mp3",
                     scratch_dir,
                 )
 

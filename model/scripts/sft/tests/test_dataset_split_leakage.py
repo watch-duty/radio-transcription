@@ -301,6 +301,28 @@ class TestSplitLeakage(unittest.TestCase):
         ):
             validate_model_ready_audio((segment,))
 
+    def test_reused_model_ready_uri_must_match_source_audio_uri(self) -> None:
+        valid_segment = _segment(
+            "feed-a",
+            model_ready_audio_uri="gs://bucket/feed-a/0.mp3",
+            transformation_metadata=_transformation_metadata(
+                action="reused",
+            ),
+        )
+        validate_model_ready_audio((valid_segment,))
+
+        stale_segment = _segment(
+            "feed-a",
+            model_ready_audio_uri="gs://ready/stale.flac",
+            transformation_metadata=_transformation_metadata(
+                action="reused",
+            ),
+        )
+        with self.assertRaisesRegex(
+            SplitLeakageError, "row_index=0.*model_ready_audio_uri"
+        ):
+            validate_model_ready_audio((stale_segment,))
+
     def test_transformation_metadata_must_match_segment_fields(self) -> None:
         cases = (
             ("original_audio_uri", "gs://bucket/stale.wav"),

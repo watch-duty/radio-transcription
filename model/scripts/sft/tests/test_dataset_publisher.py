@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sys
 import unittest
 from dataclasses import replace
@@ -17,7 +18,10 @@ if _COLABS_DIR not in sys.path:
     sys.path.insert(0, _COLABS_DIR)
 
 from dataset_split.artifacts import DatasetVersionExistsError  # noqa: E402
-from dataset_split.audio import AudioPreparationResult  # noqa: E402
+from dataset_split.audio import (  # noqa: E402
+    AudioPreparationResult,
+    AudioUploadTask,
+)
 from dataset_split.publisher import (  # noqa: E402
     DatasetPublicationError,
     DatasetPublicationResult,
@@ -115,11 +119,13 @@ def _segment(
     row_index: int,
     duration: float,
     suffix: str = "flac",
+    audio_uri: str | None = None,
 ) -> LabeledSegment:
-    audio_uri = (
-        f"https://source.example.invalid/{dataset_name}/"
-        f"{source_group}/{row_index}.{suffix}"
-    )
+    if audio_uri is None:
+        audio_uri = (
+            f"https://source.example.invalid/{dataset_name}/"
+            f"{source_group}/{row_index}.{suffix}"
+        )
     return LabeledSegment(
         dataset_name=dataset_name,
         dataset_family=dataset_family,
@@ -166,6 +172,7 @@ def _segments() -> tuple[LabeledSegment, ...]:
             row_index=3,
             duration=11.0,
             suffix="flac",
+            audio_uri="gs://source-bucket/feeds/feeds-a/3.flac",
         ),
     )
 
@@ -182,6 +189,7 @@ def _publish(client: FakeStorageClient) -> DatasetPublicationResult:
         user_prompt="Transcribe the emergency radio audio.",
         scratch_dir="/tmp/sft-audio",
         audio_preparer=_fake_audio_preparer,
+        audio_uploader=_fake_audio_uploader,
     )
 
 
@@ -242,25 +250,43 @@ def _fake_audio_preparer(
     layout: object,
     segments: tuple[LabeledSegment, ...],
     scratch_dir: str | Path | None = None,
+    upload: bool = True,
 ) -> AudioPreparationResult:
-    storage_client.events.append(f"prepare_audio:{scratch_dir}")
-    enriched_segments = tuple(_enriched_segment(segment) for segment in segments)
-    uploaded_audio_uris = tuple(
-        segment.model_ready_audio_uri
+    storage_client.events.append(f"prepare_audio:{scratch_dir}:upload={upload}")
+    enriched_segments = tuple(
+        _enriched_segment(segment) for segment in segments
+    )
+    upload_tasks = tuple(
+        AudioUploadTask(
+            uri=str(segment.model_ready_audio_uri),
+            local_path=Path(f"/tmp/fake-audio/{segment.row_index}.flac"),
+            content_type="audio/flac",
+        )
         for segment in enriched_segments
-        if segment.model_ready_audio_uri is not None
+        if (segment.transformation_metadata or {}).get("action") != "reused"
     )
     return AudioPreparationResult(
         segments=enriched_segments,
         plans=(),
-        uploaded_audio_uris=uploaded_audio_uris,
+        uploaded_audio_uris=tuple(task.uri for task in upload_tasks)
+        if upload
+        else (),
         action_counts={
             "reused": 1,
             "copied": 1,
             "derived": 1,
             "transcoded": 0,
         },
+        upload_tasks=upload_tasks,
     )
+
+
+def _fake_audio_uploader(
+    storage_client: FakeStorageClient,
+    audio_result: AudioPreparationResult,
+) -> tuple[str, ...]:
+    storage_client.events.append("upload_audio")
+    return tuple(task.uri for task in audio_result.upload_tasks)
 
 
 def _enriched_segment(segment: LabeledSegment) -> LabeledSegment:
@@ -270,10 +296,13 @@ def _enriched_segment(segment: LabeledSegment) -> LabeledSegment:
         3: "reused",
     }
     action = action_by_row[segment.row_index]
-    model_ready_audio_uri = (
-        f"gs://wd-ready/{segment.dataset_name}/"
-        f"{segment.source_group}/{segment.row_index}.flac"
-    )
+    if action == "reused":
+        model_ready_audio_uri = segment.audio_uri
+    else:
+        model_ready_audio_uri = (
+            f"gs://wd-ready/{segment.dataset_name}/"
+            f"{segment.source_group}/{segment.row_index}.flac"
+        )
     return replace(
         segment,
         model_ready_audio_uri=model_ready_audio_uri,
@@ -351,7 +380,6 @@ class TestDatasetPublisher(unittest.TestCase):
             (
                 "gs://wd-ready/calls/calls-a/1.flac",
                 "gs://wd-ready/calls/calls-b/2.flac",
-                "gs://wd-ready/feeds/feeds-a/3.flac",
             ),
         )
         self.assertEqual(
@@ -386,13 +414,18 @@ class TestDatasetPublisher(unittest.TestCase):
         _publish(client)
 
         self.assertEqual(client.events[0], "list:sft/dv-001/")
-        prepare_index = client.events.index("prepare_audio:/tmp/sft-audio")
+        prepare_index = client.events.index(
+            "prepare_audio:/tmp/sft-audio:upload=False"
+        )
+        audio_upload_index = client.events.index("upload_audio")
         first_text_upload_index = next(
             index
             for index, event in enumerate(client.events)
             if event.startswith("upload_text:")
         )
         self.assertLess(prepare_index, first_text_upload_index)
+        self.assertLess(prepare_index, audio_upload_index)
+        self.assertLess(audio_upload_index, first_text_upload_index)
 
     def test_publish_checks_dataset_version_absent_once(self) -> None:
         client = FakeStorageClient()
@@ -406,7 +439,7 @@ class TestDatasetPublisher(unittest.TestCase):
         )
         self.assertLess(
             client.events.index("list:sft/dv-001/"),
-            client.events.index("prepare_audio:/tmp/sft-audio"),
+            client.events.index("prepare_audio:/tmp/sft-audio:upload=False"),
         )
 
     def test_publish_uses_enriched_segments_for_model_writers(self) -> None:
@@ -440,14 +473,14 @@ class TestDatasetPublisher(unittest.TestCase):
             {row["audio_filepath"] for row in nemo_rows},
             {
                 "gs://wd-ready/calls/calls-a/1.flac",
-                "gs://wd-ready/feeds/feeds-a/3.flac",
+                "gs://source-bucket/feeds/feeds-a/3.flac",
             },
         )
         self.assertEqual(
             {row["audio_uri"] for row in whisper_rows},
             {
                 "gs://wd-ready/calls/calls-a/1.flac",
-                "gs://wd-ready/feeds/feeds-a/3.flac",
+                "gs://source-bucket/feeds/feeds-a/3.flac",
             },
         )
         self.assertEqual(
@@ -457,20 +490,22 @@ class TestDatasetPublisher(unittest.TestCase):
             },
             {
                 "gs://wd-ready/calls/calls-a/1.flac",
-                "gs://wd-ready/feeds/feeds-a/3.flac",
+                "gs://source-bucket/feeds/feeds-a/3.flac",
             },
         )
-        self.assertTrue(
-            all(
-                row["audio_uri"].startswith("https://source.example.invalid/")
-                for row in canonical_rows
-            )
+        self.assertEqual(
+            {row["audio_uri"] for row in canonical_rows},
+            {
+                "https://source.example.invalid/calls/calls-a/1.flac",
+                "gs://source-bucket/feeds/feeds-a/3.flac",
+            },
         )
-        self.assertTrue(
-            all(
-                str(row["model_ready_audio_uri"]).startswith("gs://wd-ready/")
-                for row in canonical_rows
-            )
+        self.assertEqual(
+            {row["model_ready_audio_uri"] for row in canonical_rows},
+            {
+                "gs://wd-ready/calls/calls-a/1.flac",
+                "gs://source-bucket/feeds/feeds-a/3.flac",
+            },
         )
 
     def test_publish_does_not_accept_force_resume_or_cleanup_arguments(
@@ -552,6 +587,35 @@ class TestDatasetPublisher(unittest.TestCase):
             _publish(client)
 
         self.assertEqual(len(client.list_calls), 1)
+        self.assertEqual(client.uploads, [])
+
+    def test_publish_does_not_upload_audio_when_text_planning_fails(
+        self,
+    ) -> None:
+        client = FakeStorageClient()
+
+        with self.assertRaises(ValueError):
+            publish_dataset_version_artifacts(
+                client,
+                dataset_version_id="dv-001",
+                segments=_segments(),
+                resolved_config={
+                    "dataset_version_id": "dv-001",
+                    "bad_float": math.nan,
+                },
+                leakage_validation={"passed": True},
+                balance_report={"score": 0.92, "components": {}},
+                system_prompt="You are a radio transcription model.",
+                user_prompt="Transcribe the emergency radio audio.",
+                scratch_dir="/tmp/sft-audio",
+                audio_preparer=_fake_audio_preparer,
+                audio_uploader=_fake_audio_uploader,
+            )
+
+        self.assertIn(
+            "prepare_audio:/tmp/sft-audio:upload=False", client.events
+        )
+        self.assertNotIn("upload_audio", client.events)
         self.assertEqual(client.uploads, [])
 
     def test_publish_rejects_sft_run_fields_before_upload(self) -> None:
