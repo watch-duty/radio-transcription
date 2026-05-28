@@ -66,7 +66,7 @@ Plans:
 - [x] 03-01: GCS layout planner and overwrite protection
 - [x] 03-02: Canonical and per-dataset artifact writers
 - [x] 03-03: NeMo and Whisper model-input writers
-- [ ] 03-04: Gemini model-input writer, config generation, and artifact publication
+- [x] 03-04: Gemini model-input writer, config generation, and artifact publication
 
 ### Phase 4: Audio Derivation And Provenance
 **Goal**: Users can reuse standalone clips or derive clips from longer labeled audio while preserving minimal transformation and auditable provenance.
