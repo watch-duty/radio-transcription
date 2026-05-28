@@ -3,11 +3,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util import Retry
-
 from backend.pipeline.common.auth_client import get_id_token
+from backend.pipeline.common.clients.session_helper import (
+    create_resilient_session,
+)
 from backend.pipeline.common.env import is_gcp_env
 
 if TYPE_CHECKING:
@@ -30,24 +29,16 @@ class AudioSegmentsClient:
             max_retries: The maximum number of retries for transient network errors.
         """
         self.api_url = api_url.rstrip("/")
-        self.session = requests.Session()
-
-        if max_retries > 0:
-            # Configure exponential backoff retries for transient gateway/network faults (502, 503, 504)
-            retries = Retry(
-                total=max_retries,
-                backoff_factor=0.5,  # [0.5s, 1.0s, 2.0s]
-                status_forcelist=[502, 503, 504],
-                raise_on_status=False,
-            )
-            adapter = HTTPAdapter(max_retries=retries)
-            self.session.mount("http://", adapter)
-            self.session.mount("https://", adapter)
+        self.session = create_resilient_session(
+            max_retries=max_retries,
+            backoff_factor=0.5,  # [0.5s, 1.0s, 2.0s]
+            raise_on_status=False,
+        )
 
     def add_audio_segment_annotation(
         self,
         audio_segment_id: str,
-        annotation_type: AnnotationType | str,
+        annotation_type: AnnotationType,
         data: dict,
     ) -> None:
         """
@@ -59,21 +50,8 @@ class AudioSegmentsClient:
             data: The annotation data payload.
 
         Raises:
-            ValueError: If any inputs fail boundary validation.
             requests.exceptions.HTTPError: If the request fails.
         """
-
-        def _raise(msg: str) -> None:
-            raise ValueError(msg)
-
-        # Fail-Fast Local input boundary validations
-        if not audio_segment_id or not audio_segment_id.strip():
-            _raise("audio_segment_id cannot be empty or whitespace")
-        if not annotation_type:
-            _raise("annotation_type cannot be empty")
-        if not data:
-            _raise("annotation data payload cannot be empty")
-
         if is_gcp_env():
             token = get_id_token(self.api_url)
             self.session.headers.update({"Authorization": f"Bearer {token}"})
@@ -98,21 +76,8 @@ class AudioSegmentsClient:
             segment: The audio segment data to add.
 
         Raises:
-            ValueError: If any inputs fail boundary validation.
             requests.exceptions.HTTPError: If the request fails.
         """
-
-        def _raise(msg: str) -> None:
-            raise ValueError(msg)
-
-        # Fail-Fast Local input boundary validation
-        if not segment:
-            _raise("segment data cannot be empty")
-        if not segment.get("id"):
-            _raise("segment id is required")
-        if not segment.get("feed_id"):
-            _raise("segment feed_id is required")
-
         if is_gcp_env():
             token = get_id_token(self.api_url)
             self.session.headers.update({"Authorization": f"Bearer {token}"})

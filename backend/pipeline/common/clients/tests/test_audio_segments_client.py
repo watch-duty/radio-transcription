@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 from backend.pipeline.common.clients.audio_segments_client import (
     AudioSegmentsClient,
 )
+from backend.services.audio_segments.models import AnnotationType
 
 
 class TestAudioSegmentsClient(unittest.TestCase):
@@ -33,6 +34,9 @@ class TestAudioSegmentsClient(unittest.TestCase):
         self.assertIsNotNone(adapter)
         if adapter is not None:
             self.assertEqual(adapter.max_retries.total, 5)
+            self.assertEqual(
+                adapter.max_retries.status_forcelist, [429, 500, 502, 503, 504]
+            )
 
     def test_init_with_zero_max_retries(self) -> None:
         # Execute
@@ -57,7 +61,7 @@ class TestAudioSegmentsClient(unittest.TestCase):
         # Execute
         self.client.add_audio_segment_annotation(
             audio_segment_id="segment-id-123",
-            annotation_type="EVALUATION",
+            annotation_type=AnnotationType.EVALUATION,
             data=annotation_data,
         )
 
@@ -87,7 +91,7 @@ class TestAudioSegmentsClient(unittest.TestCase):
         # Execute
         self.client.add_audio_segment_annotation(
             audio_segment_id="segment-id-123",
-            annotation_type="EVALUATION",
+            annotation_type=AnnotationType.EVALUATION,
             data={"key": "val"},
         )
 
@@ -105,52 +109,9 @@ class TestAudioSegmentsClient(unittest.TestCase):
         with self.assertRaises(Exception):
             self.client.add_audio_segment_annotation(
                 audio_segment_id="segment-id-123",
-                annotation_type="EVALUATION",
+                annotation_type=AnnotationType.EVALUATION,
                 data={"key": "val"},
             )
-
-    def test_add_audio_segment_annotation_empty_id_raises_value_error(
-        self,
-    ) -> None:
-        # Execute & Verify
-        with self.assertRaises(ValueError) as cm:
-            self.client.add_audio_segment_annotation(
-                audio_segment_id="  ",
-                annotation_type="EVALUATION",
-                data={"key": "value"},
-            )
-        self.assertEqual(
-            str(cm.exception), "audio_segment_id cannot be empty or whitespace"
-        )
-        self.mock_session.post.assert_not_called()
-
-    def test_add_audio_segment_annotation_empty_type_raises_value_error(
-        self,
-    ) -> None:
-        # Execute & Verify
-        with self.assertRaises(ValueError) as cm:
-            self.client.add_audio_segment_annotation(
-                audio_segment_id="segment-123",
-                annotation_type="",
-                data={"key": "value"},
-            )
-        self.assertEqual(str(cm.exception), "annotation_type cannot be empty")
-        self.mock_session.post.assert_not_called()
-
-    def test_add_audio_segment_annotation_empty_payload_raises_value_error(
-        self,
-    ) -> None:
-        # Execute & Verify
-        with self.assertRaises(ValueError) as cm:
-            self.client.add_audio_segment_annotation(
-                audio_segment_id="segment-123",
-                annotation_type="EVALUATION",
-                data={},
-            )
-        self.assertEqual(
-            str(cm.exception), "annotation data payload cannot be empty"
-        )
-        self.mock_session.post.assert_not_called()
 
     def test_add_audio_segment_success(self) -> None:
         # Setup
