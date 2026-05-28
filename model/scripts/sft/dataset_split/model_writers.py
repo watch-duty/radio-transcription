@@ -125,6 +125,7 @@ def build_whisper_inputs(
     for segment in segment_tuple:
         rows_by_split[_require_split(segment)].append(_whisper_row(segment))
         if float(segment.duration) > _WHISPER_RECOMMENDED_MAX_DURATION_SECONDS:
+            model_ready_audio_uri = _require_model_ready_audio_uri(segment)
             warnings.append(
                 WriterWarning(
                     writer="whisper",
@@ -140,7 +141,8 @@ def build_whisper_inputs(
                         "recommended_max_duration_seconds": (
                             _WHISPER_RECOMMENDED_MAX_DURATION_SECONDS
                         ),
-                        "audio_uri": segment.audio_uri,
+                        "audio_uri": model_ready_audio_uri,
+                        "original_audio_uri": segment.original_audio_uri,
                         "example_id": segment.example_id,
                         "segment_id": segment.segment_id,
                     },
@@ -219,12 +221,15 @@ def build_gemini_inputs(
     rows_by_split = _empty_rows_by_split()
 
     for segment in segment_tuple:
+        model_ready_audio_uri = _require_model_ready_audio_uri(segment)
         row = build_example(
-            audio_uri=segment.audio_uri,
+            audio_uri=model_ready_audio_uri,
             gt_text=segment.text,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-            mime_type=_infer_audio_mime_type_for_segment(segment),
+            mime_type=_infer_audio_mime_type_for_uri(
+                segment, model_ready_audio_uri
+            ),
         )
         if not validate_example(row):
             raise ModelWriterError(
@@ -249,8 +254,9 @@ def build_gemini_inputs(
 
 
 def _nemo_row(segment: LabeledSegment) -> dict[str, object]:
+    model_ready_audio_uri = _require_model_ready_audio_uri(segment)
     return {
-        "audio_filepath": segment.audio_uri,
+        "audio_filepath": model_ready_audio_uri,
         "text": segment.text,
         "duration": segment.duration,
         "offset": segment.offset,
@@ -260,8 +266,9 @@ def _nemo_row(segment: LabeledSegment) -> dict[str, object]:
 
 
 def _whisper_row(segment: LabeledSegment) -> dict[str, object]:
+    model_ready_audio_uri = _require_model_ready_audio_uri(segment)
     return {
-        "audio_uri": segment.audio_uri,
+        "audio_uri": model_ready_audio_uri,
         "text": segment.text,
         "duration": segment.duration,
         "offset": segment.offset,
@@ -269,6 +276,7 @@ def _whisper_row(segment: LabeledSegment) -> dict[str, object]:
         "dataset_family": segment.dataset_family,
         "source_group": segment.source_group,
         "split": _require_split(segment),
+        "original_audio_uri": segment.original_audio_uri,
         "example_id": segment.example_id,
         "segment_id": segment.segment_id,
         "preprocessing": dict(_WHISPER_PREPROCESSING),
@@ -320,6 +328,15 @@ def _require_text(value: str, *, label: str) -> str:
     return text
 
 
+def _require_model_ready_audio_uri(segment: LabeledSegment) -> str:
+    uri = (segment.model_ready_audio_uri or "").strip()
+    if not uri.startswith("gs://"):
+        raise ModelWriterError(
+            f"row_index={segment.row_index} missing model_ready_audio_uri"
+        )
+    return uri
+
+
 def _require_adapter_size(value: str) -> str:
     adapter_size = _require_text(value, label="adapter_size")
     if adapter_size not in _GEMINI_ADAPTER_SIZES:
@@ -360,12 +377,15 @@ def _require_float_range(
     return normalized
 
 
-def _infer_audio_mime_type_for_segment(segment: LabeledSegment) -> str:
+def _infer_audio_mime_type_for_uri(
+    segment: LabeledSegment, audio_uri: str
+) -> str:
     try:
-        return infer_audio_mime_type(segment.audio_uri)
+        return infer_audio_mime_type(audio_uri)
     except ModelWriterError as exc:
         raise ModelWriterError(
-            f"row_index={segment.row_index} unsupported audio_uri={segment.audio_uri}"
+            "row_index="
+            f"{segment.row_index} unsupported model_ready_audio_uri={audio_uri}"
         ) from exc
 
 
