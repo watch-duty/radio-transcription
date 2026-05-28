@@ -106,35 +106,6 @@ class TestNemoWriter(unittest.TestCase):
             },
         )
 
-    def test_writers_do_not_mutate_benchmark_eval_manifests(self) -> None:
-        segments = (
-            _segment("feed-a", split="train", row_index=1),
-            _segment("feed-b", split="eval", row_index=2),
-        )
-
-        nemo = build_nemo_inputs(
-            segments,
-            train_manifest_uri="gs://wd-transcription-data/sft/v1/model_inputs/nemo/train.jsonl",
-            eval_manifest_uri="gs://wd-transcription-data/sft/v1/model_inputs/nemo/eval.jsonl",
-        )
-        whisper = build_whisper_inputs(segments)
-        output = json.dumps(
-            {
-                "nemo_rows": nemo.rows_by_split,
-                "nemo_config": nemo.config,
-                "whisper_rows": whisper.rows_by_split,
-                "warnings": whisper.warnings_by_writer(),
-            },
-            sort_keys=True,
-        )
-
-        for forbidden in (
-            "model/data",
-            "inference_manifests",
-            "benchmark",
-        ):
-            self.assertNotIn(forbidden, output)
-
 
 class TestWhisperWriter(unittest.TestCase):
     def test_whisper_writer_shape_and_warnings(self) -> None:
@@ -193,6 +164,37 @@ class TestWhisperWriter(unittest.TestCase):
             result.warnings_by_writer()["whisper"][0]["code"],
             "whisper_duration_over_30s",
         )
+
+
+class TestWriterSafety(unittest.TestCase):
+    def test_writers_do_not_mutate_benchmark_eval_manifests(self) -> None:
+        segments = (
+            _segment("feed-a", split="train", row_index=1),
+            _segment("feed-b", split="eval", row_index=2),
+        )
+
+        nemo = build_nemo_inputs(
+            segments,
+            train_manifest_uri="gs://wd-transcription-data/sft/v1/model_inputs/nemo/train.jsonl",
+            eval_manifest_uri="gs://wd-transcription-data/sft/v1/model_inputs/nemo/eval.jsonl",
+        )
+        whisper = build_whisper_inputs(segments)
+        output = json.dumps(
+            {
+                "nemo_rows": nemo.rows_by_split,
+                "nemo_config": nemo.config,
+                "whisper_rows": whisper.rows_by_split,
+                "warnings": whisper.warnings_by_writer(),
+            },
+            sort_keys=True,
+        )
+
+        for forbidden in (
+            "model/data",
+            "inference_manifests",
+            "benchmark",
+        ):
+            self.assertNotIn(forbidden, output)
 
 
 if __name__ == "__main__":
