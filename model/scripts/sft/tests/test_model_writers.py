@@ -36,7 +36,13 @@ def _segment(
     offset: float = 3.0,
     text: str = "engine 41 copy",
     audio_suffix: str = "mp3",
+    model_ready_audio_uri: str | None = "DEFAULT",
 ) -> LabeledSegment:
+    ready_uri = (
+        f"gs://wd-ready/{source_group}/{row_index}.{audio_suffix}"
+        if model_ready_audio_uri == "DEFAULT"
+        else model_ready_audio_uri
+    )
     return LabeledSegment(
         dataset_name="calls",
         dataset_family="bcfy_calls",
@@ -54,6 +60,7 @@ def _segment(
         example_id=f"example-{row_index}",
         segment_id=f"segment-{row_index}",
         split=split,
+        model_ready_audio_uri=ready_uri,
         raw_row={
             "benchmark_path": "model/data/inference_manifests/benchmark.jsonl"
         },
@@ -83,13 +90,30 @@ class TestNemoWriter(unittest.TestCase):
                 "segment_id",
             },
         )
-        self.assertEqual(row["audio_filepath"], segment.audio_uri)
+        self.assertEqual(
+            row["audio_filepath"], segment.model_ready_audio_uri
+        )
+        self.assertNotEqual(row["audio_filepath"], segment.audio_uri)
         self.assertEqual(row["text"], segment.text)
         self.assertEqual(row["duration"], segment.duration)
         self.assertEqual(row["offset"], segment.offset)
         self.assertEqual(row["example_id"], segment.example_id)
         self.assertEqual(row["segment_id"], segment.segment_id)
         self.assertEqual(result.rows_by_split["eval"], ())
+
+    def test_nemo_requires_model_ready_audio_uri(self) -> None:
+        segment = _segment(
+            "feed-a", row_index=11, model_ready_audio_uri=None
+        )
+
+        with self.assertRaisesRegex(
+            ModelWriterError, "row_index=11 missing model_ready_audio_uri"
+        ):
+            build_nemo_inputs(
+                (segment,),
+                train_manifest_uri="gs://wd-transcription-data/sft/v1/model_inputs/nemo/train.jsonl",
+                eval_manifest_uri="gs://wd-transcription-data/sft/v1/model_inputs/nemo/eval.jsonl",
+            )
 
     def test_nemo_config_references_train_and_eval_manifests(self) -> None:
         train_uri = (
@@ -135,12 +159,17 @@ class TestWhisperWriter(unittest.TestCase):
                 "dataset_family",
                 "source_group",
                 "split",
+                "original_audio_uri",
                 "example_id",
                 "segment_id",
                 "preprocessing",
             },
         )
-        self.assertEqual(row["audio_uri"], segment.audio_uri)
+        self.assertEqual(row["audio_uri"], segment.model_ready_audio_uri)
+        self.assertNotEqual(row["audio_uri"], segment.audio_uri)
+        self.assertEqual(
+            row["original_audio_uri"], segment.original_audio_uri
+        )
         self.assertEqual(row["dataset_name"], segment.dataset_name)
         self.assertEqual(row["dataset_family"], segment.dataset_family)
         self.assertEqual(row["source_group"], segment.source_group)
@@ -172,6 +201,16 @@ class TestWhisperWriter(unittest.TestCase):
             result.warnings_by_writer()["whisper"][0]["code"],
             "whisper_duration_over_30s",
         )
+
+    def test_whisper_requires_model_ready_audio_uri(self) -> None:
+        segment = _segment(
+            "feed-a", row_index=12, model_ready_audio_uri=None
+        )
+
+        with self.assertRaisesRegex(
+            ModelWriterError, "row_index=12 missing model_ready_audio_uri"
+        ):
+            build_whisper_inputs((segment,))
 
 
 class TestGeminiWriter(unittest.TestCase):
@@ -215,11 +254,15 @@ class TestGeminiWriter(unittest.TestCase):
         )
         self.assertEqual(train_row["contents"][0]["role"], "user")
         self.assertEqual(train_row["contents"][1]["role"], "model")
+        self.assertNotEqual(
+            train_row["contents"][0]["parts"][0]["fileData"]["fileUri"],
+            segments[0].audio_uri,
+        )
         self.assertEqual(
             train_row["contents"][0]["parts"][0]["fileData"],
             {
                 "mimeType": "audio/flac",
-                "fileUri": segments[0].audio_uri,
+                "fileUri": segments[0].model_ready_audio_uri,
             },
         )
         self.assertEqual(
@@ -278,7 +321,12 @@ class TestGeminiWriter(unittest.TestCase):
                     )
 
     def test_gemini_writer_rejects_unsupported_audio_mime(self) -> None:
-        segment = _segment("feed-a", row_index=9, audio_suffix="wav")
+        segment = _segment(
+            "feed-a",
+            row_index=9,
+            audio_suffix="flac",
+            model_ready_audio_uri="gs://wd-ready/feed-a/9.wav",
+        )
 
         with self.assertRaisesRegex(ModelWriterError, "row_index=9"):
             build_gemini_inputs(
@@ -296,8 +344,64 @@ class TestGeminiWriter(unittest.TestCase):
             infer_audio_mime_type("gs://bucket/a.mp3"), "audio/mpeg"
         )
 
+    def test_gemini_requires_model_ready_audio_uri(self) -> None:
+        segment = _segment(
+            "feed-a", row_index=13, model_ready_audio_uri=None
+        )
+
+        with self.assertRaisesRegex(
+            ModelWriterError, "row_index=13 missing model_ready_audio_uri"
+        ):
+            build_gemini_inputs(
+                (segment,),
+                system_prompt="sys",
+                user_prompt="user",
+                training_dataset_uri="gs://wd-transcription-data/sft/dv-001/model_inputs/gemini/train.jsonl",
+            )
+
 
 class TestWriterSafety(unittest.TestCase):
+    def test_writers_reject_non_gcs_model_ready_audio_uri(self) -> None:
+        invalid_values = (
+            "",
+            " https://example.invalid/audio.flac ",
+            "s3://bucket/audio.flac",
+        )
+
+        for invalid in invalid_values:
+            segment = _segment(
+                "feed-a",
+                row_index=14,
+                model_ready_audio_uri=invalid,
+            )
+            with self.subTest(writer="nemo", invalid=invalid):
+                with self.assertRaisesRegex(
+                    ModelWriterError,
+                    "row_index=14 missing model_ready_audio_uri",
+                ):
+                    build_nemo_inputs(
+                        (segment,),
+                        train_manifest_uri="gs://wd-transcription-data/sft/v1/model_inputs/nemo/train.jsonl",
+                        eval_manifest_uri="gs://wd-transcription-data/sft/v1/model_inputs/nemo/eval.jsonl",
+                    )
+            with self.subTest(writer="whisper", invalid=invalid):
+                with self.assertRaisesRegex(
+                    ModelWriterError,
+                    "row_index=14 missing model_ready_audio_uri",
+                ):
+                    build_whisper_inputs((segment,))
+            with self.subTest(writer="gemini", invalid=invalid):
+                with self.assertRaisesRegex(
+                    ModelWriterError,
+                    "row_index=14 missing model_ready_audio_uri",
+                ):
+                    build_gemini_inputs(
+                        (segment,),
+                        system_prompt="sys",
+                        user_prompt="user",
+                        training_dataset_uri="gs://wd-transcription-data/sft/v1/model_inputs/gemini/train.jsonl",
+                    )
+
     def test_writers_do_not_mutate_benchmark_eval_manifests(self) -> None:
         segments = (
             _segment("feed-a", split="train", row_index=1),
