@@ -278,6 +278,185 @@ class TestPipelineEvalKeywordMetrics(unittest.TestCase):
             self.assertEqual(metrics["n_eval_examples"], 1)
             self.assertEqual(metrics["base_empty_rate"], 100.0)
 
+    def test_eval_duplicate_audio_uris_do_not_warn_missing_predictions(
+        self,
+    ) -> None:
+        import pipeline
+
+        with tempfile.TemporaryDirectory() as tmp:
+            results_dir = Path(tmp) / "results"
+            round_dir = results_dir / "round-duplicates"
+            round_dir.mkdir(parents=True)
+            (round_dir / "config.json").write_text(
+                json.dumps(
+                    {
+                        "round_id": "round-duplicates",
+                        "datasets": ["echo"],
+                        "system_prompt": "sys",
+                        "user_prompt": "user",
+                        "base_model": "gemini-3.1-flash-lite",
+                    }
+                )
+            )
+
+            storage_client = unittest.mock.MagicMock()
+            storage_client.bucket.return_value.list_blobs.return_value = [
+                types.SimpleNamespace(name="out/predictions.jsonl")
+            ]
+
+            def fake_download_blob_to_file(
+                _client, _bucket: str, _blob: str, local_path: str
+            ) -> None:
+                output = {
+                    "request": {
+                        "contents": [
+                            {
+                                "parts": [
+                                    {
+                                        "fileData": {
+                                            "fileUri": "gs://bucket/a.flac"
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    "response": {
+                        "candidates": [
+                            {"content": {"parts": [{"text": "engine 41"}]}}
+                        ]
+                    },
+                }
+                Path(local_path).write_text(json.dumps(output) + "\n")
+
+            with (
+                unittest.mock.patch.object(
+                    pipeline, "RESULTS_DIR", results_dir
+                ),
+                unittest.mock.patch.object(
+                    pipeline,
+                    "_load_registry",
+                    return_value={
+                        "datasets": {
+                            "echo": {
+                                "adapter": "gcs_manifest",
+                                "eval_manifest_uri": "gs://bucket/eval.jsonl",
+                            }
+                        }
+                    },
+                ),
+                unittest.mock.patch(
+                    "google.cloud.storage.Client",
+                    return_value=storage_client,
+                ),
+                unittest.mock.patch(
+                    "common.gcs_utils.download_jsonl_manifest",
+                    return_value=[
+                        {
+                            "audio_filepath": "gs://bucket/a.flac",
+                            "text": "engine 41",
+                            "duration": 5.0,
+                        },
+                        {
+                            "audio_filepath": "gs://bucket/a.flac",
+                            "text": "engine 41",
+                            "duration": 5.0,
+                        },
+                    ],
+                ),
+                unittest.mock.patch("common.gcs_utils.upload_file_to_blob"),
+                unittest.mock.patch(
+                    "common.gcs_utils.download_blob_to_file",
+                    side_effect=fake_download_blob_to_file,
+                ),
+                unittest.mock.patch(
+                    "common.scoring.build_normalizer",
+                    return_value=lambda text: text.lower(),
+                ),
+                unittest.mock.patch(
+                    "common.vertex.submit_batch_inference",
+                    return_value="gs://bucket/out/",
+                ),
+                self.assertNoLogs("pipeline", level="WARNING"),
+            ):
+                rc = pipeline._eval(
+                    argparse.Namespace(
+                        round_id="round-duplicates",
+                        base_only=True,
+                        location="us-central1",
+                    )
+                )
+
+        self.assertEqual(rc, 0)
+
+    def test_eval_batch_submit_failure_returns_clean_error(self) -> None:
+        import pipeline
+
+        with tempfile.TemporaryDirectory() as tmp:
+            results_dir = Path(tmp) / "results"
+            round_dir = results_dir / "round-batch-fails"
+            round_dir.mkdir(parents=True)
+            (round_dir / "config.json").write_text(
+                json.dumps(
+                    {
+                        "round_id": "round-batch-fails",
+                        "datasets": ["echo"],
+                        "system_prompt": "sys",
+                        "user_prompt": "user",
+                        "base_model": "gemini-3.1-flash-lite",
+                    }
+                )
+            )
+
+            with (
+                unittest.mock.patch.object(
+                    pipeline, "RESULTS_DIR", results_dir
+                ),
+                unittest.mock.patch.object(
+                    pipeline,
+                    "_load_registry",
+                    return_value={
+                        "datasets": {
+                            "echo": {
+                                "adapter": "gcs_manifest",
+                                "eval_manifest_uri": "gs://bucket/eval.jsonl",
+                            }
+                        }
+                    },
+                ),
+                unittest.mock.patch("google.cloud.storage.Client"),
+                unittest.mock.patch(
+                    "common.gcs_utils.download_jsonl_manifest",
+                    return_value=[
+                        {
+                            "audio_filepath": "gs://bucket/a.flac",
+                            "text": "engine 41",
+                            "duration": 5.0,
+                        }
+                    ],
+                ),
+                unittest.mock.patch("common.gcs_utils.upload_file_to_blob"),
+                unittest.mock.patch(
+                    "common.scoring.build_normalizer",
+                    return_value=lambda text: text.lower(),
+                ),
+                unittest.mock.patch(
+                    "common.vertex.submit_batch_inference",
+                    side_effect=TimeoutError("batch timed out"),
+                ),
+                self.assertLogs("pipeline", level="ERROR") as logs,
+            ):
+                rc = pipeline._eval(
+                    argparse.Namespace(
+                        round_id="round-batch-fails",
+                        base_only=True,
+                        location="us-central1",
+                    )
+                )
+
+        self.assertEqual(rc, 1)
+        self.assertIn("[base] Batch inference failed", "\n".join(logs.output))
+
 
 class TestWerSummaryKeywordMetrics(unittest.TestCase):
     def test_write_wer_summary_renders_keyword_accuracy(self) -> None:

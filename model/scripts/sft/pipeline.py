@@ -612,7 +612,10 @@ def _tune(args: argparse.Namespace) -> int:
     )
 
     if not args.confirm:
-        answer = input("Type 'yes' to proceed with tune: ").strip().lower()
+        try:
+            answer = input("Type 'yes' to proceed with tune: ").strip().lower()
+        except EOFError:
+            answer = ""
         if answer != "yes":
             logger.info("Tune aborted by operator.")
             return 130
@@ -827,18 +830,22 @@ def _eval(args: argparse.Namespace) -> int:
                 result[uri] = pred
         return result
 
-    def _batch_infer(model_id: str, label: str) -> dict[str, str]:
+    def _batch_infer(model_id: str, label: str) -> dict[str, str] | None:
         """Build batch JSONL, submit, download, parse -> {audio_uri: pred_text}."""
         with tempfile.TemporaryDirectory() as tmp:
             batch_input_gcs, batch_output_gcs = _build_batch_jsonl(label, tmp)
 
-            output_loc = submit_batch_inference(
-                input_uri=batch_input_gcs,
-                output_uri=batch_output_gcs,
-                model=model_id,
-                project=gcp_project,
-                location=location,
-            )
+            try:
+                output_loc = submit_batch_inference(
+                    input_uri=batch_input_gcs,
+                    output_uri=batch_output_gcs,
+                    model=model_id,
+                    project=gcp_project,
+                    location=location,
+                )
+            except (RuntimeError, TimeoutError) as e:
+                logger.error(f"[{label}] Batch inference failed: {e}")  # noqa: TRY400
+                return None
 
             # Locate the batch results. The genai batches API writes them under
             # output_loc (often in a generated subfolder) and may shard the output,
@@ -867,12 +874,13 @@ def _eval(args: argparse.Namespace) -> int:
                 preds.update(
                     _parse_batch_output(local_path.read_text(encoding="utf-8"))
                 )
-            missing = len(eval_rows) - len(preds)
+            expected_count = len({row.audio_filepath for row in eval_rows})
+            missing = max(0, expected_count - len(preds))
             if missing > 0:
                 logger.warning(
-                    f"[{label}] {missing}/{len(eval_rows)} segments returned no "
-                    f"prediction (Vertex batch errors or skips) -- they score as full "
-                    f"deletions; check for a batch/API failure, not just model quality."
+                    f"[{label}] {missing}/{expected_count} unique segments returned no "
+                    "prediction (Vertex batch errors or skips) -- they score as full "
+                    "deletions; check for a batch/API failure, not just model quality."
                 )
             return preds
 
@@ -881,6 +889,8 @@ def _eval(args: argparse.Namespace) -> int:
     # Run base model batch inference
     logger.info("Running base model batch inference...")
     base_preds = _batch_infer(base_model, "base")
+    if base_preds is None:
+        return 1
 
     refs = [row.text for row in eval_rows]
     durations = [row.duration for row in eval_rows]
@@ -939,6 +949,8 @@ def _eval(args: argparse.Namespace) -> int:
     if not base_only and tuned_endpoint:
         logger.info("Running tuned model batch inference...")
         tuned_preds = _batch_infer(tuned_endpoint, "tuned")
+        if tuned_preds is None:
+            return 1
         tuned_hyps = [
             tuned_preds.get(row.audio_filepath, "") for row in eval_rows
         ]
