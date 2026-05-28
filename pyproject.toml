@@ -225,7 +225,7 @@ known-first-party = ["backend", "local_dev"]
   "S113",   # requests.* require timeout=
   "T201",   # `print()` found
 ]
-# model/scripts/sft/ — SFT pipeline scripts (QUAL-01: full lint compliance deferred to v2).
+# model/scripts/sft/ — SFT pipeline scripts.
 # Relaxed rule set matching model/data_sources/ conventions; TC/FBT/EM/PLC/PLR
 # are suppressed because scripts/ uses lazy imports, boolean kwargs, and
 # non-top-level imports by design. INP001 suppressed (no __init__.py at scripts/sft/).

@@ -1,9 +1,9 @@
 """Data-quality preflight -- hard gate before any paid tune run.
 
-D-13 (CONTEXT.md): On ANY violation, write a preflight report to report_path, exit non-zero,
-do NOT proceed to tune. No --allow-filter escape hatch. Operator fixes the data.
-D-14 checks: per-example token limit (131,072), empty/whitespace targets, duplicate fileUris,
-fileUri reachability via blob_exists; pre-split: non-empty + disjoint train/val.
+On any violation, write a preflight report to report_path and stop before tune.
+The operator fixes the data; there is no auto-filter escape hatch.
+Checks include per-example token limit, empty/whitespace targets, duplicate fileUris,
+fileUri reachability via blob_exists, and non-empty/disjoint train/val splits.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ def _safe_blob_exists(storage_client: object, uri: str) -> bool:
 
     ``blob_exists`` calls ``parse_gcs_uri``, which raises on a non-``gs://`` URI. Without
     this guard a single malformed fileUri would crash ``run_preflight`` before the report
-    is written, violating the D-13 contract (a hard gate ALWAYS writes a preflight report).
+    is written. The hard gate should always write a preflight report.
     A malformed URI is reported downstream as "not reachable" (and also fails
     validate_example), so the operator still gets a clear, actionable failure.
     """
@@ -178,7 +178,7 @@ def run_preflight(
 ) -> PreflightReport:
     """Run all preflight checks. Write report + return result. Never mutates data.
 
-    Checks (D-14):
+    Checks:
     1. Non-empty train split (at least 1 example)
     2. If val provided: non-empty val split; disjoint train/val fileUris
     3. Per-example: validate_example (empty target), estimated token cap, fileUri reachability

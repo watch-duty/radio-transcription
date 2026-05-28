@@ -2,8 +2,8 @@
 
 Writes:
   config.json   — resolved config, git SHA, dep versions, tuned-model resource name
-  wer_summary.{md,json} — base vs. tuned WER + full scoring panel (D-15)
-  ledger.md     — appended one-row summary per eval run (PIPE-07)
+  wer_summary.{md,json} — base vs. tuned WER + full scoring panel
+  ledger.md     — appended one-row summary per eval run
 """
 
 from __future__ import annotations
@@ -60,8 +60,6 @@ def write_config(
     """Write (or overwrite) results/<round-id>/config.json with resolved run config.
 
     Always adds written_at, git_sha, and dep_versions to the written JSON.
-    PIPE-07: config.json records resolved config, git SHA, dep versions, and
-    tuned-model resource name (job_name / endpoint).
     """
     config_with_meta = {
         **config,
@@ -83,8 +81,9 @@ def write_wer_summary(
 ) -> None:
     """Write results/<round-id>/wer_summary.{json,md}.
 
-    D-15: full panel — WER, CER, ins/del/sub, empty/halluc rate, duration buckets,
-    keyword accuracy, bootstrap_paired CI. Degrades gracefully when tuned metrics absent.
+    Includes WER, CER, ins/del/sub, empty/hallucination rate, duration buckets,
+    keyword accuracy, and bootstrap paired CI. Degrades gracefully when tuned metrics
+    are absent.
     """
     out_dir = results_dir / round_id
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -237,7 +236,6 @@ def append_ledger(results_dir: Path, row: dict[str, Any]) -> None:
 
     Row fields: round_id, datasets, base_model, epochs, base_wer, tuned_wer (optional),
     delta (optional), git_sha, timestamp.
-    PIPE-07: appended one row per completed eval run.
     """
     ledger_path = results_dir / "ledger.md"
     header = (

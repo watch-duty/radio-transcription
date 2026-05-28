@@ -70,10 +70,10 @@ via the `gcs_manifest` adapter:
 
 | Name   | Adapter      | License          | Notes |
 |--------|--------------|------------------|-------|
-| `echo` | gcs_manifest | Proprietary (WD) | `train_manifest_uri` requires the Phase 4 cluster-split script |
+| `echo` | gcs_manifest | Proprietary (WD) | `train_manifest_uri` requires the cluster-split script |
 
 Note: The Echo `train_manifest_uri` in `datasets.toml` is a placeholder — it must be
-populated after the cluster-split script runs (Phase 4 prerequisite, DESIGN.md #14).
+populated after the cluster-split script runs.
 
 (The earlier HuggingFace ATC augmentation datasets — atcosim / uwb_atcc / atco2 — and the
 `hf_dataset` adapter were removed to keep the pipeline Echo-only.)
@@ -99,8 +99,8 @@ Per-run records are written to `results/<round-id>/`:
 - `wer_summary.{md,json}` — evaluation metrics (base WER, tuned WER, delta, bootstrap CI)
 - `results/ledger.md` — one-row-per-run summary table
 
-Built training JSONL files are NOT git-committed (D-16 governance — they contain proprietary
-Watch Duty Echo transcripts).
+Built training JSONL files are NOT git-committed because they contain proprietary Watch
+Duty Echo transcripts.
 
 ## Prompt Parity
 
