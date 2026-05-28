@@ -82,7 +82,7 @@ def _load_round_config(round_id: str) -> dict:
 
 def _parse_dataset_names(value: str) -> list[str]:
     """Parse comma-separated dataset names, preserving first occurrence order."""
-    return list(dict.fromkeys(d.strip() for d in value.split(",")))
+    return list(dict.fromkeys(d.strip() for d in value.split(",") if d.strip()))
 
 
 def _resolve_gcp_project(
@@ -116,6 +116,11 @@ def _resolve_gcs_bucket(
 
 
 def _gcs_sft_prefix(bucket: str) -> str:
+    bucket = bucket.strip()
+    if not bucket or bucket.startswith("gs://") or "/" in bucket:
+        raise ValueError(
+            "--gcs-bucket expects a bucket name, not a gs:// URI or path"
+        )
     return f"gs://{bucket}/sft"
 
 
@@ -328,10 +333,17 @@ def _build(args: argparse.Namespace) -> int:
 
     registry = _load_registry()
     dataset_names = _parse_dataset_names(args.datasets)
+    if not dataset_names:
+        logger.error("No datasets specified. Pass at least one dataset name.")
+        return 1
     config = _load_round_config(args.round_id)
     gcp_project = _resolve_gcp_project(args, config)
     gcs_bucket = _resolve_gcs_bucket(args, config)
-    gcs_sft_prefix = _gcs_sft_prefix(gcs_bucket)
+    try:
+        gcs_sft_prefix = _gcs_sft_prefix(gcs_bucket)
+    except ValueError as e:
+        logger.error(str(e))  # noqa: TRY400
+        return 1
 
     # Validate requested datasets exist in registry
     for ds_name in dataset_names:
@@ -455,7 +467,11 @@ def _tune(args: argparse.Namespace) -> int:
     location = getattr(args, "location", "us-central1")
     gcp_project = _resolve_gcp_project(args, config)
     gcs_bucket = _resolve_gcs_bucket(args, config)
-    gcs_sft_prefix = _gcs_sft_prefix(gcs_bucket)
+    try:
+        gcs_sft_prefix = _gcs_sft_prefix(gcs_bucket)
+    except ValueError as e:
+        logger.error(str(e))  # noqa: TRY400
+        return 1
     config["gcp_project"] = gcp_project
     config["gcs_bucket"] = gcs_bucket
     config["gcs_sft_prefix"] = gcs_sft_prefix
@@ -673,7 +689,11 @@ def _eval(args: argparse.Namespace) -> int:
 
     gcp_project = _resolve_gcp_project(args, config)
     gcs_bucket = _resolve_gcs_bucket(args, config)
-    gcs_sft_prefix = _gcs_sft_prefix(gcs_bucket)
+    try:
+        gcs_sft_prefix = _gcs_sft_prefix(gcs_bucket)
+    except ValueError as e:
+        logger.error(str(e))  # noqa: TRY400
+        return 1
 
     storage_client = storage.Client(project=gcp_project)
     location = getattr(args, "location", "us-central1")
@@ -745,7 +765,13 @@ def _eval(args: argparse.Namespace) -> int:
         for line in text.splitlines():
             if not line.strip():
                 continue
-            obj = json.loads(line)
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                logger.warning("Skipping malformed batch output JSONL row")
+                continue
+            if not isinstance(obj, dict):
+                continue
             if obj.get("status") or not isinstance(
                 obj.get("request"), dict
             ):  # error / non-prediction
@@ -764,18 +790,39 @@ def _eval(args: argparse.Namespace) -> int:
             # snake_case, so accept BOTH fileData/fileUri and file_data/file_uri.
             uri = None
             for p in parts:
+                if not isinstance(p, dict):
+                    continue
                 fd = p.get("file_data") or p.get("fileData")
-                if fd:
-                    uri = fd.get("file_uri") or fd.get("fileUri")
+                if isinstance(fd, dict):
+                    candidate_uri = fd.get("file_uri") or fd.get("fileUri")
+                    uri = (
+                        candidate_uri
+                        if isinstance(candidate_uri, str)
+                        else None
+                    )
                     if uri:
                         break
-            cands = obj.get("response", {}).get("candidates", [])
+            response = obj.get("response")
+            cands = (
+                response.get("candidates", [])
+                if isinstance(response, dict)
+                else []
+            )
             pred = ""
-            if cands:
-                for tp in cands[0].get("content", {}).get("parts", []):
-                    if "text" in tp:
-                        pred = tp["text"]
-                        break
+            if cands and isinstance(cands, list) and isinstance(cands[0], dict):
+                content = cands[0].get("content", {})
+                text_parts = (
+                    content.get("parts", [])
+                    if isinstance(content, dict)
+                    else []
+                )
+                if isinstance(text_parts, list):
+                    for tp in text_parts:
+                        if isinstance(tp, dict) and isinstance(
+                            tp.get("text"), str
+                        ):
+                            pred = tp["text"]
+                            break
             if uri:
                 result[uri] = pred
         return result
@@ -964,7 +1011,7 @@ def _eval(args: argparse.Namespace) -> int:
             "tuned_wer": metrics.get("tuned_wer"),
         }
     )
-    write_config(RESULTS_DIR, args.round_id, config)
+    config = write_config(RESULTS_DIR, args.round_id, config)
     append_ledger(
         RESULTS_DIR,
         {

@@ -114,6 +114,7 @@ class TestPipelineEvalKeywordMetrics(unittest.TestCase):
                     "common.vertex.submit_batch_inference",
                     return_value="gs://bucket/out/",
                 ),
+                unittest.mock.patch("records._git_sha", return_value="abc123"),
             ):
                 rc = pipeline._eval(
                     argparse.Namespace(
@@ -132,6 +133,9 @@ class TestPipelineEvalKeywordMetrics(unittest.TestCase):
             }
             self.assertEqual(by_keyword["copy"]["accuracy"], 0.0)
             self.assertEqual(by_keyword["engine"]["accuracy"], 100.0)
+            ledger = (results_dir / "ledger.md").read_text()
+            self.assertIn("| round-keywords | echo | gemini-2.5-flash", ledger)
+            self.assertIn("| abc123 |", ledger)
 
     def test_eval_skips_malformed_batch_output_rows(self) -> None:
         import pipeline
@@ -160,15 +164,62 @@ class TestPipelineEvalKeywordMetrics(unittest.TestCase):
             def fake_download_blob_to_file(
                 _client, _bucket: str, _blob: str, local_path: str
             ) -> None:
-                malformed_output = {
-                    "request": {},
-                    "response": {
-                        "candidates": [
-                            {"content": {"parts": [{"text": "engine 41"}]}}
-                        ]
+                malformed_outputs = [
+                    {
+                        "request": {},
+                        "response": {
+                            "candidates": [
+                                {"content": {"parts": [{"text": "engine 41"}]}}
+                            ]
+                        },
                     },
-                }
-                Path(local_path).write_text(json.dumps(malformed_output) + "\n")
+                    {
+                        "request": {
+                            "contents": [{"parts": [None]}],
+                        },
+                        "response": None,
+                    },
+                    {
+                        "request": {
+                            "contents": [
+                                {
+                                    "parts": [
+                                        {
+                                            "fileData": {
+                                                "fileUri": "gs://bucket/a.flac"
+                                            }
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        "response": {"candidates": [None]},
+                    },
+                    {
+                        "request": {
+                            "contents": [
+                                {
+                                    "parts": [
+                                        {
+                                            "fileData": {
+                                                "fileUri": "gs://bucket/a.flac"
+                                            }
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        "response": {
+                            "candidates": [
+                                {"content": {"parts": [None]}},
+                            ]
+                        },
+                    },
+                ]
+                Path(local_path).write_text(
+                    "\n".join(json.dumps(obj) for obj in malformed_outputs)
+                    + "\n"
+                )
 
             with (
                 unittest.mock.patch.object(

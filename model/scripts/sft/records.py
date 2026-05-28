@@ -56,7 +56,7 @@ def _dep_versions() -> dict[str, str]:
 
 def write_config(
     results_dir: Path, round_id: str, config: dict[str, Any]
-) -> None:
+) -> dict[str, Any]:
     """Write (or overwrite) results/<round-id>/config.json with resolved run config.
 
     Always adds written_at, git_sha, and dep_versions to the written JSON.
@@ -75,6 +75,7 @@ def write_config(
         json.dumps(config_with_meta, indent=2, default=str),
         encoding="utf-8",
     )
+    return config_with_meta
 
 
 def write_wer_summary(
