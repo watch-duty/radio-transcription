@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 import re
+from pathlib import Path
 from typing import Any
 
 from common.gcs_utils import parse_gcs_uri
+from dataset_split.types import LabeledSegment
 
 try:
     from google.api_core.exceptions import PreconditionFailed
@@ -13,7 +17,9 @@ except ImportError:  # pragma: no cover - google-cloud-storage is a model dep.
 
 
 DATASET_VERSION_ROOT = "gs://wd-transcription-data/sft"
+_AUDIO_OBJECT_ACTIONS = frozenset({"copied", "derived", "transcoded"})
 _SAFE_PATH_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_UNSAFE_PATH_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 class DatasetArtifactError(ValueError):
@@ -157,6 +163,44 @@ def upload_text_create_only(
     return uri
 
 
+def audio_object_uri(
+    layout: DatasetArtifactLayout,
+    *,
+    action: str,
+    segment: LabeledSegment,
+    suffix: str,
+) -> str:
+    action = _clean_audio_action(action)
+    suffix = _clean_suffix(suffix)
+    object_name = _audio_object_name(segment, suffix=suffix)
+    return _join_uri(layout.audio_prefix_uri, action, object_name)
+
+
+def upload_file_create_only(
+    storage_client: object,
+    uri: str,
+    local_path: str | Path,
+    *,
+    content_type: str,
+) -> str:
+    bucket_name, blob_path = parse_gcs_uri(uri)
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.blob(blob_path)
+    try:
+        blob.upload_from_filename(
+            str(local_path),
+            content_type=content_type,
+            if_generation_match=0,
+        )
+    except Exception as exc:
+        if _is_precondition_failure(exc):
+            raise DatasetVersionExistsError(
+                f"dataset version object already exists at {uri}"
+            ) from exc
+        raise
+    return uri
+
+
 def _join_uri(root_uri: str, *parts: str, trailing: bool = False) -> str:
     root = root_uri.rstrip("/")
     path = "/".join(part.strip("/") for part in parts)
@@ -181,6 +225,50 @@ def _clean_suffix(value: str) -> str:
     cleaned = value.strip().lstrip(".")
     _clean_path_part(cleaned, label="suffix")
     return cleaned
+
+
+def _clean_audio_action(value: str) -> str:
+    cleaned = _clean_path_part(value, label="audio action")
+    if cleaned not in _AUDIO_OBJECT_ACTIONS:
+        raise DatasetArtifactError(
+            "audio action must be one of "
+            f"{sorted(_AUDIO_OBJECT_ACTIONS)}: {value}"
+        )
+    return cleaned
+
+
+def _audio_object_name(segment: LabeledSegment, *, suffix: str) -> str:
+    dataset_name = _generated_path_part(
+        segment.dataset_name, fallback="dataset"
+    )
+    row_part = f"row-{segment.row_index}"
+    digest = hashlib.sha256(
+        json.dumps(
+            {
+                "dataset_name": segment.dataset_name,
+                "row_index": segment.row_index,
+                "example_id": segment.example_id,
+                "segment_id": segment.segment_id,
+                "audio_uri": segment.audio_uri,
+                "original_audio_uri": segment.original_audio_uri,
+                "offset": segment.offset,
+                "duration": segment.duration,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()[:12]
+    object_stem = _clean_path_part(
+        f"{dataset_name}-{row_part}-{digest}", label="audio object name"
+    )
+    return f"{object_stem}.{suffix}"
+
+
+def _generated_path_part(value: str, *, fallback: str) -> str:
+    cleaned = _UNSAFE_PATH_CHARS.sub("-", value.strip()).strip(".-_")
+    if not cleaned:
+        cleaned = fallback
+    return _clean_path_part(cleaned, label="generated path part")
 
 
 def _clean_root_prefix(root_prefix: str) -> str:
