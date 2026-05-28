@@ -62,6 +62,21 @@ python pipeline.py all --datasets echo --round-id 2026-06-01-echo \
   --base-model gemini-2.5-flash --confirm
 ```
 
+## Dataset Split Runbook
+
+```bash
+python split_dataset.py dry-run --config-uri gs://... --output-dir ./dry-run-out
+python split_dataset.py generate --config-uri gs://...
+```
+
+- Source Group: the leak-safe audio source identity that must stay entirely in either train or eval.
+- Labeled Segment: one normalized transcript row with audio URI, text, duration, source group, and split metadata.
+- SFT Example: one model-specific training or eval row derived from a labeled segment.
+- SFT Eval Split: the held-out eval portion produced by the dataset split, distinct from post-tuning model evaluation.
+- Dataset Version: the immutable generated artifact set for one configured split run.
+
+Exact generated paths are printed by `split_dataset.py` and recorded in `dataset_version_report.json`.
+
 ## Datasets
 
 The Gemini SFT pipeline is **Echo-only** - it fine-tunes Gemini on Watch Duty's
