@@ -252,7 +252,12 @@ class TestDatasetArtifacts(unittest.TestCase):
             layout.model_input_uri("nemo", "train", "../json")
 
     def test_layout_rejects_invalid_root_prefix(self) -> None:
-        for root_prefix in ("", "s3://bucket/sft", "gs:///sft", "gs://b/../sft"):
+        for root_prefix in (
+            "",
+            "s3://bucket/sft",
+            "gs:///sft",
+            "gs://b/../sft",
+        ):
             with self.subTest(root_prefix=root_prefix):
                 with self.assertRaises(DatasetArtifactError):
                     DatasetArtifactLayout.for_dataset_version(

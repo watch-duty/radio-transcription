@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from dataset_split.artifacts import (
@@ -30,6 +30,15 @@ from dataset_split.types import LabeledSegment
 _JSON = "application/json"
 _JSONL = "application/x-ndjson"
 _MARKDOWN = "text/markdown"
+_FORBIDDEN_SFT_RUN_KEYS = frozenset(
+    {
+        "tuned_model_id",
+        "endpoint",
+        "training_metrics",
+        "post_run_wer",
+        "run_comparison",
+    }
+)
 
 
 class DatasetPublicationError(ValueError):
@@ -78,6 +87,7 @@ def publish_dataset_version_artifacts(
     gemini_learning_rate_multiplier: float = 1.0,
 ) -> DatasetPublicationResult:
     segment_tuple = tuple(segments)
+    _reject_sft_run_fields(resolved_config)
     layout = DatasetArtifactLayout.for_dataset_version(
         dataset_version_id, root_prefix=root_prefix
     )
@@ -206,6 +216,7 @@ def _artifact_inventory(
             "json": layout.reports_json_uri,
             "markdown": layout.reports_markdown_uri,
         },
+        "audio_prefix": layout.audio_prefix_uri,
     }
 
 
@@ -342,4 +353,22 @@ def _planned_artifacts(
 
 
 def _json_dump(value: object) -> str:
-    return json.dumps(value, indent=2, sort_keys=True) + "\n"
+    return json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + "\n"
+
+
+def _reject_sft_run_fields(
+    value: object, *, path: str = "resolved_config"
+) -> None:
+    if isinstance(value, Mapping):
+        for key, nested in value.items():
+            child_path = f"{path}.{key}"
+            if str(key) in _FORBIDDEN_SFT_RUN_KEYS:
+                raise DatasetPublicationError(
+                    f"{child_path} belongs to an SFT run, not a dataset version"
+                )
+            _reject_sft_run_fields(nested, path=child_path)
+    elif isinstance(value, Sequence) and not isinstance(
+        value, (str, bytes, bytearray)
+    ):
+        for index, nested in enumerate(value):
+            _reject_sft_run_fields(nested, path=f"{path}.{index}")

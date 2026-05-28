@@ -81,6 +81,14 @@ def validate_example(example: dict[str, Any]) -> bool:
     """
     if "contents" not in example or "systemInstruction" not in example:
         return False
+    system_instruction = example["systemInstruction"]
+    if not isinstance(system_instruction, dict):
+        return False
+    if system_instruction.get("role") != "system":
+        return False
+    if not _has_nonempty_text_part(system_instruction.get("parts")):
+        return False
+
     contents = example["contents"]
     if not isinstance(contents, list) or len(contents) != 2:
         return False
@@ -90,10 +98,14 @@ def validate_example(example: dict[str, Any]) -> bool:
     if user_turn.get("role") != "user" or model_turn.get("role") != "model":
         return False
     user_parts = user_turn.get("parts", [])
+    if not isinstance(user_parts, list):
+        return False
     file_parts = [
         p for p in user_parts if isinstance(p, dict) and "fileData" in p
     ]
     if not file_parts:
+        return False
+    if not _has_nonempty_text_part(user_parts):
         return False
     fd = file_parts[0]["fileData"]
     if not isinstance(fd, dict):
@@ -111,3 +123,15 @@ def validate_example(example: dict[str, Any]) -> bool:
         return False
     model_text = first_model_part.get("text") or ""
     return bool(model_text.strip())
+
+
+def _has_nonempty_text_part(parts: object) -> bool:
+    if not isinstance(parts, list):
+        return False
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        text = part.get("text")
+        if isinstance(text, str) and text.strip():
+            return True
+    return False

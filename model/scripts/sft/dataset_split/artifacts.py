@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any
 
 from common.gcs_utils import parse_gcs_uri
@@ -12,6 +13,7 @@ except ImportError:  # pragma: no cover - google-cloud-storage is a model dep.
 
 
 DATASET_VERSION_ROOT = "gs://wd-transcription-data/sft"
+_SAFE_PATH_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 class DatasetArtifactError(ValueError):
@@ -41,13 +43,11 @@ class DatasetArtifactLayout:
         *,
         root_prefix: str = DATASET_VERSION_ROOT,
     ) -> DatasetArtifactLayout:
-        normalized_id = dataset_version_id.strip().strip("/")
-        if not normalized_id:
-            raise DatasetArtifactError("dataset_version_id must not be empty")
+        normalized_id = _clean_path_part(
+            dataset_version_id, label="dataset_version_id"
+        )
 
-        normalized_root = root_prefix.strip().rstrip("/")
-        if not normalized_root:
-            raise DatasetArtifactError("root_prefix must not be empty")
+        normalized_root = _clean_root_prefix(root_prefix)
 
         root_uri = f"{normalized_root}/{normalized_id}/"
         return cls(
@@ -167,17 +167,36 @@ def _join_uri(root_uri: str, *parts: str, trailing: bool = False) -> str:
 
 
 def _clean_path_part(value: str, *, label: str) -> str:
-    cleaned = value.strip().strip("/")
+    cleaned = value.strip()
     if not cleaned:
         raise DatasetArtifactError(f"{label} must not be empty")
+    if cleaned in {".", ".."} or not _SAFE_PATH_PART.fullmatch(cleaned):
+        raise DatasetArtifactError(
+            f"{label} must contain only letters, numbers, '.', '_', or '-'"
+        )
     return cleaned
 
 
 def _clean_suffix(value: str) -> str:
     cleaned = value.strip().lstrip(".")
-    if not cleaned:
-        raise DatasetArtifactError("suffix must not be empty")
+    _clean_path_part(cleaned, label="suffix")
     return cleaned
+
+
+def _clean_root_prefix(root_prefix: str) -> str:
+    normalized_root = root_prefix.strip().rstrip("/")
+    if not normalized_root:
+        raise DatasetArtifactError("root_prefix must not be empty")
+    try:
+        bucket_name, prefix = parse_gcs_uri(normalized_root)
+    except ValueError as exc:
+        raise DatasetArtifactError("root_prefix must be a gs:// URI") from exc
+    if not bucket_name.strip():
+        raise DatasetArtifactError("root_prefix bucket must not be empty")
+    for part in prefix.split("/"):
+        if part:
+            _clean_path_part(part, label="root_prefix path segment")
+    return normalized_root
 
 
 def _prefix_with_trailing_slash(prefix: str) -> str:

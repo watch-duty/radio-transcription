@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
+from typing import Any
 
 from common.sft import build_example, validate_example
 
@@ -11,6 +13,7 @@ from dataset_split.types import LabeledSegment
 _SPLITS = ("train", "eval")
 DEFAULT_GEMINI_BASE_MODEL = "gemini-3.1-flash-lite"
 DEFAULT_GEMINI_REGION = "us-central1"
+_GEMINI_ADAPTER_SIZES = frozenset({"ONE", "FOUR", "EIGHT", "SIXTEEN"})
 _WHISPER_RECOMMENDED_MAX_DURATION_SECONDS = 30.0
 _WHISPER_PREPROCESSING = {
     "recommendation": "preserve_original_uri_with_offset_duration",
@@ -171,15 +174,25 @@ def build_gemini_tuning_config(
     epoch_count: int = 5,
     learning_rate_multiplier: float = 1.0,
 ) -> dict[str, object]:
+    normalized_adapter_size = _require_adapter_size(adapter_size)
+    normalized_epoch_count = _require_int_range(
+        epoch_count, label="epoch_count", minimum=1, maximum=100
+    )
+    normalized_learning_rate_multiplier = _require_float_range(
+        learning_rate_multiplier,
+        label="learning_rate_multiplier",
+        minimum=0.001,
+        maximum=10.0,
+    )
     config: dict[str, object] = {
         "trainingDatasetUri": _require_text(
             training_dataset_uri, label="training_dataset_uri"
         ),
         "baseModel": _require_text(base_model, label="base_model"),
         "region": _require_text(region, label="region"),
-        "adapterSize": _require_text(adapter_size, label="adapter_size"),
-        "epochCount": int(epoch_count),
-        "learningRateMultiplier": float(learning_rate_multiplier),
+        "adapterSize": normalized_adapter_size,
+        "epochCount": normalized_epoch_count,
+        "learningRateMultiplier": normalized_learning_rate_multiplier,
     }
     if validation_dataset_uri is not None:
         config["validationDatasetUri"] = _require_text(
@@ -307,6 +320,46 @@ def _require_text(value: str, *, label: str) -> str:
     return text
 
 
+def _require_adapter_size(value: str) -> str:
+    adapter_size = _require_text(value, label="adapter_size")
+    if adapter_size not in _GEMINI_ADAPTER_SIZES:
+        raise ModelWriterError(
+            "adapter_size must be one of "
+            f"{sorted(_GEMINI_ADAPTER_SIZES)}: {adapter_size}"
+        )
+    return adapter_size
+
+
+def _require_int_range(
+    value: Any, *, label: str, minimum: int, maximum: int
+) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ModelWriterError(f"{label} must be an integer")
+    if value < minimum or value > maximum:
+        raise ModelWriterError(
+            f"{label} must be between {minimum} and {maximum}: {value}"
+        )
+    return value
+
+
+def _require_float_range(
+    value: Any, *, label: str, minimum: float, maximum: float
+) -> float:
+    if isinstance(value, bool):
+        raise ModelWriterError(f"{label} must be a finite number")
+    try:
+        normalized = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ModelWriterError(f"{label} must be a finite number") from exc
+    if not math.isfinite(normalized):
+        raise ModelWriterError(f"{label} must be a finite number")
+    if normalized < minimum or normalized > maximum:
+        raise ModelWriterError(
+            f"{label} must be between {minimum} and {maximum}: {normalized}"
+        )
+    return normalized
+
+
 def _infer_audio_mime_type_for_segment(segment: LabeledSegment) -> str:
     try:
         return infer_audio_mime_type(segment.audio_uri)
@@ -319,4 +372,9 @@ def _infer_audio_mime_type_for_segment(segment: LabeledSegment) -> str:
 def _serialize_jsonl(rows: tuple[dict[str, object], ...]) -> str:
     if not rows:
         return ""
-    return "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n"
+    return (
+        "\n".join(
+            json.dumps(row, sort_keys=True, allow_nan=False) for row in rows
+        )
+        + "\n"
+    )

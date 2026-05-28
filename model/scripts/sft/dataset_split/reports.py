@@ -321,4 +321,8 @@ def _utc_timestamp() -> str:
 
 
 def _json_block(value: object) -> str:
-    return "```json\n" + json.dumps(value, indent=2, sort_keys=True) + "\n```"
+    return (
+        "```json\n"
+        + json.dumps(value, indent=2, sort_keys=True, allow_nan=False)
+        + "\n```"
+    )

@@ -90,7 +90,12 @@ def per_dataset_manifests(
 def serialize_jsonl(rows: tuple[dict[str, object], ...]) -> str:
     if not rows:
         return ""
-    return "\n".join(json.dumps(row, sort_keys=True) for row in rows) + "\n"
+    return (
+        "\n".join(
+            json.dumps(row, sort_keys=True, allow_nan=False) for row in rows
+        )
+        + "\n"
+    )
 
 
 def _require_split(value: str | None, *, label: str) -> str:
