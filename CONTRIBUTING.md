@@ -37,7 +37,7 @@ On a high level, this local pipeline runs the following:
 Integration tests run an automated E2E test on startup.
 
 > [!NOTE]
-> `local_dev/test_data.sql` is used to seed the database with dummy feeds and rules for local development (`mise dev:start`). It is explicitly ignored in the integration tests (`mise e2e:docker`) to ensure tests run in a clean, isolated database environment.
+> `local_dev/test_data.sql` is used to seed the database with dummy feeds and rules for local development (`mise dev:start`). It is explicitly ignored in the integration tests (`mise test:e2e`) to ensure tests run in a clean, isolated database environment.
 
 Locally run the full pipeline from E2E:
 ```bash
@@ -64,8 +64,8 @@ We categorize our non-unit tests into three levels to balance speed and coverage
    * Run all: `mise run test:api`
 
 3. **End-to-End (E2E) Tests**: Full system flow tests involving multiple services and the Pub/Sub emulator.
-   * Run in an isolated environment (Docker handles lifecycle): `mise run e2e:docker`
-   * Run against a running background environment: `mise run e2e:local` (Requires you to start the environment first)
+   * Run in an isolated environment (Docker handles lifecycle): `mise run test:e2e`
+   * Run against a running background environment: `mise run test:e2e:local` (Requires you to start the environment first)
 
 For more details on the architecture and local execution of the pipeline, see the **Pipeline E2E Local Development** section above.
 
