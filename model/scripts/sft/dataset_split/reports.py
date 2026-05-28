@@ -69,6 +69,7 @@ class DatasetVersionReport:
     balance_report: Mapping[str, object]
     artifact_inventory: Mapping[str, object]
     writer_warnings: Mapping[str, Sequence[Mapping[str, object]]]
+    audio_materialized: bool
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -85,6 +86,7 @@ class DatasetVersionReport:
             "balance_report": _json_ready(self.balance_report),
             "artifact_inventory": _json_ready(self.artifact_inventory),
             "writer_warnings": _json_ready(self.writer_warnings),
+            "audio_materialized": self.audio_materialized,
         }
 
 
@@ -113,6 +115,7 @@ def build_dataset_version_report(
     artifact_inventory: Mapping[str, object],
     model_writer_summary: Mapping[str, object],
     writer_warnings: Mapping[str, Sequence[Mapping[str, object]]],
+    audio_materialized: bool = True,
 ) -> DatasetVersionReport:
     segment_tuple = tuple(segments)
     validate_split_integrity(segment_tuple)
@@ -134,6 +137,7 @@ def build_dataset_version_report(
         balance_report=_json_ready(balance_report),
         artifact_inventory=_json_ready(artifact_inventory),
         writer_warnings=_writer_warnings(writer_warnings),
+        audio_materialized=bool(audio_materialized),
     )
 
 

@@ -6,7 +6,12 @@ from dataclasses import dataclass
 from dataset_split.config import DatasetVersionConfig
 from dataset_split.gcs_io import GcsInputError, TextReader, read_json_or_jsonl
 from dataset_split.normalize import normalize_manifest_rows
-from dataset_split.types import RowValidationError, SourceIdentityError
+from dataset_split.types import (
+    ExcludedRow,
+    LabeledSegment,
+    RowValidationError,
+    SourceIdentityError,
+)
 
 
 @dataclass(frozen=True)
@@ -17,6 +22,13 @@ class DatasetValidationSummary:
     loaded_rows: int
     valid_rows: int
     excluded_empty_text: int
+
+
+@dataclass(frozen=True)
+class DatasetValidationResult:
+    segments: tuple[LabeledSegment, ...]
+    excluded: tuple[ExcludedRow, ...]
+    summaries: tuple[DatasetValidationSummary, ...]
 
 
 class DatasetValidationError(ValueError):
@@ -42,12 +54,14 @@ def load_source_map(
     return source_map
 
 
-def validate_dataset(
+def load_and_validate_datasets(
     config: DatasetVersionConfig,
     *,
     reader: TextReader,
     echo_registry: Mapping[str, set[str]] | None = None,
-) -> tuple[DatasetValidationSummary, ...]:
+) -> DatasetValidationResult:
+    segments: list[LabeledSegment] = []
+    excluded_rows: list[ExcludedRow] = []
     summaries: list[DatasetValidationSummary] = []
 
     for dataset in config.datasets:
@@ -74,6 +88,8 @@ def validate_dataset(
                 "valid examples after exclusions"
             )
 
+        segments.extend(result.segments)
+        excluded_rows.extend(result.excluded)
         summaries.append(
             DatasetValidationSummary(
                 dataset_name=dataset.name,
@@ -89,4 +105,19 @@ def validate_dataset(
             )
         )
 
-    return tuple(summaries)
+    return DatasetValidationResult(
+        segments=tuple(segments),
+        excluded=tuple(excluded_rows),
+        summaries=tuple(summaries),
+    )
+
+
+def validate_dataset(
+    config: DatasetVersionConfig,
+    *,
+    reader: TextReader,
+    echo_registry: Mapping[str, set[str]] | None = None,
+) -> tuple[DatasetValidationSummary, ...]:
+    return load_and_validate_datasets(
+        config, reader=reader, echo_registry=echo_registry
+    ).summaries
