@@ -244,7 +244,7 @@ jobs:
             -e ALLOYDB_USER=worker \
             -e ALLOYDB_DB=postgres \
             ingestion-smoke-test \
-            python -c "from backend.pipeline.ingestion.settings import NormalizerSettings; NormalizerSettings()"
+            python -c "from backend.pipeline.ingestion.settings import CollectorSettings; CollectorSettings()"
 
   # Applies the ingestion DDL (sql/ingestion/*.sql, excluding *pg_cron* files
   # which require an extension not shipped with postgres:16-alpine) to a
