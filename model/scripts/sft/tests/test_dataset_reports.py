@@ -21,7 +21,7 @@ from dataset_split.reports import (  # noqa: E402
     build_dataset_version_report,
     render_dataset_version_markdown,
 )
-from dataset_split.types import LabeledSegment  # noqa: E402
+from dataset_split.types import ExcludedRow, LabeledSegment  # noqa: E402
 
 
 def _segment(
@@ -191,12 +191,28 @@ def _report_dict() -> dict[str, object]:
             "canonical": {
                 "train": "gs://bucket/sft/dv-001/manifests/canonical/train.jsonl",
                 "eval": "gs://bucket/sft/dv-001/manifests/canonical/eval.jsonl",
-            }
+            },
+            "reports": {
+                "excluded_rows": "gs://bucket/sft/dv-001/reports/excluded_rows.jsonl"
+            },
         },
         model_writer_summary=_model_writer_summary(),
         writer_warnings={
             "whisper": [{"row_index": 7, "warning": "duration over 30 seconds"}]
         },
+        excluded_rows=(
+            ExcludedRow(
+                dataset_name="calls",
+                row_index=99,
+                audio_uri="gs://bucket/hidden.flac",
+                reason="empty_text",
+            ),
+        ),
+        excluded_rows_artifact_uri=(
+            "gs://bucket/sft/dv-001/reports/excluded_rows.jsonl"
+        ),
+        source_key_failures=0,
+        audio_materialized=True,
     )
     return report.to_dict()
 
@@ -216,6 +232,9 @@ class TestDatasetReports(unittest.TestCase):
             "balance_report",
             "artifact_inventory",
             "writer_warnings",
+            "excluded_rows",
+            "source_key_failures",
+            "audio_materialized",
         ):
             self.assertIn(key, report)
         self.assertEqual(report["split_counts"], {"train": 2, "eval": 2})
@@ -232,6 +251,14 @@ class TestDatasetReports(unittest.TestCase):
             ],
             11.0,
         )
+        self.assertEqual(report["excluded_rows"]["count"], 1)
+        self.assertEqual(report["excluded_rows"]["reasons"]["empty_text"], 1)
+        self.assertEqual(
+            report["excluded_rows"]["artifact_uri"],
+            "gs://bucket/sft/dv-001/reports/excluded_rows.jsonl",
+        )
+        self.assertEqual(report["source_key_failures"], 0)
+        self.assertIs(report["audio_materialized"], True)
 
     def test_dataset_report_contains_model_writer_summary(self) -> None:
         report = _report_dict()
@@ -368,6 +395,44 @@ class TestDatasetReports(unittest.TestCase):
         self.assertIn("## Audio Transformations", markdown)
         for label in ("reused", "copied", "derived", "transcoded"):
             self.assertIn(label, markdown)
+
+    def test_markdown_mentions_excluded_rows_without_row_text(self) -> None:
+        segments = _segments()
+        report = build_dataset_version_report(
+            dataset_version_id="dv-001",
+            resolved_config={"dataset_version_id": "dv-001"},
+            segments=segments,
+            leakage_validation={"passed": True},
+            balance_report=build_balance_report(segments).to_dict(),
+            artifact_inventory={
+                "reports": {
+                    "excluded_rows": (
+                        "gs://bucket/sft/dv-001/reports/excluded_rows.jsonl"
+                    )
+                }
+            },
+            model_writer_summary=_model_writer_summary(),
+            writer_warnings={},
+            excluded_rows=(
+                ExcludedRow(
+                    dataset_name="calls",
+                    row_index=9,
+                    audio_uri="gs://bucket/private.flac",
+                    reason="empty_text",
+                ),
+            ),
+            excluded_rows_artifact_uri=(
+                "gs://bucket/sft/dv-001/reports/excluded_rows.jsonl"
+            ),
+        )
+
+        markdown = render_dataset_version_markdown(report)
+
+        self.assertIn("## Excluded Rows", markdown)
+        self.assertIn("excluded_rows.jsonl", markdown)
+        self.assertIn("empty_text: 1", markdown)
+        self.assertNotIn("engine 41 responding", markdown)
+        self.assertNotIn("private.flac", markdown)
 
 
 if __name__ == "__main__":

@@ -94,6 +94,7 @@ class TestSplitDatasetCli(unittest.TestCase):
             expected_paths = (
                 "reports/dataset_version_report.json",
                 "reports/dataset_version_report.md",
+                "reports/excluded_rows.jsonl",
                 "manifests/canonical/train.jsonl",
                 "model_inputs/nemo/train.jsonl",
                 "model_inputs/whisper/train.jsonl",
@@ -107,6 +108,30 @@ class TestSplitDatasetCli(unittest.TestCase):
                 (output_dir / "reports/dataset_version_report.json").read_text()
             )
             self.assertIs(report["audio_materialized"], False)
+            excluded_rows = (
+                output_dir / "reports/excluded_rows.jsonl"
+            ).read_text()
+            self.assertIn('"reason": "empty_text"', excluded_rows)
+
+    def test_hard_failure_writes_no_failure_artifacts(self) -> None:
+        import split_dataset as cli
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            out = StringIO()
+            with redirect_stdout(out):
+                rc = cli.main(
+                    [
+                        "dry-run",
+                        "--config-uri",
+                        "./radio.toml",
+                        "--output-dir",
+                        str(Path(temp_dir) / "dry-run-out"),
+                    ]
+                )
+
+            self.assertEqual(rc, 1)
+            self.assertIn("config_uri must be a gs:// URI", out.getvalue())
+            self.assertEqual(list(Path(temp_dir).rglob("*failure*")), [])
 
     def test_dry_run_rejects_existing_output_dir(self) -> None:
         import split_dataset as cli

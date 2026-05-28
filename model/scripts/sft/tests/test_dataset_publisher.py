@@ -27,7 +27,7 @@ from dataset_split.publisher import (  # noqa: E402
     DatasetPublicationResult,
     publish_dataset_version_artifacts,
 )
-from dataset_split.types import LabeledSegment  # noqa: E402
+from dataset_split.types import ExcludedRow, LabeledSegment  # noqa: E402
 
 
 class FakeListedBlob:
@@ -187,6 +187,14 @@ def _publish(client: FakeStorageClient) -> DatasetPublicationResult:
         balance_report={"score": 0.92, "components": {}},
         system_prompt="You are a radio transcription model.",
         user_prompt="Transcribe the emergency radio audio.",
+        excluded_rows=(
+            ExcludedRow(
+                dataset_name="calls",
+                row_index=99,
+                audio_uri="gs://source-bucket/calls/skipped.flac",
+                reason="empty_text",
+            ),
+        ),
         scratch_dir="/tmp/sft-audio",
         audio_preparer=_fake_audio_preparer,
         audio_uploader=_fake_audio_uploader,
@@ -214,6 +222,7 @@ def _expected_uris() -> set[str]:
         f"{root}/model_inputs/gemini/tuning_config.json",
         f"{root}/reports/dataset_version_report.json",
         f"{root}/reports/dataset_version_report.md",
+        f"{root}/reports/excluded_rows.jsonl",
     }
 
 
@@ -406,6 +415,23 @@ class TestDatasetPublisher(unittest.TestCase):
                 "gs://wd-transcription-data/sft/dv-001/model_inputs/gemini/train.jsonl"
             ]["content_type"],
             "application/x-ndjson",
+        )
+        excluded_upload = _upload_by_uri(client)[
+            "gs://wd-transcription-data/sft/dv-001/reports/excluded_rows.jsonl"
+        ]
+        self.assertEqual(
+            excluded_upload["content_type"], "application/x-ndjson"
+        )
+        self.assertEqual(
+            _jsonl_rows(excluded_upload["text"]),
+            [
+                {
+                    "dataset_name": "calls",
+                    "row_index": 99,
+                    "audio_uri": "gs://source-bucket/calls/skipped.flac",
+                    "reason": "empty_text",
+                }
+            ],
         )
 
     def test_publish_prepares_audio_before_text_artifacts(self) -> None:
