@@ -8,14 +8,13 @@ import { listFeeds } from '../../service/listFeeds';
 import { FeedTable } from './FeedTable';
 
 interface FeedSearchViewProps {
-  title: string;
   triggerSnackbar: (message: string) => void;
   onError: (error: Error, titleMessage?: string) => void;
 }
 
 const FEED_REFETCH_INTERVAL_MS = 15000; // 15 seconds
 
-export function FeedSearchView({ title, onError }: FeedSearchViewProps) {
+export function FeedSearchView({ onError }: FeedSearchViewProps) {
   const { token } = useAuth();
 
   const {
@@ -46,7 +45,7 @@ export function FeedSearchView({ title, onError }: FeedSearchViewProps) {
         height: 'calc(100vh - 100px)',
       }}
     >
-      <FeedTable feeds={feeds ?? []} isLoading={feedsLoading} title={title} />
+      <FeedTable feeds={feeds ?? []} isLoading={feedsLoading} />
     </Box>
   );
 }

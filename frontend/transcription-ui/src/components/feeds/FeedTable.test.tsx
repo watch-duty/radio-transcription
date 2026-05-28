@@ -56,7 +56,7 @@ describe('FeedTable', () => {
   });
 
   it('renders feeds and columns properly', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false, title: 'Feeds' });
+    renderFeedTable({ feeds: mockFeeds, isLoading: false });
 
     expect(screen.getByText('Alpha Radio')).toBeTruthy();
     expect(screen.getByText('Bravo Scanner')).toBeTruthy();
@@ -72,12 +72,12 @@ describe('FeedTable', () => {
   });
 
   it('shows loading indicator when isLoading is true', () => {
-    renderFeedTable({ feeds: [], isLoading: true, title: 'Feeds' });
+    renderFeedTable({ feeds: [], isLoading: true });
     expect(screen.getByRole('progressbar')).toBeTruthy();
   });
 
   it('filters feeds by search bar input (name match)', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false, title: 'Feeds' });
+    renderFeedTable({ feeds: mockFeeds, isLoading: false });
 
     const searchInput = screen.getByPlaceholderText(/Search feeds\.\.\./i);
     fireEvent.change(searchInput, { target: { value: 'bravo' } });
@@ -87,7 +87,7 @@ describe('FeedTable', () => {
   });
 
   it('filters feeds by search bar input (tag match)', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false, title: 'Feeds' });
+    renderFeedTable({ feeds: mockFeeds, isLoading: false });
 
     const searchInput = screen.getByPlaceholderText(/Search feeds\.\.\./i);
     fireEvent.change(searchInput, { target: { value: 'marin' } });
@@ -97,7 +97,7 @@ describe('FeedTable', () => {
   });
 
   it('sorts feeds by name clicking the header sort label', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false, title: 'Feeds' });
+    renderFeedTable({ feeds: mockFeeds, isLoading: false });
 
     const nameHeader = screen.getByRole('columnheader', { name: /name/i });
     const nameSortLabel = within(nameHeader).getByRole('button');
@@ -109,7 +109,7 @@ describe('FeedTable', () => {
   });
 
   it('sorts feeds by status clicking the header sort label', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false, title: 'Feeds' });
+    renderFeedTable({ feeds: mockFeeds, isLoading: false });
 
     const statusHeader = screen.getByRole('columnheader', { name: /status/i });
     const statusSortLabel = within(statusHeader).getByRole('button');
@@ -124,7 +124,6 @@ describe('FeedTable', () => {
     const { container, rerender } = renderFeedTable({
       feeds: mockFeeds,
       isLoading: false,
-      title: 'Feeds',
     });
     const scroller = container.querySelector(
       '[data-testid="virtuoso-scroller"]'
@@ -145,7 +144,7 @@ describe('FeedTable', () => {
         <VirtuosoMockContext.Provider
           value={{ viewportHeight: 1000, itemHeight: 100 }}
         >
-          <FeedTable feeds={refreshedFeeds} isLoading={false} title="Feeds" />
+          <FeedTable feeds={refreshedFeeds} isLoading={false} />
         </VirtuosoMockContext.Provider>
       </MemoryRouter>
     );
@@ -158,7 +157,7 @@ describe('FeedTable', () => {
   });
 
   it('renders source and archive links directly in the links column if they exist', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false, title: 'Feeds' });
+    renderFeedTable({ feeds: mockFeeds, isLoading: false });
 
     // Alpha Radio has both URLs
     const sourceLink = screen.getByRole('link', {
@@ -180,7 +179,7 @@ describe('FeedTable', () => {
   });
 
   it('does not render source and archive links if they are not present, and renders a fallback hyphen', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false, title: 'Feeds' });
+    renderFeedTable({ feeds: mockFeeds, isLoading: false });
 
     // Bravo Scanner has neither URL
     const links = screen.queryAllByRole('link', {
@@ -193,7 +192,7 @@ describe('FeedTable', () => {
   });
 
   it('displays grouped tags and applies tag filtering', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false, title: 'Feeds' });
+    renderFeedTable({ feeds: mockFeeds, isLoading: false });
 
     const tagsInput = screen.getByLabelText('Tags');
     fireEvent.focus(tagsInput);
@@ -237,7 +236,7 @@ describe('FeedTable', () => {
   });
 
   it('filters feeds by status', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false, title: 'Feeds' });
+    renderFeedTable({ feeds: mockFeeds, isLoading: false });
 
     const statusInput = screen.getByLabelText('Status');
     fireEvent.focus(statusInput);
@@ -251,7 +250,7 @@ describe('FeedTable', () => {
   });
 
   it('filters feeds by source type', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false, title: 'Feeds' });
+    renderFeedTable({ feeds: mockFeeds, isLoading: false });
 
     const sourceTypesInput = screen.getByLabelText('Source Type');
     fireEvent.focus(sourceTypesInput);

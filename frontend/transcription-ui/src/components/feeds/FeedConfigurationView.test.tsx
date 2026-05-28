@@ -102,16 +102,18 @@ describe('FeedConfigurationView', () => {
 
     // Verify Creation form is present
     expect(screen.getByText('Register New Feed')).toBeInTheDocument();
-    expect(screen.getByLabelText('Display Name')).toBeInTheDocument();
-    expect(screen.getByLabelText('Source Type')).toBeInTheDocument();
-    expect(screen.getByLabelText('Source Feed ID')).toBeInTheDocument();
+    const formCard = screen.getByTestId('feed-config-card');
+    expect(within(formCard).getByLabelText('Display Name')).toBeInTheDocument();
+    expect(within(formCard).getByLabelText('Source Type')).toBeInTheDocument();
+    expect(
+      within(formCard).getByLabelText('Source Feed ID')
+    ).toBeInTheDocument();
 
     // Verify existing feeds list renders active items and their tag chips
     await waitFor(() => {
-      expect(screen.getByText('Registered feeds')).toBeInTheDocument();
+      expect(screen.getByText('Feeds')).toBeInTheDocument();
       expect(screen.getByText('Marin Fire Dispatch')).toBeInTheDocument();
     });
-    screen.debug(screen.getByTestId('feeds-deck-card'), 100000);
   });
 
   it('validates empty required fields and displays interactive errors', async () => {
@@ -190,13 +192,15 @@ describe('FeedConfigurationView', () => {
 
     renderView();
 
+    const formCard = screen.getByTestId('feed-config-card');
+
     // Input form details
-    fireEvent.change(screen.getByLabelText('Display Name'), {
+    fireEvent.change(within(formCard).getByLabelText('Display Name'), {
       target: { value: 'Napa Ambulance Dispatch' },
     });
 
     // Select Source Type dropdown
-    const selectDropdown = screen.getByRole('combobox', {
+    const selectDropdown = within(formCard).getByRole('combobox', {
       name: /Source Type/i,
     });
     fireEvent.mouseDown(selectDropdown);
@@ -209,12 +213,12 @@ describe('FeedConfigurationView', () => {
       await within(listbox).findByText('Broadcastify Calls');
     fireEvent.click(bcfyCallsOption);
 
-    fireEvent.change(screen.getByLabelText('Source Feed ID'), {
+    fireEvent.change(within(formCard).getByLabelText('Source Feed ID'), {
       target: { value: '9988-77' },
     });
 
     // Submit
-    const submitBtn = screen.getByRole('button', {
+    const submitBtn = within(formCard).getByRole('button', {
       name: /Register feed/i,
     });
     fireEvent.click(submitBtn);
@@ -239,8 +243,8 @@ describe('FeedConfigurationView', () => {
       );
 
       // Verify state clears on success
-      expect(screen.getByLabelText('Display Name')).toHaveValue('');
-      expect(screen.getByLabelText('Source Feed ID')).toHaveValue('');
+      expect(within(formCard).getByLabelText('Display Name')).toHaveValue('');
+      expect(within(formCard).getByLabelText('Source Feed ID')).toHaveValue('');
     });
   });
 
@@ -280,33 +284,53 @@ describe('FeedConfigurationView', () => {
       .closest('[role="row"]');
     expect(rowElement).toHaveClass('Mui-selected');
 
+    // Retrieve fresh Edit Form Card after mode transition
+    const editFormCard = screen.getByTestId('feed-config-card');
+
     // Verify form details are prepopulated from selected feed definition
-    expect(screen.getByLabelText('Display Name')).toHaveValue(
+    expect(within(editFormCard).getByLabelText('Display Name')).toHaveValue(
       'Marin Fire Dispatch'
     );
-    expect(screen.getByLabelText('Source Feed ID')).toHaveValue('33156');
+    expect(within(editFormCard).getByLabelText('Source Feed ID')).toHaveValue(
+      '33156'
+    );
 
     // Verify registered tag row is populated in input fields
-    expect(screen.getAllByLabelText('Key')[0]).toHaveValue('');
-    expect(screen.getAllByLabelText('Value')[0]).toHaveValue('');
-    expect(screen.getAllByLabelText('Key')[1]).toHaveValue('county');
-    expect(screen.getAllByLabelText('Value')[1]).toHaveValue('Marin');
+    expect(within(editFormCard).getAllByLabelText('Key')[0]).toHaveValue('');
+    expect(within(editFormCard).getAllByLabelText('Value')[0]).toHaveValue('');
+    expect(within(editFormCard).getAllByLabelText('Key')[1]).toHaveValue(
+      'county'
+    );
+    expect(within(editFormCard).getAllByLabelText('Value')[1]).toHaveValue(
+      'Marin'
+    );
 
     // Verify permanent fields are disabled in update mode
-    expect(screen.getByLabelText('Source Type')).toHaveAttribute(
+    expect(within(editFormCard).getByLabelText('Source Type')).toHaveAttribute(
       'aria-disabled',
       'true'
     );
-    expect(screen.getByLabelText('Source Feed ID')).toBeDisabled();
+    expect(
+      within(editFormCard).getByLabelText('Source Feed ID')
+    ).toBeDisabled();
 
     // Perform cancel edit check
-    const cancelBtn = screen.getByRole('button', { name: /Cancel Edit/i });
+    const cancelBtn = within(editFormCard).getByRole('button', {
+      name: /Cancel Edit/i,
+    });
     fireEvent.click(cancelBtn);
 
     // Verify transitions smoothly back to Create Mode
     expect(screen.getByText('Register New Feed')).toBeInTheDocument();
-    expect(screen.getByLabelText('Display Name')).toHaveValue('');
-    expect(screen.getByLabelText('Source Feed ID')).not.toBeDisabled();
+
+    // Retrieve fresh Register Form Card after unmount/mount transition
+    const registerFormCard = screen.getByTestId('feed-config-card');
+    expect(within(registerFormCard).getByLabelText('Display Name')).toHaveValue(
+      ''
+    );
+    expect(
+      within(registerFormCard).getByLabelText('Source Feed ID')
+    ).not.toBeDisabled();
 
     // Verify the row loses selection highlight
     expect(rowElement).not.toHaveClass('Mui-selected');
@@ -317,13 +341,16 @@ describe('FeedConfigurationView', () => {
       screen.getByText('Edit Feed: Marin Fire Dispatch')
     ).toBeInTheDocument();
 
+    // Retrieve fresh Edit Form Card
+    const editFormCard2 = screen.getByTestId('feed-config-card');
+
     // Update modifyable properties
-    fireEvent.change(screen.getByLabelText('Display Name'), {
+    fireEvent.change(within(editFormCard2).getByLabelText('Display Name'), {
       target: { value: 'Marin Unified Fire Dispatch' },
     });
 
     // Submit update changes
-    const submitBtn = screen.getByRole('button', {
+    const submitBtn = within(editFormCard2).getByRole('button', {
       name: /Save changes/i,
     });
     fireEvent.click(submitBtn);
@@ -348,7 +375,12 @@ describe('FeedConfigurationView', () => {
 
       // Verify returns back to Create Mode
       expect(screen.getByText('Register New Feed')).toBeInTheDocument();
-      expect(screen.getByLabelText('Display Name')).toHaveValue('');
+
+      // Retrieve fresh Register Form Card
+      const finalFormCard = screen.getByTestId('feed-config-card');
+      expect(within(finalFormCard).getByLabelText('Display Name')).toHaveValue(
+        ''
+      );
     });
   });
 
@@ -360,7 +392,7 @@ describe('FeedConfigurationView', () => {
       expect(screen.getByText('Sonoma Sheriff dispatch')).toBeInTheDocument();
     });
 
-    const filterInput = screen.getByPlaceholderText(/Filter feeds/i);
+    const filterInput = screen.getByPlaceholderText(/Search feeds/i);
     fireEvent.change(filterInput, { target: { value: 'sonoma' } });
 
     // Sonoma Sheriff matches, Marin Fire is hidden
@@ -381,13 +413,15 @@ describe('FeedConfigurationView', () => {
 
     renderView();
 
+    const formCard = screen.getByTestId('feed-config-card');
+
     // Input form details
-    fireEvent.change(screen.getByLabelText('Display Name'), {
+    fireEvent.change(within(formCard).getByLabelText('Display Name'), {
       target: { value: 'Napa Ambulance Dispatch' },
     });
 
     // Select Source Type dropdown
-    const selectDropdown = screen.getByRole('combobox', {
+    const selectDropdown = within(formCard).getByRole('combobox', {
       name: /Source Type/i,
     });
     fireEvent.mouseDown(selectDropdown);
@@ -396,20 +430,20 @@ describe('FeedConfigurationView', () => {
       await within(listbox).findByText('Broadcastify Calls');
     fireEvent.click(bcfyCallsOption);
 
-    fireEvent.change(screen.getByLabelText('Source Feed ID'), {
+    fireEvent.change(within(formCard).getByLabelText('Source Feed ID'), {
       target: { value: '9988-77' },
     });
 
     // Fill in the tag inputs, but DO NOT click the plus button!
-    fireEvent.change(screen.getByLabelText('Key'), {
+    fireEvent.change(within(formCard).getByLabelText('Key'), {
       target: { value: 'county' },
     });
-    fireEvent.change(screen.getByLabelText('Value'), {
+    fireEvent.change(within(formCard).getByLabelText('Value'), {
       target: { value: 'Napa' },
     });
 
     // Submit
-    const submitBtn = screen.getByRole('button', {
+    const submitBtn = within(formCard).getByRole('button', {
       name: /Register feed/i,
     });
     fireEvent.click(submitBtn);
@@ -444,7 +478,7 @@ describe('FeedConfigurationView', () => {
         .getAllByRole('row')
         .filter((row) => row.getAttribute('data-item-index') !== null);
       return bodyRows.map(
-        (row) => row.firstElementChild?.querySelector('p')?.textContent
+        (row) => row.firstElementChild?.querySelector('a')?.textContent
       );
     };
 

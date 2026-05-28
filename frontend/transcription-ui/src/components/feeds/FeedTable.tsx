@@ -40,7 +40,6 @@ export interface FeedTableProps {
   editingFeedId?: string;
   onEditFeed?: (feed: Feed) => void;
   isSubmitting?: boolean;
-  title: string;
 }
 
 interface SortConfig {
@@ -109,13 +108,26 @@ function VirtuosoTableRow(
         borderBottom: '1px solid',
         borderColor: 'divider',
         borderLeft: '4px solid transparent',
-        transition: 'background-color 0.2s ease, border-left-color 0.2s ease',
         ...(isSelected && {
           bgcolor: 'action.selected',
           borderLeftColor: 'warning.main',
         }),
         ...rest.sx,
       }}
+    />
+  );
+}
+
+function FeedTagChip({ tag }: { tag: { key: string; value: string } }) {
+  return (
+    <Chip
+      label={
+        <Typography variant="body2">
+          <b>{tag.key}</b>: {tag.value}
+        </Typography>
+      }
+      size="small"
+      variant="filled"
     />
   );
 }
@@ -135,7 +147,6 @@ export function FeedTable({
   editingFeedId,
   onEditFeed,
   isSubmitting = false,
-  title,
 }: FeedTableProps) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -513,15 +524,7 @@ export function FeedTable({
             }}
           >
             {feed.tags.map((tag, i) => (
-              <Chip
-                key={i}
-                label={
-                  <Box>
-                    <b>{tag.key}</b>: {tag.value}
-                  </Box>
-                }
-                size="small"
-              />
+              <FeedTagChip key={`feed-${feed.id}-tag-${i}`} tag={tag} />
             ))}
           </TableCell>
         ) : (
@@ -581,7 +584,7 @@ export function FeedTable({
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <TroubleshootIcon color="primary" fontSize="small" />
             <Typography variant="h6" sx={{ fontWeight: 600 }}>
-              {title}
+              Feeds
             </Typography>
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
