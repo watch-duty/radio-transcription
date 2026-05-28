@@ -10,7 +10,7 @@ from aiohttp import web
 if TYPE_CHECKING:
     import uuid
 
-    from backend.pipeline.ingestion.settings import NormalizerSettings
+    from backend.pipeline.ingestion.settings import CollectorSettings
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,7 @@ class HealthState:
 
 # Typed aiohttp app keys (the recommended pattern since aiohttp 3.9).
 _STATE_KEY: web.AppKey[HealthState] = web.AppKey("state", HealthState)
-_SETTINGS_KEY: web.AppKey[NormalizerSettings] = web.AppKey("settings")
+_SETTINGS_KEY: web.AppKey[CollectorSettings] = web.AppKey("settings")
 
 
 async def _healthz(request: web.Request) -> web.Response:
@@ -110,7 +110,7 @@ async def _healthz(request: web.Request) -> web.Response:
 
 
 def build_app(
-    settings: NormalizerSettings, state: HealthState
+    settings: CollectorSettings, state: HealthState
 ) -> web.Application:
     """Build an aiohttp Application that serves GET /healthz."""
     app = web.Application()
@@ -121,7 +121,7 @@ def build_app(
 
 
 async def start(
-    settings: NormalizerSettings,
+    settings: CollectorSettings,
     state: HealthState,
 ) -> web.AppRunner:
     """
