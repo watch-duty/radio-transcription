@@ -202,7 +202,7 @@ export function FeedConfigurationView({
           <FeedTable
             feeds={feeds}
             isLoading={feedsLoading}
-            allowEdit={true}
+            allowEdit
             editingFeedId={isEditing ? id : undefined}
             onEditFeed={handleStartEdit}
             isSubmitting={isSubmitting}

@@ -277,6 +277,12 @@ export function FeedTable({
     ? '1.5fr 1fr 1fr 60px'
     : '1.5fr 1fr 1fr 2fr';
 
+  const sortConfigColumn = sortConfig.column;
+  const columns = [
+    { key: 'name', display: 'Name' },
+    { key: 'status', display: 'Status' },
+    { key: 'type', display: 'Type' },
+  ];
   const tableHeader = (
     <TableRow
       component="div"
@@ -284,80 +290,31 @@ export function FeedTable({
         display: 'grid',
         gridTemplateColumns,
         width: '100%',
-        bgcolor: 'background.paper',
       }}
     >
-      <TableCell
-        component="div"
-        role="columnheader"
-        sx={{
-          fontWeight: 'bold',
-          bgcolor: 'background.paper',
-        }}
-        sortDirection={
-          sortConfig.column === 'name' ? sortConfig.direction : false
-        }
-      >
-        <TableSortLabel
-          active={sortConfig.column === 'name'}
-          direction={
-            sortConfig.column === 'name' ? sortConfig.direction : 'asc'
-          }
-          onClick={() => handleRequestSort('name')}
+      {columns.map(({ key, display }) => (
+        <TableCell
+          component="div"
+          role="columnheader"
+          sx={{
+            fontWeight: 'bold',
+          }}
         >
-          Name
-        </TableSortLabel>
-      </TableCell>
-      <TableCell
-        component="div"
-        role="columnheader"
-        sx={{
-          fontWeight: 'bold',
-          bgcolor: 'background.paper',
-        }}
-        sortDirection={
-          sortConfig.column === 'type' ? sortConfig.direction : false
-        }
-      >
-        <TableSortLabel
-          active={sortConfig.column === 'type'}
-          direction={
-            sortConfig.column === 'type' ? sortConfig.direction : 'asc'
-          }
-          onClick={() => handleRequestSort('type')}
-        >
-          Type
-        </TableSortLabel>
-      </TableCell>
-      <TableCell
-        component="div"
-        role="columnheader"
-        sx={{
-          fontWeight: 'bold',
-          bgcolor: 'background.paper',
-        }}
-        sortDirection={
-          sortConfig.column === 'status' ? sortConfig.direction : false
-        }
-      >
-        <TableSortLabel
-          active={sortConfig.column === 'status'}
-          direction={
-            sortConfig.column === 'status' ? sortConfig.direction : 'asc'
-          }
-          onClick={() => handleRequestSort('status')}
-        >
-          Status
-        </TableSortLabel>
-      </TableCell>
-
+          <TableSortLabel
+            active={sortConfigColumn === key}
+            direction={sortConfigColumn === key ? sortConfig.direction : 'asc'}
+            onClick={() => handleRequestSort(key as 'name' | 'type' | 'status')}
+          >
+            {display}
+          </TableSortLabel>
+        </TableCell>
+      ))}
       <TableCell
         component="div"
         role="columnheader"
         align={allowEdit ? 'right' : 'left'}
         sx={{
           fontWeight: 'bold',
-          bgcolor: 'background.paper',
           display: 'flex',
           alignItems: 'center',
         }}
@@ -368,7 +325,7 @@ export function FeedTable({
   );
 
   const renderRowContent = (feed: Feed) => {
-    const isCurrentlyEditingThis = editingFeedId === feed.id;
+    const isEditing = editingFeedId === feed.id;
 
     return (
       <>
@@ -441,7 +398,7 @@ export function FeedTable({
             <IconButton
               size="small"
               onClick={() => onEditFeed?.(feed)}
-              disabled={isSubmitting || isCurrentlyEditingThis}
+              disabled={isSubmitting || isEditing}
               sx={{
                 border: '1px solid',
                 borderRadius: 1.5,
