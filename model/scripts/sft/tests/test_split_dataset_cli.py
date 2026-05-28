@@ -205,7 +205,9 @@ class TestSplitDatasetCli(unittest.TestCase):
 
         self.assertEqual(rc, 0)
         publish.assert_called_once()
-        self.assertIn("Dataset generated: gs://bucket/out/radio-v1/", out.getvalue())
+        self.assertIn(
+            "Dataset generated: gs://bucket/out/radio-v1/", out.getvalue()
+        )
         self.assertIn("dataset_version_report.json", out.getvalue())
         self.assertIn("model_inputs/gemini/train.jsonl", out.getvalue())
 
@@ -234,6 +236,31 @@ class TestSplitDatasetCli(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("publication failed", out.getvalue())
 
+    def test_generate_audio_failure_prints_short_error(self) -> None:
+        import split_dataset as cli
+        from dataset_split.audio import AudioDerivationError
+
+        config_uri = "gs://configs/radio.toml"
+        out = StringIO()
+        with (
+            unittest.mock.patch.object(
+                cli, "_make_text_reader", return_value=_reader(config_uri)
+            ),
+            unittest.mock.patch.object(
+                cli, "_make_storage_client", return_value=object()
+            ),
+            unittest.mock.patch.object(
+                cli,
+                "publish_dataset_version_artifacts",
+                side_effect=AudioDerivationError("audio failed"),
+            ),
+            redirect_stdout(out),
+        ):
+            rc = cli.main(["generate", "--config-uri", config_uri])
+
+        self.assertEqual(rc, 1)
+        self.assertIn("audio failed", out.getvalue())
+
     def test_help_lists_only_public_commands(self) -> None:
         import split_dataset as cli
 
@@ -251,7 +278,10 @@ class TestSplitDatasetCli(unittest.TestCase):
         import split_dataset as cli
 
         dry_run_help = StringIO()
-        with redirect_stdout(dry_run_help), self.assertRaises(SystemExit) as ctx:
+        with (
+            redirect_stdout(dry_run_help),
+            self.assertRaises(SystemExit) as ctx,
+        ):
             cli.main(["dry-run", "--help"])
         self.assertEqual(ctx.exception.code, 0)
         dry_run_text = dry_run_help.getvalue()
@@ -261,7 +291,10 @@ class TestSplitDatasetCli(unittest.TestCase):
         self.assertNotIn("validate", dry_run_text)
 
         generate_help = StringIO()
-        with redirect_stdout(generate_help), self.assertRaises(SystemExit) as ctx:
+        with (
+            redirect_stdout(generate_help),
+            self.assertRaises(SystemExit) as ctx,
+        ):
             cli.main(["generate", "--help"])
         self.assertEqual(ctx.exception.code, 0)
         generate_text = generate_help.getvalue()

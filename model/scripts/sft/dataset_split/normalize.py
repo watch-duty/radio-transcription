@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Set
+import math
 
 from dataset_split.config import InputDatasetConfig
 from dataset_split.source_keys import resolve_source_group
@@ -67,6 +68,23 @@ def normalize_manifest_rows(
             ambiguous_echo_names=ambiguous_echo_names,
             source_map=source_map,
         )
+        offset = _finite_float(
+            row.get("offset"),
+            default=0.0,
+            minimum=0.0,
+            label="offset",
+            dataset_name=dataset.name,
+            row_index=row_index,
+        )
+        duration = _finite_float(
+            row.get("duration"),
+            default=None,
+            minimum=0.0,
+            exclusive_minimum=True,
+            label="duration",
+            dataset_name=dataset.name,
+            row_index=row_index,
+        )
 
         segments.append(
             LabeledSegment(
@@ -75,11 +93,13 @@ def normalize_manifest_rows(
                 source_strategy=dataset.source_strategy,
                 source_group=source_group,
                 audio_uri=audio_uri,
-                original_audio_uri=str(row.get("original_audio_uri") or audio_uri),
+                original_audio_uri=str(
+                    row.get("original_audio_uri") or audio_uri
+                ),
                 text=text,
                 row_index=row_index,
-                offset=float(row.get("offset") or 0.0),
-                duration=float(row.get("duration") or 0.0),
+                offset=offset,
+                duration=duration,
                 timestamp=_optional_str(row, "timestamp"),
                 example_id=_optional_str(row, "example_id"),
                 segment_id=_optional_str(row, "segment_id"),
@@ -109,3 +129,46 @@ def _optional_str(row: Mapping[str, object], key: str) -> str | None:
     if key not in row or row[key] is None:
         return None
     return str(row[key])
+
+
+def _finite_float(
+    value: object,
+    *,
+    default: float | None,
+    minimum: float,
+    label: str,
+    dataset_name: str,
+    row_index: int,
+    exclusive_minimum: bool = False,
+) -> float:
+    if value is None or value == "":
+        if default is None:
+            raise RowValidationError(
+                f"dataset={dataset_name} row_index={row_index} "
+                f"{label} is required"
+            )
+        value = default
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise RowValidationError(
+            f"dataset={dataset_name} row_index={row_index} "
+            f"{label} must be a finite number"
+        ) from exc
+    if not math.isfinite(parsed):
+        raise RowValidationError(
+            f"dataset={dataset_name} row_index={row_index} "
+            f"{label} must be a finite number"
+        )
+    if exclusive_minimum:
+        if parsed <= minimum:
+            raise RowValidationError(
+                f"dataset={dataset_name} row_index={row_index} "
+                f"{label} must be > {minimum:g}"
+            )
+    elif parsed < minimum:
+        raise RowValidationError(
+            f"dataset={dataset_name} row_index={row_index} "
+            f"{label} must be >= {minimum:g}"
+        )
+    return parsed

@@ -69,13 +69,14 @@ class TestDatasetVersionValidate(unittest.TestCase):
             {
                 "gs://manifests/calls.jsonl": (
                     '{"audio_filepath": "gs://bucket/123_1700000000.mp3", '
-                    '"text": "alpha"}\n'
+                    '"text": "alpha", "duration": 1.0}\n'
                     '{"audio_filepath": "gs://bucket/123_1700000001.mp3", '
                     '"text": "  "}\n'
                 ),
                 "gs://manifests/feeds.jsonl": (
                     '{"url": "https://archives.broadcastify.com/119/20260114/'
-                    '202601141312-685630-119.mp3", "text": "bravo"}\n'
+                    '202601141312-685630-119.mp3", "text": "bravo", '
+                    '"duration": 1.0}\n'
                 ),
             }
         )
@@ -122,7 +123,8 @@ class TestDatasetVersionValidate(unittest.TestCase):
         reader = FakeTextReader(
             {
                 "gs://manifests/echo.jsonl": (
-                    f'{{"audio_filepath": "{audio_uri}", "text": "alpha"}}\n'
+                    f'{{"audio_filepath": "{audio_uri}", "text": "alpha", '
+                    '"duration": 1.0}\n'
                 ),
                 "gs://maps/echo.jsonl": (
                     f'{{"audio_filepath": "{audio_uri}", '
@@ -142,9 +144,9 @@ class TestDatasetVersionValidate(unittest.TestCase):
             {
                 "gs://manifests/echo.jsonl": (
                     '{"audio_filepath": "gs://audio/Lake_Co_Red_20250326_07.wav", '
-                    '"text": "alpha"}\n'
+                    '"text": "alpha", "duration": 1.0}\n'
                     '{"audio_filepath": "gs://audio/Wahkiakum_Fire_Disp_20250326_07.wav", '
-                    '"text": "bravo"}\n'
+                    '"text": "bravo", "duration": 1.0}\n'
                 )
             }
         )
@@ -220,22 +222,23 @@ class TestDatasetVersionValidate(unittest.TestCase):
             {
                 "gs://m/calls.jsonl": (
                     '{"audio_filepath": "gs://bucket/123_1700000000.mp3", '
-                    '"text": "alpha"}\n'
+                    '"text": "alpha", "duration": 1.0}\n'
                 ),
                 "gs://m/feeds.jsonl": (
                     '{"url": "https://archives.broadcastify.com/119/20260114/'
-                    '202601141312-685630-119.mp3", "text": "bravo"}\n'
+                    '202601141312-685630-119.mp3", "text": "bravo", '
+                    '"duration": 1.0}\n'
                 ),
                 "gs://m/echo.jsonl": (
                     '{"area_code": "ca_chico", '
                     '"echo_name": "Tehama_Sheriff_Disp", '
                     '"audio_filepath": "gs://bucket/echo.mp3", '
-                    '"text": "charlie"}\n'
+                    '"text": "charlie", "duration": 1.0}\n'
                 ),
                 "gs://m/fire.jsonl": (
                     '{"location": "TEXAS/AL-JEFFERSON-ADAMSVILLE-DISP", '
                     '"url": "https://player.textmefires.info/a.mp3", '
-                    '"text": "delta"}\n'
+                    '"text": "delta", "duration": 1.0}\n'
                 ),
             }
         )

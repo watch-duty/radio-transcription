@@ -97,15 +97,19 @@ class FakeStorageClient:
         self,
         listed_blobs: list[FakeListedBlob] | None = None,
         *,
+        list_error: Exception | None = None,
         upload_error: Exception | None = None,
     ) -> None:
         self.listed_blobs = listed_blobs or []
+        self.list_error = list_error
         self.list_calls: list[dict[str, Any]] = []
         self.fake_bucket = FakeBucket(upload_error=upload_error)
 
     def list_blobs(
         self, bucket_name: str, *, prefix: str, max_results: int
     ) -> list[FakeListedBlob]:
+        if self.list_error is not None:
+            raise self.list_error
         self.list_calls.append(
             {
                 "bucket_name": bucket_name,
@@ -222,6 +226,18 @@ class TestDatasetArtifacts(unittest.TestCase):
             ],
         )
 
+    def test_prefix_inspection_failure_maps_to_artifact_error(self) -> None:
+        client = FakeStorageClient(list_error=RuntimeError("permission denied"))
+
+        with self.assertRaisesRegex(
+            DatasetArtifactError,
+            "failed to inspect dataset version prefix "
+            "gs://wd-transcription-data/sft/dv-001/",
+        ):
+            ensure_dataset_version_absent(
+                client, "gs://wd-transcription-data/sft/dv-001/"
+            )
+
     def test_create_only_precondition_failure_fails(self) -> None:
         client = FakeStorageClient(upload_error=FakePreconditionFailure("412"))
 
@@ -240,6 +256,23 @@ class TestDatasetArtifacts(unittest.TestCase):
             "sft/dv-001/config/resolved_config.json"
         ]
         self.assertEqual(blob.uploads[0]["if_generation_match"], 0)
+
+    def test_upload_text_create_only_maps_unexpected_upload_failure(
+        self,
+    ) -> None:
+        client = FakeStorageClient(upload_error=RuntimeError("network down"))
+
+        with self.assertRaisesRegex(
+            DatasetArtifactError,
+            "failed to upload artifact "
+            "gs://wd-transcription-data/sft/dv-001/config/resolved_config.json",
+        ):
+            upload_text_create_only(
+                client,
+                "gs://wd-transcription-data/sft/dv-001/config/resolved_config.json",
+                "{}",
+                content_type="application/json",
+            )
 
     def test_upload_file_create_only_uses_generation_precondition(
         self,
@@ -286,6 +319,23 @@ class TestDatasetArtifacts(unittest.TestCase):
 
         blob = client.fake_bucket.blobs["sft/dv-001/audio/derived/a.flac"]
         self.assertEqual(blob.uploads[0]["if_generation_match"], 0)
+
+    def test_upload_file_create_only_maps_unexpected_upload_failure(
+        self,
+    ) -> None:
+        client = FakeStorageClient(upload_error=RuntimeError("network down"))
+
+        with self.assertRaisesRegex(
+            DatasetArtifactError,
+            "failed to upload artifact "
+            "gs://wd-transcription-data/sft/dv-001/audio/derived/a.flac",
+        ):
+            upload_file_create_only(
+                client,
+                "gs://wd-transcription-data/sft/dv-001/audio/derived/a.flac",
+                Path("/tmp/audio.flac"),
+                content_type="audio/flac",
+            )
 
     def test_audio_object_uri_uses_action_folders_without_split_parts(
         self,

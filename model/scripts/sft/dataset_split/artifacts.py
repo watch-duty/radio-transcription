@@ -125,10 +125,19 @@ class DatasetArtifactLayout:
 
 
 def prefix_exists(storage_client: object, root_uri: str) -> bool:
-    bucket_name, prefix = parse_gcs_uri(root_uri)
-    prefix = _prefix_with_trailing_slash(prefix)
-    blobs = storage_client.list_blobs(bucket_name, prefix=prefix, max_results=1)
-    return next(iter(blobs), None) is not None
+    try:
+        bucket_name, prefix = parse_gcs_uri(root_uri)
+        prefix = _prefix_with_trailing_slash(prefix)
+        blobs = storage_client.list_blobs(
+            bucket_name, prefix=prefix, max_results=1
+        )
+        return next(iter(blobs), None) is not None
+    except DatasetArtifactError:
+        raise
+    except Exception as exc:
+        raise DatasetArtifactError(
+            f"failed to inspect dataset version prefix {root_uri}"
+        ) from exc
 
 
 def ensure_dataset_version_absent(
@@ -159,7 +168,7 @@ def upload_text_create_only(
             raise DatasetVersionExistsError(
                 f"dataset version object already exists at {uri}"
             ) from exc
-        raise
+        raise DatasetArtifactError(f"failed to upload artifact {uri}") from exc
     return uri
 
 
@@ -197,7 +206,7 @@ def upload_file_create_only(
             raise DatasetVersionExistsError(
                 f"dataset version object already exists at {uri}"
             ) from exc
-        raise
+        raise DatasetArtifactError(f"failed to upload artifact {uri}") from exc
     return uri
 
 

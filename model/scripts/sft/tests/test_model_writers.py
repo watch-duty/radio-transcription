@@ -90,9 +90,7 @@ class TestNemoWriter(unittest.TestCase):
                 "segment_id",
             },
         )
-        self.assertEqual(
-            row["audio_filepath"], segment.model_ready_audio_uri
-        )
+        self.assertEqual(row["audio_filepath"], segment.model_ready_audio_uri)
         self.assertNotEqual(row["audio_filepath"], segment.audio_uri)
         self.assertEqual(row["text"], segment.text)
         self.assertEqual(row["duration"], segment.duration)
@@ -122,9 +120,7 @@ class TestNemoWriter(unittest.TestCase):
         self.assertEqual(row["offset"], 4.5)
 
     def test_nemo_requires_model_ready_audio_uri(self) -> None:
-        segment = _segment(
-            "feed-a", row_index=11, model_ready_audio_uri=None
-        )
+        segment = _segment("feed-a", row_index=11, model_ready_audio_uri=None)
 
         with self.assertRaisesRegex(
             ModelWriterError, "row_index=11 missing model_ready_audio_uri"
@@ -187,9 +183,7 @@ class TestWhisperWriter(unittest.TestCase):
         )
         self.assertEqual(row["audio_uri"], segment.model_ready_audio_uri)
         self.assertNotEqual(row["audio_uri"], segment.audio_uri)
-        self.assertEqual(
-            row["original_audio_uri"], segment.original_audio_uri
-        )
+        self.assertEqual(row["original_audio_uri"], segment.original_audio_uri)
         self.assertEqual(row["dataset_name"], segment.dataset_name)
         self.assertEqual(row["dataset_family"], segment.dataset_family)
         self.assertEqual(row["source_group"], segment.source_group)
@@ -240,9 +234,7 @@ class TestWhisperWriter(unittest.TestCase):
         )
 
     def test_whisper_requires_model_ready_audio_uri(self) -> None:
-        segment = _segment(
-            "feed-a", row_index=12, model_ready_audio_uri=None
-        )
+        segment = _segment("feed-a", row_index=12, model_ready_audio_uri=None)
 
         with self.assertRaisesRegex(
             ModelWriterError, "row_index=12 missing model_ready_audio_uri"
@@ -313,13 +305,17 @@ class TestGeminiWriter(unittest.TestCase):
         self.assertEqual(
             result.config,
             {
-                "trainingDatasetUri": "gs://wd-transcription-data/sft/dv-001/model_inputs/gemini/train.jsonl",
-                "validationDatasetUri": "gs://wd-transcription-data/sft/dv-001/model_inputs/gemini/eval.jsonl",
                 "baseModel": "gemini-3.1-flash-lite",
                 "region": "us-central1",
-                "adapterSize": "ONE",
-                "epochCount": 5,
-                "learningRateMultiplier": 1.0,
+                "supervisedTuningSpec": {
+                    "trainingDatasetUri": "gs://wd-transcription-data/sft/dv-001/model_inputs/gemini/train.jsonl",
+                    "validationDatasetUri": "gs://wd-transcription-data/sft/dv-001/model_inputs/gemini/eval.jsonl",
+                    "hyperParameters": {
+                        "adapterSize": "ONE",
+                        "epochCount": 5,
+                        "learningRateMultiplier": 1.0,
+                    },
+                },
             },
         )
 
@@ -330,10 +326,10 @@ class TestGeminiWriter(unittest.TestCase):
         )
 
         self.assertEqual(
-            config["trainingDatasetUri"],
+            config["supervisedTuningSpec"]["trainingDatasetUri"],
             "gs://wd-transcription-data/sft/dv-001/model_inputs/gemini/train.jsonl",
         )
-        self.assertNotIn("validationDatasetUri", config)
+        self.assertNotIn("validationDatasetUri", config["supervisedTuningSpec"])
         self.assertEqual(config["baseModel"], "gemini-3.1-flash-lite")
 
     def test_gemini_config_rejects_invalid_tuning_values(self) -> None:
@@ -382,9 +378,7 @@ class TestGeminiWriter(unittest.TestCase):
         )
 
     def test_gemini_requires_model_ready_audio_uri(self) -> None:
-        segment = _segment(
-            "feed-a", row_index=13, model_ready_audio_uri=None
-        )
+        segment = _segment("feed-a", row_index=13, model_ready_audio_uri=None)
 
         with self.assertRaisesRegex(
             ModelWriterError, "row_index=13 missing model_ready_audio_uri"

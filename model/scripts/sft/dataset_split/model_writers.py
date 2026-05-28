@@ -186,18 +186,23 @@ def build_gemini_tuning_config(
         minimum=0.001,
         maximum=10.0,
     )
-    config: dict[str, object] = {
+    supervised_tuning_spec: dict[str, object] = {
         "trainingDatasetUri": _require_text(
             training_dataset_uri, label="training_dataset_uri"
         ),
+        "hyperParameters": {
+            "adapterSize": normalized_adapter_size,
+            "epochCount": normalized_epoch_count,
+            "learningRateMultiplier": normalized_learning_rate_multiplier,
+        },
+    }
+    config: dict[str, object] = {
         "baseModel": _require_text(base_model, label="base_model"),
         "region": _require_text(region, label="region"),
-        "adapterSize": normalized_adapter_size,
-        "epochCount": normalized_epoch_count,
-        "learningRateMultiplier": normalized_learning_rate_multiplier,
+        "supervisedTuningSpec": supervised_tuning_spec,
     }
     if validation_dataset_uri is not None:
-        config["validationDatasetUri"] = _require_text(
+        supervised_tuning_spec["validationDatasetUri"] = _require_text(
             validation_dataset_uri, label="validation_dataset_uri"
         )
     return config

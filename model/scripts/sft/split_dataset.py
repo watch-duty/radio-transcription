@@ -5,20 +5,32 @@ from dataclasses import asdict
 from pathlib import Path
 
 from dataset_split.artifacts import DatasetArtifactError
+from dataset_split.audio import AudioDerivationError
+from dataset_split.canonical import CanonicalManifestError
 from dataset_split.config import (
     ConfigValidationError,
     DatasetVersionConfig,
     parse_dataset_version_config_toml,
 )
 from dataset_split.dry_run import build_dry_run_artifacts
-from dataset_split.gcs_io import GcsInputError, GoogleCloudTextReader, TextReader
+from dataset_split.gcs_io import (
+    GcsInputError,
+    GoogleCloudTextReader,
+    TextReader,
+)
 from dataset_split.leakage import SplitLeakageError, validate_split_integrity
+from dataset_split.model_writers import ModelWriterError
 from dataset_split.publisher import (
     DatasetPublicationError,
     DatasetPublicationResult,
     publish_dataset_version_artifacts,
 )
-from dataset_split.split import SplitAssignmentError, SplitResult, assign_train_eval_split
+from dataset_split.reports import DatasetVersionReportError
+from dataset_split.split import (
+    SplitAssignmentError,
+    SplitResult,
+    assign_train_eval_split,
+)
 from dataset_split.validate import (
     DatasetValidationError,
     DatasetValidationResult,
@@ -37,9 +49,7 @@ def _make_text_reader() -> GoogleCloudTextReader:
     return GoogleCloudTextReader(_make_storage_client())
 
 
-def _load_config(
-    config_uri: str, reader: TextReader
-) -> DatasetVersionConfig:
+def _load_config(config_uri: str, reader: TextReader) -> DatasetVersionConfig:
     config_text = reader.read_text(config_uri)
     return parse_dataset_version_config_toml(config_text, source=config_uri)
 
@@ -131,14 +141,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    dry_run = subparsers.add_parser("dry-run",
+    dry_run = subparsers.add_parser(
+        "dry-run",
         help="Write a local preview bundle without materializing audio.",
     )
     dry_run.add_argument("--config-uri", required=True)
     dry_run.add_argument("--output-dir", required=True)
     dry_run.set_defaults(handler=_dry_run)
 
-    generate = subparsers.add_parser("generate",
+    generate = subparsers.add_parser(
+        "generate",
         help="Publish the dataset-version artifacts to GCS.",
     )
     generate.add_argument("--config-uri", required=True)
@@ -160,6 +172,10 @@ def main(argv: list[str] | None = None) -> int:
         SplitLeakageError,
         DatasetPublicationError,
         DatasetArtifactError,
+        AudioDerivationError,
+        CanonicalManifestError,
+        ModelWriterError,
+        DatasetVersionReportError,
     ) as exc:
         print(str(exc))
         return 1

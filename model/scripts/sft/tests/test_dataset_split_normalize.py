@@ -45,7 +45,9 @@ class TestDatasetVersionNormalize(unittest.TestCase):
         self.assertEqual(result.excluded[0].reason, "empty_text")
 
     def test_normalize_text_replaces_newlines(self) -> None:
-        self.assertEqual(normalize_text(" engine\n41\rresponding "), "engine 41 responding")
+        self.assertEqual(
+            normalize_text(" engine\n41\rresponding "), "engine 41 responding"
+        )
 
     def test_non_string_text_is_cast(self) -> None:
         self.assertEqual(normalize_text(1234), "1234")
@@ -66,6 +68,7 @@ class TestDatasetVersionNormalize(unittest.TestCase):
                         "audio_filepath": "gs://bucket/a.flac",
                         "text": "hello",
                         "groupId": "123",
+                        "duration": 1.0,
                     }
                 ],
             )
@@ -93,6 +96,7 @@ class TestDatasetVersionNormalize(unittest.TestCase):
                     "original_audio_uri": "https://cdn.example.com/a.mp3",
                     "text": "hello",
                     "groupId": "123",
+                    "duration": 1.0,
                 }
             ],
         )
@@ -102,6 +106,52 @@ class TestDatasetVersionNormalize(unittest.TestCase):
         self.assertIsNone(segment.derived_audio_uri)
         self.assertIsNone(segment.transformation_metadata)
         self.assertEqual(segment.raw_row["groupId"], "123")
+
+    def test_invalid_offset_fails_with_row_context(self) -> None:
+        with self.assertRaisesRegex(
+            RowValidationError, "dataset=calls row_index=0 offset"
+        ):
+            normalize_manifest_rows(
+                _dataset(),
+                [
+                    {
+                        "audio_filepath": "gs://bucket/a.flac",
+                        "text": "hello",
+                        "groupId": "123",
+                        "offset": "not-a-number",
+                        "duration": 1.0,
+                    }
+                ],
+            )
+
+    def test_missing_or_non_positive_duration_fails_with_row_context(
+        self,
+    ) -> None:
+        invalid_rows = (
+            {
+                "audio_filepath": "gs://bucket/a.flac",
+                "text": "hello",
+                "groupId": "123",
+            },
+            {
+                "audio_filepath": "gs://bucket/a.flac",
+                "text": "hello",
+                "groupId": "123",
+                "duration": 0,
+            },
+            {
+                "audio_filepath": "gs://bucket/a.flac",
+                "text": "hello",
+                "groupId": "123",
+                "duration": float("nan"),
+            },
+        )
+        for row in invalid_rows:
+            with self.subTest(row=row):
+                with self.assertRaisesRegex(
+                    RowValidationError, "dataset=calls row_index=0 duration"
+                ):
+                    normalize_manifest_rows(_dataset(), [row])
 
 
 if __name__ == "__main__":
