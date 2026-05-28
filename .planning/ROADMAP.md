@@ -77,12 +77,13 @@ Plans:
   2. Rows pointing into longer files produce derived clips from offset/duration.
   3. Derived clips are mono when needed, unpadded, and not resampled by default.
   4. Every example records original audio, offset, duration, source group, split, and transformation provenance.
-**Plans**: 3 plans
+**Plans**: 4 plans
 
 Plans:
-- [ ] 04-01: Audio reuse/derive planning
-- [ ] 04-02: Clip derivation execution and upload
-- [ ] 04-03: Provenance and transformation report integration
+- [ ] 04-01-PLAN.md — Audio preparation boundary and binary upload helpers
+- [ ] 04-02-PLAN.md — Publisher prechecked flow and model writer hard gates
+- [ ] 04-03-PLAN.md — Model-ready provenance validation and canonical manifests
+- [ ] 04-04-PLAN.md — Audio transformation report integration
 
 ### Phase 5: CLI, Reports, Docs, And Verification
 **Goal**: Users can run dry-run and generation commands, inspect reports, and hand generated artifacts to SFT workflows with clear terminology.
