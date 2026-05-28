@@ -1,8 +1,8 @@
 # Phase 3: GCS Artifacts And Model Writers - Pattern Map
 
 **Mapped:** 2026-05-27
-**Files analyzed:** 10 new/modified files
-**Analogs found:** 10 / 10
+**Files analyzed:** 12 new/modified files
+**Analogs found:** 12 / 12
 
 ## File Classification
 
@@ -11,10 +11,12 @@
 | `model/scripts/sft/dataset_split/artifacts.py` | service, utility | file-I/O, batch | `backend/pipeline/common/storage/gcs_uploader.py`; `model/scripts/sft/dataset_split/gcs_io.py`; `model/colabs/common/gcs_utils.py` | role-match |
 | `model/scripts/sft/dataset_split/canonical.py` | utility | transform, batch | `model/scripts/sft/dataset_split/normalize.py`; `model/scripts/sft/dataset_split/types.py`; `model/scripts/sft/dataset_split/leakage.py` | exact |
 | `model/scripts/sft/dataset_split/model_writers.py` | utility, service | transform, file-I/O | `model/scripts/sft/pipeline.py`; `model/colabs/common/sft.py`; `model/colabs/common/manifest.py` | role-match |
+| `model/scripts/sft/dataset_split/publisher.py` | service, orchestrator | transform, file-I/O, batch | `model/scripts/sft/pipeline.py`; `model/scripts/sft/dataset_split/artifacts.py`; `backend/pipeline/common/storage/gcs_uploader.py` | role-match |
 | `model/scripts/sft/dataset_split/reports.py` | utility | transform, batch | `model/scripts/sft/dataset_split/balance.py`; `model/scripts/sft/preflight.py` | role-match |
 | `model/colabs/common/sft.py` | utility | transform, validation | existing `model/colabs/common/sft.py`; `model/colabs/common/vertex.py` | exact |
 | `model/scripts/sft/tests/test_dataset_artifacts.py` | test | file-I/O, batch | `model/scripts/sft/tests/test_dataset_split_gcs_io.py`; `backend/pipeline/common/storage/tests/test_gcs_uploader.py` | exact |
 | `model/scripts/sft/tests/test_dataset_canonical.py` | test | transform | `model/scripts/sft/tests/test_dataset_split_normalize.py`; `model/scripts/sft/tests/test_dataset_split_leakage.py` | exact |
+| `model/scripts/sft/tests/test_dataset_publisher.py` | test | file-I/O, transform, batch | `model/scripts/sft/tests/test_pipeline_build.py`; `model/scripts/sft/tests/test_dataset_artifacts.py`; `backend/pipeline/common/storage/tests/test_gcs_uploader.py` | role-match |
 | `model/scripts/sft/tests/test_dataset_reports.py` | test | transform, batch | `model/scripts/sft/tests/test_dataset_split_balance.py`; `model/scripts/sft/tests/test_pipeline_build.py` | role-match |
 | `model/scripts/sft/tests/test_model_writers.py` | test | transform | `model/scripts/sft/tests/test_pipeline_build.py`; `model/colabs/common/tests/test_sft.py` | exact |
 | `model/colabs/common/tests/test_sft.py` | test | transform, validation | existing `model/colabs/common/tests/test_sft.py` | exact |
@@ -153,6 +155,39 @@ mock_blob.upload_from_string.assert_called_once_with(
 ```
 
 Apply this fake-client pattern in `test_dataset_artifacts.py` for prefix checks and per-object precondition failures.
+
+---
+
+### `model/scripts/sft/dataset_split/publisher.py` (service/orchestrator, transform + file-I/O + batch)
+
+**Primary analogs:** `model/scripts/sft/pipeline.py`, `dataset_split/artifacts.py`, `backend/pipeline/common/storage/gcs_uploader.py`
+
+**Pipeline orchestration pattern** from `model/scripts/sft/pipeline.py`: build model-facing artifacts from canonical rows, validate target-specific shapes, stage outputs, and return/upload deterministic artifact URIs. For Phase 3, keep the same orchestration idea but replace legacy `round_id` and Gemini-only behavior with immutable dataset-version publication.
+
+**Create-only publication pattern** from `dataset_split/artifacts.py` and `backend/pipeline/common/storage/gcs_uploader.py`: call the prefix guard before any upload, then route every object write through the helper that uses `if_generation_match=0`.
+
+Use this sequence in `publish_dataset_version_artifacts()`:
+
+```python
+layout = DatasetArtifactLayout.for_dataset_version(
+    dataset_version_id,
+    root_prefix=root_prefix,
+)
+ensure_dataset_version_absent(storage_client, layout.root_uri)
+canonical = canonical_manifests(segments)
+per_dataset = per_dataset_manifests(segments)
+nemo = build_nemo_inputs(...)
+whisper = build_whisper_inputs(...)
+gemini = build_gemini_inputs(...)
+metadata = build_dataset_version_metadata(...)
+report = build_dataset_version_report(...)
+```
+
+Then upload each serialized object with `upload_text_create_only(storage_client, uri, text, content_type=...)`. Do not call `blob.upload_from_string()` directly in `publisher.py`; that would bypass the Phase 3 overwrite safety contract.
+
+**Artifact inventory pattern:** return a frozen result object with both structured `PublishedArtifact` entries and a plain URI inventory. Reports should receive the planned inventory so `reports/dataset_version_report.*` can list the final `config/`, `metadata/`, `manifests/`, `model_inputs/`, and `reports/` paths.
+
+**Scope boundaries:** `publisher.py` is the final dataset-version writer, not a training runner. It must not instantiate `genai.Client`, submit tuning jobs, poll Vertex/Gemini jobs, derive clips, resample audio, delete prefixes, add force/resume cleanup, or mutate existing benchmark/eval manifests.
 
 ---
 
@@ -816,6 +851,36 @@ Add tests for:
 - `test_existing_prefix_fails`
 - `test_create_only_precondition_failure_fails`
 - `test_generation_targets_only_new_artifacts`
+
+---
+
+### `model/scripts/sft/tests/test_dataset_publisher.py` (test, file-I/O + transform + batch)
+
+**Primary analogs:** `test_pipeline_build.py`, `test_dataset_artifacts.py`, `backend/pipeline/common/storage/tests/test_gcs_uploader.py`
+
+**Pipeline fixture pattern:** follow `test_pipeline_build.py` by using small in-memory rows and asserting output payload shape, not by contacting external services. For publisher tests, construct split-populated `LabeledSegment` fixtures that cover train/eval, at least one per-dataset slice, one FLAC URI, and one MP3 URI.
+
+**Fake GCS pattern:** reuse the fake-client shape from `test_dataset_artifacts.py` and the create-only assertion from `test_gcs_uploader.py`. The fake must support both:
+
+```python
+storage_client.list_blobs(bucket_name, prefix=prefix, max_results=1)
+storage_client.bucket(bucket_name).blob(blob_path).upload_from_string(
+    text,
+    content_type=content_type,
+    if_generation_match=0,
+)
+```
+
+Keep all publisher tests no-network. Do not import real Google credentials, `google.genai`, NeMo, Hugging Face, audio decoders, or `gcloud`.
+
+**Required publisher tests:**
+
+- `test_publish_dataset_version_uploads_expected_uri_inventory`: asserts returned inventory contains `config/`, `metadata/`, `manifests/canonical/`, `manifests/per_dataset/`, `model_inputs/nemo/`, `model_inputs/whisper/`, `model_inputs/gemini/`, and `reports/` URIs under `gs://wd-transcription-data/sft/dv-001/`.
+- `test_publish_dataset_version_checks_prefix_before_upload`: fake `list_blobs()` returns one existing object; `publish_dataset_version_artifacts()` raises `DatasetVersionExistsError` before any upload.
+- `test_publish_dataset_version_precondition_failure_fails`: fake upload raises the same precondition failure handled by `upload_text_create_only()`; publisher surfaces the hard error instead of treating it as success.
+- `test_publish_dataset_version_uses_create_only_helper_for_all_objects`: fake records each upload and asserts `if_generation_match=0` for every object.
+
+**Assertions to include:** reports and inventory must not contain `raw_row`, credentials, tuned model IDs, tuning job names, `force`, `resume`, or cleanup/delete semantics.
 
 ---
 
