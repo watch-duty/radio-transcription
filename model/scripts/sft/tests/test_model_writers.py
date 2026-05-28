@@ -15,9 +15,14 @@ if _COLABS_DIR not in sys.path:
     sys.path.insert(0, _COLABS_DIR)
 
 from dataset_split.model_writers import (  # noqa: E402
+    DEFAULT_GEMINI_BASE_MODEL,
     ModelWriterResult,
+    ModelWriterError,
+    build_gemini_inputs,
+    build_gemini_tuning_config,
     build_nemo_inputs,
     build_whisper_inputs,
+    infer_audio_mime_type,
 )
 from dataset_split.types import LabeledSegment  # noqa: E402
 
@@ -30,14 +35,17 @@ def _segment(
     duration: float = 12.5,
     offset: float = 3.0,
     text: str = "engine 41 copy",
+    audio_suffix: str = "mp3",
 ) -> LabeledSegment:
     return LabeledSegment(
         dataset_name="calls",
         dataset_family="bcfy_calls",
         source_strategy="bcfy_calls",
         source_group=source_group,
-        audio_uri=f"gs://wd-source/{source_group}/{row_index}.mp3",
-        original_audio_uri=f"gs://wd-raw/{source_group}/{row_index}.mp3",
+        audio_uri=f"gs://wd-source/{source_group}/{row_index}.{audio_suffix}",
+        original_audio_uri=(
+            f"gs://wd-raw/{source_group}/{row_index}.{audio_suffix}"
+        ),
         text=text,
         row_index=row_index,
         offset=offset,
@@ -163,6 +171,108 @@ class TestWhisperWriter(unittest.TestCase):
         self.assertEqual(
             result.warnings_by_writer()["whisper"][0]["code"],
             "whisper_duration_over_30s",
+        )
+
+
+class TestGeminiWriter(unittest.TestCase):
+    def test_gemini_writer_shape_and_config(self) -> None:
+        segments = (
+            _segment(
+                "feed-a",
+                split="train",
+                row_index=1,
+                audio_suffix="flac",
+            ),
+            _segment(
+                "feed-b",
+                split="eval",
+                row_index=2,
+                audio_suffix="mp3",
+                text="ladder 5 responding",
+            ),
+        )
+
+        result = build_gemini_inputs(
+            segments,
+            system_prompt="You are a radio transcription model.",
+            user_prompt="Transcribe the emergency radio audio.",
+            training_dataset_uri="gs://wd-transcription-data/sft/dv-001/model_inputs/gemini/train.jsonl",
+            validation_dataset_uri="gs://wd-transcription-data/sft/dv-001/model_inputs/gemini/eval.jsonl",
+        )
+
+        self.assertIsInstance(result, ModelWriterResult)
+        self.assertEqual(DEFAULT_GEMINI_BASE_MODEL, "gemini-3.1-flash-lite")
+        self.assertEqual(result.warnings, ())
+        train_row = result.rows_by_split["train"][0]
+        eval_row = result.rows_by_split["eval"][0]
+        self.assertEqual(
+            set(train_row),
+            {"systemInstruction", "contents"},
+        )
+        self.assertEqual(
+            train_row["systemInstruction"]["parts"][0]["text"],
+            "You are a radio transcription model.",
+        )
+        self.assertEqual(train_row["contents"][0]["role"], "user")
+        self.assertEqual(train_row["contents"][1]["role"], "model")
+        self.assertEqual(
+            train_row["contents"][0]["parts"][0]["fileData"],
+            {
+                "mimeType": "audio/flac",
+                "fileUri": segments[0].audio_uri,
+            },
+        )
+        self.assertEqual(
+            eval_row["contents"][0]["parts"][0]["fileData"]["mimeType"],
+            "audio/mpeg",
+        )
+        self.assertEqual(
+            eval_row["contents"][1]["parts"][0]["text"],
+            "ladder 5 responding",
+        )
+        self.assertEqual(
+            result.config,
+            {
+                "trainingDatasetUri": "gs://wd-transcription-data/sft/dv-001/model_inputs/gemini/train.jsonl",
+                "validationDatasetUri": "gs://wd-transcription-data/sft/dv-001/model_inputs/gemini/eval.jsonl",
+                "baseModel": "gemini-3.1-flash-lite",
+                "region": "us-central1",
+                "adapterSize": "ONE",
+                "epochCount": 5,
+                "learningRateMultiplier": 1.0,
+            },
+        )
+
+    def test_gemini_config_omits_validation_when_absent(self) -> None:
+        config = build_gemini_tuning_config(
+            training_dataset_uri="gs://wd-transcription-data/sft/dv-001/model_inputs/gemini/train.jsonl",
+            validation_dataset_uri=None,
+        )
+
+        self.assertEqual(
+            config["trainingDatasetUri"],
+            "gs://wd-transcription-data/sft/dv-001/model_inputs/gemini/train.jsonl",
+        )
+        self.assertNotIn("validationDatasetUri", config)
+        self.assertEqual(config["baseModel"], "gemini-3.1-flash-lite")
+
+    def test_gemini_writer_rejects_unsupported_audio_mime(self) -> None:
+        segment = _segment("feed-a", row_index=9, audio_suffix="wav")
+
+        with self.assertRaisesRegex(ModelWriterError, "row_index=9"):
+            build_gemini_inputs(
+                (segment,),
+                system_prompt="sys",
+                user_prompt="user",
+                training_dataset_uri="gs://wd-transcription-data/sft/dv-001/model_inputs/gemini/train.jsonl",
+            )
+
+    def test_infer_audio_mime_type_maps_supported_audio(self) -> None:
+        self.assertEqual(
+            infer_audio_mime_type("gs://bucket/a.flac"), "audio/flac"
+        )
+        self.assertEqual(
+            infer_audio_mime_type("gs://bucket/a.mp3"), "audio/mpeg"
         )
 
 

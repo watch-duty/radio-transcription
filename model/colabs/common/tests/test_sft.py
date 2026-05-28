@@ -26,6 +26,29 @@ class TestBuildExample(unittest.TestCase):
         )
         self.assertEqual(file_parts[0]["fileData"]["mimeType"], "audio/flac")
 
+    def test_build_example_accepts_explicit_mpeg_mime_type(self) -> None:
+        from common.sft import build_example
+
+        example = build_example(
+            audio_uri="gs://bucket/seg001.mp3",
+            gt_text="Engine 41 copy",
+            system_prompt="You are a transcriber.",
+            user_prompt="Transcribe this.",
+            mime_type="audio/mpeg",
+        )
+        file_parts = [
+            p for p in example["contents"][0]["parts"] if "fileData" in p
+        ]
+
+        self.assertIn("systemInstruction", example)
+        self.assertEqual(
+            file_parts[0]["fileData"],
+            {
+                "mimeType": "audio/mpeg",
+                "fileUri": "gs://bucket/seg001.mp3",
+            },
+        )
+
     def test_system_instruction_is_sibling_of_contents(self) -> None:
         from common.sft import build_example
 
@@ -79,6 +102,30 @@ class TestValidateExample(unittest.TestCase):
 
         ex = build_example("gs://b/s.flac", "copy", "sys", "user")
         self.assertTrue(validate_example(ex))
+
+    def test_validate_example_accepts_audio_mpeg(self) -> None:
+        from common.sft import build_example, validate_example
+
+        ex = build_example(
+            "gs://b/s.mp3",
+            "copy",
+            "sys",
+            "user",
+            mime_type="audio/mpeg",
+        )
+        self.assertTrue(validate_example(ex))
+
+    def test_validate_example_rejects_unsupported_mime_type(self) -> None:
+        from common.sft import build_example, validate_example
+
+        ex = build_example(
+            "gs://b/s.wav",
+            "copy",
+            "sys",
+            "user",
+            mime_type="audio/wav",
+        )
+        self.assertFalse(validate_example(ex))
 
     def test_rejects_legacy_input_output_shape(self) -> None:
         from common.sft import validate_example
