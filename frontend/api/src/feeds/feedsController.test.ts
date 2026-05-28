@@ -1,4 +1,4 @@
-import type { SourceType } from '@transcription/common';
+import { SourceType } from '@transcription/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FeedsController } from './feedsController.js';
@@ -136,7 +136,7 @@ describe('FeedsController', () => {
       const controller = new FeedsController();
       const payload = {
         name: 'Test Feed',
-        sourceType: 'openmhz' as const,
+        sourceType: SourceType.OPENMHZ,
         sourceFeedId: 'src_123',
         externalId: 'ext_123',
       };
@@ -165,7 +165,7 @@ describe('FeedsController', () => {
       const controller = new FeedsController();
       const payload = {
         name: 'Test Feed',
-        sourceType: 'openmhz' as const,
+        sourceType: SourceType.OPENMHZ,
         sourceFeedId: 'src_123',
         externalId: 'ext_123',
         tags: [{ key: 'county', value: 'Fulton' }],
