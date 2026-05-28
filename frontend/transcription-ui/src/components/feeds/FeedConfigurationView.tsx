@@ -15,8 +15,8 @@ import { FeedConfigurationEdit } from './FeedConfigurationEdit';
 import { FeedConfigurationTable } from './FeedConfigurationTable';
 
 interface FeedConfigurationViewProps {
-  triggerSnackbar?: (message: string) => void;
-  onError?: (error: Error, titleMessage?: string) => void;
+  triggerSnackbar: (message: string) => void;
+  onError: (error: Error, titleMessage?: string) => void;
 }
 
 export function FeedConfigurationView({
@@ -51,15 +51,11 @@ export function FeedConfigurationView({
   const createMutation = useMutation({
     mutationFn: (newFeed: FeedCreate) => createFeed(newFeed, token!),
     onSuccess: (data) => {
-      if (triggerSnackbar) {
-        triggerSnackbar(`Feed "${data.name}" registered successfully!`);
-      }
+      triggerSnackbar(`Feed "${data.name}" registered successfully!`);
       queryClient.invalidateQueries({ queryKey: ['listFeeds', token] });
     },
     onError: (error: Error) => {
-      if (onError) {
-        onError(error, 'Registering Feed');
-      }
+      onError(error, 'Registering Feed');
     },
   });
 
@@ -72,16 +68,12 @@ export function FeedConfigurationView({
       updatePayload: FeedUpdate;
     }) => updateFeed(feedId, updatePayload, token!),
     onSuccess: (data) => {
-      if (triggerSnackbar) {
-        triggerSnackbar(`Feed "${data.name}" updated successfully!`);
-      }
+      triggerSnackbar(`Feed "${data.name}" updated successfully!`);
       setEditingFeed(null);
       queryClient.invalidateQueries({ queryKey: ['listFeeds', token] });
     },
     onError: (error: Error) => {
-      if (onError) {
-        onError(error, 'Updating Feed Settings');
-      }
+      onError(error, 'Updating Feed Settings');
     },
   });
 

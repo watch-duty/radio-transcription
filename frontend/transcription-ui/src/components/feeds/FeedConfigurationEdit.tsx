@@ -97,7 +97,7 @@ export function FeedConfigurationEdit({
 
   // Tag interactions
   const handleAddTag = () => {
-    const key = newTagKey.trim().toLowerCase();
+    const key = newTagKey.trim();
     const value = newTagValue.trim();
 
     if (!key || !value) {
@@ -138,11 +138,7 @@ export function FeedConfigurationEdit({
   ) => {
     setTags((prev) => {
       const copy = [...prev];
-      if (field === 'key') {
-        copy[index] = { ...copy[index], key: newValue.toLowerCase() };
-      } else {
-        copy[index] = { ...copy[index], value: newValue };
-      }
+      copy[index] = { ...copy[index], [field]: newValue };
       return copy;
     });
     setValidationErrors((prev) => {
@@ -162,10 +158,8 @@ export function FeedConfigurationEdit({
 
     // Source Feed ID and Source Type are only required when creating.
     // In update mode they are permanent, but we validate to stay completely defensive.
-    if (!editingFeed) {
-      if (!sourceFeedId.trim()) {
-        errors.sourceFeedId = 'Source feed ID is required.';
-      }
+    if (!editingFeed && !sourceFeedId.trim()) {
+      errors.sourceFeedId = 'Source feed ID is required.';
     }
 
     // Verify tags data integrity
@@ -200,7 +194,7 @@ export function FeedConfigurationEdit({
         const payload: FeedUpdate = {
           name: name.trim(),
           externalId: sourceFeedId.trim(),
-          tags: tags.length > 0 ? tags : undefined,
+          tags,
         };
         await onUpdateFeed(editingFeed.id, payload);
       } else {
@@ -209,7 +203,7 @@ export function FeedConfigurationEdit({
           sourceType,
           sourceFeedId: sourceFeedId.trim(),
           externalId: sourceFeedId.trim(),
-          tags: tags.length > 0 ? tags : undefined,
+          tags,
         };
         await onCreateFeed(payload);
         resetFormState();

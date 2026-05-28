@@ -145,6 +145,7 @@ export function FeedConfigurationTable({
   };
 
   // Filter list of existing feeds dynamically
+  // TODO: add pagination https://linear.app/watchduty/issue/GOO-251/add-pagination-for-feeds-api
   const filteredFeeds = useMemo(() => {
     const query = feedSearchQuery.toLowerCase().trim();
     const result = query
