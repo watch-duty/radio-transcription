@@ -531,17 +531,17 @@ Use this helper in `_nemo_row()`, `_whisper_row()`, and `build_gemini_inputs()` 
 |---|-------|---------|---------------|
 | A1 | External HTTPS source audio can be downloaded with plain `requests.get()` and no custom credentials. | Code Examples | Some source rows would fail download and need a credential/session hook. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Do any non-GCS source URLs require authentication?**
+1. **RESOLVED: Do any non-GCS source URLs require authentication?**
    - What we know: Phase 4 must fail fast on any row that cannot be downloaded. [VERIFIED: .planning/phases/04-audio-derivation-and-provenance/04-CONTEXT.md]
    - What's unclear: The local code does not define a credential adapter for external audio URLs. [VERIFIED: model/scripts/sft/dataset_split]
-   - Recommendation: Implement plain HTTPS download with timeout and clear row-context errors; add an adapter later only if a real manifest requires authenticated downloads. [ASSUMED]
+   - Accepted assumption: Implement plain HTTPS download with timeout and clear row-context errors; authenticated download adapters are out of scope until real manifests require them. [RESOLVED]
 
-2. **Should copied external objects preserve source content type exactly?**
+2. **RESOLVED: Should copied external objects preserve source content type exactly?**
    - What we know: `copied` is byte-for-byte and must be a supported standalone format. [VERIFIED: .planning/phases/04-audio-derivation-and-provenance/04-CONTEXT.md]
    - What's unclear: External sources may omit or misstate `Content-Type`. [ASSUMED]
-   - Recommendation: Infer model MIME from the resulting destination URI extension with the same writer helper, and store observed HTTP content type separately in provenance. [VERIFIED: model/scripts/sft/dataset_split/model_writers.py]
+   - Accepted assumption: Infer model MIME from the destination URI extension using the writer helper, and store observed HTTP content type separately in provenance. [RESOLVED]
 
 ## Environment Availability
 
