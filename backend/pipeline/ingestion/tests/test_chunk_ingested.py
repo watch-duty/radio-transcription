@@ -54,7 +54,7 @@ _GOLDEN_DIR = pathlib.Path(__file__).parent / "golden"
 
 
 def _make_settings(**overrides: object) -> mock.MagicMock:
-    """Mirror of test_runtime._make_settings: real-valued mock CollectorSettings."""
+    """Mirror of test_collector_runtime._make_settings: real-valued mock CollectorSettings."""
     defaults: dict[str, object] = {
         "worker_id": _WORKER_ID,
         "max_feeds_per_worker": 250,

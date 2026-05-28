@@ -222,7 +222,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=transcription
           load: true
       # PUBSUB_EMULATOR_HOST bypasses GCP credential resolution in the
-      # module-level PublisherClient() instantiation in normalizer_runtime.py.
+      # module-level PublisherClient() instantiation in collector_runtime.py.
       # Without it, the Pub/Sub SDK attempts ADC which fails inside Docker.
       - name: Verify ingestion imports
         run: |
