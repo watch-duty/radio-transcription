@@ -739,7 +739,10 @@ export function TranscriptView({
         textAlign: 'left',
         display: 'flex',
         flexDirection: 'column',
-        height: 'calc(100vh)',
+        flexGrow: 1,
+        minHeight: 0,
+        overflow: { xs: 'visible', sm: 'hidden' },
+        pt: 1.5,
       }}
     >
       <FeedHeader

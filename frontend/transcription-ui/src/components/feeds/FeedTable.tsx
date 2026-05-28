@@ -294,6 +294,7 @@ export function FeedTable({
     >
       {columns.map(({ key, display }) => (
         <TableCell
+          key={key}
           component="div"
           role="columnheader"
           sx={{

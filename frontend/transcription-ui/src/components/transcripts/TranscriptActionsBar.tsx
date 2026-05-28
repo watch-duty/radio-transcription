@@ -12,7 +12,6 @@ import Popover from '@mui/material/Popover';
 import Select from '@mui/material/Select';
 import Switch from '@mui/material/Switch';
 import Tooltip from '@mui/material/Tooltip';
-import { useTheme } from '@mui/material/styles';
 
 import { DateTimePicker } from '../common/DateTimePicker';
 import type { AlertFilter } from './TranscriptView';
@@ -29,9 +28,6 @@ export interface TranscriptActionsBarProps {
   onClickViewLatest: () => void;
 }
 
-const APPLIED_FILTER_BG_COLOR = '#bbdefb';
-const DEFAULT_FILTER_BG_COLOR = '#f9bf90';
-
 export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   hasNewerTranscripts,
   redactTranscripts,
@@ -42,9 +38,6 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   setAlertFilter,
   onClickViewLatest,
 }) => {
-  const theme = useTheme();
-  const isDarkTheme = theme.palette.mode === 'dark';
-
   const [filterAnchorEl, setFilterAnchorEl] = useState<HTMLElement | null>(
     null
   );
@@ -201,24 +194,24 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
         </Popover>
 
         <Chip
-          sx={
-            isDarkTheme
-              ? {
-                  backgroundColor: dateTime
-                    ? theme.palette.primary.main
-                    : '#f9bf90',
-                  color: 'black',
-                  '& .MuiChip-deleteIcon': {
-                    color: 'black',
-                  },
-                }
-              : {
-                  backgroundColor: dateTime
-                    ? APPLIED_FILTER_BG_COLOR
-                    : DEFAULT_FILTER_BG_COLOR,
-                  color: 'black',
-                }
-          }
+          sx={(theme) => {
+            const isDark = theme.palette.mode === 'dark';
+            const bgColor = dateTime
+              ? isDark
+                ? theme.palette.primary.main
+                : theme.palette.primary.light
+              : isDark
+                ? theme.palette.warning.dark
+                : theme.palette.warning.light;
+            const fgColor = theme.palette.getContrastText(bgColor);
+            return {
+              backgroundColor: bgColor,
+              color: fgColor,
+              '& .MuiChip-deleteIcon': {
+                color: fgColor,
+              },
+            };
+          }}
           label={
             dateTime ? (
               <Box>
@@ -237,9 +230,19 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
         />
         {alertFilter === 'alerts' && (
           <Chip
-            sx={{
-              backgroundColor: APPLIED_FILTER_BG_COLOR,
-              color: 'black',
+            sx={(theme) => {
+              const isDark = theme.palette.mode === 'dark';
+              const bgColor = isDark
+                ? theme.palette.primary.main
+                : theme.palette.primary.light;
+              const fgColor = theme.palette.getContrastText(bgColor);
+              return {
+                backgroundColor: bgColor,
+                color: fgColor,
+                '& .MuiChip-deleteIcon': {
+                  color: fgColor,
+                },
+              };
             }}
             label={
               <Box>

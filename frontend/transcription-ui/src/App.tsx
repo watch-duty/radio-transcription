@@ -24,8 +24,6 @@ import RulesView from './components/rules/RulesView';
 import TranscriptView from './components/transcripts/TranscriptView';
 import { useAuth } from './context/AuthContext';
 
-import './App.css';
-
 const DocsView = lazy(() => import('./components/docs/DocsView'));
 
 function App() {

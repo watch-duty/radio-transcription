@@ -12,6 +12,7 @@ import type { Transcript } from '@transcription/common';
 
 import AudioPlayer from '../audio/AudioPlayer';
 import AlertTooltip from './AlertTooltip';
+import TranscriptDateHeader from './TranscriptDateHeader';
 
 interface TranscriptRowProps {
   transcript: Transcript;
@@ -50,38 +51,14 @@ export function TranscriptRow({
   return (
     <Fragment>
       {showHeader && (
-        <ListItem
-          sx={{
-            position: 'sticky',
-            top: 0,
-            zIndex: 1,
-            py: 0,
-            px: 0,
-            bgcolor: 'background.paper',
-          }}
-        >
-          <Box
-            sx={{
-              width: '100%',
-              py: 0.5,
-              px: 2,
-              bgcolor: 'action.hover',
-            }}
-          >
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ fontWeight: 'bold' }}
-            >
-              {currentDate.toLocaleDateString([], {
-                weekday: 'long',
-                month: 'long',
-                day: 'numeric',
-                year: 'numeric',
-              })}
-            </Typography>
-          </Box>
-        </ListItem>
+        <TranscriptDateHeader
+          title={currentDate.toLocaleDateString([], {
+            weekday: 'long',
+            month: 'long',
+            day: 'numeric',
+            year: 'numeric',
+          })}
+        />
       )}
       <ListItem
         id={`transcript-${transcript.transmissionId}`}

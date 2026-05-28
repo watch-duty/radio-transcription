@@ -4,7 +4,6 @@ import { GroupedVirtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
-import ListItem from '@mui/material/ListItem';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import type {
@@ -14,6 +13,7 @@ import type {
 import type { Transcript } from '@transcription/common';
 
 import { getRelativeTimeString } from '../../utils/timeUtils';
+import TranscriptDateHeader from './TranscriptDateHeader';
 import TranscriptRow from './TranscriptRow';
 import type { ListTranscriptsData } from './TranscriptView';
 
@@ -82,6 +82,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
         flexGrow: 1,
         minHeight: 0,
         overflow: 'hidden',
+        borderRadius: 2,
       }}
     >
       <GroupedVirtuoso
@@ -91,78 +92,48 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
         groupContent={(index) => {
           const title = groupTitles[index];
           return (
-            <ListItem
-              sx={{
-                position: 'sticky',
-                top: 0,
-                zIndex: 1,
-                py: 0,
-                px: 0,
-                bgcolor: 'background.paper',
-              }}
-            >
-              <Box
-                sx={{
-                  width: '100%',
-                  py: 0.5,
-                  px: 2,
-                  bgcolor: 'action.hover',
-                  display: 'flex',
-                  gap: 1,
-                }}
-              >
-                <Typography
-                  variant="caption"
-                  color="text.secondary"
-                  sx={{ fontWeight: 'bold' }}
-                >
-                  {title}
-                </Typography>
-                {!hasNewerTranscripts ? (
-                  <>
-                    {transcriptsLastUpdated && (
-                      <Box
-                        sx={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 0.5,
-                        }}
+            <TranscriptDateHeader title={title}>
+              {!hasNewerTranscripts ? (
+                <>
+                  {transcriptsLastUpdated && (
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 0.5,
+                      }}
+                    >
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ whiteSpace: 'nowrap' }}
                       >
+                        Last refresh:
+                      </Typography>
+                      {isTranscriptsPolling ? (
+                        <CircularProgress size={12} />
+                      ) : (
                         <Typography
                           variant="caption"
                           color="text.secondary"
                           sx={{ whiteSpace: 'nowrap' }}
                         >
-                          Last refresh:
+                          {getRelativeTimeString(transcriptsLastUpdated, false)}
                         </Typography>
-                        {isTranscriptsPolling ? (
-                          <CircularProgress size={12} />
-                        ) : (
-                          <Typography
-                            variant="caption"
-                            color="text.secondary"
-                            sx={{ whiteSpace: 'nowrap' }}
-                          >
-                            {getRelativeTimeString(
-                              transcriptsLastUpdated,
-                              false
-                            )}
-                          </Typography>
-                        )}
-                      </Box>
-                    )}
-                  </>
-                ) : (
-                  <Typography
-                    variant="caption"
-                    color="text.secondary"
-                    sx={{ whiteSpace: 'nowrap' }}
-                  >
-                    Refresh disabled while viewing historical data
-                  </Typography>
-                )}
-              </Box>
-            </ListItem>
+                      )}
+                    </Box>
+                  )}
+                </>
+              ) : (
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ whiteSpace: 'nowrap' }}
+                >
+                  Refresh disabled while viewing historical data
+                </Typography>
+              )}
+            </TranscriptDateHeader>
           );
         }}
         itemContent={(index) => {

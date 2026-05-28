@@ -43,7 +43,8 @@ export function FeedSearchView({ title, onError }: FeedSearchViewProps) {
         textAlign: 'left',
         display: 'flex',
         flexDirection: 'column',
-        height: 'calc(100vh - 100px)',
+        flexGrow: 1,
+        minHeight: 0,
       }}
     >
       <FeedTable title={title} feeds={feeds ?? []} isLoading={feedsLoading} />
