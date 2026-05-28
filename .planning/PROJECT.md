@@ -20,16 +20,14 @@ Every SFT run must train and compare models on the same auditable dataset versio
 - [x] Existing codebase has reusable manifest/scoring helpers that should be extended instead of replaced - existing
 - [x] Phase 1 validates dataset-version TOML configs, strict `gs://` JSON/JSONL inputs, source-key extraction for all four initial dataset families, and empty-text exclusion counts - Phase 1
 - [x] Phase 3 generates immutable dataset-version artifact layouts, canonical and per-dataset train/eval manifests, NeMo/Whisper/Gemini model inputs/configs, JSON/Markdown reports, and create-only GCS publication guards - Phase 3
+- [x] Phase 4 reuses supported standalone model-ready clips, derives longer-source spans into FLAC when needed, and records auditable model-ready audio provenance before publishing canonical/model artifacts - Phase 4
 
 ### Active
 
 - [ ] Build a split script that creates an 80:20 train/SFT Eval Split from existing manifests while assigning every source group wholly to one split.
 - [ ] Validate leakage prevention with actual manifest data, including source-group overlap, original-audio overlap, duplicate URI overlap, missing text rows, and parse failures.
 - [ ] Balance the split across factors that can correlate with model performance: dataset family, source count, row count, audio duration, time/month/hour, transcript length, and duration buckets.
-- [ ] Derive or reuse model-ready audio clips under the reserved dataset-version `audio/` prefix.
-- [ ] Reuse existing standalone supported clips when possible and derive clips only when a labeled row points into a longer source audio file.
-- [ ] Record enough provenance for every row to audit origin, transformations, source grouping, split assignment, and model-input generation.
-- [ ] Add focused tests for audio derivation, CLI generation, and production GCS/report integration.
+- [ ] Add focused tests for CLI generation and production GCS/report integration.
 
 ### Out of Scope
 
@@ -82,7 +80,7 @@ Glossary:
 | Use `bcfy_feeds:<feedId>` for Broadcastify Feeds | Archive URLs include feed IDs, and actual manifests parse cleanly | Validated in Phase 1 |
 | Use Fire Notification stream path/location as source identity | Per-day UUIDs are sampling artifacts and would allow same stream across splits | Validated in Phase 1 |
 | Store generated artifacts in GCS, not GitHub | Artifacts can be large/proprietary and should be immutable runtime data | Validated in Phase 3; live GCS smoke UAT pending |
-| Reuse supported standalone audio clips before deriving new clips | Reduces unnecessary audio transforms and preserves provenance | Pending |
+| Reuse supported standalone audio clips before deriving new clips | Reduces unnecessary audio transforms and preserves provenance | Validated in Phase 4 |
 | Exclude empty or missing normalized-text rows | Existing eval behavior already skips rows without usable ground truth | Validated in Phase 1 |
 
 ## Evolution
@@ -103,4 +101,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-28 after Phase 3 completion*
+*Last updated: 2026-05-28 after Phase 4 completion*
