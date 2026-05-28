@@ -88,12 +88,12 @@ class TestPipelineCLI(unittest.TestCase):
             staging_dir="",
         )
 
-        with self.assertRaisesRegex(
-            pipeline.PromptOverrideError, "system prompt file not found"
-        ) as ctx:
-            pipeline._build(args)
+        with self.assertLogs("pipeline", level="ERROR") as logs:
+            rc = pipeline._build(args)
 
-        self.assertIn(str(missing), str(ctx.exception))
+        self.assertEqual(rc, 1)
+        self.assertIn("system prompt file not found", "\n".join(logs.output))
+        self.assertIn(str(missing), "\n".join(logs.output))
 
     def test_dataset_names_are_deduped_in_order(self) -> None:
         """Repeated --datasets entries should not run adapters twice."""
@@ -127,8 +127,11 @@ class TestPipelineCLI(unittest.TestCase):
             gcs_bucket="",
         )
 
-        with self.assertRaisesRegex(ValueError, "No datasets specified"):
-            pipeline._build(args)
+        with self.assertLogs("pipeline", level="ERROR") as logs:
+            rc = pipeline._build(args)
+
+        self.assertEqual(rc, 1)
+        self.assertIn("No datasets specified", "\n".join(logs.output))
 
     def test_gcs_sft_prefix_rejects_full_gcs_uri(self) -> None:
         """--gcs-bucket expects a bucket name, not a gs:// URI."""
@@ -248,9 +251,14 @@ class TestPipelineCLI(unittest.TestCase):
 
         with (
             unittest.mock.patch("pipeline._load_round_config", return_value={}),
-            self.assertRaisesRegex(ValueError, "Run `build` first"),
+            self.assertLogs("pipeline", level="ERROR") as logs,
         ):
-            pipeline._tune(args)
+            rc = pipeline._tune(args)
+
+        self.assertEqual(rc, 1)
+        joined = "\n".join(logs.output)
+        self.assertNotIn("rejected", joined)
+        self.assertIn("Run `build` first", joined)
 
     def test_tune_cost_estimate_uses_gemini_31_flash_lite_rate(self) -> None:
         """Tune cost estimate references Gemini 3.1 Flash-Lite SFT pricing."""
@@ -355,7 +363,7 @@ class TestPipelineCLI(unittest.TestCase):
             ),
             unittest.mock.patch(
                 "preflight.run_preflight",
-                return_value=None,
+                return_value=types.SimpleNamespace(passed=True, failures=[]),
             ),
             unittest.mock.patch("builtins.input", return_value="no"),
             unittest.mock.patch("common.vertex.submit_tuning_job") as submit,
@@ -404,7 +412,7 @@ class TestPipelineCLI(unittest.TestCase):
             ),
             unittest.mock.patch(
                 "preflight.run_preflight",
-                return_value=None,
+                return_value=types.SimpleNamespace(passed=True, failures=[]),
             ),
             unittest.mock.patch("builtins.input", side_effect=EOFError),
             unittest.mock.patch("common.vertex.submit_tuning_job") as submit,
@@ -457,7 +465,7 @@ class TestPipelineCLI(unittest.TestCase):
             ),
             unittest.mock.patch(
                 "preflight.run_preflight",
-                return_value=None,
+                return_value=types.SimpleNamespace(passed=True, failures=[]),
             ),
             unittest.mock.patch("builtins.input", return_value="no"),
             contextlib.redirect_stdout(stdout),
@@ -500,14 +508,38 @@ class TestPreflightEmptyTarget(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             train_path = Path(tmp) / "train.jsonl"
+            report_path = Path(tmp) / "preflight_report.json"
             train_path.write_text(json.dumps(self._make_bad_example()) + "\n")
 
-            with self.assertRaisesRegex(ValueError, "failed validate_example"):
-                run_preflight(
-                    train_jsonl_path=train_path,
-                    val_jsonl_path=None,
-                    storage_client=None,
-                )
+            report = run_preflight(
+                train_jsonl_path=train_path,
+                val_jsonl_path=None,
+                storage_client=None,
+                report_path=report_path,
+            )
+
+        self.assertFalse(report.passed)
+        self.assertTrue(len(report.failures) > 0)
+
+    def test_preflight_report_written_on_failure(self) -> None:
+        from preflight import run_preflight
+
+        with tempfile.TemporaryDirectory() as tmp:
+            train_path = Path(tmp) / "train.jsonl"
+            report_path = Path(tmp) / "preflight_report.json"
+            train_path.write_text(json.dumps(self._make_bad_example()) + "\n")
+
+            run_preflight(
+                train_jsonl_path=train_path,
+                val_jsonl_path=None,
+                storage_client=None,
+                report_path=report_path,
+            )
+
+            # Check inside the context while directory still exists
+            self.assertTrue(report_path.exists())
+            data = json.loads(report_path.read_text())
+            self.assertFalse(data["passed"])
 
 
 class TestPreflightDuplicateUri(unittest.TestCase):
@@ -539,6 +571,7 @@ class TestPreflightDuplicateUri(unittest.TestCase):
         duplicate_uri = "gs://bucket/audio/duplicate.flac"
         with tempfile.TemporaryDirectory() as tmp:
             train_path = Path(tmp) / "train.jsonl"
+            report_path = Path(tmp) / "preflight_report.json"
             lines = [
                 json.dumps(self._make_good_example(duplicate_uri)) + "\n",
                 json.dumps(self._make_good_example(duplicate_uri))
@@ -546,42 +579,46 @@ class TestPreflightDuplicateUri(unittest.TestCase):
             ]
             train_path.write_text("".join(lines))
 
-            with self.assertRaisesRegex(ValueError, "Duplicate fileUri"):
-                run_preflight(
-                    train_jsonl_path=train_path,
-                    val_jsonl_path=None,
-                    storage_client=None,
-                )
+            report = run_preflight(
+                train_jsonl_path=train_path,
+                val_jsonl_path=None,
+                storage_client=None,
+                report_path=report_path,
+            )
+
+        self.assertFalse(report.passed)
+        self.assertTrue(any("uplicate" in f for f in report.failures))
 
     def test_preflight_passes_on_valid_data(self) -> None:
         from preflight import run_preflight
 
         with tempfile.TemporaryDirectory() as tmp:
             train_path = Path(tmp) / "train.jsonl"
+            report_path = Path(tmp) / "preflight_report.json"
             train_path.write_text(
                 json.dumps(self._make_good_example("gs://b/audio1.flac")) + "\n"
             )
 
             # storage_client=None means no reachability check
-            result = run_preflight(
+            report = run_preflight(
                 train_jsonl_path=train_path,
                 val_jsonl_path=None,
                 storage_client=None,
+                report_path=report_path,
             )
 
-        self.assertIsNone(result)
-
-    def test_blob_exists_with_timeout_uses_timeout(self) -> None:
-        from preflight import (
-            PREFLIGHT_GCS_TIMEOUT_SECONDS,
-            _blob_exists_with_timeout,
+        self.assertTrue(
+            report.passed, f"Unexpected failures: {report.failures}"
         )
+
+    def test_safe_blob_exists_uses_timeout(self) -> None:
+        from preflight import PREFLIGHT_GCS_TIMEOUT_SECONDS, _safe_blob_exists
 
         storage_client = object()
         with unittest.mock.patch(
             "preflight.blob_exists", return_value=True
         ) as mock_exists:
-            ok = _blob_exists_with_timeout(storage_client, "gs://b/audio.flac")
+            ok = _safe_blob_exists(storage_client, "gs://b/audio.flac")
 
         self.assertTrue(ok)
         mock_exists.assert_called_once_with(
@@ -595,6 +632,7 @@ class TestPreflightDuplicateUri(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             train_path = Path(tmp) / "train.jsonl"
+            report_path = Path(tmp) / "preflight_report.json"
             train_path.write_text(
                 "".join(
                     json.dumps(self._make_good_example(f"gs://b/audio{i}.flac"))
@@ -605,20 +643,29 @@ class TestPreflightDuplicateUri(unittest.TestCase):
 
             with (
                 unittest.mock.patch(
-                    "preflight._blob_exists_with_timeout",
+                    "preflight._safe_blob_exists",
                     side_effect=lambda _client, _uri: True,
                 ) as mock_exists,
+                unittest.mock.patch("preflight.time.sleep") as mock_sleep,
             ):
-                result = run_preflight(
+                report = run_preflight(
                     train_jsonl_path=train_path,
                     val_jsonl_path=None,
                     storage_client=object(),
+                    report_path=report_path,
                     gcs_max_workers=2,
                     gcs_batch_size=2,
+                    gcs_batch_pause_seconds=0.5,
                 )
 
-        self.assertIsNone(result)
+        self.assertTrue(
+            report.passed, f"Unexpected failures: {report.failures}"
+        )
         self.assertEqual(mock_exists.call_count, 5)
+        self.assertEqual(mock_sleep.call_count, 2)
+        mock_sleep.assert_has_calls(
+            [unittest.mock.call(0.5), unittest.mock.call(0.5)]
+        )
 
     def test_preflight_validates_val_examples(self) -> None:
         from preflight import run_preflight
@@ -626,6 +673,7 @@ class TestPreflightDuplicateUri(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             train_path = Path(tmp) / "train.jsonl"
             val_path = Path(tmp) / "val.jsonl"
+            report_path = Path(tmp) / "preflight_report.json"
             train_path.write_text(
                 json.dumps(self._make_good_example("gs://b/train.flac")) + "\n"
             )
@@ -635,17 +683,21 @@ class TestPreflightDuplicateUri(unittest.TestCase):
             )
 
             with unittest.mock.patch(
-                "preflight._blob_exists_with_timeout",
+                "preflight._safe_blob_exists",
                 side_effect=lambda _client, uri: uri != "gs://b/missing.flac",
             ):
-                with self.assertRaisesRegex(
-                    ValueError, "fileUri not reachable: gs://b/missing.flac"
-                ):
-                    run_preflight(
-                        train_jsonl_path=train_path,
-                        val_jsonl_path=val_path,
-                        storage_client=object(),
-                    )
+                report = run_preflight(
+                    train_jsonl_path=train_path,
+                    val_jsonl_path=val_path,
+                    storage_client=object(),
+                    report_path=report_path,
+                )
+
+        self.assertFalse(report.passed)
+        self.assertTrue(
+            any("val[0]: fileUri not reachable" in f for f in report.failures)
+        )
+        self.assertIn("val[0]", report.offending_ids)
 
     def test_preflight_rejects_malformed_val_examples(self) -> None:
         from preflight import run_preflight
@@ -653,33 +705,41 @@ class TestPreflightDuplicateUri(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             train_path = Path(tmp) / "train.jsonl"
             val_path = Path(tmp) / "val.jsonl"
+            report_path = Path(tmp) / "preflight_report.json"
             train_path.write_text(
                 json.dumps(self._make_good_example("gs://b/train.flac")) + "\n"
             )
             val_path.write_text(json.dumps(self._make_good_example("")) + "\n")
 
-            with self.assertRaisesRegex(
-                ValueError, r"val\[0\]: failed validate_example"
-            ):
-                run_preflight(
-                    train_jsonl_path=train_path,
-                    val_jsonl_path=val_path,
-                    storage_client=None,
-                )
+            report = run_preflight(
+                train_jsonl_path=train_path,
+                val_jsonl_path=val_path,
+                storage_client=None,
+                report_path=report_path,
+            )
+
+        self.assertFalse(report.passed)
+        self.assertTrue(
+            any("val[0]: failed validate_example" in f for f in report.failures)
+        )
+        self.assertIn("val[0]", report.offending_ids)
 
     def test_preflight_fails_on_empty_train(self) -> None:
         from preflight import run_preflight
 
         with tempfile.TemporaryDirectory() as tmp:
             train_path = Path(tmp) / "train.jsonl"
+            report_path = Path(tmp) / "preflight_report.json"
             train_path.write_text("")  # empty
 
-            with self.assertRaisesRegex(ValueError, "Train JSONL is empty"):
-                run_preflight(
-                    train_jsonl_path=train_path,
-                    val_jsonl_path=None,
-                    storage_client=None,
-                )
+            report = run_preflight(
+                train_jsonl_path=train_path,
+                val_jsonl_path=None,
+                storage_client=None,
+                report_path=report_path,
+            )
+
+        self.assertFalse(report.passed)
 
 
 class TestGcsManifestAdapter(unittest.TestCase):

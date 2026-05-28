@@ -82,8 +82,8 @@ def write_wer_summary(
     """Write results/<round-id>/wer_summary.{json,md}.
 
     Includes WER, CER, ins/del/sub, empty/hallucination rate, duration buckets,
-    keyword accuracy, and bootstrap paired CI. Renders base-only summaries when
-    tuned metrics are absent.
+    keyword accuracy, and bootstrap paired CI. Degrades gracefully when tuned metrics
+    are absent.
     """
     out_dir = results_dir / round_id
     out_dir.mkdir(parents=True, exist_ok=True)
