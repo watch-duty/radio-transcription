@@ -15,8 +15,6 @@ from backend.pipeline.storage.connection import (
 
 from .models import (
     AudioSegment,
-    BulkAddAudioSegmentsRequest,
-    BulkAddAudioSegmentsResponse,
 )
 from .service import AudioSegmentService
 
@@ -58,28 +56,6 @@ async def list_audio_segments(
     service: AudioSegmentService = request.app.state.audio_segment_service
     try:
         return await service.list_audio_segments(feed_ids)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-
-
-@app.post(
-    "/v1/audio_segments",
-    response_model=BulkAddAudioSegmentsResponse,
-    status_code=status.HTTP_201_CREATED,
-    tags=["audio_segments"],
-)
-async def bulk_add_audio_segments(
-    request: Request,
-    payload: BulkAddAudioSegmentsRequest,
-) -> BulkAddAudioSegmentsResponse:
-    """Idempotently add multiple audio segments in bulk. Already existing IDs are skipped."""
-    service: AudioSegmentService = request.app.state.audio_segment_service
-    try:
-        inserted = await service.bulk_add_audio_segments(payload.audio_segments)
-        return BulkAddAudioSegmentsResponse(inserted_count=inserted)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -65,36 +65,6 @@ class TestAudioSegmentsAPI(unittest.TestCase):
         self.assertEqual(data[0]["id"], segment_id)
         self.mock_service.list_audio_segments.assert_called_once_with([feed_id])
 
-    def test_bulk_add_audio_segments_success(self) -> None:
-        """Test bulk adding audio segments successfully."""
-        segment_id = str(uuid.uuid4())
-        feed_id = str(uuid.uuid4())
-        payload = {
-            "audio_segments": [
-                {
-                    "id": segment_id,
-                    "feed_id": feed_id,
-                    "classification": "SPEECH_DETECTED",
-                    "start_timestamp": "2026-01-01T00:00:00Z",
-                    "end_timestamp": "2026-01-01T00:01:00Z",
-                    "missing_prior_context": False,
-                    "missing_post_context": False,
-                    "source_audio_uris": ["gs://bucket/audio1.ogg"],
-                    "canonical_audio_uri": "gs://bucket/canonical.ogg",
-                    "start_audio_offset": "PT5S",
-                    "end_audio_offset": "PT10S",
-                    "playback_audio_uri": None,
-                }
-            ]
-        }
-        self.mock_service.bulk_add_audio_segments.return_value = 1
-
-        response = self.client.post("/v1/audio_segments", json=payload)
-
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(response.json()["inserted_count"], 1)
-        self.mock_service.bulk_add_audio_segments.assert_called_once()
-
 
 if __name__ == "__main__":
     unittest.main()

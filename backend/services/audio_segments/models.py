@@ -93,15 +93,3 @@ class AudioSegmentCreate(BaseModel):
     start_audio_offset: timedelta | None = None
     end_audio_offset: timedelta | None = None
     playback_audio_uri: str | None = None
-
-
-class BulkAddAudioSegmentsRequest(BaseModel):
-    """Request schema for bulk adding audio segments."""
-
-    audio_segments: list[AudioSegmentCreate]
-
-
-class BulkAddAudioSegmentsResponse(BaseModel):
-    """Response schema for bulk adding audio segments."""
-
-    inserted_count: int

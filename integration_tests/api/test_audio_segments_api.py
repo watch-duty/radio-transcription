@@ -1,10 +1,12 @@
 """Integration tests for the Audio Segments API."""
 
+import datetime
 import os
 import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+import asyncpg
 import httpx
 import pytest
 
@@ -39,32 +41,43 @@ async def test_audio_segments_api_routes(
     feed_id, _ = test_bcfy_feed
     segment_id = str(uuid.uuid4())
 
-    payload = {
-        "audio_segments": [
-            {
-                "id": segment_id,
-                "feed_id": feed_id,
-                "classification": "SPEECH_DETECTED",
-                "start_timestamp": "2026-01-01T00:00:00Z",
-                "end_timestamp": "2026-01-01T00:01:00Z",
-                "missing_prior_context": False,
-                "missing_post_context": False,
-                "source_audio_uris": ["gs://bucket/audio1.ogg"],
-                "canonical_audio_uri": "gs://bucket/canonical.ogg",
-                "start_audio_offset": "PT5S",
-                "end_audio_offset": "PT10S",
-                "playback_audio_uri": None,
-            }
-        ]
+    # 1. Directly seed audio segments into the database using asyncpg
+    _conn_kwargs = {
+        "host": os.environ.get("ALLOYDB_HOST", "postgres"),
+        "port": int(os.environ.get("ALLOYDB_PORT", "5432")),
+        "user": os.environ.get("ALLOYDB_USER", "postgres"),
+        "password": os.environ.get("ALLOYDB_PASSWORD", "postgres"),
+        "database": os.environ.get("ALLOYDB_DB", "postgres"),
     }
-
-    # 1. Bulk add audio segments
-    response = await api_client.post(
-        "/audio_segments", json=payload, timeout=10.0
-    )
-    assert response.status_code == 201, f"Failed to bulk add: {response.text}"
-    added_data = response.json()
-    assert added_data["inserted_count"] == 1
+    conn = await asyncpg.connect(**_conn_kwargs)
+    try:
+        is_missing_prior = False
+        is_missing_post = False
+        await conn.execute(
+            """
+            INSERT INTO audio_segments (
+                id, feed_id, classification, start_timestamp, end_timestamp,
+                missing_prior_context, missing_post_context, source_audio_uris,
+                canonical_audio_uri, start_audio_offset, end_audio_offset, playback_audio_uri
+            ) VALUES (
+                $1::uuid, $2::uuid, 'SPEECH_DETECTED'::audio_classification, $3, $4,
+                $5, $6, $7, $8, $9, $10, $11
+            )
+            """,
+            segment_id,
+            feed_id,
+            datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+            datetime.datetime(2026, 1, 1, 0, 1, tzinfo=datetime.UTC),
+            is_missing_prior,
+            is_missing_post,
+            ["gs://bucket/audio1.ogg"],
+            "gs://bucket/canonical.ogg",
+            datetime.timedelta(seconds=5),
+            datetime.timedelta(seconds=10),
+            None,
+        )
+    finally:
+        await conn.close()
 
     # 2. List audio segments and verification (filtering by feed_id)
     response = await api_client.get(
@@ -75,15 +88,3 @@ async def test_audio_segments_api_routes(
     assert len(data) >= 1
     found = any(item["id"] == segment_id for item in data)
     assert found, f"Created segment {segment_id} not found in /audio_segments"
-
-    # 3. Idempotency Check: Post duplicate segment
-    response = await api_client.post(
-        "/audio_segments", json=payload, timeout=10.0
-    )
-    assert response.status_code == 201, (
-        f"Failed bulk add retry: {response.text}"
-    )
-    added_data = response.json()
-    assert (
-        added_data["inserted_count"] == 0
-    )  # Duplicate segment, nothing inserted
