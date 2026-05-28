@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 04-01-PLAN.md
-last_updated: "2026-05-28T03:59:43.116Z"
+stopped_at: Completed 04-02-PLAN.md
+last_updated: "2026-05-28T04:13:21.846Z"
 last_activity: 2026-05-28
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 14
-  completed_plans: 11
-  percent: 79
+  completed_plans: 12
+  percent: 86
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-05-28)
 ## Current Position
 
 Phase: 04 (audio-derivation-and-provenance) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
 Last activity: 2026-05-28
 
-Progress: [████████░░] 79%
+Progress: [█████████░] 86%
 
 ## Performance Metrics
 
@@ -61,6 +61,7 @@ Progress: [████████░░] 79%
 | Phase 02 P02 | 3 min | 2 tasks | 2 files |
 | Phase 02 P03 | 4 min | 3 tasks | 4 files |
 | Phase 04 P01 | 13min | 3 tasks | 4 files |
+| Phase 04 P02 | 8 min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -78,6 +79,9 @@ Recent decisions affecting current work:
 - [Phase 04]: Generated and copied audio objects use action folders with safe row-hash names, excluding raw source URI, raw source_group, and split from object paths.
 - [Phase 04]: Derived and transcoded outputs use FLAC with mono downmix and no explicit resampling or padding flags.
 - [Phase 04]: Audio preparation returns new frozen LabeledSegment rows with model-ready audio URIs and transformation provenance.
+- [Phase 04]: Model writers require non-empty gs:// model_ready_audio_uri and do not fall back to audio_uri.
+- [Phase 04]: Publisher checks the dataset-version root once, then prepares audio and builds final artifacts from audio_result.segments.
+- [Phase 04]: Publisher exposes audio action counts and uploaded audio URIs without adding force, overwrite, resume, cleanup, delete, or partial-publish controls.
 
 ### Pending Todos
 
@@ -96,6 +100,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-28T03:59:43.110Z
-Stopped at: Completed 04-01-PLAN.md
+Last session: 2026-05-28T04:12:56.504Z
+Stopped at: Completed 04-02-PLAN.md
 Resume file: None

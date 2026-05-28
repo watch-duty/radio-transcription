@@ -81,7 +81,7 @@ Plans:
 
 Plans:
 - [x] 04-01-PLAN.md — Audio preparation boundary and binary upload helpers
-- [ ] 04-02-PLAN.md — Publisher prechecked flow and model writer hard gates
+- [x] 04-02-PLAN.md — Publisher prechecked flow and model writer hard gates
 - [ ] 04-03-PLAN.md — Model-ready provenance validation and canonical manifests
 - [ ] 04-04-PLAN.md — Audio transformation report integration
 
@@ -112,5 +112,5 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 1. Manifest And Source Identity | 3/3 | Complete | 2026-05-27 |
 | 2. Split Engine And Leakage Gates | 3/3 | Complete | 2026-05-27 |
 | 3. GCS Artifacts And Model Writers | 0/4 | Not started | - |
-| 4. Audio Derivation And Provenance | 0/3 | Not started | - |
+| 4. Audio Derivation And Provenance | 2/4 | In Progress | - |
 | 5. CLI, Reports, Docs, And Verification | 0/3 | Not started | - |
