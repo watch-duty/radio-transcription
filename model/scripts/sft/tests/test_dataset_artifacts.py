@@ -18,9 +18,12 @@ from dataset_split.artifacts import (  # noqa: E402
     DatasetArtifactError,
     DatasetArtifactLayout,
     DatasetVersionExistsError,
+    audio_object_uri,
     ensure_dataset_version_absent,
+    upload_file_create_only,
     upload_text_create_only,
 )
+from dataset_split.types import LabeledSegment  # noqa: E402
 
 
 class FakeListedBlob:
@@ -51,6 +54,25 @@ class FakeBlob:
         self.uploads.append(
             {
                 "text": text,
+                "content_type": content_type,
+                "if_generation_match": if_generation_match,
+            }
+        )
+        if self.upload_error is not None:
+            raise self.upload_error
+
+    def upload_from_filename(
+        self,
+        filename: str,
+        *,
+        content_type: str,
+        if_generation_match: int | object = _missing,
+    ) -> None:
+        if if_generation_match is self._missing:
+            raise AssertionError("if_generation_match=0 is required")
+        self.uploads.append(
+            {
+                "filename": filename,
                 "content_type": content_type,
                 "if_generation_match": if_generation_match,
             }
@@ -112,6 +134,25 @@ def _inventory_strings(value: object) -> list[str]:
             strings.extend(_inventory_strings(nested))
         return strings
     return []
+
+
+def _segment(*, split: str = "train", row_index: int = 7) -> LabeledSegment:
+    return LabeledSegment(
+        dataset_name="calls",
+        dataset_family="bcfy_calls",
+        source_strategy="bcfy_calls",
+        source_group="bcfy_calls:group/with/slash",
+        audio_uri="https://example.test/raw/path/source.mp3",
+        original_audio_uri="gs://raw-bucket/source/path/source.mp3",
+        text="engine 41 copy",
+        row_index=row_index,
+        offset=0.0,
+        duration=4.25,
+        timestamp="2026-05-27T12:00:00Z",
+        example_id="example/unsafe",
+        segment_id="segment:unsafe",
+        split=split,
+    )
 
 
 class TestDatasetArtifacts(unittest.TestCase):
@@ -199,6 +240,91 @@ class TestDatasetArtifacts(unittest.TestCase):
             "sft/dv-001/config/resolved_config.json"
         ]
         self.assertEqual(blob.uploads[0]["if_generation_match"], 0)
+
+    def test_upload_file_create_only_uses_generation_precondition(
+        self,
+    ) -> None:
+        client = FakeStorageClient()
+        local_path = Path("/tmp/audio.flac")
+
+        uri = upload_file_create_only(
+            client,
+            "gs://wd-transcription-data/sft/dv-001/audio/derived/a.flac",
+            local_path,
+            content_type="audio/flac",
+        )
+
+        self.assertEqual(
+            uri,
+            "gs://wd-transcription-data/sft/dv-001/audio/derived/a.flac",
+        )
+        blob = client.fake_bucket.blobs["sft/dv-001/audio/derived/a.flac"]
+        self.assertEqual(
+            blob.uploads,
+            [
+                {
+                    "filename": str(local_path),
+                    "content_type": "audio/flac",
+                    "if_generation_match": 0,
+                }
+            ],
+        )
+
+    def test_upload_file_create_only_maps_precondition_failure(self) -> None:
+        client = FakeStorageClient(upload_error=FakePreconditionFailure("412"))
+
+        with self.assertRaisesRegex(
+            DatasetVersionExistsError,
+            "gs://wd-transcription-data/sft/dv-001/audio/derived/a.flac",
+        ):
+            upload_file_create_only(
+                client,
+                "gs://wd-transcription-data/sft/dv-001/audio/derived/a.flac",
+                Path("/tmp/audio.flac"),
+                content_type="audio/flac",
+            )
+
+        blob = client.fake_bucket.blobs["sft/dv-001/audio/derived/a.flac"]
+        self.assertEqual(blob.uploads[0]["if_generation_match"], 0)
+
+    def test_audio_object_uri_uses_action_folders_without_split_parts(
+        self,
+    ) -> None:
+        layout = DatasetArtifactLayout.for_dataset_version("dv-001")
+
+        uris = {
+            action: audio_object_uri(
+                layout,
+                action=action,
+                segment=_segment(split="eval"),
+                suffix=".flac" if action != "copied" else ".mp3",
+            )
+            for action in ("copied", "derived", "transcoded")
+        }
+
+        self.assertIn("audio/copied/", uris["copied"])
+        self.assertIn("audio/derived/", uris["derived"])
+        self.assertIn("audio/transcoded/", uris["transcoded"])
+        self.assertTrue(uris["copied"].endswith(".mp3"))
+        self.assertTrue(uris["derived"].endswith(".flac"))
+        self.assertTrue(uris["transcoded"].endswith(".flac"))
+        for uri in uris.values():
+            self.assertTrue(uri.startswith(layout.audio_prefix_uri), uri)
+            self.assertNotIn("/train/", uri)
+            self.assertNotIn("/eval/", uri)
+            self.assertNotIn("bcfy_calls:group/with/slash", uri)
+            self.assertNotIn("https://example.test", uri)
+
+    def test_audio_object_uri_rejects_reused_action(self) -> None:
+        layout = DatasetArtifactLayout.for_dataset_version("dv-001")
+
+        with self.assertRaises(DatasetArtifactError):
+            audio_object_uri(
+                layout,
+                action="reused",
+                segment=_segment(),
+                suffix=".flac",
+            )
 
     def test_generation_targets_only_new_artifacts(self) -> None:
         layout = DatasetArtifactLayout.for_dataset_version("dv-001")
