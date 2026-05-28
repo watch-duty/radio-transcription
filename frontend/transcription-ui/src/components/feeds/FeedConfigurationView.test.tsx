@@ -12,6 +12,7 @@ import {
   within,
 } from '@testing-library/react';
 import type { Feed } from '@transcription/common';
+import { SourceType } from '@transcription/common';
 
 import { createFeed } from '../../service/createFeed';
 import { listFeeds } from '../../service/listFeeds';
@@ -45,7 +46,7 @@ describe('FeedConfigurationView', () => {
     {
       id: 'feed-1',
       name: 'Marin Fire Dispatch',
-      sourceType: 'bcfy_feeds',
+      sourceType: SourceType.BCFY_FEEDS,
       sourceFeedId: '33156',
       externalId: 'ca-mrn-fire',
       status: 'active',
@@ -54,7 +55,7 @@ describe('FeedConfigurationView', () => {
     {
       id: 'feed-2',
       name: 'Sonoma Sheriff dispatch',
-      sourceType: 'openmhz',
+      sourceType: SourceType.OPENMHZ,
       sourceFeedId: 'sonoma-county',
       externalId: 'ca-snm-sheriff',
       status: 'inactive',
@@ -180,7 +181,7 @@ describe('FeedConfigurationView', () => {
     const mockCreatedFeed = {
       id: 'feed-99',
       name: 'Napa Ambulance Dispatch',
-      sourceType: 'bcfy_calls' as const,
+      sourceType: SourceType.BCFY_CALLS,
       sourceFeedId: '9988-77',
       externalId: 'ca-nap-amb',
       status: 'active' as const,
@@ -371,7 +372,7 @@ describe('FeedConfigurationView', () => {
     const mockCreatedFeed = {
       id: 'feed-99',
       name: 'Napa Ambulance Dispatch',
-      sourceType: 'bcfy_calls' as const,
+      sourceType: SourceType.BCFY_CALLS,
       sourceFeedId: '9988-77',
       externalId: 'ca-nap-amb',
       status: 'active' as const,

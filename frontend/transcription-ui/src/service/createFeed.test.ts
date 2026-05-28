@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { SourceType } from '@transcription/common';
+
 import { createFeed } from './createFeed';
 
 describe('createFeed', () => {
@@ -13,7 +15,7 @@ describe('createFeed', () => {
   it('should create feed successfully', async () => {
     const feedCreate = {
       name: 'New Feed',
-      sourceType: 'bcfy_feeds' as const,
+      sourceType: SourceType.BCFY_FEEDS,
       sourceFeedId: '12345',
       externalId: 'ext-123',
       tags: [{ key: 'county', value: 'Marin' }],
@@ -22,7 +24,7 @@ describe('createFeed', () => {
     const mockResponseData = {
       id: '99',
       name: 'New Feed',
-      sourceType: 'bcfy_feeds',
+      sourceType: SourceType.BCFY_FEEDS,
       sourceFeedId: '12345',
       externalId: 'ext-123',
       status: 'active',
@@ -70,7 +72,7 @@ describe('createFeed', () => {
       createFeed(
         {
           name: 'New Feed',
-          sourceType: 'bcfy_feeds' as const,
+          sourceType: SourceType.BCFY_FEEDS,
           sourceFeedId: '12345',
           externalId: 'ext-123',
         },

@@ -22,36 +22,31 @@ import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
-import type {
-  Feed,
-  FeedCreate,
-  FeedUpdate,
-  SourceType,
-  Tag,
-} from '@transcription/common';
+import type { Feed, FeedCreate, FeedUpdate, Tag } from '@transcription/common';
+import { SourceType } from '@transcription/common';
 
 const SOURCE_TYPE_OPTIONS: {
   value: SourceType;
   label: string;
 }[] = [
   {
-    value: 'bcfy_feeds',
+    value: SourceType.BCFY_FEEDS,
     label: 'Broadcastify Feeds',
   },
   {
-    value: 'bcfy_calls',
+    value: SourceType.BCFY_CALLS,
     label: 'Broadcastify Calls',
   },
   {
-    value: 'openmhz',
+    value: SourceType.OPENMHZ,
     label: 'OpenMHZ',
   },
   {
-    value: 'echo',
+    value: SourceType.ECHO,
     label: 'Echo',
   },
   {
-    value: 'fire_notifications',
+    value: SourceType.FIRE_NOTIFICATIONS,
     label: 'Fire Notifications',
   },
 ];
@@ -74,7 +69,7 @@ export function FeedConfigurationEdit({
   // Form Fields (initialized declaratively; resets managed on mount via component key change)
   const [name, setName] = useState(editingFeed?.name ?? '');
   const [sourceType, setSourceType] = useState<SourceType>(
-    editingFeed?.sourceType ?? 'bcfy_feeds'
+    editingFeed?.sourceType ?? SourceType.BCFY_FEEDS
   );
   const [sourceFeedId, setSourceFeedId] = useState(
     editingFeed?.sourceFeedId ?? ''
@@ -92,7 +87,7 @@ export function FeedConfigurationEdit({
 
   const resetFormState = () => {
     setName('');
-    setSourceType('bcfy_feeds');
+    setSourceType(SourceType.BCFY_FEEDS);
     setSourceFeedId('');
     setTags([]);
     setNewTagKey('');
