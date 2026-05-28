@@ -169,6 +169,15 @@ class TestValidateExample(unittest.TestCase):
         ex = build_example("gs://b/s.flac", "   ", "sys", "user")
         self.assertFalse(validate_example(ex))
 
+    def test_rejects_non_list_model_parts(self) -> None:
+        from common.sft import build_example, validate_example
+
+        for parts in ({"text": "copy"}, {0: {"text": "copy"}}, "copy"):
+            with self.subTest(parts=parts):
+                ex = build_example("gs://b/s.flac", "copy", "sys", "user")
+                ex["contents"][1]["parts"] = parts
+                self.assertFalse(validate_example(ex))
+
     def test_rejects_empty_system_instruction_text(self) -> None:
         from common.sft import build_example, validate_example
 
