@@ -373,6 +373,57 @@ class TestPipelineCLI(unittest.TestCase):
         self.assertEqual(rc, 130)
         submit.assert_not_called()
 
+    def test_tune_eof_confirmation_returns_user_abort(self) -> None:
+        """Non-interactive tune without --confirm should abort cleanly."""
+        import pipeline
+
+        args = argparse.Namespace(
+            round_id="2026-06-01-echo",
+            base_model="gemini-3.1-flash-lite",
+            gcp_project="",
+            gcs_bucket="",
+            location="us-central1",
+            epochs=1,
+            adapter_size="EIGHT",
+            lr_multiplier=1.0,
+            confirm=False,
+        )
+
+        def fake_download_blob_to_file(
+            _client, _bucket: str, _blob: str, local_path: str
+        ) -> None:
+            Path(local_path).write_text('{"ok": true}\n')
+
+        with (
+            unittest.mock.patch(
+                "pipeline._load_round_config",
+                return_value={
+                    "combined_train_uri": "gs://bucket/train.jsonl",
+                    "combined_val_uri": "",
+                    "system_prompt": "sys",
+                    "user_prompt": "user",
+                    "total_train_duration_seconds": 10,
+                },
+            ),
+            unittest.mock.patch("google.cloud.storage.Client"),
+            unittest.mock.patch(
+                "common.gcs_utils.download_blob_to_file",
+                side_effect=fake_download_blob_to_file,
+            ),
+            unittest.mock.patch(
+                "preflight.run_preflight",
+                return_value=types.SimpleNamespace(passed=True, failures=[]),
+            ),
+            unittest.mock.patch("builtins.input", side_effect=EOFError),
+            unittest.mock.patch("common.vertex.submit_tuning_job") as submit,
+            self.assertLogs("pipeline", level="INFO") as logs,
+        ):
+            rc = pipeline._tune(args)
+
+        self.assertEqual(rc, 130)
+        self.assertIn("Tune aborted by operator", "\n".join(logs.output))
+        submit.assert_not_called()
+
     def test_tune_fallback_duration_constant_is_used_in_cost_estimate(
         self,
     ) -> None:

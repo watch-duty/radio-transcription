@@ -290,7 +290,12 @@ def poll_tuning_job(
     if state not in _TUNING_SUCCESS_STATES:
         raise RuntimeError(f"Tuning job ended in non-success state: {state}")
 
-    endpoint: str = cur.tuned_model.endpoint
+    tuned = getattr(cur, "tuned_model", None)
+    endpoint = getattr(tuned, "endpoint", None) if tuned else None
+    if not endpoint:
+        raise RuntimeError(
+            f"Tuning job {name} succeeded but returned no tuned_model.endpoint"
+        )
     logger.info(f"Tuned model endpoint: {endpoint}")
     return endpoint
 

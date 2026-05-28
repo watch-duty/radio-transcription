@@ -226,6 +226,23 @@ class TestPollTuningJob(unittest.TestCase):
         self.assertEqual(mock_client.tunings.get.call_count, 2)
         mock_sleep.assert_called_once()
 
+    @unittest.mock.patch("common.vertex.genai")
+    def test_poll_raises_clear_error_when_endpoint_missing(self, mock_genai):
+        """Succeeded tuning jobs should expose a tuned_model endpoint."""
+        mock_client = _make_mock_client()
+        mock_client.tunings.get.return_value.tuned_model = None
+        mock_genai.Client.return_value = mock_client
+        from common.vertex import poll_tuning_job
+
+        with self.assertRaisesRegex(
+            RuntimeError, "succeeded but returned no tuned_model.endpoint"
+        ):
+            poll_tuning_job(
+                name="projects/p/locations/l/tuningJobs/123",
+                project="p",
+                location="us-central1",
+            )
+
 
 class TestAdapterEnum(unittest.TestCase):
     """Guard against silent miskeys in _ADAPTER_ENUM."""
