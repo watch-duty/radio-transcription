@@ -104,6 +104,42 @@ class TestPipelineCLI(unittest.TestCase):
             ["echo", "bench"],
         )
 
+    def test_dataset_names_ignore_empty_entries(self) -> None:
+        """Trailing commas and empty comma slots should not create fake datasets."""
+        import pipeline
+
+        self.assertEqual(
+            pipeline._parse_dataset_names(" echo, ,bench,echo, "),
+            ["echo", "bench"],
+        )
+
+    def test_build_rejects_empty_dataset_list(self) -> None:
+        """All-empty --datasets should fail before staging or GCS work."""
+        import pipeline
+
+        args = argparse.Namespace(
+            datasets=" , ",
+            round_id="empty-datasets",
+            system_prompt="",
+            user_prompt="",
+            staging_dir="",
+            gcp_project="",
+            gcs_bucket="",
+        )
+
+        with self.assertLogs("pipeline", level="ERROR") as logs:
+            rc = pipeline._build(args)
+
+        self.assertEqual(rc, 1)
+        self.assertIn("No datasets specified", "\n".join(logs.output))
+
+    def test_gcs_sft_prefix_rejects_full_gcs_uri(self) -> None:
+        """--gcs-bucket expects a bucket name, not a gs:// URI."""
+        import pipeline
+
+        with self.assertRaisesRegex(ValueError, "bucket name"):
+            pipeline._gcs_sft_prefix("gs://sandbox-bucket")
+
     def test_tune_defaults_to_gemini_31_flash_lite(self) -> None:
         """Tune CLI defaults to the current supported Gemini SFT model."""
         import pipeline
