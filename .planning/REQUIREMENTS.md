@@ -34,12 +34,12 @@
 
 ### GCS Artifacts
 
-- [ ] **ARTF-01**: User can write a dataset version under `gs://wd-transcription-data/sft/{dataset_version_id}/`.
-- [ ] **ARTF-02**: Generation fails if the dataset version path already exists unless an explicit force flag is provided and recorded.
-- [ ] **ARTF-03**: The generator writes canonical train/eval JSONL manifests.
-- [ ] **ARTF-04**: The generator writes per-dataset train/eval JSONL slices.
-- [ ] **ARTF-05**: The generator writes machine-readable JSON reports and a human-readable Markdown summary.
-- [ ] **ARTF-06**: Generated manifests and derived audio are not committed to Git.
+- [x] **ARTF-01**: User can write a dataset version under `gs://wd-transcription-data/sft/{dataset_version_id}/`.
+- [x] **ARTF-02**: Generation fails if the dataset version path already exists unless an explicit force flag is provided and recorded.
+- [x] **ARTF-03**: The generator writes canonical train/eval JSONL manifests.
+- [x] **ARTF-04**: The generator writes per-dataset train/eval JSONL slices.
+- [x] **ARTF-05**: The generator writes machine-readable JSON reports and a human-readable Markdown summary.
+- [x] **ARTF-06**: Generated manifests and derived audio are not committed to Git.
 
 ### Audio And Provenance
 
@@ -52,14 +52,14 @@
 
 ### Model Inputs
 
-- [ ] **MODL-01**: NeMo writer emits train/eval manifests with `audio_filepath`, `text`, and `duration`.
-- [ ] **MODL-02**: NeMo writer emits a config fragment that references train and validation manifest paths.
-- [ ] **MODL-03**: Whisper writer emits train/eval loader-friendly manifests with audio URI/path, text, duration, source metadata, and preprocessing recommendations.
-- [ ] **MODL-04**: Whisper writer records or enforces the sub-30-second example constraint needed to avoid Whisper feature-extractor truncation.
-- [ ] **MODL-05**: Gemini writer emits Vertex SFT JSONL with `systemInstruction`, `contents`, `fileData`, `mimeType`, and target transcript text.
-- [ ] **MODL-06**: Gemini writer emits a tuning config with train dataset URI, validation dataset URI, base model name, region, adapter size, epoch count, and learning-rate multiplier.
-- [ ] **MODL-07**: Gemini writer supports Gemini 3.1 Flash-Lite as a documented supervised-tuning target while keeping the base model configurable.
-- [ ] **MODL-08**: Existing benchmark/eval manifests remain unchanged.
+- [x] **MODL-01**: NeMo writer emits train/eval manifests with `audio_filepath`, `text`, and `duration`.
+- [x] **MODL-02**: NeMo writer emits a config fragment that references train and validation manifest paths.
+- [x] **MODL-03**: Whisper writer emits train/eval loader-friendly manifests with audio URI/path, text, duration, source metadata, and preprocessing recommendations.
+- [x] **MODL-04**: Whisper writer records or enforces the sub-30-second example constraint needed to avoid Whisper feature-extractor truncation.
+- [x] **MODL-05**: Gemini writer emits Vertex SFT JSONL with `systemInstruction`, `contents`, `fileData`, `mimeType`, and target transcript text.
+- [x] **MODL-06**: Gemini writer emits a tuning config with train dataset URI, validation dataset URI, base model name, region, adapter size, epoch count, and learning-rate multiplier.
+- [x] **MODL-07**: Gemini writer supports Gemini 3.1 Flash-Lite as a documented supervised-tuning target while keeping the base model configurable.
+- [x] **MODL-08**: Existing benchmark/eval manifests remain unchanged.
 
 ### CLI And Reports
 
@@ -75,8 +75,8 @@
 - [x] **TEST-02**: Tests cover Source Group split assignment, per-dataset train/eval coverage, and the seed-free config contract.
 - [x] **TEST-03**: Tests cover leakage-gate failures for source overlap, original-audio overlap, and model-ready URI overlap.
 - [x] **TEST-04**: Tests cover balance scoring and report contents.
-- [ ] **TEST-05**: Tests cover NeMo, Whisper, and Gemini model-writer output shapes.
-- [ ] **TEST-06**: Tests cover existing-path protection for dataset versions.
+- [x] **TEST-05**: Tests cover NeMo, Whisper, and Gemini model-writer output shapes.
+- [x] **TEST-06**: Tests cover existing-path protection for dataset versions.
 
 ## v2 Requirements
 
@@ -129,22 +129,22 @@
 | TEST-02 | Phase 2 | Complete |
 | TEST-03 | Phase 2 | Complete |
 | TEST-04 | Phase 2 | Complete |
-| ARTF-01 | Phase 3 | Pending |
-| ARTF-02 | Phase 3 | Pending |
-| ARTF-03 | Phase 3 | Pending |
-| ARTF-04 | Phase 3 | Pending |
-| ARTF-05 | Phase 3 | Pending |
-| ARTF-06 | Phase 3 | Pending |
-| MODL-01 | Phase 3 | Pending |
-| MODL-02 | Phase 3 | Pending |
-| MODL-03 | Phase 3 | Pending |
-| MODL-04 | Phase 3 | Pending |
-| MODL-05 | Phase 3 | Pending |
-| MODL-06 | Phase 3 | Pending |
-| MODL-07 | Phase 3 | Pending |
-| MODL-08 | Phase 3 | Pending |
-| TEST-05 | Phase 3 | Pending |
-| TEST-06 | Phase 3 | Pending |
+| ARTF-01 | Phase 3 | Complete |
+| ARTF-02 | Phase 3 | Complete |
+| ARTF-03 | Phase 3 | Complete |
+| ARTF-04 | Phase 3 | Complete |
+| ARTF-05 | Phase 3 | Complete |
+| ARTF-06 | Phase 3 | Complete |
+| MODL-01 | Phase 3 | Complete |
+| MODL-02 | Phase 3 | Complete |
+| MODL-03 | Phase 3 | Complete |
+| MODL-04 | Phase 3 | Complete |
+| MODL-05 | Phase 3 | Complete |
+| MODL-06 | Phase 3 | Complete |
+| MODL-07 | Phase 3 | Complete |
+| MODL-08 | Phase 3 | Complete |
+| TEST-05 | Phase 3 | Complete |
+| TEST-06 | Phase 3 | Complete |
 | AUD-01 | Phase 4 | Pending |
 | AUD-02 | Phase 4 | Pending |
 | AUD-03 | Phase 4 | Pending |
@@ -164,4 +164,4 @@
 
 ---
 *Requirements defined: 2026-05-27*
-*Last updated: 2026-05-27 after roadmap draft*
+*Last updated: 2026-05-28 after Phase 3 completion*
