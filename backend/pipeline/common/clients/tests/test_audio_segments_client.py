@@ -38,7 +38,7 @@ class TestAudioSegmentsClient(unittest.TestCase):
 
         # Verify
         adapter = client.session.adapters.get("http://")
-        self.assertEqual(adapter.max_retries, 0)
+        self.assertEqual(getattr(adapter.max_retries, "total", adapter.max_retries), 0)
 
     def test_add_audio_segment_annotation_success(self) -> None:
         # Setup
