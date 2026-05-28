@@ -22,7 +22,7 @@ import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
-import type { Feed, FeedCreate, FeedUpdate, Tag } from '@transcription/common';
+import type { FeedCreate, FeedUpdate, Tag } from '@transcription/common';
 import { SourceType } from '@transcription/common';
 
 const SOURCE_TYPE_OPTIONS: {
@@ -52,30 +52,36 @@ const SOURCE_TYPE_OPTIONS: {
 ];
 
 interface FeedConfigurationEditProps {
-  editingFeed: Feed | null;
+  isEditing: boolean;
+  feedName: string;
+  feedSourceType: SourceType;
+  feedSourceId: string;
+  feedTags: Tag[];
+  setFeedName: (name: string) => void;
+  setFeedSourceType: (sourceType: SourceType) => void;
+  setFeedSourceId: (sourceFeedId: string) => void;
+  setFeedTags: (tags: Tag[]) => void;
   onCreateFeed: (payload: FeedCreate) => Promise<void>;
-  onUpdateFeed: (feedId: string, payload: FeedUpdate) => Promise<void>;
+  onUpdateFeed: (payload: FeedUpdate) => Promise<void>;
   onCancel: () => void;
   isSubmitting: boolean;
 }
 
 export function FeedConfigurationEdit({
-  editingFeed,
+  isEditing,
+  feedName,
+  feedSourceType,
+  feedSourceId,
+  feedTags,
+  setFeedName,
+  setFeedSourceType,
+  setFeedSourceId,
+  setFeedTags,
   onCreateFeed,
   onUpdateFeed,
   onCancel,
   isSubmitting,
 }: FeedConfigurationEditProps) {
-  // Form Fields (initialized declaratively; resets managed on mount via component key change)
-  const [name, setName] = useState(editingFeed?.name ?? '');
-  const [sourceType, setSourceType] = useState<SourceType>(
-    editingFeed?.sourceType ?? SourceType.BCFY_FEEDS
-  );
-  const [sourceFeedId, setSourceFeedId] = useState(
-    editingFeed?.sourceFeedId ?? ''
-  );
-  const [tags, setTags] = useState<Tag[]>(editingFeed?.tags ?? []);
-
   // Subform dynamic fields for adding Tags
   const [newTagKey, setNewTagKey] = useState('');
   const [newTagValue, setNewTagValue] = useState('');
@@ -86,10 +92,10 @@ export function FeedConfigurationEdit({
   >({});
 
   const resetFormState = () => {
-    setName('');
-    setSourceType(SourceType.BCFY_FEEDS);
-    setSourceFeedId('');
-    setTags([]);
+    setFeedName('');
+    setFeedSourceType(SourceType.BCFY_FEEDS);
+    setFeedSourceId('');
+    setFeedTags([]);
     setNewTagKey('');
     setNewTagValue('');
     setValidationErrors({});
@@ -109,7 +115,7 @@ export function FeedConfigurationEdit({
     }
 
     // Prevent duplicate keys in tags list
-    if (tags.some((t) => t.key === key)) {
+    if (feedTags.some((t) => t.key === key)) {
       setValidationErrors((prev) => ({
         ...prev,
         tags: `A tag with key "${key}" already exists.`,
@@ -117,7 +123,7 @@ export function FeedConfigurationEdit({
       return;
     }
 
-    setTags((prev) => [...prev, { key, value }]);
+    setFeedTags([...feedTags, { key, value }]);
     setNewTagKey('');
     setNewTagValue('');
     setValidationErrors((prev) => {
@@ -128,7 +134,7 @@ export function FeedConfigurationEdit({
   };
 
   const handleRemoveTag = (keyToRemove: string) => {
-    setTags((prev) => prev.filter((tag) => tag.key !== keyToRemove));
+    setFeedTags(feedTags.filter((tag) => tag.key !== keyToRemove));
   };
 
   const handleUpdateTag = (
@@ -136,11 +142,9 @@ export function FeedConfigurationEdit({
     field: 'key' | 'value',
     newValue: string
   ) => {
-    setTags((prev) => {
-      const copy = [...prev];
-      copy[index] = { ...copy[index], [field]: newValue };
-      return copy;
-    });
+    const copy = [...feedTags];
+    copy[index] = { ...copy[index], [field]: newValue };
+    setFeedTags(copy);
     setValidationErrors((prev) => {
       const copy = { ...prev };
       delete copy.tags;
@@ -152,19 +156,17 @@ export function FeedConfigurationEdit({
   const validateForm = (): boolean => {
     const errors: Record<string, string> = {};
 
-    if (!name.trim()) {
+    if (!feedName.trim()) {
       errors.name = 'Display name is required.';
     }
 
-    // Source Feed ID and Source Type are only required when creating.
-    // In update mode they are permanent, but we validate to stay completely defensive.
-    if (!editingFeed && !sourceFeedId.trim()) {
+    if (!feedSourceId.trim()) {
       errors.sourceFeedId = 'Source feed ID is required.';
     }
 
     // Verify tags data integrity
-    const duplicateKeys = tags.filter(
-      (tag, idx) => tags.findIndex((t) => t.key === tag.key) !== idx
+    const duplicateKeys = feedTags.filter(
+      (tag, idx) => feedTags.findIndex((t) => t.key === tag.key) !== idx
     );
     if (duplicateKeys.length > 0) {
       errors.tags = `Duplicate tag keys discovered: ${duplicateKeys
@@ -172,7 +174,9 @@ export function FeedConfigurationEdit({
         .join(', ')}. Keys must be unique.`;
     }
 
-    const blankTags = tags.some((tag) => !tag.key.trim() || !tag.value.trim());
+    const blankTags = feedTags.some(
+      (tag) => !tag.key.trim() || !tag.value.trim()
+    );
     if (blankTags) {
       errors.tags =
         'Tag key and value inputs cannot be blank. Discard empty tag rows using the delete button.';
@@ -190,20 +194,20 @@ export function FeedConfigurationEdit({
     }
 
     try {
-      if (editingFeed) {
+      if (isEditing) {
         const payload: FeedUpdate = {
-          name: name.trim(),
-          externalId: sourceFeedId.trim(),
-          tags,
+          name: feedName.trim(),
+          externalId: feedSourceId.trim(),
+          tags: feedTags,
         };
-        await onUpdateFeed(editingFeed.id, payload);
+        await onUpdateFeed(payload);
       } else {
         const payload: FeedCreate = {
-          name: name.trim(),
-          sourceType,
-          sourceFeedId: sourceFeedId.trim(),
-          externalId: sourceFeedId.trim(),
-          tags,
+          name: feedName.trim(),
+          sourceType: feedSourceType,
+          sourceFeedId: feedSourceId.trim(),
+          externalId: feedSourceId.trim(),
+          tags: feedTags,
         };
         await onCreateFeed(payload);
         resetFormState();
@@ -229,13 +233,13 @@ export function FeedConfigurationEdit({
       <Box
         sx={{
           p: 3,
-          color: editingFeed ? 'warning.contrastText' : 'primary.contrastText',
-          bgcolor: editingFeed ? 'warning.main' : 'primary.main',
+          color: isEditing ? 'warning.contrastText' : 'primary.contrastText',
+          bgcolor: isEditing ? 'warning.main' : 'primary.main',
           flexShrink: 0,
         }}
       >
         <Typography variant="h6" sx={{ fontWeight: 600 }}>
-          {editingFeed ? `Edit Feed: ${editingFeed.name}` : 'Register New Feed'}
+          {isEditing ? `Edit Feed: ${feedName}` : 'Register New Feed'}
         </Typography>
       </Box>
 
@@ -258,8 +262,8 @@ export function FeedConfigurationEdit({
               size="small"
               variant="outlined"
               placeholder="Ventura Public Safety - Fire Dispatch"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
+              value={feedName}
+              onChange={(e) => setFeedName(e.target.value)}
               error={!!validationErrors.name}
               helperText={
                 validationErrors.name || 'Concise and readable name of the feed'
@@ -269,18 +273,18 @@ export function FeedConfigurationEdit({
 
             <Grid container spacing={2}>
               <Grid size={{ xs: 12, sm: 6 }}>
-                <FormControl fullWidth disabled={!!editingFeed || isSubmitting}>
+                <FormControl fullWidth disabled={!!isEditing || isSubmitting}>
                   <InputLabel id="source-type-select-label">
                     Source Type
                   </InputLabel>
                   <Select
                     labelId="source-type-select-label"
                     id="source-type-select"
-                    value={sourceType}
+                    value={feedSourceType}
                     label="Source Type"
                     size="small"
                     onChange={(e) =>
-                      setSourceType(e.target.value as SourceType)
+                      setFeedSourceType(e.target.value as SourceType)
                     }
                   >
                     {SOURCE_TYPE_OPTIONS.map((opt) => (
@@ -290,7 +294,7 @@ export function FeedConfigurationEdit({
                     ))}
                   </Select>
                   <FormHelperText>
-                    {editingFeed
+                    {isEditing
                       ? 'Source cannot be changed after it has been registered'
                       : 'Source the audio comes from'}
                   </FormHelperText>
@@ -304,16 +308,16 @@ export function FeedConfigurationEdit({
                   variant="outlined"
                   size="small"
                   placeholder={'12345'}
-                  value={sourceFeedId}
-                  onChange={(e) => setSourceFeedId(e.target.value)}
+                  value={feedSourceId}
+                  onChange={(e) => setFeedSourceId(e.target.value)}
                   error={!!validationErrors.sourceFeedId}
                   helperText={
                     validationErrors.sourceFeedId || 'Unique ID of the source'
                   }
-                  disabled={!!editingFeed || isSubmitting}
+                  disabled={!!isEditing || isSubmitting}
                   slotProps={{
                     input: {
-                      endAdornment: editingFeed ? (
+                      endAdornment: isEditing ? (
                         <InputAdornment position="end">
                           <Tooltip title="Source configs cannot be edited after initial mapping creation.">
                             <InfoOutlinedIcon
@@ -417,7 +421,7 @@ export function FeedConfigurationEdit({
                   gap: 1.5,
                 }}
               >
-                {tags.length === 0 ? (
+                {feedTags.length === 0 ? (
                   <Typography
                     variant="body2"
                     color="text.secondary"
@@ -426,7 +430,7 @@ export function FeedConfigurationEdit({
                     No tags added.
                   </Typography>
                 ) : (
-                  tags.map((tag, index) => (
+                  feedTags.map((tag, index) => (
                     <Stack
                       key={index}
                       direction="row"
@@ -476,7 +480,7 @@ export function FeedConfigurationEdit({
                 mt: 1,
               }}
             >
-              {editingFeed && (
+              {isEditing && (
                 <Button
                   variant="outlined"
                   onClick={onCancel}
@@ -495,7 +499,7 @@ export function FeedConfigurationEdit({
               >
                 {isSubmitting ? (
                   <CircularProgress size={20} color="inherit" />
-                ) : editingFeed ? (
+                ) : isEditing ? (
                   'Save changes'
                 ) : (
                   'Register feed'
