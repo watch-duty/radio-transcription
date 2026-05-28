@@ -24,6 +24,7 @@ def _git_sha() -> str:
             ["git", "rev-parse", "--short", "HEAD"],
             capture_output=True,
             text=True,
+            timeout=5,
             cwd=str(
                 Path(__file__).resolve().parent.parent.parent
             ),  # resolves to model/ (inside the repo; git finds the root from here)
@@ -254,7 +255,7 @@ def append_ledger(results_dir: Path, row: dict[str, Any]) -> None:
 
     md_row = (
         f"| {row.get('round_id', '—')} "
-        f"| {','.join(row.get('datasets', []))} "
+        f"| {','.join(row.get('datasets') or [])} "
         f"| {row.get('base_model', '—')} "
         f"| {row.get('epochs', '—')} "
         f"| {_f(base_wer)} "

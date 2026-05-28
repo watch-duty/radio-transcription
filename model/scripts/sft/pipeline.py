@@ -545,7 +545,7 @@ def _tune(args: argparse.Namespace) -> int:
         answer = input("Type 'yes' to proceed with tune: ").strip().lower()
         if answer != "yes":
             logger.info("Tune aborted by operator.")
-            return 0
+            return 130
 
     # Submit (and persist job.name BEFORE polling — D-08/D-10)
     display_name = f"wd-radio-sft-{args.round_id}"

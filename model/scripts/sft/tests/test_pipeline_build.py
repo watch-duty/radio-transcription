@@ -204,6 +204,53 @@ class TestPipelineCLI(unittest.TestCase):
         self.assertEqual(rc, 0)
         require.assert_called_once_with()
 
+    def test_tune_declined_confirmation_returns_user_abort(self) -> None:
+        """Declined cost confirmation should stop `all` before eval."""
+        import pipeline
+
+        args = argparse.Namespace(
+            round_id="2026-06-01-echo",
+            base_model="gemini-3.1-flash-lite",
+            location="us-central1",
+            epochs=1,
+            adapter_size="EIGHT",
+            lr_multiplier=1.0,
+            confirm=False,
+        )
+
+        def fake_download_blob_to_file(
+            _client, _bucket: str, _blob: str, local_path: str
+        ) -> None:
+            Path(local_path).write_text('{"ok": true}\n')
+
+        with (
+            unittest.mock.patch(
+                "pipeline._load_round_config",
+                return_value={
+                    "combined_train_uri": "gs://bucket/train.jsonl",
+                    "combined_val_uri": "",
+                    "system_prompt": "sys",
+                    "user_prompt": "user",
+                    "total_train_duration_seconds": 10,
+                },
+            ),
+            unittest.mock.patch("google.cloud.storage.Client"),
+            unittest.mock.patch(
+                "common.gcs_utils.download_blob_to_file",
+                side_effect=fake_download_blob_to_file,
+            ),
+            unittest.mock.patch(
+                "preflight.run_preflight",
+                return_value=types.SimpleNamespace(passed=True, failures=[]),
+            ),
+            unittest.mock.patch("builtins.input", return_value="no"),
+            unittest.mock.patch("common.vertex.submit_tuning_job") as submit,
+        ):
+            rc = pipeline._tune(args)
+
+        self.assertEqual(rc, 130)
+        submit.assert_not_called()
+
 
 class TestPreflightEmptyTarget(unittest.TestCase):
     """run_preflight aborts on empty model text (validate_example returns False)."""

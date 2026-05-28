@@ -140,8 +140,8 @@ _BATCH_SUCCESS_STATES = {
 }
 
 _TUNING_SUCCESS_STATES = {"JOB_STATE_SUCCEEDED", "SUCCEEDED"}
-_TUNING_GET_RETRY_LIMIT = 3
-_TUNING_GET_RETRY_SLEEP_SECONDS = 5.0
+_POLL_GET_RETRY_LIMIT = 3
+_POLL_GET_RETRY_SLEEP_SECONDS = 5.0
 
 
 def _require_vertex() -> None:
@@ -261,16 +261,16 @@ def poll_tuning_job(
                     f"{timeout_hours}h timeout elapsed (last state: {state or 'unknown'}). "
                     "It may still be running on Vertex; re-run tune to resume polling by job name."
                 ) from e
-            if consecutive_get_errors > _TUNING_GET_RETRY_LIMIT:
+            if consecutive_get_errors > _POLL_GET_RETRY_LIMIT:
                 raise RuntimeError(
                     f"Could not fetch tuning job {name} after "
-                    f"{_TUNING_GET_RETRY_LIMIT} retries; re-run tune to resume polling."
+                    f"{_POLL_GET_RETRY_LIMIT} retries; re-run tune to resume polling."
                 ) from e
             logger.warning(
                 f"Transient error fetching tuning job {name}; retrying "
-                f"({consecutive_get_errors}/{_TUNING_GET_RETRY_LIMIT}): {e}"
+                f"({consecutive_get_errors}/{_POLL_GET_RETRY_LIMIT}): {e}"
             )
-            time.sleep(_TUNING_GET_RETRY_SLEEP_SECONDS)
+            time.sleep(_POLL_GET_RETRY_SLEEP_SECONDS)
             continue
         consecutive_get_errors = 0
         state = getattr(cur.state, "name", str(cur.state))
@@ -339,8 +339,29 @@ def submit_batch_inference(
     last_state: "str | None" = None
     state: str = ""
     deadline = time.monotonic() + timeout_hours * 3600
+    consecutive_get_errors = 0
     while True:
-        cur = client.batches.get(name=batch_job.name)
+        try:
+            cur = client.batches.get(name=batch_job.name)
+        except Exception as e:
+            consecutive_get_errors += 1
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"Batch job {batch_job.name} could not be fetched before "
+                    f"the {timeout_hours}h timeout elapsed (last state: {state or 'unknown'})."
+                ) from e
+            if consecutive_get_errors > _POLL_GET_RETRY_LIMIT:
+                raise RuntimeError(
+                    f"Could not fetch batch job {batch_job.name} after "
+                    f"{_POLL_GET_RETRY_LIMIT} retries."
+                ) from e
+            logger.warning(
+                f"Transient error fetching batch job {batch_job.name}; retrying "
+                f"({consecutive_get_errors}/{_POLL_GET_RETRY_LIMIT}): {e}"
+            )
+            time.sleep(_POLL_GET_RETRY_SLEEP_SECONDS)
+            continue
+        consecutive_get_errors = 0
         state = getattr(cur.state, "name", str(cur.state))
         if state != last_state:
             logger.info(f"[{time.strftime('%H:%M:%S')}] batch state: {state}")
@@ -359,9 +380,14 @@ def submit_batch_inference(
             f"Batch inference job ended in non-success state: {state}"
         )
 
-    # PR3 fix: cur.dest is a BatchJobDestination object, not a string
-    # BEFORE (buggy): output_location: str = getattr(cur, "dest", output_uri)
-    # AFTER (correct): use .gcs_uri attribute
-    output_location: str = cur.dest.gcs_uri if cur.dest else output_uri
+    dest_uri = getattr(cur.dest, "gcs_uri", None) if cur.dest else None
+    if dest_uri:
+        output_location: str = dest_uri
+    else:
+        logger.warning(
+            f"Batch job returned no destination GCS URI; falling back to requested "
+            f"output URI: {output_uri}"
+        )
+        output_location = output_uri
     logger.info(f"Batch output location: {output_location}")
     return output_location
