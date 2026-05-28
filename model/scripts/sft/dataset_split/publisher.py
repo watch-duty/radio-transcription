@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 from dataset_split.artifacts import (
     DATASET_VERSION_ROOT,
@@ -10,6 +11,7 @@ from dataset_split.artifacts import (
     ensure_dataset_version_absent,
     upload_text_create_only,
 )
+from dataset_split.audio import prepare_audio_for_publication
 from dataset_split.canonical import canonical_manifests, per_dataset_manifests
 from dataset_split.model_writers import (
     DEFAULT_GEMINI_BASE_MODEL,
@@ -59,6 +61,8 @@ class DatasetPublicationResult:
     artifacts: tuple[PublishedArtifact, ...]
     artifact_inventory: dict[str, object]
     writer_warnings: dict[str, list[dict[str, object]]]
+    audio_action_counts: dict[str, int]
+    uploaded_audio_uris: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -85,6 +89,8 @@ def publish_dataset_version_artifacts(
     gemini_adapter_size: str = "ONE",
     gemini_epoch_count: int = 5,
     gemini_learning_rate_multiplier: float = 1.0,
+    scratch_dir: str | Path | None = None,
+    audio_preparer=prepare_audio_for_publication,
 ) -> DatasetPublicationResult:
     segment_tuple = tuple(segments)
     _reject_sft_run_fields(resolved_config)
@@ -93,16 +99,24 @@ def publish_dataset_version_artifacts(
     )
     ensure_dataset_version_absent(storage_client, layout.root_uri)
 
-    canonical = canonical_manifests(segment_tuple)
-    per_dataset = per_dataset_manifests(segment_tuple)
+    audio_result = audio_preparer(
+        storage_client,
+        layout=layout,
+        segments=segment_tuple,
+        scratch_dir=scratch_dir,
+    )
+    enriched_segments = tuple(audio_result.segments)
+
+    canonical = canonical_manifests(enriched_segments)
+    per_dataset = per_dataset_manifests(enriched_segments)
     nemo = build_nemo_inputs(
-        segment_tuple,
+        enriched_segments,
         train_manifest_uri=layout.model_input_uri("nemo", "train"),
         eval_manifest_uri=layout.model_input_uri("nemo", "eval"),
     )
-    whisper = build_whisper_inputs(segment_tuple)
+    whisper = build_whisper_inputs(enriched_segments)
     gemini = build_gemini_inputs(
-        segment_tuple,
+        enriched_segments,
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         training_dataset_uri=layout.model_input_uri("gemini", "train"),
@@ -120,7 +134,11 @@ def publish_dataset_version_artifacts(
         "gemini": summarize_model_writer_result(gemini),
     }
     writer_warnings = _combined_writer_warnings(nemo, whisper, gemini)
-    artifact_inventory = _artifact_inventory(layout, per_dataset)
+    artifact_inventory = _artifact_inventory(
+        layout,
+        per_dataset,
+        uploaded_audio_uris=audio_result.uploaded_audio_uris,
+    )
     metadata = build_dataset_version_metadata(
         layout.dataset_version_id,
         layout.root_uri,
@@ -129,7 +147,7 @@ def publish_dataset_version_artifacts(
     report = build_dataset_version_report(
         layout.dataset_version_id,
         resolved_config,
-        segment_tuple,
+        enriched_segments,
         leakage_validation,
         balance_report,
         artifact_inventory,
@@ -170,12 +188,16 @@ def publish_dataset_version_artifacts(
         ),
         artifact_inventory=artifact_inventory,
         writer_warnings=writer_warnings,
+        audio_action_counts=dict(audio_result.action_counts),
+        uploaded_audio_uris=tuple(audio_result.uploaded_audio_uris),
     )
 
 
 def _artifact_inventory(
     layout: DatasetArtifactLayout,
     per_dataset: Mapping[str, Mapping[str, str]],
+    *,
+    uploaded_audio_uris: Sequence[str],
 ) -> dict[str, object]:
     return {
         "root": layout.root_uri,
@@ -217,6 +239,12 @@ def _artifact_inventory(
             "markdown": layout.reports_markdown_uri,
         },
         "audio_prefix": layout.audio_prefix_uri,
+        "audio_action_prefixes": {
+            "copied": f"{layout.audio_prefix_uri}copied/",
+            "derived": f"{layout.audio_prefix_uri}derived/",
+            "transcoded": f"{layout.audio_prefix_uri}transcoded/",
+        },
+        "uploaded_audio_uris": tuple(uploaded_audio_uris),
     }
 
 
