@@ -13,12 +13,15 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+SUPPORTED_AUDIO_MIME_TYPES = frozenset({"audio/flac", "audio/mpeg"})
+
 
 def build_example(
     audio_uri: str,
     gt_text: str,
     system_prompt: str,
     user_prompt: str,
+    mime_type: str = "audio/flac",
 ) -> dict[str, Any]:
     """Build a single Vertex AI audio-SFT JSONL example.
 
@@ -28,12 +31,13 @@ def build_example(
     ``scripts/sft/prompts.py``).
 
     Args:
-        audio_uri: GCS URI (gs://...) to the audio segment; must be audio/flac.
+        audio_uri: GCS URI (gs://...) to the audio segment.
         gt_text: Ground-truth transcript text.
         system_prompt: Caller-supplied system instruction (e.g. from
             ``scripts/sft/prompts.py``).
         user_prompt: Per-turn user instruction (e.g. from
             ``scripts/sft/prompts.py``).
+        mime_type: Audio MIME type; supports audio/flac and audio/mpeg.
 
     Returns:
         A dict matching the current Vertex AI audio-SFT JSONL schema:
@@ -51,7 +55,7 @@ def build_example(
                 "parts": [
                     {
                         "fileData": {
-                            "mimeType": "audio/flac",
+                            "mimeType": mime_type,
                             "fileUri": audio_uri,
                         }
                     },
@@ -97,7 +101,7 @@ def validate_example(example: dict[str, Any]) -> bool:
     file_uri = fd.get("fileUri", "")
     if not isinstance(file_uri, str) or not file_uri.startswith("gs://"):
         return False
-    if fd.get("mimeType") != "audio/flac":
+    if fd.get("mimeType") not in SUPPORTED_AUDIO_MIME_TYPES:
         return False
     model_parts = model_turn.get("parts", [{}])
     if not model_parts:
