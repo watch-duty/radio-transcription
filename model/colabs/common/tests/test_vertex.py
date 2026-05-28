@@ -432,14 +432,54 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
 
         from common.vertex import submit_batch_inference
 
+        with self.assertLogs("common.vertex", level="WARNING") as logs:
+            result = submit_batch_inference(
+                input_uri="gs://bucket/input.jsonl",
+                output_uri="gs://bucket/fallback/",
+                model="gemini-2.5-flash",
+                project="p",
+                location="us-central1",
+            )
+
+        self.assertEqual(result, "gs://bucket/fallback/")
+        self.assertIn(
+            "Batch job returned no destination", "\n".join(logs.output)
+        )
+
+    @unittest.mock.patch("common.vertex.time.sleep")
+    @unittest.mock.patch("common.vertex.genai")
+    def test_batch_poll_retries_transient_get_error(
+        self, mock_genai, mock_sleep
+    ):
+        """submit_batch_inference retries a transient batches.get failure."""
+        mock_dest = unittest.mock.MagicMock()
+        mock_dest.gcs_uri = "gs://bucket/output/"
+        mock_batch_job = unittest.mock.MagicMock()
+        mock_batch_job.name = "projects/p/locations/l/batchPredictionJobs/1"
+        mock_cur = unittest.mock.MagicMock()
+        mock_cur.state.name = "JOB_STATE_SUCCEEDED"
+        mock_cur.dest = mock_dest
+        mock_client = unittest.mock.MagicMock()
+        mock_client.batches.create.return_value = mock_batch_job
+        mock_client.batches.get.side_effect = [
+            RuntimeError("temporary network failure"),
+            mock_cur,
+        ]
+        mock_genai.Client.return_value = mock_client
+
+        from common.vertex import submit_batch_inference
+
         result = submit_batch_inference(
             input_uri="gs://bucket/input.jsonl",
-            output_uri="gs://bucket/fallback/",
+            output_uri="gs://bucket/output/",
             model="gemini-2.5-flash",
             project="p",
             location="us-central1",
         )
-        self.assertEqual(result, "gs://bucket/fallback/")
+
+        self.assertEqual(result, "gs://bucket/output/")
+        self.assertEqual(mock_client.batches.get.call_count, 2)
+        mock_sleep.assert_called_once()
 
 
 if __name__ == "__main__":
