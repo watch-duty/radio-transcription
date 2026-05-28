@@ -98,8 +98,11 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
+**Wave 1**
 - [ ] 05-01: Dry-run and generation CLI commands
 - [ ] 05-02: Report bundle and failure UX
+
+**Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 05-03: Documentation and end-to-end verification
 
 ## Progress
