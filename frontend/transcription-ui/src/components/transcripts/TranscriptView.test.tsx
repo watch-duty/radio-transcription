@@ -7,6 +7,7 @@ import { Howl } from 'howler';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { SourceType } from '@transcription/common';
 
 import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
@@ -86,7 +87,7 @@ describe('TranscriptView', () => {
       {
         id: 'feed123',
         name: 'Feed 123',
-        sourceType: 'bcfy_feeds',
+        sourceType: SourceType.BCFY_FEEDS,
         status: 'active',
       },
     ]);
@@ -94,7 +95,7 @@ describe('TranscriptView', () => {
     vi.mocked(getFeed).mockResolvedValue({
       id: 'feed123',
       name: 'Feed 123',
-      sourceType: 'bcfy_feeds',
+      sourceType: SourceType.BCFY_FEEDS,
       status: 'active',
       lastHeartbeat: '2026-04-10T12:00:00Z',
     });
@@ -174,7 +175,7 @@ describe('TranscriptView', () => {
       {
         id: 'feed1',
         name: 'Feed 1',
-        sourceType: 'bcfy_feeds' as const,
+        sourceType: SourceType.BCFY_FEEDS,
         status: 'active' as const,
       },
     ];
@@ -227,7 +228,7 @@ describe('TranscriptView', () => {
       {
         id: 'feed123',
         name: 'Feed 123',
-        sourceType: 'bcfy_feeds' as const,
+        sourceType: SourceType.BCFY_FEEDS,
         status: 'active' as const,
         sourceUrl: 'https://partner.broadcastify.com/12345',
         archiveUrl: 'https://www.broadcastify.com/archives/feed/12345',
@@ -616,7 +617,7 @@ describe('TranscriptView', () => {
     const mockFeed = {
       id: 'feed123',
       name: 'Feed 123',
-      sourceType: 'bcfy_feeds' as const,
+      sourceType: SourceType.BCFY_FEEDS,
       status: 'active' as const,
       lastHeartbeat: new Date(fixedNow.getTime() - 5 * 60 * 1000).toISOString(),
     };
