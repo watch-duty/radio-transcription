@@ -103,7 +103,7 @@ Plans:
 - [x] 05-02: Report bundle and failure UX
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 05-03: Documentation and end-to-end verification
+- [x] 05-03: Documentation and end-to-end verification
 
 ## Progress
 
