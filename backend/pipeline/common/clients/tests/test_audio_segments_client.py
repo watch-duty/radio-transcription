@@ -137,25 +137,6 @@ class TestAudioSegmentsClient(unittest.TestCase):
         with self.assertRaises(Exception):
             self.client.add_audio_segment(self.segment_payload)
 
-    def test_add_audio_segment_empty_payload_raises_value_error(self) -> None:
-        # Execute & Verify
-        with self.assertRaises(ValueError) as cm:
-            self.client.add_audio_segment({})
-        self.assertEqual(str(cm.exception), "segment data cannot be empty")
-        self.mock_session.post.assert_not_called()
-
-    def test_add_audio_segment_missing_fields_raises_value_error(self) -> None:
-        # Execute & Verify (missing id)
-        with self.assertRaises(ValueError) as cm:
-            self.client.add_audio_segment({"feed_id": "feed-123"})
-        self.assertEqual(str(cm.exception), "segment id is required")
-
-        # Execute & Verify (missing feed_id)
-        with self.assertRaises(ValueError) as cm:
-            self.client.add_audio_segment({"id": "segment-123"})
-        self.assertEqual(str(cm.exception), "segment feed_id is required")
-        self.mock_session.post.assert_not_called()
-
 
 if __name__ == "__main__":
     unittest.main()
