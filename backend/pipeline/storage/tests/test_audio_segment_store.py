@@ -100,7 +100,11 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             )
         self.assertIn("Invalid segment_id UUID", str(cm.exception))
 
-    async def test_create_audio_segment_success(self) -> None:
+    @unittest.mock.patch(
+        "backend.pipeline.storage.audio_segment_store.uuid.uuid4"
+    )
+    async def test_create_audio_segment_success(self, mock_uuid4) -> None:
+        mock_uuid4.return_value = _SEGMENT_ID
         new_row = _AUDIO_SEGMENT_ROW.copy()
         new_row.pop("annotations", None)
         self.pool.fetchrow.return_value = new_row
@@ -127,7 +131,7 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
         missing_post_context = False
         self.pool.fetchrow.assert_called_once_with(
             audio_segment_queries.CREATE_AUDIO_SEGMENT_SQL,
-            unittest.mock.ANY,
+            _SEGMENT_ID,
             _FEED_ID,
             AudioClassification.SPEECH_DETECTED,
             datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
