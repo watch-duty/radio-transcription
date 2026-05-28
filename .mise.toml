@@ -167,9 +167,10 @@ docker-compose logs --tail 100 -t -f {{ arg(name="service") }}
 #                              Testing Tasks                                   #
 # ---------------------------------------------------------------------------- #
 
-[tasks.test]
-description = "Run the full local pytest suite"
-run = "uv run pytest"
+[tasks."test:unit"]
+description = "Run all unit tests (alias: test)"
+alias = ["test"]
+run = "uv run python -m unittest discover backend/pipeline"
 
 [tasks."test:model"]
 description = "Run model/ common-library unit tests (pytest)"
@@ -180,19 +181,15 @@ run = "uv run --extra dev --extra scoring pytest colabs/common/tests/"
 
 [tasks."test:component:rules"]
 description = "Run RulesStore component tests"
-run = "uv run pytest -n 0 integration_tests/storage/test_rules_store_integration.py"
+run = "uv run pytest integration_tests/storage/test_rules_store_integration.py"
 
 [tasks."test:component:feeds"]
 description = "Run FeedStore component tests"
-run = "uv run pytest -n 0 integration_tests/storage/test_feed_store_integration.py"
+run = "uv run pytest integration_tests/storage/test_feed_store_integration.py"
 
 [tasks."test:component"]
 description = "Run all component tests"
-run = """
-uv run pytest -n 0 \
-  integration_tests/storage/ \
-  $(find backend -type f -name "test_*_integration.py" | sort)
-"""
+run = "uv run pytest integration_tests/storage/"
 
 [tasks."test:e2e"]
 description = "Run all E2E tests in Docker Compose"
@@ -204,9 +201,9 @@ docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run --rm int
 
 [tasks."test:api"]
 description = "Run API integration tests"
-run = "uv run pytest -n 0 integration_tests/api/"
+run = "uv run pytest integration_tests/api/"
 
 [tasks."test:e2e:local"]
 description = "Run E2E tests on host (Requires running environment)"
 depends = ["generate:protos"]
-run = "uv run pytest -n 0 integration_tests/e2e/"
+run = "uv run pytest integration_tests/e2e/"
