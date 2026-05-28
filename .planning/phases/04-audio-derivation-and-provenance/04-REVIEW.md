@@ -1,176 +1,78 @@
 ---
 phase: 04-audio-derivation-and-provenance
-reviewed: 2026-05-28T04:44:35Z
+reviewed: 2026-05-28T05:12:30Z
 depth: standard
-files_reviewed: 14
+files_reviewed: 8
 files_reviewed_list:
   - model/scripts/sft/dataset_split/audio.py
-  - model/scripts/sft/dataset_split/artifacts.py
-  - model/scripts/sft/dataset_split/model_writers.py
   - model/scripts/sft/dataset_split/publisher.py
   - model/scripts/sft/dataset_split/leakage.py
+  - model/scripts/sft/dataset_split/artifacts.py
   - model/scripts/sft/dataset_split/canonical.py
-  - model/scripts/sft/dataset_split/reports.py
   - model/scripts/sft/tests/test_audio_derivation.py
-  - model/scripts/sft/tests/test_dataset_artifacts.py
-  - model/scripts/sft/tests/test_model_writers.py
   - model/scripts/sft/tests/test_dataset_publisher.py
   - model/scripts/sft/tests/test_dataset_split_leakage.py
-  - model/scripts/sft/tests/test_dataset_canonical.py
-  - model/scripts/sft/tests/test_dataset_reports.py
 findings:
-  blocker: 3
-  critical: 3
-  warning: 3
+  blocker: 0
+  critical: 0
+  warning: 0
   info: 0
-  total: 6
-status: issues_found
+  total: 0
+status: clean
 ---
 
 # Phase 04: Code Review Report
 
-**Reviewed:** 2026-05-28T04:44:35Z
-**Depth:** standard
-**Files Reviewed:** 14
-**Status:** issues_found
+**Reviewed:** 2026-05-28T05:12:30Z
+**Depth:** standard focused re-review
+**Files Reviewed:** 8
+**Status:** clean
 
 ## Summary
 
-Reviewed the Phase 4 audio derivation, artifact publication, model writer, leakage, canonical, report, and targeted test files. The main risks are around immutable GCS publication failure modes, unchecked FFmpeg output correctness, and unsafe external audio download behavior. Tests cover the happy paths, but they miss several failure paths that can leave unretryable dataset versions or publish incorrect model-ready audio metadata.
+Re-reviewed Phase 04 after the latest fixes, focused on the prior findings in this report: publication ordering, external URL SSRF boundary, generated output duration tolerance, reused provenance semantics, and empty version output.
 
-## Blockers
+All prior blocker and warning findings are resolved in the current source. No new blocker or warning findings were found in the focused scope.
 
-### BL-01: Partial Audio Uploads Can Poison an Immutable Dataset Version
+## Prior Finding Status
 
-**File:** `model/scripts/sft/dataset_split/audio.py:359`
-**Classification:** BLOCKER
-**Issue:** `_prepare_audio_for_publication()` materializes each plan in sequence, and `_materialize_plan()` uploads the generated/copied audio immediately at lines 430-435. If segment N uploads successfully and segment N+1 later fails during FFmpeg, probe, copy, or upload, publication aborts after creating `sft/{dataset_version_id}/audio/...` objects but before final manifests. A rerun with the same `dataset_version_id` then fails the prefix-existence guard, leaving a permanently partial dataset version.
-**Fix:** Split local materialization from GCS upload. Generate/copy/probe every non-reused audio file into scratch first and only start `upload_file_create_only()` after all local work succeeds.
+### Publication ordering
 
-```python
-local_results = []
-for plan in plans:
-    enriched, local_output_path = _materialize_plan_locally(
-        plan,
-        scratch_dir=Path(scratch_dir),
-        version_summary=version_summary,
-        runner=runner,
-    )
-    local_results.append((plan, enriched, local_output_path))
+**Status:** Resolved.
 
-for plan, _, local_output_path in local_results:
-    if local_output_path is not None:
-        _upload_audio_file(
-            storage_client,
-            uri=plan.destination_uri,
-            local_path=local_output_path,
-        )
-```
+`publish_dataset_version_artifacts()` now calls the audio preparer with `upload=False` before artifact generation, preserving local prepared audio tasks without final-prefix audio uploads (`model/scripts/sft/dataset_split/publisher.py:131`). It builds canonical manifests, per-dataset manifests, model inputs, metadata, reports, Markdown, and JSON serializations before calling the audio uploader (`model/scripts/sft/dataset_split/publisher.py:143`, `model/scripts/sft/dataset_split/publisher.py:190`, `model/scripts/sft/dataset_split/publisher.py:203`). The regression test covers a serialization/planning failure and confirms audio upload is not reached (`model/scripts/sft/tests/test_dataset_publisher.py:592`).
 
-### BL-02: FFmpeg Output Duration Is Recorded But Never Validated
+### External URL SSRF boundary
 
-**File:** `model/scripts/sft/dataset_split/audio.py:418`
-**Classification:** BLOCKER
-**Issue:** Derived and transcoded outputs are probed at lines 418 and 426, but the probed `output_duration` is only stored in metadata. The code uploads the file and returns manifest rows using `segment.duration` even if FFmpeg produced a shorter, longer, or otherwise wrong clip. This can happen when the source barely passes the tolerance check or FFmpeg truncates near EOF.
-**Fix:** Validate every generated output duration against the requested row duration before upload, with a small tolerance for codec/probe precision. Fail with row context if the output does not match.
+**Status:** Resolved.
 
-```python
-def _validate_output_duration(segment: LabeledSegment, probe: AudioProbe) -> None:
-    tolerance = _duration_tolerance(segment.duration)
-    if abs(probe.duration - segment.duration) > tolerance:
-        raise AudioDerivationError(
-            "generated audio duration mismatch "
-            f"output_duration={probe.duration} expected={segment.duration} "
-            f"tolerance={tolerance} {_row_context(segment)}"
-        )
+External source staging now requires HTTPS on the default port, restricts hosts to `ALLOWED_EXTERNAL_AUDIO_HOSTS`, rejects any resolved address that is not global, disables redirects, streams with a timeout, and enforces a maximum byte count (`model/scripts/sft/dataset_split/audio.py:43`, `model/scripts/sft/dataset_split/audio.py:531`, `model/scripts/sft/dataset_split/audio.py:731`). The focused tests cover plain HTTP rejection, unknown host rejection, private address rejection, streaming controls, and byte limits (`model/scripts/sft/tests/test_audio_derivation.py:856`, `model/scripts/sft/tests/test_audio_derivation.py:900`, `model/scripts/sft/tests/test_audio_derivation.py:909`, `model/scripts/sft/tests/test_audio_derivation.py:924`).
 
-# after probing derived/transcoded output and before upload
-_validate_output_duration(plan.segment, output_probe)
-```
+### Generated output duration tolerance
 
-### BL-03: External Audio Downloads Allow SSRF and Plain HTTP
+**Status:** Resolved.
 
-**File:** `model/scripts/sft/dataset_split/audio.py:35`
-**Classification:** BLOCKER
-**Issue:** Manifest-controlled `audio_uri` values may use both `http` and `https` schemes, and `_download_external_source()` calls `requests.get()` with default redirect handling at lines 465-469. A malicious or compromised manifest row can make the offline job fetch internal services such as metadata endpoints, loopback, RFC1918 hosts, or an HTTPS URL that redirects to those targets. Plain HTTP also permits tampering before ffprobe/ffmpeg consumes the file.
-**Fix:** Treat external downloads as an explicit trust boundary: require HTTPS, disable redirects or revalidate each redirected URL, reject loopback/link-local/private IPs after DNS resolution, and preferably use a configured allowlist for known source hosts.
+Generated FLAC outputs now use a separate generated-output tolerance instead of the source-bounds tolerance (`model/scripts/sft/dataset_split/audio.py:35`, `model/scripts/sft/dataset_split/audio.py:718`, `model/scripts/sft/dataset_split/audio.py:786`). The regression test verifies a 0.4 second generated-output mismatch fails before upload (`model/scripts/sft/tests/test_audio_derivation.py:720`).
 
-```python
-def _validate_external_url(source_uri: str) -> None:
-    parsed = urlparse(source_uri)
-    if parsed.scheme != "https":
-        raise AudioDerivationError("external source audio must use https")
-    if not parsed.hostname:
-        raise AudioDerivationError("external source audio host is required")
-    _reject_private_or_link_local_host(parsed.hostname)
+### Reused provenance semantics
 
-_validate_external_url(source_uri)
-with requests.get(
-    source_uri,
-    stream=True,
-    timeout=EXTERNAL_DOWNLOAD_TIMEOUT,
-    allow_redirects=False,
-) as response:
-    ...
-```
+**Status:** Resolved.
 
-## Warnings
+`validate_model_ready_audio()` now rejects `action="reused"` unless `model_ready_audio_uri` equals the segment source `audio_uri` (`model/scripts/sft/dataset_split/leakage.py:122`). Publisher test fixtures now model reused rows with the source URI as the model-ready URI, and leakage tests cover both accepted and stale reused URI cases (`model/scripts/sft/tests/test_dataset_publisher.py:299`, `model/scripts/sft/tests/test_dataset_split_leakage.py:304`).
 
-### WR-01: FFprobe and FFmpeg Calls Can Hang Indefinitely
+### Empty version output
 
-**File:** `model/scripts/sft/dataset_split/audio.py:89`
-**Classification:** WARNING
-**Issue:** `probe_audio()`, `_run_ffmpeg()`, and `_program_version()` call the runner without any subprocess timeout. A corrupt or adversarial audio file can hang ffprobe/ffmpeg and block the dataset publication job forever, despite the external download itself having timeouts.
-**Fix:** Add bounded subprocess timeouts and map `subprocess.TimeoutExpired` into `AudioDerivationError` with row/program context.
+**Status:** Resolved.
 
-```python
-FFPROBE_TIMEOUT_SECONDS = 60
-FFMPEG_TIMEOUT_SECONDS = 300
+`_program_version()` now treats empty stdout as `"unavailable"` instead of indexing an empty splitlines list (`model/scripts/sft/dataset_split/audio.py:685`). The regression test covers successful command execution with empty stdout (`model/scripts/sft/tests/test_audio_derivation.py:750`).
 
-runner(command, capture_output=True, check=True, text=True, timeout=FFPROBE_TIMEOUT_SECONDS)
-runner(command, capture_output=True, check=True, text=True, timeout=FFMPEG_TIMEOUT_SECONDS)
-```
+## Verification
 
-### WR-02: Non-Finite Segment Spans Reach FFmpeg
-
-**File:** `model/scripts/sft/dataset_split/audio.py:610`
-**Classification:** WARNING
-**Issue:** `_validate_segment_span()` rejects `duration <= 0` and `offset < 0`, but `NaN` and positive/negative infinity pass those comparisons. Those values then flow into `_duration_tolerance()`, action selection, and FFmpeg arguments such as `-ss nan` or `-t inf`, producing late and inconsistent failures.
-**Fix:** Require finite numeric `offset`, `duration`, and probed source duration before planning or deriving.
-
-```python
-import math
-
-def _validate_segment_span(segment: LabeledSegment) -> None:
-    if not math.isfinite(segment.duration) or segment.duration <= 0:
-        raise AudioDerivationError(...)
-    if not math.isfinite(segment.offset) or segment.offset < 0:
-        raise AudioDerivationError(...)
-```
-
-### WR-03: Model-Ready Provenance Validation Does Not Check Field Consistency
-
-**File:** `model/scripts/sft/dataset_split/leakage.py:123`
-**Classification:** WARNING
-**Issue:** `validate_model_ready_audio()` checks that transformation metadata has required keys and that `split` and `source_group` match the segment, but it does not verify `original_audio_uri`, `source_audio_uri`, `offset`, `duration`, or action-specific URI fields against the `LabeledSegment`. Canonical manifests and reports can therefore accept inconsistent or stale provenance if callers provide enriched segments directly or through a custom audio preparer.
-**Fix:** Extend validation to compare provenance values against the segment and action semantics before canonical/report publication.
-
-```python
-expected = {
-    "original_audio_uri": segment.original_audio_uri,
-    "source_audio_uri": segment.audio_uri,
-    "offset": segment.offset,
-    "duration": segment.duration,
-}
-for key, expected_value in expected.items():
-    if metadata[key] != expected_value:
-        raise _model_ready_error(segment, action, f"transformation_metadata.{key}", "must match segment")
-if action == "derived" and segment.derived_audio_uri != segment.model_ready_audio_uri:
-    raise _model_ready_error(segment, action, "derived_audio_uri", "must equal model_ready_audio_uri")
-```
+- `PYTHONPATH=model/scripts/sft:model/colabs uv run --project model python -m unittest model.scripts.sft.tests.test_audio_derivation model.scripts.sft.tests.test_dataset_publisher model.scripts.sft.tests.test_dataset_split_leakage` - passed, `Ran 55 tests`, `OK`.
+- `PYTHONPATH=model/scripts/sft:model/colabs uv run --project model python -m py_compile model/scripts/sft/dataset_split/audio.py model/scripts/sft/dataset_split/publisher.py model/scripts/sft/dataset_split/leakage.py model/scripts/sft/tests/test_audio_derivation.py model/scripts/sft/tests/test_dataset_publisher.py model/scripts/sft/tests/test_dataset_split_leakage.py` - passed.
 
 ---
 
-_Reviewed: 2026-05-28T04:44:35Z_
+_Reviewed: 2026-05-28T05:12:30Z_
 _Reviewer: the agent (gsd-code-reviewer)_
-_Depth: standard_
+_Depth: standard focused re-review_
