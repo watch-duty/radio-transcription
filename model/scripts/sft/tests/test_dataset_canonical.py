@@ -147,7 +147,9 @@ class TestDatasetCanonical(unittest.TestCase):
         train_rows = _jsonl_rows(manifests["train"])
         eval_rows = _jsonl_rows(manifests["eval"])
         self.assertEqual([row["split"] for row in train_rows], ["train"])
-        self.assertEqual([row["source_group"] for row in train_rows], ["feed-a"])
+        self.assertEqual(
+            [row["source_group"] for row in train_rows], ["feed-a"]
+        )
         self.assertEqual([row["split"] for row in eval_rows], ["eval"])
         self.assertEqual([row["source_group"] for row in eval_rows], ["feed-b"])
 
@@ -187,15 +189,24 @@ class TestDatasetCanonical(unittest.TestCase):
         mock_assign.assert_not_called()
         self.assertEqual(list(manifests), ["calls", "feeds"])
         self.assertEqual(
-            [row["source_group"] for row in _jsonl_rows(manifests["calls"]["train"])],
+            [
+                row["source_group"]
+                for row in _jsonl_rows(manifests["calls"]["train"])
+            ],
             ["calls-a"],
         )
         self.assertEqual(
-            [row["source_group"] for row in _jsonl_rows(manifests["calls"]["eval"])],
+            [
+                row["source_group"]
+                for row in _jsonl_rows(manifests["calls"]["eval"])
+            ],
             ["calls-b"],
         )
         self.assertEqual(
-            [row["source_group"] for row in _jsonl_rows(manifests["feeds"]["train"])],
+            [
+                row["source_group"]
+                for row in _jsonl_rows(manifests["feeds"]["train"])
+            ],
             ["feeds-a"],
         )
         self.assertEqual(_jsonl_rows(manifests["feeds"]["eval"]), [])
