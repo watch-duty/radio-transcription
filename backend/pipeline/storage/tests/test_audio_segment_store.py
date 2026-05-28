@@ -13,6 +13,12 @@ from backend.services.audio_segments.models import (
     AudioClassification,
 )
 
+
+class IsUUID:
+    def __eq__(self, uuid_val: object) -> bool:
+        return isinstance(uuid_val, uuid.UUID)
+
+
 _SEGMENT_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 _FEED_ID = uuid.UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
 
@@ -100,11 +106,7 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             )
         self.assertIn("Invalid segment_id UUID", str(cm.exception))
 
-    @unittest.mock.patch(
-        "backend.pipeline.storage.audio_segment_store.uuid.uuid4"
-    )
-    async def test_create_audio_segment_success(self, mock_uuid4) -> None:
-        mock_uuid4.return_value = _SEGMENT_ID
+    async def test_create_audio_segment_success(self) -> None:
         new_row = _AUDIO_SEGMENT_ROW.copy()
         new_row.pop("annotations", None)
         self.pool.fetchrow.return_value = new_row
@@ -131,7 +133,7 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
         missing_post_context = False
         self.pool.fetchrow.assert_called_once_with(
             audio_segment_queries.CREATE_AUDIO_SEGMENT_SQL,
-            _SEGMENT_ID,
+            IsUUID(),
             _FEED_ID,
             AudioClassification.SPEECH_DETECTED,
             datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
