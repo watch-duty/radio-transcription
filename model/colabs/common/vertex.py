@@ -138,8 +138,6 @@ _BATCH_SUCCESS_STATES = {
 }
 
 _TUNING_SUCCESS_STATES = {"JOB_STATE_SUCCEEDED", "SUCCEEDED"}
-_POLL_GET_RETRY_LIMIT = 3
-_POLL_GET_RETRY_SLEEP_SECONDS = 5.0
 
 
 def _require_vertex() -> None:
@@ -247,30 +245,8 @@ def poll_tuning_job(
     last_state: "str | None" = None
     state: str = ""
     deadline = time.monotonic() + timeout_hours * 3600
-    consecutive_get_errors = 0
     while True:
-        try:
-            cur = client.tunings.get(name=name)
-        except Exception as e:
-            consecutive_get_errors += 1
-            if time.monotonic() >= deadline:
-                raise TimeoutError(
-                    f"Tuning job {name} could not be fetched before the "
-                    f"{timeout_hours}h timeout elapsed (last state: {state or 'unknown'}). "
-                    "It may still be running on Vertex; re-run tune to resume polling by job name."
-                ) from e
-            if consecutive_get_errors > _POLL_GET_RETRY_LIMIT:
-                raise RuntimeError(
-                    f"Could not fetch tuning job {name} after "
-                    f"{_POLL_GET_RETRY_LIMIT} retries; re-run tune to resume polling."
-                ) from e
-            logger.warning(
-                f"Transient error fetching tuning job {name}; retrying "
-                f"({consecutive_get_errors}/{_POLL_GET_RETRY_LIMIT}): {e}"
-            )
-            time.sleep(_POLL_GET_RETRY_SLEEP_SECONDS)
-            continue
-        consecutive_get_errors = 0
+        cur = client.tunings.get(name=name)
         state = getattr(cur.state, "name", str(cur.state))
         if state != last_state:
             logger.info(f"[{time.strftime('%H:%M:%S')}] tuning state: {state}")
@@ -342,29 +318,8 @@ def submit_batch_inference(
     last_state: "str | None" = None
     state: str = ""
     deadline = time.monotonic() + timeout_hours * 3600
-    consecutive_get_errors = 0
     while True:
-        try:
-            cur = client.batches.get(name=batch_job.name)
-        except Exception as e:
-            consecutive_get_errors += 1
-            if time.monotonic() >= deadline:
-                raise TimeoutError(
-                    f"Batch job {batch_job.name} could not be fetched before "
-                    f"the {timeout_hours}h timeout elapsed (last state: {state or 'unknown'})."
-                ) from e
-            if consecutive_get_errors > _POLL_GET_RETRY_LIMIT:
-                raise RuntimeError(
-                    f"Could not fetch batch job {batch_job.name} after "
-                    f"{_POLL_GET_RETRY_LIMIT} retries."
-                ) from e
-            logger.warning(
-                f"Transient error fetching batch job {batch_job.name}; retrying "
-                f"({consecutive_get_errors}/{_POLL_GET_RETRY_LIMIT}): {e}"
-            )
-            time.sleep(_POLL_GET_RETRY_SLEEP_SECONDS)
-            continue
-        consecutive_get_errors = 0
+        cur = client.batches.get(name=batch_job.name)
         state = getattr(cur.state, "name", str(cur.state))
         if state != last_state:
             logger.info(f"[{time.strftime('%H:%M:%S')}] batch state: {state}")
