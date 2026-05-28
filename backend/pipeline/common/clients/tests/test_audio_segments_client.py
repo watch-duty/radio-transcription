@@ -24,6 +24,22 @@ class TestAudioSegmentsClient(unittest.TestCase):
             "source_audio_uris": ["gs://bucket/audio1.ogg"],
         }
 
+    def test_init_with_custom_max_retries(self) -> None:
+        # Execute
+        client = AudioSegmentsClient(self.api_url, max_retries=5)
+
+        # Verify
+        adapter = client.session.adapters.get("http://")
+        self.assertEqual(adapter.max_retries.total, 5)
+
+    def test_init_with_zero_max_retries(self) -> None:
+        # Execute
+        client = AudioSegmentsClient(self.api_url, max_retries=0)
+
+        # Verify
+        adapter = client.session.adapters.get("http://")
+        self.assertEqual(adapter.max_retries, 0)
+
     def test_add_audio_segment_annotation_success(self) -> None:
         # Setup
         mock_response = MagicMock()

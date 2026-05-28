@@ -21,26 +21,28 @@ class AudioSegmentsClient:
     Resilient client for interacting with the Audio Segments API.
     """
 
-    def __init__(self, api_url: str) -> None:
+    def __init__(self, api_url: str, max_retries: int = 3) -> None:
         """
         Initializes the AudioSegmentsClient with retry-resilient sessions.
 
         Args:
             api_url: The base URL of the Audio Segments API.
+            max_retries: The maximum number of retries for transient network errors.
         """
         self.api_url = api_url.rstrip("/")
         self.session = requests.Session()
 
-        # Configure exponential backoff retries for transient gateway/network faults (502, 503, 504)
-        retries = Retry(
-            total=3,
-            backoff_factor=0.5,  # [0.5s, 1.0s, 2.0s]
-            status_forcelist=[502, 503, 504],
-            raise_on_status=False,
-        )
-        adapter = HTTPAdapter(max_retries=retries)
-        self.session.mount("http://", adapter)
-        self.session.mount("https://", adapter)
+        if max_retries > 0:
+            # Configure exponential backoff retries for transient gateway/network faults (502, 503, 504)
+            retries = Retry(
+                total=max_retries,
+                backoff_factor=0.5,  # [0.5s, 1.0s, 2.0s]
+                status_forcelist=[502, 503, 504],
+                raise_on_status=False,
+            )
+            adapter = HTTPAdapter(max_retries=retries)
+            self.session.mount("http://", adapter)
+            self.session.mount("https://", adapter)
 
     def add_audio_segment_annotation(
         self,
