@@ -19,15 +19,14 @@ Every SFT run must train and compare models on the same auditable dataset versio
 - [x] Existing SFT scripts can consume GCS manifests and build canonical/model-oriented JSONL rows for Gemini-style tuning inputs - existing
 - [x] Existing codebase has reusable manifest/scoring helpers that should be extended instead of replaced - existing
 - [x] Phase 1 validates dataset-version TOML configs, strict `gs://` JSON/JSONL inputs, source-key extraction for all four initial dataset families, and empty-text exclusion counts - Phase 1
+- [x] Phase 2 assigns whole Source Groups into a balance-first 80:20 train/SFT Eval Split with leakage gates and balance reporting - Phase 2
 - [x] Phase 3 generates immutable dataset-version artifact layouts, canonical and per-dataset train/eval manifests, NeMo/Whisper/Gemini model inputs/configs, JSON/Markdown reports, and create-only GCS publication guards - Phase 3
 - [x] Phase 4 reuses supported standalone model-ready clips, derives longer-source spans into FLAC when needed, and records auditable model-ready audio provenance before publishing canonical/model artifacts - Phase 4
+- [x] Phase 5 exposes `split_dataset.py dry-run` and `generate`, report sidecars, existing README terminology, and targeted SFT script verification - Phase 5
 
 ### Active
 
-- [ ] Build a split script that creates an 80:20 train/SFT Eval Split from existing manifests while assigning every source group wholly to one split.
-- [ ] Validate leakage prevention with actual manifest data, including source-group overlap, original-audio overlap, duplicate URI overlap, missing text rows, and parse failures.
-- [ ] Balance the split across factors that can correlate with model performance: dataset family, source count, row count, audio duration, time/month/hour, transcript length, and duration buckets.
-- [ ] Add focused tests for CLI generation and production GCS/report integration.
+No active v1 requirements remain for this milestone.
 
 ### Out of Scope
 
@@ -64,7 +63,7 @@ Glossary:
 - **Ambiguity**: Ambiguous source identity must fail rather than guess - especially Echo rows where `echo_name` is duplicated across area codes.
 - **Compatibility**: Generated model inputs must match current NeMo, Whisper, and Gemini/Vertex AI requirements as verified from current docs during implementation.
 - **Storage**: Generated dataset artifacts and derived clips live in GCS under `gs://wd-transcription-data/sft/{dataset_version_id}/`.
-- **Reproducibility**: Splits must be deterministic by seed, input manifest set, and split configuration.
+- **Reproducibility**: Saved split assignments, metadata, and reports are the reproducibility source of truth; split optimization prioritizes balance quality over seed-stable recomputation.
 - **Minimal transformation**: Reuse existing clips when valid; derive audio only when needed; avoid padding and avoid resampling unless a target model/input format requires it.
 - **Git hygiene**: Git stores code, tests, templates, and planning docs; not generated manifests, credentials, or audio payloads.
 
@@ -82,6 +81,7 @@ Glossary:
 | Store generated artifacts in GCS, not GitHub | Artifacts can be large/proprietary and should be immutable runtime data | Validated in Phase 3; live GCS smoke UAT pending |
 | Reuse supported standalone audio clips before deriving new clips | Reduces unnecessary audio transforms and preserves provenance | Validated in Phase 4 |
 | Exclude empty or missing normalized-text rows | Existing eval behavior already skips rows without usable ground truth | Validated in Phase 1 |
+| Use `split_dataset.py` as the dataset split runbook CLI | The main task is splitting existing datasets into train and SFT Eval Split, with validation/reporting internal to dry-run and generate | Validated in Phase 5 |
 
 ## Evolution
 
@@ -101,4 +101,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-28 after Phase 4 completion*
+*Last updated: 2026-05-28 after Phase 5 completion*

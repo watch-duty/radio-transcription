@@ -63,11 +63,11 @@
 
 ### CLI And Reports
 
-- [ ] **CLI-01**: User can run a dry run that validates inputs, computes split assignment, and writes local reports without uploading derived audio.
-- [ ] **CLI-02**: User can run a generation command that writes canonical/model inputs and reports to GCS.
-- [ ] **CLI-03**: The CLI exits nonzero on hard validation failures and prints the report path or failure report location.
-- [ ] **CLI-04**: The report bundle includes leakage, balance, source-key failures, excluded rows, and transformations.
-- [ ] **CLI-05**: Documentation explains the terms Source Group, Labeled Segment, SFT Example, SFT Eval Split, and Dataset Version.
+- [x] **CLI-01**: User can run a dry run that validates inputs, computes split assignment, and writes local reports without uploading derived audio.
+- [x] **CLI-02**: User can run a generation command that writes canonical/model inputs and reports to GCS.
+- [x] **CLI-03**: The CLI exits nonzero on hard validation failures and prints the report path or failure report location.
+- [x] **CLI-04**: The report bundle includes leakage, balance, source-key failures, excluded rows, and transformations.
+- [x] **CLI-05**: Documentation explains the terms Source Group, Labeled Segment, SFT Example, SFT Eval Split, and Dataset Version.
 
 ### Tests
 
@@ -151,11 +151,11 @@
 | AUD-04 | Phase 4 | Complete |
 | AUD-05 | Phase 4 | Complete |
 | AUD-06 | Phase 4 | Complete |
-| CLI-01 | Phase 5 | Pending |
-| CLI-02 | Phase 5 | Pending |
-| CLI-03 | Phase 5 | Pending |
-| CLI-04 | Phase 5 | Pending |
-| CLI-05 | Phase 5 | Pending |
+| CLI-01 | Phase 5 | Complete |
+| CLI-02 | Phase 5 | Complete |
+| CLI-03 | Phase 5 | Complete |
+| CLI-04 | Phase 5 | Complete |
+| CLI-05 | Phase 5 | Complete |
 
 **Coverage:**
 - v1 requirements: 49 total
