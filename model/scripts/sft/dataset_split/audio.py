@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import ipaddress
 import json
+import math
 import os
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import tempfile
 from urllib.parse import urlparse
@@ -32,7 +35,10 @@ SOURCE_DURATION_TOLERANCE_RATIO = 0.02
 EXTERNAL_DOWNLOAD_TIMEOUT = (10, 120)
 EXTERNAL_DOWNLOAD_CHUNK_SIZE = 1024 * 1024
 EXTERNAL_DOWNLOAD_MAX_BYTES = 512 * 1024 * 1024
-_SUPPORTED_SOURCE_SCHEMES = frozenset({"gs", "http", "https"})
+FFPROBE_TIMEOUT_SECONDS = 60
+FFMPEG_TIMEOUT_SECONDS = 300
+PROGRAM_VERSION_TIMEOUT_SECONDS = 10
+_SUPPORTED_SOURCE_SCHEMES = frozenset({"gs", "https"})
 _NEAR_ZERO_OFFSET_SECONDS = 1e-6
 _ENRICHED_FIELD_NAMES = (
     "model_ready_audio_uri",
@@ -70,9 +76,14 @@ class AudioPreparationResult:
     action_counts: dict[str, int]
 
 
-def probe_audio(
-    local_path: str | Path, *, runner=subprocess.run
-) -> AudioProbe:
+@dataclass(frozen=True)
+class _LocalAudioMaterialization:
+    segment: LabeledSegment
+    upload_uri: str | None
+    local_output_path: Path | None
+
+
+def probe_audio(local_path: str | Path, *, runner=subprocess.run) -> AudioProbe:
     command = [
         "ffprobe",
         "-v",
@@ -91,6 +102,7 @@ def probe_audio(
             capture_output=True,
             check=True,
             text=True,
+            timeout=FFPROBE_TIMEOUT_SECONDS,
         )
         payload = json.loads(result.stdout)
         stream = payload["streams"][0]
@@ -106,9 +118,9 @@ def probe_audio(
         raise AudioDerivationError(
             f"failed to probe audio local_path={local_path}"
         ) from exc
-    if probe.duration <= 0:
+    if not math.isfinite(probe.duration) or probe.duration <= 0:
         raise AudioDerivationError(
-            f"source duration must be > 0 local_path={local_path}"
+            f"source duration must be finite and > 0 local_path={local_path}"
         )
     return probe
 
@@ -219,9 +231,7 @@ def transcode_audio_file(
     return Path(output_path)
 
 
-def copy_audio_file(
-    input_path: str | Path, output_path: str | Path
-) -> Path:
+def copy_audio_file(input_path: str | Path, output_path: str | Path) -> Path:
     try:
         shutil.copyfile(input_path, output_path)
     except Exception as exc:
@@ -273,15 +283,17 @@ def _plan_audio_action(
         )
         probe = probe_audio(local_source_path, runner=runner)
     except AudioDerivationError as exc:
-        raise AudioDerivationError(
-            f"{exc} {_row_context(segment)}"
-        ) from exc
+        raise AudioDerivationError(f"{exc} {_row_context(segment)}") from exc
     _validate_source_bounds(segment, probe)
 
     source_supported = _is_writer_supported(segment.audio_uri)
     standalone = _is_standalone_span(segment, probe)
     source_suffix = _source_suffix(segment.audio_uri)
-    if source_supported and standalone and segment.audio_uri.startswith("gs://"):
+    if (
+        source_supported
+        and standalone
+        and segment.audio_uri.startswith("gs://")
+    ):
         return AudioActionPlan(
             segment=segment,
             action="reused",
@@ -353,13 +365,11 @@ def _prepare_audio_for_publication(
         runner=runner,
     )
     version_summary = _command_version_summary(runner)
-    enriched_segments: list[LabeledSegment] = []
-    uploaded_audio_uris: list[str] = []
+    local_results: list[_LocalAudioMaterialization] = []
     action_counts = {action: 0 for action in AUDIO_ACTIONS}
     for plan in plans:
         try:
-            enriched, uploaded_uri = _materialize_plan(
-                storage_client,
+            local_result = _materialize_plan_locally(
                 plan=plan,
                 scratch_dir=Path(scratch_dir),
                 version_summary=version_summary,
@@ -370,29 +380,43 @@ def _prepare_audio_for_publication(
                 f"{exc} {_row_context(plan.segment)}"
             ) from exc
         action_counts[plan.action] += 1
-        enriched_segments.append(enriched)
-        if uploaded_uri is not None:
-            uploaded_audio_uris.append(uploaded_uri)
+        local_results.append(local_result)
+
+    uploaded_audio_uris: list[str] = []
+    for local_result in local_results:
+        if local_result.upload_uri is None:
+            continue
+        if local_result.local_output_path is None:
+            raise AudioDerivationError(
+                f"missing local output path for upload uri={local_result.upload_uri}"
+            )
+        _upload_audio_file(
+            storage_client,
+            uri=local_result.upload_uri,
+            local_path=local_result.local_output_path,
+        )
+        uploaded_audio_uris.append(local_result.upload_uri)
+
     return AudioPreparationResult(
-        segments=tuple(enriched_segments),
+        segments=tuple(result.segment for result in local_results),
         plans=plans,
         uploaded_audio_uris=tuple(uploaded_audio_uris),
         action_counts=action_counts,
     )
 
 
-def _materialize_plan(
-    storage_client: object,
-    *,
+def _materialize_plan_locally(
     plan: AudioActionPlan,
+    *,
     scratch_dir: Path,
     version_summary: dict[str, str],
     runner,
-) -> tuple[LabeledSegment, str | None]:
+) -> _LocalAudioMaterialization:
     if plan.action == "reused":
         model_ready_uri = plan.source_uri
         output_probe = plan.probe
-        uploaded_uri = None
+        upload_uri = None
+        local_output_path = None
         ffmpeg_summary = None
     else:
         if plan.destination_uri is None:
@@ -416,6 +440,7 @@ def _materialize_plan(
             )
             ffmpeg_summary = _derive_command_summary()
             output_probe = probe_audio(local_output_path, runner=runner)
+            _validate_output_duration(plan.segment, output_probe)
         elif plan.action == "transcoded":
             transcode_audio_file(
                 plan.local_source_path,
@@ -424,15 +449,11 @@ def _materialize_plan(
             )
             ffmpeg_summary = _transcode_command_summary()
             output_probe = probe_audio(local_output_path, runner=runner)
+            _validate_output_duration(plan.segment, output_probe)
         else:
             raise AudioDerivationError(f"unsupported action={plan.action}")
         model_ready_uri = plan.destination_uri
-        _upload_audio_file(
-            storage_client,
-            uri=model_ready_uri,
-            local_path=local_output_path,
-        )
-        uploaded_uri = model_ready_uri
+        upload_uri = model_ready_uri
     if not model_ready_uri.startswith("gs://"):
         raise AudioDerivationError(
             f"model_ready_audio_uri must be gs://: {model_ready_uri}"
@@ -445,17 +466,20 @@ def _materialize_plan(
         version_summary=version_summary,
     )
     segment = plan.segment
-    return (
-        replace(segment,
+    return _LocalAudioMaterialization(
+        segment=replace(
+            segment,
             model_ready_audio_uri=model_ready_uri,
             derived_audio_uri=derived_audio_uri,
             transformation_metadata=metadata,
         ),
-        uploaded_uri,
+        upload_uri=upload_uri,
+        local_output_path=local_output_path,
     )
 
 
 def _download_external_source(source_uri: str, scratch_dir: Path) -> Path:
+    _validate_external_url(source_uri)
     fd, local_path = tempfile.mkstemp(
         dir=scratch_dir, suffix=_source_suffix(source_uri)
     )
@@ -466,6 +490,7 @@ def _download_external_source(source_uri: str, scratch_dir: Path) -> Path:
                 source_uri,
                 stream=True,
                 timeout=EXTERNAL_DOWNLOAD_TIMEOUT,
+                allow_redirects=False,
             ) as response:
                 response.raise_for_status()
                 for chunk in response.iter_content(
@@ -496,6 +521,7 @@ def _run_ffmpeg(command: list[str], *, runner) -> None:
             capture_output=True,
             check=True,
             text=True,
+            timeout=FFMPEG_TIMEOUT_SECONDS,
         )
     except Exception as exc:
         raise AudioDerivationError(
@@ -514,9 +540,7 @@ def _upload_audio_file(
             content_type=infer_audio_mime_type(uri),
         )
     except Exception as exc:
-        raise AudioDerivationError(
-            f"failed to upload audio uri={uri}"
-        ) from exc
+        raise AudioDerivationError(f"failed to upload audio uri={uri}") from exc
 
 
 def _local_output_path(scratch_dir: Path, *, suffix: str) -> Path:
@@ -600,6 +624,7 @@ def _program_version(program: str, *, runner) -> str:
             capture_output=True,
             check=True,
             text=True,
+            timeout=PROGRAM_VERSION_TIMEOUT_SECONDS,
         )
     except Exception:
         return "unavailable"
@@ -608,19 +633,22 @@ def _program_version(program: str, *, runner) -> str:
 
 
 def _validate_segment_span(segment: LabeledSegment) -> None:
-    if segment.duration <= 0:
+    if not math.isfinite(segment.duration) or segment.duration <= 0:
         raise AudioDerivationError(
-            f"row duration must be > 0 {_row_context(segment)}"
+            f"row duration must be finite and > 0 {_row_context(segment)}"
         )
-    if segment.offset < 0:
+    if not math.isfinite(segment.offset) or segment.offset < 0:
         raise AudioDerivationError(
-            f"row offset must be >= 0 {_row_context(segment)}"
+            f"row offset must be finite and >= 0 {_row_context(segment)}"
         )
 
 
-def _validate_source_bounds(
-    segment: LabeledSegment, probe: AudioProbe
-) -> None:
+def _validate_source_bounds(segment: LabeledSegment, probe: AudioProbe) -> None:
+    if not math.isfinite(probe.duration) or probe.duration <= 0:
+        raise AudioDerivationError(
+            "source duration must be finite and > 0 "
+            f"source_duration={probe.duration} {_row_context(segment)}"
+        )
     tolerance = _duration_tolerance(segment.duration)
     if segment.offset + segment.duration > probe.duration + tolerance:
         raise AudioDerivationError(
@@ -630,9 +658,57 @@ def _validate_source_bounds(
         )
 
 
-def _is_standalone_span(
-    segment: LabeledSegment, probe: AudioProbe
-) -> bool:
+def _validate_output_duration(
+    segment: LabeledSegment, output_probe: AudioProbe
+) -> None:
+    tolerance = _duration_tolerance(segment.duration)
+    if abs(output_probe.duration - segment.duration) > tolerance:
+        raise AudioDerivationError(
+            "generated audio duration mismatch "
+            f"output_duration={output_probe.duration} "
+            f"expected_duration={segment.duration} "
+            f"tolerance={tolerance} {_row_context(segment)}"
+        )
+
+
+def _validate_external_url(source_uri: str) -> None:
+    parsed = urlparse(source_uri)
+    if parsed.scheme != "https":
+        raise AudioDerivationError(
+            f"external source audio must use https source_uri={source_uri}"
+        )
+    if not parsed.hostname:
+        raise AudioDerivationError(
+            f"external source audio host is required source_uri={source_uri}"
+        )
+    try:
+        addresses = socket.getaddrinfo(
+            parsed.hostname,
+            parsed.port or 443,
+            type=socket.SOCK_STREAM,
+        )
+    except OSError as exc:
+        raise AudioDerivationError(
+            f"failed to resolve external source host source_uri={source_uri}"
+        ) from exc
+    for address in addresses:
+        ip_address = ipaddress.ip_address(address[4][0])
+        if (
+            ip_address.is_private
+            or ip_address.is_loopback
+            or ip_address.is_link_local
+            or ip_address.is_multicast
+            or ip_address.is_reserved
+            or ip_address.is_unspecified
+        ):
+            raise AudioDerivationError(
+                "external source audio host must not resolve to private, "
+                f"loopback, link-local, multicast, reserved, or unspecified "
+                f"address source_uri={source_uri}"
+            )
+
+
+def _is_standalone_span(segment: LabeledSegment, probe: AudioProbe) -> bool:
     tolerance = _duration_tolerance(segment.duration)
     return (
         abs(segment.offset) <= _NEAR_ZERO_OFFSET_SECONDS

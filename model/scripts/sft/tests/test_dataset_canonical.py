@@ -320,7 +320,7 @@ class TestDatasetCanonical(unittest.TestCase):
             transformation_metadata=_transformation_metadata(
                 action="derived",
                 original_audio_uri="https://example.com/source.wav",
-                source_audio_uri="https://example.com/source.wav",
+                source_audio_uri="gs://bucket/calls/feed-a/0.flac",
                 offset=1.5,
                 duration=4.25,
                 split="train",

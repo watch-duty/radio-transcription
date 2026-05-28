@@ -59,7 +59,7 @@ def validate_split_leakage(segments: tuple[LabeledSegment, ...]) -> None:
 
 
 def validate_no_duplicate_audio_spans(
-    segments: tuple[LabeledSegment, ...]
+    segments: tuple[LabeledSegment, ...],
 ) -> None:
     seen_by_split: dict[str, set[tuple[str | None, float, float]]] = {
         "train": set(),
@@ -145,6 +145,7 @@ def validate_model_ready_audio(segments: tuple[LabeledSegment, ...]) -> None:
                 "transformation_metadata.source_group",
                 f"must match segment source_group {segment.source_group}",
             )
+        _validate_metadata_matches_segment(segment, metadata, action)
 
         derived_uri = _normalized_uri(segment.derived_audio_uri)
         if action == "derived":
@@ -155,12 +156,40 @@ def validate_model_ready_audio(segments: tuple[LabeledSegment, ...]) -> None:
                     "derived_audio_uri",
                     "must be a non-empty gs:// URI for derived action",
                 )
+            if derived_uri != model_ready_uri:
+                raise _model_ready_error(
+                    segment,
+                    action,
+                    "derived_audio_uri",
+                    "must equal model_ready_audio_uri for derived action",
+                )
         elif derived_uri is not None:
             raise _model_ready_error(
                 segment,
                 action,
                 "derived_audio_uri",
                 f"must be blank for {action} action",
+            )
+
+
+def _validate_metadata_matches_segment(
+    segment: LabeledSegment,
+    metadata: Mapping[str, object],
+    action: str,
+) -> None:
+    expected_values = {
+        "original_audio_uri": segment.original_audio_uri,
+        "source_audio_uri": segment.audio_uri,
+        "offset": segment.offset,
+        "duration": segment.duration,
+    }
+    for field_name, expected in expected_values.items():
+        if metadata[field_name] != expected:
+            raise _model_ready_error(
+                segment,
+                action,
+                f"transformation_metadata.{field_name}",
+                f"must match segment {field_name}",
             )
 
 

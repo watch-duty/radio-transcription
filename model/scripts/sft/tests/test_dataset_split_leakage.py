@@ -55,13 +55,17 @@ def _transformation_metadata(
     action: str = "copied",
     split: str = "train",
     source_group: str = "feed-a",
+    original_audio_uri: str = "gs://bucket/audio.mp3",
+    source_audio_uri: str = "gs://bucket/feed-a/0.mp3",
+    offset: float = 0.0,
+    duration: float = 10.0,
 ) -> dict[str, object]:
     return {
         "action": action,
-        "original_audio_uri": "gs://bucket/original.wav",
-        "source_audio_uri": "gs://bucket/source.wav",
-        "offset": 0.0,
-        "duration": 10.0,
+        "original_audio_uri": original_audio_uri,
+        "source_audio_uri": source_audio_uri,
+        "offset": offset,
+        "duration": duration,
         "source_duration": 10.0,
         "output_duration": 10.0,
         "source_format": "flac",
@@ -237,9 +241,7 @@ class TestSplitLeakage(unittest.TestCase):
             transformation_metadata=metadata,
         )
 
-        with self.assertRaisesRegex(
-            SplitLeakageError, "row_index=0.*action"
-        ):
+        with self.assertRaisesRegex(SplitLeakageError, "row_index=0.*action"):
             validate_model_ready_audio((segment,))
 
     def test_unknown_transformation_action_fails(self) -> None:
@@ -260,9 +262,7 @@ class TestSplitLeakage(unittest.TestCase):
         missing_derived_uri = _segment(
             "feed-a",
             model_ready_audio_uri="gs://ready/feed-a.flac",
-            transformation_metadata=_transformation_metadata(
-                action="derived"
-            ),
+            transformation_metadata=_transformation_metadata(action="derived"),
         )
         with self.assertRaisesRegex(
             SplitLeakageError, "row_index=0.*derived_audio_uri"
@@ -273,9 +273,7 @@ class TestSplitLeakage(unittest.TestCase):
             "feed-a",
             model_ready_audio_uri="gs://ready/feed-a.flac",
             derived_audio_uri="gs://ready/feed-a.flac",
-            transformation_metadata=_transformation_metadata(
-                action="copied"
-            ),
+            transformation_metadata=_transformation_metadata(action="copied"),
         )
         with self.assertRaisesRegex(
             SplitLeakageError, "row_index=0.*derived_audio_uri"
@@ -286,11 +284,44 @@ class TestSplitLeakage(unittest.TestCase):
             "feed-a",
             model_ready_audio_uri="gs://ready/feed-a.flac",
             derived_audio_uri="gs://ready/feed-a.flac",
-            transformation_metadata=_transformation_metadata(
-                action="derived"
-            ),
+            transformation_metadata=_transformation_metadata(action="derived"),
         )
         validate_model_ready_audio((derived_segment,))
+
+    def test_derived_audio_uri_must_match_model_ready_uri(self) -> None:
+        segment = _segment(
+            "feed-a",
+            model_ready_audio_uri="gs://ready/feed-a.flac",
+            derived_audio_uri="gs://ready/stale.flac",
+            transformation_metadata=_transformation_metadata(action="derived"),
+        )
+
+        with self.assertRaisesRegex(
+            SplitLeakageError, "row_index=0.*derived_audio_uri"
+        ):
+            validate_model_ready_audio((segment,))
+
+    def test_transformation_metadata_must_match_segment_fields(self) -> None:
+        cases = (
+            ("original_audio_uri", "gs://bucket/stale.wav"),
+            ("source_audio_uri", "gs://bucket/stale-source.wav"),
+            ("offset", 3.0),
+            ("duration", 8.0),
+        )
+        for key, stale_value in cases:
+            with self.subTest(key=key):
+                metadata = _transformation_metadata()
+                metadata[key] = stale_value
+                segment = _segment(
+                    "feed-a",
+                    model_ready_audio_uri="gs://ready/feed-a.flac",
+                    transformation_metadata=metadata,
+                )
+
+                with self.assertRaisesRegex(
+                    SplitLeakageError, f"row_index=0.*{key}"
+                ):
+                    validate_model_ready_audio((segment,))
 
     def test_transformation_metadata_requires_all_minimum_keys(self) -> None:
         for key in (
@@ -332,7 +363,10 @@ class TestSplitLeakage(unittest.TestCase):
                 original_audio_uri="gs://bucket/a.wav",
                 model_ready_audio_uri="gs://ready/shared.flac",
                 transformation_metadata=_transformation_metadata(
-                    split="train", source_group="feed-a"
+                    split="train",
+                    source_group="feed-a",
+                    original_audio_uri="gs://bucket/a.wav",
+                    source_audio_uri="gs://bucket/feed-a/0.mp3",
                 ),
                 row_index=0,
             ),
@@ -342,7 +376,10 @@ class TestSplitLeakage(unittest.TestCase):
                 original_audio_uri="gs://bucket/b.wav",
                 model_ready_audio_uri="gs://ready/shared.flac",
                 transformation_metadata=_transformation_metadata(
-                    split="eval", source_group="feed-b"
+                    split="eval",
+                    source_group="feed-b",
+                    original_audio_uri="gs://bucket/b.wav",
+                    source_audio_uri="gs://bucket/feed-b/1.mp3",
                 ),
                 row_index=1,
             ),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 import sys
 import tempfile
@@ -24,6 +25,8 @@ from dataset_split.audio import (  # noqa: E402
     EXTERNAL_DOWNLOAD_CHUNK_SIZE,
     EXTERNAL_DOWNLOAD_MAX_BYTES,
     EXTERNAL_DOWNLOAD_TIMEOUT,
+    FFMPEG_TIMEOUT_SECONDS,
+    FFPROBE_TIMEOUT_SECONDS,
     AudioDerivationError,
     AudioProbe,
     plan_audio_actions,
@@ -76,6 +79,15 @@ class FakeStorageClient:
     def bucket(self, bucket_name: str) -> FakeBucket:
         bucket = self.buckets.setdefault(bucket_name, FakeBucket())
         return bucket
+
+
+def _all_uploads(client: FakeStorageClient) -> list[dict[str, object]]:
+    return [
+        upload
+        for bucket in client.buckets.values()
+        for blob in bucket.blobs.values()
+        for upload in blob.uploads
+    ]
 
 
 class FakeResponse:
@@ -137,7 +149,9 @@ def _ffprobe_runner(
     format_name: str = "flac",
     calls: list[dict[str, object]] | None = None,
 ):
-    def runner(args: list[str], **kwargs: object) -> subprocess.CompletedProcess:
+    def runner(
+        args: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess:
         if calls is not None:
             calls.append({"args": args, "kwargs": kwargs})
         payload = {
@@ -302,9 +316,29 @@ class TestAudioActionPlanning(unittest.TestCase):
             AUDIO_ACTIONS, ("reused", "copied", "derived", "transcoded")
         )
 
+    def test_non_finite_span_values_fail_before_ffmpeg(self) -> None:
+        for offset, duration in (
+            (math.nan, 10.0),
+            (math.inf, 10.0),
+            (0.0, math.nan),
+            (0.0, math.inf),
+        ):
+            with self.subTest(offset=offset, duration=duration):
+                with self.assertRaisesRegex(
+                    AudioDerivationError, "must be finite"
+                ):
+                    _plan(
+                        _segment(offset=offset, duration=duration),
+                        probe_duration=10.0,
+                    )
+
     @patch("dataset_split.audio.requests.get")
+    @patch(
+        "dataset_split.audio.socket.getaddrinfo",
+        return_value=[(None, None, None, None, ("93.184.216.34", 443))],
+    )
     def test_supported_standalone_non_gcs_clip_is_copied(
-        self, mock_get: Any
+        self, _mock_getaddrinfo: Any, mock_get: Any
     ) -> None:
         mock_get.return_value = FakeResponse((b"fake",))
 
@@ -347,6 +381,7 @@ class TestAudioCommands(unittest.TestCase):
         self.assertEqual(args[0], "ffprobe")
         self.assertIn("-of", args)
         self.assertIn("json", args)
+        self.assertEqual(kwargs["timeout"], FFPROBE_TIMEOUT_SECONDS)
         self.assertNotIn("shell", kwargs)
 
     def test_derive_command_downmixes_to_mono_without_resampling(self) -> None:
@@ -381,6 +416,7 @@ class TestAudioCommands(unittest.TestCase):
         self.assertNotIn("-ar", args)
         self.assertNotIn("apad", args)
         self.assertNotIn("adelay", args)
+        self.assertEqual(calls[0]["kwargs"]["timeout"], FFMPEG_TIMEOUT_SECONDS)
         self.assertNotIn("shell", calls[0]["kwargs"])
 
     def test_transcode_command_downmixes_without_clipping_or_padding(
@@ -418,6 +454,7 @@ class TestAudioCommands(unittest.TestCase):
         self.assertNotIn("-ar", args)
         self.assertNotIn("apad", args)
         self.assertNotIn("adelay", args)
+        self.assertEqual(calls[0]["kwargs"]["timeout"], FFMPEG_TIMEOUT_SECONDS)
         self.assertNotIn("shell", calls[0]["kwargs"])
 
 
@@ -507,8 +544,12 @@ class TestAudioPreparation(unittest.TestCase):
         self.assertFalse(metadata["resampled"])
         self.assertFalse(metadata["padded"])
         self.assertIn("ffmpeg -hide_banner", str(metadata["ffmpeg"]))
-        self.assertEqual(metadata["ffprobe_version"], "ffprobe version 7.0.2-test")
-        self.assertEqual(metadata["ffmpeg_version"], "ffmpeg version 7.0.2-test")
+        self.assertEqual(
+            metadata["ffprobe_version"], "ffprobe version 7.0.2-test"
+        )
+        self.assertEqual(
+            metadata["ffmpeg_version"], "ffmpeg version 7.0.2-test"
+        )
 
     def test_derived_sets_derived_audio_uri_only_for_clipped_spans(
         self,
@@ -558,13 +599,15 @@ class TestAudioPreparation(unittest.TestCase):
         self.assertIsNone(result.segments[2].derived_audio_uri)
 
     @patch("dataset_split.audio.requests.get")
+    @patch(
+        "dataset_split.audio.socket.getaddrinfo",
+        return_value=[(None, None, None, None, ("93.184.216.34", 443))],
+    )
     def test_copied_action_uploads_staged_file_without_ffmpeg(
-        self, mock_get: Any
+        self, _mock_getaddrinfo: Any, mock_get: Any
     ) -> None:
         mock_get.return_value = FakeResponse((b"mp3 bytes",))
-        runner = FakeAudioRunner(
-            (AudioProbe(8.0, "mp3", 2, 44100, "mp3"),)
-        )
+        runner = FakeAudioRunner((AudioProbe(8.0, "mp3", 2, 44100, "mp3"),))
 
         with tempfile.TemporaryDirectory() as scratch_dir:
             result = prepare_audio_for_publication(
@@ -592,9 +635,125 @@ class TestAudioPreparation(unittest.TestCase):
         )
         self.assertEqual(runner.ffmpeg_transform_commands(), [])
 
+    def test_generated_output_duration_mismatch_fails_before_upload(
+        self,
+    ) -> None:
+        client = FakeStorageClient()
+        runner = FakeAudioRunner(
+            (
+                AudioProbe(30.0, "flac", 1, 16000, "flac"),
+                AudioProbe(2.0, "flac", 1, 16000, "flac"),
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as scratch_dir:
+            with self.assertRaisesRegex(
+                AudioDerivationError, "generated audio duration mismatch"
+            ):
+                prepare_audio_for_publication(
+                    client,
+                    layout=_layout(),
+                    segments=(
+                        _segment(
+                            "gs://source-bucket/audio/source.flac",
+                            offset=2.0,
+                            duration=6.0,
+                        ),
+                    ),
+                    scratch_dir=scratch_dir,
+                    runner=runner,
+                )
+
+        self.assertEqual(_all_uploads(client), [])
+
+    def test_local_materialization_failure_happens_before_any_upload(
+        self,
+    ) -> None:
+        client = FakeStorageClient()
+        ffmpeg_calls = 0
+        ffprobe_calls = 0
+
+        def runner(
+            args: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess:
+            nonlocal ffmpeg_calls, ffprobe_calls
+            if args == ["ffprobe", "-version"]:
+                return subprocess.CompletedProcess(
+                    args=args,
+                    returncode=0,
+                    stdout="ffprobe version 7.0.2-test\n",
+                    stderr="",
+                )
+            if args == ["ffmpeg", "-version"]:
+                return subprocess.CompletedProcess(
+                    args=args,
+                    returncode=0,
+                    stdout="ffmpeg version 7.0.2-test\n",
+                    stderr="",
+                )
+            if args[0] == "ffmpeg":
+                ffmpeg_calls += 1
+                if ffmpeg_calls == 2:
+                    raise subprocess.CalledProcessError(1, args)
+                Path(args[-1]).write_bytes(b"generated audio")
+                return subprocess.CompletedProcess(
+                    args=args, returncode=0, stdout="", stderr=""
+                )
+            if args[0] == "ffprobe":
+                ffprobe_calls += 1
+                duration = "30.0" if ffprobe_calls <= 2 else "6.0"
+                payload = {
+                    "format": {"duration": duration, "format_name": "flac"},
+                    "streams": [
+                        {
+                            "codec_name": "flac",
+                            "channels": 1,
+                            "sample_rate": "16000",
+                        }
+                    ],
+                }
+                return subprocess.CompletedProcess(
+                    args=args,
+                    returncode=0,
+                    stdout=json.dumps(payload),
+                    stderr="",
+                )
+            raise AssertionError(f"unexpected command: {args}")
+
+        with tempfile.TemporaryDirectory() as scratch_dir:
+            with self.assertRaisesRegex(
+                AudioDerivationError, "failed to run ffmpeg"
+            ):
+                prepare_audio_for_publication(
+                    client,
+                    layout=_layout(),
+                    segments=(
+                        _segment(
+                            "gs://source-bucket/audio/source-a.flac",
+                            offset=1.0,
+                            duration=6.0,
+                            row_index=1,
+                        ),
+                        _segment(
+                            "gs://source-bucket/audio/source-b.flac",
+                            offset=1.0,
+                            duration=6.0,
+                            row_index=2,
+                        ),
+                    ),
+                    scratch_dir=scratch_dir,
+                    runner=runner,
+                )
+
+        self.assertEqual(_all_uploads(client), [])
+
     @patch("dataset_split.audio.requests.get")
+    @patch(
+        "dataset_split.audio.socket.getaddrinfo",
+        return_value=[(None, None, None, None, ("93.184.216.34", 443))],
+    )
     def test_external_url_staging_uses_streaming_download_controls(
-        self, mock_get: Any
+        self, _mock_getaddrinfo: Any, mock_get: Any
     ) -> None:
         response = FakeResponse((b"abc", b"", b"def"))
         mock_get.return_value = response
@@ -609,6 +768,7 @@ class TestAudioPreparation(unittest.TestCase):
             "https://example.test/audio/source.mp3",
             stream=True,
             timeout=EXTERNAL_DOWNLOAD_TIMEOUT,
+            allow_redirects=False,
         )
         self.assertEqual(response.chunk_sizes, [EXTERNAL_DOWNLOAD_CHUNK_SIZE])
         self.assertEqual(Path(local_path).suffix, ".mp3")
@@ -616,8 +776,12 @@ class TestAudioPreparation(unittest.TestCase):
 
     @patch("dataset_split.audio.EXTERNAL_DOWNLOAD_MAX_BYTES", 3)
     @patch("dataset_split.audio.requests.get")
+    @patch(
+        "dataset_split.audio.socket.getaddrinfo",
+        return_value=[(None, None, None, None, ("93.184.216.34", 443))],
+    )
     def test_external_url_staging_enforces_max_bytes(
-        self, mock_get: Any
+        self, _mock_getaddrinfo: Any, mock_get: Any
     ) -> None:
         self.assertEqual(EXTERNAL_DOWNLOAD_MAX_BYTES, 512 * 1024 * 1024)
         mock_get.return_value = FakeResponse((b"ab", b"cd"))
@@ -629,6 +793,32 @@ class TestAudioPreparation(unittest.TestCase):
                 stage_source_audio(
                     FakeStorageClient(),
                     "https://example.test/audio/source.mp3",
+                    scratch_dir,
+                )
+
+    def test_external_url_staging_rejects_plain_http(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch_dir:
+            with self.assertRaisesRegex(AudioDerivationError, "must use https"):
+                stage_source_audio(
+                    FakeStorageClient(),
+                    "http://example.test/audio/source.mp3",
+                    scratch_dir,
+                )
+
+    @patch(
+        "dataset_split.audio.socket.getaddrinfo",
+        return_value=[(None, None, None, None, ("127.0.0.1", 443))],
+    )
+    def test_external_url_staging_rejects_private_hosts(
+        self, _mock_getaddrinfo: Any
+    ) -> None:
+        with tempfile.TemporaryDirectory() as scratch_dir:
+            with self.assertRaisesRegex(
+                AudioDerivationError, "must not resolve to private"
+            ):
+                stage_source_audio(
+                    FakeStorageClient(),
+                    "https://metadata.google.internal/audio/source.mp3",
                     scratch_dir,
                 )
 
