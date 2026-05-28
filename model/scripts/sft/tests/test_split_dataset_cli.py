@@ -247,6 +247,29 @@ class TestSplitDatasetCli(unittest.TestCase):
         self.assertIn("generate", help_text)
         self.assertNotIn("validate", help_text)
 
+    def test_subcommand_help_has_intended_options_only(self) -> None:
+        import split_dataset as cli
+
+        dry_run_help = StringIO()
+        with redirect_stdout(dry_run_help), self.assertRaises(SystemExit) as ctx:
+            cli.main(["dry-run", "--help"])
+        self.assertEqual(ctx.exception.code, 0)
+        dry_run_text = dry_run_help.getvalue()
+        self.assertIn("--config-uri", dry_run_text)
+        self.assertIn("--output-dir", dry_run_text)
+        self.assertNotIn("--scratch-dir", dry_run_text)
+        self.assertNotIn("validate", dry_run_text)
+
+        generate_help = StringIO()
+        with redirect_stdout(generate_help), self.assertRaises(SystemExit) as ctx:
+            cli.main(["generate", "--help"])
+        self.assertEqual(ctx.exception.code, 0)
+        generate_text = generate_help.getvalue()
+        self.assertIn("--config-uri", generate_text)
+        self.assertNotIn("--output-dir", generate_text)
+        self.assertNotIn("--scratch-dir", generate_text)
+        self.assertNotIn("validate", generate_text)
+
 
 if __name__ == "__main__":
     unittest.main()

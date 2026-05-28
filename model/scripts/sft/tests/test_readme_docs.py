@@ -40,6 +40,22 @@ class TestGeminiSftReadme(unittest.TestCase):
         self.assertIn("Default local runtime", readme)
         self.assertLess(readme.index("## Runtime"), readme.index("## Local"))
 
+    def test_dataset_split_runbook_terms_are_documented(self) -> None:
+        readme = _README.read_text()
+
+        for expected in (
+            "Dataset Split Runbook",
+            "python split_dataset.py dry-run --config-uri",
+            "python split_dataset.py generate --config-uri",
+            "Source Group",
+            "Labeled Segment",
+            "SFT Example",
+            "SFT Eval Split",
+            "Dataset Version",
+            "dataset_version_report.json",
+        ):
+            self.assertIn(expected, readme)
+
 
 if __name__ == "__main__":
     unittest.main()
