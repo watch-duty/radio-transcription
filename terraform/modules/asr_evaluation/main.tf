@@ -47,13 +47,23 @@ resource "google_compute_instance" "eval_instance" {
     # Execute auto-shutdown monitoring using nohup to survive startup script process exit
     nohup bash -c '
       sleep $(( ${var.auto_shutdown_hours} * 3600 ))
+      
+      consecutive_idle_checks=0
+      max_idle_checks=6 # 6 checks * 5 mins = 30 mins idle limit
+      
       while true; do
-        if nvidia-smi --query-compute-apps=pid --format=csv,noheader | grep -q . ; then
-          sleep 1800
+        if nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits | grep -q -v "^0$"; then
+          consecutive_idle_checks=0
         else
+          consecutive_idle_checks=$((consecutive_idle_checks + 1))
+        fi
+        
+        if [ "$consecutive_idle_checks" -ge "$max_idle_checks" ]; then
           poweroff
           break
         fi
+        
+        sleep 300
       done
     ' > /var/log/auto-shutdown.log 2>&1 &
   EOT
