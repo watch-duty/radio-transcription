@@ -10,6 +10,30 @@ from dataset_split.types import LabeledSegment
 
 MODEL_WRITER_SUMMARY_WRITERS = ("nemo", "whisper", "gemini")
 MODEL_WRITER_SUMMARY_SPLITS = ("train", "eval")
+AUDIO_ACTIONS = ("reused", "copied", "derived", "transcoded")
+TRANSFORMATION_METADATA_KEYS = (
+    "original_audio_uri",
+    "source_audio_uri",
+    "offset",
+    "duration",
+    "source_duration",
+    "output_duration",
+    "source_format",
+    "output_format",
+    "source_channels",
+    "output_channels",
+    "mixed_to_mono",
+    "resampled",
+    "padded",
+    "split",
+    "source_group",
+)
+COMMAND_SUMMARY_KEYS = (
+    "ffprobe",
+    "ffmpeg",
+    "ffprobe_version",
+    "ffmpeg_version",
+)
 
 
 class DatasetVersionReportError(ValueError):
@@ -40,6 +64,7 @@ class DatasetVersionReport:
     duration_seconds: Mapping[str, float]
     dataset_summary: Mapping[str, object]
     model_writer_summary: Mapping[str, object]
+    audio_transformation_summary: Mapping[str, object]
     leakage_validation: Mapping[str, object]
     balance_report: Mapping[str, object]
     artifact_inventory: Mapping[str, object]
@@ -53,6 +78,9 @@ class DatasetVersionReport:
             "duration_seconds": dict(self.duration_seconds),
             "dataset_summary": _json_ready(self.dataset_summary),
             "model_writer_summary": _json_ready(self.model_writer_summary),
+            "audio_transformation_summary": _json_ready(
+                self.audio_transformation_summary
+            ),
             "leakage_validation": _json_ready(self.leakage_validation),
             "balance_report": _json_ready(self.balance_report),
             "artifact_inventory": _json_ready(self.artifact_inventory),
@@ -99,6 +127,9 @@ def build_dataset_version_report(
         model_writer_summary=_validate_model_writer_summary(
             model_writer_summary
         ),
+        audio_transformation_summary=_audio_transformation_summary(
+            segment_tuple
+        ),
         leakage_validation=_json_ready(leakage_validation),
         balance_report=_json_ready(balance_report),
         artifact_inventory=_json_ready(artifact_inventory),
@@ -121,6 +152,30 @@ def render_dataset_version_markdown(report: DatasetVersionReport) -> str:
             f"{split}: {report_dict['split_counts'][split]} rows, "
             f"{report_dict['duration_seconds'][split]} seconds"
         )
+
+    audio_summary = report_dict["audio_transformation_summary"]
+    lines.extend(["", "## Audio Transformations"])
+    for action in AUDIO_ACTIONS:
+        action_summary = audio_summary["actions"][action]
+        lines.append(
+            "- "
+            f"{action}: {action_summary['count']} rows, "
+            f"{action_summary['duration_seconds']} seconds"
+        )
+    lines.extend(
+        [
+            "- "
+            "model-ready audio URIs: "
+            f"{audio_summary['model_ready_audio_uri_count']}",
+            f"- derived audio URIs: {audio_summary['derived_audio_uri_count']}",
+            f"- mixed to mono: {audio_summary['mixed_to_mono_count']}",
+            f"- resampled: {audio_summary['resampled_count']}",
+            f"- padded: {audio_summary['padded_count']}",
+            "- "
+            "command/version summaries: "
+            f"{audio_summary['command_summary_count']}",
+        ]
+    )
 
     lines.extend(
         [
@@ -193,6 +248,64 @@ def _dataset_summary(
             },
         }
     return summary
+
+
+def _audio_transformation_summary(
+    segments: tuple[LabeledSegment, ...],
+) -> dict[str, object]:
+    actions = {
+        action: {"count": 0, "duration_seconds": 0.0}
+        for action in AUDIO_ACTIONS
+    }
+    metadata_key_coverage = {key: 0 for key in TRANSFORMATION_METADATA_KEYS}
+    model_ready_audio_uri_count = 0
+    derived_audio_uri_count = 0
+    mixed_to_mono_count = 0
+    resampled_count = 0
+    padded_count = 0
+    command_summary_count = 0
+
+    for segment in segments:
+        _require_model_ready_audio_uri(segment)
+        model_ready_audio_uri_count += 1
+        if _has_text(segment.derived_audio_uri):
+            derived_audio_uri_count += 1
+
+        metadata = _require_transformation_metadata(segment)
+        action = _require_audio_action(segment, metadata)
+        actions[action]["count"] += 1
+        actions[action]["duration_seconds"] += float(segment.duration)
+
+        missing_keys = [
+            key for key in TRANSFORMATION_METADATA_KEYS if key not in metadata
+        ]
+        if missing_keys:
+            raise DatasetVersionReportError(
+                f"row_index={segment.row_index} missing "
+                f"transformation_metadata.{missing_keys[0]}"
+            )
+        for key in TRANSFORMATION_METADATA_KEYS:
+            metadata_key_coverage[key] += 1
+
+        if bool(metadata["mixed_to_mono"]):
+            mixed_to_mono_count += 1
+        if bool(metadata["resampled"]):
+            resampled_count += 1
+        if bool(metadata["padded"]):
+            padded_count += 1
+        if any(_has_text(metadata.get(key)) for key in COMMAND_SUMMARY_KEYS):
+            command_summary_count += 1
+
+    return {
+        "actions": actions,
+        "model_ready_audio_uri_count": model_ready_audio_uri_count,
+        "derived_audio_uri_count": derived_audio_uri_count,
+        "mixed_to_mono_count": mixed_to_mono_count,
+        "resampled_count": resampled_count,
+        "padded_count": padded_count,
+        "metadata_key_coverage": metadata_key_coverage,
+        "command_summary_count": command_summary_count,
+    }
 
 
 def _validate_model_writer_summary(
@@ -270,6 +383,47 @@ def _writer_warnings(
     return normalized
 
 
+def _require_model_ready_audio_uri(segment: LabeledSegment) -> str:
+    uri = _require_non_empty_text(
+        segment.model_ready_audio_uri,
+        label="model_ready_audio_uri",
+        row_index=segment.row_index,
+    )
+    if not uri.startswith("gs://"):
+        raise DatasetVersionReportError(
+            f"row_index={segment.row_index} model_ready_audio_uri "
+            "must be a gs:// URI"
+        )
+    return uri
+
+
+def _require_transformation_metadata(
+    segment: LabeledSegment,
+) -> Mapping[str, object]:
+    metadata = segment.transformation_metadata
+    if not isinstance(metadata, Mapping):
+        raise DatasetVersionReportError(
+            f"row_index={segment.row_index} "
+            "transformation_metadata must be a mapping"
+        )
+    return metadata
+
+
+def _require_audio_action(
+    segment: LabeledSegment, metadata: Mapping[str, object]
+) -> str:
+    action = _require_non_empty_text(
+        metadata.get("action"),
+        label="transformation_metadata.action",
+        row_index=segment.row_index,
+    )
+    if action not in AUDIO_ACTIONS:
+        raise DatasetVersionReportError(
+            f"row_index={segment.row_index} unknown audio action: {action}"
+        )
+    return action
+
+
 def _json_ready(value: object) -> object:
     to_dict = getattr(value, "to_dict", None)
     if callable(to_dict):
@@ -284,6 +438,10 @@ def _json_ready(value: object) -> object:
     if isinstance(value, tuple | list):
         return [_json_ready(nested) for nested in value]
     return value
+
+
+def _has_text(value: object | None) -> bool:
+    return value is not None and bool(str(value).strip())
 
 
 def _sft_run_keys() -> set[str]:
@@ -302,6 +460,21 @@ def _require_split(segment: LabeledSegment) -> str:
             f"row_index={segment.row_index} missing split"
         )
     return segment.split
+
+
+def _require_non_empty_text(
+    value: object | None, *, label: str, row_index: int
+) -> str:
+    if value is None:
+        raise DatasetVersionReportError(
+            f"row_index={row_index} {label} must not be empty"
+        )
+    text = str(value).strip()
+    if not text:
+        raise DatasetVersionReportError(
+            f"row_index={row_index} {label} must not be empty"
+        )
+    return text
 
 
 def _require_text(value: str, *, label: str) -> str:

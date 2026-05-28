@@ -41,9 +41,7 @@ def _segment(
     model_ready_audio_uri = (
         f"gs://bucket/sft/dv-001/audio/{action}/{row_index}.flac"
     )
-    derived_audio_uri = (
-        model_ready_audio_uri if action == "derived" else None
-    )
+    derived_audio_uri = model_ready_audio_uri if action == "derived" else None
     return LabeledSegment(
         dataset_name=dataset_name,
         dataset_family=dataset_family,
@@ -244,7 +242,9 @@ class TestDatasetReports(unittest.TestCase):
             2,
         )
         self.assertEqual(
-            model_writer_summary["whisper"]["splits"]["eval"]["duration_seconds"],
+            model_writer_summary["whisper"]["splits"]["eval"][
+                "duration_seconds"
+            ],
             20.0,
         )
         self.assertEqual(model_writer_summary["gemini"]["total"]["count"], 4)
