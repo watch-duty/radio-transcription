@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 # in environments where K_SERVICE is set but ADC is unavailable).
 # ---------------------------------------------------------------------------
 STAGING_BUCKET = _require_env("AUDIO_STAGING_BUCKET")
-RAW_AUDIO_TOPIC = _require_env("RAW_AUDIO_TOPIC")
+SEGMENTED_PUBSUB_TOPIC_PATH = _require_env("SEGMENTED_PUBSUB_TOPIC_PATH")
 # Optional: set only on prod to also mirror the source MP3 into the dev
 # recordings bucket so dev's pipeline runs E2E against real prod traffic.
 # Best-effort — failures are logged and do not affect prod ingestion.
@@ -187,7 +187,7 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
 
         publish_audio_chunk_sync(
             publisher,
-            RAW_AUDIO_TOPIC,
+            SEGMENTED_PUBSUB_TOPIC_PATH,
             feed_id_str,
             feed["name"],
             feed["external_id"],

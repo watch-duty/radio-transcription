@@ -169,7 +169,7 @@ async def _process_file_list(
             continue
 
         # Download the actual audio
-        s3_url = f"{s3_base_url}/{file_uuid}.mp3"
+        s3_url = f"{s3_base_url.rstrip('/')}/{file_uuid}.mp3"
         receipt_time = datetime.datetime.now(datetime.UTC)
 
         mp3_bytes = await _download_audio(session, s3_url, shutdown_event)

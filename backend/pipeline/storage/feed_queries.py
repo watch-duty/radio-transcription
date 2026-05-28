@@ -48,15 +48,15 @@ SET worker_id = NULL,
     status = 'unclaimed'::feed_status,
     unclaimed_since = NOW()
 WHERE id = $1 AND worker_id = $2 AND fencing_token = $3
+  AND status = 'active'::feed_status
 """
 
-# SIGTERM drain: release every lease still owned by this worker in one
-# UPDATE. Primary use is _shutdown_sequence — after cancelling all feed
-# tasks (whose CancelledError path skips the normal-completion
-# release_feed), this single statement is what flips every active row
-# back to unclaimed. Secondary defensive role: catches stragglers where
-# an earlier per-feed release_feed call failed mid-lifetime and left
-# worker_id = us in the DB.
+# SIGTERM drain: release every active lease still owned by this worker in
+# one UPDATE. Primary use is _shutdown_sequence — after cancelling all
+# feed tasks (whose CancelledError path skips the normal-completion
+# release_feed), this single statement is what flips active rows back to
+# unclaimed. Deactivated rows are terminal admin stops until reset, so
+# release must not make them claimable.
 #
 # WHERE worker_id = $1 is authoritative for both cases — symmetric with
 # count_held_by_type's DB-truth stance. unclaimed_since = NOW() matches
@@ -70,6 +70,7 @@ SET worker_id = NULL,
     status = 'unclaimed'::feed_status,
     unclaimed_since = NOW()
 WHERE worker_id = $1
+  AND status = 'active'::feed_status
 """
 
 # Authoritative per-cycle replacement for the worker's in-memory
@@ -322,6 +323,7 @@ SET status = CASE WHEN failure_count + 1 >= $3
     -- rather than overwriting it with NULL. A real reason still wins.
     quarantine_reason = CASE WHEN failure_count + 1 >= $3 THEN COALESCE($7, quarantine_reason) ELSE quarantine_reason END
 WHERE id = $1 AND worker_id = $2 AND fencing_token = $4
+  AND status = 'active'::feed_status
 RETURNING status::text, failure_count, retry_after
 """
 
@@ -383,4 +385,23 @@ WITH updated AS (
 SELECT u.*, fp.source_feed_id, fp.external_id, fp.tags
 FROM updated u
 JOIN feed_properties fp ON fp.feed_id = u.id
+"""
+
+UPDATE_FEED_SQL = """\
+WITH updated_feed AS (
+    UPDATE feeds
+    SET name = $2
+    WHERE id = $1
+    RETURNING id, name, source_type, status, failure_count, worker_id, last_heartbeat, last_processed_filename, last_bookmark_time, created_at
+),
+updated_props AS (
+    UPDATE feed_properties
+    SET external_id = $3,
+        tags = $4
+    WHERE feed_id = $1
+    RETURNING source_feed_id, external_id, tags
+)
+SELECT uf.*, up.source_feed_id, up.external_id, up.tags
+FROM updated_feed uf
+JOIN updated_props up ON TRUE;
 """

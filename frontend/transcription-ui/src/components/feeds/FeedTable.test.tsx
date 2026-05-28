@@ -13,6 +13,7 @@ import {
   within,
 } from '@testing-library/react';
 import type { Feed } from '@transcription/common';
+import { SourceType } from '@transcription/common';
 
 import { FeedTable } from './FeedTable';
 
@@ -33,7 +34,7 @@ describe('FeedTable', () => {
     {
       id: 'feed-1',
       name: 'Alpha Radio',
-      sourceType: 'bcfy_feeds',
+      sourceType: SourceType.BCFY_FEEDS,
       status: 'active',
       sourceUrl: 'https://example.com/source',
       archiveUrl: 'https://example.com/archive',
@@ -45,9 +46,8 @@ describe('FeedTable', () => {
     {
       id: 'feed-2',
       name: 'Bravo Scanner',
-      sourceType: 'openmhz',
+      sourceType: SourceType.OPENMHZ,
       status: 'inactive',
-      // Missing links to test disabled items
     },
   ];
 
@@ -63,13 +63,12 @@ describe('FeedTable', () => {
     expect(screen.getByText('bcfy_feeds')).toBeTruthy();
     expect(screen.getByText('openmhz')).toBeTruthy();
 
-    // Status check (actual text is capitalized, rendered uppercase via CSS)
     expect(screen.getByText('Active')).toBeTruthy();
     expect(screen.getByText('Inactive')).toBeTruthy();
 
-    // Tags check
     expect(screen.getByText(/Marin/i)).toBeTruthy();
     expect(screen.getByText(/Fire/i)).toBeTruthy();
+    expect(screen.getByText('-')).toBeTruthy();
   });
 
   it('shows loading indicator when isLoading is true', () => {
@@ -100,26 +99,61 @@ describe('FeedTable', () => {
   it('sorts feeds by name clicking the header sort label', () => {
     renderFeedTable({ feeds: mockFeeds, isLoading: false });
 
-    const nameSortLabel = screen.getByText('Name');
+    const nameHeader = screen.getByRole('columnheader', { name: /name/i });
+    const nameSortLabel = within(nameHeader).getByRole('button');
 
-    // Initially asc, click to sort desc
     fireEvent.click(nameSortLabel);
 
     const cells = screen.getAllByRole('cell');
-    // The first body cell should contain Bravo Scanner in desc order
     expect(cells[0].textContent).toContain('Bravo Scanner');
   });
 
   it('sorts feeds by status clicking the header sort label', () => {
     renderFeedTable({ feeds: mockFeeds, isLoading: false });
 
-    const statusSortLabel = screen.getByText('Status');
+    const statusHeader = screen.getByRole('columnheader', { name: /status/i });
+    const statusSortLabel = within(statusHeader).getByRole('button');
 
-    // Click to sort by status
     fireEvent.click(statusSortLabel);
 
     const cells = screen.getAllByRole('cell');
     expect(cells[0].textContent).toContain('Alpha Radio');
+  });
+
+  it('preserves virtualized scroller position on feed refresh rerender', () => {
+    const { container, rerender } = renderFeedTable({
+      feeds: mockFeeds,
+      isLoading: false,
+    });
+    const scroller = container.querySelector(
+      '[data-testid="virtuoso-scroller"]'
+    );
+    expect(scroller).toBeTruthy();
+    if (!scroller) {
+      throw new Error('Expected virtuoso scroller to be rendered');
+    }
+
+    scroller.scrollTop = 200;
+    const refreshedFeeds = mockFeeds.map((feed) => ({
+      ...feed,
+      name: `${feed.name} (updated)`,
+    }));
+
+    rerender(
+      <MemoryRouter>
+        <VirtuosoMockContext.Provider
+          value={{ viewportHeight: 1000, itemHeight: 100 }}
+        >
+          <FeedTable feeds={refreshedFeeds} isLoading={false} />
+        </VirtuosoMockContext.Provider>
+      </MemoryRouter>
+    );
+
+    const refreshedScroller = container.querySelector(
+      '[data-testid="virtuoso-scroller"]'
+    );
+    expect(refreshedScroller).toBe(scroller);
+    expect(refreshedScroller?.scrollTop).toBe(200);
   });
 
   it('opens the three dot menu and disables links if not present', () => {
@@ -129,7 +163,6 @@ describe('FeedTable', () => {
       name: /feed actions/i,
     });
 
-    // Click actions for Bravo Scanner (index 1) which has no links
     fireEvent.click(actionButtons[1]);
 
     const menu = screen.getByRole('menu');
@@ -149,7 +182,6 @@ describe('FeedTable', () => {
       name: /feed actions/i,
     });
 
-    // Click actions for Alpha Radio (index 0) which has links
     fireEvent.click(actionButtons[0]);
 
     const menu = screen.getByRole('menu');
@@ -163,5 +195,77 @@ describe('FeedTable', () => {
       'https://example.com/archive'
     );
     expect(sourceUrlItem?.getAttribute('target')).toBe('_blank');
+  });
+
+  it('displays grouped tags and applies tag filtering', () => {
+    renderFeedTable({ feeds: mockFeeds, isLoading: false });
+
+    const tagsInput = screen.getByLabelText('Tags');
+    fireEvent.focus(tagsInput);
+    fireEvent.keyDown(tagsInput, { key: 'ArrowDown' });
+
+    const listbox = screen.getByRole('listbox');
+
+    expect(within(listbox).getByText('County')).toBeTruthy();
+    expect(within(listbox).getByText('Agency')).toBeTruthy();
+
+    const countyOption = within(listbox).getByText('Marin');
+    const agencyOption = within(listbox).getByText('Fire');
+    expect(countyOption).toBeTruthy();
+    expect(agencyOption).toBeTruthy();
+
+    fireEvent.click(countyOption);
+
+    expect(screen.getByText('Alpha Radio')).toBeTruthy();
+    expect(screen.queryByText('Bravo Scanner')).toBeNull();
+
+    expect(screen.getByText('Showing 1 of 2 feeds')).toBeTruthy();
+
+    fireEvent.click(agencyOption);
+
+    expect(screen.getByText('Alpha Radio')).toBeTruthy();
+    expect(screen.queryByText('Bravo Scanner')).toBeNull();
+
+    fireEvent.click(countyOption);
+
+    expect(screen.getByText('Alpha Radio')).toBeTruthy();
+    expect(screen.queryByText('Bravo Scanner')).toBeNull();
+
+    const clearButton = within(tagsInput.parentElement!).getByRole('button', {
+      name: 'Clear',
+    });
+    fireEvent.click(clearButton);
+
+    expect(screen.getByText('Alpha Radio')).toBeTruthy();
+    expect(screen.getByText('Bravo Scanner')).toBeTruthy();
+    expect(screen.queryByText('Showing 1 of 2 feeds')).toBeNull();
+  });
+
+  it('filters feeds by status', () => {
+    renderFeedTable({ feeds: mockFeeds, isLoading: false });
+
+    const statusInput = screen.getByLabelText('Status');
+    fireEvent.focus(statusInput);
+    fireEvent.keyDown(statusInput, { key: 'ArrowDown' });
+
+    const activeOption = screen.getByRole('option', { name: 'Active' });
+    fireEvent.click(activeOption);
+
+    expect(screen.getByText('Alpha Radio')).toBeTruthy();
+    expect(screen.queryByText('Bravo Scanner')).toBeNull();
+  });
+
+  it('filters feeds by source type', () => {
+    renderFeedTable({ feeds: mockFeeds, isLoading: false });
+
+    const sourceTypesInput = screen.getByLabelText('Source Type');
+    fireEvent.focus(sourceTypesInput);
+    fireEvent.keyDown(sourceTypesInput, { key: 'ArrowDown' });
+
+    const bcfyOption = screen.getByRole('option', { name: 'bcfy_feeds' });
+    fireEvent.click(bcfyOption);
+
+    expect(screen.getByText('Alpha Radio')).toBeTruthy();
+    expect(screen.queryByText('Bravo Scanner')).toBeNull();
   });
 });
