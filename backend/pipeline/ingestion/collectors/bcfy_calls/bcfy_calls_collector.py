@@ -372,7 +372,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
             trailing slash.
         resources: Runtime-owned CaptureResources. The http_session is
             the runtime-owned aiohttp.ClientSession created in
-            NormalizerRuntime._main(); per HTTP-01, the collector
+            CollectorRuntime._main(); per HTTP-01, the collector
             reuses it instead of constructing a new session
             per poll. Lifecycle is owned by the runtime — do not close.
     """
@@ -498,7 +498,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                 headers["Authorization"] = f"Bearer {jwt_token}"
             except Exception as e:
                 # Use warning, not exception — the catch-all handler in
-                # normalizer_runtime calls logger.exception, which already
+                # collector_runtime calls logger.exception, which already
                 # includes this exception's traceback via __cause__.
                 # Logging it here too duplicates the stack trace.
                 logger.warning("Failed to refresh JWT token: %s", e)

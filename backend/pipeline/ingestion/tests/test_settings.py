@@ -2,7 +2,7 @@ import unittest
 import uuid
 from unittest.mock import patch
 
-from backend.pipeline.ingestion.settings import NormalizerSettings
+from backend.pipeline.ingestion.settings import CollectorSettings
 from backend.pipeline.storage.feed_store import SourceType
 
 
@@ -16,8 +16,8 @@ def _required_env() -> dict[str, str]:
     }
 
 
-class TestNormalizerSettings(unittest.TestCase):
-    """Test suite for environment-driven NormalizerSettings parsing."""
+class TestCollectorSettings(unittest.TestCase):
+    """Test suite for environment-driven CollectorSettings parsing."""
 
     def test_normal_expected_inputs(self) -> None:
         """Loads all settings from valid environment variables."""
@@ -60,7 +60,7 @@ class TestNormalizerSettings(unittest.TestCase):
         }
 
         with patch.dict("os.environ", env, clear=True):
-            settings = NormalizerSettings()
+            settings = CollectorSettings()
 
         self.assertEqual(settings.worker_id, uuid.UUID(env["WORKER_ID"]))
         self.assertEqual(settings.max_feeds_per_worker, 500)
@@ -111,7 +111,7 @@ class TestNormalizerSettings(unittest.TestCase):
     def test_edge_case_uses_defaults_and_generates_worker_id(self) -> None:
         """Uses defaults for optional settings when only required vars are set."""
         with patch.dict("os.environ", _required_env(), clear=True):
-            settings = NormalizerSettings()
+            settings = CollectorSettings()
 
         self.assertIsInstance(settings.worker_id, uuid.UUID)
         self.assertEqual(settings.max_feeds_per_worker, 800)
@@ -165,7 +165,7 @@ class TestNormalizerSettings(unittest.TestCase):
         }
 
         with patch.dict("os.environ", env, clear=True):
-            settings = NormalizerSettings()
+            settings = CollectorSettings()
 
         self.assertEqual(settings.max_feeds_per_worker, 0)
         self.assertEqual(settings.lease_poll_interval_sec, 0.0)
@@ -179,7 +179,7 @@ class TestNormalizerSettings(unittest.TestCase):
         env = {**_required_env(), "CAP_BCFY_FEEDS": "999"}
 
         with patch.dict("os.environ", env, clear=True):
-            settings = NormalizerSettings()
+            settings = CollectorSettings()
 
         self.assertEqual(settings.caps[SourceType.BCFY_FEEDS], 999)
         self.assertEqual(settings.caps[SourceType.BCFY_CALLS], 600)
@@ -188,7 +188,7 @@ class TestNormalizerSettings(unittest.TestCase):
     def test_caps_keys_match_default_caps_registry(self) -> None:
         """settings.caps populates exactly the SourceTypes registered in _DEFAULT_CAPS."""
         with patch.dict("os.environ", _required_env(), clear=True):
-            settings = NormalizerSettings()
+            settings = CollectorSettings()
 
         # ECHO is intentionally absent: Echo feeds aren't VM-leased.
         self.assertNotIn(SourceType.ECHO, settings.caps)
@@ -203,7 +203,7 @@ class TestNormalizerSettings(unittest.TestCase):
 
         with patch.dict("os.environ", env, clear=True):
             with self.assertRaises(ValueError) as context:
-                NormalizerSettings()
+                CollectorSettings()
 
         self.assertIn("AUDIO_STAGING_BUCKET", str(context.exception))
 
@@ -213,7 +213,7 @@ class TestNormalizerSettings(unittest.TestCase):
 
         with patch.dict("os.environ", env, clear=True):
             with self.assertRaises(ValueError) as context:
-                NormalizerSettings()
+                CollectorSettings()
 
         self.assertIn("AUDIO_STAGING_BUCKET", str(context.exception))
 
@@ -223,7 +223,7 @@ class TestNormalizerSettings(unittest.TestCase):
 
         with patch.dict("os.environ", env, clear=True):
             with self.assertRaises(ValueError):
-                NormalizerSettings()
+                CollectorSettings()
 
     def test_invalid_integer_env_raises(self) -> None:
         """Raises ValueError for non-integer integer-backed settings."""
@@ -231,7 +231,7 @@ class TestNormalizerSettings(unittest.TestCase):
 
         with patch.dict("os.environ", env, clear=True):
             with self.assertRaises(ValueError):
-                NormalizerSettings()
+                CollectorSettings()
 
     def test_invalid_float_env_raises(self) -> None:
         """Raises ValueError for non-float float-backed settings."""
@@ -239,7 +239,7 @@ class TestNormalizerSettings(unittest.TestCase):
 
         with patch.dict("os.environ", env, clear=True):
             with self.assertRaises(ValueError):
-                NormalizerSettings()
+                CollectorSettings()
 
     def test_invalid_task_cancel_budget_exceeds_graceful_shutdown_raises(
         self,
@@ -255,7 +255,7 @@ class TestNormalizerSettings(unittest.TestCase):
 
         with patch.dict("os.environ", env, clear=True):
             with self.assertRaises(ValueError) as context:
-                NormalizerSettings()
+                CollectorSettings()
 
         self.assertIn("task_cancel_budget_sec", str(context.exception))
         self.assertIn("graceful_shutdown_timeout_sec", str(context.exception))
@@ -273,7 +273,7 @@ class TestNormalizerSettings(unittest.TestCase):
         }
 
         with patch.dict("os.environ", env, clear=True):
-            settings = NormalizerSettings()
+            settings = CollectorSettings()
 
         self.assertEqual(settings.task_cancel_budget_sec, 88.0)
         self.assertEqual(settings.graceful_shutdown_timeout_sec, 90.0)

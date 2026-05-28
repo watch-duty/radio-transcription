@@ -6,7 +6,7 @@ constructing a real aiohttp.ClientSession would open real sockets,
 which we want to avoid in unit tests.
 
 Mirrors the _default_resources() helper in
-backend/pipeline/ingestion/tests/test_runtime.py - kept as a separate
+backend/pipeline/ingestion/tests/test_collector_runtime.py - kept as a separate
 module-level helper rather than a pytest fixture so existing
 ``unittest.IsolatedAsyncioTestCase`` test classes can call it imperatively
 (pytest fixtures don't auto-inject into unittest.TestCase methods without

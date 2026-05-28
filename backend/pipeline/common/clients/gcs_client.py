@@ -4,7 +4,7 @@ import aiohttp
 from gcloud.aio.storage import Storage
 
 # aiohttp's default TCPConnector cap is 100 simultaneous connections.
-# NormalizerRuntime runs up to max_feeds_per_worker concurrent GCS uploads,
+# CollectorRuntime runs up to max_feeds_per_worker concurrent GCS uploads,
 # so the default causes 150+ uploads to queue behind the pool limit at 250
 # feeds, adding latency and event-loop overhead. Callers should pass a limit
 # sized to their actual concurrency.

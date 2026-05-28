@@ -449,7 +449,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(str(ctx.exception), "ffmpeg_exit_1")
 
-        # Simulate what NormalizerRuntime._process_feed does on exception
+        # Simulate what CollectorRuntime._process_feed does on exception
         await self.store.report_feed_failure(
             feed["id"], self.worker_id, feed["fencing_token"]
         )

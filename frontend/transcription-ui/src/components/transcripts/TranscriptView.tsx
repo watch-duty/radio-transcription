@@ -723,6 +723,15 @@ export function TranscriptView({
     );
   }
 
+  const customSourceUrl = searchedFeed?.tags?.find(
+    (t) => t.key === 'source_url'
+  )?.value;
+  const customArchiveUrl = searchedFeed?.tags?.find(
+    (t) => t.key === 'archive_url'
+  )?.value;
+  const sourceUrl = customSourceUrl || searchedFeed?.sourceUrl;
+  const archiveUrl = customArchiveUrl || searchedFeed?.archiveUrl;
+
   return (
     <Box
       sx={{
@@ -738,8 +747,8 @@ export function TranscriptView({
         searchedFeed={searchedFeed}
         onSelectFeed={handleFeedSelect}
         feedsLoading={feedsFetching}
-        sourceUrl={searchedFeed?.sourceUrl}
-        archiveUrl={searchedFeed?.archiveUrl}
+        sourceUrl={sourceUrl}
+        archiveUrl={archiveUrl}
         status={activeFeedData?.status ?? searchedFeed?.status}
         lastHeartbeat={
           activeFeedData?.lastHeartbeat ?? searchedFeed?.lastHeartbeat
