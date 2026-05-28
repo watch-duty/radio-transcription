@@ -19,17 +19,17 @@ Every SFT run must train and compare models on the same auditable dataset versio
 - [x] Existing SFT scripts can consume GCS manifests and build canonical/model-oriented JSONL rows for Gemini-style tuning inputs - existing
 - [x] Existing codebase has reusable manifest/scoring helpers that should be extended instead of replaced - existing
 - [x] Phase 1 validates dataset-version TOML configs, strict `gs://` JSON/JSONL inputs, source-key extraction for all four initial dataset families, and empty-text exclusion counts - Phase 1
+- [x] Phase 3 generates immutable dataset-version artifact layouts, canonical and per-dataset train/eval manifests, NeMo/Whisper/Gemini model inputs/configs, JSON/Markdown reports, and create-only GCS publication guards - Phase 3
 
 ### Active
 
 - [ ] Build a split script that creates an 80:20 train/SFT Eval Split from existing manifests while assigning every source group wholly to one split.
 - [ ] Validate leakage prevention with actual manifest data, including source-group overlap, original-audio overlap, duplicate URI overlap, missing text rows, and parse failures.
 - [ ] Balance the split across factors that can correlate with model performance: dataset family, source count, row count, audio duration, time/month/hour, transcript length, and duration buckets.
-- [ ] Generate immutable GCS artifacts under `gs://wd-transcription-data/sft/{dataset_version_id}/` for canonical train/eval data, dataset-specific slices, model-specific inputs, reports, and derived clips.
-- [ ] Produce model-ready input manifests/configs for NeMo, Whisper, and Gemini fine tuning without changing historical benchmark/eval manifests.
+- [ ] Derive or reuse model-ready audio clips under the reserved dataset-version `audio/` prefix.
 - [ ] Reuse existing standalone supported clips when possible and derive clips only when a labeled row points into a longer source audio file.
 - [ ] Record enough provenance for every row to audit origin, transformations, source grouping, split assignment, and model-input generation.
-- [ ] Add focused tests for source-key extraction, split determinism, leakage gates, balance scoring, manifest generation, and GCS path planning.
+- [ ] Add focused tests for audio derivation, CLI generation, and production GCS/report integration.
 
 ### Out of Scope
 
@@ -74,14 +74,14 @@ Glossary:
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Use `dataset_version_id` as the primary artifact identifier | Dataset artifacts are reused across model runs and should not be coupled to one training run | Pending |
+| Use `dataset_version_id` as the primary artifact identifier | Dataset artifacts are reused across model runs and should not be coupled to one training run | Validated in Phase 3 |
 | Split Source Groups before slicing or deriving SFT examples | Prevents same-feed leakage even when multiple clips come from one long source recording | Pending |
 | Call the evaluation side `SFT Eval Split` | It may be used for validation and selection, so "holdout" would overstate isolation | Pending |
 | Use `area_code` + `echo_name` for Echo source identity | `echo_name` alone is ambiguous; validated CSV has duplicate names across areas | Validated in Phase 1 |
 | Use `bcfy_calls:<groupId>` for Broadcastify Calls | Filenames and metadata expose stable group IDs, and actual manifests parse cleanly | Validated in Phase 1 |
 | Use `bcfy_feeds:<feedId>` for Broadcastify Feeds | Archive URLs include feed IDs, and actual manifests parse cleanly | Validated in Phase 1 |
 | Use Fire Notification stream path/location as source identity | Per-day UUIDs are sampling artifacts and would allow same stream across splits | Validated in Phase 1 |
-| Store generated artifacts in GCS, not GitHub | Artifacts can be large/proprietary and should be immutable runtime data | Pending |
+| Store generated artifacts in GCS, not GitHub | Artifacts can be large/proprietary and should be immutable runtime data | Validated in Phase 3; live GCS smoke UAT pending |
 | Reuse supported standalone audio clips before deriving new clips | Reduces unnecessary audio transforms and preserves provenance | Pending |
 | Exclude empty or missing normalized-text rows | Existing eval behavior already skips rows without usable ground truth | Validated in Phase 1 |
 
@@ -103,4 +103,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-27 after Phase 1 completion*
+*Last updated: 2026-05-28 after Phase 3 completion*
