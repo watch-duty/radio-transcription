@@ -121,6 +121,16 @@ source_strategy = "bcfy_feeds"
         with self.assertRaisesRegex(ConfigValidationError, "train_ratio"):
             parse_dataset_version_config_toml(text)
 
+    def test_rejects_non_finite_ratios(self) -> None:
+        for key in ("train_ratio", "eval_ratio"):
+            with self.subTest(key=key):
+                text = _valid_config(**{key: "nan"})
+
+                with self.assertRaisesRegex(
+                    ConfigValidationError, "finite number"
+                ):
+                    parse_dataset_version_config_toml(text)
+
 
 if __name__ == "__main__":
     unittest.main()

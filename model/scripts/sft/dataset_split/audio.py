@@ -557,7 +557,12 @@ def _materialize_plan_locally(
             )
             ffmpeg_summary = _derive_command_summary()
             output_probe = probe_audio(local_output_path, runner=runner)
-            _validate_output_duration(plan.segment, output_probe)
+            _validate_output_duration(
+                plan.segment,
+                output_probe,
+                source_probe=plan.probe,
+                action=plan.action,
+            )
         elif plan.action == "transcoded":
             transcode_audio_file(
                 plan.local_source_path,
@@ -566,7 +571,12 @@ def _materialize_plan_locally(
             )
             ffmpeg_summary = _transcode_command_summary()
             output_probe = probe_audio(local_output_path, runner=runner)
-            _validate_output_duration(plan.segment, output_probe)
+            _validate_output_duration(
+                plan.segment,
+                output_probe,
+                source_probe=plan.probe,
+                action=plan.action,
+            )
         else:
             raise AudioDerivationError(f"unsupported action={plan.action}")
         model_ready_uri = plan.destination_uri
@@ -765,14 +775,21 @@ def _validate_source_bounds(segment: LabeledSegment, probe: AudioProbe) -> None:
 
 
 def _validate_output_duration(
-    segment: LabeledSegment, output_probe: AudioProbe
+    segment: LabeledSegment,
+    output_probe: AudioProbe,
+    *,
+    source_probe: AudioProbe,
+    action: str,
 ) -> None:
-    tolerance = _generated_output_duration_tolerance(segment.duration)
-    if abs(output_probe.duration - segment.duration) > tolerance:
+    expected_duration = _expected_generated_output_duration(
+        segment, source_probe, action=action
+    )
+    tolerance = _generated_output_duration_tolerance(expected_duration)
+    if abs(output_probe.duration - expected_duration) > tolerance:
         raise AudioDerivationError(
             "generated audio duration mismatch "
             f"output_duration={output_probe.duration} "
-            f"expected_duration={segment.duration} "
+            f"expected_duration={expected_duration} "
             f"tolerance={tolerance} {_row_context(segment)}"
         )
 
@@ -837,6 +854,15 @@ def _generated_output_duration_tolerance(duration: float) -> float:
         GENERATED_OUTPUT_DURATION_TOLERANCE_SECONDS,
         duration * GENERATED_OUTPUT_DURATION_TOLERANCE_RATIO,
     )
+
+
+def _expected_generated_output_duration(
+    segment: LabeledSegment, source_probe: AudioProbe, *, action: str
+) -> float:
+    if action == "transcoded":
+        return source_probe.duration
+    available_duration = max(0.0, source_probe.duration - segment.offset)
+    return min(segment.duration, available_duration)
 
 
 def _is_writer_supported(audio_uri: str) -> bool:

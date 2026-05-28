@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import tomllib
 from dataclasses import dataclass
 from typing import Any
@@ -185,7 +186,12 @@ def _require_number(value: dict[str, Any], key: str, source: str) -> float:
     item = value[key]
     if not isinstance(item, int | float) or isinstance(item, bool):
         raise ConfigValidationError(f"{source}: {key} must be a number")
-    return float(item)
+    parsed = float(item)
+    if not math.isfinite(parsed):
+        raise ConfigValidationError(
+            f"{source}: {key} must be a finite number"
+        )
+    return parsed
 
 
 def _require_gs_uri(uri: str, *, label: str, source: str) -> None:

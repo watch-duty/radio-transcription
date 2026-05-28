@@ -8,7 +8,10 @@ _SFT_DIR = str(Path(__file__).resolve().parent.parent)
 if _SFT_DIR not in sys.path:
     sys.path.insert(0, _SFT_DIR)
 
+from dataset_split.balance import DEFAULT_BALANCE_WEIGHTS  # noqa: E402
 from dataset_split.split import (  # noqa: E402
+    _MILLISECONDS_PER_SECOND,
+    _OBJECTIVE_WEIGHTS,
     SplitAssignmentError,
     assign_train_eval_split,
 )
@@ -57,7 +60,10 @@ class TestAssignTrainEvalSplit(unittest.TestCase):
                 segment.split or ""
             )
         self.assertEqual(
-            {source_group: len(splits) for source_group, splits in observed.items()},
+            {
+                source_group: len(splits)
+                for source_group, splits in observed.items()
+            },
             {"feed-a": 1, "feed-b": 1, "feed-c": 1},
         )
         self.assertEqual(
@@ -132,6 +138,21 @@ class TestAssignTrainEvalSplit(unittest.TestCase):
         self.assertIn("dataset_row_count", result.metadata.weights)
         self.assertIsNotNone(result.balance_report)
         self.assertIn("weighted_score", result.balance_report or {})
+
+    def test_solver_count_weights_are_scaled_to_duration_milliseconds(
+        self,
+    ) -> None:
+        self.assertEqual(
+            _OBJECTIVE_WEIGHTS["dataset_row_count"],
+            int(
+                DEFAULT_BALANCE_WEIGHTS["dataset_rows"]
+                * _MILLISECONDS_PER_SECOND
+            ),
+        )
+        self.assertEqual(
+            _OBJECTIVE_WEIGHTS["dataset_duration"],
+            int(DEFAULT_BALANCE_WEIGHTS["dataset_duration"]),
+        )
 
     def test_assignment_does_not_require_random_seed(self) -> None:
         result = assign_train_eval_split(

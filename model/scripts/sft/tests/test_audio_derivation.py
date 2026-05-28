@@ -719,6 +719,69 @@ class TestAudioPreparation(unittest.TestCase):
 
         self.assertEqual(_all_uploads(client), [])
 
+    def test_near_eof_generated_output_matches_available_source_duration(
+        self,
+    ) -> None:
+        client = FakeStorageClient()
+        runner = FakeAudioRunner(
+            (
+                AudioProbe(10.0, "flac", 1, 16000, "flac"),
+                AudioProbe(0.3, "flac", 1, 16000, "flac"),
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as scratch_dir:
+            result = prepare_audio_for_publication(
+                client,
+                layout=_layout(),
+                segments=(
+                    _segment(
+                        "gs://source-bucket/audio/source.flac",
+                        offset=9.7,
+                        duration=0.6,
+                    ),
+                ),
+                scratch_dir=scratch_dir,
+                runner=runner,
+                upload=False,
+            )
+
+        metadata = result.segments[0].transformation_metadata or {}
+        self.assertEqual(metadata["output_duration"], 0.3)
+        self.assertEqual(_all_uploads(client), [])
+
+    def test_transcoded_standalone_output_matches_source_duration(
+        self,
+    ) -> None:
+        client = FakeStorageClient()
+        runner = FakeAudioRunner(
+            (
+                AudioProbe(10.2, "pcm_s16le", 1, 16000, "wav"),
+                AudioProbe(10.2, "flac", 1, 16000, "flac"),
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as scratch_dir:
+            result = prepare_audio_for_publication(
+                client,
+                layout=_layout(),
+                segments=(
+                    _segment(
+                        "gs://source-bucket/audio/source.wav",
+                        offset=0.0,
+                        duration=10.0,
+                    ),
+                ),
+                scratch_dir=scratch_dir,
+                runner=runner,
+                upload=False,
+            )
+
+        metadata = result.segments[0].transformation_metadata or {}
+        self.assertEqual(metadata["action"], "transcoded")
+        self.assertEqual(metadata["output_duration"], 10.2)
+        self.assertEqual(_all_uploads(client), [])
+
     def test_prepare_audio_can_defer_uploads(self) -> None:
         client = FakeStorageClient()
         runner = FakeAudioRunner(

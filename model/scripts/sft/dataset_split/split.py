@@ -14,20 +14,28 @@ from dataset_split.balance import (
 )
 from dataset_split.types import LabeledSegment
 
+_MILLISECONDS_PER_SECOND = 1000
+
+
+def _count_objective_weight(weight_key: str) -> int:
+    # Duration components are measured in milliseconds for CP-SAT precision.
+    # Count-like components are scaled to keep one count delta comparable to
+    # one second of duration under equal human-readable balance weights.
+    return int(DEFAULT_BALANCE_WEIGHTS[weight_key] * _MILLISECONDS_PER_SECOND)
+
+
 _OBJECTIVE_WEIGHTS = {
-    "dataset_row_count": int(DEFAULT_BALANCE_WEIGHTS["dataset_rows"]),
+    "dataset_row_count": _count_objective_weight("dataset_rows"),
     "dataset_duration": int(DEFAULT_BALANCE_WEIGHTS["dataset_duration"]),
-    "dataset_source_count": int(DEFAULT_BALANCE_WEIGHTS["dataset_sources"]),
-    "family_row_count": int(DEFAULT_BALANCE_WEIGHTS["family_rows"]),
+    "dataset_source_count": _count_objective_weight("dataset_sources"),
+    "family_row_count": _count_objective_weight("family_rows"),
     "family_duration": int(DEFAULT_BALANCE_WEIGHTS["family_duration"]),
-    "global_row_count": int(DEFAULT_BALANCE_WEIGHTS["global_rows"]),
+    "global_row_count": _count_objective_weight("global_rows"),
     "global_duration": int(DEFAULT_BALANCE_WEIGHTS["global_duration"]),
-    "global_source_count": int(DEFAULT_BALANCE_WEIGHTS["global_sources"]),
-    "duration_bucket_count": int(
-        DEFAULT_BALANCE_WEIGHTS["duration_bucket_rows"]
-    ),
-    "transcript_bucket_count": int(
-        DEFAULT_BALANCE_WEIGHTS["transcript_bucket_rows"]
+    "global_source_count": _count_objective_weight("global_sources"),
+    "duration_bucket_count": _count_objective_weight("duration_bucket_rows"),
+    "transcript_bucket_count": _count_objective_weight(
+        "transcript_bucket_rows"
     ),
 }
 
@@ -92,7 +100,9 @@ def assign_train_eval_split(
     if abs((train_ratio + eval_ratio) - 1.0) > 1e-9:
         raise SplitAssignmentError("train_ratio + eval_ratio must equal 1.0")
     if train_ratio <= 0.0 or eval_ratio <= 0.0:
-        raise SplitAssignmentError("train_ratio and eval_ratio must be positive")
+        raise SplitAssignmentError(
+            "train_ratio and eval_ratio must be positive"
+        )
 
     segments_by_source_group = _segments_by_source_group(segments)
     dataset_source_groups = _dataset_source_groups(segments)
@@ -109,7 +119,9 @@ def assign_train_eval_split(
     }
 
     for dataset_name, source_groups in dataset_source_groups.items():
-        eval_count = sum(is_eval[source_group] for source_group in source_groups)
+        eval_count = sum(
+            is_eval[source_group] for source_group in source_groups
+        )
         model.Add(eval_count >= 1)
         model.Add(eval_count <= len(source_groups) - 1)
 
@@ -233,8 +245,9 @@ def _objective_components(
                 f"family_row_count:{family}",
                 "family_row_count",
                 segments,
-                lambda segment, expected=family: segment.dataset_family
-                == expected,
+                lambda segment, expected=family: (
+                    segment.dataset_family == expected
+                ),
                 lambda segment: 1,
             )
         )
@@ -243,8 +256,9 @@ def _objective_components(
                 f"family_duration:{family}",
                 "family_duration",
                 segments,
-                lambda segment, expected=family: segment.dataset_family
-                == expected,
+                lambda segment, expected=family: (
+                    segment.dataset_family == expected
+                ),
                 _duration_ms,
             )
         )
@@ -286,10 +300,9 @@ def _objective_components(
                 f"duration_bucket:{bucket_name}",
                 "duration_bucket_count",
                 segments,
-                lambda segment, expected=bucket_name: bucket_duration_seconds(
-                    segment.duration
-                )
-                == expected,
+                lambda segment, expected=bucket_name: (
+                    bucket_duration_seconds(segment.duration) == expected
+                ),
                 lambda segment: 1,
             )
         )
@@ -300,10 +313,9 @@ def _objective_components(
                 f"transcript_words:{bucket_name}",
                 "transcript_bucket_count",
                 segments,
-                lambda segment, expected=bucket_name: bucket_transcript_words(
-                    segment.text
-                )
-                == expected,
+                lambda segment, expected=bucket_name: (
+                    bucket_transcript_words(segment.text) == expected
+                ),
                 lambda segment: 1,
             )
         )
@@ -324,9 +336,7 @@ def _source_group_stats(
         }
         for segment in group_segments:
             duration_buckets[bucket_duration_seconds(segment.duration)] += 1
-            transcript_word_buckets[
-                bucket_transcript_words(segment.text)
-            ] += 1
+            transcript_word_buckets[bucket_transcript_words(segment.text)] += 1
 
         stats.append(
             SourceGroupStats(
@@ -340,7 +350,9 @@ def _source_group_stats(
                     )
                 ),
                 row_count=len(group_segments),
-                duration_ms=sum(_duration_ms(segment) for segment in group_segments),
+                duration_ms=sum(
+                    _duration_ms(segment) for segment in group_segments
+                ),
                 duration_buckets=duration_buckets,
                 transcript_word_buckets=transcript_word_buckets,
             )

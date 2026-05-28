@@ -124,7 +124,8 @@ def build_whisper_inputs(
 
     for segment in segment_tuple:
         rows_by_split[_require_split(segment)].append(_whisper_row(segment))
-        if float(segment.duration) > _WHISPER_RECOMMENDED_MAX_DURATION_SECONDS:
+        model_ready_duration = _model_ready_duration(segment)
+        if model_ready_duration > _WHISPER_RECOMMENDED_MAX_DURATION_SECONDS:
             model_ready_audio_uri = _require_model_ready_audio_uri(segment)
             warnings.append(
                 WriterWarning(
@@ -137,7 +138,7 @@ def build_whisper_inputs(
                         "30.0 second maximum; row remains in output."
                     ),
                     details={
-                        "duration": float(segment.duration),
+                        "duration": model_ready_duration,
                         "recommended_max_duration_seconds": (
                             _WHISPER_RECOMMENDED_MAX_DURATION_SECONDS
                         ),
@@ -263,7 +264,7 @@ def _nemo_row(segment: LabeledSegment) -> dict[str, object]:
     return {
         "audio_filepath": model_ready_audio_uri,
         "text": segment.text,
-        "duration": segment.duration,
+        "duration": _model_ready_duration(segment),
         "offset": _offset_for_audio_uri(segment, model_ready_audio_uri),
         "example_id": segment.example_id,
         "segment_id": segment.segment_id,
@@ -275,7 +276,7 @@ def _whisper_row(segment: LabeledSegment) -> dict[str, object]:
     return {
         "audio_uri": model_ready_audio_uri,
         "text": segment.text,
-        "duration": segment.duration,
+        "duration": _model_ready_duration(segment),
         "offset": _offset_for_audio_uri(segment, model_ready_audio_uri),
         "dataset_name": segment.dataset_name,
         "dataset_family": segment.dataset_family,
@@ -303,7 +304,7 @@ def _summary_by_split(
         summary[split]["count"] = int(summary[split]["count"]) + 1
         summary[split]["duration_seconds"] = float(
             summary[split]["duration_seconds"]
-        ) + float(segment.duration)
+        ) + _model_ready_duration(segment)
     return summary
 
 
@@ -346,6 +347,37 @@ def _offset_for_audio_uri(segment: LabeledSegment, audio_uri: str) -> float:
     if audio_uri != segment.audio_uri:
         return 0.0
     return float(segment.offset)
+
+
+def _model_ready_duration(segment: LabeledSegment) -> float:
+    model_ready_audio_uri = _require_model_ready_audio_uri(segment)
+    if model_ready_audio_uri != segment.audio_uri:
+        metadata = segment.transformation_metadata
+        if isinstance(metadata, dict) and "output_duration" in metadata:
+            return _require_positive_duration(
+                metadata["output_duration"],
+                label="transformation_metadata.output_duration",
+                row_index=segment.row_index,
+            )
+    return _require_positive_duration(
+        segment.duration, label="duration", row_index=segment.row_index
+    )
+
+
+def _require_positive_duration(
+    value: object, *, label: str, row_index: int
+) -> float:
+    try:
+        duration = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ModelWriterError(
+            f"row_index={row_index} {label} must be a finite positive number"
+        ) from exc
+    if not math.isfinite(duration) or duration <= 0.0:
+        raise ModelWriterError(
+            f"row_index={row_index} {label} must be a finite positive number"
+        )
+    return duration
 
 
 def _require_adapter_size(value: str) -> str:

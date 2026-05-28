@@ -16,8 +16,8 @@ if _COLABS_DIR not in sys.path:
 
 from dataset_split.model_writers import (  # noqa: E402
     DEFAULT_GEMINI_BASE_MODEL,
-    ModelWriterResult,
     ModelWriterError,
+    ModelWriterResult,
     build_gemini_inputs,
     build_gemini_tuning_config,
     build_nemo_inputs,
@@ -37,6 +37,7 @@ def _segment(
     text: str = "engine 41 copy",
     audio_suffix: str = "mp3",
     model_ready_audio_uri: str | None = "DEFAULT",
+    transformation_metadata: dict[str, object] | None = None,
 ) -> LabeledSegment:
     ready_uri = (
         f"gs://wd-ready/{source_group}/{row_index}.{audio_suffix}"
@@ -61,6 +62,7 @@ def _segment(
         segment_id=f"segment-{row_index}",
         split=split,
         model_ready_audio_uri=ready_uri,
+        transformation_metadata=transformation_metadata,
         raw_row={
             "benchmark_path": "model/data/inference_manifests/benchmark.jsonl"
         },
@@ -154,6 +156,26 @@ class TestNemoWriter(unittest.TestCase):
             },
         )
 
+    def test_nemo_uses_prepared_audio_output_duration(self) -> None:
+        segment = _segment(
+            "feed-a",
+            row_index=3,
+            duration=0.6,
+            transformation_metadata={"output_duration": 0.3},
+        )
+
+        result = build_nemo_inputs(
+            (segment,),
+            train_manifest_uri="gs://wd-transcription-data/sft/v1/model_inputs/nemo/train.jsonl",
+            eval_manifest_uri="gs://wd-transcription-data/sft/v1/model_inputs/nemo/eval.jsonl",
+        )
+
+        row = result.rows_by_split["train"][0]
+        self.assertEqual(row["duration"], 0.3)
+        self.assertEqual(
+            result.summary_by_split["train"]["duration_seconds"], 0.3
+        )
+
 
 class TestWhisperWriter(unittest.TestCase):
     def test_whisper_writer_shape_and_warnings(self) -> None:
@@ -240,6 +262,22 @@ class TestWhisperWriter(unittest.TestCase):
             ModelWriterError, "row_index=12 missing model_ready_audio_uri"
         ):
             build_whisper_inputs((segment,))
+
+    def test_whisper_uses_prepared_audio_output_duration(self) -> None:
+        segment = _segment(
+            "feed-a",
+            row_index=4,
+            duration=0.6,
+            transformation_metadata={"output_duration": 0.3},
+        )
+
+        result = build_whisper_inputs((segment,))
+
+        row = result.rows_by_split["train"][0]
+        self.assertEqual(row["duration"], 0.3)
+        self.assertEqual(
+            result.summary_by_split["train"]["duration_seconds"], 0.3
+        )
 
 
 class TestGeminiWriter(unittest.TestCase):
