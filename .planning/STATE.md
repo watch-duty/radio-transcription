@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 4 context gathered
-last_updated: "2026-05-28T03:42:36.876Z"
-last_activity: 2026-05-28 -- Phase 04 execution started
+stopped_at: Completed 04-01-PLAN.md
+last_updated: "2026-05-28T03:59:43.116Z"
+last_activity: 2026-05-28
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 14
-  completed_plans: 10
-  percent: 71
+  completed_plans: 11
+  percent: 79
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-05-28)
 ## Current Position
 
 Phase: 04 (audio-derivation-and-provenance) — EXECUTING
-Plan: 1 of 4
-Status: Executing Phase 04
-Last activity: 2026-05-28 -- Phase 04 execution started
+Plan: 2 of 4
+Status: Ready to execute
+Last activity: 2026-05-28
 
-Progress: [██████░░░░] 60%
+Progress: [████████░░] 79%
 
 ## Performance Metrics
 
@@ -60,6 +60,7 @@ Progress: [██████░░░░] 60%
 | Phase 02 P01 | 6 min | 3 tasks | 7 files |
 | Phase 02 P02 | 3 min | 2 tasks | 2 files |
 | Phase 02 P03 | 4 min | 3 tasks | 4 files |
+| Phase 04 P01 | 13min | 3 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -74,6 +75,9 @@ Recent decisions affecting current work:
 - Initialization: Generated dataset artifacts live in GCS, not Git.
 - Phase 2: Balance quality is higher priority than seeded deterministic recomputation; reproducibility comes from saved assignment and metadata.
 - Phase 2: Leakage checks are exact Source Group, original-audio URI, model-ready URI, and duplicate audio-span gates.
+- [Phase 04]: Generated and copied audio objects use action folders with safe row-hash names, excluding raw source URI, raw source_group, and split from object paths.
+- [Phase 04]: Derived and transcoded outputs use FLAC with mono downmix and no explicit resampling or padding flags.
+- [Phase 04]: Audio preparation returns new frozen LabeledSegment rows with model-ready audio URIs and transformation provenance.
 
 ### Pending Todos
 
@@ -92,6 +96,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-28T02:36:07.288Z
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-audio-derivation-and-provenance/04-CONTEXT.md
+Last session: 2026-05-28T03:59:43.110Z
+Stopped at: Completed 04-01-PLAN.md
+Resume file: None

@@ -43,12 +43,12 @@
 
 ### Audio And Provenance
 
-- [ ] **AUD-01**: The planner reuses an existing standalone supported clip when a row already points to one utterance clip.
-- [ ] **AUD-02**: The planner derives a clip only when a labeled row points into a longer source audio file by offset/duration.
-- [ ] **AUD-03**: Derived clips preserve the least-transforming reliable audio format accepted by target writers, with WAV fallback when exact source-format slicing is unreliable.
-- [ ] **AUD-04**: Multichannel input is mixed to mono when deriving clips.
-- [ ] **AUD-05**: The generator does not add padding and does not resample by default unless a target-specific writer requires it.
-- [ ] **AUD-06**: Every SFT example records provenance for original audio URI, offset, duration, source group, split, reuse/derived decision, and transformation metadata.
+- [x] **AUD-01**: The planner reuses an existing standalone supported clip when a row already points to one utterance clip.
+- [x] **AUD-02**: The planner derives a clip only when a labeled row points into a longer source audio file by offset/duration.
+- [x] **AUD-03**: Derived clips preserve the least-transforming reliable audio format accepted by target writers, with WAV fallback when exact source-format slicing is unreliable.
+- [x] **AUD-04**: Multichannel input is mixed to mono when deriving clips.
+- [x] **AUD-05**: The generator does not add padding and does not resample by default unless a target-specific writer requires it.
+- [x] **AUD-06**: Every SFT example records provenance for original audio URI, offset, duration, source group, split, reuse/derived decision, and transformation metadata.
 
 ### Model Inputs
 
@@ -145,12 +145,12 @@
 | MODL-08 | Phase 3 | Complete |
 | TEST-05 | Phase 3 | Complete |
 | TEST-06 | Phase 3 | Complete |
-| AUD-01 | Phase 4 | Pending |
-| AUD-02 | Phase 4 | Pending |
-| AUD-03 | Phase 4 | Pending |
-| AUD-04 | Phase 4 | Pending |
-| AUD-05 | Phase 4 | Pending |
-| AUD-06 | Phase 4 | Pending |
+| AUD-01 | Phase 4 | Complete |
+| AUD-02 | Phase 4 | Complete |
+| AUD-03 | Phase 4 | Complete |
+| AUD-04 | Phase 4 | Complete |
+| AUD-05 | Phase 4 | Complete |
+| AUD-06 | Phase 4 | Complete |
 | CLI-01 | Phase 5 | Pending |
 | CLI-02 | Phase 5 | Pending |
 | CLI-03 | Phase 5 | Pending |
