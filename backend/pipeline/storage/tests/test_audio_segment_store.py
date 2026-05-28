@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import unittest
+import unittest.mock
 import uuid
 
 from backend.pipeline.storage import audio_segment_queries
@@ -126,6 +127,7 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
         missing_post_context = False
         self.pool.fetchrow.assert_called_once_with(
             audio_segment_queries.CREATE_AUDIO_SEGMENT_SQL,
+            unittest.mock.ANY,
             _FEED_ID,
             AudioClassification.SPEECH_DETECTED,
             datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),

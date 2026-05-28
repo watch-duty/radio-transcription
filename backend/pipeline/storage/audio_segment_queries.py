@@ -41,6 +41,7 @@ RETURNING audio_segment_id, type, data, created_at, updated_at
 
 CREATE_AUDIO_SEGMENT_SQL = """
 INSERT INTO audio_segments (
+    id,
     feed_id,
     classification,
     start_timestamp,
@@ -53,6 +54,6 @@ INSERT INTO audio_segments (
     end_audio_offset,
     playback_audio_uri
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 RETURNING id, feed_id, classification, start_timestamp, end_timestamp, missing_prior_context, missing_post_context, source_audio_uris, canonical_audio_uri, start_audio_offset, end_audio_offset, playback_audio_uri, created_at
 """

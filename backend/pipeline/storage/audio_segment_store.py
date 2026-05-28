@@ -99,8 +99,10 @@ class AudioSegmentStore:
             msg = f"Invalid feed_id UUID: {feed_id}"
             raise ValueError(msg) from e
 
+        segment_id = uuid.uuid4()
         row = await self._pool.fetchrow(
             audio_segment_queries.CREATE_AUDIO_SEGMENT_SQL,
+            segment_id,
             feed_uuid,
             classification,
             start_timestamp,
