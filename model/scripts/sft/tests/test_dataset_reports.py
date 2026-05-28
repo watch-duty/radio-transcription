@@ -140,13 +140,17 @@ class TestDatasetReports(unittest.TestCase):
         ):
             self.assertIn(key, report)
         self.assertEqual(report["split_counts"], {"train": 2, "eval": 1})
-        self.assertEqual(report["duration_seconds"], {"train": 16.0, "eval": 7.0})
+        self.assertEqual(
+            report["duration_seconds"], {"train": 16.0, "eval": 7.0}
+        )
         self.assertEqual(
             report["dataset_summary"]["calls"]["splits"]["train"]["count"],
             1,
         )
         self.assertEqual(
-            report["dataset_summary"]["feeds"]["splits"]["train"]["duration_seconds"],
+            report["dataset_summary"]["feeds"]["splits"]["train"][
+                "duration_seconds"
+            ],
             11.0,
         )
 
@@ -166,7 +170,9 @@ class TestDatasetReports(unittest.TestCase):
         for writer in ("nemo", "whisper", "gemini"):
             self.assertIn("train", model_writer_summary[writer]["splits"])
             self.assertIn("eval", model_writer_summary[writer]["splits"])
-            self.assertIn("duration_seconds", model_writer_summary[writer]["total"])
+            self.assertIn(
+                "duration_seconds", model_writer_summary[writer]["total"]
+            )
 
     def test_dataset_report_excludes_sft_run_fields(self) -> None:
         segments = _segments()
