@@ -63,7 +63,7 @@ Plans:
 **Plans**: 4 plans
 
 Plans:
-- [ ] 03-01: GCS layout planner and overwrite protection
+- [x] 03-01: GCS layout planner and overwrite protection
 - [ ] 03-02: Canonical and per-dataset artifact writers
 - [ ] 03-03: NeMo and Whisper model-input writers
 - [ ] 03-04: Gemini model-input writer, config generation, and artifact publication
