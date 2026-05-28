@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from dataset_split.leakage import validate_split_integrity
-from dataset_split.types import LabeledSegment
+from dataset_split.types import ExcludedRow, LabeledSegment
 
 MODEL_WRITER_SUMMARY_WRITERS = ("nemo", "whisper", "gemini")
 MODEL_WRITER_SUMMARY_SPLITS = ("train", "eval")
@@ -70,6 +71,8 @@ class DatasetVersionReport:
     artifact_inventory: Mapping[str, object]
     writer_warnings: Mapping[str, Sequence[Mapping[str, object]]]
     audio_materialized: bool
+    excluded_rows: Mapping[str, object]
+    source_key_failures: int
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -87,6 +90,8 @@ class DatasetVersionReport:
             "artifact_inventory": _json_ready(self.artifact_inventory),
             "writer_warnings": _json_ready(self.writer_warnings),
             "audio_materialized": self.audio_materialized,
+            "excluded_rows": _json_ready(self.excluded_rows),
+            "source_key_failures": self.source_key_failures,
         }
 
 
@@ -106,6 +111,27 @@ def build_dataset_version_metadata(
     )
 
 
+def serialize_excluded_rows(rows: Sequence[ExcludedRow]) -> str:
+    if not rows:
+        return ""
+    return (
+        "\n".join(
+            json.dumps(
+                {
+                    "dataset_name": row.dataset_name,
+                    "row_index": row.row_index,
+                    "audio_uri": row.audio_uri,
+                    "reason": row.reason,
+                },
+                sort_keys=True,
+                allow_nan=False,
+            )
+            for row in rows
+        )
+        + "\n"
+    )
+
+
 def build_dataset_version_report(
     dataset_version_id: str,
     resolved_config: Mapping[str, object],
@@ -116,6 +142,9 @@ def build_dataset_version_report(
     model_writer_summary: Mapping[str, object],
     writer_warnings: Mapping[str, Sequence[Mapping[str, object]]],
     audio_materialized: bool = True,
+    excluded_rows: Sequence[ExcludedRow] = (),
+    excluded_rows_artifact_uri: str | None = None,
+    source_key_failures: int = 0,
 ) -> DatasetVersionReport:
     segment_tuple = tuple(segments)
     validate_split_integrity(segment_tuple)
@@ -138,6 +167,11 @@ def build_dataset_version_report(
         artifact_inventory=_json_ready(artifact_inventory),
         writer_warnings=_writer_warnings(writer_warnings),
         audio_materialized=bool(audio_materialized),
+        excluded_rows=_excluded_rows_summary(
+            excluded_rows,
+            artifact_uri=excluded_rows_artifact_uri,
+        ),
+        source_key_failures=int(source_key_failures),
     )
 
 
@@ -180,6 +214,23 @@ def render_dataset_version_markdown(report: DatasetVersionReport) -> str:
             f"{audio_summary['command_summary_count']}",
         ]
     )
+
+    excluded_rows = report_dict["excluded_rows"]
+    lines.extend(
+        [
+            "",
+            "## Excluded Rows",
+            f"- count: {excluded_rows['count']}",
+        ]
+    )
+    if excluded_rows.get("artifact_uri"):
+        lines.append(f"- artifact: `{excluded_rows['artifact_uri']}`")
+    reasons = excluded_rows.get("reasons", {})
+    if reasons:
+        lines.append("- reasons:")
+        for reason, count in sorted(reasons.items()):
+            lines.append(f"  - {reason}: {count}")
+    lines.append(f"- source_key_failures: {report.source_key_failures}")
 
     lines.extend(
         [
@@ -251,6 +302,19 @@ def _dataset_summary(
                 ),
             },
         }
+    return summary
+
+
+def _excluded_rows_summary(
+    rows: Sequence[ExcludedRow], *, artifact_uri: str | None
+) -> dict[str, object]:
+    row_tuple = tuple(rows)
+    summary: dict[str, object] = {
+        "count": len(row_tuple),
+        "reasons": dict(Counter(row.reason for row in row_tuple)),
+    }
+    if artifact_uri:
+        summary["artifact_uri"] = artifact_uri
     return summary
 
 
