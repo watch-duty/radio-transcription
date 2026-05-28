@@ -82,7 +82,7 @@ Plans:
 Plans:
 - [x] 04-01-PLAN.md — Audio preparation boundary and binary upload helpers
 - [x] 04-02-PLAN.md — Publisher prechecked flow and model writer hard gates
-- [ ] 04-03-PLAN.md — Model-ready provenance validation and canonical manifests
+- [x] 04-03-PLAN.md — Model-ready provenance validation and canonical manifests
 - [ ] 04-04-PLAN.md — Audio transformation report integration
 
 ### Phase 5: CLI, Reports, Docs, And Verification
