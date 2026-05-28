@@ -56,7 +56,7 @@ Plans:
 **Requirements**: ARTF-01, ARTF-02, ARTF-03, ARTF-04, ARTF-05, ARTF-06, MODL-01, MODL-02, MODL-03, MODL-04, MODL-05, MODL-06, MODL-07, MODL-08, TEST-05, TEST-06
 **Success Criteria** (what must be TRUE):
   1. Dataset-version output paths are planned under `gs://wd-transcription-data/sft/{dataset_version_id}/`.
-  2. Existing dataset-version paths fail unless force is explicit.
+  2. Existing dataset-version paths fail without overwrite, resume, cleanup, or force.
   3. Canonical and per-dataset train/eval manifests are generated.
   4. NeMo, Whisper, and Gemini writers emit valid model-input shapes and config files.
   5. Existing benchmark/eval manifests are not modified.
@@ -66,7 +66,7 @@ Plans:
 - [ ] 03-01: GCS layout planner and overwrite protection
 - [ ] 03-02: Canonical and per-dataset artifact writers
 - [ ] 03-03: NeMo and Whisper model-input writers
-- [ ] 03-04: Gemini model-input writer and config generation
+- [ ] 03-04: Gemini model-input writer, config generation, and artifact publication
 
 ### Phase 4: Audio Derivation And Provenance
 **Goal**: Users can reuse standalone clips or derive clips from longer labeled audio while preserving minimal transformation and auditable provenance.
