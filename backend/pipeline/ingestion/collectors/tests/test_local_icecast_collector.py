@@ -91,11 +91,6 @@ class TestLocalIcecastCollector(unittest.IsolatedAsyncioTestCase):
                     "uuid4",
                     return_value=fixed_feed_id,
                 ),
-                patch.object(
-                    local_icecast_collector,
-                    "BCFY_FEEDS_URL_BASE",
-                    "https://partner.broadcastify.com/",
-                ),
             ):
                 await local_icecast_collector.run_local_capture()
 

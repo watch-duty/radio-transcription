@@ -142,7 +142,7 @@ container = EvaluationServiceContainer()
 _loop = asyncio.new_event_loop()
 
 
-@functions_framework.cloud_event
+@functions_framework.cloud_event  # type: ignore
 def evaluate_transcribed_audio_segment(
     cloud_event: cloudevent.CloudEvent,
 ) -> None:
