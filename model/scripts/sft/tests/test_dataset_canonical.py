@@ -230,6 +230,12 @@ class TestDatasetCanonical(unittest.TestCase):
         with self.assertRaises(SplitLeakageError):
             canonical_manifests(segments)
 
+    def test_canonical_build_rejects_non_finite_numbers(self) -> None:
+        with self.assertRaises(ValueError):
+            canonical_manifests(
+                (_segment("feed-a", duration=float("nan"), row_index=9),)
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

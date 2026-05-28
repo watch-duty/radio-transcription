@@ -17,6 +17,7 @@ if _COLABS_DIR not in sys.path:
 
 from dataset_split.artifacts import DatasetVersionExistsError  # noqa: E402
 from dataset_split.publisher import (  # noqa: E402
+    DatasetPublicationError,
     DatasetPublicationResult,
     publish_dataset_version_artifacts,
 )
@@ -257,6 +258,10 @@ class TestDatasetPublisher(unittest.TestCase):
             )
         )
         self.assertEqual(
+            result.artifact_inventory["audio_prefix"],
+            "gs://wd-transcription-data/sft/dv-001/audio/",
+        )
+        self.assertEqual(
             {upload["if_generation_match"] for upload in client.uploads},
             {0},
         )
@@ -321,6 +326,30 @@ class TestDatasetPublisher(unittest.TestCase):
             _publish(client)
 
         self.assertEqual(len(client.list_calls), 1)
+        self.assertEqual(client.uploads, [])
+
+    def test_publish_rejects_sft_run_fields_before_upload(self) -> None:
+        client = FakeStorageClient()
+
+        with self.assertRaisesRegex(
+            DatasetPublicationError,
+            "resolved_config.history.0.tuned_model_id",
+        ):
+            publish_dataset_version_artifacts(
+                client,
+                dataset_version_id="dv-001",
+                segments=_segments(),
+                resolved_config={
+                    "dataset_version_id": "dv-001",
+                    "history": [{"tuned_model_id": "must-not-publish"}],
+                },
+                leakage_validation={"passed": True},
+                balance_report={"score": 0.92, "components": {}},
+                system_prompt="You are a radio transcription model.",
+                user_prompt="Transcribe the emergency radio audio.",
+            )
+
+        self.assertEqual(client.list_calls, [])
         self.assertEqual(client.uploads, [])
 
 

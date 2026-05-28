@@ -256,6 +256,27 @@ class TestGeminiWriter(unittest.TestCase):
         self.assertNotIn("validationDatasetUri", config)
         self.assertEqual(config["baseModel"], "gemini-3.1-flash-lite")
 
+    def test_gemini_config_rejects_invalid_tuning_values(self) -> None:
+        invalid_kwargs = (
+            {"adapter_size": "INVALID"},
+            {"epoch_count": 0},
+            {"epoch_count": 101},
+            {"epoch_count": True},
+            {"learning_rate_multiplier": -1.0},
+            {"learning_rate_multiplier": float("nan")},
+            {"learning_rate_multiplier": True},
+        )
+
+        for kwargs in invalid_kwargs:
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(ModelWriterError):
+                    build_gemini_tuning_config(
+                        training_dataset_uri=(
+                            "gs://wd-transcription-data/sft/dv-001/model_inputs/gemini/train.jsonl"
+                        ),
+                        **kwargs,
+                    )
+
     def test_gemini_writer_rejects_unsupported_audio_mime(self) -> None:
         segment = _segment("feed-a", row_index=9, audio_suffix="wav")
 

@@ -15,6 +15,7 @@ if _COLABS_DIR not in sys.path:
     sys.path.insert(0, _COLABS_DIR)
 
 from dataset_split.artifacts import (  # noqa: E402
+    DatasetArtifactError,
     DatasetArtifactLayout,
     DatasetVersionExistsError,
     ensure_dataset_version_absent,
@@ -229,6 +230,34 @@ class TestDatasetArtifacts(unittest.TestCase):
                 "raw_row",
             ):
                 self.assertNotIn(forbidden, uri)
+
+    def test_layout_rejects_unsafe_path_components(self) -> None:
+        for dataset_version_id in ("../bad", "a/b", r"a\b", ".", ".."):
+            with self.subTest(dataset_version_id=dataset_version_id):
+                with self.assertRaises(DatasetArtifactError):
+                    DatasetArtifactLayout.for_dataset_version(
+                        dataset_version_id
+                    )
+
+        layout = DatasetArtifactLayout.for_dataset_version("dv-001")
+        for dataset_name in ("../calls", "calls/feed", r"calls\feed"):
+            with self.subTest(dataset_name=dataset_name):
+                with self.assertRaises(DatasetArtifactError):
+                    layout.per_dataset_manifest_uri(dataset_name, "train")
+        for writer in ("../nemo", "nemo/train", r"nemo\train"):
+            with self.subTest(writer=writer):
+                with self.assertRaises(DatasetArtifactError):
+                    layout.model_input_uri(writer, "train")
+        with self.assertRaises(DatasetArtifactError):
+            layout.model_input_uri("nemo", "train", "../json")
+
+    def test_layout_rejects_invalid_root_prefix(self) -> None:
+        for root_prefix in ("", "s3://bucket/sft", "gs:///sft", "gs://b/../sft"):
+            with self.subTest(root_prefix=root_prefix):
+                with self.assertRaises(DatasetArtifactError):
+                    DatasetArtifactLayout.for_dataset_version(
+                        "dv-001", root_prefix=root_prefix
+                    )
 
 
 if __name__ == "__main__":

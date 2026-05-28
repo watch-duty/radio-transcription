@@ -169,6 +169,28 @@ class TestValidateExample(unittest.TestCase):
         ex = build_example("gs://b/s.flac", "   ", "sys", "user")
         self.assertFalse(validate_example(ex))
 
+    def test_rejects_empty_system_instruction_text(self) -> None:
+        from common.sft import build_example, validate_example
+
+        ex = build_example("gs://b/s.flac", "copy", "   ", "user")
+        self.assertFalse(validate_example(ex))
+
+    def test_rejects_wrong_system_instruction_role(self) -> None:
+        from common.sft import build_example, validate_example
+
+        ex = build_example("gs://b/s.flac", "copy", "sys", "user")
+        ex["systemInstruction"]["role"] = "user"
+        self.assertFalse(validate_example(ex))
+
+    def test_rejects_missing_user_prompt_text(self) -> None:
+        from common.sft import build_example, validate_example
+
+        ex = build_example("gs://b/s.flac", "copy", "sys", "user")
+        ex["contents"][0]["parts"] = [
+            part for part in ex["contents"][0]["parts"] if "fileData" in part
+        ]
+        self.assertFalse(validate_example(ex))
+
     def test_rejects_contents_with_wrong_turn_count(self) -> None:
         from common.sft import build_example, validate_example
 
