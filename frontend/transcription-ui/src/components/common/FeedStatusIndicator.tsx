@@ -26,7 +26,16 @@ export function FeedStatusIndicator({
 
   const statusConfig = status ? FEED_STATUS_UI_CONFIG[status] : undefined;
   return (
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+    <Box
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1,
+        minWidth: 0,
+        overflow: 'hidden',
+        width: '100%',
+      }}
+    >
       <Badge
         color={statusConfig?.color ?? 'error'}
         variant="dot"
@@ -35,6 +44,7 @@ export function FeedStatusIndicator({
           px: 0.5,
           display: 'flex',
           alignItems: 'center',
+          flexShrink: 0,
         }}
       ></Badge>
       <Typography
@@ -43,6 +53,7 @@ export function FeedStatusIndicator({
           color: `${statusConfig?.color ?? 'error'}.main`,
           fontWeight: 600,
           textTransform: 'uppercase',
+          flexShrink: 0,
         }}
       >
         {statusConfig?.displayText ?? status}
@@ -51,7 +62,12 @@ export function FeedStatusIndicator({
         <Typography
           variant="caption"
           color="text.secondary"
-          sx={{ whiteSpace: 'nowrap' }}
+          sx={{
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            minWidth: 0,
+          }}
         >
           Last updated: {getRelativeTimeString(lastHeartbeat)}
         </Typography>

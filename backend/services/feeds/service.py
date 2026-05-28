@@ -4,7 +4,7 @@ import logging
 import uuid
 from typing import TYPE_CHECKING
 
-from .models import Feed, FeedCreate
+from .models import Feed, FeedCreate, FeedUpdate
 
 if TYPE_CHECKING:
     from backend.pipeline.storage.feed_store import FeedStore
@@ -31,6 +31,27 @@ class FeedService:
         )
         return Feed.model_validate(store_feed)
 
+    async def update_feed(
+        self, feed_id: str, feed_in: FeedUpdate
+    ) -> Feed | None:
+        """Updates an existing feed."""
+        try:
+            uid = uuid.UUID(feed_id)
+        except ValueError:
+            return None
+
+        store_feed = await self._store.update_feed(
+            feed_id=uid,
+            name=feed_in.name,
+            external_id=feed_in.external_id,
+            tags=[t.model_dump() for t in feed_in.tags]
+            if feed_in.tags
+            else None,
+        )
+        if not store_feed:
+            return None
+        return Feed.model_validate(store_feed)
+
     async def get_feed(self, feed_id: str) -> Feed | None:
         """Fetches a feed by ID."""
         try:
@@ -54,10 +75,21 @@ class FeedService:
             uid = uuid.UUID(feed_id)
         except ValueError:
             return False
-        return await self._store.deactivate_feed(uid)
+        success = await self._store.deactivate_feed(uid)
+        if success:
+            logger.info(
+                "Feed deactivated",
+                extra={
+                    "json_fields": {
+                        "event_type": "feed_deactivated",
+                        "feed_id": str(uid),
+                    },
+                },
+            )
+        return success
 
     async def reset_feed(self, feed_id: str) -> Feed | None:
-        """Reset a failed or quarantined feed to an unclaimed state.
+        """Reset a failed, quarantined, or deactivated feed to an unclaimed state.
 
         This clears the claim state, resets the failure count, clears
         `worker_id`, and updates `last_heartbeat`.
@@ -69,4 +101,13 @@ class FeedService:
         store_feed = await self._store.reset_feed(uid)
         if not store_feed:
             return None
+        logger.info(
+            "Feed reset",
+            extra={
+                "json_fields": {
+                    "event_type": "feed_reset",
+                    "feed_id": str(uid),
+                },
+            },
+        )
         return Feed.model_validate(store_feed)

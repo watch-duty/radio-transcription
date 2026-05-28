@@ -196,6 +196,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
                   display: 'flex',
                   justifyContent: 'center',
                   py: 1,
+                  gap: 1,
                 }}
               >
                 {isFetchingNewerTranscripts ? (

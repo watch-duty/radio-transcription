@@ -6,6 +6,7 @@ from unittest import TestCase, main, mock
 
 from cloudevents.http import CloudEvent
 
+from backend.pipeline.schema_types import EvaluationErrorType
 from backend.pipeline.schema_types.alert_notification_pb2 import (
     AlertNotification,
 )
@@ -107,6 +108,66 @@ class TestSendNotification(TestCase):
         t = expected_notification.tags.add()
         t.key = "env"
         t.value = "prod"
+
+        mock_request_handler.send_notification.assert_called_once_with(
+            expected_notification
+        )
+
+    @mock.patch("requests.get")
+    @mock.patch("backend.pipeline.notification.send_notification.deduplication")
+    @mock.patch(
+        "backend.pipeline.notification.send_notification.request_handler"
+    )
+    def test_send_notification_with_errors(
+        self,
+        mock_request_handler: mock.Mock,
+        mock_dedupe: mock.Mock,
+        mock_get: mock.Mock,
+    ) -> None:
+        mock_dedupe.process_notification.return_value = True
+
+        mock_response = mock.Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"tags": []}
+        mock_get.return_value = mock_response
+
+        evaluated_payload = EvaluatedTranscribedAudio(
+            transcript="This has errors!",
+            transmission_id="5678",
+            source_audio_uris=["gs://foo/bar.flac"],
+            feed_name="asdf",
+            external_id="ext-id",
+            errors=[EvaluationErrorType.ERROR_RULES_FETCH_FAILED],
+        )
+        evaluated_payload.start_audio_offset.seconds = 10
+        evaluated_payload.end_audio_offset.seconds = 20
+        evaluated_payload.start_timestamp.seconds = 1000
+        evaluated_payload.end_timestamp.seconds = 2000
+        raw_data = base64.b64encode(evaluated_payload.SerializeToString())
+        event_data = {"message": {"data": raw_data, "messageId": "5678"}}
+
+        attributes = {
+            "type": "google.cloud.pubsub.topic.v1.messagePublished",
+            "source": "//pubsub.googleapis.com/projects/my-project/topics/my-topic",
+        }
+
+        cloud_event = CloudEvent(attributes, event_data)
+        result = send_notification(cloud_event)
+        self.assertIsNone(result)
+
+        expected_notification = AlertNotification(
+            transcript="This has errors!",
+            transmission_id="5678",
+            source_audio_uris=["gs://foo/bar.flac"],
+            feed_name="asdf",
+            external_id="ext-id",
+            app_url="https://app.example.com/transcripts?feedId=&transmissionId=5678&timestamp=1000000",
+            evaluation_errors=[EvaluationErrorType.ERROR_RULES_FETCH_FAILED],
+        )
+        expected_notification.start_audio_offset.seconds = 10
+        expected_notification.end_audio_offset.seconds = 20
+        expected_notification.start_timestamp.seconds = 1000
+        expected_notification.end_timestamp.seconds = 2000
 
         mock_request_handler.send_notification.assert_called_once_with(
             expected_notification
