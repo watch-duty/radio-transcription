@@ -96,10 +96,30 @@ class TestNemoWriter(unittest.TestCase):
         self.assertNotEqual(row["audio_filepath"], segment.audio_uri)
         self.assertEqual(row["text"], segment.text)
         self.assertEqual(row["duration"], segment.duration)
-        self.assertEqual(row["offset"], segment.offset)
+        self.assertEqual(row["offset"], 0.0)
         self.assertEqual(row["example_id"], segment.example_id)
         self.assertEqual(row["segment_id"], segment.segment_id)
         self.assertEqual(result.rows_by_split["eval"], ())
+
+    def test_nemo_preserves_offset_when_audio_uri_is_original_source(
+        self,
+    ) -> None:
+        segment = _segment(
+            "feed-a",
+            row_index=2,
+            model_ready_audio_uri="gs://wd-source/feed-a/2.mp3",
+            offset=4.5,
+        )
+
+        result = build_nemo_inputs(
+            (segment,),
+            train_manifest_uri="gs://wd-transcription-data/sft/v1/model_inputs/nemo/train.jsonl",
+            eval_manifest_uri="gs://wd-transcription-data/sft/v1/model_inputs/nemo/eval.jsonl",
+        )
+
+        row = result.rows_by_split["train"][0]
+        self.assertEqual(row["audio_filepath"], segment.audio_uri)
+        self.assertEqual(row["offset"], 4.5)
 
     def test_nemo_requires_model_ready_audio_uri(self) -> None:
         segment = _segment(
@@ -177,12 +197,29 @@ class TestWhisperWriter(unittest.TestCase):
         self.assertEqual(
             row["preprocessing"],
             {
-                "recommendation": "preserve_original_uri_with_offset_duration",
+                "recommendation": "use_audio_uri_with_offset_relative_to_audio_uri",
                 "clip_derivation_phase": 4,
                 "recommended_max_duration_seconds": 30.0,
             },
         )
+        self.assertEqual(row["offset"], 0.0)
         self.assertEqual(result.warnings, ())
+
+    def test_whisper_preserves_offset_when_audio_uri_is_original_source(
+        self,
+    ) -> None:
+        segment = _segment(
+            "feed-a",
+            row_index=2,
+            model_ready_audio_uri="gs://wd-source/feed-a/2.mp3",
+            offset=4.5,
+        )
+
+        result = build_whisper_inputs((segment,))
+
+        row = result.rows_by_split["train"][0]
+        self.assertEqual(row["audio_uri"], segment.audio_uri)
+        self.assertEqual(row["offset"], 4.5)
 
     def test_whisper_over_30_seconds_is_warning_not_failure(self) -> None:
         segment = _segment("feed-a", duration=31.0, row_index=7)

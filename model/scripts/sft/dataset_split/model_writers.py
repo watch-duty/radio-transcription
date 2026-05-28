@@ -16,7 +16,7 @@ DEFAULT_GEMINI_REGION = "us-central1"
 _GEMINI_ADAPTER_SIZES = frozenset({"ONE", "FOUR", "EIGHT", "SIXTEEN"})
 _WHISPER_RECOMMENDED_MAX_DURATION_SECONDS = 30.0
 _WHISPER_PREPROCESSING = {
-    "recommendation": "preserve_original_uri_with_offset_duration",
+    "recommendation": "use_audio_uri_with_offset_relative_to_audio_uri",
     "clip_derivation_phase": 4,
     "recommended_max_duration_seconds": (
         _WHISPER_RECOMMENDED_MAX_DURATION_SECONDS
@@ -259,7 +259,7 @@ def _nemo_row(segment: LabeledSegment) -> dict[str, object]:
         "audio_filepath": model_ready_audio_uri,
         "text": segment.text,
         "duration": segment.duration,
-        "offset": segment.offset,
+        "offset": _offset_for_audio_uri(segment, model_ready_audio_uri),
         "example_id": segment.example_id,
         "segment_id": segment.segment_id,
     }
@@ -271,7 +271,7 @@ def _whisper_row(segment: LabeledSegment) -> dict[str, object]:
         "audio_uri": model_ready_audio_uri,
         "text": segment.text,
         "duration": segment.duration,
-        "offset": segment.offset,
+        "offset": _offset_for_audio_uri(segment, model_ready_audio_uri),
         "dataset_name": segment.dataset_name,
         "dataset_family": segment.dataset_family,
         "source_group": segment.source_group,
@@ -335,6 +335,12 @@ def _require_model_ready_audio_uri(segment: LabeledSegment) -> str:
             f"row_index={segment.row_index} missing model_ready_audio_uri"
         )
     return uri
+
+
+def _offset_for_audio_uri(segment: LabeledSegment, audio_uri: str) -> float:
+    if audio_uri != segment.audio_uri:
+        return 0.0
+    return float(segment.offset)
 
 
 def _require_adapter_size(value: str) -> str:
