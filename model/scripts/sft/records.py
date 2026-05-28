@@ -71,7 +71,10 @@ def write_config(
     }
     path = results_dir / round_id / "config.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(config_with_meta, indent=2, default=str))
+    path.write_text(
+        json.dumps(config_with_meta, indent=2, default=str),
+        encoding="utf-8",
+    )
 
 
 def write_wer_summary(
@@ -85,9 +88,12 @@ def write_wer_summary(
     out_dir = results_dir / round_id
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "wer_summary.json").write_text(
-        json.dumps(metrics, indent=2, default=str)
+        json.dumps(metrics, indent=2, default=str),
+        encoding="utf-8",
     )
-    (out_dir / "wer_summary.md").write_text(_render_wer_md(metrics))
+    (out_dir / "wer_summary.md").write_text(
+        _render_wer_md(metrics), encoding="utf-8"
+    )
 
 
 def _render_wer_md(metrics: dict[str, Any]) -> str:
@@ -238,7 +244,9 @@ def append_ledger(results_dir: Path, row: dict[str, Any]) -> None:
         "|----------|----------|------------|--------|----------|-----------|-------|---------|----------|\n"
     )
     if not ledger_path.exists():
-        ledger_path.write_text("# SFT Pipeline Run Ledger\n\n" + header)
+        ledger_path.write_text(
+            "# SFT Pipeline Run Ledger\n\n" + header, encoding="utf-8"
+        )
 
     def _f(v: float | None, pct: bool = True) -> str:
         if v is None:
@@ -264,5 +272,5 @@ def append_ledger(results_dir: Path, row: dict[str, Any]) -> None:
         f"| {row.get('git_sha', '—')} "
         f"| {row.get('timestamp', datetime.now(UTC).strftime('%Y-%m-%d'))} |\n"
     )
-    with open(ledger_path, "a") as f:
+    with ledger_path.open("a", encoding="utf-8") as f:
         f.write(md_row)
