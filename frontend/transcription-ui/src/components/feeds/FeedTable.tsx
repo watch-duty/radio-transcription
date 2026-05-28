@@ -298,6 +298,7 @@ export function FeedTable({
           role="columnheader"
           sx={{
             fontWeight: 'bold',
+            bgcolor: 'background.paper',
           }}
         >
           <TableSortLabel
@@ -317,6 +318,7 @@ export function FeedTable({
           fontWeight: 'bold',
           display: 'flex',
           alignItems: 'center',
+          bgcolor: 'background.paper',
         }}
       >
         {allowEdit ? '' : 'Links'}
