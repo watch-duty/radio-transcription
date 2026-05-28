@@ -4,11 +4,11 @@ from abc import ABC, abstractmethod
 from typing import TypedDict
 
 import cachetools
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util import Retry
 
 from backend.pipeline.common.auth_client import get_id_token
+from backend.pipeline.common.clients.session_helper import (
+    create_resilient_session,
+)
 from backend.pipeline.common.env import is_gcp_env
 from backend.pipeline.common.rules import models
 from backend.pipeline.schema_types import EvaluationErrorType
@@ -177,18 +177,12 @@ class RemoteTextEvaluator(BaseTextEvaluator):
             raise ValueError(msg)
 
         self.api_url = api_url.rstrip("/")
-        self.session = requests.Session()
-
-        # Configure automatic retries at the Session level
-        retries = Retry(
-            total=3,  # 1 initial attempt + 3 retries = 4 attempts total
-            backoff_factor=1,  # Sleeps for 1s, 2s, 4s... between attempts
+        self.session = create_resilient_session(
+            max_retries=3,
+            backoff_factor=1.0,
             status_forcelist=[429, 500, 502, 503, 504],
             raise_on_status=True,
         )
-        adapter = HTTPAdapter(max_retries=retries)
-        self.session.mount("http://", adapter)
-        self.session.mount("https://", adapter)
 
         self._cache_ttl_seconds = cache_ttl_seconds
         self._cache = cachetools.TTLCache(
