@@ -1,6 +1,6 @@
 import base64
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.exceptions import AlreadyExistsError
@@ -17,7 +17,7 @@ from backend.pipeline.schema_types import (
 from backend.services.audio_segments.models import AnnotationType
 
 
-class TestEvaluationEventProcessor(unittest.IsolatedAsyncioTestCase):
+class TestEvaluationEventProcessor(unittest.TestCase):
     def setUp(self) -> None:
         self.mock_service = MagicMock()
         self.mock_transcripts_client = MagicMock()
@@ -25,15 +25,14 @@ class TestEvaluationEventProcessor(unittest.IsolatedAsyncioTestCase):
         self.mock_raw_publisher = MagicMock()
         self.mock_publisher.get_publisher.return_value = self.mock_raw_publisher
         self.output_topic_path = "projects/test-project/topics/test-topic"
-        self.mock_audio_segment_store = MagicMock()
-        self.mock_audio_segment_store.add_annotation = AsyncMock()
+        self.mock_audio_segments_client = MagicMock()
 
         self.processor = EvaluationEventProcessor(
             evaluation_service=self.mock_service,
             transcripts_client=self.mock_transcripts_client,
             publisher=self.mock_publisher,
             output_topic_path=self.output_topic_path,
-            audio_segment_store=self.mock_audio_segment_store,
+            audio_segments_client=self.mock_audio_segments_client,
         )
 
         # Create a sample TranscribedAudio proto
@@ -56,7 +55,7 @@ class TestEvaluationEventProcessor(unittest.IsolatedAsyncioTestCase):
         mock_event.data = data
         return mock_event
 
-    async def test_process_event_flagged_publishes(self) -> None:
+    def test_process_event_flagged_publishes(self) -> None:
         # Setup
         self.evaluated_payload.evaluation_decisions.append("test_rule")
         self.mock_service.evaluate.return_value = self.evaluated_payload
@@ -75,15 +74,15 @@ class TestEvaluationEventProcessor(unittest.IsolatedAsyncioTestCase):
         self.mock_raw_publisher.publish.return_value = mock_future
 
         # Execute
-        await self.processor.process_event(cloud_event)
+        self.processor.process_event(cloud_event)
 
         # Verify
         self.mock_service.evaluate.assert_called_once()
         self.mock_transcripts_client.create_transcript.assert_called_once_with(
             self.evaluated_payload
         )
-        self.mock_audio_segment_store.add_annotation.assert_called_once_with(
-            segment_id="12345",
+        self.mock_audio_segments_client.add_audio_segment_annotation.assert_called_once_with(
+            audio_segment_id="12345",
             annotation_type=AnnotationType.EVALUATION,
             data={
                 "decisions": ["test_rule"],
@@ -97,7 +96,7 @@ class TestEvaluationEventProcessor(unittest.IsolatedAsyncioTestCase):
             traceparent="",
         )
 
-    async def test_process_event_not_flagged_skips_publish(self) -> None:
+    def test_process_event_not_flagged_skips_publish(self) -> None:
         # Setup
         # No decisions or errors
         self.mock_service.evaluate.return_value = self.evaluated_payload
@@ -110,15 +109,15 @@ class TestEvaluationEventProcessor(unittest.IsolatedAsyncioTestCase):
         )
 
         # Execute
-        await self.processor.process_event(cloud_event)
+        self.processor.process_event(cloud_event)
 
         # Verify
         self.mock_service.evaluate.assert_called_once()
         self.mock_transcripts_client.create_transcript.assert_called_once_with(
             self.evaluated_payload
         )
-        self.mock_audio_segment_store.add_annotation.assert_called_once_with(
-            segment_id="12345",
+        self.mock_audio_segments_client.add_audio_segment_annotation.assert_called_once_with(
+            audio_segment_id="12345",
             annotation_type=AnnotationType.EVALUATION,
             data={
                 "decisions": [],
@@ -127,7 +126,7 @@ class TestEvaluationEventProcessor(unittest.IsolatedAsyncioTestCase):
         )
         self.mock_raw_publisher.publish.assert_not_called()
 
-    async def test_process_event_has_errors_publishes(self) -> None:
+    def test_process_event_has_errors_publishes(self) -> None:
         # Setup
         self.evaluated_payload.errors.append(
             EvaluationErrorType.ERROR_FEED_ID_MISSING
@@ -146,24 +145,24 @@ class TestEvaluationEventProcessor(unittest.IsolatedAsyncioTestCase):
         self.mock_raw_publisher.publish.return_value = mock_future
 
         # Execute
-        await self.processor.process_event(cloud_event)
+        self.processor.process_event(cloud_event)
 
         # Verify
         self.mock_raw_publisher.publish.assert_called_once()
 
-    async def test_process_event_parse_failure_skips(self) -> None:
+    def test_process_event_parse_failure_skips(self) -> None:
         # Setup
         # Missing "data" field
         cloud_event = self._create_mock_event({"message": {}})
 
         # Execute
-        await self.processor.process_event(cloud_event)
+        self.processor.process_event(cloud_event)
 
         # Verify
         self.mock_service.evaluate.assert_not_called()
         self.mock_raw_publisher.publish.assert_not_called()
 
-    async def test_process_event_evaluation_none_skips(self) -> None:
+    def test_process_event_evaluation_none_skips(self) -> None:
         # Setup
         self.mock_service.evaluate.return_value = None
 
@@ -175,13 +174,13 @@ class TestEvaluationEventProcessor(unittest.IsolatedAsyncioTestCase):
         )
 
         # Execute
-        await self.processor.process_event(cloud_event)
+        self.processor.process_event(cloud_event)
 
         # Verify
         self.mock_service.evaluate.assert_called_once()
         self.mock_raw_publisher.publish.assert_not_called()
 
-    async def test_process_event_create_transcript_exists_continues(
+    def test_process_event_create_transcript_exists_continues(
         self,
     ) -> None:
         # Setup
@@ -208,7 +207,7 @@ class TestEvaluationEventProcessor(unittest.IsolatedAsyncioTestCase):
         self.mock_raw_publisher.publish.return_value = mock_future
 
         # Execute
-        await self.processor.process_event(cloud_event)
+        self.processor.process_event(cloud_event)
 
         # Verify
         self.mock_service.evaluate.assert_called_once()
@@ -224,7 +223,7 @@ class TestEvaluationEventProcessor(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch("backend.pipeline.evaluation.processor.with_tracer_context")
-    async def test_process_event_uses_traceparent(
+    def test_process_event_uses_traceparent(
         self, mock_with_tracer_context
     ) -> None:
         """Verifies that process_event extracts traceparent and uses with_tracer_context."""
@@ -247,7 +246,7 @@ class TestEvaluationEventProcessor(unittest.IsolatedAsyncioTestCase):
         mock_with_tracer_context.return_value = mock_cm
 
         # Execute
-        await self.processor.process_event(cloud_event)
+        self.processor.process_event(cloud_event)
 
         # Verify
         mock_with_tracer_context.assert_called_once_with(
@@ -257,7 +256,7 @@ class TestEvaluationEventProcessor(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch("backend.pipeline.evaluation.processor.with_tracer_context")
-    async def test_process_event_missing_traceparent_uses_empty_string(
+    def test_process_event_missing_traceparent_uses_empty_string(
         self, mock_with_tracer_context
     ) -> None:
         """Verifies that process_event uses empty string when traceparent is missing."""
@@ -274,19 +273,19 @@ class TestEvaluationEventProcessor(unittest.IsolatedAsyncioTestCase):
         mock_with_tracer_context.return_value = mock_cm
 
         # Execute
-        await self.processor.process_event(cloud_event)
+        self.processor.process_event(cloud_event)
 
         # Verify
         mock_with_tracer_context.assert_called_once_with(
             "", "evaluate_rules", "backend.pipeline.evaluation.processor"
         )
 
-    async def test_process_event_add_annotation_failure_continues(self) -> None:
+    def test_process_event_add_annotation_failure_continues(self) -> None:
         # Setup
         self.evaluated_payload.evaluation_decisions.append("test_rule")
         self.mock_service.evaluate.return_value = self.evaluated_payload
 
-        self.mock_audio_segment_store.add_annotation.side_effect = Exception(
+        self.mock_audio_segments_client.add_audio_segment_annotation.side_effect = Exception(
             "DB Error"
         )
 
@@ -302,7 +301,7 @@ class TestEvaluationEventProcessor(unittest.IsolatedAsyncioTestCase):
         self.mock_raw_publisher.publish.return_value = mock_future
 
         # Execute
-        await self.processor.process_event(cloud_event)
+        self.processor.process_event(cloud_event)
 
         # Verify
         self.mock_service.evaluate.assert_called_once()

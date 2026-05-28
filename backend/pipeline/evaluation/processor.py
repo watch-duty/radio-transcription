@@ -17,12 +17,14 @@ from backend.services.audio_segments.models import AnnotationType
 if TYPE_CHECKING:
     from cloudevents.http import event as cloudevent
 
+    from backend.pipeline.common.clients.audio_segments_client import (
+        AudioSegmentsClient,
+    )
     from backend.pipeline.common.clients.pubsub_client import PubSubClient
     from backend.pipeline.common.clients.transcripts_client import (
         TranscriptsClient,
     )
     from backend.pipeline.evaluation.service import EvaluationService
-    from backend.pipeline.storage.audio_segment_store import AudioSegmentStore
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +41,7 @@ class EvaluationEventProcessor:
         transcripts_client: TranscriptsClient,
         publisher: PubSubClient,
         output_topic_path: str,
-        audio_segment_store: AudioSegmentStore,
+        audio_segments_client: AudioSegmentsClient,
     ) -> None:
         """
         Initializes the EvaluationEventProcessor.
@@ -49,15 +51,15 @@ class EvaluationEventProcessor:
             transcripts_client: Client to write to Transcripts API.
             publisher: Pub/Sub publisher client.
             output_topic_path: Topic path to publish alerts to.
-            audio_segment_store: Store for audio segments and annotations.
+            audio_segments_client: Client for the Audio Segments API.
         """
         self.evaluation_service = evaluation_service
         self.transcripts_client = transcripts_client
         self.publisher = publisher
         self.output_topic_path = output_topic_path
-        self.audio_segment_store = audio_segment_store
+        self.audio_segments_client = audio_segments_client
 
-    async def process_event(self, cloud_event: cloudevent.CloudEvent) -> None:
+    def process_event(self, cloud_event: cloudevent.CloudEvent) -> None:
         """
         Processes a CloudEvent containing transcribed audio.
 
@@ -120,8 +122,8 @@ class EvaluationEventProcessor:
                     "decisions": list(evaluated_payload.evaluation_decisions),
                     "errors": list(evaluated_payload.errors),
                 }
-                await self.audio_segment_store.add_annotation(
-                    segment_id=new_audio.transmission_id,
+                self.audio_segments_client.add_audio_segment_annotation(
+                    audio_segment_id=new_audio.transmission_id,
                     annotation_type=AnnotationType.EVALUATION,
                     data=annotation_data,
                 )
