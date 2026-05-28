@@ -99,7 +99,7 @@ Plans:
 
 Plans:
 **Wave 1**
-- [ ] 05-01: Dry-run and generation CLI commands
+- [x] 05-01: Dry-run and generation CLI commands
 - [ ] 05-02: Report bundle and failure UX
 
 **Wave 2** *(blocked on Wave 1 completion)*
