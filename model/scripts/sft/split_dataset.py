@@ -97,7 +97,9 @@ def _generate(args: argparse.Namespace) -> int:
     reader = _make_text_reader()
     storage_client = _make_storage_client()
     config = _load_config(args.config_uri, reader)
-    _, split_result, leakage_validation = _prepare_split(config, reader)
+    validation_result, split_result, leakage_validation = _prepare_split(
+        config, reader
+    )
     result = publish_dataset_version_artifacts(
         storage_client,
         dataset_version_id=config.dataset_version_id,
@@ -107,6 +109,7 @@ def _generate(args: argparse.Namespace) -> int:
         balance_report=split_result.balance_report or {},
         system_prompt=PIPELINE_SYSTEM_PROMPT,
         user_prompt=PIPELINE_USER_PROMPT,
+        excluded_rows=validation_result.excluded,
         root_prefix=config.output_gcs_prefix,
     )
     _print_publication_result(result)

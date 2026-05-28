@@ -21,11 +21,16 @@ from dataset_split.model_writers import (
     build_whisper_inputs,
     summarize_model_writer_result,
 )
-from dataset_split.publisher import _artifact_inventory, _planned_artifacts
+from dataset_split.publisher import (
+    _artifact_inventory,
+    _excluded_rows_uri,
+    _planned_artifacts,
+)
 from dataset_split.reports import (
     build_dataset_version_metadata,
     build_dataset_version_report,
     render_dataset_version_markdown,
+    serialize_excluded_rows,
 )
 from dataset_split.types import ExcludedRow, LabeledSegment
 
@@ -110,6 +115,9 @@ def build_dry_run_artifacts(
         model_writer_summary,
         writer_warnings,
         audio_materialized=False,
+        excluded_rows=excluded_rows,
+        excluded_rows_artifact_uri=_excluded_rows_uri(layout),
+        source_key_failures=0,
     )
     planned_artifacts = _planned_artifacts(
         layout=layout,
@@ -122,6 +130,7 @@ def build_dry_run_artifacts(
         metadata=metadata.to_dict(),
         report=report.to_dict(),
         markdown=render_dataset_version_markdown(report),
+        excluded_rows_jsonl=serialize_excluded_rows(excluded_rows),
     )
 
     output_dir.mkdir(parents=True)

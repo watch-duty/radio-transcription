@@ -30,8 +30,9 @@ from dataset_split.reports import (
     build_dataset_version_metadata,
     build_dataset_version_report,
     render_dataset_version_markdown,
+    serialize_excluded_rows,
 )
-from dataset_split.types import LabeledSegment
+from dataset_split.types import ExcludedRow, LabeledSegment
 
 _JSON = "application/json"
 _JSONL = "application/x-ndjson"
@@ -87,6 +88,7 @@ def publish_dataset_version_artifacts(
     balance_report: dict[str, object],
     system_prompt: str,
     user_prompt: str,
+    excluded_rows: tuple[ExcludedRow, ...] = (),
     root_prefix: str = DATASET_VERSION_ROOT,
     gemini_base_model: str = DEFAULT_GEMINI_BASE_MODEL,
     gemini_region: str = DEFAULT_GEMINI_REGION,
@@ -110,6 +112,7 @@ def publish_dataset_version_artifacts(
                 balance_report=balance_report,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
+                excluded_rows=excluded_rows,
                 root_prefix=root_prefix,
                 gemini_base_model=gemini_base_model,
                 gemini_region=gemini_region,
@@ -186,6 +189,10 @@ def publish_dataset_version_artifacts(
         artifact_inventory,
         model_writer_summary,
         writer_warnings,
+        excluded_rows=excluded_rows,
+        excluded_rows_artifact_uri=_excluded_rows_uri(layout),
+        source_key_failures=0,
+        audio_materialized=True,
     )
     planned = _planned_artifacts(
         layout=layout,
@@ -198,6 +205,7 @@ def publish_dataset_version_artifacts(
         metadata=metadata.to_dict(),
         report=report.to_dict(),
         markdown=render_dataset_version_markdown(report),
+        excluded_rows_jsonl=serialize_excluded_rows(excluded_rows),
     )
 
     uploaded_audio_uris = tuple(audio_uploader(storage_client, audio_result))
@@ -276,6 +284,7 @@ def _artifact_inventory(
         "reports": {
             "json": layout.reports_json_uri,
             "markdown": layout.reports_markdown_uri,
+            "excluded_rows": _excluded_rows_uri(layout),
         },
         "audio_prefix": layout.audio_prefix_uri,
         "audio_action_prefixes": {
@@ -311,6 +320,7 @@ def _planned_artifacts(
     metadata: Mapping[str, object],
     report: Mapping[str, object],
     markdown: str,
+    excluded_rows_jsonl: str,
 ) -> tuple[_PlannedArtifact, ...]:
     planned = [
         _PlannedArtifact(
@@ -414,9 +424,19 @@ def _planned_artifacts(
                 markdown,
                 _MARKDOWN,
             ),
+            _PlannedArtifact(
+                "reports/excluded_rows",
+                _excluded_rows_uri(layout),
+                excluded_rows_jsonl,
+                _JSONL,
+            ),
         ]
     )
     return tuple(planned)
+
+
+def _excluded_rows_uri(layout: DatasetArtifactLayout) -> str:
+    return f"{layout.root_uri}reports/excluded_rows.jsonl"
 
 
 def _json_dump(value: object) -> str:
