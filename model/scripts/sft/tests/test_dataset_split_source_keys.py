@@ -8,11 +8,24 @@ _SFT_DIR = str(Path(__file__).resolve().parent.parent)
 if _SFT_DIR not in sys.path:
     sys.path.insert(0, _SFT_DIR)
 
-from dataset_split.source_keys import resolve_source_group  # noqa: E402
+from dataset_split.source_keys import (  # noqa: E402
+    find_ambiguous_echo_names,
+    resolve_source_group,
+)
 from dataset_split.types import SourceIdentityError  # noqa: E402
 
 
 class TestDatasetVersionSourceKeys(unittest.TestCase):
+    def test_find_ambiguous_echo_names_from_registry(self) -> None:
+        ambiguous_names = find_ambiguous_echo_names(
+            {
+                "Tehama_Sheriff_Disp": {"ca_chico", "ca_red_bluff"},
+                "Wahkiakum_Fire_Disp": {"wa_cathlamet"},
+            }
+        )
+
+        self.assertEqual(ambiguous_names, frozenset({"Tehama_Sheriff_Disp"}))
+
     def test_bcfy_calls_explicit_group_id(self) -> None:
         source_group = resolve_source_group(
             {"groupId": 12345},
@@ -30,6 +43,35 @@ class TestDatasetVersionSourceKeys(unittest.TestCase):
         )
 
         self.assertEqual(source_group, "bcfy_calls:67890")
+
+    def test_bcfy_calls_gcs_filename_fallback(self) -> None:
+        source_group = resolve_source_group(
+            {
+                "audio_filepath": (
+                    "gs://wd-transcription-data/audio/broadcastify/calls/"
+                    "eval/1775174650-13004.wav"
+                )
+            },
+            dataset_family="bcfy_calls",
+            source_strategy="bcfy_calls",
+        )
+
+        self.assertEqual(source_group, "bcfy_calls:13004")
+
+    def test_bcfy_calls_segmented_gcs_filename_fallback(self) -> None:
+        source_group = resolve_source_group(
+            {
+                "audio_filepath": (
+                    "gs://wd-transcription-data/segmented_audio/"
+                    "broadcastify/calls/eval/audio_raw/1775174650-13004/"
+                    "1775174650-13004__seg000.flac"
+                )
+            },
+            dataset_family="bcfy_calls",
+            source_strategy="bcfy_calls",
+        )
+
+        self.assertEqual(source_group, "bcfy_calls:13004")
 
     def test_bcfy_calls_missing_group_fails(self) -> None:
         with self.assertRaisesRegex(SourceIdentityError, "bcfy_calls"):
@@ -66,6 +108,20 @@ class TestDatasetVersionSourceKeys(unittest.TestCase):
                 source_strategy="bcfy_feeds",
             )
 
+    def test_bcfy_feeds_gcs_filename_fallback(self) -> None:
+        source_group = resolve_source_group(
+            {
+                "audio_filepath": (
+                    "gs://wd-transcription-data/audio/"
+                    "202510290856-295286-45527.wav"
+                )
+            },
+            dataset_family="bcfy_feeds",
+            source_strategy="bcfy_feeds",
+        )
+
+        self.assertEqual(source_group, "bcfy_feeds:45527")
+
     def test_bcfy_feeds_missing_feed_fails(self) -> None:
         with self.assertRaisesRegex(SourceIdentityError, "bcfy_feeds"):
             resolve_source_group(
@@ -81,7 +137,18 @@ class TestDatasetVersionSourceKeys(unittest.TestCase):
             source_strategy="echo",
         )
 
-        self.assertEqual(source_group, "echo:ca_chico/Tehama_Sheriff_Disp")
+        self.assertEqual(source_group, "echo:Tehama_Sheriff_Disp")
+
+    def test_echo_unique_explicit_area_and_name_keeps_area(self) -> None:
+        source_group = resolve_source_group(
+            {"area_code": "wa_cathlamet", "echo_name": "Wahkiakum_Fire_Disp"},
+            dataset_family="echo",
+            source_strategy="echo",
+            echo_registry={"Wahkiakum_Fire_Disp": {"wa_cathlamet"}},
+            ambiguous_echo_names=frozenset(),
+        )
+
+        self.assertEqual(source_group, "echo:wa_cathlamet/Wahkiakum_Fire_Disp")
 
     def test_echo_uri_fallback(self) -> None:
         source_group = resolve_source_group(
@@ -96,7 +163,40 @@ class TestDatasetVersionSourceKeys(unittest.TestCase):
             source_strategy="echo",
         )
 
-        self.assertEqual(source_group, "echo:ca_chico/Tehama_Sheriff_Disp")
+        self.assertEqual(source_group, "echo:Tehama_Sheriff_Disp")
+
+    def test_echo_gcs_flat_filename_uses_echo_name(self) -> None:
+        source_group = resolve_source_group(
+            {
+                "audio_filepath": (
+                    "gs://wd-transcription-data/audio/echo/eval/"
+                    "Wahkiakum_Fire_Disp_20250326_07.wav"
+                )
+            },
+            dataset_family="echo",
+            source_strategy="echo",
+            echo_registry={"Wahkiakum_Fire_Disp": {"wa_cathlamet"}},
+        )
+
+        self.assertEqual(source_group, "echo:wa_cathlamet/Wahkiakum_Fire_Disp")
+
+    def test_echo_gcs_flat_filename_ambiguous_registry_uses_echo_name(
+        self,
+    ) -> None:
+        source_group = resolve_source_group(
+            {
+                "audio_filepath": (
+                    "gs://wd-transcription-data/audio/echo/eval/"
+                    "Lake_Co_Red_20250326_07.wav"
+                )
+            },
+            dataset_family="echo",
+            source_strategy="echo",
+            echo_registry={"Lake_Co_Red": {"ca_petaluma", "ca_willits"}},
+            ambiguous_echo_names=frozenset({"Lake_Co_Red"}),
+        )
+
+        self.assertEqual(source_group, "echo:Lake_Co_Red")
 
     def test_echo_source_map_fallback(self) -> None:
         uri = "gs://bucket/echo/file.mp3"
@@ -113,7 +213,7 @@ class TestDatasetVersionSourceKeys(unittest.TestCase):
         )
 
         self.assertEqual(
-            source_group, "echo:ca_red_bluff/Tehama_Sheriff_Disp"
+            source_group, "echo:Tehama_Sheriff_Disp"
         )
 
     def test_echo_source_map_uses_audio_uri_field(self) -> None:
@@ -131,24 +231,26 @@ class TestDatasetVersionSourceKeys(unittest.TestCase):
         )
 
         self.assertEqual(
-            source_group, "echo:ca_red_bluff/Tehama_Sheriff_Disp"
+            source_group, "echo:Tehama_Sheriff_Disp"
         )
 
-    def test_echo_ambiguous_name_without_area_fails(self) -> None:
-        with self.assertRaisesRegex(SourceIdentityError, "ambiguous echo_name"):
-            resolve_source_group(
-                {"echo_name": "Tehama_Sheriff_Disp"},
-                dataset_family="echo",
-                source_strategy="echo",
-                echo_registry={
-                    "Tehama_Sheriff_Disp": {"ca_chico", "ca_red_bluff"}
-                },
-            )
+    def test_echo_ambiguous_name_without_area_uses_echo_name(self) -> None:
+        source_group = resolve_source_group(
+            {"echo_name": "Tehama_Sheriff_Disp"},
+            dataset_family="echo",
+            source_strategy="echo",
+            echo_registry={
+                "Tehama_Sheriff_Disp": {"ca_chico", "ca_red_bluff"}
+            },
+            ambiguous_echo_names=frozenset({"Tehama_Sheriff_Disp"}),
+        )
+
+        self.assertEqual(source_group, "echo:Tehama_Sheriff_Disp")
 
     def test_echo_missing_identity_fails(self) -> None:
         with self.assertRaisesRegex(SourceIdentityError, "echo"):
             resolve_source_group(
-                {"echo_name": "Unknown"},
+                {"audio_filepath": "gs://bucket/echo/unknown.wav"},
                 dataset_family="echo",
                 source_strategy="echo",
                 echo_registry={},
@@ -183,6 +285,20 @@ class TestDatasetVersionSourceKeys(unittest.TestCase):
         self.assertEqual(
             source_group, "fire_notifications:COLORADO/CO-BOULDER-DISP"
         )
+
+    def test_fire_notifications_gcs_filename_fallback(self) -> None:
+        source_group = resolve_source_group(
+            {
+                "audio_filepath": (
+                    "gs://wd-transcription-data/audio/"
+                    "FT-BEND-CMD-1_202026-04-13_2004-01-54.wav"
+                )
+            },
+            dataset_family="fire_notifications",
+            source_strategy="fire_notifications",
+        )
+
+        self.assertEqual(source_group, "fire_notifications:FT-BEND-CMD-1")
 
     def test_fire_notifications_missing_stream_fails(self) -> None:
         with self.assertRaisesRegex(SourceIdentityError, "fire_notifications"):

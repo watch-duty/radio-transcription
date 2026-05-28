@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Set
 
 from dataset_split.config import InputDatasetConfig
 from dataset_split.source_keys import resolve_source_group
@@ -32,6 +32,7 @@ def normalize_manifest_rows(
     rows: Iterable[Mapping[str, object]],
     *,
     echo_registry: Mapping[str, set[str]] | None = None,
+    ambiguous_echo_names: Set[str] | None = None,
     source_map: Mapping[str, Mapping[str, str]] | None = None,
 ) -> NormalizationResult:
     segments: list[LabeledSegment] = []
@@ -63,6 +64,7 @@ def normalize_manifest_rows(
             dataset_family=dataset.family,
             source_strategy=dataset.source_strategy,
             echo_registry=echo_registry,
+            ambiguous_echo_names=ambiguous_echo_names,
             source_map=source_map,
         )
 

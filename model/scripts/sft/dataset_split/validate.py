@@ -6,6 +6,10 @@ from dataclasses import dataclass
 from dataset_split.config import DatasetVersionConfig
 from dataset_split.gcs_io import GcsInputError, TextReader, read_json_or_jsonl
 from dataset_split.normalize import normalize_manifest_rows
+from dataset_split.source_keys import (
+    find_ambiguous_echo_names,
+    load_echo_registry,
+)
 from dataset_split.types import (
     ExcludedRow,
     LabeledSegment,
@@ -63,6 +67,14 @@ def load_and_validate_datasets(
     segments: list[LabeledSegment] = []
     excluded_rows: list[ExcludedRow] = []
     summaries: list[DatasetValidationSummary] = []
+    resolved_echo_registry = echo_registry
+    ambiguous_echo_names = None
+
+    if any(dataset.source_strategy == "echo" for dataset in config.datasets):
+        resolved_echo_registry = (
+            echo_registry if echo_registry is not None else load_echo_registry()
+        )
+        ambiguous_echo_names = find_ambiguous_echo_names(resolved_echo_registry)
 
     for dataset in config.datasets:
         try:
@@ -71,7 +83,8 @@ def load_and_validate_datasets(
             result = normalize_manifest_rows(
                 dataset,
                 rows,
-                echo_registry=echo_registry,
+                echo_registry=resolved_echo_registry,
+                ambiguous_echo_names=ambiguous_echo_names,
                 source_map=source_map,
             )
         except (GcsInputError, RowValidationError, SourceIdentityError) as exc:

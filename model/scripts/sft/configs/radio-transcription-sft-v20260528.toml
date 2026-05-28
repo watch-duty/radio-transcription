@@ -1,0 +1,28 @@
+dataset_version_id = "radio-transcription-sft-v20260528"
+train_ratio = 0.8
+eval_ratio = 0.2
+output_gcs_prefix = "gs://wd-transcription-data/sft/dataset_versions"
+
+[[datasets]]
+name = "bcfy_calls"
+family = "bcfy_calls"
+manifest_uri = "gs://wd-transcription-data/manifests/broadcastify/calls/eval/manifest.json"
+source_strategy = "bcfy_calls"
+
+[[datasets]]
+name = "bcfy_feeds"
+family = "bcfy_feeds"
+manifest_uri = "gs://wd-transcription-data/manifests/broadcastify/feeds/eval/manifest.json"
+source_strategy = "bcfy_feeds"
+
+[[datasets]]
+name = "echo"
+family = "echo"
+manifest_uri = "gs://wd-transcription-data/manifests/echo/eval/manifest.json"
+source_strategy = "echo"
+
+[[datasets]]
+name = "fire_notifications"
+family = "fire_notifications"
+manifest_uri = "gs://wd-transcription-data/manifests/fire_notifications/eval/manifest.json"
+source_strategy = "fire_notifications"

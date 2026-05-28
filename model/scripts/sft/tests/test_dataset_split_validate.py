@@ -19,6 +19,7 @@ from dataset_split.config import (  # noqa: E402
 )
 from dataset_split.validate import (  # noqa: E402
     DatasetValidationError,
+    load_and_validate_datasets,
     load_source_map,
     validate_dataset,
 )
@@ -134,6 +135,33 @@ class TestDatasetVersionValidate(unittest.TestCase):
         summaries = validate_dataset(config, reader=reader)
 
         self.assertEqual(summaries[0].valid_rows, 1)
+
+    def test_validation_precomputes_echo_ambiguity_policy(self) -> None:
+        config = _config(_dataset("echo", "echo", "gs://manifests/echo.jsonl"))
+        reader = FakeTextReader(
+            {
+                "gs://manifests/echo.jsonl": (
+                    '{"audio_filepath": "gs://audio/Lake_Co_Red_20250326_07.wav", '
+                    '"text": "alpha"}\n'
+                    '{"audio_filepath": "gs://audio/Wahkiakum_Fire_Disp_20250326_07.wav", '
+                    '"text": "bravo"}\n'
+                )
+            }
+        )
+
+        result = load_and_validate_datasets(
+            config,
+            reader=reader,
+            echo_registry={
+                "Lake_Co_Red": {"ca_petaluma", "ca_willits"},
+                "Wahkiakum_Fire_Disp": {"wa_cathlamet"},
+            },
+        )
+
+        self.assertEqual(
+            [segment.source_group for segment in result.segments],
+            ["echo:Lake_Co_Red", "echo:wa_cathlamet/Wahkiakum_Fire_Disp"],
+        )
 
     def test_source_identity_error_includes_dataset_manifest_and_strategy(
         self,
