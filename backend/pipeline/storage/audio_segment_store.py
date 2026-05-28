@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import datetime
 import json
 import uuid
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    import datetime
+
     import asyncpg
 
 from pydantic import TypeAdapter
@@ -82,13 +83,14 @@ class AudioSegmentStore:
         classification: AudioClassification,
         start_timestamp: datetime.datetime,
         end_timestamp: datetime.datetime,
-        missing_prior_context: bool,
-        missing_post_context: bool,
         source_audio_uris: list[str],
         canonical_audio_uri: str | None = None,
         start_audio_offset: datetime.timedelta | None = None,
         end_audio_offset: datetime.timedelta | None = None,
         playback_audio_uri: str | None = None,
+        *,
+        missing_prior_context: bool,
+        missing_post_context: bool,
     ) -> AudioSegment:
         """Create a new audio segment."""
         try:

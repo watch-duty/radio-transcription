@@ -111,25 +111,27 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             end_timestamp=datetime.datetime(
                 2026, 1, 1, 0, 1, tzinfo=datetime.UTC
             ),
-            missing_prior_context=False,
-            missing_post_context=False,
             source_audio_uris=["gs://bucket/audio1.ogg"],
             canonical_audio_uri="gs://bucket/canonical.ogg",
             start_audio_offset=datetime.timedelta(seconds=5),
             end_audio_offset=datetime.timedelta(seconds=10),
             playback_audio_uri=None,
+            missing_prior_context=False,
+            missing_post_context=False,
         )
 
         self.assertEqual(result.id, str(_SEGMENT_ID))
         self.assertEqual(result.feed_id, str(_FEED_ID))
+        missing_prior_context = False
+        missing_post_context = False
         self.pool.fetchrow.assert_called_once_with(
             audio_segment_queries.CREATE_AUDIO_SEGMENT_SQL,
             _FEED_ID,
             AudioClassification.SPEECH_DETECTED,
             datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
             datetime.datetime(2026, 1, 1, 0, 1, tzinfo=datetime.UTC),
-            False,
-            False,
+            missing_prior_context,
+            missing_post_context,
             ["gs://bucket/audio1.ogg"],
             "gs://bucket/canonical.ogg",
             datetime.timedelta(seconds=5),
@@ -148,9 +150,9 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
                 end_timestamp=datetime.datetime(
                     2026, 1, 1, 0, 1, tzinfo=datetime.UTC
                 ),
+                source_audio_uris=["gs://bucket/audio1.ogg"],
                 missing_prior_context=False,
                 missing_post_context=False,
-                source_audio_uris=["gs://bucket/audio1.ogg"],
             )
         self.assertIn("Invalid feed_id UUID", str(cm.exception))
 
