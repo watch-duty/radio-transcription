@@ -45,13 +45,28 @@ def _segment(
     raw_row: dict[str, object] | None = None,
 ) -> LabeledSegment:
     audio_uri = f"gs://bucket/{dataset_name}/{source_group}/{row_index}.flac"
+    original_uri = original_audio_uri or audio_uri
+    ready_uri = (
+        model_ready_audio_uri
+        if model_ready_audio_uri is not None
+        else f"gs://ready/{dataset_name}/{source_group}/{row_index}.flac"
+    )
+    metadata = transformation_metadata or _transformation_metadata(
+        action="copied",
+        original_audio_uri=original_uri,
+        source_audio_uri=audio_uri,
+        offset=offset,
+        duration=duration,
+        split=split,
+        source_group=source_group,
+    )
     return LabeledSegment(
         dataset_name=dataset_name,
         dataset_family=dataset_family,
         source_strategy=source_strategy,
         source_group=source_group,
         audio_uri=audio_uri,
-        original_audio_uri=original_audio_uri or audio_uri,
+        original_audio_uri=original_uri,
         text=text,
         row_index=row_index,
         offset=offset,
@@ -60,11 +75,41 @@ def _segment(
         example_id=example_id or f"example-{row_index}",
         segment_id=segment_id or f"segment-{row_index}",
         split=split,
-        model_ready_audio_uri=model_ready_audio_uri,
+        model_ready_audio_uri=ready_uri,
         derived_audio_uri=derived_audio_uri,
-        transformation_metadata=transformation_metadata,
+        transformation_metadata=metadata,
         raw_row=raw_row,
     )
+
+
+def _transformation_metadata(
+    *,
+    action: str,
+    original_audio_uri: str,
+    source_audio_uri: str,
+    offset: float,
+    duration: float,
+    split: str,
+    source_group: str,
+) -> dict[str, object]:
+    return {
+        "action": action,
+        "original_audio_uri": original_audio_uri,
+        "source_audio_uri": source_audio_uri,
+        "offset": offset,
+        "duration": duration,
+        "source_duration": duration,
+        "output_duration": duration,
+        "source_format": "flac",
+        "output_format": "flac",
+        "source_channels": 1,
+        "output_channels": 1,
+        "mixed_to_mono": False,
+        "resampled": False,
+        "padded": False,
+        "split": split,
+        "source_group": source_group,
+    }
 
 
 def _jsonl_rows(text: str) -> list[dict[str, object]]:
@@ -80,7 +125,15 @@ class TestDatasetCanonical(unittest.TestCase):
             raw_row={"secret": "x"},
             model_ready_audio_uri="gs://ready/feed-a.flac",
             derived_audio_uri="gs://derived/feed-a.flac",
-            transformation_metadata={"reused": False},
+            transformation_metadata=_transformation_metadata(
+                action="derived",
+                original_audio_uri="gs://bucket/calls/feed-a/0.flac",
+                source_audio_uri="gs://bucket/calls/feed-a/0.flac",
+                offset=1.5,
+                duration=4.25,
+                split="train",
+                source_group="feed-a",
+            ),
         )
 
         row = canonical_row(segment)
@@ -113,9 +166,15 @@ class TestDatasetCanonical(unittest.TestCase):
         self.assertEqual(row["source_group"], "feed-a")
         self.assertEqual(row["split"], "train")
         self.assertEqual(row["original_audio_uri"], segment.original_audio_uri)
+        self.assertEqual(row["model_ready_audio_uri"], "gs://ready/feed-a.flac")
+        self.assertEqual(row["derived_audio_uri"], "gs://derived/feed-a.flac")
         self.assertEqual(row["offset"], 1.5)
         self.assertEqual(row["duration"], 4.25)
-        self.assertEqual(row["transformation_metadata"], {"reused": False})
+        self.assertEqual(
+            row["transformation_metadata"],
+            segment.transformation_metadata,
+        )
+        self.assertEqual(row["transformation_metadata"]["action"], "derived")
         self.assertNotIn("raw_row", row)
         self.assertNotIn("secret", json.dumps(row))
         for forbidden in (
@@ -229,6 +288,60 @@ class TestDatasetCanonical(unittest.TestCase):
 
         with self.assertRaises(SplitLeakageError):
             canonical_manifests(segments)
+
+    def test_canonical_manifests_require_model_ready_audio(self) -> None:
+        segment = _segment(
+            "feed-a",
+            model_ready_audio_uri="",
+            transformation_metadata=_transformation_metadata(
+                action="copied",
+                original_audio_uri="gs://bucket/calls/feed-a/0.flac",
+                source_audio_uri="gs://bucket/calls/feed-a/0.flac",
+                offset=1.5,
+                duration=4.25,
+                split="train",
+                source_group="feed-a",
+            ),
+        )
+
+        with self.assertRaisesRegex(
+            SplitLeakageError, "row_index=0.*model_ready_audio_uri"
+        ):
+            canonical_manifests((segment,))
+
+    def test_canonical_rows_preserve_original_and_model_ready_audio(
+        self,
+    ) -> None:
+        segment = _segment(
+            "feed-a",
+            original_audio_uri="https://example.com/source.wav",
+            model_ready_audio_uri="gs://ready/feed-a.flac",
+            derived_audio_uri="gs://ready/feed-a.flac",
+            transformation_metadata=_transformation_metadata(
+                action="derived",
+                original_audio_uri="https://example.com/source.wav",
+                source_audio_uri="https://example.com/source.wav",
+                offset=1.5,
+                duration=4.25,
+                split="train",
+                source_group="feed-a",
+            ),
+        )
+
+        manifests = canonical_manifests((segment,))
+        row = _jsonl_rows(manifests["train"])[0]
+
+        self.assertEqual(row["audio_uri"], segment.audio_uri)
+        self.assertEqual(
+            row["original_audio_uri"], "https://example.com/source.wav"
+        )
+        self.assertEqual(row["model_ready_audio_uri"], "gs://ready/feed-a.flac")
+        self.assertEqual(row["derived_audio_uri"], "gs://ready/feed-a.flac")
+        self.assertEqual(row["transformation_metadata"]["action"], "derived")
+        self.assertEqual(
+            row["transformation_metadata"]["original_audio_uri"],
+            "https://example.com/source.wav",
+        )
 
     def test_canonical_build_rejects_non_finite_numbers(self) -> None:
         with self.assertRaises(ValueError):

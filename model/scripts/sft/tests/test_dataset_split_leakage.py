@@ -10,6 +10,7 @@ if _SFT_DIR not in sys.path:
 
 from dataset_split.leakage import (  # noqa: E402
     SplitLeakageError,
+    validate_model_ready_audio,
     validate_no_duplicate_audio_spans,
     validate_split_integrity,
     validate_split_leakage,
@@ -27,6 +28,8 @@ def _segment(
     offset: float = 0.0,
     duration: float = 10.0,
     row_index: int = 0,
+    derived_audio_uri: str | None = None,
+    transformation_metadata: dict[str, object] | None = None,
 ) -> LabeledSegment:
     audio_uri = f"gs://bucket/{source_group}/{row_index}.mp3"
     return LabeledSegment(
@@ -42,7 +45,35 @@ def _segment(
         duration=duration,
         split=split,
         model_ready_audio_uri=model_ready_audio_uri,
+        derived_audio_uri=derived_audio_uri,
+        transformation_metadata=transformation_metadata,
     )
+
+
+def _transformation_metadata(
+    *,
+    action: str = "copied",
+    split: str = "train",
+    source_group: str = "feed-a",
+) -> dict[str, object]:
+    return {
+        "action": action,
+        "original_audio_uri": "gs://bucket/original.wav",
+        "source_audio_uri": "gs://bucket/source.wav",
+        "offset": 0.0,
+        "duration": 10.0,
+        "source_duration": 10.0,
+        "output_duration": 10.0,
+        "source_format": "flac",
+        "output_format": "flac",
+        "source_channels": 1,
+        "output_channels": 1,
+        "mixed_to_mono": False,
+        "resampled": False,
+        "padded": False,
+        "split": split,
+        "source_group": source_group,
+    }
 
 
 class TestSplitLeakage(unittest.TestCase):
@@ -172,6 +203,156 @@ class TestSplitLeakage(unittest.TestCase):
             SplitLeakageError, "row_index=0 missing split"
         ):
             validate_split_integrity((_segment("feed-a", split=None),))
+
+    def test_model_ready_audio_uri_is_required(self) -> None:
+        segment = _segment(
+            "feed-a",
+            model_ready_audio_uri=None,
+            transformation_metadata=_transformation_metadata(),
+        )
+
+        with self.assertRaisesRegex(
+            SplitLeakageError, "row_index=0.*model_ready_audio_uri"
+        ):
+            validate_model_ready_audio((segment,))
+
+    def test_model_ready_audio_uri_must_be_gcs(self) -> None:
+        segment = _segment(
+            "feed-a",
+            model_ready_audio_uri="https://example.com/audio.flac",
+            transformation_metadata=_transformation_metadata(),
+        )
+
+        with self.assertRaisesRegex(
+            SplitLeakageError, "row_index=0.*model_ready_audio_uri"
+        ):
+            validate_model_ready_audio((segment,))
+
+    def test_transformation_metadata_action_is_required(self) -> None:
+        metadata = _transformation_metadata()
+        metadata.pop("action")
+        segment = _segment(
+            "feed-a",
+            model_ready_audio_uri="gs://ready/feed-a.flac",
+            transformation_metadata=metadata,
+        )
+
+        with self.assertRaisesRegex(
+            SplitLeakageError, "row_index=0.*action"
+        ):
+            validate_model_ready_audio((segment,))
+
+    def test_unknown_transformation_action_fails(self) -> None:
+        segment = _segment(
+            "feed-a",
+            model_ready_audio_uri="gs://ready/feed-a.flac",
+            transformation_metadata=_transformation_metadata(
+                action="normalized"
+            ),
+        )
+
+        with self.assertRaisesRegex(
+            SplitLeakageError, "row_index=0.*action=normalized"
+        ):
+            validate_model_ready_audio((segment,))
+
+    def test_derived_audio_uri_required_only_for_derived_action(self) -> None:
+        missing_derived_uri = _segment(
+            "feed-a",
+            model_ready_audio_uri="gs://ready/feed-a.flac",
+            transformation_metadata=_transformation_metadata(
+                action="derived"
+            ),
+        )
+        with self.assertRaisesRegex(
+            SplitLeakageError, "row_index=0.*derived_audio_uri"
+        ):
+            validate_model_ready_audio((missing_derived_uri,))
+
+        stale_derived_uri = _segment(
+            "feed-a",
+            model_ready_audio_uri="gs://ready/feed-a.flac",
+            derived_audio_uri="gs://ready/feed-a.flac",
+            transformation_metadata=_transformation_metadata(
+                action="copied"
+            ),
+        )
+        with self.assertRaisesRegex(
+            SplitLeakageError, "row_index=0.*derived_audio_uri"
+        ):
+            validate_model_ready_audio((stale_derived_uri,))
+
+        derived_segment = _segment(
+            "feed-a",
+            model_ready_audio_uri="gs://ready/feed-a.flac",
+            derived_audio_uri="gs://ready/feed-a.flac",
+            transformation_metadata=_transformation_metadata(
+                action="derived"
+            ),
+        )
+        validate_model_ready_audio((derived_segment,))
+
+    def test_transformation_metadata_requires_all_minimum_keys(self) -> None:
+        for key in (
+            "original_audio_uri",
+            "source_audio_uri",
+            "offset",
+            "duration",
+            "source_duration",
+            "output_duration",
+            "source_format",
+            "output_format",
+            "source_channels",
+            "output_channels",
+            "mixed_to_mono",
+            "resampled",
+            "padded",
+            "split",
+            "source_group",
+        ):
+            with self.subTest(key=key):
+                metadata = _transformation_metadata()
+                metadata.pop(key)
+                segment = _segment(
+                    "feed-a",
+                    model_ready_audio_uri="gs://ready/feed-a.flac",
+                    transformation_metadata=metadata,
+                )
+
+                with self.assertRaisesRegex(
+                    SplitLeakageError, f"row_index=0.*{key}"
+                ):
+                    validate_model_ready_audio((segment,))
+
+    def test_model_ready_uri_overlap_still_fails_after_enrichment(self) -> None:
+        segments = (
+            _segment(
+                "feed-a",
+                split="train",
+                original_audio_uri="gs://bucket/a.wav",
+                model_ready_audio_uri="gs://ready/shared.flac",
+                transformation_metadata=_transformation_metadata(
+                    split="train", source_group="feed-a"
+                ),
+                row_index=0,
+            ),
+            _segment(
+                "feed-b",
+                split="eval",
+                original_audio_uri="gs://bucket/b.wav",
+                model_ready_audio_uri="gs://ready/shared.flac",
+                transformation_metadata=_transformation_metadata(
+                    split="eval", source_group="feed-b"
+                ),
+                row_index=1,
+            ),
+        )
+
+        validate_model_ready_audio(segments)
+        with self.assertRaisesRegex(
+            SplitLeakageError, "model_ready_audio_uri appears in both splits"
+        ):
+            validate_split_integrity(segments)
 
 
 if __name__ == "__main__":
