@@ -64,8 +64,8 @@ Plans:
 
 Plans:
 - [x] 03-01: GCS layout planner and overwrite protection
-- [ ] 03-02: Canonical and per-dataset artifact writers
-- [ ] 03-03: NeMo and Whisper model-input writers
+- [x] 03-02: Canonical and per-dataset artifact writers
+- [x] 03-03: NeMo and Whisper model-input writers
 - [ ] 03-04: Gemini model-input writer, config generation, and artifact publication
 
 ### Phase 4: Audio Derivation And Provenance
