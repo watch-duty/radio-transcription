@@ -30,7 +30,9 @@ class TestAudioSegmentsClient(unittest.TestCase):
 
         # Verify
         adapter = client.session.adapters.get("http://")
-        self.assertEqual(adapter.max_retries.total, 5)
+        self.assertIsNotNone(adapter)
+        if adapter is not None:
+            self.assertEqual(adapter.max_retries.total, 5)
 
     def test_init_with_zero_max_retries(self) -> None:
         # Execute
@@ -38,7 +40,11 @@ class TestAudioSegmentsClient(unittest.TestCase):
 
         # Verify
         adapter = client.session.adapters.get("http://")
-        self.assertEqual(getattr(adapter.max_retries, "total", adapter.max_retries), 0)
+        self.assertIsNotNone(adapter)
+        if adapter is not None:
+            self.assertEqual(
+                getattr(adapter.max_retries, "total", adapter.max_retries), 0
+            )
 
     def test_add_audio_segment_annotation_success(self) -> None:
         # Setup
@@ -146,41 +152,47 @@ class TestAudioSegmentsClient(unittest.TestCase):
         )
         self.mock_session.post.assert_not_called()
 
-    def test_bulk_add_audio_segments_success(self) -> None:
+    def test_add_audio_segment_success(self) -> None:
         # Setup
         mock_response = MagicMock()
         mock_response.raise_for_status.return_value = None
-        mock_response.json.return_value = {"inserted_count": 1}
         self.mock_session.post.return_value = mock_response
 
         # Execute
-        result = self.client.bulk_add_audio_segments([self.segment_payload])
+        self.client.add_audio_segment(self.segment_payload)
 
         # Verify
         self.mock_session.post.assert_called_once()
         args, kwargs = self.mock_session.post.call_args
         self.assertEqual(args[0], "http://test-api.com/v1/audio_segments")
         self.assertIn("json", kwargs)
-        self.assertEqual(
-            kwargs["json"]["audio_segments"], [self.segment_payload]
-        )
-        self.assertEqual(result, 1)
+        self.assertEqual(kwargs["json"], self.segment_payload)
 
-    def test_bulk_add_audio_segments_propagates_exception(self) -> None:
+    def test_add_audio_segment_propagates_exception(self) -> None:
         # Setup
         self.mock_session.post.side_effect = Exception("Network error")
 
         # Execute & Verify
         with self.assertRaises(Exception):
-            self.client.bulk_add_audio_segments([self.segment_payload])
+            self.client.add_audio_segment(self.segment_payload)
 
-    def test_bulk_add_audio_segments_empty_payload_raises_value_error(
-        self,
-    ) -> None:
+    def test_add_audio_segment_empty_payload_raises_value_error(self) -> None:
         # Execute & Verify
         with self.assertRaises(ValueError) as cm:
-            self.client.bulk_add_audio_segments([])
-        self.assertEqual(str(cm.exception), "segments list cannot be empty")
+            self.client.add_audio_segment({})
+        self.assertEqual(str(cm.exception), "segment data cannot be empty")
+        self.mock_session.post.assert_not_called()
+
+    def test_add_audio_segment_missing_fields_raises_value_error(self) -> None:
+        # Execute & Verify (missing id)
+        with self.assertRaises(ValueError) as cm:
+            self.client.add_audio_segment({"feed_id": "feed-123"})
+        self.assertEqual(str(cm.exception), "segment id is required")
+
+        # Execute & Verify (missing feed_id)
+        with self.assertRaises(ValueError) as cm:
+            self.client.add_audio_segment({"id": "segment-123"})
+        self.assertEqual(str(cm.exception), "segment feed_id is required")
         self.mock_session.post.assert_not_called()
 
 

@@ -90,15 +90,12 @@ class AudioSegmentsClient:
         )
         response.raise_for_status()
 
-    def bulk_add_audio_segments(self, segments: list[dict]) -> int:
+    def add_audio_segment(self, segment: dict) -> None:
         """
-        Saves multiple audio segments in bulk.
+        Saves a single audio segment.
 
         Args:
-            segments: A list of audio segment data to add.
-
-        Returns:
-            The count of successfully inserted segments.
+            segment: The audio segment data to add.
 
         Raises:
             ValueError: If any inputs fail boundary validation.
@@ -109,8 +106,12 @@ class AudioSegmentsClient:
             raise ValueError(msg)
 
         # Fail-Fast Local input boundary validation
-        if not segments:
-            _raise("segments list cannot be empty")
+        if not segment:
+            _raise("segment data cannot be empty")
+        if not segment.get("id"):
+            _raise("segment id is required")
+        if not segment.get("feed_id"):
+            _raise("segment feed_id is required")
 
         if is_gcp_env():
             token = get_id_token(self.api_url)
@@ -118,8 +119,7 @@ class AudioSegmentsClient:
 
         response = self.session.post(
             f"{self.api_url}/v1/audio_segments",
-            json={"audio_segments": segments},
+            json=segment,
             timeout=10,
         )
         response.raise_for_status()
-        return response.json().get("inserted_count", 0)
