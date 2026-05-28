@@ -22,6 +22,7 @@ if _COLABS_DIR not in sys.path:
 from dataset_split.artifacts import DatasetArtifactLayout  # noqa: E402
 from dataset_split.audio import (  # noqa: E402
     AUDIO_ACTIONS,
+    AUDIO_UPLOAD_MAX_WORKERS,
     EXTERNAL_DOWNLOAD_CHUNK_SIZE,
     EXTERNAL_DOWNLOAD_MAX_BYTES,
     EXTERNAL_DOWNLOAD_TIMEOUT,
@@ -30,7 +31,9 @@ from dataset_split.audio import (  # noqa: E402
     GENERATED_OUTPUT_DURATION_TOLERANCE_SECONDS,
     PROGRAM_VERSION_TIMEOUT_SECONDS,
     AudioDerivationError,
+    AudioPreparationResult,
     AudioProbe,
+    AudioUploadTask,
     plan_audio_actions,
     prepare_audio_for_publication,
     probe_audio,
@@ -465,6 +468,50 @@ class TestAudioCommands(unittest.TestCase):
 
 
 class TestAudioPreparation(unittest.TestCase):
+    def setUp(self) -> None:
+        self.upload_many_calls: list[dict[str, object]] = []
+        self._upload_many_patcher = patch(
+            "dataset_split.audio.transfer_manager.upload_many",
+            side_effect=self._fake_upload_many,
+        )
+        self._upload_many_patcher.start()
+        self.addCleanup(self._upload_many_patcher.stop)
+
+    def _fake_upload_many(
+        self,
+        file_blob_pairs: list[tuple[str, FakeDownloadedBlob]],
+        *,
+        upload_kwargs: dict[str, object],
+        raise_exception: bool,
+        worker_type: str,
+        max_workers: int,
+    ) -> list[Exception | None]:
+        pairs = tuple(file_blob_pairs)
+        self.upload_many_calls.append(
+            {
+                "pairs": pairs,
+                "upload_kwargs": dict(upload_kwargs),
+                "raise_exception": raise_exception,
+                "worker_type": worker_type,
+                "max_workers": max_workers,
+            }
+        )
+        results: list[Exception | None] = []
+        for filename, blob in pairs:
+            try:
+                blob.upload_from_filename(
+                    filename,
+                    content_type=str(upload_kwargs["content_type"]),
+                    if_generation_match=int(
+                        upload_kwargs["if_generation_match"]
+                    ),
+                )
+            except Exception as exc:
+                results.append(exc)
+            else:
+                results.append(None)
+        return results
+
     def test_prepare_audio_enriches_segments_with_transformation_metadata(
         self,
     ) -> None:
@@ -705,6 +752,113 @@ class TestAudioPreparation(unittest.TestCase):
 
         self.assertEqual(uploaded, (result.upload_tasks[0].uri,))
         self.assertEqual(len(_all_uploads(client)), 1)
+
+    def test_upload_prepared_audio_uses_transfer_manager_create_only(
+        self,
+    ) -> None:
+        client = FakeStorageClient()
+        with tempfile.TemporaryDirectory() as scratch_dir:
+            flac_path = Path(scratch_dir) / "one.flac"
+            mp3_path = Path(scratch_dir) / "two.mp3"
+            flac_path.write_bytes(b"flac")
+            mp3_path.write_bytes(b"mp3")
+            result = AudioPreparationResult(
+                segments=(),
+                plans=(),
+                uploaded_audio_uris=(),
+                action_counts=dict.fromkeys(AUDIO_ACTIONS, 0),
+                upload_tasks=(
+                    AudioUploadTask(
+                        uri="gs://bucket/audio/one.flac",
+                        local_path=flac_path,
+                        content_type="audio/flac",
+                    ),
+                    AudioUploadTask(
+                        uri="gs://bucket/audio/two.mp3",
+                        local_path=mp3_path,
+                        content_type="audio/mpeg",
+                    ),
+                ),
+            )
+
+            uploaded = upload_prepared_audio(client, result)
+
+        self.assertEqual(
+            uploaded,
+            ("gs://bucket/audio/one.flac", "gs://bucket/audio/two.mp3"),
+        )
+        self.assertEqual(len(self.upload_many_calls), 2)
+        self.assertEqual(
+            {
+                call["upload_kwargs"]["content_type"]  # type: ignore[index]
+                for call in self.upload_many_calls
+            },
+            {"audio/flac", "audio/mpeg"},
+        )
+        for call in self.upload_many_calls:
+            self.assertEqual(
+                call["upload_kwargs"]["if_generation_match"],
+                0,  # type: ignore[index]
+            )
+            self.assertFalse(call["raise_exception"])
+            self.assertEqual(call["worker_type"], "thread")
+            self.assertEqual(call["max_workers"], AUDIO_UPLOAD_MAX_WORKERS)
+
+    def test_upload_prepared_audio_fails_when_any_transfer_fails(self) -> None:
+        client = FakeStorageClient()
+        with tempfile.TemporaryDirectory() as scratch_dir:
+            local_path = Path(scratch_dir) / "one.flac"
+            local_path.write_bytes(b"flac")
+            result = AudioPreparationResult(
+                segments=(),
+                plans=(),
+                uploaded_audio_uris=(),
+                action_counts=dict.fromkeys(AUDIO_ACTIONS, 0),
+                upload_tasks=(
+                    AudioUploadTask(
+                        uri="gs://bucket/audio/one.flac",
+                        local_path=local_path,
+                        content_type="audio/flac",
+                    ),
+                ),
+            )
+
+            with patch(
+                "dataset_split.audio.transfer_manager.upload_many",
+                return_value=[RuntimeError("network down")],
+            ):
+                with self.assertRaisesRegex(
+                    AudioDerivationError,
+                    "failed to upload audio count=1 "
+                    "first_uri=gs://bucket/audio/one.flac",
+                ):
+                    upload_prepared_audio(client, result)
+
+    def test_upload_prepared_audio_fails_before_partial_upload_for_missing_file(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as scratch_dir:
+            missing_path = Path(scratch_dir) / "does-not-exist.flac"
+            result = AudioPreparationResult(
+                segments=(),
+                plans=(),
+                uploaded_audio_uris=(),
+                action_counts=dict.fromkeys(AUDIO_ACTIONS, 0),
+                upload_tasks=(
+                    AudioUploadTask(
+                        uri="gs://bucket/audio/missing.flac",
+                        local_path=missing_path,
+                        content_type="audio/flac",
+                    ),
+                ),
+            )
+
+            with self.assertRaisesRegex(
+                AudioDerivationError, "missing prepared audio file"
+            ):
+                upload_prepared_audio(FakeStorageClient(), result)
+
+        self.assertEqual(self.upload_many_calls, [])
 
     def test_deferred_upload_requires_caller_owned_scratch_dir(self) -> None:
         with self.assertRaisesRegex(

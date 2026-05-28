@@ -1,27 +1,31 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
 import ipaddress
 import json
 import math
 import os
-from pathlib import Path
 import shutil
 import socket
 import subprocess
 import tempfile
+from dataclasses import dataclass, replace
+from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 import requests
+from common.gcs_utils import download_to_scratch, parse_gcs_uri
+from google.cloud.storage import transfer_manager
+from google.cloud.storage.retry import DEFAULT_RETRY_IF_GENERATION_SPECIFIED
 
-from common.gcs_utils import download_to_scratch
 from dataset_split.artifacts import (
     DatasetArtifactLayout,
     audio_object_uri,
-    upload_file_create_only,
 )
 from dataset_split.model_writers import ModelWriterError, infer_audio_mime_type
-from dataset_split.types import LabeledSegment
+
+if TYPE_CHECKING:
+    from dataset_split.types import LabeledSegment
 
 
 class AudioDerivationError(ValueError):
@@ -40,6 +44,7 @@ EXTERNAL_DOWNLOAD_MAX_BYTES = 512 * 1024 * 1024
 FFPROBE_TIMEOUT_SECONDS = 60
 FFMPEG_TIMEOUT_SECONDS = 300
 PROGRAM_VERSION_TIMEOUT_SECONDS = 10
+AUDIO_UPLOAD_MAX_WORKERS = 8
 ALLOWED_EXTERNAL_AUDIO_HOSTS = frozenset(
     {
         "archives.broadcastify.com",
@@ -297,16 +302,78 @@ def upload_prepared_audio(
     storage_client: object,
     preparation_result: AudioPreparationResult,
 ) -> tuple[str, ...]:
-    uploaded_audio_uris: list[str] = []
-    for task in preparation_result.upload_tasks:
-        _upload_audio_file(
-            storage_client,
-            uri=task.uri,
-            local_path=task.local_path,
-            content_type=task.content_type,
-        )
-        uploaded_audio_uris.append(task.uri)
-    return tuple(uploaded_audio_uris)
+    upload_tasks = tuple(preparation_result.upload_tasks)
+    if not upload_tasks:
+        return ()
+
+    for task in upload_tasks:
+        if not task.local_path.exists():
+            raise AudioDerivationError(
+                "missing prepared audio file "
+                f"uri={task.uri} local_path={task.local_path}"
+            )
+
+    failures: list[tuple[str, Exception]] = []
+    bucket_cache: dict[str, object] = {}
+    for content_type, tasks in _upload_tasks_by_content_type(upload_tasks):
+        file_blob_pairs = []
+        task_uris = []
+        for task in tasks:
+            bucket_name, blob_path = parse_gcs_uri(task.uri)
+            bucket = bucket_cache.setdefault(
+                bucket_name, storage_client.bucket(bucket_name)
+            )
+            file_blob_pairs.append(
+                (str(task.local_path), bucket.blob(blob_path))
+            )
+            task_uris.append(task.uri)
+
+        try:
+            results = transfer_manager.upload_many(
+                file_blob_pairs,
+                upload_kwargs={
+                    "content_type": content_type,
+                    "if_generation_match": 0,
+                    "retry": DEFAULT_RETRY_IF_GENERATION_SPECIFIED,
+                },
+                raise_exception=False,
+                worker_type=transfer_manager.THREAD,
+                max_workers=AUDIO_UPLOAD_MAX_WORKERS,
+            )
+        except Exception as exc:
+            raise AudioDerivationError(
+                f"failed to upload audio batch count={len(tasks)}"
+            ) from exc
+
+        if len(results) != len(tasks):
+            raise AudioDerivationError(
+                "audio upload result count mismatch "
+                f"expected={len(tasks)} actual={len(results)}"
+            )
+
+        for uri, result in zip(task_uris, results, strict=True):
+            if isinstance(result, Exception):
+                failures.append((uri, result))
+
+    if failures:
+        first_uri, first_error = failures[0]
+        raise AudioDerivationError(
+            f"failed to upload audio count={len(failures)} "
+            f"first_uri={first_uri}"
+        ) from first_error
+
+    return tuple(task.uri for task in upload_tasks)
+
+
+def _upload_tasks_by_content_type(
+    upload_tasks: tuple[AudioUploadTask, ...],
+) -> tuple[tuple[str, tuple[AudioUploadTask, ...]], ...]:
+    grouped: dict[str, list[AudioUploadTask]] = {}
+    for task in upload_tasks:
+        grouped.setdefault(task.content_type, []).append(task)
+    return tuple(
+        (content_type, tuple(tasks)) for content_type, tasks in grouped.items()
+    )
 
 
 def _plan_audio_action(
@@ -577,24 +644,6 @@ def _run_ffmpeg(command: list[str], *, runner) -> None:
         raise AudioDerivationError(
             f"failed to run ffmpeg command={command[0]}"
         ) from exc
-
-
-def _upload_audio_file(
-    storage_client: object,
-    *,
-    uri: str,
-    local_path: Path,
-    content_type: str | None = None,
-) -> None:
-    try:
-        upload_file_create_only(
-            storage_client,
-            uri,
-            local_path,
-            content_type=content_type or infer_audio_mime_type(uri),
-        )
-    except Exception as exc:
-        raise AudioDerivationError(f"failed to upload audio uri={uri}") from exc
 
 
 def _local_output_path(scratch_dir: Path, *, suffix: str) -> Path:
