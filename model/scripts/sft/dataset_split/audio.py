@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 from urllib.parse import urlparse
@@ -14,6 +15,7 @@ from common.gcs_utils import download_to_scratch
 from dataset_split.artifacts import (
     DatasetArtifactLayout,
     audio_object_uri,
+    upload_file_create_only,
 )
 from dataset_split.model_writers import ModelWriterError, infer_audio_mime_type
 from dataset_split.types import LabeledSegment
@@ -32,6 +34,12 @@ EXTERNAL_DOWNLOAD_CHUNK_SIZE = 1024 * 1024
 EXTERNAL_DOWNLOAD_MAX_BYTES = 512 * 1024 * 1024
 _SUPPORTED_SOURCE_SCHEMES = frozenset({"gs", "http", "https"})
 _NEAR_ZERO_OFFSET_SECONDS = 1e-6
+_ENRICHED_FIELD_NAMES = (
+    "model_ready_audio_uri",
+    "derived_audio_uri",
+    "transformation_metadata",
+)
+_FFMPEG_FLAC_MONO_ARGS = ("-ac", "1", "-c:a", "flac")
 
 
 @dataclass(frozen=True)
@@ -161,6 +169,95 @@ def plan_audio_actions(
     return tuple(plans)
 
 
+def derive_audio_clip(
+    input_path: str | Path,
+    output_path: str | Path,
+    *,
+    offset: float,
+    duration: float,
+    runner=subprocess.run,
+) -> Path:
+    command = [
+        "ffmpeg",
+        "-hide_banner",
+        "-y",
+        "-ss",
+        f"{offset:.6f}",
+        "-t",
+        f"{duration:.6f}",
+        "-i",
+        str(input_path),
+        "-map",
+        "0:a:0",
+        "-vn",
+        *_FFMPEG_FLAC_MONO_ARGS,
+        str(output_path),
+    ]
+    _run_ffmpeg(command, runner=runner)
+    return Path(output_path)
+
+
+def transcode_audio_file(
+    input_path: str | Path,
+    output_path: str | Path,
+    *,
+    runner=subprocess.run,
+) -> Path:
+    command = [
+        "ffmpeg",
+        "-hide_banner",
+        "-y",
+        "-i",
+        str(input_path),
+        "-map",
+        "0:a:0",
+        "-vn",
+        *_FFMPEG_FLAC_MONO_ARGS,
+        str(output_path),
+    ]
+    _run_ffmpeg(command, runner=runner)
+    return Path(output_path)
+
+
+def copy_audio_file(
+    input_path: str | Path, output_path: str | Path
+) -> Path:
+    try:
+        shutil.copyfile(input_path, output_path)
+    except Exception as exc:
+        raise AudioDerivationError(
+            f"failed to copy audio input_path={input_path} "
+            f"output_path={output_path}"
+        ) from exc
+    return Path(output_path)
+
+
+def prepare_audio_for_publication(
+    storage_client: object,
+    *,
+    layout: DatasetArtifactLayout,
+    segments: tuple[LabeledSegment, ...],
+    scratch_dir: str | Path | None = None,
+    runner=subprocess.run,
+) -> AudioPreparationResult:
+    if scratch_dir is None:
+        with tempfile.TemporaryDirectory() as temporary_scratch:
+            return _prepare_audio_for_publication(
+                storage_client,
+                layout=layout,
+                segments=segments,
+                scratch_dir=temporary_scratch,
+                runner=runner,
+            )
+    return _prepare_audio_for_publication(
+        storage_client,
+        layout=layout,
+        segments=segments,
+        scratch_dir=scratch_dir,
+        runner=runner,
+    )
+
+
 def _plan_audio_action(
     storage_client: object,
     *,
@@ -240,6 +337,124 @@ def _plan_audio_action(
     )
 
 
+def _prepare_audio_for_publication(
+    storage_client: object,
+    *,
+    layout: DatasetArtifactLayout,
+    segments: tuple[LabeledSegment, ...],
+    scratch_dir: str | Path,
+    runner,
+) -> AudioPreparationResult:
+    plans = plan_audio_actions(
+        storage_client,
+        layout=layout,
+        segments=tuple(segments),
+        scratch_dir=scratch_dir,
+        runner=runner,
+    )
+    version_summary = _command_version_summary(runner)
+    enriched_segments: list[LabeledSegment] = []
+    uploaded_audio_uris: list[str] = []
+    action_counts = {action: 0 for action in AUDIO_ACTIONS}
+    for plan in plans:
+        try:
+            enriched, uploaded_uri = _materialize_plan(
+                storage_client,
+                plan=plan,
+                scratch_dir=Path(scratch_dir),
+                version_summary=version_summary,
+                runner=runner,
+            )
+        except AudioDerivationError as exc:
+            raise AudioDerivationError(
+                f"{exc} {_row_context(plan.segment)}"
+            ) from exc
+        action_counts[plan.action] += 1
+        enriched_segments.append(enriched)
+        if uploaded_uri is not None:
+            uploaded_audio_uris.append(uploaded_uri)
+    return AudioPreparationResult(
+        segments=tuple(enriched_segments),
+        plans=plans,
+        uploaded_audio_uris=tuple(uploaded_audio_uris),
+        action_counts=action_counts,
+    )
+
+
+def _materialize_plan(
+    storage_client: object,
+    *,
+    plan: AudioActionPlan,
+    scratch_dir: Path,
+    version_summary: dict[str, str],
+    runner,
+) -> tuple[LabeledSegment, str | None]:
+    if plan.action == "reused":
+        model_ready_uri = plan.source_uri
+        output_probe = plan.probe
+        uploaded_uri = None
+        ffmpeg_summary = None
+    else:
+        if plan.destination_uri is None:
+            raise AudioDerivationError(
+                f"missing destination_uri for action={plan.action}"
+            )
+        local_output_path = _local_output_path(
+            scratch_dir, suffix=plan.output_suffix
+        )
+        ffmpeg_summary = None
+        if plan.action == "copied":
+            copy_audio_file(plan.local_source_path, local_output_path)
+            output_probe = plan.probe
+        elif plan.action == "derived":
+            derive_audio_clip(
+                plan.local_source_path,
+                local_output_path,
+                offset=plan.segment.offset,
+                duration=plan.segment.duration,
+                runner=runner,
+            )
+            ffmpeg_summary = _derive_command_summary()
+            output_probe = probe_audio(local_output_path, runner=runner)
+        elif plan.action == "transcoded":
+            transcode_audio_file(
+                plan.local_source_path,
+                local_output_path,
+                runner=runner,
+            )
+            ffmpeg_summary = _transcode_command_summary()
+            output_probe = probe_audio(local_output_path, runner=runner)
+        else:
+            raise AudioDerivationError(f"unsupported action={plan.action}")
+        model_ready_uri = plan.destination_uri
+        _upload_audio_file(
+            storage_client,
+            uri=model_ready_uri,
+            local_path=local_output_path,
+        )
+        uploaded_uri = model_ready_uri
+    if not model_ready_uri.startswith("gs://"):
+        raise AudioDerivationError(
+            f"model_ready_audio_uri must be gs://: {model_ready_uri}"
+        )
+    derived_audio_uri = model_ready_uri if plan.action == "derived" else None
+    metadata = _transformation_metadata(
+        plan,
+        output_probe=output_probe,
+        ffmpeg_summary=ffmpeg_summary,
+        version_summary=version_summary,
+    )
+    segment = plan.segment
+    return (
+        replace(segment,
+            model_ready_audio_uri=model_ready_uri,
+            derived_audio_uri=derived_audio_uri,
+            transformation_metadata=metadata,
+        ),
+        uploaded_uri,
+    )
+
+
 def _download_external_source(source_uri: str, scratch_dir: Path) -> Path:
     fd, local_path = tempfile.mkstemp(
         dir=scratch_dir, suffix=_source_suffix(source_uri)
@@ -272,6 +487,124 @@ def _download_external_source(source_uri: str, scratch_dir: Path) -> Path:
             f"failed to download external source audio source_uri={source_uri}"
         ) from exc
     return Path(local_path)
+
+
+def _run_ffmpeg(command: list[str], *, runner) -> None:
+    try:
+        runner(
+            command,
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+    except Exception as exc:
+        raise AudioDerivationError(
+            f"failed to run ffmpeg command={command[0]}"
+        ) from exc
+
+
+def _upload_audio_file(
+    storage_client: object, *, uri: str, local_path: Path
+) -> None:
+    try:
+        upload_file_create_only(
+            storage_client,
+            uri,
+            local_path,
+            content_type=infer_audio_mime_type(uri),
+        )
+    except Exception as exc:
+        raise AudioDerivationError(
+            f"failed to upload audio uri={uri}"
+        ) from exc
+
+
+def _local_output_path(scratch_dir: Path, *, suffix: str) -> Path:
+    fd, local_path = tempfile.mkstemp(dir=scratch_dir, suffix=suffix)
+    os.close(fd)
+    return Path(local_path)
+
+
+def _transformation_metadata(
+    plan: AudioActionPlan,
+    *,
+    output_probe: AudioProbe,
+    ffmpeg_summary: str | None,
+    version_summary: dict[str, str],
+) -> dict[str, object]:
+    segment = plan.segment
+    return {
+        "action": plan.action,
+        "original_audio_uri": segment.original_audio_uri,
+        "source_audio_uri": plan.source_uri,
+        "offset": segment.offset,
+        "duration": segment.duration,
+        "source_duration": plan.probe.duration,
+        "output_duration": output_probe.duration,
+        "source_format": _probe_format(plan.probe),
+        "output_format": _probe_format(output_probe),
+        "source_channels": plan.probe.channels,
+        "output_channels": output_probe.channels,
+        "mixed_to_mono": (
+            plan.action in {"derived", "transcoded"}
+            and plan.probe.channels != output_probe.channels
+            and output_probe.channels == 1
+        ),
+        "resampled": plan.probe.sample_rate != output_probe.sample_rate,
+        "padded": False,
+        "split": segment.split,
+        "source_group": segment.source_group,
+        "ffprobe": _ffprobe_command_summary(),
+        "ffmpeg": ffmpeg_summary,
+        "ffprobe_version": version_summary["ffprobe_version"],
+        "ffmpeg_version": version_summary["ffmpeg_version"],
+    }
+
+
+def _probe_format(probe: AudioProbe) -> str:
+    return probe.format_name or probe.codec_name
+
+
+def _ffprobe_command_summary() -> str:
+    return (
+        "ffprobe -v error -select_streams a:0 -show_entries "
+        "format=duration:stream=codec_name,channels,sample_rate -of json INPUT"
+    )
+
+
+def _derive_command_summary() -> str:
+    return (
+        "ffmpeg -hide_banner -y -ss OFFSET -t DURATION -i INPUT "
+        "-map 0:a:0 -vn -ac 1 -c:a flac OUTPUT.flac"
+    )
+
+
+def _transcode_command_summary() -> str:
+    return (
+        "ffmpeg -hide_banner -y -i INPUT -map 0:a:0 -vn "
+        "-ac 1 -c:a flac OUTPUT.flac"
+    )
+
+
+def _command_version_summary(runner) -> dict[str, str]:
+    return {
+        "ffprobe_version": _program_version("ffprobe", runner=runner),
+        "ffmpeg_version": _program_version("ffmpeg", runner=runner),
+    }
+
+
+def _program_version(program: str, *, runner) -> str:
+    try:
+        result = runner(
+            [program, "-version"],
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+    except Exception:
+        return "unavailable"
+    first_line = str(result.stdout).splitlines()[0].strip()
+    return first_line or "unavailable"
 
 
 def _validate_segment_span(segment: LabeledSegment) -> None:

@@ -27,6 +27,7 @@ from dataset_split.audio import (  # noqa: E402
     AudioDerivationError,
     AudioProbe,
     plan_audio_actions,
+    prepare_audio_for_publication,
     probe_audio,
     stage_source_audio,
 )
@@ -37,10 +38,26 @@ class FakeDownloadedBlob:
     def __init__(self, content: bytes = b"fake audio") -> None:
         self.content = content
         self.downloads: list[str] = []
+        self.uploads: list[dict[str, object]] = []
 
     def download_to_filename(self, filename: str, **_: object) -> None:
         self.downloads.append(filename)
         Path(filename).write_bytes(self.content)
+
+    def upload_from_filename(
+        self,
+        filename: str,
+        *,
+        content_type: str,
+        if_generation_match: int,
+    ) -> None:
+        self.uploads.append(
+            {
+                "filename": filename,
+                "content_type": content_type,
+                "if_generation_match": if_generation_match,
+            }
+        )
 
 
 class FakeBucket:
@@ -141,6 +158,67 @@ def _ffprobe_runner(
         )
 
     return runner
+
+
+class FakeAudioRunner:
+    def __init__(self, probes: tuple[AudioProbe, ...]) -> None:
+        self.probes = list(probes)
+        self.calls: list[dict[str, object]] = []
+
+    def __call__(
+        self, args: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess:
+        self.calls.append({"args": args, "kwargs": kwargs})
+        if args == ["ffprobe", "-version"]:
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=0,
+                stdout="ffprobe version 7.0.2-test\n",
+                stderr="",
+            )
+        if args == ["ffmpeg", "-version"]:
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=0,
+                stdout="ffmpeg version 7.0.2-test\n",
+                stderr="",
+            )
+        if args[0] == "ffprobe":
+            probe = self.probes.pop(0)
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "format": {
+                            "duration": str(probe.duration),
+                            "format_name": probe.format_name,
+                        },
+                        "streams": [
+                            {
+                                "codec_name": probe.codec_name,
+                                "channels": probe.channels,
+                                "sample_rate": str(probe.sample_rate),
+                            }
+                        ],
+                    }
+                ),
+                stderr="",
+            )
+        if args[0] == "ffmpeg":
+            Path(args[-1]).write_bytes(b"generated audio")
+            return subprocess.CompletedProcess(
+                args=args, returncode=0, stdout="", stderr=""
+            )
+        raise AssertionError(f"unexpected command: {args}")
+
+    def ffmpeg_transform_commands(self) -> list[list[str]]:
+        return [
+            call["args"]
+            for call in self.calls
+            if call["args"][0] == "ffmpeg"
+            and call["args"] != ["ffmpeg", "-version"]
+        ]
 
 
 def _plan(
@@ -344,6 +422,176 @@ class TestAudioCommands(unittest.TestCase):
 
 
 class TestAudioPreparation(unittest.TestCase):
+    def test_prepare_audio_enriches_segments_with_transformation_metadata(
+        self,
+    ) -> None:
+        runner = FakeAudioRunner(
+            (
+                AudioProbe(10.0, "flac", 2, 44100, "flac"),
+                AudioProbe(30.0, "flac", 2, 44100, "flac"),
+                AudioProbe(8.0, "pcm_s16le", 2, 48000, "wav"),
+                AudioProbe(6.0, "flac", 1, 44100, "flac"),
+                AudioProbe(8.0, "flac", 1, 48000, "flac"),
+            )
+        )
+        segments = (
+            _segment(
+                "gs://source-bucket/audio/reused.flac",
+                duration=10.0,
+                row_index=1,
+            ),
+            _segment(
+                "gs://source-bucket/audio/source.flac",
+                offset=2.0,
+                duration=6.0,
+                row_index=2,
+            ),
+            _segment(
+                "gs://source-bucket/audio/source.wav",
+                duration=8.0,
+                row_index=3,
+            ),
+        )
+
+        with tempfile.TemporaryDirectory() as scratch_dir:
+            result = prepare_audio_for_publication(
+                FakeStorageClient(),
+                layout=_layout(),
+                segments=segments,
+                scratch_dir=scratch_dir,
+                runner=runner,
+            )
+
+        self.assertEqual(
+            result.action_counts,
+            {"reused": 1, "copied": 0, "derived": 1, "transcoded": 1},
+        )
+        self.assertEqual(len(result.uploaded_audio_uris), 2)
+        reused, derived, transcoded = result.segments
+        self.assertEqual(
+            reused.model_ready_audio_uri,
+            "gs://source-bucket/audio/reused.flac",
+        )
+        self.assertIn("audio/derived/", derived.model_ready_audio_uri or "")
+        self.assertIn(
+            "audio/transcoded/", transcoded.model_ready_audio_uri or ""
+        )
+        metadata = derived.transformation_metadata or {}
+        for key in (
+            "action",
+            "original_audio_uri",
+            "source_audio_uri",
+            "offset",
+            "duration",
+            "source_duration",
+            "output_duration",
+            "source_format",
+            "output_format",
+            "source_channels",
+            "output_channels",
+            "mixed_to_mono",
+            "resampled",
+            "padded",
+            "split",
+            "source_group",
+            "ffprobe",
+            "ffmpeg",
+            "ffprobe_version",
+            "ffmpeg_version",
+        ):
+            self.assertIn(key, metadata)
+        self.assertEqual(metadata["action"], "derived")
+        self.assertEqual(metadata["source_channels"], 2)
+        self.assertEqual(metadata["output_channels"], 1)
+        self.assertTrue(metadata["mixed_to_mono"])
+        self.assertFalse(metadata["resampled"])
+        self.assertFalse(metadata["padded"])
+        self.assertIn("ffmpeg -hide_banner", str(metadata["ffmpeg"]))
+        self.assertEqual(metadata["ffprobe_version"], "ffprobe version 7.0.2-test")
+        self.assertEqual(metadata["ffmpeg_version"], "ffmpeg version 7.0.2-test")
+
+    def test_derived_sets_derived_audio_uri_only_for_clipped_spans(
+        self,
+    ) -> None:
+        runner = FakeAudioRunner(
+            (
+                AudioProbe(10.0, "flac", 1, 16000, "flac"),
+                AudioProbe(30.0, "flac", 1, 16000, "flac"),
+                AudioProbe(8.0, "pcm_s16le", 1, 16000, "wav"),
+                AudioProbe(6.0, "flac", 1, 16000, "flac"),
+                AudioProbe(8.0, "flac", 1, 16000, "flac"),
+            )
+        )
+        segments = (
+            _segment(
+                "gs://source-bucket/audio/reused.flac",
+                duration=10.0,
+                row_index=1,
+            ),
+            _segment(
+                "gs://source-bucket/audio/source.flac",
+                offset=2.0,
+                duration=6.0,
+                row_index=2,
+            ),
+            _segment(
+                "gs://source-bucket/audio/source.wav",
+                duration=8.0,
+                row_index=3,
+            ),
+        )
+
+        with tempfile.TemporaryDirectory() as scratch_dir:
+            result = prepare_audio_for_publication(
+                FakeStorageClient(),
+                layout=_layout(),
+                segments=segments,
+                scratch_dir=scratch_dir,
+                runner=runner,
+            )
+
+        self.assertIsNone(result.segments[0].derived_audio_uri)
+        self.assertEqual(
+            result.segments[1].derived_audio_uri,
+            result.segments[1].model_ready_audio_uri,
+        )
+        self.assertIsNone(result.segments[2].derived_audio_uri)
+
+    @patch("dataset_split.audio.requests.get")
+    def test_copied_action_uploads_staged_file_without_ffmpeg(
+        self, mock_get: Any
+    ) -> None:
+        mock_get.return_value = FakeResponse((b"mp3 bytes",))
+        runner = FakeAudioRunner(
+            (AudioProbe(8.0, "mp3", 2, 44100, "mp3"),)
+        )
+
+        with tempfile.TemporaryDirectory() as scratch_dir:
+            result = prepare_audio_for_publication(
+                FakeStorageClient(),
+                layout=_layout(),
+                segments=(
+                    _segment(
+                        "https://example.test/audio/source.mp3",
+                        duration=8.0,
+                    ),
+                ),
+                scratch_dir=scratch_dir,
+                runner=runner,
+            )
+
+        self.assertEqual(result.action_counts["copied"], 1)
+        segment = result.segments[0]
+        self.assertIn("audio/copied/", segment.model_ready_audio_uri or "")
+        self.assertIsNone(segment.derived_audio_uri)
+        self.assertEqual(
+            (segment.transformation_metadata or {})["output_channels"], 2
+        )
+        self.assertFalse(
+            (segment.transformation_metadata or {})["mixed_to_mono"]
+        )
+        self.assertEqual(runner.ffmpeg_transform_commands(), [])
+
     @patch("dataset_split.audio.requests.get")
     def test_external_url_staging_uses_streaming_download_controls(
         self, mock_get: Any
