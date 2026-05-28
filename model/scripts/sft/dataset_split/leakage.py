@@ -1,8 +1,30 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from dataset_split.types import LabeledSegment
 
 _SPLITS = {"train", "eval"}
+AUDIO_ACTIONS = frozenset({"reused", "copied", "derived", "transcoded"})
+TRANSFORMATION_METADATA_KEYS = frozenset(
+    {
+        "original_audio_uri",
+        "source_audio_uri",
+        "offset",
+        "duration",
+        "source_duration",
+        "output_duration",
+        "source_format",
+        "output_format",
+        "source_channels",
+        "output_channels",
+        "mixed_to_mono",
+        "resampled",
+        "padded",
+        "split",
+        "source_group",
+    }
+)
 _FIELD_LEAK_MESSAGES = {
     "source_group": "source_group appears in both splits",
     "original_audio_uri": "original_audio_uri appears in both splits",
@@ -61,6 +83,87 @@ def validate_split_integrity(segments: tuple[LabeledSegment, ...]) -> None:
     validate_no_duplicate_audio_spans(segments)
 
 
+def validate_model_ready_audio(segments: tuple[LabeledSegment, ...]) -> None:
+    for segment in segments:
+        split = _require_split(segment)
+        model_ready_uri = _normalized_uri(segment.model_ready_audio_uri)
+        if model_ready_uri is None or not model_ready_uri.startswith("gs://"):
+            raise _model_ready_error(
+                segment,
+                None,
+                "model_ready_audio_uri",
+                "must be a non-empty gs:// URI",
+            )
+
+        metadata = segment.transformation_metadata
+        if not isinstance(metadata, Mapping):
+            raise _model_ready_error(
+                segment,
+                None,
+                "transformation_metadata",
+                "must be a mapping",
+            )
+
+        action = _metadata_action(metadata)
+        if action is None:
+            raise _model_ready_error(
+                segment,
+                None,
+                "transformation_metadata.action",
+                "is required",
+            )
+        if action not in AUDIO_ACTIONS:
+            raise _model_ready_error(
+                segment,
+                action,
+                "transformation_metadata.action",
+                "is invalid",
+            )
+
+        missing_keys = sorted(
+            key for key in TRANSFORMATION_METADATA_KEYS if key not in metadata
+        )
+        if missing_keys:
+            raise _model_ready_error(
+                segment,
+                action,
+                f"transformation_metadata.{missing_keys[0]}",
+                "is required",
+            )
+
+        if metadata["split"] != split:
+            raise _model_ready_error(
+                segment,
+                action,
+                "transformation_metadata.split",
+                f"must match segment split {split}",
+            )
+        if metadata["source_group"] != segment.source_group:
+            raise _model_ready_error(
+                segment,
+                action,
+                "transformation_metadata.source_group",
+                f"must match segment source_group {segment.source_group}",
+            )
+
+        derived_uri = _normalized_uri(segment.derived_audio_uri)
+        if action == "derived":
+            if derived_uri is None or not derived_uri.startswith("gs://"):
+                raise _model_ready_error(
+                    segment,
+                    action,
+                    "derived_audio_uri",
+                    "must be a non-empty gs:// URI for derived action",
+                )
+        elif derived_uri is not None:
+            raise _model_ready_error(
+                segment,
+                action,
+                "derived_audio_uri",
+                f"must be blank for {action} action",
+            )
+
+
 def _normalized_uri(value: object | None) -> str | None:
     if value is None:
         return None
@@ -91,3 +194,26 @@ def _require_split(segment: LabeledSegment) -> str:
     if segment.split not in _SPLITS:
         raise SplitLeakageError(f"row_index={segment.row_index} missing split")
     return segment.split
+
+
+def _metadata_action(metadata: Mapping[str, object]) -> str | None:
+    action = metadata.get("action")
+    if action is None:
+        return None
+    normalized = str(action).strip()
+    if not normalized:
+        return None
+    return normalized
+
+
+def _model_ready_error(
+    segment: LabeledSegment,
+    action: str | None,
+    field_name: str,
+    reason: str,
+) -> SplitLeakageError:
+    action_context = f" action={action}" if action is not None else ""
+    return SplitLeakageError(
+        f"row_index={segment.row_index}{action_context} "
+        f"invalid {field_name}: {reason}"
+    )

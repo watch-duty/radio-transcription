@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 
-from dataset_split.leakage import validate_split_integrity
+from dataset_split.leakage import (
+    validate_model_ready_audio,
+    validate_split_integrity,
+)
 from dataset_split.types import LabeledSegment
 
 _SPLITS = ("train", "eval")
@@ -43,6 +46,7 @@ def canonical_rows(
 ) -> tuple[dict[str, object], ...]:
     requested_split = _require_split(split, label="split")
     validate_split_integrity(segments)
+    validate_model_ready_audio(segments)
     return tuple(
         canonical_row(segment)
         for segment in segments
@@ -52,6 +56,7 @@ def canonical_rows(
 
 def canonical_manifests(segments: tuple[LabeledSegment, ...]) -> dict[str, str]:
     validate_split_integrity(segments)
+    validate_model_ready_audio(segments)
     return {
         split: serialize_jsonl(
             tuple(
@@ -68,6 +73,7 @@ def per_dataset_manifests(
     segments: tuple[LabeledSegment, ...],
 ) -> dict[str, dict[str, str]]:
     validate_split_integrity(segments)
+    validate_model_ready_audio(segments)
     rows_by_dataset_split: dict[str, dict[str, list[dict[str, object]]]] = (
         defaultdict(lambda: {split: [] for split in _SPLITS})
     )
