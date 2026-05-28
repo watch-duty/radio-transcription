@@ -5,7 +5,8 @@ import Box from '@mui/material/Box';
 import Grid from '@mui/material/Grid';
 import Typography from '@mui/material/Typography';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { Feed, FeedCreate, FeedUpdate } from '@transcription/common';
+import type { Feed, FeedCreate, FeedUpdate, Tag } from '@transcription/common';
+import { SourceType } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { createFeed } from '../../service/createFeed';
@@ -15,8 +16,8 @@ import { FeedConfigurationEdit } from './FeedConfigurationEdit';
 import { FeedTable } from './FeedTable';
 
 interface FeedConfigurationViewProps {
-  triggerSnackbar?: (message: string) => void;
-  onError?: (error: Error, titleMessage?: string) => void;
+  triggerSnackbar: (message: string) => void;
+  onError: (error: Error, titleMessage?: string) => void;
 }
 
 export function FeedConfigurationView({
@@ -26,7 +27,13 @@ export function FeedConfigurationView({
   const { token } = useAuth();
   const queryClient = useQueryClient();
 
-  const [editingFeed, setEditingFeed] = useState<Feed | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [id, setId] = useState('');
+  const [name, setName] = useState('');
+  const [sourceType, setSourceType] = useState(SourceType.BCFY_FEEDS);
+  const [sourceFeedId, setSourceFeedId] = useState('');
+  const [tags, setTags] = useState<Tag[]>([]);
+
   const feedsErrorHandled = useRef<Error | null>(null);
 
   const {
@@ -51,15 +58,11 @@ export function FeedConfigurationView({
   const createMutation = useMutation({
     mutationFn: (newFeed: FeedCreate) => createFeed(newFeed, token!),
     onSuccess: (data) => {
-      if (triggerSnackbar) {
-        triggerSnackbar(`Feed "${data.name}" registered successfully!`);
-      }
+      triggerSnackbar(`Feed "${data.name}" registered successfully!`);
       queryClient.invalidateQueries({ queryKey: ['listFeeds', token] });
     },
     onError: (error: Error) => {
-      if (onError) {
-        onError(error, 'Registering Feed');
-      }
+      onError(error, 'Registering Feed');
     },
   });
 
@@ -72,16 +75,18 @@ export function FeedConfigurationView({
       updatePayload: FeedUpdate;
     }) => updateFeed(feedId, updatePayload, token!),
     onSuccess: (data) => {
-      if (triggerSnackbar) {
-        triggerSnackbar(`Feed "${data.name}" updated successfully!`);
-      }
-      setEditingFeed(null);
+      triggerSnackbar(`Feed "${data.name}" updated successfully!`);
+      setIsEditing(false);
+      // Reset form
+      setId('');
+      setName('');
+      setSourceType(SourceType.BCFY_FEEDS);
+      setSourceFeedId('');
+      setTags([]);
       queryClient.invalidateQueries({ queryKey: ['listFeeds', token] });
     },
     onError: (error: Error) => {
-      if (onError) {
-        onError(error, 'Updating Feed Settings');
-      }
+      onError(error, 'Updating Feed Settings');
     },
   });
 
@@ -94,13 +99,24 @@ export function FeedConfigurationView({
   };
 
   const handleStartEdit = (feed: Feed) => {
-    setEditingFeed(feed);
+    setIsEditing(true);
+    setId(feed.id);
+    setName(feed.name);
+    setSourceType(feed.sourceType);
+    setSourceFeedId(feed.sourceFeedId || '');
+    setTags(feed.tags ?? []);
     // Smooth scroll operator back to form on small viewports
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleCancelEdit = () => {
-    setEditingFeed(null);
+    setIsEditing(false);
+    // Reset form
+    setId('');
+    setName('');
+    setSourceType(SourceType.BCFY_FEEDS);
+    setSourceFeedId('');
+    setTags([]);
   };
 
   const isSubmitting = createMutation.isPending || updateMutation.isPending;
@@ -155,10 +171,20 @@ export function FeedConfigurationView({
           }}
         >
           <FeedConfigurationEdit
-            key={editingFeed ? `edit-${editingFeed.id}` : 'register'}
-            editingFeed={editingFeed}
+            key={isEditing ? `edit-${sourceFeedId}` : 'register'}
+            isEditing={isEditing}
+            feedName={name}
+            feedSourceType={sourceType}
+            feedSourceId={sourceFeedId}
+            feedTags={tags}
+            setFeedName={setName}
+            setFeedSourceType={setSourceType}
+            setFeedSourceId={setSourceFeedId}
+            setFeedTags={setTags}
             onCreateFeed={handleCreateFeed}
-            onUpdateFeed={handleUpdateFeed}
+            onUpdateFeed={(payload: FeedUpdate) =>
+              handleUpdateFeed(id, payload)
+            }
             onCancel={handleCancelEdit}
             isSubmitting={isSubmitting}
           />
@@ -175,9 +201,8 @@ export function FeedConfigurationView({
         >
           <FeedTable
             feeds={feeds}
-            isLoading={feedsLoading}
-            allowEdit={true}
-            editingFeedId={editingFeed?.id}
+            feedsLoading={feedsLoading}
+            editingFeedId={isEditing ? id : undefined}
             onEditFeed={handleStartEdit}
             isSubmitting={isSubmitting}
             title={'Feeds'}

@@ -12,6 +12,7 @@ import {
   within,
 } from '@testing-library/react';
 import type { Feed } from '@transcription/common';
+import { SourceType } from '@transcription/common';
 
 import { createFeed } from '../../service/createFeed';
 import { listFeeds } from '../../service/listFeeds';
@@ -45,7 +46,7 @@ describe('FeedConfigurationView', () => {
     {
       id: 'feed-1',
       name: 'Marin Fire Dispatch',
-      sourceType: 'bcfy_feeds',
+      sourceType: SourceType.BCFY_FEEDS,
       sourceFeedId: '33156',
       externalId: 'ca-mrn-fire',
       status: 'active',
@@ -54,7 +55,7 @@ describe('FeedConfigurationView', () => {
     {
       id: 'feed-2',
       name: 'Sonoma Sheriff dispatch',
-      sourceType: 'openmhz',
+      sourceType: SourceType.OPENMHZ,
       sourceFeedId: 'sonoma-county',
       externalId: 'ca-snm-sheriff',
       status: 'inactive',
@@ -101,20 +102,13 @@ describe('FeedConfigurationView', () => {
 
     // Verify Creation form is present
     expect(screen.getByText('Register New Feed')).toBeInTheDocument();
-    const configCard = screen.getByTestId('feed-config-card');
-    expect(
-      within(configCard).getByLabelText('Display Name')
-    ).toBeInTheDocument();
-    expect(
-      within(configCard).getByLabelText('Source Type')
-    ).toBeInTheDocument();
-    expect(
-      within(configCard).getByLabelText('Source Feed ID')
-    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Display Name')).toBeInTheDocument();
+    expect(screen.getByLabelText('Source Type')).toBeInTheDocument();
+    expect(screen.getByLabelText('Source Feed ID')).toBeInTheDocument();
 
     // Verify existing feeds list renders active items and their tag chips
     await waitFor(() => {
-      expect(screen.getByText('Feeds')).toBeInTheDocument();
+      expect(screen.getByText('Registered feeds')).toBeInTheDocument();
       expect(screen.getByText('Marin Fire Dispatch')).toBeInTheDocument();
     });
     screen.debug(screen.getByTestId('feeds-deck-card'), 100000);
@@ -187,7 +181,7 @@ describe('FeedConfigurationView', () => {
     const mockCreatedFeed = {
       id: 'feed-99',
       name: 'Napa Ambulance Dispatch',
-      sourceType: 'bcfy_calls' as const,
+      sourceType: SourceType.BCFY_CALLS,
       sourceFeedId: '9988-77',
       externalId: 'ca-nap-amb',
       status: 'active' as const,
@@ -202,9 +196,7 @@ describe('FeedConfigurationView', () => {
     });
 
     // Select Source Type dropdown
-    const selectDropdown = within(
-      screen.getByTestId('feed-config-card')
-    ).getByRole('combobox', {
+    const selectDropdown = screen.getByRole('combobox', {
       name: /Source Type/i,
     });
     fireEvent.mouseDown(selectDropdown);
@@ -233,10 +225,10 @@ describe('FeedConfigurationView', () => {
       expect(createFeed).toHaveBeenCalledWith(
         {
           name: 'Napa Ambulance Dispatch',
-          sourceType: 'bcfy_calls',
+          sourceType: SourceType.BCFY_CALLS,
           sourceFeedId: '9988-77',
           externalId: '9988-77',
-          tags: undefined,
+          tags: [],
         },
         'fake-jwt-token-xyz'
       );
@@ -301,12 +293,11 @@ describe('FeedConfigurationView', () => {
     expect(screen.getAllByLabelText('Value')[1]).toHaveValue('Marin');
 
     // Verify permanent fields are disabled in update mode
-    const configCard = screen.getByTestId('feed-config-card');
-    expect(within(configCard).getByLabelText('Source Type')).toHaveAttribute(
+    expect(screen.getByLabelText('Source Type')).toHaveAttribute(
       'aria-disabled',
       'true'
     );
-    expect(within(configCard).getByLabelText('Source Feed ID')).toBeDisabled();
+    expect(screen.getByLabelText('Source Feed ID')).toBeDisabled();
 
     // Perform cancel edit check
     const cancelBtn = screen.getByRole('button', { name: /Cancel Edit/i });
@@ -369,7 +360,7 @@ describe('FeedConfigurationView', () => {
       expect(screen.getByText('Sonoma Sheriff dispatch')).toBeInTheDocument();
     });
 
-    const filterInput = screen.getByPlaceholderText(/Search feeds/i);
+    const filterInput = screen.getByPlaceholderText(/Filter feeds/i);
     fireEvent.change(filterInput, { target: { value: 'sonoma' } });
 
     // Sonoma Sheriff matches, Marin Fire is hidden
@@ -381,7 +372,7 @@ describe('FeedConfigurationView', () => {
     const mockCreatedFeed = {
       id: 'feed-99',
       name: 'Napa Ambulance Dispatch',
-      sourceType: 'bcfy_calls' as const,
+      sourceType: SourceType.BCFY_CALLS,
       sourceFeedId: '9988-77',
       externalId: 'ca-nap-amb',
       status: 'active' as const,
@@ -396,9 +387,7 @@ describe('FeedConfigurationView', () => {
     });
 
     // Select Source Type dropdown
-    const selectDropdown = within(
-      screen.getByTestId('feed-config-card')
-    ).getByRole('combobox', {
+    const selectDropdown = screen.getByRole('combobox', {
       name: /Source Type/i,
     });
     fireEvent.mouseDown(selectDropdown);
@@ -431,10 +420,10 @@ describe('FeedConfigurationView', () => {
       expect(createFeed).toHaveBeenCalledWith(
         {
           name: 'Napa Ambulance Dispatch',
-          sourceType: 'bcfy_calls',
+          sourceType: SourceType.BCFY_CALLS,
           sourceFeedId: '9988-77',
           externalId: '9988-77',
-          tags: undefined,
+          tags: [],
         },
         'fake-jwt-token-xyz'
       );
@@ -455,7 +444,7 @@ describe('FeedConfigurationView', () => {
         .getAllByRole('row')
         .filter((row) => row.getAttribute('data-item-index') !== null);
       return bodyRows.map(
-        (row) => row.firstElementChild?.querySelector('p, a')?.textContent
+        (row) => row.firstElementChild?.querySelector('p')?.textContent
       );
     };
 

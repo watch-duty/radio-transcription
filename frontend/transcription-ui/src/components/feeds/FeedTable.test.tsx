@@ -13,6 +13,7 @@ import {
   within,
 } from '@testing-library/react';
 import type { Feed } from '@transcription/common';
+import { SourceType } from '@transcription/common';
 
 import { FeedTable } from './FeedTable';
 
@@ -33,7 +34,7 @@ describe('FeedTable', () => {
     {
       id: 'feed-1',
       name: 'Alpha Radio',
-      sourceType: 'bcfy_feeds',
+      sourceType: SourceType.BCFY_FEEDS,
       status: 'active',
       sourceUrl: 'https://example.com/source',
       archiveUrl: 'https://example.com/archive',
@@ -45,7 +46,7 @@ describe('FeedTable', () => {
     {
       id: 'feed-2',
       name: 'Bravo Scanner',
-      sourceType: 'openmhz',
+      sourceType: SourceType.OPENMHZ,
       status: 'inactive',
     },
   ];

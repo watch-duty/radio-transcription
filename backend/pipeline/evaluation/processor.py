@@ -12,6 +12,7 @@ from backend.pipeline.common.tracing_utils import (
 from backend.pipeline.schema_types import (
     transcribed_audio_pb2 as transcribed_pb2,
 )
+from backend.services.audio_segments.models import AnnotationType
 
 if TYPE_CHECKING:
     from cloudevents.http import event as cloudevent
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
         TranscriptsClient,
     )
     from backend.pipeline.evaluation.service import EvaluationService
+    from backend.pipeline.storage.audio_segment_store import AudioSegmentStore
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +39,7 @@ class EvaluationEventProcessor:
         transcripts_client: TranscriptsClient,
         publisher: PubSubClient,
         output_topic_path: str,
+        audio_segment_store: AudioSegmentStore,
     ) -> None:
         """
         Initializes the EvaluationEventProcessor.
@@ -46,13 +49,15 @@ class EvaluationEventProcessor:
             transcripts_client: Client to write to Transcripts API.
             publisher: Pub/Sub publisher client.
             output_topic_path: Topic path to publish alerts to.
+            audio_segment_store: Store for audio segments and annotations.
         """
         self.evaluation_service = evaluation_service
         self.transcripts_client = transcripts_client
         self.publisher = publisher
         self.output_topic_path = output_topic_path
+        self.audio_segment_store = audio_segment_store
 
-    def process_event(self, cloud_event: cloudevent.CloudEvent) -> None:
+    async def process_event(self, cloud_event: cloudevent.CloudEvent) -> None:
         """
         Processes a CloudEvent containing transcribed audio.
 
@@ -100,12 +105,35 @@ class EvaluationEventProcessor:
 
             # 3. Always write to Transcripts API
             # TODO (https://linear.app/watchduty/issue/GOO-245/): Handle write failure.
+            # TODO (https://linear.app/watchduty/issue/GOO-458/remaining-legacy-cleanup): cleanup after migration
             try:
                 self.transcripts_client.create_transcript(evaluated_payload)
             except AlreadyExistsError:
                 logger.warning(
                     "Transcript already exists for transmission %s which indicates we already processed this transmission. Continuing.",
                     evaluated_payload.transmission_id,
+                )
+
+            # 3.5 Write to Annotation Segments table
+            try:
+                annotation_data = {
+                    "decisions": list(evaluated_payload.evaluation_decisions),
+                    "errors": list(evaluated_payload.errors),
+                }
+                await self.audio_segment_store.add_annotation(
+                    segment_id=new_audio.transmission_id,
+                    annotation_type=AnnotationType.EVALUATION,
+                    data=annotation_data,
+                )
+                logger.info(
+                    "Successfully added evaluation annotation for segment %s",
+                    new_audio.transmission_id,
+                )
+            except Exception as e:
+                logger.exception(
+                    "Failed to add evaluation annotation for segment %s: %s",
+                    new_audio.transmission_id,
+                    e,
                 )
 
             # 4. Publish to Downstream Topic if flagged or has errors
