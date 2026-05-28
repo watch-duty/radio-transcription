@@ -182,7 +182,9 @@ export function FeedConfigurationView({
             setFeedSourceId={setSourceFeedId}
             setFeedTags={setTags}
             onCreateFeed={handleCreateFeed}
-            onUpdateFeed={(payload: FeedUpdate) => handleUpdateFeed(id, payload)}
+            onUpdateFeed={(payload: FeedUpdate) =>
+              handleUpdateFeed(id, payload)
+            }
             onCancel={handleCancelEdit}
             isSubmitting={isSubmitting}
           />
