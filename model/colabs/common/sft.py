@@ -115,8 +115,8 @@ def validate_example(example: dict[str, Any]) -> bool:
         return False
     if fd.get("mimeType") not in SUPPORTED_AUDIO_MIME_TYPES:
         return False
-    model_parts = model_turn.get("parts", [{}])
-    if not model_parts:
+    model_parts = model_turn.get("parts")
+    if not isinstance(model_parts, list) or not model_parts:
         return False
     first_model_part = model_parts[0]
     if not isinstance(first_model_part, dict):
