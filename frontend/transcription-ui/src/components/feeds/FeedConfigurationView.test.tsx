@@ -225,10 +225,10 @@ describe('FeedConfigurationView', () => {
       expect(createFeed).toHaveBeenCalledWith(
         {
           name: 'Napa Ambulance Dispatch',
-          sourceType: 'bcfy_calls',
+          sourceType: SourceType.BCFY_CALLS,
           sourceFeedId: '9988-77',
           externalId: '9988-77',
-          tags: undefined,
+          tags: [],
         },
         'fake-jwt-token-xyz'
       );
@@ -420,10 +420,10 @@ describe('FeedConfigurationView', () => {
       expect(createFeed).toHaveBeenCalledWith(
         {
           name: 'Napa Ambulance Dispatch',
-          sourceType: 'bcfy_calls',
+          sourceType: SourceType.BCFY_CALLS,
           sourceFeedId: '9988-77',
           externalId: '9988-77',
-          tags: undefined,
+          tags: [],
         },
         'fake-jwt-token-xyz'
       );
