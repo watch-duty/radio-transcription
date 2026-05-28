@@ -1,18 +1,17 @@
 """Data-quality preflight -- hard gate before any paid tune run.
 
-On any violation, write a preflight report to report_path and stop before tune.
-The operator fixes the data; there is no auto-filter escape hatch.
-Checks include per-example token limit, empty/whitespace targets, duplicate fileUris,
-fileUri reachability via blob_exists, and non-empty/disjoint train/val splits.
+On any violation, raise a clear error and stop before tune. The operator fixes
+the data; there is no auto-filter escape hatch.
+Checks include per-example token limit, empty/whitespace targets, duplicate
+fileUris, fileUri reachability via blob_exists, and non-empty/disjoint train/val
+splits.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 from typing import Final
@@ -30,33 +29,13 @@ PREFLIGHT_GCS_BATCH_SIZE: Final = 256
 PREFLIGHT_GCS_TIMEOUT_SECONDS: Final = 30.0
 
 
-@dataclass
-class PreflightReport:
-    failures: list[str] = field(default_factory=list)
-    offending_ids: list[str] = field(default_factory=list)
-
-    @property
-    def passed(self) -> bool:
-        return len(self.failures) == 0
-
-
-def _safe_blob_exists(storage_client: object, uri: str) -> bool:
-    """``blob_exists`` that never raises -- a malformed/unparseable URI is unreachable.
-
-    ``blob_exists`` calls ``parse_gcs_uri``, which raises on a non-``gs://`` URI. Without
-    this guard a single malformed fileUri would crash ``run_preflight`` before the report
-    is written. The hard gate should always write a preflight report.
-    A malformed URI is reported downstream as "not reachable" (and also fails
-    validate_example), so the operator still gets a clear, actionable failure.
-    """
-    try:
-        return blob_exists(
-            storage_client,
-            uri,
-            timeout=PREFLIGHT_GCS_TIMEOUT_SECONDS,
-        )
-    except Exception:
-        return False
+def _blob_exists_with_timeout(storage_client: object, uri: str) -> bool:
+    """``blob_exists`` with the preflight timeout boundary."""
+    return blob_exists(
+        storage_client,
+        uri,
+        timeout=PREFLIGHT_GCS_TIMEOUT_SECONDS,
+    )
 
 
 def _estimate_text_tokens(
@@ -88,35 +67,36 @@ def _iter_batches(items: list[str], batch_size: int) -> list[list[str]]:
     return [items[i : i + batch_size] for i in range(0, len(items), batch_size)]
 
 
-def _find_unreachable_gcs_uris(
+def _check_gcs_uris_reachable(
     storage_client: object,
     uris: list[str],
     *,
     max_workers: int,
     batch_size: int,
-    batch_pause_seconds: float,
-) -> set[str]:
+) -> None:
     if max_workers <= 0:
         raise ValueError("gcs_max_workers must be > 0")
-    if batch_pause_seconds < 0:
-        raise ValueError("gcs_batch_pause_seconds must be >= 0")
     if not uris:
-        return set()
+        return
 
-    unreachable: set[str] = set()
     batches = _iter_batches(uris, batch_size)
     worker_count = min(max_workers, len(uris))
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
-        for batch_index, batch in enumerate(batches):
+        for batch in batches:
             flags = list(
-                executor.map(partial(_safe_blob_exists, storage_client), batch)
+                executor.map(
+                    partial(_blob_exists_with_timeout, storage_client), batch
+                )
             )
-            unreachable.update(
-                u for u, ok in zip(batch, flags, strict=True) if not ok
-            )
-            if batch_pause_seconds and batch_index < len(batches) - 1:
-                time.sleep(batch_pause_seconds)
-    return unreachable
+            unreachable = [
+                uri for uri, ok in zip(batch, flags, strict=True) if not ok
+            ]
+            if len(unreachable) == 1:
+                raise ValueError(f"fileUri not reachable: {unreachable[0]}")
+            if unreachable:
+                raise ValueError(
+                    f"{len(unreachable)} fileUris not reachable; first: {unreachable[0]}"
+                )
 
 
 def _extract_file_uris(example: dict) -> list[str]:
@@ -130,53 +110,55 @@ def _extract_file_uris(example: dict) -> list[str]:
 
 def _check_examples(
     *,
-    report: PreflightReport,
     split: str,
     examples: list[dict],
     system_prompt: str,
     user_prompt: str,
-    storage_client: object,
-    unreachable: set[str],
 ) -> None:
     for i, ex in enumerate(examples):
         ex_id = f"{split}[{i}]"
         if not validate_example(ex):
-            report.failures.append(
+            raise ValueError(
                 f"{ex_id}: failed validate_example (empty target or malformed schema)"
             )
-            if ex_id not in report.offending_ids:
-                report.offending_ids.append(ex_id)
         # Token cap check (text portion only -- audio duration not available here)
         text_tokens = _estimate_text_tokens(ex, system_prompt, user_prompt)
         if text_tokens > PREFLIGHT_TOKEN_CAP:
-            report.failures.append(
+            raise ValueError(
                 f"{ex_id}: estimated text tokens {text_tokens} exceed cap {PREFLIGHT_TOKEN_CAP}"
             )
-            if ex_id not in report.offending_ids:
-                report.offending_ids.append(ex_id)
-        # fileUri reachability check (only when storage_client is provided)
-        if storage_client is not None:
-            for uri in _extract_file_uris(ex):
-                if uri and uri in unreachable:
-                    report.failures.append(
-                        f"{ex_id}: fileUri not reachable: {uri}"
-                    )
-                    if ex_id not in report.offending_ids:
-                        report.offending_ids.append(ex_id)
+
+
+def _load_jsonl(path: Path, split: str) -> list[dict]:
+    examples: list[dict] = []
+    with path.open(encoding="utf-8") as f:
+        for line_no, line in enumerate(f, start=1):
+            if not line.strip():
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"{split} JSONL line {line_no} is not valid JSON: {exc.msg}"
+                ) from exc
+            if not isinstance(obj, dict):
+                raise TypeError(
+                    f"{split} JSONL line {line_no} must be a JSON object"
+                )
+            examples.append(obj)
+    return examples
 
 
 def run_preflight(
     train_jsonl_path: Path,
     val_jsonl_path: Path | None,
-    storage_client: object,
-    report_path: Path,
+    storage_client: object | None,
     system_prompt: str = "",
     user_prompt: str = "",
     gcs_max_workers: int = PREFLIGHT_GCS_MAX_WORKERS,
     gcs_batch_size: int = PREFLIGHT_GCS_BATCH_SIZE,
-    gcs_batch_pause_seconds: float = 0.0,
-) -> PreflightReport:
-    """Run all preflight checks. Write report + return result. Never mutates data.
+) -> None:
+    """Run all preflight checks. Raises on first failure. Never mutates data.
 
     Checks:
     1. Non-empty train split (at least 1 example)
@@ -184,26 +166,21 @@ def run_preflight(
     3. Per-example: validate_example (empty target), estimated token cap, fileUri reachability
     4. Duplicate fileUri detection in train set
     """
-    report = PreflightReport()
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Load train examples
-    train_examples: list[dict] = []
-    try:
-        with train_jsonl_path.open() as tf:
-            train_examples = [json.loads(line) for line in tf if line.strip()]
-    except Exception as exc:
-        report.failures.append(f"Failed to load train JSONL: {exc}")
-        _write_report(report, report_path)
-        return report
+    train_examples = _load_jsonl(train_jsonl_path, "train")
 
     # Check 1: non-empty train
     if not train_examples:
-        report.failures.append(
+        raise ValueError(
             "Train JSONL is empty -- no examples to tune on."
         )
-        _write_report(report, report_path)
-        return report
+
+    # Check 3: per-example validate_example + token cap.
+    _check_examples(
+        split="train",
+        examples=train_examples,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+    )
 
     # Check 4: duplicate fileUris in train
     train_uris: list[str] = []
@@ -212,9 +189,7 @@ def run_preflight(
     seen: set[str] = set()
     for uri in train_uris:
         if uri and uri in seen:
-            report.failures.append(f"Duplicate fileUri in train: {uri}")
-            if uri not in report.offending_ids:
-                report.offending_ids.append(uri)
+            raise ValueError(f"Duplicate fileUri in train: {uri}")
         if uri:
             seen.add(uri)
 
@@ -222,73 +197,33 @@ def run_preflight(
     val_examples: list[dict] = []
     val_uris: list[str] = []
     if val_jsonl_path is not None:
-        try:
-            with val_jsonl_path.open() as vf:
-                val_examples = [json.loads(line) for line in vf if line.strip()]
-        except Exception as exc:
-            report.failures.append(f"Failed to load val JSONL: {exc}")
-        else:
-            if not val_examples:
-                report.failures.append("Val JSONL is empty.")
+        val_examples = _load_jsonl(val_jsonl_path, "val")
+        if not val_examples:
+            raise ValueError("Val JSONL is empty.")
+        _check_examples(
+            split="val",
+            examples=val_examples,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+        )
         for ex in val_examples:
             val_uris.extend(_extract_file_uris(ex))
         # Check 2: disjoint
         overlap = {u for u in train_uris if u} & {u for u in val_uris if u}
         for uri in sorted(overlap):
-            report.failures.append(
+            raise ValueError(
                 f"fileUri in both train and val (not disjoint): {uri}"
             )
-            if uri not in report.offending_ids:
-                report.offending_ids.append(uri)
 
     # Pre-compute unreachable fileUris in parallel (network-bound; dedup + thread pool)
-    # so the per-example reachability check below is a fast set-membership test.
-    unreachable: set[str] = set()
+    # and fail as soon as the bounded check finds any missing object.
     if storage_client is not None:
         unique_uris = sorted({u for u in [*train_uris, *val_uris] if u})
-        unreachable = _find_unreachable_gcs_uris(
+        _check_gcs_uris_reachable(
             storage_client,
             unique_uris,
             max_workers=gcs_max_workers,
             batch_size=gcs_batch_size,
-            batch_pause_seconds=gcs_batch_pause_seconds,
         )
 
-    # Check 3: per-example validate_example + token cap + reachability
-    _check_examples(
-        report=report,
-        split="train",
-        examples=train_examples,
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-        storage_client=storage_client,
-        unreachable=unreachable,
-    )
-    _check_examples(
-        report=report,
-        split="val",
-        examples=val_examples,
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-        storage_client=storage_client,
-        unreachable=unreachable,
-    )
-
-    _write_report(report, report_path)
-    return report
-
-
-def _write_report(report: PreflightReport, report_path: Path) -> None:
-    report_dict = {
-        "passed": report.passed,
-        "failures": report.failures,
-        "offending_ids": report.offending_ids,
-    }
-    report_path.write_text(json.dumps(report_dict, indent=2))
-    if report.passed:
-        logger.info(f"Preflight passed. Report: {report_path}")
-    else:
-        logger.error(
-            f"Preflight FAILED ({len(report.failures)} issues). "
-            f"Report: {report_path}. Fix the data and re-run."
-        )
+    logger.info("Preflight passed.")

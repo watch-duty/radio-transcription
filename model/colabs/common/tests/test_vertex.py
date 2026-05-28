@@ -198,28 +198,24 @@ class TestPollTuningJob(unittest.TestCase):
                 timeout_hours=0,
             )
 
-    @unittest.mock.patch("common.vertex.time.sleep")
     @unittest.mock.patch("common.vertex.genai")
-    def test_poll_retries_transient_get_error(self, mock_genai, mock_sleep):
-        """poll_tuning_job retries a transient tunings.get failure."""
+    def test_poll_get_error_propagates(self, mock_genai):
+        """poll_tuning_job lets transient tunings.get failures surface."""
         mock_client = _make_mock_client()
-        success = mock_client.tunings.get.return_value
-        mock_client.tunings.get.side_effect = [
-            RuntimeError("temporary network failure"),
-            success,
-        ]
+        mock_client.tunings.get.side_effect = RuntimeError(
+            "temporary network failure"
+        )
         mock_genai.Client.return_value = mock_client
         from common.vertex import poll_tuning_job
 
-        result = poll_tuning_job(
-            name="projects/p/locations/l/tuningJobs/123",
-            project="p",
-            location="us-central1",
-        )
+        with self.assertRaisesRegex(RuntimeError, "temporary network failure"):
+            poll_tuning_job(
+                name="projects/p/locations/l/tuningJobs/123",
+                project="p",
+                location="us-central1",
+            )
 
-        self.assertIn("endpoints", result)
-        self.assertEqual(mock_client.tunings.get.call_count, 2)
-        mock_sleep.assert_called_once()
+        self.assertEqual(mock_client.tunings.get.call_count, 1)
 
     @unittest.mock.patch("common.vertex.genai")
     def test_poll_raises_clear_error_when_endpoint_missing(self, mock_genai):
@@ -458,12 +454,9 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
             "Batch job returned no destination", "\n".join(logs.output)
         )
 
-    @unittest.mock.patch("common.vertex.time.sleep")
     @unittest.mock.patch("common.vertex.genai")
-    def test_batch_poll_retries_transient_get_error(
-        self, mock_genai, mock_sleep
-    ):
-        """submit_batch_inference retries a transient batches.get failure."""
+    def test_batch_poll_get_error_propagates(self, mock_genai):
+        """submit_batch_inference lets transient batches.get failures surface."""
         mock_dest = unittest.mock.MagicMock()
         mock_dest.gcs_uri = "gs://bucket/output/"
         mock_batch_job = unittest.mock.MagicMock()
@@ -473,25 +466,23 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
         mock_cur.dest = mock_dest
         mock_client = unittest.mock.MagicMock()
         mock_client.batches.create.return_value = mock_batch_job
-        mock_client.batches.get.side_effect = [
-            RuntimeError("temporary network failure"),
-            mock_cur,
-        ]
+        mock_client.batches.get.side_effect = RuntimeError(
+            "temporary network failure"
+        )
         mock_genai.Client.return_value = mock_client
 
         from common.vertex import submit_batch_inference
 
-        result = submit_batch_inference(
-            input_uri="gs://bucket/input.jsonl",
-            output_uri="gs://bucket/output/",
-            model="gemini-2.5-flash",
-            project="p",
-            location="us-central1",
-        )
+        with self.assertRaisesRegex(RuntimeError, "temporary network failure"):
+            submit_batch_inference(
+                input_uri="gs://bucket/input.jsonl",
+                output_uri="gs://bucket/output/",
+                model="gemini-2.5-flash",
+                project="p",
+                location="us-central1",
+            )
 
-        self.assertEqual(result, "gs://bucket/output/")
-        self.assertEqual(mock_client.batches.get.call_count, 2)
-        mock_sleep.assert_called_once()
+        self.assertEqual(mock_client.batches.get.call_count, 1)
 
 
 if __name__ == "__main__":

@@ -22,6 +22,39 @@ if _COLABS_DIR not in sys.path:
 
 
 class TestPipelineEvalKeywordMetrics(unittest.TestCase):
+    def test_eval_requires_endpoint_unless_base_only(self) -> None:
+        import pipeline
+
+        with tempfile.TemporaryDirectory() as tmp:
+            results_dir = Path(tmp) / "results"
+            round_dir = results_dir / "round-no-endpoint"
+            round_dir.mkdir(parents=True)
+            (round_dir / "config.json").write_text(
+                json.dumps(
+                    {
+                        "round_id": "round-no-endpoint",
+                        "datasets": ["echo"],
+                        "system_prompt": "sys",
+                        "user_prompt": "user",
+                        "base_model": "gemini-3.1-flash-lite",
+                    }
+                )
+            )
+
+            with (
+                unittest.mock.patch.object(
+                    pipeline, "RESULTS_DIR", results_dir
+                ),
+                self.assertRaisesRegex(ValueError, "--base-only"),
+            ):
+                pipeline._eval(
+                    argparse.Namespace(
+                        round_id="round-no-endpoint",
+                        base_only=False,
+                        location="us-central1",
+                    )
+                )
+
     def test_eval_records_base_keyword_metrics(self) -> None:
         import pipeline
 
@@ -137,7 +170,7 @@ class TestPipelineEvalKeywordMetrics(unittest.TestCase):
             self.assertIn("| round-keywords | echo | gemini-2.5-flash", ledger)
             self.assertIn("| abc123 |", ledger)
 
-    def test_eval_skips_malformed_batch_output_rows(self) -> None:
+    def test_eval_fails_on_malformed_batch_output_rows(self) -> None:
         import pipeline
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -164,60 +197,100 @@ class TestPipelineEvalKeywordMetrics(unittest.TestCase):
             def fake_download_blob_to_file(
                 _client, _bucket: str, _blob: str, local_path: str
             ) -> None:
-                malformed_outputs = [
-                    {
-                        "request": {},
-                        "response": {
-                            "candidates": [
-                                {"content": {"parts": [{"text": "engine 41"}]}}
-                            ]
-                        },
+                malformed_output = {
+                    "request": {},
+                    "response": {
+                        "candidates": [
+                            {"content": {"parts": [{"text": "engine 41"}]}}
+                        ]
                     },
-                    {
-                        "request": {
-                            "contents": [{"parts": [None]}],
-                        },
-                        "response": None,
+                }
+                Path(local_path).write_text(json.dumps(malformed_output) + "\n")
+
+            with (
+                unittest.mock.patch.object(
+                    pipeline, "RESULTS_DIR", results_dir
+                ),
+                unittest.mock.patch.object(
+                    pipeline,
+                    "_load_registry",
+                    return_value={
+                        "datasets": {
+                            "echo": {
+                                "adapter": "gcs_manifest",
+                                "eval_manifest_uri": "gs://bucket/eval.jsonl",
+                            }
+                        }
                     },
+                ),
+                unittest.mock.patch(
+                    "google.cloud.storage.Client",
+                    return_value=storage_client,
+                ),
+                unittest.mock.patch(
+                    "common.gcs_utils.download_jsonl_manifest",
+                    return_value=[
+                        {
+                            "audio_filepath": "gs://bucket/a.flac",
+                            "text": "copy engine 41",
+                            "duration": 5.0,
+                        }
+                    ],
+                ),
+                unittest.mock.patch("common.gcs_utils.upload_file_to_blob"),
+                unittest.mock.patch(
+                    "common.gcs_utils.download_blob_to_file",
+                    side_effect=fake_download_blob_to_file,
+                ),
+                unittest.mock.patch(
+                    "common.scoring.build_normalizer",
+                    return_value=lambda text: text.lower(),
+                ),
+                unittest.mock.patch(
+                    "common.vertex.submit_batch_inference",
+                    return_value="gs://bucket/out/",
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    TypeError, "malformed request contents"
+                ):
+                    pipeline._eval(
+                        argparse.Namespace(
+                            round_id="round-malformed",
+                            base_only=True,
+                            location="us-central1",
+                        )
+                    )
+
+    def test_eval_scores_missing_batch_predictions_as_empty(self) -> None:
+        import pipeline
+
+        with tempfile.TemporaryDirectory() as tmp:
+            results_dir = Path(tmp) / "results"
+            round_dir = results_dir / "round-missing-prediction"
+            round_dir.mkdir(parents=True)
+            (round_dir / "config.json").write_text(
+                json.dumps(
                     {
-                        "request": {
-                            "contents": [
-                                {
-                                    "parts": [
-                                        {
-                                            "fileData": {
-                                                "fileUri": "gs://bucket/a.flac"
-                                            }
-                                        }
-                                    ]
-                                }
-                            ]
-                        },
-                        "response": {"candidates": [None]},
-                    },
-                    {
-                        "request": {
-                            "contents": [
-                                {
-                                    "parts": [
-                                        {
-                                            "fileData": {
-                                                "fileUri": "gs://bucket/a.flac"
-                                            }
-                                        }
-                                    ]
-                                }
-                            ]
-                        },
-                        "response": {
-                            "candidates": [
-                                {"content": {"parts": [None]}},
-                            ]
-                        },
-                    },
-                ]
+                        "round_id": "round-missing-prediction",
+                        "datasets": ["echo"],
+                        "system_prompt": "sys",
+                        "user_prompt": "user",
+                        "base_model": "gemini-3.1-flash-lite",
+                    }
+                )
+            )
+
+            storage_client = unittest.mock.MagicMock()
+            storage_client.bucket.return_value.list_blobs.return_value = [
+                types.SimpleNamespace(name="out/predictions.jsonl")
+            ]
+
+            def fake_download_blob_to_file(
+                _client, _bucket: str, _blob: str, local_path: str
+            ) -> None:
                 Path(local_path).write_text(
-                    "\n".join(json.dumps(obj) for obj in malformed_outputs)
+                    json.dumps({"status": {"code": 13, "message": "error"}})
                     + "\n"
                 )
 
@@ -264,10 +337,11 @@ class TestPipelineEvalKeywordMetrics(unittest.TestCase):
                     "common.vertex.submit_batch_inference",
                     return_value="gs://bucket/out/",
                 ),
+                self.assertLogs("pipeline", level="WARNING") as logs,
             ):
                 rc = pipeline._eval(
                     argparse.Namespace(
-                        round_id="round-malformed",
+                        round_id="round-missing-prediction",
                         base_only=True,
                         location="us-central1",
                     )
@@ -277,6 +351,9 @@ class TestPipelineEvalKeywordMetrics(unittest.TestCase):
             metrics = json.loads((round_dir / "wer_summary.json").read_text())
             self.assertEqual(metrics["n_eval_examples"], 1)
             self.assertEqual(metrics["base_empty_rate"], 100.0)
+            self.assertIn(
+                "unique segments returned no prediction", "\n".join(logs.output)
+            )
 
     def test_eval_duplicate_audio_uris_do_not_warn_missing_predictions(
         self,
@@ -389,7 +466,7 @@ class TestPipelineEvalKeywordMetrics(unittest.TestCase):
 
         self.assertEqual(rc, 0)
 
-    def test_eval_batch_submit_failure_returns_clean_error(self) -> None:
+    def test_eval_batch_submit_failure_propagates(self) -> None:
         import pipeline
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -444,18 +521,15 @@ class TestPipelineEvalKeywordMetrics(unittest.TestCase):
                     "common.vertex.submit_batch_inference",
                     side_effect=TimeoutError("batch timed out"),
                 ),
-                self.assertLogs("pipeline", level="ERROR") as logs,
             ):
-                rc = pipeline._eval(
-                    argparse.Namespace(
-                        round_id="round-batch-fails",
-                        base_only=True,
-                        location="us-central1",
+                with self.assertRaisesRegex(TimeoutError, "batch timed out"):
+                    pipeline._eval(
+                        argparse.Namespace(
+                            round_id="round-batch-fails",
+                            base_only=True,
+                            location="us-central1",
+                        )
                     )
-                )
-
-        self.assertEqual(rc, 1)
-        self.assertIn("[base] Batch inference failed", "\n".join(logs.output))
 
 
 class TestWerSummaryKeywordMetrics(unittest.TestCase):
