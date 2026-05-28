@@ -57,9 +57,6 @@ python pipeline.py tune --round-id 2026-06-01-echo \
 # Run evaluation on the tuned Gemini model
 python pipeline.py eval --round-id 2026-06-01-echo
 
-# Or score the base model only, without requiring a tuned endpoint
-python pipeline.py eval --round-id 2026-06-01-echo --base-only
-
 # Full Gemini SFT pipeline: build -> tune -> eval
 python pipeline.py all --datasets echo --round-id 2026-06-01-echo \
   --base-model gemini-3.1-flash-lite --confirm

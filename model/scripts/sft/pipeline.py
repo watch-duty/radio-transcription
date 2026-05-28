@@ -322,7 +322,11 @@ def _build(args: argparse.Namespace) -> int:
     ``combined_val_uri`` is recorded so ``tune`` wires a Vertex validation dataset
     (eval_total_loss). When no dataset declares one, the val split is skipped.
     """
-    system_prompt, user_prompt = _load_prompts(args)
+    try:
+        system_prompt, user_prompt = _load_prompts(args)
+    except PromptOverrideError as e:
+        logger.error(str(e))  # noqa: TRY400
+        return 1
 
     from common.scoring import build_normalizer
     from google.cloud import storage
@@ -330,19 +334,25 @@ def _build(args: argparse.Namespace) -> int:
     registry = _load_registry()
     dataset_names = _parse_dataset_names(args.datasets)
     if not dataset_names:
-        raise ValueError("No datasets specified. Pass at least one dataset name.")
+        logger.error("No datasets specified. Pass at least one dataset name.")
+        return 1
     config = _load_round_config(args.round_id)
     gcp_project = _resolve_gcp_project(args, config)
     gcs_bucket = _resolve_gcs_bucket(args, config)
-    gcs_sft_prefix = _gcs_sft_prefix(gcs_bucket)
+    try:
+        gcs_sft_prefix = _gcs_sft_prefix(gcs_bucket)
+    except ValueError as e:
+        logger.error(str(e))  # noqa: TRY400
+        return 1
 
     # Validate requested datasets exist in registry
     for ds_name in dataset_names:
         if ds_name not in registry.get("datasets", {}):
-            raise ValueError(
+            logger.error(
                 f"Dataset '{ds_name}' not found in datasets.toml. "
                 f"Available: {list(registry['datasets'].keys())}"
             )
+            return 1
 
     storage_client = storage.Client(project=gcp_project)
     staging_dir = (
@@ -355,20 +365,26 @@ def _build(args: argparse.Namespace) -> int:
     normalizer = build_normalizer()
 
     # Train split (required)
-    per_dataset_uris, combined_train_uri, total_duration_seconds = (
-        _build_split_jsonl(
-            dataset_names=dataset_names,
-            registry=registry,
-            split="train",
-            staging_dir=staging_dir,
-            storage_client=storage_client,
-            normalizer=normalizer,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            round_id=args.round_id,
-            gcs_sft_prefix=gcs_sft_prefix,
+    try:
+        per_dataset_uris, combined_train_uri, total_duration_seconds = (
+            _build_split_jsonl(
+                dataset_names=dataset_names,
+                registry=registry,
+                split="train",
+                staging_dir=staging_dir,
+                storage_client=storage_client,
+                normalizer=normalizer,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                round_id=args.round_id,
+                gcs_sft_prefix=gcs_sft_prefix,
+            )
         )
-    )
+    except ValueError as e:
+        # e.g. echo's train_manifest_uri placeholder is empty until the
+        # cluster-split runs -- fail cleanly, not with a traceback.
+        logger.error(f"cannot build train split: {e}")  # noqa: TRY400
+        return 1
 
     # Val split (optional) -- only datasets declaring a non-empty val_manifest_uri.
     val_dataset_names = [
@@ -378,18 +394,22 @@ def _build(args: argparse.Namespace) -> int:
     ]
     combined_val_uri = ""
     if val_dataset_names:
-        _, combined_val_uri, _ = _build_split_jsonl(
-            dataset_names=val_dataset_names,
-            registry=registry,
-            split="val",
-            staging_dir=staging_dir,
-            storage_client=storage_client,
-            normalizer=normalizer,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            round_id=args.round_id,
-            gcs_sft_prefix=gcs_sft_prefix,
-        )
+        try:
+            _, combined_val_uri, _ = _build_split_jsonl(
+                dataset_names=val_dataset_names,
+                registry=registry,
+                split="val",
+                staging_dir=staging_dir,
+                storage_client=storage_client,
+                normalizer=normalizer,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                round_id=args.round_id,
+                gcs_sft_prefix=gcs_sft_prefix,
+            )
+        except ValueError as e:
+            logger.error(f"cannot build val split: {e}")  # noqa: TRY400
+            return 1
 
     # Write/update config.json
     config.update(
@@ -437,16 +457,21 @@ def _tune(args: argparse.Namespace) -> int:
     # Reject unsupported base models before any GCP call. The supported list is
     # intentionally narrow and mirrors Google's supervised-tuning model list.
     if args.base_model not in SUPPORTED_SFT_BASE_MODELS:
-        raise ValueError(
+        logger.error(
             f"Base model '{args.base_model}' is not supported for this Gemini SFT pipeline. "
             f"Use one of: {', '.join(sorted(SUPPORTED_SFT_BASE_MODELS))}."
         )
+        return 1
 
     config = _load_round_config(args.round_id)
     location = getattr(args, "location", "us-central1")
     gcp_project = _resolve_gcp_project(args, config)
     gcs_bucket = _resolve_gcs_bucket(args, config)
-    gcs_sft_prefix = _gcs_sft_prefix(gcs_bucket)
+    try:
+        gcs_sft_prefix = _gcs_sft_prefix(gcs_bucket)
+    except ValueError as e:
+        logger.error(str(e))  # noqa: TRY400
+        return 1
     config["gcp_project"] = gcp_project
     config["gcs_bucket"] = gcs_bucket
     config["gcs_sft_prefix"] = gcs_sft_prefix
@@ -466,7 +491,8 @@ def _tune(args: argparse.Namespace) -> int:
             if not endpoint:
                 # Crash recovery: the job succeeded but the endpoint was never
                 # persisted (the process died between submit and the endpoint write).
-                # Re-read it from the job resource so tuned eval can proceed.
+                # Re-read it from the job resource so eval does not silently
+                # degrade to base-only.
                 tuned = getattr(cur, "tuned_model", None)
                 endpoint = getattr(tuned, "endpoint", None) if tuned else None
                 if endpoint:
@@ -476,9 +502,9 @@ def _tune(args: argparse.Namespace) -> int:
                         f"Recovered endpoint from succeeded job {job_name}: {endpoint}"
                     )
                 else:
-                    raise RuntimeError(
+                    logger.warning(
                         f"Job {job_name} is SUCCEEDED but exposes no endpoint; "
-                        "cannot run tuned eval."
+                        "eval will run base-only."
                     )
             else:
                 logger.info(
@@ -506,7 +532,8 @@ def _tune(args: argparse.Namespace) -> int:
     train_uri = config.get("combined_train_uri") or ""
     val_uri = config.get("combined_val_uri", "")
     if not train_uri:
-        raise ValueError("No combined_train_uri in config.json. Run `build` first.")
+        logger.error("No combined_train_uri in config.json. Run `build` first.")
+        return 1
 
     storage_client = storage.Client(project=gcp_project)
 
@@ -528,13 +555,23 @@ def _tune(args: argparse.Namespace) -> int:
 
         system_prompt = config.get("system_prompt", "")
         user_prompt = config.get("user_prompt", "")
-        run_preflight(
+        preflight_report_path = (
+            RESULTS_DIR / args.round_id / "preflight_report.json"
+        )
+        report = run_preflight(
             train_jsonl_path=train_local,
             val_jsonl_path=val_local,
             storage_client=storage_client,
+            report_path=preflight_report_path,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
         )
+        if not report.passed:
+            logger.error(
+                f"Preflight FAILED. {len(report.failures)} issue(s) found. "
+                f"Report: {preflight_report_path}. Fix the data and re-run."
+            )
+            return 1
 
         # Count examples for cost estimate
         with train_local.open(encoding="utf-8") as fh:
@@ -619,7 +656,7 @@ def _eval(args: argparse.Namespace) -> int:
 
     Computes the full scoring panel: WER, CER, ins/del/sub, empty/hallucination
     rate, duration buckets, keyword accuracy, and bootstrap paired significance.
-    Pass ``--base-only`` to score the base model without a tuned endpoint.
+    Degrades gracefully to base-only metrics when no tuned model endpoint is available.
     """
     import tempfile
 
@@ -646,14 +683,20 @@ def _eval(args: argparse.Namespace) -> int:
 
     config = _load_round_config(args.round_id)
     if not config:
-        raise ValueError(
+        logger.error(
             f"No config.json found for round {args.round_id}. Run `build` first."
         )
+        return 1
 
     gcp_project = _resolve_gcp_project(args, config)
     gcs_bucket = _resolve_gcs_bucket(args, config)
-    gcs_sft_prefix = _gcs_sft_prefix(gcs_bucket)
+    try:
+        gcs_sft_prefix = _gcs_sft_prefix(gcs_bucket)
+    except ValueError as e:
+        logger.error(str(e))  # noqa: TRY400
+        return 1
 
+    storage_client = storage.Client(project=gcp_project)
     location = getattr(args, "location", "us-central1")
     system_prompt = config.get("system_prompt", "")
     user_prompt = config.get("user_prompt", "")
@@ -663,21 +706,21 @@ def _eval(args: argparse.Namespace) -> int:
     tuned_endpoint = config.get("endpoint")
 
     if not base_only and not tuned_endpoint:
-        raise ValueError(
-            "No tuned endpoint in config.json. Run `tune` first or pass "
-            "`--base-only` to score the base model only."
+        logger.warning(
+            "No tuned endpoint in config.json — running base-only eval."
         )
+        base_only = True
 
-    storage_client = storage.Client(project=gcp_project)
     registry = _load_registry()
     datasets = config.get("datasets", [])
     eval_uris = _resolve_eval_manifest_uris(registry, datasets)
 
     if not eval_uris:
-        raise ValueError(
+        logger.error(
             "No eval_manifest_uri found for any gcs_manifest dataset in the build config. "
             "Check datasets.toml [datasets.echo] eval_manifest_uri."
         )
+        return 1
 
     # Load eval manifest -> CanonicalRows
     eval_entries = []
@@ -688,8 +731,6 @@ def _eval(args: argparse.Namespace) -> int:
             f"Eval manifest [{ds_name}]: {len(ds_entries)} rows from {eval_uri}"
         )
     eval_rows = rows_from_manifest(eval_entries)
-    if not eval_rows:
-        raise ValueError("Eval manifest produced no valid rows to score.")
     logger.info(
         f"Combined eval manifest: {len(eval_rows)} rows from {len(eval_uris)} dataset(s)"
     )
@@ -719,118 +760,90 @@ def _eval(args: argparse.Namespace) -> int:
         )
         return batch_input_gcs, batch_output_gcs
 
-    def _extract_batch_request_uri(obj: dict, line_no: int) -> str:
-        request = obj.get("request")
-        if not isinstance(request, dict):
-            raise TypeError(
-                f"batch output line {line_no}: missing request object"
-            )
-        contents = request.get("contents")
-        if (
-            not isinstance(contents, list)
-            or not contents
-            or not isinstance(contents[0], dict)
-        ):
-            raise TypeError(
-                f"batch output line {line_no}: malformed request contents"
-            )
-        parts = contents[0].get("parts")
-        if not isinstance(parts, list):
-            raise TypeError(
-                f"batch output line {line_no}: malformed request parts"
-            )
-        # Vertex echoes the request back in camelCase even though we send
-        # snake_case, so accept BOTH fileData/fileUri and file_data/file_uri.
-        for part in parts:
-            if not isinstance(part, dict):
-                raise TypeError(
-                    f"batch output line {line_no}: malformed request part"
-                )
-            fd = part.get("file_data") or part.get("fileData")
-            if fd is None:
-                continue
-            if not isinstance(fd, dict):
-                raise TypeError(
-                    f"batch output line {line_no}: malformed file data"
-                )
-            candidate_uri = fd.get("file_uri") or fd.get("fileUri")
-            if isinstance(candidate_uri, str) and candidate_uri:
-                return candidate_uri
-        raise ValueError(f"batch output line {line_no}: missing request file URI")
-
-    def _extract_batch_prediction_text(obj: dict, line_no: int) -> str:
-        response = obj.get("response")
-        if response is None:
-            return ""
-        if not isinstance(response, dict):
-            raise TypeError(
-                f"batch output line {line_no}: malformed response object"
-            )
-        candidates = response.get("candidates") or []
-        if not candidates:
-            return ""
-        if not isinstance(candidates, list) or not isinstance(
-            candidates[0], dict
-        ):
-            raise TypeError(
-                f"batch output line {line_no}: malformed response candidates"
-            )
-        content = candidates[0].get("content") or {}
-        if not isinstance(content, dict):
-            raise TypeError(
-                f"batch output line {line_no}: malformed response content"
-            )
-        parts = content.get("parts") or []
-        if not parts:
-            return ""
-        if not isinstance(parts, list):
-            raise TypeError(
-                f"batch output line {line_no}: malformed response parts"
-            )
-        for part in parts:
-            if not isinstance(part, dict):
-                raise TypeError(
-                    f"batch output line {line_no}: malformed response part"
-                )
-            text_value = part.get("text")
-            if isinstance(text_value, str):
-                return text_value
-        return ""
-
     def _parse_batch_output(text: str) -> dict[str, str]:
         """Parse batch output JSONL lines; return {audio_uri: pred_text}."""
         result: dict[str, str] = {}
-        for line_no, line in enumerate(text.splitlines(), start=1):
+        for line in text.splitlines():
             if not line.strip():
                 continue
             try:
                 obj = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise ValueError(
-                    f"batch output line {line_no}: invalid JSON: {exc.msg}"
-                ) from exc
-            if not isinstance(obj, dict):
-                raise TypeError(
-                    f"batch output line {line_no}: expected JSON object"
-                )
-            if obj.get("status"):
+            except json.JSONDecodeError:
+                logger.warning("Skipping malformed batch output JSONL row")
                 continue
-            uri = _extract_batch_request_uri(obj, line_no)
-            result[uri] = _extract_batch_prediction_text(obj, line_no)
+            if not isinstance(obj, dict):
+                continue
+            if obj.get("status") or not isinstance(
+                obj.get("request"), dict
+            ):  # error / non-prediction
+                continue
+            contents = obj["request"].get("contents", [])
+            if (
+                not isinstance(contents, list)
+                or not contents
+                or not isinstance(contents[0], dict)
+            ):
+                continue
+            parts = contents[0].get("parts", [])
+            if not isinstance(parts, list):
+                continue
+            # Vertex echoes the request back in camelCase even though we send
+            # snake_case, so accept BOTH fileData/fileUri and file_data/file_uri.
+            uri = None
+            for p in parts:
+                if not isinstance(p, dict):
+                    continue
+                fd = p.get("file_data") or p.get("fileData")
+                if isinstance(fd, dict):
+                    candidate_uri = fd.get("file_uri") or fd.get("fileUri")
+                    uri = (
+                        candidate_uri
+                        if isinstance(candidate_uri, str)
+                        else None
+                    )
+                    if uri:
+                        break
+            response = obj.get("response")
+            cands = (
+                response.get("candidates", [])
+                if isinstance(response, dict)
+                else []
+            )
+            pred = ""
+            if cands and isinstance(cands, list) and isinstance(cands[0], dict):
+                content = cands[0].get("content", {})
+                text_parts = (
+                    content.get("parts", [])
+                    if isinstance(content, dict)
+                    else []
+                )
+                if isinstance(text_parts, list):
+                    for tp in text_parts:
+                        if isinstance(tp, dict) and isinstance(
+                            tp.get("text"), str
+                        ):
+                            pred = tp["text"]
+                            break
+            if uri:
+                result[uri] = pred
         return result
 
-    def _batch_infer(model_id: str, label: str) -> dict[str, str]:
+    def _batch_infer(model_id: str, label: str) -> dict[str, str] | None:
         """Build batch JSONL, submit, download, parse -> {audio_uri: pred_text}."""
         with tempfile.TemporaryDirectory() as tmp:
             batch_input_gcs, batch_output_gcs = _build_batch_jsonl(label, tmp)
 
-            output_loc = submit_batch_inference(
-                input_uri=batch_input_gcs,
-                output_uri=batch_output_gcs,
-                model=model_id,
-                project=gcp_project,
-                location=location,
-            )
+            try:
+                output_loc = submit_batch_inference(
+                    input_uri=batch_input_gcs,
+                    output_uri=batch_output_gcs,
+                    model=model_id,
+                    project=gcp_project,
+                    location=location,
+                )
+            except (RuntimeError, TimeoutError) as e:
+                logger.error(f"[{label}] Batch inference failed: {e}")  # noqa: TRY400
+                return None
 
             # Locate the batch results. The genai batches API writes them under
             # output_loc (often in a generated subfolder) and may shard the output,
@@ -845,10 +858,11 @@ def _eval(args: argparse.Namespace) -> int:
                 if blob.name.endswith(".jsonl")
             ]
             if not pred_blobs:
-                raise RuntimeError(
+                logger.error(
                     f"[{label}] no .jsonl prediction output under {output_loc} -- "
                     "batch produced no readable results."
                 )
+                return {}
             preds: dict[str, str] = {}
             for i, blob in enumerate(pred_blobs):
                 local_path = Path(tmp) / f"predictions_{i}.jsonl"
@@ -873,6 +887,8 @@ def _eval(args: argparse.Namespace) -> int:
     # Run base model batch inference
     logger.info("Running base model batch inference...")
     base_preds = _batch_infer(base_model, "base")
+    if base_preds is None:
+        return 1
 
     refs = [row.text for row in eval_rows]
     durations = [row.duration for row in eval_rows]
@@ -917,16 +933,22 @@ def _eval(args: argparse.Namespace) -> int:
     )
 
     # Duration bucket WER.
-    bucket_results = duration_bucket_wer(
-        refs, base_hyps, durations, normalizer=normalizer
-    )
-    metrics["duration_buckets"] = [
-        {"bucket": b["bucket"], "base_wer": b["wer"]} for b in bucket_results
-    ]
+    try:
+        bucket_results = duration_bucket_wer(
+            refs, base_hyps, durations, normalizer=normalizer
+        )
+        metrics["duration_buckets"] = [
+            {"bucket": b["bucket"], "base_wer": b["wer"]}
+            for b in bucket_results
+        ]
+    except Exception as e:
+        logger.warning(f"Could not compute duration bucket WER: {e}")
 
     if not base_only and tuned_endpoint:
         logger.info("Running tuned model batch inference...")
         tuned_preds = _batch_infer(tuned_endpoint, "tuned")
+        if tuned_preds is None:
+            return 1
         tuned_hyps = [
             tuned_preds.get(row.audio_filepath, "") for row in eval_rows
         ]
@@ -959,24 +981,33 @@ def _eval(args: argparse.Namespace) -> int:
             )
 
         # Bootstrap significance: bootstrap_paired takes (refs, hyps_a, hyps_b).
-        bs = bootstrap_paired(
-            refs, base_hyps, tuned_hyps, normalizer=normalizer
-        )
-        metrics["bootstrap_p_value"] = bs.get("p_value_one_sided")
-        metrics["bootstrap_ci_low"] = bs.get("ci_low")
-        metrics["bootstrap_ci_high"] = bs.get("ci_high")
-        metrics["bootstrap_delta"] = bs.get("delta")
+        try:
+            bs = bootstrap_paired(
+                refs, base_hyps, tuned_hyps, normalizer=normalizer
+            )
+            metrics["bootstrap_p_value"] = bs.get("p_value_one_sided")
+            metrics["bootstrap_ci_low"] = bs.get("ci_low")
+            metrics["bootstrap_ci_high"] = bs.get("ci_high")
+            metrics["bootstrap_delta"] = bs.get("delta")
+        except Exception as e:
+            logger.warning(f"bootstrap_paired failed: {e}")
 
         # Tuned duration bucket WER
-        tuned_bucket_results = duration_bucket_wer(
-            refs, tuned_hyps, durations, normalizer=normalizer
-        )
-        # Merge tuned WER into the existing bucket entries
-        tuned_wer_by_bucket = {
-            b["bucket"]: b["wer"] for b in tuned_bucket_results
-        }
-        for entry in metrics["duration_buckets"]:
-            entry["tuned_wer"] = tuned_wer_by_bucket.get(entry["bucket"])
+        try:
+            tuned_bucket_results = duration_bucket_wer(
+                refs, tuned_hyps, durations, normalizer=normalizer
+            )
+            # Merge tuned WER into the existing bucket entries
+            tuned_wer_by_bucket = {
+                b["bucket"]: b["wer"] for b in tuned_bucket_results
+            }
+            if "duration_buckets" in metrics:
+                for entry in metrics["duration_buckets"]:
+                    entry["tuned_wer"] = tuned_wer_by_bucket.get(
+                        entry["bucket"]
+                    )
+        except Exception as e:
+            logger.warning(f"Could not compute tuned duration bucket WER: {e}")
 
     # Write per-run records.
     write_wer_summary(RESULTS_DIR, args.round_id, metrics)
