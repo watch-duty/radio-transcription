@@ -4,9 +4,9 @@ import type {
   FeedCreate,
   FeedStatus,
   FeedUpdate,
-  SourceType,
   Tag,
 } from '@transcription/common';
+import { SourceType } from '@transcription/common';
 import { GoogleAuth } from 'google-auth-library';
 import {
   Body,
@@ -58,15 +58,15 @@ function getSourceUrl(
 ): string | undefined {
   if (!sourceFeedId) return undefined;
   switch (sourceType) {
-    case 'bcfy_feeds':
+    case SourceType.BCFY_FEEDS:
       return `https://www.broadcastify.com/listen/feed/${sourceFeedId}`;
-    case 'bcfy_calls':
+    case SourceType.BCFY_CALLS:
       return `https://www.broadcastify.com/calls/tg/${sourceFeedId.replace(/-/g, '/')}`;
-    case 'openmhz':
+    case SourceType.OPENMHZ:
       return `https://openmhz.com/system/${sourceFeedId}`;
-    case 'echo':
+    case SourceType.ECHO:
       return undefined;
-    case 'fire_notifications':
+    case SourceType.FIRE_NOTIFICATIONS:
       return undefined;
     default:
       return undefined;
@@ -80,15 +80,15 @@ function getArchiveUrl(
   if (!sourceFeedId) return undefined;
 
   switch (sourceType) {
-    case 'bcfy_feeds':
+    case SourceType.BCFY_FEEDS:
       return `https://www.broadcastify.com/archives/feed/${sourceFeedId}`;
-    case 'bcfy_calls':
+    case SourceType.BCFY_CALLS:
       return `https://www.broadcastify.com/calls/tg/${sourceFeedId.replace(/-/g, '/')}/archives`;
-    case 'openmhz':
+    case SourceType.OPENMHZ:
       return undefined;
-    case 'echo':
+    case SourceType.ECHO:
       return undefined;
-    case 'fire_notifications':
+    case SourceType.FIRE_NOTIFICATIONS:
       return undefined;
     default:
       return undefined;
