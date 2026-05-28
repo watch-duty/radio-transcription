@@ -33,7 +33,7 @@ from backend.pipeline.ingestion.retry import (
     retry_with_lease_check,
 )
 from backend.pipeline.ingestion.router import resolve_topic_path
-from backend.pipeline.ingestion.settings import NormalizerSettings
+from backend.pipeline.ingestion.settings import CollectorSettings
 from backend.pipeline.ingestion.slo_contract import EVENT_TYPE_CHUNK_INGESTED
 from backend.pipeline.storage.connection import (
     close_pool,
@@ -58,7 +58,7 @@ CaptureFn = Callable[
 logger = logging.getLogger(__name__)
 
 
-class NormalizerRuntime:
+class CollectorRuntime:
     """
     Generic runtime orchestrator for a fleet of async feed-processing tasks.
 
@@ -67,7 +67,7 @@ class NormalizerRuntime:
     an OS daemon thread (immune to event loop starvation), and detecting fence
     violations (immediate ``os._exit(1)`` on any lost lease).
 
-    Normalizer authors provide a single ``capture_fn`` async generator that
+    Collector authors provide a single ``capture_fn`` async generator that
     yields audio chunks. The runtime handles everything else.
 
     Design target: 250 concurrent feeds per GCE instance on a Managed
@@ -87,21 +87,21 @@ class NormalizerRuntime:
 
     Args:
         capture_fn: Async generator factory ``(feed, shutdown_event) -> AsyncIterator[CapturedChunk]``.
-        settings: Runtime configuration. Defaults to ``NormalizerSettings()``.
+        settings: Runtime configuration. Defaults to ``CollectorSettings()``.
 
     """
 
     def __init__(
         self,
         capture_fn: CaptureFn,
-        settings: NormalizerSettings | None = None,
+        settings: CollectorSettings | None = None,
     ) -> None:
         if settings is None:
-            from backend.pipeline.ingestion.settings import NormalizerSettings  # noqa: I001, PLC0415
+            from backend.pipeline.ingestion.settings import CollectorSettings  # noqa: I001, PLC0415
 
-            settings = NormalizerSettings()
+            settings = CollectorSettings()
         self._capture_fn = capture_fn
-        self._normalizer_settings = settings
+        self._collector_settings = settings
         # threading.Event (not asyncio.Event) — the heartbeat OS thread
         # can't use asyncio primitives; it needs a thread-safe signal.
         self._thread_stop = threading.Event()
@@ -147,7 +147,7 @@ class NormalizerRuntime:
         # Without this, the default limit of 100 means ~150 uploads always
         # queue at the 250-feed target, adding latency and event-loop overhead.
         self._gcs_client = gcs_client.GcsClient(
-            max_connections=self._normalizer_settings.max_feeds_per_worker,
+            max_connections=self._collector_settings.max_feeds_per_worker,
         )
         self._pubsub_client = pubsub_client.PubSubClient()
         # Shared state published to the /healthz handler. feed_tasks is held
@@ -167,9 +167,9 @@ class NormalizerRuntime:
         concurrent feed tasks each generating frequent I/O completions.
         """
         logger.info(
-            "Starting NormalizerRuntime worker_id=%s max_feeds=%d",
-            self._normalizer_settings.worker_id,
-            self._normalizer_settings.max_feeds_per_worker,
+            "Starting CollectorRuntime worker_id=%s max_feeds=%d",
+            self._collector_settings.worker_id,
+            self._collector_settings.max_feeds_per_worker,
         )
         asyncio.run(self._main(), loop_factory=uvloop.new_event_loop)
 
@@ -196,7 +196,7 @@ class NormalizerRuntime:
         for sig in (signal.SIGTERM, signal.SIGINT):
             self._loop.add_signal_handler(sig, _on_signal, sig)
 
-        settings = self._normalizer_settings
+        settings = self._collector_settings
         # command_timeout: bounds query execution on established connections.
         # timeout (connect): bounds TCP handshake — without it, a VPC subnet
         # silently dropping packets hangs connect() for 2+ min (Linux TCP
@@ -349,7 +349,7 @@ class NormalizerRuntime:
         """
         # cgroup v2 (unified hierarchy; expected on COS / GKE / Cloud Run)
         try:
-            raw = NormalizerRuntime._CGROUP_V2_LIMIT_PATH.read_text().strip()
+            raw = CollectorRuntime._CGROUP_V2_LIMIT_PATH.read_text().strip()
         except OSError:
             pass
         else:
@@ -362,7 +362,7 @@ class NormalizerRuntime:
             return val if val > 0 else None
         # cgroup v1 fallback (legacy hosts; should not be reachable on COS)
         try:
-            raw = NormalizerRuntime._CGROUP_V1_LIMIT_PATH.read_text().strip()
+            raw = CollectorRuntime._CGROUP_V1_LIMIT_PATH.read_text().strip()
         except OSError:
             return None
         try:
@@ -370,7 +370,7 @@ class NormalizerRuntime:
         except ValueError:
             return None
         if (
-            val >= NormalizerRuntime._CGROUP_V1_UNBOUNDED_SENTINEL_THRESHOLD
+            val >= CollectorRuntime._CGROUP_V1_UNBOUNDED_SENTINEL_THRESHOLD
             or val <= 0
         ):
             return None
@@ -394,13 +394,13 @@ class NormalizerRuntime:
         """
         try:
             return int(
-                NormalizerRuntime._CGROUP_V2_USAGE_PATH.read_text().strip(),
+                CollectorRuntime._CGROUP_V2_USAGE_PATH.read_text().strip(),
             )
         except (OSError, ValueError):
             pass
         try:
             return int(
-                NormalizerRuntime._CGROUP_V1_USAGE_PATH.read_text().strip(),
+                CollectorRuntime._CGROUP_V1_USAGE_PATH.read_text().strip(),
             )
         except (OSError, ValueError):
             return None
@@ -440,7 +440,7 @@ class NormalizerRuntime:
 
             if self._paused_for_memory.is_set():
                 if await self._sleep_or_shutdown(
-                    self._normalizer_settings.rss_watchdog_poll_interval_sec,
+                    self._collector_settings.rss_watchdog_poll_interval_sec,
                 ):
                     return
                 continue
@@ -454,11 +454,11 @@ class NormalizerRuntime:
             # no other worker can steal leases either.
             try:
                 total_slack = (
-                    self._normalizer_settings.max_feeds_per_worker
+                    self._collector_settings.max_feeds_per_worker
                     - len(self._feed_tasks)
                 )
                 if total_slack > 0:
-                    s = self._normalizer_settings
+                    s = self._collector_settings
                     caps = s.caps
                     # Pull the authoritative per-type held count from the
                     # DB before apportioning. See FeedStore.count_held_by_type
@@ -590,16 +590,16 @@ class NormalizerRuntime:
                             len(primary),
                             len(leases) - len(primary),
                             len(self._feed_tasks),
-                            self._normalizer_settings.max_feeds_per_worker,
+                            self._collector_settings.max_feeds_per_worker,
                         )
             except Exception:
                 logger.exception(
                     "Lease acquisition failed -- will retry in %.1fs",
-                    self._normalizer_settings.lease_poll_interval_sec,
+                    self._collector_settings.lease_poll_interval_sec,
                 )
 
             if await self._sleep_or_shutdown(
-                self._normalizer_settings.lease_poll_interval_sec,
+                self._collector_settings.lease_poll_interval_sec,
             ):
                 return
 
@@ -738,9 +738,7 @@ class NormalizerRuntime:
 
     def _get_pubsub_topic_path(self, feed: LeasedFeed) -> str:
         """Determines the Pub/Sub topic path based on the feed source type."""
-        return resolve_topic_path(
-            feed["source_type"], self._normalizer_settings
-        )
+        return resolve_topic_path(feed["source_type"], self._collector_settings)
 
     async def _process_feed(self, feed: LeasedFeed) -> None:  # noqa: PLR0912, PLR0915
         """
@@ -750,9 +748,9 @@ class NormalizerRuntime:
         bookmarks progress with fence violation detection.
         """
         chunk_seq = 0
-        worker_id = self._normalizer_settings.worker_id
+        worker_id = self._collector_settings.worker_id
         fencing_token = feed["fencing_token"]
-        settings = self._normalizer_settings
+        settings = self._collector_settings
         _fallback_session_id: str | None = None
         topic_path = self._get_pubsub_topic_path(feed)
 
@@ -978,7 +976,7 @@ class NormalizerRuntime:
                     feed["id"],
                     worker_id,
                     fencing_token,
-                    self._normalizer_settings.feed_failure_threshold,
+                    self._collector_settings.feed_failure_threshold,
                     reason=reason,
                 )
                 if status == "quarantined":
@@ -1030,7 +1028,7 @@ class NormalizerRuntime:
         consecutive slow cycles could exceed the 60s abandonment window,
         triggering unnecessary ``os._exit(1)``.
         """
-        interval = self._normalizer_settings.heartbeat_interval_sec
+        interval = self._collector_settings.heartbeat_interval_sec
         next_tick = time.monotonic() + interval
 
         while not self._thread_stop.is_set():
@@ -1044,7 +1042,7 @@ class NormalizerRuntime:
                     self._loop,
                 )
                 future.result(
-                    timeout=self._normalizer_settings.heartbeat_stall_timeout_sec,
+                    timeout=self._collector_settings.heartbeat_stall_timeout_sec,
                 )
             except concurrent.futures.TimeoutError:
                 # CRITICAL: must be concurrent.futures.TimeoutError, NOT the
@@ -1055,7 +1053,7 @@ class NormalizerRuntime:
                 logger.critical(
                     "Event loop stall -- heartbeat did not complete "
                     "in %ds, terminating",
-                    self._normalizer_settings.heartbeat_stall_timeout_sec,
+                    self._collector_settings.heartbeat_stall_timeout_sec,
                 )
                 logging.shutdown()  # flush before os._exit bypasses handlers
                 os._exit(1)
@@ -1094,7 +1092,7 @@ class NormalizerRuntime:
         trip. No periodic-poll logging — at 2s polling, 1800 lines/hour
         would dominate Cloud Logging quota.
         """
-        s = self._normalizer_settings
+        s = self._collector_settings
         poll_interval = s.rss_watchdog_poll_interval_sec
         pause_threshold = s.rss_watchdog_pause_threshold
         exit_threshold = s.rss_watchdog_exit_threshold
@@ -1232,7 +1230,7 @@ class NormalizerRuntime:
             HeartbeatResult
         ] = await self._heartbeat_store.renew_heartbeats_batch_diagnostic(
             list(active.keys()),
-            self._normalizer_settings.worker_id,
+            self._collector_settings.worker_id,
         )
 
         # Retention signal is now DB-authoritative worker ownership, not
@@ -1260,7 +1258,7 @@ class NormalizerRuntime:
         # existing retry_with_lease_check wrapper + _lease_lost event
         # gracefully handles that outcome without depending on the
         # heartbeat's retained_ids observation.
-        worker_id = self._normalizer_settings.worker_id
+        worker_id = self._collector_settings.worker_id
         retained_ids = {
             r["id"] for r in results if r["current_worker"] == worker_id
         }
@@ -1401,7 +1399,7 @@ class NormalizerRuntime:
         if self._feed_tasks:
             _done, pending = await asyncio.wait(
                 self._feed_tasks.values(),
-                timeout=self._normalizer_settings.task_cancel_budget_sec,
+                timeout=self._collector_settings.task_cancel_budget_sec,
             )
             if pending:
                 # PITFALLS.md Pitfall 9: asyncio.wait does NOT cancel
@@ -1425,7 +1423,7 @@ class NormalizerRuntime:
                     "explicitly cancelling and proceeding to release. "
                     "names=%s",
                     len(pending),
-                    self._normalizer_settings.task_cancel_budget_sec,
+                    self._collector_settings.task_cancel_budget_sec,
                     names,
                 )
                 for task in pending:
@@ -1448,7 +1446,7 @@ class NormalizerRuntime:
         # flip self-balancing across surviving workers, so the
         # batched+jittered stagger the scaling plan originally prescribed
         # is no longer needed.
-        worker_id = self._normalizer_settings.worker_id
+        worker_id = self._collector_settings.worker_id
         logger.info(
             "Releasing all leases owned by worker %s",
             worker_id,
