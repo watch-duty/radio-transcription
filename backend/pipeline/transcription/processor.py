@@ -92,20 +92,10 @@ class TranscriptionEventProcessor:
                 duration_ms = max(0, int(end_ms - start_ms))
 
                 # Retrieve active transcriber and run Speech API
-                try:
-                    transcript = self.transcriber.transcribe(
-                        uri=claim.canonical_audio_uri,
-                        duration_ms=duration_ms,
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "Failed to transcribe transmission %s (feed %s): %s. "
-                        "Silently dropping to avoid Pub/Sub retry loop.",
-                        transmission_id,
-                        feed_id,
-                        e,
-                    )
-                    return
+                transcript = self.transcriber.transcribe(
+                    uri=claim.canonical_audio_uri,
+                    duration_ms=duration_ms,
+                )
 
                 if not transcript:
                     logger.info(
@@ -161,4 +151,4 @@ class TranscriptionEventProcessor:
                     feed_id,
                     e,
                 )
-                raise
+                return
