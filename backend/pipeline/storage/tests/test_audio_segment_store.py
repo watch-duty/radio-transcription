@@ -9,7 +9,14 @@ from backend.pipeline.storage.audio_segment_store import AudioSegmentStore
 from backend.pipeline.storage.tests.connection_util import make_mock_pool
 from backend.services.audio_segments.models import (
     AnnotationType,
+    AudioClassification,
 )
+
+
+class IsUUID:
+    def __eq__(self, uuid_val: object) -> bool:
+        return isinstance(uuid_val, uuid.UUID)
+
 
 _SEGMENT_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 _FEED_ID = uuid.UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
@@ -97,6 +104,64 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
                 "invalid-uuid", AnnotationType.TRANSCRIPT, {"text": "hello"}
             )
         self.assertIn("Invalid segment_id UUID", str(cm.exception))
+
+    async def test_create_audio_segment_success(self) -> None:
+        new_row = _AUDIO_SEGMENT_ROW.copy()
+        new_row.pop("annotations", None)
+        self.pool.fetchrow.return_value = new_row
+
+        result = await self.store.create_audio_segment(
+            feed_id=str(_FEED_ID),
+            classification=AudioClassification.SPEECH_DETECTED,
+            start_timestamp=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+            end_timestamp=datetime.datetime(
+                2026, 1, 1, 0, 1, tzinfo=datetime.UTC
+            ),
+            source_audio_uris=["gs://bucket/audio1.ogg"],
+            canonical_audio_uri="gs://bucket/canonical.ogg",
+            start_audio_offset=datetime.timedelta(seconds=5),
+            end_audio_offset=datetime.timedelta(seconds=10),
+            playback_audio_uri=None,
+            missing_prior_context=False,
+            missing_post_context=False,
+        )
+
+        self.assertEqual(result.id, str(_SEGMENT_ID))
+        self.assertEqual(result.feed_id, str(_FEED_ID))
+        missing_prior_context = False
+        missing_post_context = False
+        self.pool.fetchrow.assert_called_once_with(
+            audio_segment_queries.CREATE_AUDIO_SEGMENT_SQL,
+            IsUUID(),
+            _FEED_ID,
+            AudioClassification.SPEECH_DETECTED,
+            datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+            datetime.datetime(2026, 1, 1, 0, 1, tzinfo=datetime.UTC),
+            missing_prior_context,
+            missing_post_context,
+            ["gs://bucket/audio1.ogg"],
+            "gs://bucket/canonical.ogg",
+            datetime.timedelta(seconds=5),
+            datetime.timedelta(seconds=10),
+            None,
+        )
+
+    async def test_create_audio_segment_invalid_feed_id(self) -> None:
+        with self.assertRaises(ValueError) as cm:
+            await self.store.create_audio_segment(
+                feed_id="invalid-uuid",
+                classification=AudioClassification.SPEECH_DETECTED,
+                start_timestamp=datetime.datetime(
+                    2026, 1, 1, tzinfo=datetime.UTC
+                ),
+                end_timestamp=datetime.datetime(
+                    2026, 1, 1, 0, 1, tzinfo=datetime.UTC
+                ),
+                source_audio_uris=["gs://bucket/audio1.ogg"],
+                missing_prior_context=False,
+                missing_post_context=False,
+            )
+        self.assertIn("Invalid feed_id UUID", str(cm.exception))
 
     async def test_list_audio_segments(self) -> None:
         result = await self.store.list_audio_segments()
