@@ -70,6 +70,7 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
             <Chip label={searchedFeed.sourceType} size="small" />
             <FeedStatusIndicator
               status={status}
+              substatus={searchedFeed.substatus}
               lastHeartbeat={lastHeartbeat}
             />
           </Box>

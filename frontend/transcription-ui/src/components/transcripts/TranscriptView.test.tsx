@@ -7,7 +7,11 @@ import { Howl } from 'howler';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
-import { SourceType } from '@transcription/common';
+import {
+  type BackendFeedStatus,
+  type FeedStatus,
+  SourceType,
+} from '@transcription/common';
 
 import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
@@ -88,7 +92,8 @@ describe('TranscriptView', () => {
         id: 'feed123',
         name: 'Feed 123',
         sourceType: SourceType.BCFY_FEEDS,
-        status: 'active',
+        status: 'active' as FeedStatus,
+        substatus: 'active' as BackendFeedStatus,
       },
     ]);
     // Default mock for getFeed
@@ -96,7 +101,8 @@ describe('TranscriptView', () => {
       id: 'feed123',
       name: 'Feed 123',
       sourceType: SourceType.BCFY_FEEDS,
-      status: 'active',
+      status: 'active' as FeedStatus,
+      substatus: 'active' as BackendFeedStatus,
       lastHeartbeat: '2026-04-10T12:00:00Z',
     });
     // Default mock for listRules
@@ -176,7 +182,8 @@ describe('TranscriptView', () => {
         id: 'feed1',
         name: 'Feed 1',
         sourceType: SourceType.BCFY_FEEDS,
-        status: 'active' as const,
+        status: 'active' as FeedStatus,
+        substatus: 'active' as BackendFeedStatus,
       },
     ];
     vi.mocked(listFeeds).mockResolvedValueOnce(mockFeeds);
@@ -229,7 +236,8 @@ describe('TranscriptView', () => {
         id: 'feed123',
         name: 'Feed 123',
         sourceType: SourceType.BCFY_FEEDS,
-        status: 'active' as const,
+        status: 'active' as FeedStatus,
+        substatus: 'active' as BackendFeedStatus,
         sourceUrl: 'https://partner.broadcastify.com/12345',
         archiveUrl: 'https://www.broadcastify.com/archives/feed/12345',
       },
@@ -618,7 +626,8 @@ describe('TranscriptView', () => {
       id: 'feed123',
       name: 'Feed 123',
       sourceType: SourceType.BCFY_FEEDS,
-      status: 'active' as const,
+      status: 'active' as FeedStatus,
+      substatus: 'active' as BackendFeedStatus,
       lastHeartbeat: new Date(fixedNow.getTime() - 5 * 60 * 1000).toISOString(),
     };
     vi.mocked(getFeed).mockResolvedValue(mockFeed);
