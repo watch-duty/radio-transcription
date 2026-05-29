@@ -87,7 +87,7 @@ export class TranscriptsController extends Controller {
       if (query.startTime) queryParams.append('start_time', query.startTime);
       if (query.endTime) queryParams.append('end_time', query.endTime);
       if (query.order) queryParams.append('order', query.order);
-      // Can be true/false, just not undefined/null.
+      // Can be true/false, just not undefined.
       if (query.isAlert !== undefined) {
         queryParams.append('is_alert', query.isAlert.toString());
       }
