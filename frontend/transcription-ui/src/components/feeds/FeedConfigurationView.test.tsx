@@ -144,15 +144,26 @@ describe('FeedConfigurationView', () => {
     const tagValInput = screen.getByLabelText('Value');
     const addTagBtn = screen.getByRole('button', { name: 'Add Tag' });
 
-    // Try adding empty tag (should show error)
+    // Try adding empty tag (should NOT show error because nothing was added/entered yet)
+    fireEvent.click(addTagBtn);
+    expect(
+      screen.queryByText('Both key and value must be populated to add a tag.')
+    ).not.toBeInTheDocument();
+
+    // Try adding partial tag (should show error since they typed a key but no value)
+    fireEvent.change(tagKeyInput, { target: { value: 'agency' } });
     fireEvent.click(addTagBtn);
     expect(
       screen.getByText('Both key and value must be populated to add a tag.')
     ).toBeInTheDocument();
 
-    // Fill tag fields
-    fireEvent.change(tagKeyInput, { target: { value: 'agency' } });
+    // Change value (should automatically clear tag validation error)
     fireEvent.change(tagValInput, { target: { value: 'CHP' } });
+    expect(
+      screen.queryByText('Both key and value must be populated to add a tag.')
+    ).not.toBeInTheDocument();
+
+    // Click add (should save changes successfully since inputs are now complete)
     fireEvent.click(addTagBtn);
 
     // Verify tag row is registered and populated as input values
@@ -407,7 +418,7 @@ describe('FeedConfigurationView', () => {
     expect(screen.queryByText('Marin Fire Dispatch')).not.toBeInTheDocument();
   });
 
-  it('does not automatically add the tag if Tag Key and Tag Value are filled in but the Add button is not clicked', async () => {
+  it('automatically adds the tag if Tag Key and Tag Value are filled in and the form is submitted without clicking the Add button', async () => {
     const mockCreatedFeed = {
       id: 'feed-99',
       name: 'Napa Ambulance Dispatch',
@@ -458,17 +469,21 @@ describe('FeedConfigurationView', () => {
 
     await waitFor(() => {
       expect(createFeed).toHaveBeenCalledTimes(1);
-      // Expect tags to be undefined because they were not explicitly added using the 'Add' button
+      // Expect tags to be automatically included since they were entered in the input fields
       expect(createFeed).toHaveBeenCalledWith(
         {
           name: 'Napa Ambulance Dispatch',
           sourceType: SourceType.BCFY_CALLS,
           sourceFeedId: '9988-77',
           externalId: '9988-77',
-          tags: [],
+          tags: [{ key: 'county', value: 'Napa' }],
         },
         'fake-jwt-token-xyz'
       );
+
+      // Expect tag fields to be cleared on success along with other fields due to form reset
+      expect(within(formCard).getByLabelText('Key')).toHaveValue('');
+      expect(within(formCard).getByLabelText('Value')).toHaveValue('');
     });
   });
 
@@ -533,5 +548,37 @@ describe('FeedConfigurationView', () => {
       'Sonoma Sheriff dispatch',
       'Marin Fire Dispatch',
     ]);
+  });
+
+  it('displays validation error if partial tag inputs are provided without clicking Add upon form submission', async () => {
+    renderView();
+
+    const formCard = screen.getByTestId('feed-config-card');
+
+    // Input form details
+    fireEvent.change(within(formCard).getByLabelText('Display Name'), {
+      target: { value: 'Napa Ambulance Dispatch' },
+    });
+
+    fireEvent.change(within(formCard).getByLabelText('Source Feed ID'), {
+      target: { value: '9988-77' },
+    });
+
+    // Fill only the key input, leave value empty!
+    fireEvent.change(within(formCard).getByLabelText('Key'), {
+      target: { value: 'county' },
+    });
+
+    // Submit
+    const submitBtn = within(formCard).getByRole('button', {
+      name: /Register feed/i,
+    });
+    fireEvent.click(submitBtn);
+
+    // Expect validation error to show and prevent API call
+    expect(
+      screen.getByText('Both key and value must be populated to add a tag.')
+    ).toBeInTheDocument();
+    expect(createFeed).not.toHaveBeenCalled();
   });
 });
