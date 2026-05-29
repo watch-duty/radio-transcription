@@ -204,3 +204,56 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
                 "errors": ["Empty transcription from Speech Model"],
             },
         )
+
+    def test_process_event_transcribe_error_silent_drop(self) -> None:
+        """Verifies that any exception raised during transcription is caught and silently dropped."""
+        mock_transcriber = MagicMock()
+        mock_transcriber.transcribe.side_effect = RuntimeError(
+            "Failed to invoke external transcription API"
+        )
+
+        mock_publisher = MagicMock()
+        mock_publisher.topic_path.return_value = (
+            "projects/test-proj/topics/egress"
+        )
+
+        claim = NormalizedAudio(
+            transmission_id="tx-1111",
+            feed_id="feed-2222",
+            source_audio_uris=["gs://bucket/raw1.flac"],
+            canonical_audio_uri="gs://bucket/normalized.flac",
+            playback_audio_uri="gs://bucket/normalized.m4a",
+            feed_name="Test Feed",
+            external_id="ext-1234",
+        )
+
+        data_bytes = claim.SerializeToString()
+        envelope = {
+            "message": {
+                "data": base64.b64encode(data_bytes).decode("utf-8"),
+                "attributes": {
+                    "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+                },
+            }
+        }
+
+        cloud_event = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test-source",
+            },
+            data=envelope,
+        )
+
+        processor = TranscriptionEventProcessor(
+            project_id="test-proj",
+            output_topic="projects/test-proj/topics/egress",
+            transcriber=mock_transcriber,
+            publisher=mock_publisher,
+        )
+
+        # Any transcription exception must be caught gracefully without propagating
+        processor.process_event(cloud_event)
+
+        # Egress publishing must never be called (event silently dropped)
+        mock_publisher.publish.assert_not_called()

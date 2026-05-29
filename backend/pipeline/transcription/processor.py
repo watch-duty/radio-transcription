@@ -25,9 +25,9 @@ from backend.pipeline.schema_types.transcribed_audio_pb2 import (
 from backend.pipeline.transcription.transcribers.base import Transcriber
 from backend.services.audio_segments import models as audio_segments_models
 
-logger = logging.getLogger(__name__)
-
 CHIRP_UNINTELLIGIBLE_MARKER = "[UNINTELLIGIBLE]"
+
+logger = logging.getLogger(__name__)
 
 
 class TranscriptionEventProcessor:
@@ -61,8 +61,8 @@ class TranscriptionEventProcessor:
             traceparent, "transcribe_claim_check", __name__
         ):
             errors = []
-            transcript = None
-            transmission_id = None
+            transcript = ""
+            transmission_id = ""
             raw_data = pubsub_message.get("data", "")
             if not raw_data:
                 logger.error("Bad Request: Missing Pub/Sub data payload")
@@ -161,11 +161,12 @@ class TranscriptionEventProcessor:
                     e,
                 )
                 errors.append(f"Exception: {e}")
-                raise
             finally:
                 if transmission_id:
                     self._write_transcript_annotation(
-                        transmission_id, transcript, errors
+                        transmission_id,
+                        transcript or "",
+                        errors,
                     )
 
     def _write_transcript_annotation(
