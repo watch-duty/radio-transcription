@@ -85,7 +85,6 @@ components:
             - desc
         isAlert:
           type: boolean
-          default: false
       type: object
       additionalProperties: false
     ScopeLevel:
@@ -479,7 +478,6 @@ paths:
           name: isAlert
           required: false
           schema:
-            default: false
             type: boolean
       x-google-backend: radio-transcription-api
   /api/v1/rules:
