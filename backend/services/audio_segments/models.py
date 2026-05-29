@@ -76,3 +76,19 @@ class AudioSegment(BaseModel):
     playback_audio_uri: str | None = None
     created_at: datetime
     annotations: list[Annotation] = Field(default_factory=list)
+
+
+class AudioSegmentCreate(BaseModel):
+    """Model for creating an audio segment (immutable)."""
+
+    feed_id: str
+    classification: AudioClassification
+    start_timestamp: datetime
+    end_timestamp: datetime
+    missing_prior_context: bool = False
+    missing_post_context: bool = False
+    source_audio_uris: list[str] = Field(default_factory=list)
+    canonical_audio_uri: str | None = None
+    start_audio_offset: timedelta | None = None
+    end_audio_offset: timedelta | None = None
+    playback_audio_uri: str | None = None
