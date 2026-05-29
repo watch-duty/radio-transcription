@@ -1,3 +1,4 @@
+import { AnnotationType } from '@transcription/common';
 import type {
   Annotation,
   AudioClassification,
@@ -20,12 +21,12 @@ import { HttpError, handleBackendError } from '../utils.js';
 
 interface BaseAnnotationBackend {
   audio_segment_id: string;
-  type: 'TRANSCRIPT' | 'EVALUATION';
+  type: AnnotationType;
   created_at: string;
 }
 
 interface TranscriptAnnotationBackend extends BaseAnnotationBackend {
-  type: 'TRANSCRIPT';
+  type: AnnotationType.TRANSCRIPT;
   data: {
     text: string;
     errors: string[];
@@ -33,7 +34,7 @@ interface TranscriptAnnotationBackend extends BaseAnnotationBackend {
 }
 
 interface EvaluationAnnotationBackend extends BaseAnnotationBackend {
-  type: 'EVALUATION';
+  type: AnnotationType.EVALUATION;
   data: {
     decisions: string[];
     errors: string[];
@@ -63,11 +64,10 @@ interface AudioSegmentBackend {
 
 function convertAnnotationBackend(response: AnnotationBackend): Annotation {
   return {
-    audioSegmentId: response.audio_segment_id,
     type: response.type,
     createdAt: response.created_at,
     data: response.data,
-  } as Annotation;
+  };
 }
 
 function convertAudioSegmentBackend(

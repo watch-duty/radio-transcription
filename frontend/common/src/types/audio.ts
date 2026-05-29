@@ -1,6 +1,12 @@
-export type AudioClassification = 'SPEECH_DETECTED' | 'UNCLASSIFIED';
+export enum AudioClassification {
+  SPEECH_DETECTED = 'SPEECH_DETECTED',
+  UNCLASSIFIED = 'UNCLASSIFIED',
+}
 
-export type AnnotationType = 'TRANSCRIPT' | 'EVALUATION';
+export enum AnnotationType {
+  TRANSCRIPT = 'TRANSCRIPT',
+  EVALUATION = 'EVALUATION',
+}
 
 export interface TranscriptAnnotationData {
   text: string;
@@ -12,23 +18,11 @@ export interface EvaluationAnnotationData {
   errors: string[];
 }
 
-export interface BaseAnnotation {
-  audioSegmentId: string;
+export interface Annotation {
   type: AnnotationType;
   createdAt: string;
+  data: TranscriptAnnotationData | EvaluationAnnotationData;
 }
-
-export interface TranscriptAnnotation extends BaseAnnotation {
-  type: 'TRANSCRIPT';
-  data: TranscriptAnnotationData;
-}
-
-export interface EvaluationAnnotation extends BaseAnnotation {
-  type: 'EVALUATION';
-  data: EvaluationAnnotationData;
-}
-
-export type Annotation = TranscriptAnnotation | EvaluationAnnotation;
 
 export interface AudioSegment {
   id: string;

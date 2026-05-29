@@ -376,10 +376,15 @@ components:
       type: object
       additionalProperties: false
     AudioClassification:
-      type: string
       enum:
         - SPEECH_DETECTED
         - UNCLASSIFIED
+      type: string
+    AnnotationType:
+      enum:
+        - TRANSCRIPT
+        - EVALUATION
+      type: string
     TranscriptAnnotationData:
       properties:
         text:
@@ -391,31 +396,6 @@ components:
       required:
         - text
         - errors
-      type: object
-      additionalProperties: false
-    AnnotationType:
-      type: string
-      enum:
-        - TRANSCRIPT
-        - EVALUATION
-    TranscriptAnnotation:
-      properties:
-        audioSegmentId:
-          type: string
-        type:
-          type: string
-          enum:
-            - TRANSCRIPT
-          nullable: false
-        createdAt:
-          type: string
-        data:
-          $ref: "#/components/schemas/TranscriptAnnotationData"
-      required:
-        - audioSegmentId
-        - type
-        - createdAt
-        - data
       type: object
       additionalProperties: false
     EvaluationAnnotationData:
@@ -433,30 +413,22 @@ components:
         - errors
       type: object
       additionalProperties: false
-    EvaluationAnnotation:
+    Annotation:
       properties:
-        audioSegmentId:
-          type: string
         type:
-          type: string
-          enum:
-            - EVALUATION
-          nullable: false
+          $ref: "#/components/schemas/AnnotationType"
         createdAt:
           type: string
         data:
-          $ref: "#/components/schemas/EvaluationAnnotationData"
+          anyOf:
+            - $ref: "#/components/schemas/TranscriptAnnotationData"
+            - $ref: "#/components/schemas/EvaluationAnnotationData"
       required:
-        - audioSegmentId
         - type
         - createdAt
         - data
       type: object
       additionalProperties: false
-    Annotation:
-      anyOf:
-        - $ref: "#/components/schemas/TranscriptAnnotation"
-        - $ref: "#/components/schemas/EvaluationAnnotation"
     AudioSegment:
       properties:
         id:
