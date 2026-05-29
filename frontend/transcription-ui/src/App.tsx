@@ -157,6 +157,16 @@ function App() {
           },
         },
       },
+      MuiBadge: {
+        styleOverrides: {
+          badge: ({ ownerState, theme }) => ({
+            ...(ownerState.color === 'default' && {
+              backgroundColor: theme.palette.text.secondary,
+              color: theme.palette.background.paper,
+            }),
+          }),
+        },
+      },
     },
   });
 

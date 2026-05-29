@@ -91,6 +91,26 @@ export function FeedConfigurationEdit({
     Record<string, string>
   >({});
 
+  const handleKeyChange = (val: string) => {
+    setNewTagKey(val);
+    setValidationErrors((prev) => {
+      if (!prev.tags) return prev;
+      const copy = { ...prev };
+      delete copy.tags;
+      return copy;
+    });
+  };
+
+  const handleValueChange = (val: string) => {
+    setNewTagValue(val);
+    setValidationErrors((prev) => {
+      if (!prev.tags) return prev;
+      const copy = { ...prev };
+      delete copy.tags;
+      return copy;
+    });
+  };
+
   const resetFormState = () => {
     setFeedName('');
     setFeedSourceType(SourceType.BCFY_FEEDS);
@@ -105,6 +125,12 @@ export function FeedConfigurationEdit({
   const handleAddTag = () => {
     const key = newTagKey.trim();
     const value = newTagValue.trim();
+
+    // If both fields are completely blank, they didn't input anything.
+    // Do not show a validation error, just ignore the click and return early.
+    if (!key && !value) {
+      return;
+    }
 
     if (!key || !value) {
       setValidationErrors((prev) => ({
@@ -153,7 +179,10 @@ export function FeedConfigurationEdit({
   };
 
   // Local schema verification before dispatching mutations
-  const validateForm = (): boolean => {
+  const validateForm = (
+    tagsToValidate: Tag[],
+    inProgressTag: { key: string; value: string }
+  ): Record<string, string> => {
     const errors: Record<string, string> = {};
 
     if (!feedName.trim()) {
@@ -164,9 +193,26 @@ export function FeedConfigurationEdit({
       errors.sourceFeedId = 'Source feed ID is required.';
     }
 
-    // Verify tags data integrity
-    const duplicateKeys = feedTags.filter(
-      (tag, idx) => feedTags.findIndex((t) => t.key === tag.key) !== idx
+    // First check the in-progress tag inputs
+    const trimmedNewKey = inProgressTag.key.trim();
+    const trimmedNewValue = inProgressTag.value.trim();
+
+    const combinedTags = [...tagsToValidate];
+
+    // If there is something in the in-progress tag fields, validate it.
+    if (trimmedNewKey && trimmedNewValue) {
+      if (tagsToValidate.some((t) => t.key === trimmedNewKey)) {
+        errors.tags = `A tag with key "${trimmedNewKey}" already exists.`;
+      } else {
+        combinedTags.push({ key: trimmedNewKey, value: trimmedNewValue });
+      }
+    } else if (trimmedNewKey || trimmedNewValue) {
+      errors.tags = 'Both key and value must be populated to add a tag.';
+    }
+
+    // Verify tags data integrity across the combined set
+    const duplicateKeys = combinedTags.filter(
+      (tag, idx) => combinedTags.findIndex((t) => t.key === tag.key) !== idx
     );
     if (duplicateKeys.length > 0) {
       errors.tags = `Duplicate tag keys discovered: ${duplicateKeys
@@ -174,7 +220,7 @@ export function FeedConfigurationEdit({
         .join(', ')}. Keys must be unique.`;
     }
 
-    const blankTags = feedTags.some(
+    const blankTags = combinedTags.some(
       (tag) => !tag.key.trim() || !tag.value.trim()
     );
     if (blankTags) {
@@ -182,15 +228,32 @@ export function FeedConfigurationEdit({
         'Tag key and value inputs cannot be blank. Discard empty tag rows using the delete button.';
     }
 
-    setValidationErrors(errors);
-    return Object.keys(errors).length === 0;
+    return errors;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!validateForm()) {
+    const inProgressTag = { key: newTagKey, value: newTagValue };
+    const errors = validateForm(feedTags, inProgressTag);
+
+    if (Object.keys(errors).length > 0) {
+      setValidationErrors(errors);
       return;
+    }
+
+    setValidationErrors({});
+
+    // Build the final tags array to submit. If there was a valid in-progress tag, include it.
+    const trimmedNewKey = newTagKey.trim();
+    const trimmedNewValue = newTagValue.trim();
+    const finalTags = [...feedTags];
+    if (trimmedNewKey && trimmedNewValue) {
+      finalTags.push({ key: trimmedNewKey, value: trimmedNewValue });
+      // Update state so the UI reflects the added tag and clears the inputs
+      setFeedTags(finalTags);
+      setNewTagKey('');
+      setNewTagValue('');
     }
 
     try {
@@ -198,7 +261,7 @@ export function FeedConfigurationEdit({
         const payload: FeedUpdate = {
           name: feedName.trim(),
           externalId: feedSourceId.trim(),
-          tags: feedTags,
+          tags: finalTags,
         };
         await onUpdateFeed(payload);
       } else {
@@ -207,7 +270,7 @@ export function FeedConfigurationEdit({
           sourceType: feedSourceType,
           sourceFeedId: feedSourceId.trim(),
           externalId: feedSourceId.trim(),
-          tags: feedTags,
+          tags: finalTags,
         };
         await onCreateFeed(payload);
         resetFormState();
@@ -369,7 +432,7 @@ export function FeedConfigurationEdit({
                   label="Key"
                   placeholder="county"
                   value={newTagKey}
-                  onChange={(e) => setNewTagKey(e.target.value)}
+                  onChange={(e) => handleKeyChange(e.target.value)}
                   error={!!validationErrors.tags}
                   disabled={isSubmitting}
                   sx={{ flexGrow: 1 }}
@@ -379,7 +442,7 @@ export function FeedConfigurationEdit({
                   label="Value"
                   placeholder="Ventura"
                   value={newTagValue}
-                  onChange={(e) => setNewTagValue(e.target.value)}
+                  onChange={(e) => handleValueChange(e.target.value)}
                   error={!!validationErrors.tags}
                   disabled={isSubmitting}
                   sx={{ flexGrow: 1 }}

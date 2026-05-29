@@ -14,6 +14,7 @@ describe('FeedHeader', () => {
     id: 'feed123',
     name: 'Test Scanner Feed',
     status: 'active',
+    substatus: 'active',
     lastHeartbeat: new Date().toISOString(),
     sourceUrl: 'https://test.example/source',
     archiveUrl: 'https://test.example/archives',

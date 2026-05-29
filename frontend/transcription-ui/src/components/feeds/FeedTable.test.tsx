@@ -36,6 +36,7 @@ describe('FeedTable', () => {
       name: 'Alpha Radio',
       sourceType: SourceType.BCFY_FEEDS,
       status: 'active',
+      substatus: 'active',
       sourceUrl: 'https://example.com/source',
       archiveUrl: 'https://example.com/archive',
       tags: [
@@ -48,6 +49,7 @@ describe('FeedTable', () => {
       name: 'Bravo Scanner',
       sourceType: SourceType.OPENMHZ,
       status: 'inactive',
+      substatus: 'deactivated',
     },
   ];
 
