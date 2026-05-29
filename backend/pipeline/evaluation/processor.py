@@ -41,7 +41,7 @@ class EvaluationEventProcessor:
         transcripts_client: TranscriptsClient,
         publisher: PubSubClient,
         output_topic_path: str,
-        audio_segments_client: AudioSegmentsClient,
+        audio_segments_client: AudioSegmentsClient | None,
     ) -> None:
         """
         Initializes the EvaluationEventProcessor.
@@ -51,7 +51,7 @@ class EvaluationEventProcessor:
             transcripts_client: Client to write to Transcripts API.
             publisher: Pub/Sub publisher client.
             output_topic_path: Topic path to publish alerts to.
-            audio_segments_client: Client for the Audio Segments API.
+            audio_segments_client: Client for the Audio Segments API (optional).
         """
         self.evaluation_service = evaluation_service
         self.transcripts_client = transcripts_client
@@ -117,26 +117,30 @@ class EvaluationEventProcessor:
                 )
 
             # 3.5 Write to Annotation Segments table
-            try:
-                annotation_data = {
-                    "decisions": list(evaluated_payload.evaluation_decisions),
-                    "errors": list(evaluated_payload.errors),
-                }
-                self.audio_segments_client.add_audio_segment_annotation(
-                    audio_segment_id=new_audio.transmission_id,
-                    annotation_type=AnnotationType.EVALUATION,
-                    data=annotation_data,
-                )
-                logger.info(
-                    "Successfully added evaluation annotation for segment %s",
-                    new_audio.transmission_id,
-                )
-            except Exception as e:
-                logger.exception(
-                    "Failed to add evaluation annotation for segment %s: %s",
-                    new_audio.transmission_id,
-                    e,
-                )
+            if self.audio_segments_client is not None:
+                # TODO (https://linear.app/watchduty/issue/GOO-449/ui-uibff-cutover-and-legacy-cleanup): Make this client required and call unconditional once the migration is complete.
+                try:
+                    annotation_data = {
+                        "decisions": list(
+                            evaluated_payload.evaluation_decisions
+                        ),
+                        "errors": list(evaluated_payload.errors),
+                    }
+                    self.audio_segments_client.add_audio_segment_annotation(
+                        audio_segment_id=new_audio.transmission_id,
+                        annotation_type=AnnotationType.EVALUATION,
+                        data=annotation_data,
+                    )
+                    logger.info(
+                        "Successfully added evaluation annotation for segment %s",
+                        new_audio.transmission_id,
+                    )
+                except Exception as e:
+                    logger.exception(
+                        "Failed to add evaluation annotation for segment %s: %s",
+                        new_audio.transmission_id,
+                        e,
+                    )
 
             # 4. Publish to Downstream Topic if flagged or has errors
             if (

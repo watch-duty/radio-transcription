@@ -311,6 +311,39 @@ class TestEvaluationEventProcessor(unittest.TestCase):
         # Should still publish because it was flagged, despite DB error
         self.mock_raw_publisher.publish.assert_called_once()
 
+    def test_process_event_with_none_audio_segments_client_succeeds(
+        self,
+    ) -> None:
+        # Setup
+        self.evaluated_payload.evaluation_decisions.append("test_rule")
+        self.mock_service.evaluate.return_value = self.evaluated_payload
+
+        # Set client to None
+        self.processor.audio_segments_client = None
+
+        # Encode proto to base64
+        serialized_audio = self.transcribed_audio.SerializeToString()
+        base64_audio = base64.b64encode(serialized_audio).decode("utf-8")
+
+        cloud_event = self._create_mock_event(
+            {"message": {"data": base64_audio}}
+        )
+
+        # Mock publisher build future
+        mock_future = MagicMock()
+        mock_future.result.return_value = "msg-123"
+        self.mock_raw_publisher.publish.return_value = mock_future
+
+        # Execute
+        self.processor.process_event(cloud_event)
+
+        # Verify
+        self.mock_service.evaluate.assert_called_once()
+        self.mock_transcripts_client.create_transcript.assert_called_once_with(
+            self.evaluated_payload
+        )
+        self.mock_raw_publisher.publish.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

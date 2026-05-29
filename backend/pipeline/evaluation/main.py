@@ -79,12 +79,15 @@ class EvaluationServiceContainer:
             self._transcripts_client = TranscriptsClient(api_url=url)
         return self._transcripts_client
 
-    def get_audio_segments_client(self) -> AudioSegmentsClient:
+    def get_audio_segments_client(self) -> AudioSegmentsClient | None:
         if self._audio_segments_client is None:
+            # TODO (https://linear.app/watchduty/issue/GOO-449/ui-uibff-cutover-and-legacy-cleanup): Make this client required once the migration is complete.
             url = os.environ.get("AUDIO_SEGMENTS_API_URL")
             if not url:
-                msg = "AUDIO_SEGMENTS_API_URL environment variable is not set."
-                raise ValueError(msg)
+                logger.warning(
+                    "AUDIO_SEGMENTS_API_URL environment variable is not set. Audio segments client will be disabled."
+                )
+                return None
             self._audio_segments_client = AudioSegmentsClient(api_url=url)
         return self._audio_segments_client
 
