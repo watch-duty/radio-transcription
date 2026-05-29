@@ -36,8 +36,12 @@ export function FeedStatusIndicator({
     return null;
   }
 
-  const statusConfig = status ? FEED_STATUS_UI_CONFIG[status] ?? status : undefined;
-  const substatusText = substatus ? FEED_SUBSTATUS_UI_TEXT_DISPLAY[substatus] ?? substatus : undefined;
+  const statusConfig = status
+    ? (FEED_STATUS_UI_CONFIG[status] ?? status)
+    : undefined;
+  const substatusText = substatus
+    ? (FEED_SUBSTATUS_UI_TEXT_DISPLAY[substatus] ?? substatus)
+    : undefined;
   return (
     <Box
       sx={{
@@ -50,11 +54,13 @@ export function FeedStatusIndicator({
       }}
     >
       <Tooltip title={substatusText}>
-        <Box sx={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 1,
-        }}>
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+          }}
+        >
           <Badge
             color={statusConfig?.color ?? 'error'}
             variant="dot"
