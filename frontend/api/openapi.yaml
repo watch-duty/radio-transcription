@@ -257,7 +257,6 @@ components:
       enum:
         - active
         - inactive
-        - error
     Tag:
       properties:
         key:
