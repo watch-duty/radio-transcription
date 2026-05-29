@@ -13,6 +13,15 @@
   Hugging Face API; retain this provenance caveat in reports.
 - Chose four initial runs: WD-only adapter 4/8 and WD+ATC adapter 4/8, all at 5
   epochs and learning rate multiplier 1.0.
+- Audited the public selection against the locked objective. The first selected
+  slice was optimal but still contained residual ATC vocabulary not covered by
+  the soft penalties.
+- Expanded the soft-penalty list with residual procedure terms and common
+  airline/callsign tokens, re-solved the selector, restaged public artifacts,
+  rebuilt the blended train JSONL, regenerated configs, and re-ran readiness.
+- The refined selection remains optimal, hits all targets exactly, and reduces
+  residual procedure-term rows from 620 to 110 and sampled airline-token rows
+  from 488 to 119.
 
 ## Execution Boundary
 

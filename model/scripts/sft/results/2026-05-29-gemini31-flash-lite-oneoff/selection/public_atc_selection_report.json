@@ -5,6 +5,8 @@
   "candidate_rows": 8122,
   "candidate_rows_after_hard_filters": 5144,
   "selected_rows": 2000,
+  "solver_status": "OPTIMAL",
+  "objective_value": 3555758.0,
   "targets": {
     "word_0_3": 350,
     "word_4_10": 1150,
@@ -19,12 +21,12 @@
   "selected_distribution": {
     "rows": 2000,
     "splits": {
-      "test": 190,
-      "train": 1601,
-      "validation": 209
+      "test": 202,
+      "train": 1618,
+      "validation": 180
     },
-    "soft_atc_rows": 0,
-    "soft_atc_term_hits": 0,
+    "soft_atc_rows": 352,
+    "soft_atc_term_hits": 352,
     "word_0_3": 350,
     "word_4_10": 1150,
     "word_11_14": 400,
@@ -43,8 +45,8 @@
       "train": 6497,
       "validation": 812
     },
-    "soft_atc_rows": 3041,
-    "soft_atc_term_hits": 3723,
+    "soft_atc_rows": 5389,
+    "soft_atc_term_hits": 10267,
     "word_0_3": 997,
     "word_4_10": 3614,
     "word_11_14": 1785,
@@ -80,7 +82,27 @@
     "cleared",
     "knots",
     "altitude",
-    "maintain"
+    "maintain",
+    "direct",
+    "contact",
+    "radar",
+    "turn",
+    "proceed",
+    "hold short",
+    "line up",
+    "wind",
+    "degrees",
+    "decimal",
+    "lufthansa",
+    "speedbird",
+    "aeroflot",
+    "turkish",
+    "austrian",
+    "shamrock",
+    "ascot",
+    "sunturk",
+    "ethiopian",
+    "csa"
   ],
   "selected_manifest": "model/scripts/sft/results/2026-05-29-gemini31-flash-lite-oneoff/selection/public_atc_selected.jsonl"
 }

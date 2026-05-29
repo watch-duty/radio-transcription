@@ -75,6 +75,9 @@ PUBLIC_GEMINI_JSONL: Final = STAGING_DIR / "public_atc_gemini_train.jsonl"
 PUBLIC_MANIFEST_JSONL: Final = STAGING_DIR / "public_atc_manifest.jsonl"
 BLENDED_GEMINI_JSONL: Final = STAGING_DIR / "wd_plus_public_atc_train.jsonl"
 READINESS_REPORT_JSON: Final = WORKSPACE_DIR / "readiness_report.json"
+SELECTION_AUDIT_REPORT_JSON: Final = (
+    WORKSPACE_DIR / "selection_audit_report.json"
+)
 COMMANDS_MD: Final = WORKSPACE_DIR / "commands.md"
 
 PUBLIC_GCS_MANIFEST_URI: Final = (
@@ -121,6 +124,26 @@ SOFT_ATC_TERMS: Final = (
     "knots",
     "altitude",
     "maintain",
+    "direct",
+    "contact",
+    "radar",
+    "turn",
+    "proceed",
+    "hold short",
+    "line up",
+    "wind",
+    "degrees",
+    "decimal",
+    "lufthansa",
+    "speedbird",
+    "aeroflot",
+    "turkish",
+    "austrian",
+    "shamrock",
+    "ascot",
+    "sunturk",
+    "ethiopian",
+    "csa",
 )
 PHONETIC_WORDS: Final = frozenset(
     {
@@ -518,7 +541,7 @@ def _feature_value(candidate: PublicCandidate, feature: str) -> bool:
 
 def _select_with_solver(
     candidates: list[PublicCandidate],
-) -> list[PublicCandidate]:
+) -> tuple[list[PublicCandidate], str, float]:
     from ortools.sat.python import cp_model
 
     feasible = [
@@ -561,7 +584,7 @@ def _select_with_solver(
         if solver.BooleanValue(var)
     ]
     logger.info("Selector status: %s", status_name)
-    return selected
+    return selected, status_name, float(solver.ObjectiveValue())
 
 
 def _distribution(candidates: list[PublicCandidate]) -> dict[str, Any]:
@@ -603,7 +626,7 @@ def select_public(args: argparse.Namespace) -> int:
             for c in candidates
         ]
 
-    selected = _select_with_solver(candidates)
+    selected, status_name, objective_value = _select_with_solver(candidates)
     rows = [asdict(candidate) for candidate in selected]
     _write_jsonl(PUBLIC_SELECTED_JSONL, rows)
 
@@ -614,6 +637,8 @@ def select_public(args: argparse.Namespace) -> int:
         "candidate_rows": len(candidates),
         "candidate_rows_after_hard_filters": filtered_count,
         "selected_rows": len(selected),
+        "solver_status": status_name,
+        "objective_value": objective_value,
         "targets": TARGETS,
         "selected_distribution": _distribution(selected),
         "all_candidate_distribution": _distribution(candidates),
@@ -626,6 +651,166 @@ def select_public(args: argparse.Namespace) -> int:
     )
     logger.info("Wrote %s and %s", PUBLIC_SELECTED_JSONL, PUBLIC_REPORT_JSON)
     return 0
+
+
+def _selection_objective(candidates: list[PublicCandidate]) -> int:
+    return sum(_candidate_for_objective(candidate) for candidate in candidates)
+
+
+def _target_deltas(distribution: dict[str, Any]) -> dict[str, int]:
+    return {
+        feature: int(distribution.get(feature, 0)) - target
+        for feature, target in TARGETS.items()
+    }
+
+
+def _duration_bucket(duration: float) -> str:
+    if duration < 3:
+        return "duration_0_3"
+    if duration < 7:
+        return "duration_3_7"
+    if duration < 15:
+        return "duration_7_15"
+    if duration < 30:
+        return "duration_15_30"
+    return "duration_30_plus"
+
+
+def _text_distribution(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    candidates = [
+        build_candidate(
+            row_id=str(i),
+            split=str(row.get("split", "unknown")),
+            source_file=str(row.get("source_file", "unknown")),
+            row_index=i,
+            text=str(row.get("text", "")),
+        )
+        for i, row in enumerate(rows)
+    ]
+    distribution = _distribution(candidates)
+    duration_buckets = {
+        "duration_0_3": 0,
+        "duration_3_7": 0,
+        "duration_7_15": 0,
+        "duration_15_30": 0,
+        "duration_30_plus": 0,
+    }
+    durations: list[float] = []
+    for row in rows:
+        duration = float(row.get("duration") or 0.0)
+        durations.append(duration)
+        duration_buckets[_duration_bucket(duration)] += 1
+    distribution["duration_buckets"] = duration_buckets
+    distribution["total_duration_seconds"] = round(sum(durations), 3)
+    distribution["mean_duration_seconds"] = (
+        round(sum(durations) / len(durations), 3) if durations else 0.0
+    )
+    return distribution
+
+
+def _manifest_distribution(storage_client: Any, gcs_uri: str) -> dict[str, Any]:
+    rows = _iter_jsonl_text(_download_gcs_text(storage_client, gcs_uri))
+    return _text_distribution(rows)
+
+
+def audit_selection(args: argparse.Namespace) -> int:
+    del args
+    _ensure_dirs()
+    if not PUBLIC_SELECTED_JSONL.exists():
+        raise FileNotFoundError(f"Run select first: {PUBLIC_SELECTED_JSONL}")
+    if not PUBLIC_MANIFEST_JSONL.exists():
+        raise FileNotFoundError(
+            f"Run stage-public first: {PUBLIC_MANIFEST_JSONL}"
+        )
+
+    candidates = _load_public_candidates()
+    scores = _compute_similarity_scores(candidates)
+    candidates = [
+        PublicCandidate(
+            **{
+                **asdict(candidate),
+                "similarity_score": scores.get(candidate.row_id, 0),
+            }
+        )
+        for candidate in candidates
+    ]
+    selected_ids = {
+        str(row["row_id"]) for row in _read_jsonl(PUBLIC_SELECTED_JSONL)
+    }
+    selected = [
+        candidate
+        for candidate in candidates
+        if candidate.row_id in selected_ids
+    ]
+    optimal_selected, status_name, optimal_objective = _select_with_solver(
+        candidates
+    )
+    selected_objective = float(_selection_objective(selected))
+    optimal_ids = {candidate.row_id for candidate in optimal_selected}
+    selected_distribution = _distribution(selected)
+
+    storage_client = _storage_client()
+    public_manifest = _read_jsonl(PUBLIC_MANIFEST_JSONL)
+    report = {
+        "best_under_current_objective": status_name == "OPTIMAL"
+        and selected_distribution.get("rows") == TARGET_SELECTED
+        and all(
+            delta == 0
+            for delta in _target_deltas(selected_distribution).values()
+        )
+        and abs(selected_objective - optimal_objective) < 0.001,
+        "solver_status": status_name,
+        "selected_rows": len(selected),
+        "optimal_rows": len(optimal_selected),
+        "current_selected_objective": selected_objective,
+        "optimal_objective": optimal_objective,
+        "objective_delta": selected_objective - optimal_objective,
+        "selected_ids_matching_resolved_optimum": len(
+            selected_ids & optimal_ids
+        ),
+        "candidate_rows": len(candidates),
+        "feasible_rows_after_hard_filters": sum(
+            1
+            for candidate in candidates
+            if not candidate.hard_atc
+            and candidate.word_bucket != "word_26_plus"
+        ),
+        "selected_distribution": selected_distribution,
+        "target_deltas": _target_deltas(selected_distribution),
+        "selected_similarity_score_mean": round(
+            sum(candidate.similarity_score for candidate in selected)
+            / len(selected),
+            3,
+        ),
+        "candidate_similarity_score_mean": round(
+            sum(candidate.similarity_score for candidate in candidates)
+            / len(candidates),
+            3,
+        ),
+        "wd_train_distribution": _manifest_distribution(
+            storage_client, WD_CANONICAL_TRAIN_URI
+        ),
+        "wd_eval_distribution": _manifest_distribution(
+            storage_client, WD_CANONICAL_EVAL_URI
+        ),
+        "public_selected_manifest_distribution": _text_distribution(
+            public_manifest
+        ),
+        "interpretation": [
+            "The selected rows are optimal for the locked constrained objective.",
+            "This does not prove the objective is globally best for Watch Duty WER; the tuning runs test that transfer hypothesis.",
+            "The selected slice intentionally over-represents numeric and phonetic structures relative to WD to test targeted transfer.",
+        ],
+    }
+    SELECTION_AUDIT_REPORT_JSON.write_text(
+        json.dumps(report, indent=2), encoding="utf-8"
+    )
+    logger.info(
+        "Selection best under current objective: %s",
+        report["best_under_current_objective"],
+    )
+    logger.info("Wrote %s", SELECTION_AUDIT_REPORT_JSON)
+    return 0 if report["best_under_current_objective"] else 1
 
 
 def _selected_by_file() -> dict[str, dict[str, dict[str, Any]]]:
@@ -958,6 +1143,7 @@ def main() -> int:
     sub.add_parser("build-blended")
     sub.add_parser("make-configs")
     sub.add_parser("validate-ready")
+    sub.add_parser("audit-selection")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     return {
@@ -966,6 +1152,7 @@ def main() -> int:
         "build-blended": build_blended,
         "make-configs": make_configs,
         "validate-ready": validate_ready,
+        "audit-selection": audit_selection,
     }[args.cmd](args)
 
 

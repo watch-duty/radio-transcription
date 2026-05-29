@@ -74,9 +74,9 @@
       "val_uri": "gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/model_inputs/gemini/eval.jsonl",
       "cost_estimate": {
         "audio_tokens_per_second": 32,
-        "estimated_training_tokens": 6341118,
+        "estimated_training_tokens": 6291261,
         "training_rate_per_million_tokens_usd": 3.0,
-        "estimated_cost_usd": 19.02,
+        "estimated_cost_usd": 18.87,
         "model_display_name": "Gemini 3.1 Flash-Lite"
       }
     },
@@ -90,9 +90,9 @@
       "val_uri": "gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/model_inputs/gemini/eval.jsonl",
       "cost_estimate": {
         "audio_tokens_per_second": 32,
-        "estimated_training_tokens": 6341118,
+        "estimated_training_tokens": 6291261,
         "training_rate_per_million_tokens_usd": 3.0,
-        "estimated_cost_usd": 19.02,
+        "estimated_cost_usd": 18.87,
         "model_display_name": "Gemini 3.1 Flash-Lite"
       }
     }

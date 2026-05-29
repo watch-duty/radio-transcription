@@ -31,7 +31,10 @@ The selector optimizes for:
 - numeric-heavy examples;
 - examples with digit context rather than bare isolated number lists;
 - some phonetic alphabet coverage;
-- low exposure to aviation-procedure vocabulary.
+- low exposure to aviation-procedure vocabulary. Strong aviation terms are hard
+  exclusions; residual procedure terms and common airline/callsign tokens are
+  soft penalties so the solver can avoid them when feasible without breaking the
+  numeric/phonetic targets.
 
 The selected public rows are appended to the Watch Duty Gemini training JSONL
 and shuffled deterministically. The Watch Duty eval split is used as the Vertex
@@ -44,6 +47,11 @@ This design tests whether public radio speech improves Watch Duty metrics
 without letting ATC dominate the training distribution. It also gives us an
 auditable selected manifest, feature distribution report, and deterministic
 rebuild path.
+
+The selected public rows are best only with respect to this locked selector
+objective. A re-solve audit confirms the refined selected IDs are an optimal
+solution with zero objective delta, but the WD-only versus WD+ATC tuning runs
+remain necessary to test whether the objective improves Watch Duty WER.
 
 The final score is validation-backed because the Watch Duty eval split is also
 the Vertex validation split. That is acceptable for model selection here, but it

@@ -61,6 +61,26 @@ Soft penalties:
 - knots
 - altitude
 - maintain
+- direct
+- contact
+- radar
+- turn
+- proceed
+- hold short
+- line up
+- wind
+- degrees
+- decimal
+- lufthansa
+- speedbird
+- aeroflot
+- turkish
+- austrian
+- shamrock
+- ascot
+- sunturk
+- ethiopian
+- csa
 
 ## Label Normalization
 
@@ -72,10 +92,30 @@ rewrites beyond numeric normalization.
 
 - selected public manifest
 - selection feature report
+- selection audit report
 - public Gemini JSONL
 - public FLAC audio in GCS
 - blended Gemini training JSONL in GCS
 - four tuning config directories
+
+## Selection Audit
+
+The refined selected public slice is optimal for the locked constrained
+objective. The audit re-solves the CP-SAT problem and confirms:
+
+- 2,000 selected rows
+- all numeric, phonetic, and word-count targets hit exactly
+- objective delta versus the resolved optimum is 0
+- 0 Watch Duty train/eval audio overlap
+
+This proves the rows are best for the current selector objective. It does not
+prove the selector objective is globally best for Watch Duty WER; that remains
+the experiment hypothesis tested by the WD-only versus WD+ATC tuning runs.
+
+The refined soft-penalty list reduces residual aviation-procedure rows, but some
+remain because exact numeric/phonetic targets make them unavoidable. This is
+acceptable because public ATC is a small fraction of the blended train set and
+the comparison against WD-only isolates whether the transfer helps.
 
 ## Stop Condition
 

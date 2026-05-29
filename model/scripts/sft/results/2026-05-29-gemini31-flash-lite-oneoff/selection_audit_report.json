@@ -1,0 +1,131 @@
+{
+  "best_under_current_objective": true,
+  "solver_status": "OPTIMAL",
+  "selected_rows": 2000,
+  "optimal_rows": 2000,
+  "current_selected_objective": 3555758.0,
+  "optimal_objective": 3555758.0,
+  "objective_delta": 0.0,
+  "selected_ids_matching_resolved_optimum": 2000,
+  "candidate_rows": 8122,
+  "feasible_rows_after_hard_filters": 5144,
+  "selected_distribution": {
+    "rows": 2000,
+    "splits": {
+      "test": 202,
+      "train": 1618,
+      "validation": 180
+    },
+    "soft_atc_rows": 352,
+    "soft_atc_term_hits": 352,
+    "word_0_3": 350,
+    "word_4_10": 1150,
+    "word_11_14": 400,
+    "word_15_25": 100,
+    "numeric_any": 1600,
+    "numeric_phrase_context": 1540,
+    "number_only": 60,
+    "phonetic_any": 500,
+    "numeric_and_phonetic": 400,
+    "word_26_plus": 0
+  },
+  "target_deltas": {
+    "word_0_3": 0,
+    "word_4_10": 0,
+    "word_11_14": 0,
+    "word_15_25": 0,
+    "numeric_any": 0,
+    "numeric_phrase_context": 0,
+    "number_only": 0,
+    "phonetic_any": 0,
+    "numeric_and_phonetic": 0
+  },
+  "selected_similarity_score_mean": 1.851,
+  "candidate_similarity_score_mean": 1.588,
+  "wd_train_distribution": {
+    "rows": 16919,
+    "splits": {
+      "train": 16919
+    },
+    "soft_atc_rows": 283,
+    "soft_atc_term_hits": 283,
+    "word_0_3": 7676,
+    "word_4_10": 6694,
+    "word_11_14": 1197,
+    "word_15_25": 1066,
+    "numeric_any": 10199,
+    "numeric_phrase_context": 8924,
+    "number_only": 1275,
+    "phonetic_any": 346,
+    "numeric_and_phonetic": 282,
+    "word_26_plus": 286,
+    "duration_buckets": {
+      "duration_0_3": 13658,
+      "duration_3_7": 2791,
+      "duration_7_15": 436,
+      "duration_15_30": 34,
+      "duration_30_plus": 0
+    },
+    "total_duration_seconds": 34446.278,
+    "mean_duration_seconds": 2.036
+  },
+  "wd_eval_distribution": {
+    "rows": 4108,
+    "splits": {
+      "eval": 4108
+    },
+    "soft_atc_rows": 57,
+    "soft_atc_term_hits": 58,
+    "word_0_3": 1814,
+    "word_4_10": 1670,
+    "word_11_14": 289,
+    "word_15_25": 263,
+    "numeric_any": 2364,
+    "numeric_phrase_context": 1989,
+    "number_only": 375,
+    "phonetic_any": 126,
+    "numeric_and_phonetic": 102,
+    "word_26_plus": 72,
+    "duration_buckets": {
+      "duration_0_3": 3287,
+      "duration_3_7": 690,
+      "duration_7_15": 123,
+      "duration_15_30": 8,
+      "duration_30_plus": 0
+    },
+    "total_duration_seconds": 8611.569,
+    "mean_duration_seconds": 2.096
+  },
+  "public_selected_manifest_distribution": {
+    "rows": 2000,
+    "splits": {
+      "unknown": 2000
+    },
+    "soft_atc_rows": 352,
+    "soft_atc_term_hits": 352,
+    "word_0_3": 704,
+    "word_4_10": 1153,
+    "word_11_14": 111,
+    "word_15_25": 32,
+    "numeric_any": 1600,
+    "numeric_phrase_context": 1540,
+    "number_only": 60,
+    "phonetic_any": 500,
+    "numeric_and_phonetic": 400,
+    "word_26_plus": 0,
+    "duration_buckets": {
+      "duration_0_3": 1410,
+      "duration_3_7": 581,
+      "duration_7_15": 9,
+      "duration_15_30": 0,
+      "duration_30_plus": 0
+    },
+    "total_duration_seconds": 4874.106,
+    "mean_duration_seconds": 2.437
+  },
+  "interpretation": [
+    "The selected rows are optimal for the locked constrained objective.",
+    "This does not prove the objective is globally best for Watch Duty WER; the tuning runs test that transfer hypothesis.",
+    "The selected slice intentionally over-represents numeric and phonetic structures relative to WD to test targeted transfer."
+  ]
+}

@@ -23,3 +23,15 @@ def test_build_candidate_flags_target_features():
     assert candidate.phonetic_any
     assert candidate.numeric_and_phonetic
     assert not candidate.hard_atc
+
+
+def test_build_candidate_penalizes_residual_atc_terms():
+    candidate = build_candidate(
+        row_id="r2",
+        split="train",
+        source_file="data/train.parquet",
+        row_index=1,
+        text="DIRECT LUFTHANSA ONE TWO",
+    )
+
+    assert candidate.soft_atc_count == 2

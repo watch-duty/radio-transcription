@@ -1,5 +1,5 @@
 project: gemini31_flash_lite_sft
-status: preparing_artifacts
+status: ready_for_operator_tuning
 date: 2026-05-29
 base_model: gemini-3.1-flash-lite
 seed: 20260529
@@ -41,6 +41,48 @@ selection:
     number_only: 60
     phonetic_any: 500
     numeric_and_phonetic: 400
+  soft_penalties:
+    - heading
+    - climb
+    - descend
+    - approach
+    - departure
+    - tower
+    - ground
+    - cleared
+    - knots
+    - altitude
+    - maintain
+    - direct
+    - contact
+    - radar
+    - turn
+    - proceed
+    - hold short
+    - line up
+    - wind
+    - degrees
+    - decimal
+    - lufthansa
+    - speedbird
+    - aeroflot
+    - turkish
+    - austrian
+    - shamrock
+    - ascot
+    - sunturk
+    - ethiopian
+    - csa
+selection_audit:
+  solver_status: OPTIMAL
+  best_under_current_objective: true
+  objective_delta: 0
+  selected_rows: 2000
+  train_eval_audio_overlap_count: 0
+  residual_procedure_rows_before_refinement: 620
+  residual_procedure_rows_after_refinement: 110
+  sampled_airline_token_rows_before_refinement: 488
+  sampled_airline_token_rows_after_refinement: 119
 tuning_matrix:
   - dataset: wd_internal
     adapter_size: FOUR
