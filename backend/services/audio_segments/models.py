@@ -59,6 +59,26 @@ Annotation = Annotated[
 ]
 
 
+class TranscriptAnnotationCreate(BaseModel):
+    """Model for creating a transcript annotation."""
+
+    type: Literal[AnnotationType.TRANSCRIPT] = AnnotationType.TRANSCRIPT
+    data: TranscriptAnnotationData
+
+
+class EvaluationAnnotationCreate(BaseModel):
+    """Model for creating an evaluation annotation."""
+
+    type: Literal[AnnotationType.EVALUATION] = AnnotationType.EVALUATION
+    data: EvaluationAnnotationData
+
+
+AnnotationCreate = Annotated[
+    Union[TranscriptAnnotationCreate, EvaluationAnnotationCreate],
+    Field(discriminator="type"),
+]
+
+
 class AudioSegment(BaseModel):
     """Model for an audio segment with its annotations."""
 
@@ -76,3 +96,19 @@ class AudioSegment(BaseModel):
     playback_audio_uri: str | None = None
     created_at: datetime
     annotations: list[Annotation] = Field(default_factory=list)
+
+
+class AudioSegmentCreate(BaseModel):
+    """Model for creating an audio segment."""
+
+    feed_id: str
+    classification: AudioClassification
+    start_timestamp: datetime
+    end_timestamp: datetime
+    missing_prior_context: bool = False
+    missing_post_context: bool = False
+    source_audio_uris: list[str] = Field(default_factory=list)
+    canonical_audio_uri: str | None = None
+    start_audio_offset: timedelta | None = None
+    end_audio_offset: timedelta | None = None
+    playback_audio_uri: str | None = None

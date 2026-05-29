@@ -85,7 +85,6 @@ components:
             - desc
         isAlert:
           type: boolean
-          default: false
       type: object
       additionalProperties: false
     ScopeLevel:
@@ -258,6 +257,15 @@ components:
       enum:
         - active
         - inactive
+        - error
+    BackendFeedStatus:
+      type: string
+      enum:
+        - unclaimed
+        - active
+        - failing
+        - quarantined
+        - deactivated
     Tag:
       properties:
         key:
@@ -270,13 +278,13 @@ components:
       type: object
       additionalProperties: false
     SourceType:
-      type: string
       enum:
         - bcfy_feeds
         - bcfy_calls
         - echo
         - openmhz
         - fire_notifications
+      type: string
     Feed:
       properties:
         name:
@@ -295,6 +303,8 @@ components:
           type: string
         status:
           $ref: "#/components/schemas/FeedStatus"
+        substatus:
+          $ref: "#/components/schemas/BackendFeedStatus"
         lastHeartbeat:
           type: string
         tags:
@@ -306,6 +316,7 @@ components:
         - sourceType
         - id
         - status
+        - substatus
       type: object
       additionalProperties: false
     FeedCreate:
@@ -479,7 +490,6 @@ paths:
           name: isAlert
           required: false
           schema:
-            default: false
             type: boolean
       x-google-backend: radio-transcription-api
   /api/v1/rules:

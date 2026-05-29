@@ -144,7 +144,7 @@ class CapturedChunk:
 class CaptureResources:
     """Runtime-owned resources passed to capture functions.
 
-    Constructed once in NormalizerRuntime._main() and lifecycle-managed
+    Constructed once in CollectorRuntime._main() and lifecycle-managed
     by the runtime: http_session is closed in _shutdown_sequence after
     _gcs_client.close() (followed by a 250ms SSL-teardown sleep, per
     aiohttp's documented graceful-shutdown idiom for SSL).

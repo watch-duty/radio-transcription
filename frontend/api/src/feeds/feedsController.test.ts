@@ -1,4 +1,4 @@
-import type { SourceType } from '@transcription/common';
+import { SourceType } from '@transcription/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FeedsController } from './feedsController.js';
@@ -32,6 +32,7 @@ describe('FeedsController', () => {
     source_feed_id: 'src_123',
     external_id: 'ext_123',
     status: 'active',
+    substatus: 'active',
     last_heartbeat: '2024-01-01T00:00:00Z',
   };
 
@@ -44,6 +45,7 @@ describe('FeedsController', () => {
     sourceUrl: 'https://openmhz.com/system/src_123',
     archiveUrl: undefined,
     status: 'active',
+    substatus: 'active',
     lastHeartbeat: '2024-01-01T00:00:00Z',
   };
 
@@ -136,7 +138,7 @@ describe('FeedsController', () => {
       const controller = new FeedsController();
       const payload = {
         name: 'Test Feed',
-        sourceType: 'openmhz' as const,
+        sourceType: SourceType.OPENMHZ,
         sourceFeedId: 'src_123',
         externalId: 'ext_123',
       };
@@ -165,7 +167,7 @@ describe('FeedsController', () => {
       const controller = new FeedsController();
       const payload = {
         name: 'Test Feed',
-        sourceType: 'openmhz' as const,
+        sourceType: SourceType.OPENMHZ,
         sourceFeedId: 'src_123',
         externalId: 'ext_123',
         tags: [{ key: 'county', value: 'Fulton' }],
@@ -483,9 +485,9 @@ describe('FeedsController', () => {
   describe('status conversion', () => {
     const testCases = [
       { backend: 'active', expected: 'active' },
-      { backend: 'failing', expected: 'inactive' },
+      { backend: 'failing', expected: 'error' },
       { backend: 'unclaimed', expected: 'inactive' },
-      { backend: 'quarantined', expected: 'inactive' },
+      { backend: 'quarantined', expected: 'error' },
       { backend: 'deactivated', expected: 'inactive' },
     ];
 

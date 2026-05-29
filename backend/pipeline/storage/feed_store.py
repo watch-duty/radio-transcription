@@ -51,7 +51,7 @@ class SourceType(enum.StrEnum):
            and ``006_seed_source_types.sql``.
         3. **Per-type cap registry** — add an entry to
            ``backend.pipeline.ingestion.settings._DEFAULT_CAPS``. This
-           dict drives ``NormalizerSettings.caps``, ``FeedStore``'s
+           dict drives ``CollectorSettings.caps``, ``FeedStore``'s
            generated acquire-batch SQL, and the ``claim_types`` filter on
            the recovery path. **Skipping this step means VM workers
            will silently never claim feeds of the new type** — neither
@@ -148,7 +148,7 @@ class FeedStore:
             is generated at construction time with one MATERIALIZED CTE
             per type. Defaults to every ``SourceType`` except ``ECHO``
             (Echo feeds are served by a separate cloud function and
-            are never leased here). ``NormalizerRuntime`` passes
+            are never leased here). ``CollectorRuntime`` passes
             ``list(settings.caps.keys())`` so the SQL shape and the
             runtime's per-type budgets are seeded from the same set.
 

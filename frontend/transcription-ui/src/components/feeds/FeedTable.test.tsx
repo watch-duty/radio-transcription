@@ -13,6 +13,7 @@ import {
   within,
 } from '@testing-library/react';
 import type { Feed } from '@transcription/common';
+import { SourceType } from '@transcription/common';
 
 import { FeedTable } from './FeedTable';
 
@@ -33,8 +34,9 @@ describe('FeedTable', () => {
     {
       id: 'feed-1',
       name: 'Alpha Radio',
-      sourceType: 'bcfy_feeds',
+      sourceType: SourceType.BCFY_FEEDS,
       status: 'active',
+      substatus: 'active',
       sourceUrl: 'https://example.com/source',
       archiveUrl: 'https://example.com/archive',
       tags: [
@@ -45,8 +47,9 @@ describe('FeedTable', () => {
     {
       id: 'feed-2',
       name: 'Bravo Scanner',
-      sourceType: 'openmhz',
+      sourceType: SourceType.OPENMHZ,
       status: 'inactive',
+      substatus: 'deactivated',
     },
   ];
 
@@ -67,7 +70,17 @@ describe('FeedTable', () => {
 
     expect(screen.getByText(/Marin/i)).toBeTruthy();
     expect(screen.getByText(/Fire/i)).toBeTruthy();
-    expect(screen.getByText('-')).toBeTruthy();
+
+    // Verify Bravo Scanner row details (no tags cell should render, and renders a fallback hyphen for links)
+    const bravoRow = screen
+      .getByText('Bravo Scanner')
+      .closest('[role="row"]') as HTMLElement;
+    expect(bravoRow).toBeTruthy();
+    if (bravoRow) {
+      expect(within(bravoRow).getByText('-')).toBeInTheDocument();
+      const tagChips = bravoRow.querySelectorAll('.MuiChip-filled');
+      expect(tagChips).toHaveLength(0);
+    }
   });
 
   it('shows loading indicator when isLoading is true', () => {
@@ -155,45 +168,49 @@ describe('FeedTable', () => {
     expect(refreshedScroller?.scrollTop).toBe(200);
   });
 
-  it('opens the three dot menu and disables links if not present', () => {
+  it('renders source and archive links directly in the links column if they exist', () => {
     renderFeedTable({ feeds: mockFeeds, isLoading: false });
 
-    const actionButtons = screen.getAllByRole('button', {
-      name: /feed actions/i,
+    // Alpha Radio has both URLs
+    const sourceLink = screen.getByRole('link', {
+      name: 'https://example.com/source',
+    });
+    const archiveLink = screen.getByRole('link', {
+      name: 'https://example.com/archive',
     });
 
-    fireEvent.click(actionButtons[1]);
+    expect(sourceLink).toBeTruthy();
+    expect(sourceLink.getAttribute('href')).toBe('https://example.com/source');
+    expect(sourceLink.getAttribute('target')).toBe('_blank');
 
-    const menu = screen.getByRole('menu');
-    expect(menu).toBeTruthy();
-
-    const sourceUrlItem = within(menu).getByText('Source URL').closest('li');
-    const archiveUrlItem = within(menu).getByText('Archive URL').closest('li');
-
-    expect(sourceUrlItem?.getAttribute('aria-disabled')).toBe('true');
-    expect(archiveUrlItem?.getAttribute('aria-disabled')).toBe('true');
-  });
-
-  it('enables links in menu if URLs are present', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false });
-
-    const actionButtons = screen.getAllByRole('button', {
-      name: /feed actions/i,
-    });
-
-    fireEvent.click(actionButtons[0]);
-
-    const menu = screen.getByRole('menu');
-    const sourceUrlItem = within(menu).getByText('Source URL').closest('a');
-    const archiveUrlItem = within(menu).getByText('Archive URL').closest('a');
-
-    expect(sourceUrlItem?.getAttribute('href')).toBe(
-      'https://example.com/source'
-    );
-    expect(archiveUrlItem?.getAttribute('href')).toBe(
+    expect(archiveLink).toBeTruthy();
+    expect(archiveLink.getAttribute('href')).toBe(
       'https://example.com/archive'
     );
-    expect(sourceUrlItem?.getAttribute('target')).toBe('_blank');
+    expect(archiveLink.getAttribute('target')).toBe('_blank');
+  });
+
+  it('does not render source and archive links if they are not present, and renders a fallback hyphen', () => {
+    renderFeedTable({ feeds: mockFeeds, isLoading: false });
+
+    // Verify Alpha Radio has its links rendered correctly
+    const links = screen.queryAllByRole('link', {
+      name: /https:\/\/example\.com/i,
+    });
+    expect(links).toHaveLength(2); // Only the 2 links of Alpha Radio exist!
+
+    // Verify Bravo Scanner has no source/archive URLs and falls back to rendering a hyphen inside its row context
+    const bravoRow = screen
+      .getByText('Bravo Scanner')
+      .closest('[role="row"]') as HTMLElement;
+    expect(bravoRow).toBeTruthy();
+    if (bravoRow) {
+      const bravoSourceLinks = within(bravoRow).queryAllByRole('link', {
+        name: /https:/i,
+      });
+      expect(bravoSourceLinks).toHaveLength(0);
+      expect(within(bravoRow).getByText('-')).toBeInTheDocument();
+    }
   });
 
   it('displays grouped tags and applies tag filtering', () => {
