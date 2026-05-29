@@ -59,6 +59,26 @@ Annotation = Annotated[
 ]
 
 
+class TranscriptAnnotationCreate(BaseModel):
+    """Model for creating a transcript annotation."""
+
+    type: Literal[AnnotationType.TRANSCRIPT] = AnnotationType.TRANSCRIPT
+    data: TranscriptAnnotationData
+
+
+class EvaluationAnnotationCreate(BaseModel):
+    """Model for creating an evaluation annotation."""
+
+    type: Literal[AnnotationType.EVALUATION] = AnnotationType.EVALUATION
+    data: EvaluationAnnotationData
+
+
+AnnotationCreate = Annotated[
+    Union[TranscriptAnnotationCreate, EvaluationAnnotationCreate],
+    Field(discriminator="type"),
+]
+
+
 class AudioSegment(BaseModel):
     """Model for an audio segment with its annotations."""
 
