@@ -90,36 +90,49 @@ class BaseTextEvaluator(ABC):
             return bool(re.search(conditions.expression, text, flags))
 
         if isinstance(conditions, models.KeywordConditions):
+            # Filter out empty, empty-string, or whitespace-only keywords
+            valid_keywords = [
+                k.strip() for k in conditions.keywords if k and k.strip()
+            ]
+            if not valid_keywords:
+                return False
+
             # 1. Fast-path substring pre-check using optimized in-operator
             target_text = text if conditions.case_sensitive else text.lower()
             keywords_to_check = (
-                conditions.keywords
+                valid_keywords
                 if conditions.case_sensitive
-                else [k.lower() for k in conditions.keywords]
+                else [k.lower() for k in valid_keywords]
             )
 
+            has_substrings = True
             if conditions.operator == models.LogicalOperator.ANY:
-                if not any(k in target_text for k in keywords_to_check):
-                    return False
+                has_substrings = any(
+                    k in target_text for k in keywords_to_check
+                )
             elif conditions.operator == models.LogicalOperator.ALL:
-                if not all(k in target_text for k in keywords_to_check):
-                    return False
+                has_substrings = all(
+                    k in target_text for k in keywords_to_check
+                )
+
+            if not has_substrings:
+                return False
 
             # 2. Retrieve cached/compiled regex for precise word boundary verification
             compiled = _get_compiled_keyword_regex(
-                tuple(conditions.keywords),
+                tuple(valid_keywords),
                 case_sensitive=conditions.case_sensitive,
                 operator=conditions.operator,
             )
 
-            if conditions.operator == models.LogicalOperator.ANY:
-                # compiled is a single compiled Pattern matching any of the keywords
-                if isinstance(compiled, re.Pattern):
-                    return bool(compiled.search(text))
-            elif conditions.operator == models.LogicalOperator.ALL:
-                # compiled is a list of compiled Patterns
-                if isinstance(compiled, list):
-                    return all(bool(p.search(text)) for p in compiled)
+            if conditions.operator == models.LogicalOperator.ANY and isinstance(
+                compiled, re.Pattern
+            ):
+                return bool(compiled.search(text))
+            if conditions.operator == models.LogicalOperator.ALL and isinstance(
+                compiled, list
+            ):
+                return all(bool(p.search(text)) for p in compiled)
 
         # For now, we skip GroupConditions as it requires a rule lookup
         return False
