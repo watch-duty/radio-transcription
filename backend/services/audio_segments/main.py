@@ -94,8 +94,8 @@ async def create_audio_segment(
     tags=["audio_segments"],
 )
 async def add_annotation(
-    audio_segment_id: str,
     request: Request,
+    audio_segment_id: str,
     annotation: AnnotationCreate,
 ) -> Annotation:
     """Add an annotation to an audio segment."""
