@@ -10,6 +10,7 @@ import logging
 from cloudevents.http.event import CloudEvent
 from google.cloud import pubsub_v1
 
+from backend.pipeline.common.clients import audio_segments_client
 from backend.pipeline.common.constants import (
     MS_PER_SECOND,
     NANOS_PER_MS,
@@ -22,6 +23,7 @@ from backend.pipeline.schema_types.transcribed_audio_pb2 import (
     TranscribedAudio,
 )
 from backend.pipeline.transcription.transcribers.base import Transcriber
+from backend.services.audio_segments import models as audio_segments_models
 
 logger = logging.getLogger(__name__)
 
@@ -40,11 +42,14 @@ class TranscriptionEventProcessor:
         output_topic: str,
         transcriber: Transcriber,
         publisher: pubsub_v1.PublisherClient,
+        audio_segments_client: audio_segments_client.AudioSegmentsClient
+        | None = None,
     ) -> None:
         self.project_id = project_id
         self.output_topic = output_topic
         self.transcriber = transcriber
         self.publisher = publisher
+        self.audio_segments_client = audio_segments_client
 
     def process_event(self, cloud_event: CloudEvent) -> None:
         """Decodes, processes, and transcribes the given CloudEvent."""
@@ -96,12 +101,40 @@ class TranscriptionEventProcessor:
                     uri=claim.canonical_audio_uri,
                     duration_ms=duration_ms,
                 )
+                errors = []
 
                 if not transcript:
                     logger.info(
                         "Speech API returned empty transcription. Using fallback unintelligible marker."
                     )
+                    errors.append("empty_transcription")
                     transcript = CHIRP_UNINTELLIGIBLE_MARKER
+
+                # TODO: Put this write into a Pub/Sub for retries.
+                # https://linear.app/watchduty/issue/GOO-515/eng-front-transcript-annotation-write-with-pubsub-retry
+                if self.audio_segments_client is not None:
+                    try:
+                        annotation_data = {
+                            "text": transcript,
+                            "errors": errors,
+                        }
+                        self.audio_segments_client.add_audio_segment_annotation(
+                            audio_segment_id=claim.transmission_id,
+                            annotation_type=(
+                                audio_segments_models.AnnotationType.TRANSCRIPT
+                            ),
+                            data=annotation_data,
+                        )
+                        logger.info(
+                            "Successfully added transcript annotation for segment %s",
+                            claim.transmission_id,
+                        )
+                    except Exception as e:
+                        logger.exception(
+                            "Failed to add transcript annotation for segment %s: %s",
+                            claim.transmission_id,
+                            e,
+                        )
 
                 # Build TranscribedAudio egress protobuf message
                 out_proto = TranscribedAudio(
