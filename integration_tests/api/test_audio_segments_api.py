@@ -73,3 +73,33 @@ async def test_audio_segments_api_routes(
     assert len(data) >= 1
     found = any(item["id"] == segment_id for item in data)
     assert found, f"Created segment {segment_id} not found in /audio_segments"
+
+    # 3. POST: Add an annotation to the audio segment
+    annotation_data = {
+        "type": "TRANSCRIPT",
+        "data": {"text": "hello integration test", "errors": []},
+    }
+    ann_res = await api_client.post(
+        f"/audio_segments/{segment_id}/annotations",
+        json=annotation_data,
+        timeout=10.0,
+    )
+    assert ann_res.status_code == 201, (
+        f"Failed to add annotation: {ann_res.text}"
+    )
+    ann = ann_res.json()
+    assert ann["audio_segment_id"] == segment_id
+    assert ann["type"] == "TRANSCRIPT"
+    assert ann["data"]["text"] == "hello integration test"
+
+    # 4. GET: List audio segments to confirm annotation is retrieved
+    get_res2 = await api_client.get(
+        "/audio_segments", params={"feed_ids": [feed_id]}, timeout=10.0
+    )
+    assert get_res2.status_code == 200
+    data2 = get_res2.json()
+    target_segment = next(item for item in data2 if item["id"] == segment_id)
+    assert len(target_segment["annotations"]) >= 1
+    first_ann = target_segment["annotations"][0]
+    assert first_ann["type"] == "TRANSCRIPT"
+    assert first_ann["data"]["text"] == "hello integration test"
