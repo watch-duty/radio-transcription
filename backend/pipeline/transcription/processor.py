@@ -23,9 +23,9 @@ from backend.pipeline.schema_types.transcribed_audio_pb2 import (
 )
 from backend.pipeline.transcription.transcribers.base import Transcriber
 
-logger = logging.getLogger(__name__)
-
 CHIRP_UNINTELLIGIBLE_MARKER = "[UNINTELLIGIBLE]"
+
+logger = logging.getLogger(__name__)
 
 
 class TranscriptionEventProcessor:
@@ -92,10 +92,20 @@ class TranscriptionEventProcessor:
                 duration_ms = max(0, int(end_ms - start_ms))
 
                 # Retrieve active transcriber and run Speech API
-                transcript = self.transcriber.transcribe(
-                    uri=claim.canonical_audio_uri,
-                    duration_ms=duration_ms,
-                )
+                try:
+                    transcript = self.transcriber.transcribe(
+                        uri=claim.canonical_audio_uri,
+                        duration_ms=duration_ms,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to transcribe transmission %s (feed %s): %s. "
+                        "Silently dropping to avoid Pub/Sub retry loop.",
+                        transmission_id,
+                        feed_id,
+                        e,
+                    )
+                    return
 
                 if not transcript:
                     logger.info(
