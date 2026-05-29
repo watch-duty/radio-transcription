@@ -23,9 +23,9 @@ from backend.pipeline.schema_types.transcribed_audio_pb2 import (
 )
 from backend.pipeline.transcription.transcribers.base import Transcriber
 
-logger = logging.getLogger(__name__)
-
 CHIRP_UNINTELLIGIBLE_MARKER = "[UNINTELLIGIBLE]"
+
+logger = logging.getLogger(__name__)
 
 
 class TranscriptionEventProcessor:
@@ -151,4 +151,4 @@ class TranscriptionEventProcessor:
                     feed_id,
                     e,
                 )
-                raise
+                return
