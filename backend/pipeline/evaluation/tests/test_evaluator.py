@@ -543,5 +543,6 @@ class TestRemoteTextEvaluator(unittest.TestCase):
             result2["is_flagged"], "Should match standalone 'field fire'"
         )
 
+
 if __name__ == "__main__":
     unittest.main()
