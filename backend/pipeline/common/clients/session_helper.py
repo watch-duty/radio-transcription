@@ -4,7 +4,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util import Retry
 
-DEFAULT_STATUS_FORCELIST = [502, 503, 504]
+DEFAULT_STATUS_FORCELIST = [429, 500, 502, 503, 504]
 
 
 def create_resilient_session(
