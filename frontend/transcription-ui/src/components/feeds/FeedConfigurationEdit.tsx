@@ -200,19 +200,14 @@ export function FeedConfigurationEdit({
     const combinedTags = [...tagsToValidate];
 
     // If there is something in the in-progress tag fields, validate it.
-    if (trimmedNewKey || trimmedNewValue) {
-      // If one is missing, it's an error
-      if (!trimmedNewKey || !trimmedNewValue) {
-        errors.tags = 'Both key and value must be populated to add a tag.';
-      }
-      // If the key is already present in the existing tags, it's an error
-      else if (tagsToValidate.some((t) => t.key === trimmedNewKey)) {
+    if (trimmedNewKey && trimmedNewValue) {
+      if (tagsToValidate.some((t) => t.key === trimmedNewKey)) {
         errors.tags = `A tag with key "${trimmedNewKey}" already exists.`;
-      }
-      // Otherwise, it's a valid tag
-      else {
+      } else {
         combinedTags.push({ key: trimmedNewKey, value: trimmedNewValue });
       }
+    } else if (trimmedNewKey || trimmedNewValue) {
+      errors.tags = 'Both key and value must be populated to add a tag.';
     }
 
     // Verify tags data integrity across the combined set
