@@ -32,6 +32,7 @@ export interface Feed extends BaseFeed {
   sourceUrl?: string;
   archiveUrl?: string;
   status: FeedStatus;
+  substatus: BackendFeedStatus;
   lastHeartbeat?: string;
   tags?: Tag[];
 }

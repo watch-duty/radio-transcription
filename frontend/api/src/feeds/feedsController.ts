@@ -118,6 +118,7 @@ function convertFeedBackend(response: FeedBackend): Feed {
     sourceUrl: getSourceUrl(response.source_type, response.source_feed_id),
     archiveUrl: getArchiveUrl(response.source_type, response.source_feed_id),
     status: convertFeedStatusBackend(response.status),
+    substatus: response.status,
     lastHeartbeat: response.last_heartbeat ?? undefined,
     tags: response.tags,
   };
