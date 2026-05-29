@@ -8,8 +8,13 @@ from fastapi.testclient import TestClient
 from backend.pipeline.common.auth import verify_oidc_token
 from backend.services.audio_segments.main import app
 from backend.services.audio_segments.models import (
+    AnnotationType,
     AudioClassification,
     AudioSegment,
+    EvaluationAnnotation,
+    EvaluationAnnotationData,
+    TranscriptAnnotation,
+    TranscriptAnnotationData,
 )
 
 _SEGMENT_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -116,6 +121,69 @@ class TestAudioSegmentsAPI(unittest.TestCase):
             "start_timestamp": "not-a-timestamp",
         }
         response = self.client.post("/v1/audio_segments", json=payload)
+        self.assertEqual(
+            response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY
+        )
+
+    def test_add_transcript_annotation_success(self) -> None:
+        """Test adding a transcript annotation successfully."""
+        payload = {
+            "type": "TRANSCRIPT",
+            "data": {"text": "hello test", "errors": []},
+        }
+        mock_annotation = TranscriptAnnotation(
+            audio_segment_id=_SEGMENT_ID,
+            type=AnnotationType.TRANSCRIPT,
+            data=TranscriptAnnotationData(text="hello test", errors=[]),
+            created_at=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+        )
+        self.mock_service.add_annotation.return_value = mock_annotation
+
+        response = self.client.post(
+            f"/v1/audio_segments/{_SEGMENT_ID}/annotations", json=payload
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        data = response.json()
+        self.assertEqual(data["audio_segment_id"], _SEGMENT_ID)
+        self.assertEqual(data["type"], "TRANSCRIPT")
+        self.assertEqual(data["data"]["text"], "hello test")
+        self.mock_service.add_annotation.assert_called_once()
+
+    def test_add_evaluation_annotation_success(self) -> None:
+        """Test adding an evaluation annotation successfully."""
+        payload = {
+            "type": "EVALUATION",
+            "data": {"decisions": ["rule-1"], "errors": ["err-1"]},
+        }
+        mock_annotation = EvaluationAnnotation(
+            audio_segment_id=_SEGMENT_ID,
+            type=AnnotationType.EVALUATION,
+            data=EvaluationAnnotationData(
+                decisions=["rule-1"], errors=["err-1"]
+            ),
+            created_at=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+        )
+        self.mock_service.add_annotation.return_value = mock_annotation
+
+        response = self.client.post(
+            f"/v1/audio_segments/{_SEGMENT_ID}/annotations", json=payload
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        data = response.json()
+        self.assertEqual(data["audio_segment_id"], _SEGMENT_ID)
+        self.assertEqual(data["type"], "EVALUATION")
+        self.assertEqual(data["data"]["decisions"], ["rule-1"])
+        self.mock_service.add_annotation.assert_called_once()
+
+    def test_add_annotation_parsing_error(self) -> None:
+        """Test adding an annotation with invalid payload formats."""
+        payload = {
+            "type": "TRANSCRIPT",
+            "data": {"bad_field": "hello test"},
+        }
+        response = self.client.post(
+            f"/v1/audio_segments/{_SEGMENT_ID}/annotations", json=payload
+        )
         self.assertEqual(
             response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY
         )
