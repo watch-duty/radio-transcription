@@ -32,6 +32,11 @@ class AudioSegmentStore:
         """Prepare an annotation dictionary for Pydantic validation."""
         if row_dict.get("audio_segment_id"):
             row_dict["audio_segment_id"] = str(row_dict["audio_segment_id"])
+
+        data = row_dict.get("data")
+        if isinstance(data, str):
+            row_dict["data"] = json.loads(data)
+
         return row_dict
 
     def _prepare_audio_segment_row(self, row: asyncpg.Record) -> dict:
@@ -44,6 +49,8 @@ class AudioSegmentStore:
 
         annotations = data.get("annotations")
         if annotations:
+            if isinstance(annotations, str):
+                annotations = json.loads(annotations)
             data["annotations"] = [
                 self._prepare_annotation_row(ann) for ann in annotations
             ]
