@@ -1,4 +1,4 @@
-import Badge from '@mui/material/Badge';
+import Badge, { type BadgeProps } from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Typography from '@mui/material/Typography';
 import type { FeedStatus } from '@transcription/common';
@@ -7,10 +7,11 @@ import { getRelativeTimeString } from '../../utils/timeUtils';
 
 const FEED_STATUS_UI_CONFIG: Record<
   FeedStatus,
-  { displayText: string; color: 'success' | 'error' }
+  { displayText: string; color: BadgeProps['color'] }
 > = {
   active: { displayText: 'Active', color: 'success' },
-  inactive: { displayText: 'Inactive', color: 'error' },
+  inactive: { displayText: 'Inactive', color: 'default' },
+  error: { displayText: 'Error', color: 'error' },
 };
 
 export function FeedStatusIndicator({
@@ -50,7 +51,10 @@ export function FeedStatusIndicator({
       <Typography
         variant="body2"
         sx={{
-          color: `${statusConfig?.color ?? 'error'}.main`,
+          color:
+            statusConfig?.color === 'default'
+              ? 'text.secondary'
+              : `${statusConfig?.color ?? 'error'}.main`,
           fontWeight: 600,
           textTransform: 'uppercase',
           flexShrink: 0,

@@ -96,7 +96,16 @@ function getArchiveUrl(
 }
 
 function convertFeedStatusBackend(status: BackendFeedStatus): FeedStatus {
-  return status === 'active' ? 'active' : 'inactive';
+  switch (status) {
+    case 'active':
+      return 'active';
+    case 'quarantined':
+    case 'failing':
+      return 'error';
+    case 'deactivated':
+    default:
+      return 'inactive';
+  }
 }
 
 function convertFeedBackend(response: FeedBackend): Feed {
