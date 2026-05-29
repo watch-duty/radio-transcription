@@ -87,8 +87,10 @@ export class TranscriptsController extends Controller {
       if (query.startTime) queryParams.append('start_time', query.startTime);
       if (query.endTime) queryParams.append('end_time', query.endTime);
       if (query.order) queryParams.append('order', query.order);
-      if (query.isAlert !== undefined && query.isAlert !== null)
+      // Can be true/false, just not undefined/null.
+      if (query.isAlert !== undefined && query.isAlert !== null) {
         queryParams.append('is_alert', query.isAlert.toString());
+      }
 
       const auth = new GoogleAuth();
       const client = await auth.getIdTokenClient(TRANSCRIPTS_API_URL!);
