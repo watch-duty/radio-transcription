@@ -113,6 +113,7 @@ class TestSubmitTuningJob(unittest.TestCase):
         self.assertEqual(
             call_kwargs["config"]["validation_dataset"], "val-dataset"
         )
+        self.assertFalse(call_kwargs["config"]["export_last_checkpoint_only"])
         mock_types.TuningDataset.assert_called_once_with(
             gcs_uri="gs://b/train.jsonl"
         )

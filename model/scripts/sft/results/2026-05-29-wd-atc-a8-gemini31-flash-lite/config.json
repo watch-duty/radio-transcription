@@ -1,0 +1,29 @@
+{
+  "round_id": "2026-05-29-wd-atc-a8-gemini31-flash-lite",
+  "experiment_variant": "wd_internal_plus_atc",
+  "datasets": [
+    "wd_sft_v20260528"
+  ],
+  "gcp_project": "automatic-hawk-481415-m9",
+  "gcs_bucket": "wd-transcription-data",
+  "gcs_sft_prefix": "gs://wd-transcription-data/sft",
+  "system_prompt": "Evaluate all audio specifically as VHF/UHF fire-related dispatch radio traffic. The audio likely contains mic clicks, RF static, radio hum, and possibly some unintelligible speech. The speakers use heavy jargon.\n\nEXPECTED TERMINOLOGY:\ncopy, received, affirmative, affirm, proceed, responding, responding to, en-route, on-scene, on-scene in the area, available, returning, in service, got a caller, caller advising, in quarters, arrived, go ahead, back at, engine, tanker, brush, brush truck, tender, battalion, squad, ladder, tower, tower-ladder, medic, ambulance, k, branch, chopper, copter, AIQ, AOR, IC, ICP, LAT, RP, SEAT, TAC, VFIRE, VLAT, air attack, air tactics, helispot, lead plane, strike team, control, being toned, box alarm, cancel the balance, chaparral, exposure protection, fire attack, fire boss, forward progress stopped, forward rate of spread stopped, heavy timber, left flank, light flashy fuels, rate of spread, right flank, structure defense, structure protection, structures threatened, terrain driven, wind driven, 10-4, 10-7, 10-8, 10-9, 10-20, 10-22, 10-23, 10-97.\n\nCRITICAL RULES:\n1. Transcribe EVERY spoken word, including conversational phrasing and incomplete sentences. Only transcribe intelligible speech.\n2. Output the transcript exactly as said, with no newlines.\n3. When transcribing numbers, write the digits grouped together (e.g., 100 instead of one hundred, 6333 instead of 63 33).\n4. Format all unit identifiers as the unit type followed by digits (e.g., Engine 41, Battalion 2, Medic 12).\n5. Do not continue the speech segment beyond what is spoken.\n6. If the audio is completely unintelligible or contains only static, output exactly: [UNINTELLIGIBLE]\n\nTASK:\nTranscribe the attached audio. Output strictly the transcript.",
+  "user_prompt": "Transcribe this emergency radio communication segment verbatim per the rules above.",
+  "combined_train_uri": "gs://wd-transcription-data/sft/oneoff_runs/2026-05-29-gemini31-flash-lite-public-atc/blended/gemini_train.jsonl",
+  "combined_val_uri": "gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/model_inputs/gemini/eval.jsonl",
+  "eval_manifest_uri": "gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/manifests/canonical/eval.jsonl",
+  "base_model": "gemini-3.1-flash-lite",
+  "epochs": 5,
+  "adapter_size": "EIGHT",
+  "lr_multiplier": 1.0,
+  "export_last_checkpoint_only": false,
+  "total_train_duration_seconds": 39631.9885,
+  "cost_estimate": {
+    "audio_tokens_per_second": 32,
+    "estimated_training_tokens": 6341118,
+    "training_rate_per_million_tokens_usd": 3.0,
+    "estimated_cost_usd": 19.02,
+    "model_display_name": "Gemini 3.1 Flash-Lite"
+  },
+  "prepared_at": "2026-05-29"
+}

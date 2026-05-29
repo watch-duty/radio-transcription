@@ -1,0 +1,86 @@
+{
+  "dataset": "jacktol/ATC-ASR-Dataset",
+  "license_metadata": null,
+  "seed": 20260529,
+  "candidate_rows": 8122,
+  "candidate_rows_after_hard_filters": 5144,
+  "selected_rows": 2000,
+  "targets": {
+    "word_0_3": 350,
+    "word_4_10": 1150,
+    "word_11_14": 400,
+    "word_15_25": 100,
+    "numeric_any": 1600,
+    "numeric_phrase_context": 1540,
+    "number_only": 60,
+    "phonetic_any": 500,
+    "numeric_and_phonetic": 400
+  },
+  "selected_distribution": {
+    "rows": 2000,
+    "splits": {
+      "test": 190,
+      "train": 1601,
+      "validation": 209
+    },
+    "soft_atc_rows": 0,
+    "soft_atc_term_hits": 0,
+    "word_0_3": 350,
+    "word_4_10": 1150,
+    "word_11_14": 400,
+    "word_15_25": 100,
+    "numeric_any": 1600,
+    "numeric_phrase_context": 1540,
+    "number_only": 60,
+    "phonetic_any": 500,
+    "numeric_and_phonetic": 400,
+    "word_26_plus": 0
+  },
+  "all_candidate_distribution": {
+    "rows": 8122,
+    "splits": {
+      "test": 813,
+      "train": 6497,
+      "validation": 812
+    },
+    "soft_atc_rows": 3041,
+    "soft_atc_term_hits": 3723,
+    "word_0_3": 997,
+    "word_4_10": 3614,
+    "word_11_14": 1785,
+    "word_15_25": 1651,
+    "numeric_any": 7103,
+    "numeric_phrase_context": 6838,
+    "number_only": 265,
+    "phonetic_any": 3193,
+    "numeric_and_phonetic": 2890,
+    "word_26_plus": 75
+  },
+  "hard_atc_terms": [
+    "runway",
+    "taxi",
+    "takeoff",
+    "landing",
+    "flight level",
+    "squawk",
+    "qnh",
+    "ils",
+    "atis",
+    "glideslope",
+    "localizer"
+  ],
+  "soft_atc_terms": [
+    "heading",
+    "climb",
+    "descend",
+    "approach",
+    "departure",
+    "tower",
+    "ground",
+    "cleared",
+    "knots",
+    "altitude",
+    "maintain"
+  ],
+  "selected_manifest": "model/scripts/sft/results/2026-05-29-gemini31-flash-lite-oneoff/selection/public_atc_selected.jsonl"
+}

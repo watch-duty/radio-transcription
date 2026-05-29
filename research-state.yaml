@@ -1,0 +1,61 @@
+project: gemini31_flash_lite_sft
+status: preparing_artifacts
+date: 2026-05-29
+base_model: gemini-3.1-flash-lite
+seed: 20260529
+datasets:
+  watch_duty_internal:
+    version: radio-transcription-sft-v20260528
+    train_gemini_uri: gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/model_inputs/gemini/train.jsonl
+    eval_gemini_uri: gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/model_inputs/gemini/eval.jsonl
+    eval_manifest_uri: gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/manifests/canonical/eval.jsonl
+  public_atc:
+    hf_dataset: jacktol/ATC-ASR-Dataset
+    use_splits_as_pool:
+      - train
+      - validation
+      - test
+selection:
+  method: ortools_cp_sat
+  selected_public_rows: 2000
+  hard_exclusions:
+    - runway
+    - taxi
+    - takeoff
+    - landing
+    - flight level
+    - squawk
+    - qnh
+    - ils
+    - atis
+    - glideslope
+    - localizer
+  targets:
+    word_0_3: 350
+    word_4_10: 1150
+    word_11_14: 400
+    word_15_25: 100
+    word_26_plus: 0
+    numeric_any: 1600
+    numeric_phrase_context: 1540
+    number_only: 60
+    phonetic_any: 500
+    numeric_and_phonetic: 400
+tuning_matrix:
+  - dataset: wd_internal
+    adapter_size: FOUR
+    epoch_count: 5
+    learning_rate_multiplier: 1.0
+  - dataset: wd_internal
+    adapter_size: EIGHT
+    epoch_count: 5
+    learning_rate_multiplier: 1.0
+  - dataset: wd_internal_plus_atc
+    adapter_size: FOUR
+    epoch_count: 5
+    learning_rate_multiplier: 1.0
+  - dataset: wd_internal_plus_atc
+    adapter_size: EIGHT
+    epoch_count: 5
+    learning_rate_multiplier: 1.0
+stop_boundary: do_not_submit_vertex_tuning_jobs

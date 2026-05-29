@@ -1,0 +1,10 @@
+{
+  "wd_train_rows": 16919,
+  "public_rows": 2000,
+  "blended_rows": 18919,
+  "wd_train_duration_seconds": 34446.278,
+  "public_duration_seconds": 5185.7105,
+  "blended_duration_seconds": 39631.9885,
+  "blended_train_uri": "gs://wd-transcription-data/sft/oneoff_runs/2026-05-29-gemini31-flash-lite-public-atc/blended/gemini_train.jsonl",
+  "shuffle_seed": 20260529
+}

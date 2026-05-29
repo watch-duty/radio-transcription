@@ -1,0 +1,101 @@
+{
+  "passed": true,
+  "required_uri_existence": {
+    "gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/model_inputs/gemini/train.jsonl": true,
+    "gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/model_inputs/gemini/eval.jsonl": true,
+    "gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/manifests/canonical/train.jsonl": true,
+    "gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/manifests/canonical/eval.jsonl": true,
+    "gs://wd-transcription-data/sft/oneoff_runs/2026-05-29-gemini31-flash-lite-public-atc/public_atc/gemini_train.jsonl": true,
+    "gs://wd-transcription-data/sft/oneoff_runs/2026-05-29-gemini31-flash-lite-public-atc/public_atc/selected_manifest.jsonl": true,
+    "gs://wd-transcription-data/sft/oneoff_runs/2026-05-29-gemini31-flash-lite-public-atc/blended/gemini_train.jsonl": true
+  },
+  "missing_uris": [],
+  "wd_train": {
+    "uri": "gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/model_inputs/gemini/train.jsonl",
+    "rows": 16919,
+    "invalid_rows": 0,
+    "unique_audio_uris": 16919
+  },
+  "wd_eval": {
+    "uri": "gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/model_inputs/gemini/eval.jsonl",
+    "rows": 4108,
+    "invalid_rows": 0,
+    "unique_audio_uris": 4108
+  },
+  "blended_train": {
+    "uri": "gs://wd-transcription-data/sft/oneoff_runs/2026-05-29-gemini31-flash-lite-public-atc/blended/gemini_train.jsonl",
+    "rows": 18919,
+    "invalid_rows": 0,
+    "unique_audio_uris": 18919
+  },
+  "train_eval_audio_overlap_count": 0,
+  "train_eval_audio_overlap_examples": [],
+  "public_manifest_rows": 2000,
+  "configs": [
+    {
+      "round_id": "2026-05-29-wd-internal-a4-gemini31-flash-lite",
+      "exists": true,
+      "base_model": "gemini-3.1-flash-lite",
+      "adapter_size": "FOUR",
+      "epochs": 5,
+      "train_uri": "gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/model_inputs/gemini/train.jsonl",
+      "val_uri": "gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/model_inputs/gemini/eval.jsonl",
+      "cost_estimate": {
+        "audio_tokens_per_second": 32,
+        "estimated_training_tokens": 5511404,
+        "training_rate_per_million_tokens_usd": 3.0,
+        "estimated_cost_usd": 16.53,
+        "model_display_name": "Gemini 3.1 Flash-Lite"
+      }
+    },
+    {
+      "round_id": "2026-05-29-wd-internal-a8-gemini31-flash-lite",
+      "exists": true,
+      "base_model": "gemini-3.1-flash-lite",
+      "adapter_size": "EIGHT",
+      "epochs": 5,
+      "train_uri": "gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/model_inputs/gemini/train.jsonl",
+      "val_uri": "gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/model_inputs/gemini/eval.jsonl",
+      "cost_estimate": {
+        "audio_tokens_per_second": 32,
+        "estimated_training_tokens": 5511404,
+        "training_rate_per_million_tokens_usd": 3.0,
+        "estimated_cost_usd": 16.53,
+        "model_display_name": "Gemini 3.1 Flash-Lite"
+      }
+    },
+    {
+      "round_id": "2026-05-29-wd-atc-a4-gemini31-flash-lite",
+      "exists": true,
+      "base_model": "gemini-3.1-flash-lite",
+      "adapter_size": "FOUR",
+      "epochs": 5,
+      "train_uri": "gs://wd-transcription-data/sft/oneoff_runs/2026-05-29-gemini31-flash-lite-public-atc/blended/gemini_train.jsonl",
+      "val_uri": "gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/model_inputs/gemini/eval.jsonl",
+      "cost_estimate": {
+        "audio_tokens_per_second": 32,
+        "estimated_training_tokens": 6341118,
+        "training_rate_per_million_tokens_usd": 3.0,
+        "estimated_cost_usd": 19.02,
+        "model_display_name": "Gemini 3.1 Flash-Lite"
+      }
+    },
+    {
+      "round_id": "2026-05-29-wd-atc-a8-gemini31-flash-lite",
+      "exists": true,
+      "base_model": "gemini-3.1-flash-lite",
+      "adapter_size": "EIGHT",
+      "epochs": 5,
+      "train_uri": "gs://wd-transcription-data/sft/oneoff_runs/2026-05-29-gemini31-flash-lite-public-atc/blended/gemini_train.jsonl",
+      "val_uri": "gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/model_inputs/gemini/eval.jsonl",
+      "cost_estimate": {
+        "audio_tokens_per_second": 32,
+        "estimated_training_tokens": 6341118,
+        "training_rate_per_million_tokens_usd": 3.0,
+        "estimated_cost_usd": 19.02,
+        "model_display_name": "Gemini 3.1 Flash-Lite"
+      }
+    }
+  ],
+  "fine_tuning_jobs_submitted": false
+}

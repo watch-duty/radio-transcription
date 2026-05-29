@@ -21,3 +21,11 @@ eval_manifest_uri = "gs://wd-transcription-data/inference_manifests/echo/eval/ge
 val_manifest_uri = ""
 normalize = false
 license = "proprietary"
+
+[datasets.wd_sft_v20260528]
+adapter = "gcs_manifest"
+train_manifest_uri = "gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/manifests/canonical/train.jsonl"
+eval_manifest_uri = "gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/manifests/canonical/eval.jsonl"
+val_manifest_uri = ""
+normalize = false
+license = "proprietary"

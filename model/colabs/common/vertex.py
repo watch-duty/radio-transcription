@@ -199,6 +199,7 @@ def submit_tuning_job(
         "epoch_count": epoch_count,
         "adapter_size": _ADAPTER_ENUM[adapter_size],
         "learning_rate_multiplier": lr_multiplier,
+        "export_last_checkpoint_only": False,
     }
     if val_uri:
         cfg_kwargs["validation_dataset"] = types.TuningValidationDataset(
