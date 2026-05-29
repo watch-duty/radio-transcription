@@ -20,18 +20,21 @@ describe('FeedSearch', () => {
       name: 'Zulu Feed',
       sourceType: SourceType.BCFY_FEEDS,
       status: 'active',
+      substatus: 'active',
     },
     {
       id: 'alpha-feed',
       name: 'Alpha Feed',
       sourceType: SourceType.BCFY_FEEDS,
       status: 'active',
+      substatus: 'active',
     },
     {
       id: 'charlie-feed',
       name: 'Charlie Feed',
       sourceType: SourceType.BCFY_FEEDS,
       status: 'active',
+      substatus: 'active',
     },
   ];
 
