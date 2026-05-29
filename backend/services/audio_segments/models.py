@@ -80,6 +80,7 @@ class AudioSegment(BaseModel):
 
 class AudioSegmentCreate(BaseModel):
     """Model for creating an audio segment."""
+
     feed_id: str
     classification: AudioClassification
     start_timestamp: datetime
