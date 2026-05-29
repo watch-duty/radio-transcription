@@ -83,6 +83,8 @@ components:
           enum:
             - asc
             - desc
+        isAlert:
+          type: boolean
       type: object
       additionalProperties: false
     ScopeLevel:
@@ -267,13 +269,13 @@ components:
       type: object
       additionalProperties: false
     SourceType:
-      type: string
       enum:
         - bcfy_feeds
         - bcfy_calls
         - echo
         - openmhz
         - fire_notifications
+      type: string
     Feed:
       properties:
         name:
@@ -323,6 +325,21 @@ components:
         - name
         - sourceType
         - sourceFeedId
+        - externalId
+      type: object
+      additionalProperties: false
+    FeedUpdate:
+      properties:
+        name:
+          type: string
+        externalId:
+          type: string
+        tags:
+          items:
+            $ref: "#/components/schemas/Tag"
+          type: array
+      required:
+        - name
         - externalId
       type: object
       additionalProperties: false
@@ -457,6 +474,11 @@ paths:
             enum:
               - asc
               - desc
+        - in: query
+          name: isAlert
+          required: false
+          schema:
+            type: boolean
       x-google-backend: radio-transcription-api
   /api/v1/rules:
     get:
@@ -935,6 +957,79 @@ paths:
           required: true
           schema:
             type: string
+      x-google-backend: radio-transcription-api
+    put:
+      operationId: UpdateFeed
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Feed"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      description: |-
+        Update an existing feed (Full override).
+        The fields passed here will fully override the fields stored. There is no coalesing done, so make sure these are the final desired fields.
+      tags:
+        - Feeds
+      security:
+        - google_id_token: []
+      parameters:
+        - in: path
+          name: feedId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FeedUpdate"
       x-google-backend: radio-transcription-api
   /api/v1/feeds/{feedId}/reset:
     post:

@@ -1,6 +1,6 @@
 """WATCHDOG-01 D-29 parser unit tests.
 
-Tests the cgroup memory limit + usage parsers in NormalizerRuntime,
+Tests the cgroup memory limit + usage parsers in CollectorRuntime,
 covering cgroup v2, cgroup v1 fallback, the literal "max", and the
 v1 unbounded sentinel >= 2**62.
 
@@ -13,7 +13,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
+from backend.pipeline.ingestion.collector_runtime import CollectorRuntime
 
 
 class TestResolveContainerMemoryLimit(unittest.TestCase):
@@ -25,7 +25,7 @@ class TestResolveContainerMemoryLimit(unittest.TestCase):
             "pathlib.Path.read_text",
             return_value="max\n",
         ):
-            result = NormalizerRuntime._resolve_container_memory_bytes()
+            result = CollectorRuntime._resolve_container_memory_bytes()
         self.assertIsNone(result)
 
     def test_v2_int_returns_value(self) -> None:
@@ -34,7 +34,7 @@ class TestResolveContainerMemoryLimit(unittest.TestCase):
             "pathlib.Path.read_text",
             return_value="4294967296\n",
         ):
-            result = NormalizerRuntime._resolve_container_memory_bytes()
+            result = CollectorRuntime._resolve_container_memory_bytes()
         self.assertEqual(result, 4294967296)
 
     def test_v1_sentinel_returns_none(self) -> None:
@@ -43,7 +43,7 @@ class TestResolveContainerMemoryLimit(unittest.TestCase):
             "pathlib.Path.read_text",
             side_effect=[OSError("v2 missing"), "9223372036854771712\n"],
         ):
-            result = NormalizerRuntime._resolve_container_memory_bytes()
+            result = CollectorRuntime._resolve_container_memory_bytes()
         self.assertIsNone(result)
 
     def test_v1_int_returns_value(self) -> None:
@@ -52,7 +52,7 @@ class TestResolveContainerMemoryLimit(unittest.TestCase):
             "pathlib.Path.read_text",
             side_effect=[OSError("v2 missing"), "4294967296\n"],
         ):
-            result = NormalizerRuntime._resolve_container_memory_bytes()
+            result = CollectorRuntime._resolve_container_memory_bytes()
         self.assertEqual(result, 4294967296)
 
     def test_both_paths_oserror_returns_none(self) -> None:
@@ -61,7 +61,7 @@ class TestResolveContainerMemoryLimit(unittest.TestCase):
             "pathlib.Path.read_text",
             side_effect=[OSError("v2 missing"), OSError("v1 missing")],
         ):
-            result = NormalizerRuntime._resolve_container_memory_bytes()
+            result = CollectorRuntime._resolve_container_memory_bytes()
         self.assertIsNone(result)
 
     def test_v2_malformed_value_returns_none(self) -> None:
@@ -70,7 +70,7 @@ class TestResolveContainerMemoryLimit(unittest.TestCase):
             "pathlib.Path.read_text",
             return_value="not-an-integer\n",
         ):
-            result = NormalizerRuntime._resolve_container_memory_bytes()
+            result = CollectorRuntime._resolve_container_memory_bytes()
         self.assertIsNone(result)
 
     def test_v2_zero_limit_returns_none(self) -> None:
@@ -79,7 +79,7 @@ class TestResolveContainerMemoryLimit(unittest.TestCase):
             "pathlib.Path.read_text",
             return_value="0\n",
         ):
-            result = NormalizerRuntime._resolve_container_memory_bytes()
+            result = CollectorRuntime._resolve_container_memory_bytes()
         self.assertIsNone(result)
 
     def test_v1_malformed_value_returns_none(self) -> None:
@@ -88,7 +88,7 @@ class TestResolveContainerMemoryLimit(unittest.TestCase):
             "pathlib.Path.read_text",
             side_effect=[OSError("v2 missing"), "garbage\n"],
         ):
-            result = NormalizerRuntime._resolve_container_memory_bytes()
+            result = CollectorRuntime._resolve_container_memory_bytes()
         self.assertIsNone(result)
 
     def test_v1_zero_limit_returns_none(self) -> None:
@@ -97,7 +97,7 @@ class TestResolveContainerMemoryLimit(unittest.TestCase):
             "pathlib.Path.read_text",
             side_effect=[OSError("v2 missing"), "0\n"],
         ):
-            result = NormalizerRuntime._resolve_container_memory_bytes()
+            result = CollectorRuntime._resolve_container_memory_bytes()
         self.assertIsNone(result)
 
     def test_v1_negative_limit_returns_none(self) -> None:
@@ -106,7 +106,7 @@ class TestResolveContainerMemoryLimit(unittest.TestCase):
             "pathlib.Path.read_text",
             side_effect=[OSError("v2 missing"), "-1\n"],
         ):
-            result = NormalizerRuntime._resolve_container_memory_bytes()
+            result = CollectorRuntime._resolve_container_memory_bytes()
         self.assertIsNone(result)
 
 
@@ -119,7 +119,7 @@ class TestResolveContainerMemoryUsage(unittest.TestCase):
             "pathlib.Path.read_text",
             return_value="3221225472\n",
         ):
-            result = NormalizerRuntime._resolve_container_memory_usage_bytes()
+            result = CollectorRuntime._resolve_container_memory_usage_bytes()
         self.assertEqual(result, 3221225472)
 
     def test_v1_fallback_when_v2_missing(self) -> None:
@@ -128,7 +128,7 @@ class TestResolveContainerMemoryUsage(unittest.TestCase):
             "pathlib.Path.read_text",
             side_effect=[OSError("v2 missing"), "3221225472\n"],
         ):
-            result = NormalizerRuntime._resolve_container_memory_usage_bytes()
+            result = CollectorRuntime._resolve_container_memory_usage_bytes()
         self.assertEqual(result, 3221225472)
 
     def test_both_paths_oserror_returns_none(self) -> None:
@@ -137,7 +137,7 @@ class TestResolveContainerMemoryUsage(unittest.TestCase):
             "pathlib.Path.read_text",
             side_effect=[OSError("v2 missing"), OSError("v1 missing")],
         ):
-            result = NormalizerRuntime._resolve_container_memory_usage_bytes()
+            result = CollectorRuntime._resolve_container_memory_usage_bytes()
         self.assertIsNone(result)
 
     def test_malformed_value_returns_none(self) -> None:
@@ -146,7 +146,7 @@ class TestResolveContainerMemoryUsage(unittest.TestCase):
             "pathlib.Path.read_text",
             return_value="not-an-integer\n",
         ):
-            result = NormalizerRuntime._resolve_container_memory_usage_bytes()
+            result = CollectorRuntime._resolve_container_memory_usage_bytes()
         self.assertIsNone(result)
 
 

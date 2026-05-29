@@ -45,7 +45,8 @@ class TestRequestHandler(TestCase):
                 '"missingPriorContext": false, "missingPostContext": false, '
                 '"sourceAudioUris": [], "canonicalAudioUri": "", '
                 '"evaluationDecisions": [], "playbackAudioUri": "", '
-                '"appUrl": "", "feedName": "", "externalId": "", "tags": []}'
+                '"appUrl": "", "feedName": "", "externalId": "", "tags": [], '
+                '"evaluationErrors": []}'
             ),
             headers={
                 "Content-Type": "application/json",

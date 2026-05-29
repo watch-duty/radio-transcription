@@ -66,7 +66,7 @@ class TestEmitMarkerCount(unittest.TestCase):
 
     Enforces exactly 2 `# SLO: call_download_failed emit` markers (one in
     OpenMHZ, one in bcfy_calls) and exactly 1 `# SLO: chunk_ingested emit`
-    marker (inline in normalizer_runtime._process_feed). A new collector that
+    marker (inline in collector_runtime._process_feed). A new collector that
     adds a 3rd call_download_failed emit must consciously update
     _EXPECTED_CALL_DL_FAILED_EMIT_COUNT or face this test.
 
@@ -125,7 +125,7 @@ class TestEmitMarkerCount(unittest.TestCase):
                 f"'# SLO: chunk_ingested emit' marker under "
                 f"{_INGESTION_DIR.relative_to(_REPO_ROOT)} (excluding tests/), "
                 f"found {count}. Files: {found_files}. "
-                "The emit lives in normalizer_runtime._process_feed strictly "
+                "The emit lives in collector_runtime._process_feed strictly "
                 "after retry_with_lease_check(update_feed_progress) returns "
                 "ok=True (02-CONTEXT.md D-11 + LOG-01 SC#1)."
             ),
