@@ -11,6 +11,7 @@ import { GoogleAuth } from 'google-auth-library';
 import {
   Body,
   Controller,
+  Delete,
   Extension,
   Get,
   Path,
@@ -291,6 +292,34 @@ export class FeedsController extends Controller {
       await client.request({
         url: `${FEEDS_STORE_API_URL}/${feedId}/deactivate`,
         method: 'POST',
+      });
+    } catch (error: unknown) {
+      const { status, message } = handleBackendError(
+        error,
+        `deleting feed ${feedId}`
+      );
+      throw new HttpError(status, message);
+    }
+  }
+
+  /**
+   * Hard delete a feed (permanent delete).
+   * Deletes the feed, corresponding transcripts, and audio segments.
+   */
+  @Delete('{feedId}')
+  @Security('google_id_token')
+  @SuccessResponse('204', 'No Content')
+  @Response<{ message: string }>(401, 'Unauthorized')
+  @Response<{ message: string }>(403, 'Forbidden')
+  @Response<{ message: string }>(404, 'Not Found')
+  @Response<{ message: string }>(500, 'Internal Server Error')
+  @Extension('x-google-backend', 'radio-transcription-api')
+  public async deleteFeed(@Path() feedId: string): Promise<void> {
+    const client = await this.getClient();
+    try {
+      await client.request({
+        url: `${FEEDS_STORE_API_URL}/${feedId}`,
+        method: 'DELETE',
       });
     } catch (error: unknown) {
       const { status, message } = handleBackendError(

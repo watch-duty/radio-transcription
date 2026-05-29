@@ -368,6 +368,20 @@ UPDATE feeds
 SET status = 'deactivated'::feed_status
 WHERE id = $1
 """
+# TODO remove transcripts PR https://linear.app/watchduty/issue/GOO-458/remaining-legacy-cleanup
+DELETE_FEED_SQL = """\
+WITH deleted_audio_segments AS (
+    DELETE FROM audio_segments
+    WHERE feed_id = $1
+),
+deleted_transcripts AS (
+    DELETE FROM transcripts
+    WHERE feed_id = $1
+)
+DELETE FROM feeds
+WHERE id = $1
+"""
+
 
 RESET_FEED_SQL = """\
 WITH updated AS (
