@@ -170,6 +170,7 @@ docker-compose logs --tail 100 -t -f {{ arg(name="service") }}
 [tasks."test:unit"]
 description = "Run all unit tests (alias: test)"
 alias = ["test"]
+depends = ["generate:protos"]
 run = "uv run python -m pytest backend/ -q --ignore-glob='**/test_*_integration.py'"
 
 [tasks."test:model"]
