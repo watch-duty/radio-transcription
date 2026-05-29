@@ -9,9 +9,44 @@ Refer to these guidelines to ensure consistency with project standards.
 
 ---
 
+## Critical Local Test Safety
+
+This repo has resource-heavy Docker/testcontainers and E2E lanes. Broad local
+test commands have previously exhausted developer machines.
+
+Default behavior for agents:
+
+- If the user asks to "run tests" without specifying scope, run the narrowest
+  relevant low-resource check.
+- For docs-only changes, run `git diff --check`; do not run Python tests unless
+  the user asks for them.
+- Safe backend default: `uv run python -m pytest backend/ -q --ignore-glob='**/test_*_integration.py'`.
+- Use `mise run test` only after inspecting `.mise.toml` and confirming it is
+  scoped to safe backend/unit tests.
+- Do not proactively run local E2E, API, component, Docker, testcontainers, or
+  full integration-stack commands unless the user explicitly asks and confirms
+  the machine is prepared. Examples: `mise run test:e2e`,
+  `mise run test:e2e:local`, `mise run test:component`, `mise run test:api`,
+  `docker compose ... integration-tests`, `uv run pytest integration_tests/`,
+  or unscoped `uv run pytest`.
+- Prefer GitHub Actions for E2E/resource-stack validation: push the branch,
+  check `gh pr checks <pr-number> --repo watch-duty/radio-transcription`, and
+  inspect failures with
+  `gh run view <run-id> --repo watch-duty/radio-transcription --log`.
+- If the user explicitly approves a large local test, run the narrowest path
+  possible, keep Docker/testcontainers/API/E2E/component tests serial with
+  `-n 0`, and avoid `-n auto` unless xdist fanout is specifically requested.
+
+Reason: local E2E/resource-stack tests can start many containers and emulators,
+including AlloyDB Omni, Pub/Sub, GCS, Redis, and pipeline services. CI runners
+isolate those resource costs.
+
 ## Agent Action Standards
 
-To ensure absolute consistency with Watch Duty's development guidelines, always utilize the project's **mise** task runner instead of running ad-hoc commands:
+Prefer the project's **mise** task runner for standard formatting, linting, and
+generation tasks. For test execution, follow the Critical Local Test Safety
+section above; keep local validation narrow unless the user explicitly asks for
+a larger resource-heavy run.
 
 1. **Code Formatting & Linting**:
    - Run `mise run format` locally to automatically format all modified files (Python, Terraform, Frontend) before submitting.
@@ -20,14 +55,11 @@ To ensure absolute consistency with Watch Duty's development guidelines, always 
 2. **Protobuf Generation**:
    - Run `mise run generate:protos` to regenerate Python Protobuf/gRPC bindings after making changes to any `.proto` schemas.
 
-3. **Unit Tests**:
-   - Run `mise run test` (or `mise run test:unit`) to verify the local Python unit test suite.
-
-4. **Git Commits**:
+3. **Git Commits**:
    - Use descriptive semantic commit prefixes (e.g., `feat(transcription):`, `fix(pipeline):`, `style(transcription):`, `docs:`).
    - **Resource Limits & Sandboxes**: If committing inside a resource-restricted sandbox environment where local git hooks fail due to memory or process limits (exit codes `137` / `-9`), stage changes with `git add -u` and commit utilizing the `--no-verify` flag. The remote GitHub Action CI will perform final validation.
 
-5. **Pull Request Title Standards**:
+4. **Pull Request Title Standards**:
    - When creating or submitting a Pull Request on GitHub, you MUST prefix the PR title in brackets to satisfy the remote Linear check.
    - **Supported Prefix Formats**:
      - If the work corresponds to a tracked Linear ticket, prefix the PR title with the exact issue ID (e.g. `[GOO-123] feat: implementation...`).
