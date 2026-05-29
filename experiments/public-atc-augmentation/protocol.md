@@ -93,6 +93,7 @@ rewrites beyond numeric normalization.
 - selected public manifest
 - selection feature report
 - selection audit report
+- preflight reports for WD-only and WD+ATC train/validation pairs
 - public Gemini JSONL
 - public FLAC audio in GCS
 - blended Gemini training JSONL in GCS
@@ -116,6 +117,14 @@ The refined soft-penalty list reduces residual aviation-procedure rows, but some
 remain because exact numeric/phonetic targets make them unavoidable. This is
 acceptable because public ATC is a small fraction of the blended train set and
 the comparison against WD-only isolates whether the transfer helps.
+
+## Preflight Gate
+
+Before tuning, run `oneoff_gemini31_flash_lite.py preflight-configs`. The
+current WD-only and WD+ATC train/validation pairs both pass this gate with zero
+failures. This verifies that paid tuning should not fail later because of
+malformed SFT JSONL, empty targets, train/validation overlap, token-cap issues,
+or unreachable GCS audio.
 
 ## Stop Condition
 

@@ -52,3 +52,14 @@ to 119 while preserving all numeric/phonetic targets.
   paid jobs.
 - The installed Google Gen AI SDK supports the tuning fields used by the
   pipeline, including validation datasets and checkpoint export.
+
+## Preflight Result
+
+The exact WD-only and WD+ATC train/validation pairs both pass the SFT preflight
+gate before any tuning submission. This verifies JSONL parsing, SFT schema,
+empty-target checks, approximate text-token caps, train/validation disjointness,
+and GCS audio reachability for the configured train and validation examples.
+
+Base-model batch evaluation was not run in this pass. It would submit a paid
+Vertex batch inference job and does not change the data-readiness decision; the
+same eval pipeline should be run once endpoints are available for final scoring.

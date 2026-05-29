@@ -14,6 +14,7 @@ import logging
 import random
 import re
 import sys
+import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -78,6 +79,7 @@ READINESS_REPORT_JSON: Final = WORKSPACE_DIR / "readiness_report.json"
 SELECTION_AUDIT_REPORT_JSON: Final = (
     WORKSPACE_DIR / "selection_audit_report.json"
 )
+PREFLIGHT_SUMMARY_JSON: Final = WORKSPACE_DIR / "preflight_summary.json"
 COMMANDS_MD: Final = WORKSPACE_DIR / "commands.md"
 
 PUBLIC_GCS_MANIFEST_URI: Final = (
@@ -1132,6 +1134,81 @@ def validate_ready(args: argparse.Namespace) -> int:
     return 0 if report["passed"] else 1
 
 
+def _download_gcs_file(
+    storage_client: Any, gcs_uri: str, local_path: Path
+) -> None:
+    from google.cloud.storage.retry import DEFAULT_RETRY
+
+    bucket_name, blob_path = parse_gcs_uri(gcs_uri)
+    storage_client.bucket(bucket_name).blob(blob_path).download_to_filename(
+        str(local_path), retry=DEFAULT_RETRY
+    )
+
+
+def preflight_configs(args: argparse.Namespace) -> int:
+    del args
+    from preflight import run_preflight
+
+    _ensure_dirs()
+    storage_client = _storage_client()
+    checks = [
+        {
+            "name": "wd_internal",
+            "train_uri": WD_GEMINI_TRAIN_URI,
+            "val_uri": WD_GEMINI_EVAL_URI,
+            "report_path": WORKSPACE_DIR / "preflight_wd_internal_report.json",
+        },
+        {
+            "name": "wd_internal_plus_atc",
+            "train_uri": BLENDED_GCS_TRAIN_URI,
+            "val_uri": WD_GEMINI_EVAL_URI,
+            "report_path": WORKSPACE_DIR / "preflight_wd_atc_report.json",
+        },
+    ]
+    summary: list[dict[str, Any]] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        for check in checks:
+            train_path = tmp_dir / f"{check['name']}_train.jsonl"
+            val_path = tmp_dir / f"{check['name']}_val.jsonl"
+            _download_gcs_file(storage_client, check["train_uri"], train_path)
+            _download_gcs_file(storage_client, check["val_uri"], val_path)
+            report = run_preflight(
+                train_jsonl_path=train_path,
+                val_jsonl_path=val_path,
+                storage_client=storage_client,
+                report_path=check["report_path"],
+                system_prompt=PIPELINE_SYSTEM_PROMPT,
+                user_prompt=PIPELINE_USER_PROMPT,
+                gcs_max_workers=8,
+                gcs_batch_pause_seconds=0.1,
+            )
+            summary.append(
+                {
+                    "name": check["name"],
+                    "train_uri": check["train_uri"],
+                    "val_uri": check["val_uri"],
+                    "report_path": str(
+                        check["report_path"].relative_to(REPO_ROOT)
+                    ),
+                    "passed": report.passed,
+                    "failure_count": len(report.failures),
+                }
+            )
+    PREFLIGHT_SUMMARY_JSON.write_text(
+        json.dumps(
+            {
+                "passed": all(row["passed"] for row in summary),
+                "checks": summary,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    logger.info("Preflight summary: %s", PREFLIGHT_SUMMARY_JSON)
+    return 0 if all(row["passed"] for row in summary) else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Prepare one-off Gemini 3.1 Flash-Lite SFT run artifacts"
@@ -1144,6 +1221,7 @@ def main() -> int:
     sub.add_parser("make-configs")
     sub.add_parser("validate-ready")
     sub.add_parser("audit-selection")
+    sub.add_parser("preflight-configs")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     return {
@@ -1153,6 +1231,7 @@ def main() -> int:
         "make-configs": make_configs,
         "validate-ready": validate_ready,
         "audit-selection": audit_selection,
+        "preflight-configs": preflight_configs,
     }[args.cmd](args)
 
 

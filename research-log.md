@@ -22,6 +22,9 @@
 - The refined selection remains optimal, hits all targets exactly, and reduces
   residual procedure-term rows from 620 to 110 and sampled airline-token rows
   from 488 to 119.
+- Ran preflight on the two distinct train/validation pairs: WD-only plus WD eval,
+  and WD+ATC plus WD eval. Both passed with zero failures. No tuning or Vertex
+  batch-eval jobs were submitted.
 
 ## Execution Boundary
 

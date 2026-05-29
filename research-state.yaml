@@ -83,6 +83,15 @@ selection_audit:
   residual_procedure_rows_after_refinement: 110
   sampled_airline_token_rows_before_refinement: 488
   sampled_airline_token_rows_after_refinement: 119
+preflight:
+  passed: true
+  checks:
+    - name: wd_internal
+      failures: 0
+    - name: wd_internal_plus_atc
+      failures: 0
+  base_batch_eval_run: false
+  vertex_tuning_jobs_submitted: false
 tuning_matrix:
   - dataset: wd_internal
     adapter_size: FOUR

@@ -1,0 +1,21 @@
+{
+  "passed": true,
+  "checks": [
+    {
+      "name": "wd_internal",
+      "train_uri": "gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/model_inputs/gemini/train.jsonl",
+      "val_uri": "gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/model_inputs/gemini/eval.jsonl",
+      "report_path": "model/scripts/sft/results/2026-05-29-gemini31-flash-lite-oneoff/preflight_wd_internal_report.json",
+      "passed": true,
+      "failure_count": 0
+    },
+    {
+      "name": "wd_internal_plus_atc",
+      "train_uri": "gs://wd-transcription-data/sft/oneoff_runs/2026-05-29-gemini31-flash-lite-public-atc/blended/gemini_train.jsonl",
+      "val_uri": "gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/model_inputs/gemini/eval.jsonl",
+      "report_path": "model/scripts/sft/results/2026-05-29-gemini31-flash-lite-oneoff/preflight_wd_atc_report.json",
+      "passed": true,
+      "failure_count": 0
+    }
+  ]
+}
