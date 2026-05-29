@@ -60,6 +60,9 @@ class TranscriptionEventProcessor:
         with with_tracer_context(
             traceparent, "transcribe_claim_check", __name__
         ):
+            errors = []
+            transcript = None
+            transmission_id = None
             raw_data = pubsub_message.get("data", "")
             if not raw_data:
                 logger.error("Bad Request: Missing Pub/Sub data payload")
@@ -101,40 +104,13 @@ class TranscriptionEventProcessor:
                     uri=claim.canonical_audio_uri,
                     duration_ms=duration_ms,
                 )
-                errors = []
 
                 if not transcript:
                     logger.info(
                         "Speech API returned empty transcription. Using fallback unintelligible marker."
                     )
-                    errors.append("empty_transcription")
+                    errors.append("Empty transcription from Speech Model")
                     transcript = CHIRP_UNINTELLIGIBLE_MARKER
-
-                # TODO: Put this write into a Pub/Sub for retries.
-                # https://linear.app/watchduty/issue/GOO-515/eng-front-transcript-annotation-write-with-pubsub-retry
-                if self.audio_segments_client is not None:
-                    try:
-                        annotation_data = {
-                            "text": transcript,
-                            "errors": errors,
-                        }
-                        self.audio_segments_client.add_audio_segment_annotation(
-                            audio_segment_id=claim.transmission_id,
-                            annotation_type=(
-                                audio_segments_models.AnnotationType.TRANSCRIPT
-                            ),
-                            data=annotation_data,
-                        )
-                        logger.info(
-                            "Successfully added transcript annotation for segment %s",
-                            claim.transmission_id,
-                        )
-                    except Exception as e:
-                        logger.exception(
-                            "Failed to add transcript annotation for segment %s: %s",
-                            claim.transmission_id,
-                            e,
-                        )
 
                 # Build TranscribedAudio egress protobuf message
                 out_proto = TranscribedAudio(
@@ -184,4 +160,40 @@ class TranscriptionEventProcessor:
                     feed_id,
                     e,
                 )
+                errors.append(f"Exception: {e}")
                 raise
+            finally:
+                if transmission_id:
+                    self._write_transcript_annotation(
+                        transmission_id, transcript, errors
+                    )
+
+    def _write_transcript_annotation(
+        self, transmission_id: str, transcript: str, errors: list[str]
+    ) -> None:
+        """Writes transcript annotation to audio segments API."""
+        if self.audio_segments_client is None:
+            return
+
+        try:
+            annotation_data = {
+                "text": transcript,
+                "errors": errors,
+            }
+            self.audio_segments_client.add_audio_segment_annotation(
+                audio_segment_id=transmission_id,
+                annotation_type=(
+                    audio_segments_models.AnnotationType.TRANSCRIPT
+                ),
+                data=annotation_data,
+            )
+            logger.info(
+                "Successfully added transcript annotation for segment %s",
+                transmission_id,
+            )
+        except Exception as write_err:
+            logger.exception(
+                "Failed to add transcript annotation for segment %s: %s",
+                transmission_id,
+                write_err,
+            )

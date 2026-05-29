@@ -201,6 +201,6 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             annotation_type=audio_segments_models.AnnotationType.TRANSCRIPT,
             data={
                 "text": (CHIRP_UNINTELLIGIBLE_MARKER),
-                "errors": ["empty_transcription"],
+                "errors": ["Empty transcription from Speech Model"],
             },
         )
