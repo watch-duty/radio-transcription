@@ -6,7 +6,12 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from backend.pipeline.storage.audio_segment_store import AudioSegmentStore
 
-    from .models import AudioSegment, AudioSegmentCreate
+    from .models import (
+        Annotation,
+        AnnotationCreate,
+        AudioSegment,
+        AudioSegmentCreate,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -39,4 +44,14 @@ class AudioSegmentService:
             playback_audio_uri=segment.playback_audio_uri,
             missing_prior_context=segment.missing_prior_context,
             missing_post_context=segment.missing_post_context,
+        )
+
+    async def add_annotation(
+        self, segment_id: str, annotation: AnnotationCreate
+    ) -> Annotation:
+        """Adds an annotation to an audio segment."""
+        return await self._store.add_annotation(
+            segment_id=segment_id,
+            annotation_type=annotation.type,
+            data=annotation.data.model_dump(),
         )

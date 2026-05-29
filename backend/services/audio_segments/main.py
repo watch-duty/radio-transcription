@@ -14,6 +14,8 @@ from backend.pipeline.storage.connection import (
 )
 
 from .models import (
+    Annotation,
+    AnnotationCreate,
     AudioSegment,
     AudioSegmentCreate,
 )
@@ -78,6 +80,28 @@ async def create_audio_segment(
     service: AudioSegmentService = request.app.state.audio_segment_service
     try:
         return await service.create_audio_segment(segment)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+
+@app.post(
+    "/v1/audio_segments/{audio_segment_id}/annotations",
+    response_model=Annotation,
+    status_code=status.HTTP_201_CREATED,
+    tags=["audio_segments"],
+)
+async def add_annotation(
+    audio_segment_id: str,
+    request: Request,
+    annotation: AnnotationCreate,
+) -> Annotation:
+    """Add an annotation to an audio segment."""
+    service: AudioSegmentService = request.app.state.audio_segment_service
+    try:
+        return await service.add_annotation(audio_segment_id, annotation)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
