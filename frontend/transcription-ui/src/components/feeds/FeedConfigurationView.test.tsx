@@ -11,7 +11,11 @@ import {
   waitFor,
   within,
 } from '@testing-library/react';
-import type { Feed } from '@transcription/common';
+import type {
+  BackendFeedStatus,
+  Feed,
+  FeedStatus,
+} from '@transcription/common';
 import { SourceType } from '@transcription/common';
 
 import { createFeed } from '../../service/createFeed';
@@ -50,6 +54,7 @@ describe('FeedConfigurationView', () => {
       sourceFeedId: '33156',
       externalId: 'ca-mrn-fire',
       status: 'active',
+      substatus: 'active',
       tags: [{ key: 'county', value: 'Marin' }],
     },
     {
@@ -59,6 +64,7 @@ describe('FeedConfigurationView', () => {
       sourceFeedId: 'sonoma-county',
       externalId: 'ca-snm-sheriff',
       status: 'inactive',
+      substatus: 'deactivated',
       tags: [{ key: 'county', value: 'Sonoma' }],
     },
   ];
@@ -197,7 +203,8 @@ describe('FeedConfigurationView', () => {
       sourceType: SourceType.BCFY_CALLS,
       sourceFeedId: '9988-77',
       externalId: 'ca-nap-amb',
-      status: 'active' as const,
+      status: 'active' as FeedStatus,
+      substatus: 'active' as BackendFeedStatus,
     };
     vi.mocked(createFeed).mockResolvedValue(mockCreatedFeed);
 
@@ -418,7 +425,8 @@ describe('FeedConfigurationView', () => {
       sourceType: SourceType.BCFY_CALLS,
       sourceFeedId: '9988-77',
       externalId: 'ca-nap-amb',
-      status: 'active' as const,
+      status: 'active' as FeedStatus,
+      substatus: 'active' as BackendFeedStatus,
     };
     vi.mocked(createFeed).mockResolvedValue(mockCreatedFeed);
 
