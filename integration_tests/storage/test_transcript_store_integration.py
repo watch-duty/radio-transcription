@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 import pytest
 
 from backend.pipeline.storage.transcript_store import TranscriptStore
+from integration_tests.storage.storage_feed_util import create_feed
 
 
 @pytest.fixture
@@ -43,13 +44,7 @@ async def _insert_transcript(
 async def test_list_transcripts_pagination(
     db_pool: asyncpg.Pool, store: TranscriptStore
 ) -> None:
-    feed_id = uuid.uuid4()
-    await db_pool.execute(
-        "INSERT INTO feeds (id, name, source_type) VALUES ($1, $2, $3)",
-        feed_id,
-        "Test Feed",
-        "bcfy_feeds",
-    )
+    feed_id = await create_feed(db_pool)
 
     # Insert 3 transcripts with different timestamps
     t1 = datetime.datetime(2026, 1, 1, 10, 0, 0, tzinfo=datetime.UTC)
@@ -87,13 +82,7 @@ async def test_list_transcripts_pagination(
 async def test_list_transcripts_ascending(
     db_pool: asyncpg.Pool, store: TranscriptStore
 ) -> None:
-    feed_id = uuid.uuid4()
-    await db_pool.execute(
-        "INSERT INTO feeds (id, name, source_type) VALUES ($1, $2, $3)",
-        feed_id,
-        "Test Feed",
-        "bcfy_feeds",
-    )
+    feed_id = await create_feed(db_pool)
 
     t1 = datetime.datetime(2026, 1, 1, 10, 0, 0, tzinfo=datetime.UTC)
     t2 = datetime.datetime(2026, 1, 1, 10, 1, 0, tzinfo=datetime.UTC)
@@ -129,13 +118,7 @@ async def test_list_transcripts_ascending(
 async def test_list_transcripts_time_window(
     db_pool: asyncpg.Pool, store: TranscriptStore
 ) -> None:
-    feed_id = uuid.uuid4()
-    await db_pool.execute(
-        "INSERT INTO feeds (id, name, source_type) VALUES ($1, $2, $3)",
-        feed_id,
-        "Test Feed",
-        "bcfy_feeds",
-    )
+    feed_id = await create_feed(db_pool)
 
     t1 = datetime.datetime(2026, 1, 1, 10, 0, 0, tzinfo=datetime.UTC)
     t2 = datetime.datetime(2026, 1, 2, 10, 0, 0, tzinfo=datetime.UTC)

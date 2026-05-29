@@ -1,23 +1,22 @@
-import React, { useMemo, useState } from 'react';
+import { forwardRef, useMemo, useState } from 'react';
+import type { ComponentProps, HTMLAttributes } from 'react';
 import { Link as RouterLink } from 'react-router';
 import { TableVirtuoso } from 'react-virtuoso';
 
-import InventoryIcon from '@mui/icons-material/Inventory';
-import MoreVertIcon from '@mui/icons-material/MoreVert';
-import OpenInNewOutlinedIcon from '@mui/icons-material/OpenInNewOutlined';
+import ClearIcon from '@mui/icons-material/Clear';
+import EditIcon from '@mui/icons-material/Edit';
 import SearchIcon from '@mui/icons-material/Search';
+import TroubleshootIcon from '@mui/icons-material/Troubleshoot';
 import TuneIcon from '@mui/icons-material/Tune';
 import Box from '@mui/material/Box';
+import Card from '@mui/material/Card';
 import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
+import Divider from '@mui/material/Divider';
 import IconButton from '@mui/material/IconButton';
 import InputAdornment from '@mui/material/InputAdornment';
 import Link from '@mui/material/Link';
-import ListItemIcon from '@mui/material/ListItemIcon';
-import ListItemText from '@mui/material/ListItemText';
-import Menu from '@mui/material/Menu';
-import MenuItem from '@mui/material/MenuItem';
-import Paper from '@mui/material/Paper';
+import Stack from '@mui/material/Stack';
 import Table from '@mui/material/Table';
 import TableBody from '@mui/material/TableBody';
 import TableCell from '@mui/material/TableCell';
@@ -27,64 +26,100 @@ import TableRow from '@mui/material/TableRow';
 import TableSortLabel from '@mui/material/TableSortLabel';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
+import { useTheme } from '@mui/material/styles';
+import useMediaQuery from '@mui/material/useMediaQuery';
 import type { Feed } from '@transcription/common';
 
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 import { MultiSelectFilter } from '../common/MultiSelectFilter';
 
-interface FeedTableProps {
+export interface FeedTableProps {
+  title?: string;
   feeds: Feed[];
   isLoading: boolean;
+  allowEdit?: boolean;
+  editingFeedId?: string;
+  onEditFeed?: (feed: Feed) => void;
+  isSubmitting?: boolean;
 }
 
 interface SortConfig {
-  column: 'name' | 'status';
+  column: 'name' | 'type' | 'status';
   direction: 'asc' | 'desc';
 }
 
-const VirtuosoScroller = React.forwardRef<
+const VirtuosoScroller = forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->((props, ref) => <TableContainer {...props} ref={ref} />);
+  HTMLAttributes<HTMLDivElement>
+>((props, ref) => <TableContainer {...props} ref={ref} component="div" />);
 VirtuosoScroller.displayName = 'VirtuosoScroller';
 
-const VirtuosoTableHead = React.forwardRef<
-  HTMLTableSectionElement,
-  React.HTMLAttributes<HTMLTableSectionElement>
->((props, ref) => <TableHead {...props} ref={ref} />);
+const VirtuosoTableHead = forwardRef<
+  HTMLDivElement,
+  HTMLAttributes<HTMLDivElement>
+>((props, ref) => (
+  <TableHead {...props} ref={ref} component="div" sx={{ display: 'block' }} />
+));
 VirtuosoTableHead.displayName = 'VirtuosoTableHead';
 
-const VirtuosoTableBody = React.forwardRef<
-  HTMLTableSectionElement,
-  React.HTMLAttributes<HTMLTableSectionElement>
->((props, ref) => <TableBody {...props} ref={ref} />);
+const VirtuosoTableBody = forwardRef<
+  HTMLDivElement,
+  HTMLAttributes<HTMLDivElement>
+>((props, ref) => (
+  <TableBody {...props} ref={ref} component="div" sx={{ display: 'block' }} />
+));
 VirtuosoTableBody.displayName = 'VirtuosoTableBody';
 
-const VirtuosoTable = React.forwardRef<
-  HTMLTableElement,
-  React.ComponentProps<typeof Table>
->((props, ref) => (
-  <Table
-    {...props}
-    ref={ref}
-    sx={{ borderCollapse: 'separate', tableLayout: 'fixed' }}
-  />
-));
+const VirtuosoTable = forwardRef<HTMLDivElement, ComponentProps<typeof Table>>(
+  (props, ref) => (
+    <Table
+      {...props}
+      ref={ref}
+      component="div"
+      sx={{ display: 'block', width: '100%' }}
+    />
+  )
+);
 VirtuosoTable.displayName = 'VirtuosoTable';
 
-function VirtuosoTableRow(props: React.ComponentProps<typeof TableRow>) {
-  return <TableRow {...props} hover />;
+function VirtuosoTableRow(
+  props: ComponentProps<typeof TableRow> & {
+    item?: Feed;
+    context?: { editingFeedId?: string; allowEdit?: boolean };
+  }
+) {
+  const { item, context, ...rest } = props;
+  const isSelected = !!(item && context?.editingFeedId === item.id);
+  const allowEdit = context?.allowEdit ?? false;
+  const gridTemplateColumns = allowEdit
+    ? '1.5fr 1fr 1fr 60px'
+    : '1.5fr 1fr 1fr 2fr';
+
+  return (
+    <TableRow
+      {...rest}
+      component="div"
+      hover
+      selected={isSelected}
+      sx={{
+        display: 'grid',
+        gridTemplateColumns,
+        width: '100%',
+        alignItems: 'center',
+        borderBottom: '1px solid',
+        borderColor: 'divider',
+        borderLeft: '4px solid transparent',
+        ...(isSelected && {
+          bgcolor: 'action.selected',
+          borderLeftColor: 'warning.main',
+        }),
+        ...rest.sx,
+      }}
+    />
+  );
 }
 
-const VIRTUOSO_COMPONENTS = {
-  Scroller: VirtuosoScroller,
-  Table: VirtuosoTable,
-  TableHead: VirtuosoTableHead,
-  TableRow: VirtuosoTableRow,
-  TableBody: VirtuosoTableBody,
-};
-
-function FeedFilterChip({ tag }: { tag: { key: string; value: string } }) {
+function FeedTagChip({ tag }: { tag: { key: string; value: string } }) {
   return (
     <Chip
       label={
@@ -98,69 +133,26 @@ function FeedFilterChip({ tag }: { tag: { key: string; value: string } }) {
   );
 }
 
-function ActionsMenu({ feed }: { feed: Feed }) {
-  const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
+const VIRTUOSO_COMPONENTS = {
+  Scroller: VirtuosoScroller,
+  Table: VirtuosoTable,
+  TableHead: VirtuosoTableHead,
+  TableRow: VirtuosoTableRow,
+  TableBody: VirtuosoTableBody,
+};
 
-  const handleOpen = (event: React.MouseEvent<HTMLButtonElement>) => {
-    setAnchorEl(event.currentTarget);
-  };
+export function FeedTable({
+  title = 'Feeds',
+  feeds,
+  isLoading,
+  allowEdit = false,
+  editingFeedId,
+  onEditFeed,
+  isSubmitting = false,
+}: FeedTableProps) {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
-  const handleClose = () => {
-    setAnchorEl(null);
-  };
-
-  const menuOpen = Boolean(anchorEl);
-  const hasSourceUrl = !!feed.sourceUrl;
-  const hasArchiveUrl = !!feed.archiveUrl;
-
-  return (
-    <>
-      <IconButton size="small" onClick={handleOpen} aria-label="feed actions">
-        <MoreVertIcon fontSize="small" />
-      </IconButton>
-
-      <Menu
-        anchorEl={anchorEl}
-        open={menuOpen}
-        onClose={handleClose}
-        slotProps={{
-          paper: {
-            sx: { minWidth: 180 },
-          },
-        }}
-      >
-        <MenuItem
-          component={hasSourceUrl ? 'a' : 'li'}
-          href={hasSourceUrl ? feed?.sourceUrl : undefined}
-          target={hasSourceUrl ? '_blank' : undefined}
-          rel="noopener noreferrer"
-          disabled={!hasSourceUrl}
-          onClick={handleClose}
-        >
-          <ListItemIcon>
-            <OpenInNewOutlinedIcon fontSize="small" />
-          </ListItemIcon>
-          <ListItemText>Source URL</ListItemText>
-        </MenuItem>
-        <MenuItem
-          component={hasArchiveUrl ? 'a' : 'li'}
-          href={hasArchiveUrl ? feed?.archiveUrl : undefined}
-          target={hasArchiveUrl ? '_blank' : undefined}
-          rel="noopener noreferrer"
-          disabled={!hasArchiveUrl}
-          onClick={handleClose}
-        >
-          <ListItemIcon>
-            <InventoryIcon fontSize="small" />
-          </ListItemIcon>
-          <ListItemText>Archive URL</ListItemText>
-        </MenuItem>
-      </Menu>
-    </>
-  );
-}
-
-export function FeedTable({ feeds, isLoading }: FeedTableProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortConfig, setSortConfig] = useState<SortConfig>({
     column: 'name',
@@ -170,11 +162,10 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
   const [appliedTags, setAppliedTags] = useState<
     { key: string; value: string }[]
   >([]);
-
   const [appliedStatuses, setAppliedStatuses] = useState<string[]>([]);
-
   const [appliedSourceTypes, setAppliedSourceTypes] = useState<string[]>([]);
 
+  // Calculate unique tags across all feeds
   const tags = useMemo<{ key: string; value: string }[]>(() => {
     const seen = new Set<string>();
     const uniqueTags: { key: string; value: string }[] = [];
@@ -190,6 +181,7 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
     return uniqueTags;
   }, [feeds]);
 
+  // Calculate unique source types across all feeds
   const sourceTypes = useMemo<string[]>(() => {
     const seen = new Set<string>();
     feeds.forEach((feed) => {
@@ -200,7 +192,7 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
     return Array.from(seen).sort();
   }, [feeds]);
 
-  const handleRequestSort = (property: 'name' | 'status') => {
+  const handleRequestSort = (property: 'name' | 'type' | 'status') => {
     setSortConfig((prev) => ({
       column: property,
       direction:
@@ -212,6 +204,7 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
     const query = searchQuery.toLowerCase().trim();
     let filtered = feeds;
 
+    // 1. Text search filtering (matches name, tags key/value, source ID, external ID)
     if (query) {
       filtered = filtered.filter((feed) => {
         const nameMatches = feed.name.toLowerCase().includes(query);
@@ -221,10 +214,17 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
               tag.key.toLowerCase().includes(query) ||
               tag.value.toLowerCase().includes(query)
           ) ?? false;
-        return nameMatches || tagMatches;
+        const sourceIdMatches =
+          feed.sourceFeedId?.toLowerCase().includes(query) ?? false;
+        const externalIdMatches =
+          feed.externalId?.toLowerCase().includes(query) ?? false;
+        return (
+          nameMatches || tagMatches || sourceIdMatches || externalIdMatches
+        );
       });
     }
 
+    // 2. Tags filtering
     if (appliedTags.length > 0) {
       filtered = filtered.filter((feed) => {
         return appliedTags.every((appliedTag) =>
@@ -236,6 +236,7 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
       });
     }
 
+    // 3. Status filtering
     if (appliedStatuses.length > 0) {
       filtered = filtered.filter((feed) => {
         const capitalizedStatus =
@@ -244,16 +245,20 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
       });
     }
 
+    // 4. Source Type filtering
     if (appliedSourceTypes.length > 0) {
       filtered = filtered.filter((feed) =>
         appliedSourceTypes.includes(feed.sourceType)
       );
     }
 
+    // 5. Sorting using localeCompare
     return filtered.sort((a, b) => {
       let comparison = 0;
       if (sortConfig.column === 'name') {
         comparison = a.name.localeCompare(b.name);
+      } else if (sortConfig.column === 'type') {
+        comparison = a.sourceType.localeCompare(b.sourceType);
       } else if (sortConfig.column === 'status') {
         comparison = a.status.localeCompare(b.status);
       }
@@ -268,14 +273,235 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
     sortConfig,
   ]);
 
+  const gridTemplateColumns = allowEdit
+    ? '1.5fr 1fr 1fr 60px'
+    : '1.5fr 1fr 1fr 2fr';
+
+  const sortConfigColumn = sortConfig.column;
+  const columns = [
+    { key: 'name', display: 'Name' },
+    { key: 'status', display: 'Status' },
+    { key: 'type', display: 'Type' },
+  ];
+  const tableHeader = (
+    <TableRow
+      component="div"
+      sx={{
+        display: 'grid',
+        gridTemplateColumns,
+        width: '100%',
+      }}
+    >
+      {columns.map(({ key, display }) => (
+        <TableCell
+          component="div"
+          role="columnheader"
+          sx={{
+            fontWeight: 'bold',
+            bgcolor: 'background.paper',
+          }}
+        >
+          <TableSortLabel
+            active={sortConfigColumn === key}
+            direction={sortConfigColumn === key ? sortConfig.direction : 'asc'}
+            onClick={() => handleRequestSort(key as 'name' | 'type' | 'status')}
+          >
+            {display}
+          </TableSortLabel>
+        </TableCell>
+      ))}
+      <TableCell
+        component="div"
+        role="columnheader"
+        align={allowEdit ? 'right' : 'left'}
+        sx={{
+          fontWeight: 'bold',
+          display: 'flex',
+          alignItems: 'center',
+          bgcolor: 'background.paper',
+        }}
+      >
+        {allowEdit ? '' : 'Links'}
+      </TableCell>
+    </TableRow>
+  );
+
+  const renderRowContent = (feed: Feed) => {
+    const isEditing = editingFeedId === feed.id;
+
+    return (
+      <>
+        <TableCell
+          component="div"
+          role="cell"
+          sx={{
+            py: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            borderBottom: 'none',
+            minWidth: 0,
+            alignItems: 'flex-start',
+          }}
+        >
+          <Link
+            component={RouterLink}
+            to={`/transcripts?feedId=${feed.id}`}
+            variant="body2"
+            sx={{
+              fontWeight: 600,
+              textDecoration: 'none',
+              color: 'primary.main',
+              '&:hover': { textDecoration: 'underline' },
+              textOverflow: 'ellipsis',
+              maxWidth: '100%',
+            }}
+            noWrap
+          >
+            {feed.name}
+          </Link>
+
+          <Typography variant="caption" color="text.secondary">
+            <b>Source ID:</b> {feed.sourceFeedId}
+          </Typography>
+        </TableCell>
+
+        <TableCell
+          component="div"
+          role="cell"
+          sx={{ borderBottom: 'none', minWidth: 0 }}
+        >
+          <Chip label={feed.sourceType} size="small" variant="outlined" />
+        </TableCell>
+
+        <TableCell
+          component="div"
+          role="cell"
+          sx={{ borderBottom: 'none', minWidth: 0 }}
+        >
+          <FeedStatusIndicator
+            status={feed.status}
+            lastHeartbeat={feed.lastHeartbeat}
+          />
+        </TableCell>
+
+        <TableCell
+          align={allowEdit ? 'right' : 'left'}
+          component="div"
+          role="cell"
+          sx={{
+            borderBottom: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            minWidth: 0,
+            width: '100%',
+          }}
+        >
+          {allowEdit ? (
+            <IconButton
+              size="small"
+              onClick={() => onEditFeed?.(feed)}
+              disabled={isSubmitting || isEditing}
+              sx={{
+                border: '1px solid',
+                borderRadius: 1.5,
+                p: 0.5,
+                '&:hover': {
+                  borderColor: 'primary.main',
+                  bgcolor: 'primary.soft',
+                  color: 'primary.main',
+                },
+              }}
+              aria-label={`Edit ${feed.name}`}
+            >
+              <EditIcon fontSize="small" />
+            </IconButton>
+          ) : (
+            <Box
+              sx={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 0.5,
+                alignItems: 'flex-start',
+                width: '100%',
+                overflow: 'hidden',
+              }}
+            >
+              {feed.sourceUrl ? (
+                <Typography
+                  variant="caption"
+                  noWrap
+                  sx={{ maxWidth: '100%', textOverflow: 'ellipsis' }}
+                >
+                  <b>Source:</b>{' '}
+                  <Link
+                    href={feed.sourceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    underline="hover"
+                    sx={{ color: 'primary.main' }}
+                  >
+                    {feed.sourceUrl}
+                  </Link>
+                </Typography>
+              ) : null}
+              {feed.archiveUrl ? (
+                <Typography
+                  variant="caption"
+                  noWrap
+                  sx={{ maxWidth: '100%', textOverflow: 'ellipsis' }}
+                >
+                  <b>Archive:</b>{' '}
+                  <Link
+                    href={feed.archiveUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    underline="hover"
+                    sx={{ color: 'primary.main' }}
+                  >
+                    {feed.archiveUrl}
+                  </Link>
+                </Typography>
+              ) : null}
+              {!feed.sourceUrl && !feed.archiveUrl ? (
+                <Typography variant="caption" color="text.secondary">
+                  -
+                </Typography>
+              ) : null}
+            </Box>
+          )}
+        </TableCell>
+
+        {feed.tags && feed.tags.length > 0 ? (
+          <TableCell
+            component="div"
+            role="cell"
+            sx={{
+              gridColumn: '1 / -1',
+              borderBottom: 'none',
+              pt: 0,
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 0.75,
+            }}
+          >
+            {feed.tags.map((tag, i) => (
+              <FeedTagChip key={`feed-${feed.id}-tag-${i}`} tag={tag} />
+            ))}
+          </TableCell>
+        ) : null}
+      </>
+    );
+  };
+
   return (
-    <Paper
+    <Card
       variant="outlined"
+      data-testid="feeds-deck-card"
       sx={{
         display: 'flex',
         flexDirection: 'column',
         flexGrow: 1,
-        minHeight: 0,
+        minHeight: { xs: 'auto', sm: 0 },
         overflow: 'hidden',
         borderRadius: 2,
         boxShadow: '0 4px 20px rgba(0,0,0,0.05)',
@@ -284,84 +510,135 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
       <Box
         sx={{
           p: 2,
-          borderBottom: 1,
-          borderColor: 'divider',
           display: 'flex',
-          alignItems: 'center',
+          flexDirection: 'column',
           gap: 2,
           bgcolor: 'background.paper',
         }}
       >
-        <TextField
-          fullWidth
-          size="small"
-          placeholder="Search feeds..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          slotProps={{
-            input: {
-              startAdornment: (
-                <InputAdornment position="start">
-                  <SearchIcon color="action" />
-                </InputAdornment>
-              ),
-            },
-          }}
+        <Box
           sx={{
-            maxWidth: 600,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: 1.5,
           }}
-        />
-
-        <TuneIcon color="action" sx={{ ml: 1 }} />
-        <Box sx={{ width: 250, maxWidth: '100%' }}>
-          <MultiSelectFilter
-            label="Source Type"
-            options={sourceTypes}
-            value={appliedSourceTypes}
-            onChange={setAppliedSourceTypes}
-            size="small"
-          />
-        </Box>
-        <Box sx={{ width: 250, maxWidth: '100%' }}>
-          <MultiSelectFilter
-            label="Status"
-            options={['Active', 'Inactive']}
-            value={appliedStatuses}
-            onChange={setAppliedStatuses}
-            size="small"
-          />
-        </Box>
-        <Box sx={{ width: 250, maxWidth: '100%' }}>
-          <MultiSelectFilter
-            label="Tags"
-            options={tags}
-            value={appliedTags}
-            onChange={setAppliedTags}
-            size="small"
-            groupBy={(tag) => tag.key}
-            getOptionLabel={(tag) => `${tag.key}: ${tag.value}`}
-            isOptionEqualToValue={(a, b) =>
-              a.key === b.key && a.value === b.value
-            }
-            renderOptionContent={(tag) => tag.value}
-            renderValueLabel={(tag) => (
-              <Typography variant="body2">
-                <b>{tag.key}</b>: {tag.value}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <TroubleshootIcon color="primary" fontSize="small" />
+            <Typography variant="h6" sx={{ fontWeight: 600 }}>
+              {title}
+            </Typography>
+          </Box>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            {filteredAndSortedFeeds.length !== feeds.length && (
+              <Typography variant="body2" color="text.secondary">
+                Showing {filteredAndSortedFeeds.length} of {feeds.length} feeds
               </Typography>
             )}
-          />
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ fontWeight: 500 }}
+            >
+              {feeds.length} Feeds
+            </Typography>
+          </Box>
         </Box>
 
-        {filteredAndSortedFeeds.length !== feeds.length && (
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            sx={{ ml: 'auto' }}
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: 1.5,
+            width: '100%',
+          }}
+        >
+          <TextField
+            fullWidth
+            size="small"
+            placeholder="Search feeds..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            slotProps={{
+              input: {
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon color="action" fontSize="small" />
+                  </InputAdornment>
+                ),
+                endAdornment: searchQuery ? (
+                  <InputAdornment position="end">
+                    <IconButton size="small" onClick={() => setSearchQuery('')}>
+                      <ClearIcon fontSize="small" />
+                    </IconButton>
+                  </InputAdornment>
+                ) : null,
+              },
+            }}
+            sx={{
+              flexGrow: 1,
+              minWidth: { xs: '100%', md: 200 },
+              maxWidth: { md: 400 },
+            }}
+          />
+
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1.5,
+              flexGrow: 1,
+              flexWrap: 'wrap',
+              width: { xs: '100%', sm: 'auto' },
+            }}
           >
-            Showing {filteredAndSortedFeeds.length} of {feeds.length} feeds
-          </Typography>
-        )}
+            <TuneIcon color="action" fontSize="small" />
+            <Box sx={{ flexGrow: 1, minWidth: 120, maxWidth: { sm: 200 } }}>
+              <MultiSelectFilter
+                label="Source Type"
+                options={sourceTypes}
+                value={appliedSourceTypes}
+                onChange={setAppliedSourceTypes}
+                size="small"
+              />
+            </Box>
+            <Box sx={{ flexGrow: 1, minWidth: 120, maxWidth: { sm: 160 } }}>
+              <MultiSelectFilter
+                label="Status"
+                options={['Active', 'Inactive']}
+                value={appliedStatuses}
+                onChange={setAppliedStatuses}
+                size="small"
+              />
+            </Box>
+            <Box sx={{ flexGrow: 1, minWidth: 120, maxWidth: { sm: 200 } }}>
+              <MultiSelectFilter
+                label="Tags"
+                options={tags}
+                value={appliedTags}
+                onChange={setAppliedTags}
+                size="small"
+                groupBy={(tag) => tag.key}
+                getOptionLabel={(tag) => `${tag.key}: ${tag.value}`}
+                isOptionEqualToValue={(a, b) =>
+                  a.key === b.key && a.value === b.value
+                }
+                renderOptionContent={(tag) => tag.value}
+                renderValueLabel={(tag) => (
+                  <Typography variant="body2">
+                    <b>{tag.key}</b>: {tag.value}
+                  </Typography>
+                )}
+              />
+            </Box>
+          </Box>
+        </Box>
       </Box>
+
+      <Divider />
 
       {isLoading ? (
         <Box
@@ -370,122 +647,78 @@ export function FeedTable({ feeds, isLoading }: FeedTableProps) {
             justifyContent: 'center',
             alignItems: 'center',
             flexGrow: 1,
+            py: 6,
           }}
         >
-          <CircularProgress />
+          <Stack spacing={2} sx={{ alignItems: 'center' }}>
+            <CircularProgress size={36} thickness={4} />
+            <Typography variant="body2" color="text.secondary">
+              Loading feeds...
+            </Typography>
+          </Stack>
         </Box>
+      ) : filteredAndSortedFeeds.length === 0 ? (
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexGrow: 1,
+            py: 6,
+            textAlign: 'center',
+            px: 3,
+          }}
+        >
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ fontWeight: 500 }}
+          >
+            {searchQuery
+              ? 'No feeds matching filter query found.'
+              : 'No feed found.'}
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+            {searchQuery
+              ? 'Refine spelling or delete terms to widen search scope.'
+              : 'Register feeds on the left to start listening.'}
+          </Typography>
+        </Box>
+      ) : isMobile ? (
+        <TableContainer
+          component="div"
+          sx={{ flexGrow: 1, overflowY: 'visible' }}
+        >
+          <Table component="div" sx={{ display: 'block', width: '100%' }}>
+            <TableHead component="div" sx={{ display: 'block' }}>
+              {tableHeader}
+            </TableHead>
+            <TableBody component="div" sx={{ display: 'block' }}>
+              {filteredAndSortedFeeds.map((feed) => (
+                <VirtuosoTableRow
+                  key={feed.id}
+                  item={feed}
+                  context={{ editingFeedId, allowEdit }}
+                >
+                  {renderRowContent(feed)}
+                </VirtuosoTableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
       ) : (
         <TableVirtuoso
           data={filteredAndSortedFeeds}
+          context={{ editingFeedId, allowEdit }}
           computeItemKey={(_index, feed) => feed.id}
           components={VIRTUOSO_COMPONENTS}
-          fixedHeaderContent={() => (
-            <TableRow>
-              <TableCell
-                sx={{
-                  bgcolor: 'background.paper',
-                  fontWeight: 'bold',
-                }}
-              >
-                <TableSortLabel
-                  active={sortConfig.column === 'name'}
-                  direction={
-                    sortConfig.column === 'name' ? sortConfig.direction : 'asc'
-                  }
-                  onClick={() => handleRequestSort('name')}
-                >
-                  Name
-                </TableSortLabel>
-              </TableCell>
-              <TableCell
-                sx={{
-                  bgcolor: 'background.paper',
-                  fontWeight: 'bold',
-                }}
-              >
-                <TableSortLabel
-                  active={sortConfig.column === 'status'}
-                  direction={
-                    sortConfig.column === 'status'
-                      ? sortConfig.direction
-                      : 'asc'
-                  }
-                  onClick={() => handleRequestSort('status')}
-                >
-                  Status
-                </TableSortLabel>
-              </TableCell>
-              <TableCell
-                sx={{
-                  bgcolor: 'background.paper',
-                  fontWeight: 'bold',
-                }}
-              >
-                Tags
-              </TableCell>
-              <TableCell>{/* Empty header cell */}</TableCell>
-            </TableRow>
-          )}
-          itemContent={(_index, feed) => (
-            <>
-              <TableCell
-                sx={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'flex-start',
-                }}
-              >
-                <Link
-                  component={RouterLink}
-                  to={`/transcripts?feedId=${feed.id}`}
-                  variant="body1"
-                  sx={{
-                    fontWeight: 500,
-                    textOverflow: 'ellipsis',
-                    maxWidth: '100%',
-                  }}
-                  noWrap
-                >
-                  {feed.name}
-                </Link>
-                <Typography variant="caption" color="text.secondary">
-                  {feed.sourceType}
-                </Typography>
-              </TableCell>
-              <TableCell sx={{ verticalAlign: 'top', width: '100%' }}>
-                <FeedStatusIndicator
-                  status={feed.status}
-                  lastHeartbeat={feed.lastHeartbeat}
-                />
-              </TableCell>
-              <TableCell sx={{ verticalAlign: 'top', width: '100%' }}>
-                {feed.tags && feed.tags.length > 0 ? (
-                  <Box
-                    sx={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 0.5,
-                      alignItems: 'flex-start',
-                    }}
-                  >
-                    {feed.tags.map((tag) => (
-                      <FeedFilterChip key={tag.key} tag={tag} />
-                    ))}
-                  </Box>
-                ) : (
-                  <Typography variant="body2" color="text.secondary">
-                    -
-                  </Typography>
-                )}
-              </TableCell>
-              <TableCell align="right" sx={{ verticalAlign: 'top' }}>
-                <ActionsMenu feed={feed} />
-              </TableCell>
-            </>
-          )}
+          style={{ flexGrow: 1, minHeight: 0 }}
+          fixedHeaderContent={() => tableHeader}
+          itemContent={(_index, feed) => renderRowContent(feed)}
         />
       )}
-    </Paper>
+    </Card>
   );
 }
 

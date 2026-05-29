@@ -24,7 +24,7 @@ if TYPE_CHECKING:
         CaptureResources,
         CollectorFn,
     )
-    from backend.pipeline.ingestion.settings import NormalizerSettings
+    from backend.pipeline.ingestion.settings import CollectorSettings
     from backend.pipeline.storage.feed_store import LeasedFeed
 
 BCFY_FEEDS_URL_BASE = os.environ.get(
@@ -64,7 +64,7 @@ def supported_source_types() -> list[str]:
 
 
 def resolve_topic_path(
-    source_type: SourceType, settings: NormalizerSettings
+    source_type: SourceType, settings: CollectorSettings
 ) -> str:
     """Determines the Pub/Sub topic path based on the source type."""
     if source_type == SourceType.BCFY_FEEDS:
