@@ -13,8 +13,7 @@ export type BackendFeedStatus =
   | 'quarantined'
   | 'deactivated';
 
-export type FeedStatus = 'active' | 'inactive';
-
+export type FeedStatus = 'active' | 'inactive' | 'error';
 
 export interface Tag {
   key: string;
@@ -33,6 +32,7 @@ export interface Feed extends BaseFeed {
   sourceUrl?: string;
   archiveUrl?: string;
   status: FeedStatus;
+  substatus: BackendFeedStatus;
   lastHeartbeat?: string;
   tags?: Tag[];
 }

@@ -281,6 +281,7 @@ export function FeedConfigurationTable({
         <TableCell component="div" sx={{ borderBottom: 'none', minWidth: 0 }}>
           <FeedStatusIndicator
             status={feed.status}
+            substatus={feed.substatus}
             lastHeartbeat={feed.lastHeartbeat}
           />
         </TableCell>
