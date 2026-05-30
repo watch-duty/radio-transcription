@@ -9,9 +9,12 @@ import unittest
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from backend.pipeline.ingestion.collectors.failure_classification import (
+    ItemFailure,
+)
 from backend.pipeline.ingestion.collectors.fire_notifications import collector
-from backend.pipeline.ingestion.models import AudioMimeType
-from backend.pipeline.storage.feed_store import SourceType
+from backend.pipeline.ingestion.models import AudioMimeType, CollectorFailure
+from backend.pipeline.storage.feed_store import FeedStatusReason, SourceType
 
 
 class TestParseFilenameTimestamp(unittest.TestCase):
@@ -48,19 +51,58 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         resp = MagicMock(status_code=200, content=b"audio_data")
         self.session.get = AsyncMock(return_value=resp)
 
-        data = await collector._download_audio(
+        result = await collector._download_audio(
             self.session, "http://url", self.shutdown
         )
-        self.assertEqual(data, b"audio_data")
+        self.assertEqual(result.audio_bytes, b"audio_data")
+        self.assertIsNone(result.failure)
 
     async def test_non_retryable_4xx(self) -> None:
         resp = MagicMock(status_code=404)
         self.session.get = AsyncMock(return_value=resp)
 
-        data = await collector._download_audio(
+        result = await collector._download_audio(
             self.session, "http://url", self.shutdown
         )
-        self.assertIsNone(data)
+        self.assertIsNone(result.audio_bytes)
+        self.assertIsNotNone(result.failure)
+        self.assertIs(
+            result.failure.status_reason,
+            FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+        self.assertEqual(result.failure.reason, "item_download_failed")
+
+    async def test_auth_status_returns_item_failure(self) -> None:
+        resp = MagicMock(status_code=403)
+        self.session.get = AsyncMock(return_value=resp)
+
+        result = await collector._download_audio(
+            self.session, "http://url", self.shutdown
+        )
+
+        self.assertIsNone(result.audio_bytes)
+        self.assertIsNotNone(result.failure)
+        self.assertIs(
+            result.failure.status_reason,
+            FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+        )
+        self.assertEqual(result.failure.reason, "item_http_403")
+
+    async def test_rate_limit_status_returns_item_failure(self) -> None:
+        resp = MagicMock(status_code=429)
+        self.session.get = AsyncMock(return_value=resp)
+
+        result = await collector._download_audio(
+            self.session, "http://url", self.shutdown
+        )
+
+        self.assertIsNone(result.audio_bytes)
+        self.assertIsNotNone(result.failure)
+        self.assertIs(
+            result.failure.status_reason,
+            FeedStatusReason.SOURCE_RATE_LIMITED,
+        )
+        self.assertEqual(result.failure.reason, "item_http_429")
 
     @patch(
         "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
@@ -73,10 +115,11 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
 
         self.session.get = AsyncMock(side_effect=[resp500, resp200])
 
-        data = await collector._download_audio(
+        result = await collector._download_audio(
             self.session, "http://url", self.shutdown
         )
-        self.assertEqual(data, b"data")
+        self.assertEqual(result.audio_bytes, b"data")
+        self.assertIsNone(result.failure)
         self.assertEqual(self.session.get.call_count, 2)
 
     @patch(
@@ -88,10 +131,16 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         resp500 = MagicMock(status_code=500)
         self.session.get = AsyncMock(return_value=resp500)
 
-        data = await collector._download_audio(
+        result = await collector._download_audio(
             self.session, "http://url", self.shutdown
         )
-        self.assertIsNone(data)
+        self.assertIsNone(result.audio_bytes)
+        self.assertIsNotNone(result.failure)
+        self.assertIs(
+            result.failure.status_reason,
+            FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+        self.assertEqual(result.failure.reason, "item_download_failed")
         self.assertEqual(
             self.session.get.call_count, collector._DOWNLOAD_MAX_RETRIES
         )
@@ -217,10 +266,15 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
         new_callable=AsyncMock,
     )
-    async def test_failed_download_does_not_mark_uuid_seen(
+    async def test_failed_download_promotes_and_does_not_mark_uuid_seen(
         self, mock_download: AsyncMock
     ) -> None:
-        mock_download.return_value = None
+        mock_download.return_value = collector._DownloadResult(
+            failure=ItemFailure(
+                FeedStatusReason.SOURCE_UNREACHABLE,
+                "item_download_failed",
+            )
+        )
         files = [
             {
                 "type": "file",
@@ -230,22 +284,153 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
             },
         ]
 
-        chunks = []
-        async for chunk in collector._process_file_list(
-            files,
-            self.session,
-            self.shutdown,
-            "session-id",
-            self.feed,  # type: ignore
-            self.processed_uuids,
-            "CHAN",
-            "http://mock-s3-bucket",
-        ):
-            chunks.append(chunk)
+        with self.assertRaises(CollectorFailure) as ctx:
+            async for _ in collector._process_file_list(
+                files,
+                self.session,
+                self.shutdown,
+                "session-id",
+                self.feed,  # type: ignore
+                self.processed_uuids,
+                "CHAN",
+                "http://mock-s3-bucket",
+            ):
+                pass
 
-        self.assertEqual(len(chunks), 0)
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+        self.assertEqual(str(ctx.exception), "item_download_failed")
         self.assertEqual(len(self.processed_uuids), 0)
         self.assertNotIn("uuid1", self.processed_uuids)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
+        new_callable=AsyncMock,
+    )
+    async def test_mixed_file_failures_promote_collector_error(
+        self, mock_download: AsyncMock
+    ) -> None:
+        mock_download.side_effect = [
+            collector._DownloadResult(
+                failure=ItemFailure(
+                    FeedStatusReason.SOURCE_UNREACHABLE,
+                    "item_download_failed",
+                )
+            ),
+            collector._DownloadResult(
+                failure=ItemFailure(
+                    FeedStatusReason.SOURCE_RATE_LIMITED,
+                    "item_http_429",
+                )
+            ),
+        ]
+        files = [
+            {
+                "type": "file",
+                "name": "CHAN 2026-05-20 12-00-00.mp3",
+                "uuid": "uuid1",
+            },
+            {
+                "type": "file",
+                "name": "CHAN 2026-05-20 12-00-01.mp3",
+                "uuid": "uuid2",
+            },
+        ]
+
+        with self.assertRaises(CollectorFailure) as ctx:
+            async for _ in collector._process_file_list(
+                files,
+                self.session,
+                self.shutdown,
+                "session-id",
+                self.feed,  # type: ignore
+                self.processed_uuids,
+                "CHAN",
+                "http://mock-s3-bucket",
+            ):
+                pass
+
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        )
+        self.assertEqual(str(ctx.exception), "mixed_item_failures")
+        self.assertEqual(len(self.processed_uuids), 0)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
+        new_callable=AsyncMock,
+    )
+    async def test_one_file_success_prevents_feed_level_promotion(
+        self, mock_download: AsyncMock
+    ) -> None:
+        mock_download.side_effect = [
+            collector._DownloadResult(
+                failure=ItemFailure(
+                    FeedStatusReason.SOURCE_UNREACHABLE,
+                    "item_download_failed",
+                )
+            ),
+            collector._DownloadResult(audio_bytes=b"mp3_bytes"),
+        ]
+        files = [
+            {
+                "type": "file",
+                "name": "CHAN 2026-05-20 12-00-00.mp3",
+                "uuid": "uuid1",
+            },
+            {
+                "type": "file",
+                "name": "CHAN 2026-05-20 12-00-01.mp3",
+                "uuid": "uuid2",
+            },
+        ]
+
+        chunks = []
+        with patch(
+            "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
+            return_value=30000,
+        ):
+            async for chunk in collector._process_file_list(
+                files,
+                self.session,
+                self.shutdown,
+                "session-id",
+                self.feed,  # type: ignore
+                self.processed_uuids,
+                "CHAN",
+                "http://mock-s3-bucket",
+            ):
+                chunks.append(chunk)
+
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0].audio_bytes, b"mp3_bytes")
+        self.assertEqual(list(self.processed_uuids), ["uuid2"])
+
+    async def test_no_eligible_files_does_not_raise(self) -> None:
+        files = [
+            {"type": "dir", "name": "folders"},
+            {"type": "file", "name": "not-audio.txt", "uuid": "uuid1"},
+        ]
+
+        chunks = [
+            c
+            async for c in collector._process_file_list(
+                files,
+                self.session,
+                self.shutdown,
+                "session-id",
+                self.feed,  # type: ignore
+                self.processed_uuids,
+                "CHAN",
+                "http://mock-s3-bucket",
+            )
+        ]
+
+        self.assertEqual(chunks, [])
+        self.assertEqual(len(self.processed_uuids), 0)
 
 
 @patch.dict(
@@ -291,12 +476,34 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
             self.resources,
         )
 
-        with self.assertRaises(RuntimeError) as ctx:
+        with self.assertRaises(CollectorFailure) as ctx:
             async for _ in collector_generator:
                 pass
 
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SOURCE_UNREACHABLE,
+        )
         self.assertEqual(str(ctx.exception), "source_unreachable")
         self.assertEqual(mock_session.get.call_count, 10)
+
+    async def test_missing_source_feed_id_raises_typed_failure(self) -> None:
+        self.feed["source_feed_id"] = None
+
+        with self.assertRaises(CollectorFailure) as ctx:
+            async for _ in collector.fire_notifications_collector(
+                self.feed,  # type: ignore
+                self.shutdown,
+                "http://base",
+                self.resources,
+            ):
+                pass
+
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        )
+        self.assertEqual(str(ctx.exception), "missing_source_feed_id")
 
     @patch(
         "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import collections
+import dataclasses
 import datetime
 import logging
 import random
@@ -13,11 +14,22 @@ from zoneinfo import ZoneInfo
 from curl_cffi.requests import AsyncSession
 
 from backend.pipeline.common.audio import get_audio_duration
-from backend.pipeline.ingestion.models import AudioMimeType, CapturedChunk
+from backend.pipeline.ingestion.collectors.failure_classification import (
+    ItemBatchOutcome,
+    ItemFailure,
+    collector_failure,
+    missing_source_feed_id_failure,
+)
+from backend.pipeline.ingestion.models import (
+    AudioMimeType,
+    CapturedChunk,
+    CollectorFailure,
+)
 from backend.pipeline.ingestion.settings import _require_env
 from backend.pipeline.ingestion.slo_contract import (
     EVENT_TYPE_CALL_DOWNLOAD_FAILED,
 )
+from backend.pipeline.storage.feed_store import FeedStatusReason
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -42,6 +54,12 @@ def _build_auth_headers() -> dict[str, str]:
     return {"Authorization": f"Basic {encoded}"}
 
 
+@dataclasses.dataclass(frozen=True)
+class _DownloadResult:
+    audio_bytes: bytes | None = None
+    failure: ItemFailure | None = None
+
+
 async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
     """Sleep for *seconds*, returning ``True`` if interrupted by shutdown."""
     try:
@@ -56,7 +74,7 @@ async def _download_audio(
     session: AsyncSession,
     url: str,
     shutdown: asyncio.Event,
-) -> bytes | None:
+) -> _DownloadResult:
     """Download audio file from S3 with retries."""
     # Note: We use a manual retry loop instead of 'tenacity' to easily
     # interrupt the backoff sleep when the shutdown event is set,
@@ -65,14 +83,39 @@ async def _download_audio(
         try:
             resp = await session.get(url, timeout=30.0)
             if resp.status_code == 200:
-                return resp.content
+                return _DownloadResult(audio_bytes=resp.content)
+            if resp.status_code in {401, 403}:
+                logger.warning(
+                    "Download auth failure %d: url=%s",
+                    resp.status_code,
+                    url,
+                )
+                return _DownloadResult(
+                    failure=ItemFailure(
+                        FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+                        f"item_http_{resp.status_code}",
+                    )
+                )
+            if resp.status_code == 429:
+                logger.warning("Download rate limited 429: url=%s", url)
+                return _DownloadResult(
+                    failure=ItemFailure(
+                        FeedStatusReason.SOURCE_RATE_LIMITED,
+                        "item_http_429",
+                    )
+                )
             if 400 <= resp.status_code < 500:
                 logger.warning(
                     "Download non-retryable %d: url=%s",
                     resp.status_code,
                     url,
                 )
-                return None
+                return _DownloadResult(
+                    failure=ItemFailure(
+                        FeedStatusReason.SOURCE_UNREACHABLE,
+                        "item_download_failed",
+                    )
+                )
             logger.warning(
                 "Download %d (attempt %d/%d): url=%s",
                 resp.status_code,
@@ -92,10 +135,31 @@ async def _download_audio(
             if await _sleep_or_shutdown(
                 shutdown, _DOWNLOAD_BACKOFF_BASE_SEC * (2**attempt)
             ):
-                return None
+                return _DownloadResult()
 
     logger.warning("Download failed after retries: url=%s", url)
-    return None
+    return _DownloadResult(
+        failure=ItemFailure(
+            FeedStatusReason.SOURCE_UNREACHABLE,
+            "item_download_failed",
+        )
+    )
+
+
+def _normalize_download_result(
+    result: _DownloadResult | bytes | None,
+) -> _DownloadResult:
+    """Normalize legacy test doubles into the typed download result."""
+    if isinstance(result, _DownloadResult):
+        return result
+    if isinstance(result, bytes):
+        return _DownloadResult(audio_bytes=result)
+    return _DownloadResult()
+
+
+def _raise_item_failure(failure: ItemFailure) -> None:
+    """Raise a typed collector failure from a file-list aggregation result."""
+    raise collector_failure(failure.status_reason, failure.reason)
 
 
 def _get_channel_timezone(channel_key: str) -> ZoneInfo:
@@ -155,6 +219,8 @@ async def _process_file_list(
     ]
     audio_files.sort(key=lambda x: x.get("name", ""))
 
+    outcome = ItemBatchOutcome()
+
     for f in audio_files:
         if shutdown_event.is_set():
             break
@@ -182,7 +248,26 @@ async def _process_file_list(
         s3_url = f"{s3_base_url.rstrip('/')}/{file_uuid}.mp3"
         receipt_time = datetime.datetime.now(datetime.UTC)
 
-        mp3_bytes = await _download_audio(session, s3_url, shutdown_event)
+        outcome.record_attempt()
+        download_result = _normalize_download_result(
+            await _download_audio(session, s3_url, shutdown_event)
+        )
+        if download_result.failure is not None:
+            outcome.record_failure(download_result.failure)
+            if not shutdown_event.is_set():
+                logger.warning(
+                    "FN Audio download failed",
+                    extra={
+                        "json_fields": {
+                            "event_type": EVENT_TYPE_CALL_DOWNLOAD_FAILED,
+                            "feed_id": str(feed["id"]),
+                            "source_type": feed["source_type"],
+                        },
+                    },
+                )
+            continue
+
+        mp3_bytes = download_result.audio_bytes
         if mp3_bytes is None:
             if not shutdown_event.is_set():
                 logger.warning(
@@ -205,6 +290,12 @@ async def _process_file_list(
                 "Failed to compute duration for uuid=%s",
                 file_uuid,
                 exc_info=True,
+            )
+            outcome.record_failure(
+                ItemFailure(
+                    FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                    "duration_probe_failed",
+                )
             )
             continue
 
@@ -229,9 +320,14 @@ async def _process_file_list(
         # Only mark as processed after a successful yield, confirming
         # the chunk was handed off to the pipeline.
         processed_uuids.append(file_uuid)
+        outcome.record_chunk_produced()
+
+    promoted = outcome.promoted_failure()
+    if promoted is not None:
+        _raise_item_failure(promoted)
 
 
-async def fire_notifications_collector(
+async def fire_notifications_collector(  # noqa: PLR0912
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
     url_base: str,
@@ -251,8 +347,7 @@ async def fire_notifications_collector(
             feed["id"],
             feed["name"],
         )
-        msg = "missing_source_feed_id"
-        raise ValueError(msg)
+        raise missing_source_feed_id_failure()
 
     # source_feed_id is e.g. RECORDINGS/SAN-JOSE-DISP
     # Ensure no double slashes if url_base ends with /
@@ -297,6 +392,8 @@ async def fire_notifications_collector(
                     logger.warning(
                         "FN API returned %d: %s", resp.status_code, poll_url
                     )
+            except CollectorFailure:
+                raise
             except Exception:
                 logger.warning(
                     "FN API poll error: %s",
@@ -309,8 +406,10 @@ async def fire_notifications_collector(
             else:
                 consecutive_failures += 1
                 if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
-                    msg = "source_unreachable"
-                    raise RuntimeError(msg)
+                    raise collector_failure(
+                        FeedStatusReason.SOURCE_UNREACHABLE,
+                        "source_unreachable",
+                    )
 
             # Sleep before next poll, with a small jitter
             jitter = random.uniform(0, 5.0)  # noqa: S311
