@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import dataclasses
 import datetime
 import logging
 import os
@@ -14,16 +15,24 @@ from urllib.parse import urlparse
 import aiohttp
 from google.cloud import secretmanager
 
+from backend.pipeline.ingestion.collectors.failure_classification import (
+    ItemFailure,
+    aggregate_item_failures,
+    collector_failure,
+    missing_source_feed_id_failure,
+)
 from backend.pipeline.ingestion.models import (
     AudioMimeType,
     CapturedChunk,
     CaptureResources,
+    CollectorFailure,
 )
 from backend.pipeline.ingestion.slo_contract import (
     EVENT_TYPE_BCFY_JWT_FETCH_FAILED,
     EVENT_TYPE_CALL_AUTH_FAILURE,
     EVENT_TYPE_CALL_DOWNLOAD_FAILED,
 )
+from backend.pipeline.storage.feed_store import FeedStatusReason
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -67,6 +76,18 @@ class JwtConfigError(RuntimeError):
 
 class JwtFetchError(RuntimeError):
     """Raised when Broadcastify JWT Secret Manager access fails."""
+
+
+@dataclasses.dataclass(frozen=True)
+class _FetchCallsResult:
+    payload: dict[str, Any] | None = None
+    failure: ItemFailure | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class _CallChunkResult:
+    chunk: CapturedChunk | None = None
+    failure: ItemFailure | None = None
 
 
 async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
@@ -201,7 +222,10 @@ async def _get_shared_jwt_token_with_retry(
                 feed_id,
                 jwt_failures,
                 shutdown_event,
-                terminal_reason="jwt_secret_unavailable",
+                ItemFailure(
+                    FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+                    "jwt_secret_unavailable",
+                ),
             )
     return None
 
@@ -209,26 +233,30 @@ async def _get_shared_jwt_token_with_retry(
 def _raise_for_fatal_status(
     status: int, feed_id: object, source_feed_id: str
 ) -> None:
-    """Raise RuntimeError or AuthError for HTTP status codes that are not retryable."""
-    if status == 429:
-        msg = f"Rate limited by Broadcastify Calls API (feed {feed_id})"
-        raise RuntimeError(msg)
+    """Raise typed collector failures for non-retryable API statuses."""
+    del source_feed_id
     if status in (401, 403):
-        msg = (
-            f"Auth failure {status} from Broadcastify Calls API"
-            f" (feed {feed_id}): credentials are invalid"
+        logger.warning(
+            "Auth failure %s from Broadcastify Calls API (feed %s)",
+            status,
+            feed_id,
         )
-        raise AuthError(msg)
+        raise collector_failure(
+            FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+            f"calls_api_http_{status}",
+        )
     if status == 404:
-        msg = (
-            f"Feed not found (404) from Broadcastify Calls API"
-            f" (feed {feed_id}, source_feed_id {source_feed_id}):"
-            " feed configuration is wrong"
+        logger.error(
+            "Feed not found from Broadcastify Calls API (feed %s)",
+            feed_id,
         )
-        raise RuntimeError(msg)
+        raise collector_failure(
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            "calls_api_http_404",
+        )
 
 
-async def _fetch_calls(
+async def _fetch_calls(  # noqa: PLR0911
     session: aiohttp.ClientSession,
     url: str,
     headers: dict[str, str],
@@ -236,14 +264,46 @@ async def _fetch_calls(
     feed_id: object,
     source_feed_id: str,
     shutdown_event: asyncio.Event,
-) -> dict[str, Any] | None:
+) -> _FetchCallsResult:
     """Fetch audio calls from Broadcastify, handling retries for 5XX errors."""
     for attempt in range(_MAX_5XX_RETRIES + 1):
         if shutdown_event.is_set():
-            return None
+            return _FetchCallsResult()
 
         async with session.get(url, headers=headers, params=params) as resp:
             _raise_for_fatal_status(resp.status, feed_id, source_feed_id)
+
+            if resp.status == 429:
+                if attempt < _MAX_5XX_RETRIES:
+                    retry_after = (getattr(resp, "headers", {}) or {}).get(
+                        "Retry-After"
+                    )
+                    if retry_after and retry_after.isdigit():
+                        delay = float(retry_after)
+                    else:
+                        delay = (2**attempt) + random.uniform(0, 1)  # noqa: S311
+                    logger.warning(
+                        "429 rate limit (feed %s), retry %d/%d in %.1fs",
+                        feed_id,
+                        attempt + 1,
+                        _MAX_5XX_RETRIES,
+                        delay,
+                    )
+                    if await _sleep_or_shutdown(shutdown_event, delay):
+                        return _FetchCallsResult()
+                    continue
+
+                logger.error(
+                    "429 rate limit (feed %s) after %d retries",
+                    feed_id,
+                    _MAX_5XX_RETRIES,
+                )
+                return _FetchCallsResult(
+                    failure=ItemFailure(
+                        FeedStatusReason.SOURCE_RATE_LIMITED,
+                        "calls_api_rate_limited",
+                    )
+                )
 
             if 500 <= resp.status <= 599:
                 if attempt < _MAX_5XX_RETRIES:
@@ -257,7 +317,7 @@ async def _fetch_calls(
                         delay,
                     )
                     if await _sleep_or_shutdown(shutdown_event, delay):
-                        return None
+                        return _FetchCallsResult()
                     continue
 
                 logger.error(
@@ -266,7 +326,12 @@ async def _fetch_calls(
                     feed_id,
                     _MAX_5XX_RETRIES,
                 )
-                return None
+                return _FetchCallsResult(
+                    failure=ItemFailure(
+                        FeedStatusReason.SOURCE_UNREACHABLE,
+                        "calls_api_unreachable",
+                    )
+                )
 
             if resp.status != 200:
                 logger.error(
@@ -278,11 +343,16 @@ async def _fetch_calls(
                     url,
                     params,
                 )
-                return None
+                return _FetchCallsResult(
+                    failure=ItemFailure(
+                        FeedStatusReason.SOURCE_UNREACHABLE,
+                        "calls_api_unreachable",
+                    )
+                )
 
-            return await resp.json()
+            return _FetchCallsResult(payload=await resp.json())
 
-    return None
+    return _FetchCallsResult()
 
 
 def _get_audio_format(url: str) -> str:
@@ -308,25 +378,49 @@ def _get_audio_format(url: str) -> str:
     return "mp3"
 
 
-def _raise_if_429(status: int, audio_url: str) -> None:
-    """Raise RuntimeError if status is 429."""
-    if status == 429:
-        msg = f"CDN rate limit (429) downloading audio file: {audio_url}"
-        raise RuntimeError(msg)
-
-
-async def _download_audio(  # noqa: PLR0911
+async def _download_audio(  # noqa: PLR0911, PLR0912
     session: aiohttp.ClientSession,
     audio_url: str,
     shutdown_event: asyncio.Event,
     out_headers: dict[str, str] | None = None,
-) -> bytes | None:
+) -> bytes | ItemFailure | None:
     """Download audio file."""
     timeout = aiohttp.ClientTimeout(total=_AUDIO_TIMEOUT_SEC)
     for attempt in range(_AUDIO_FILE_DOWNLOAD_MAX_RETRIES + 1):
         try:
             async with session.get(audio_url, timeout=timeout) as audio_resp:
-                _raise_if_429(audio_resp.status, audio_url)
+                if audio_resp.status in {401, 403}:
+                    logger.warning(
+                        "Auth failure %s downloading audio: %s",
+                        audio_resp.status,
+                        audio_url,
+                    )
+                    return ItemFailure(
+                        FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+                        f"audio_http_{audio_resp.status}",
+                    )
+
+                if audio_resp.status == 429:
+                    if attempt < _AUDIO_FILE_DOWNLOAD_MAX_RETRIES:
+                        delay = _AUDIO_FILE_DOWNLOAD_BACKOFF_BASE_SEC * (
+                            2**attempt
+                        )
+                        logger.warning(
+                            "429 downloading audio"
+                            " (attempt %d/%d, retry in %.1fs): %s",
+                            attempt + 1,
+                            _AUDIO_FILE_DOWNLOAD_MAX_RETRIES,
+                            delay,
+                            audio_url,
+                        )
+                        if await _sleep_or_shutdown(shutdown_event, delay):
+                            return None
+                        continue
+
+                    return ItemFailure(
+                        FeedStatusReason.SOURCE_RATE_LIMITED,
+                        "audio_http_429",
+                    )
 
                 if 500 <= audio_resp.status <= 599:
                     if attempt < _AUDIO_FILE_DOWNLOAD_MAX_RETRIES:
@@ -353,7 +447,10 @@ async def _download_audio(  # noqa: PLR0911
                         _AUDIO_FILE_DOWNLOAD_MAX_RETRIES,
                         audio_url,
                     )
-                    return None
+                    return ItemFailure(
+                        FeedStatusReason.SOURCE_UNREACHABLE,
+                        "audio_download_failed",
+                    )
 
                 if audio_resp.status != 200:
                     logger.error(
@@ -361,14 +458,15 @@ async def _download_audio(  # noqa: PLR0911
                         audio_url,
                         audio_resp.status,
                     )
-                    return None
+                    return ItemFailure(
+                        FeedStatusReason.SOURCE_UNREACHABLE,
+                        "audio_download_failed",
+                    )
 
                 if out_headers is not None:
                     out_headers.update(audio_resp.headers)
 
                 return await audio_resp.read()
-        except RuntimeError:
-            raise
         except Exception as e:
             if attempt < _AUDIO_FILE_DOWNLOAD_MAX_RETRIES:
                 delay = _AUDIO_FILE_DOWNLOAD_BACKOFF_BASE_SEC * (2**attempt)
@@ -390,7 +488,10 @@ async def _download_audio(  # noqa: PLR0911
                 _AUDIO_FILE_DOWNLOAD_MAX_RETRIES,
                 audio_url,
             )
-            return None
+            return ItemFailure(
+                FeedStatusReason.SOURCE_UNREACHABLE,
+                "audio_download_failed",
+            )
     return None
 
 
@@ -412,21 +513,29 @@ async def _create_chunk_from_call(
     session_id: str,
     receipt_time: datetime.datetime,
     out_headers: dict[str, str] | None = None,
-) -> CapturedChunk | None:
+) -> _CallChunkResult:
     """Download audio for a single call and wrap it in a CapturedChunk."""
     out_h = out_headers if out_headers is not None else {}
     try:
-        audio_bytes = await _download_audio(
+        audio_result = await _download_audio(
             session, audio_url, shutdown_event, out_h
         )
-    except RuntimeError:
-        raise
     except Exception as e:
         logger.exception("Failed to process audio for %s: %s", audio_url, e)
-        return None
+        return _CallChunkResult(
+            failure=ItemFailure(
+                FeedStatusReason.SOURCE_UNREACHABLE,
+                "audio_download_failed",
+            )
+        )
 
-    if not audio_bytes:
-        return None
+    if isinstance(audio_result, ItemFailure):
+        return _CallChunkResult(failure=audio_result)
+
+    if not audio_result:
+        return _CallChunkResult()
+
+    audio_bytes = audio_result
 
     start_ts = result.get("start_ts")
     end_ts = result.get("end_ts")
@@ -460,28 +569,57 @@ async def _create_chunk_from_call(
     content_type = out_h.get("Content-Type")
     mime_type = AudioMimeType.from_string(content_type)
 
-    return CapturedChunk(
-        audio_bytes=audio_bytes,
-        chunk_start_time=chunk_start_time,
-        chunk_end_time=chunk_end_time,
-        session_id=session_id,
-        receipt_time=receipt_time,
-        mime_type=mime_type,
-        resume_position=resume_position,
+    return _CallChunkResult(
+        chunk=CapturedChunk(
+            audio_bytes=audio_bytes,
+            chunk_start_time=chunk_start_time,
+            chunk_end_time=chunk_end_time,
+            session_id=session_id,
+            receipt_time=receipt_time,
+            mime_type=mime_type,
+            resume_position=resume_position,
+        )
     )
+
+
+def _normalize_fetch_result(
+    fetch_result: _FetchCallsResult | dict[str, Any] | None,
+) -> _FetchCallsResult:
+    """Normalize legacy test doubles into the typed fetch result."""
+    if isinstance(fetch_result, _FetchCallsResult):
+        return fetch_result
+    if fetch_result is None:
+        return _FetchCallsResult()
+    return _FetchCallsResult(payload=fetch_result)
+
+
+def _normalize_call_chunk_result(
+    call_result: _CallChunkResult | CapturedChunk | None,
+) -> _CallChunkResult:
+    """Normalize legacy test doubles into the typed call result."""
+    if isinstance(call_result, _CallChunkResult):
+        return call_result
+    if isinstance(call_result, CapturedChunk):
+        return _CallChunkResult(chunk=call_result)
+    return _CallChunkResult()
+
+
+def _raise_item_failure(failure: ItemFailure) -> None:
+    """Raise a typed collector failure from an item aggregation result."""
+    raise collector_failure(failure.status_reason, failure.reason)
 
 
 async def _handle_loop_failure(
     feed_id: object,
     consecutive_failures: int,
     shutdown_event: asyncio.Event,
-    *,
-    terminal_reason: str = "source_unreachable",
+    failure: ItemFailure,
 ) -> int:
     """Increment failure count, raise if exceeded, and sleep."""
+    del feed_id
     consecutive_failures += 1
     if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
-        raise RuntimeError(terminal_reason)
+        raise collector_failure(failure.status_reason, failure.reason)
     await _sleep_or_shutdown(shutdown_event, _POLL_INTERVAL_SEC)
     return consecutive_failures
 
@@ -520,8 +658,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
             feed_id,
             feed_name,
         )
-        msg = "missing_source_feed_id"
-        raise ValueError(msg)
+        raise missing_source_feed_id_failure()
 
     jwt_token = await _get_shared_jwt_token_with_retry(feed_id, shutdown_event)
     if jwt_token is None:
@@ -542,19 +679,34 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
             params["pos"] = last_bookmark_time_unix
 
         try:
-            bcfy_calls = await _fetch_calls(
-                session,
-                normalized_url_base,
-                headers,
-                params,
-                feed_id,
-                source_feed_id,
-                shutdown_event,
+            fetch_result = _normalize_fetch_result(
+                await _fetch_calls(
+                    session,
+                    normalized_url_base,
+                    headers,
+                    params,
+                    feed_id,
+                    source_feed_id,
+                    shutdown_event,
+                )
             )
+            if fetch_result.failure is not None:
+                consecutive_failures = await _handle_loop_failure(
+                    feed_id,
+                    consecutive_failures,
+                    shutdown_event,
+                    fetch_result.failure,
+                )
+                continue
+
+            bcfy_calls = fetch_result.payload
 
             calls = _extract_calls_from_response(bcfy_calls)
 
             if calls:
+                attempted_count = 0
+                succeeded_count = 0
+                item_failures: list[ItemFailure] = []
                 # Sort the page by the API index time `ts` so the per-call
                 # resume cursor advances monotonically; data-loss is then
                 # bounded to the accepted tie case (calls sharing a `ts`).
@@ -570,14 +722,21 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                     if not audio_url or audio_url in seen_urls:
                         continue
 
-                    chunk = await _create_chunk_from_call(
-                        session,
-                        result,
-                        audio_url,
-                        shutdown_event,
-                        connection_session_id,
-                        receipt_time,
+                    attempted_count += 1
+                    call_result = _normalize_call_chunk_result(
+                        await _create_chunk_from_call(
+                            session,
+                            result,
+                            audio_url,
+                            shutdown_event,
+                            connection_session_id,
+                            receipt_time,
+                        )
                     )
+                    if call_result.failure is not None:
+                        item_failures.append(call_result.failure)
+
+                    chunk = call_result.chunk
                     if not chunk:
                         if not shutdown_event.is_set():
                             # SLO: call_download_failed emit — bcfy_calls _create_chunk_from_call returned None
@@ -594,12 +753,20 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                         continue
 
                     yield chunk
+                    succeeded_count += 1
 
                     # Only mark as seen and update pagination after a successful
                     # yield, confirming the chunk was handed off to the pipeline.
                     seen_urls.append(audio_url)
                     # Reset consecutive failures on successful yield
                     consecutive_failures = 0
+                promoted = aggregate_item_failures(
+                    item_failures,
+                    attempted_count=attempted_count,
+                    succeeded_count=succeeded_count,
+                )
+                if promoted is not None:
+                    _raise_item_failure(promoted)
             # Update last_bookmark_time_unix for pagination AFTER processing
             # all calls in the response — ensures we don't skip any calls if
             # an error occurs mid-page.
@@ -635,12 +802,55 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
             jwt_token = refreshed_token
             headers["Authorization"] = f"Bearer {jwt_token}"
             consecutive_failures = await _handle_loop_failure(
-                feed_id, consecutive_failures, shutdown_event
+                feed_id,
+                consecutive_failures,
+                shutdown_event,
+                ItemFailure(
+                    FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+                    "auth_failed",
+                ),
             )
-        except RuntimeError:
-            raise
+        except CollectorFailure as e:
+            if (
+                e.status_reason
+                is not FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED
+            ):
+                raise
+            logger.warning(
+                "Auth failure for feed %s; refreshing token.",
+                feed_id,
+                extra={
+                    "json_fields": {
+                        "event_type": EVENT_TYPE_CALL_AUTH_FAILURE,
+                        "feed_id": str(feed_id),
+                        "source_type": feed["source_type"],
+                    },
+                },
+            )
+            refreshed_token = await _get_shared_jwt_token_with_retry(
+                feed_id,
+                shutdown_event,
+                force_refresh=True,
+                stale_token=jwt_token,
+            )
+            if refreshed_token is None:
+                return
+            jwt_token = refreshed_token
+            headers["Authorization"] = f"Bearer {jwt_token}"
+            consecutive_failures = await _handle_loop_failure(
+                feed_id,
+                consecutive_failures,
+                shutdown_event,
+                ItemFailure(e.status_reason, str(e)),
+            )
         except Exception as e:
             logger.exception("Error in capture_bcfy_calls loop: %s", e)
             consecutive_failures = await _handle_loop_failure(
-                feed_id, consecutive_failures, shutdown_event
+                feed_id,
+                consecutive_failures,
+                shutdown_event,
+                ItemFailure(
+                    FeedStatusReason.SOURCE_UNREACHABLE,
+                    "source_unreachable",
+                ),
             )
