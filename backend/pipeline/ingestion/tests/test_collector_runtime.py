@@ -6,6 +6,7 @@ import datetime
 import logging
 import unittest
 import uuid
+from typing import Any, cast
 from unittest import mock
 
 import aiohttp
@@ -87,15 +88,14 @@ class TestCollectorFailureContract(unittest.TestCase):
         self.assertIs(exc.status_reason, FeedStatusReason.SOURCE_OFFLINE)
         self.assertEqual(exc.reason, "source_offline")
 
-    def test_is_frozen(self) -> None:
-        """CollectorFailure is immutable after construction."""
+    def test_allows_python_exception_runtime_fields(self) -> None:
+        """CollectorFailure remains compatible with Python exception handling."""
         exc = CollectorFailure(
             FeedStatusReason.SOURCE_OFFLINE,
             "source_offline",
         )
 
-        with self.assertRaises(dataclasses.FrozenInstanceError):
-            exc.reason = "changed"
+        exc.__traceback__ = None
 
 
 def _mock_pubsub_publish(message_id: str = "test-message-id") -> mock._patch:
@@ -1728,11 +1728,12 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(len(failure_records), 1)
         record = failure_records[0]
-        self.assertEqual(record.json_fields["feed_id"], str(_FEED_ID))
-        self.assertEqual(record.json_fields["source_type"], "bcfy_feeds")
-        self.assertEqual(record.json_fields["reason"], "capture_failed")
+        json_fields = cast("dict[str, Any]", record.__dict__["json_fields"])
+        self.assertEqual(json_fields["feed_id"], str(_FEED_ID))
+        self.assertEqual(json_fields["source_type"], "bcfy_feeds")
+        self.assertEqual(json_fields["reason"], "capture_failed")
         self.assertEqual(
-            record.json_fields["status_reason"],
+            json_fields["status_reason"],
             "system_unexpected_error",
         )
 

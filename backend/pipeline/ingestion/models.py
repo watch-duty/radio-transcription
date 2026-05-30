@@ -116,7 +116,7 @@ class AudioMimeType(StrEnum):
             return aliases.get(clean_type)
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(init=False, eq=False)
 class CollectorFailure(Exception):
     """Feed-level collector failure classified at the collector boundary.
 
@@ -126,23 +126,32 @@ class CollectorFailure(Exception):
     credentials, or other high-cardinality data in either field.
     """
 
-    status_reason: FeedStatusReason | str
+    status_reason: FeedStatusReason
     reason: str
 
-    def __post_init__(self) -> None:
+    def __init__(
+        self,
+        status_reason: FeedStatusReason | str,
+        reason: str,
+    ) -> None:
         """Normalize collector-provided values before the runtime sees them."""
         try:
-            status_reason = FeedStatusReason(self.status_reason)
+            normalized_status_reason = FeedStatusReason(status_reason)
         except (TypeError, ValueError) as e:
-            msg = f"Unknown feed status reason: {self.status_reason!r}"
+            msg = f"Unknown feed status reason: {status_reason!r}"
             raise ValueError(msg) from e
 
-        if not isinstance(self.reason, str) or not self.reason:
+        if not isinstance(reason, str) or not reason:
             msg = "CollectorFailure.reason must be a non-empty string"
             raise ValueError(msg)
 
-        object.__setattr__(self, "status_reason", status_reason)
-        object.__setattr__(self, "reason", self.reason[:200])
+        # Exception instances must remain runtime-mutable: Python sets
+        # __traceback__, __context__, and __cause__ while propagating them.
+        # A frozen dataclass breaks that machinery, so keep only the payload
+        # normalized and bounded.
+        self.status_reason = normalized_status_reason
+        self.reason = reason[:200]
+        Exception.__init__(self, self.reason)
 
     def __str__(self) -> str:
         return self.reason
