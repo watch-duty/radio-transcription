@@ -4,7 +4,7 @@ import os
 import unittest
 import uuid
 from pathlib import Path
-from typing import Self, cast
+from typing import Any, Self, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
@@ -78,9 +78,8 @@ def _resources_with_probe_status(
     reason: str = "",
 ):
     resources = _default_resources()
-    resources.http_session.get = MagicMock(
-        return_value=_StreamProbeResponse(status, reason)
-    )
+    session = cast("Any", resources.http_session)
+    session.get = MagicMock(return_value=_StreamProbeResponse(status, reason))
     return resources
 
 

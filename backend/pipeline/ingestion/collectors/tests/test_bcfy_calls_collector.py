@@ -29,6 +29,14 @@ from backend.pipeline.storage.feed_store import (
 )
 
 
+def _require_item_failure(value: ItemFailure | bytes | None) -> ItemFailure:
+    """Return a typed item failure for tests that intentionally expect one."""
+    if not isinstance(value, ItemFailure):
+        msg = f"Expected ItemFailure, got {value!r}"
+        raise TypeError(msg)
+    return value
+
+
 class TestSleepOrShutdown(unittest.IsolatedAsyncioTestCase):
     async def test_timeout(self) -> None:
         shutdown = asyncio.Event()
@@ -371,12 +379,12 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
             self.session, "url", {}, {}, "fid", "sid", self.shutdown
         )
         self.assertIsNone(res.payload)
-        self.assertIsNotNone(res.failure)
+        failure = _require_item_failure(res.failure)
         self.assertIs(
-            res.failure.status_reason,
+            failure.status_reason,
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
-        self.assertEqual(res.failure.reason, "calls_api_unreachable")
+        self.assertEqual(failure.reason, "calls_api_unreachable")
         self.assertEqual(
             self.session.get.call_count,
             bcfy_calls_collector._MAX_5XX_RETRIES + 1,
@@ -414,12 +422,12 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
             self.session, "url", {}, {}, "fid", "sid", self.shutdown
         )
         self.assertIsNone(res.payload)
-        self.assertIsNotNone(res.failure)
+        failure = _require_item_failure(res.failure)
         self.assertIs(
-            res.failure.status_reason,
+            failure.status_reason,
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
-        self.assertEqual(res.failure.reason, "calls_api_unreachable")
+        self.assertEqual(failure.reason, "calls_api_unreachable")
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
@@ -441,12 +449,12 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIsNone(res.payload)
-        self.assertIsNotNone(res.failure)
+        failure = _require_item_failure(res.failure)
         self.assertIs(
-            res.failure.status_reason,
+            failure.status_reason,
             FeedStatusReason.SOURCE_RATE_LIMITED,
         )
-        self.assertEqual(res.failure.reason, "calls_api_rate_limited")
+        self.assertEqual(failure.reason, "calls_api_rate_limited")
         self.assertEqual(
             self.session.get.call_count,
             bcfy_calls_collector._MAX_5XX_RETRIES + 1,
@@ -528,9 +536,11 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         res = await bcfy_calls_collector._download_audio(
             self.session, "http://mp3", self.shutdown
         )
-        self.assertIsInstance(res, ItemFailure)
-        self.assertIs(res.status_reason, FeedStatusReason.SOURCE_UNREACHABLE)
-        self.assertEqual(res.reason, "audio_download_failed")
+        failure = _require_item_failure(res)
+        self.assertIs(
+            failure.status_reason, FeedStatusReason.SOURCE_UNREACHABLE
+        )
+        self.assertEqual(failure.reason, "audio_download_failed")
 
     async def test_http_exception(self) -> None:
         self.session.get.side_effect = aiohttp.ClientError()
@@ -538,9 +548,11 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         res = await bcfy_calls_collector._download_audio(
             self.session, "http://mp3", self.shutdown
         )
-        self.assertIsInstance(res, ItemFailure)
-        self.assertIs(res.status_reason, FeedStatusReason.SOURCE_UNREACHABLE)
-        self.assertEqual(res.reason, "audio_download_failed")
+        failure = _require_item_failure(res)
+        self.assertIs(
+            failure.status_reason, FeedStatusReason.SOURCE_UNREACHABLE
+        )
+        self.assertEqual(failure.reason, "audio_download_failed")
 
     async def test_429_retries_then_returns_rate_limited_failure(self) -> None:
         resp = AsyncMock(status=429)
@@ -559,9 +571,11 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
                 self.session, "http://mp3", self.shutdown
             )
 
-        self.assertIsInstance(res, ItemFailure)
-        self.assertIs(res.status_reason, FeedStatusReason.SOURCE_RATE_LIMITED)
-        self.assertEqual(res.reason, "audio_http_429")
+        failure = _require_item_failure(res)
+        self.assertIs(
+            failure.status_reason, FeedStatusReason.SOURCE_RATE_LIMITED
+        )
+        self.assertEqual(failure.reason, "audio_http_429")
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls"
@@ -611,9 +625,11 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         res = await bcfy_calls_collector._download_audio(
             self.session, "http://mp3", self.shutdown
         )
-        self.assertIsInstance(res, ItemFailure)
-        self.assertIs(res.status_reason, FeedStatusReason.SOURCE_UNREACHABLE)
-        self.assertEqual(res.reason, "audio_download_failed")
+        failure = _require_item_failure(res)
+        self.assertIs(
+            failure.status_reason, FeedStatusReason.SOURCE_UNREACHABLE
+        )
+        self.assertEqual(failure.reason, "audio_download_failed")
         self.assertEqual(
             self.session.get.call_count,
             bcfy_calls_collector._AUDIO_FILE_DOWNLOAD_MAX_RETRIES + 1,
@@ -786,12 +802,12 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIsNone(result.chunk)
-        self.assertIsNotNone(result.failure)
+        failure = _require_item_failure(result.failure)
         self.assertIs(
-            result.failure.status_reason,
+            failure.status_reason,
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
-        self.assertEqual(result.failure.reason, "audio_download_failed")
+        self.assertEqual(failure.reason, "audio_download_failed")
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls"
@@ -814,9 +830,9 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIsNone(result.chunk)
-        self.assertIsNotNone(result.failure)
+        failure = _require_item_failure(result.failure)
         self.assertIs(
-            result.failure.status_reason,
+            failure.status_reason,
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
 
