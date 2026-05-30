@@ -13,7 +13,12 @@ UPDATE_PROGRESS_SQL = """\
 UPDATE feeds
 SET last_processed_filename = $1,
     last_bookmark_time = COALESCE($5, last_bookmark_time),
-    failure_count = 0
+    failure_count = 0,
+    status_reason_updated_at = CASE
+        WHEN status_reason IS NOT NULL THEN NOW()
+        ELSE status_reason_updated_at
+    END,
+    status_reason = NULL
 WHERE id = $2 AND worker_id = $3 AND fencing_token = $4
 """
 
@@ -58,12 +63,13 @@ WHERE id = $1 AND worker_id = $2 AND fencing_token = $3
 # unclaimed. Deactivated rows are terminal admin stops until reset, so
 # release must not make them claimable.
 #
-# WHERE worker_id = $1 is authoritative for both cases — symmetric with
-# count_held_by_type's DB-truth stance. unclaimed_since = NOW() matches
-# the convention in RELEASE_FEED_SQL so the autoscaler's
-# MIN(unclaimed_since) signal stays accurate across scale-in. No
-# last_heartbeat write — heartbeat renewal is now the sole writer of
-# that column (scaling plan §6.1).
+# WHERE worker_id = $1 is authoritative for both cases, and the active
+# status guard preserves operator deactivation if shutdown races a
+# manual lifecycle change. unclaimed_since = NOW() matches the
+# convention in RELEASE_FEED_SQL so the autoscaler's MIN(unclaimed_since)
+# signal stays accurate across scale-in. No last_heartbeat write —
+# heartbeat renewal is now the sole writer of that column (scaling plan
+# §6.1).
 RELEASE_FEEDS_BATCH_SQL = """\
 UPDATE feeds
 SET worker_id = NULL,
@@ -321,7 +327,9 @@ SET status = CASE WHEN failure_count + 1 >= $3
     -- COALESCE protects against an edge call passing reason=None during
     -- the quarantine transition: keep the previously-recorded reason
     -- rather than overwriting it with NULL. A real reason still wins.
-    quarantine_reason = CASE WHEN failure_count + 1 >= $3 THEN COALESCE($7, quarantine_reason) ELSE quarantine_reason END
+    quarantine_reason = CASE WHEN failure_count + 1 >= $3 THEN COALESCE($7, quarantine_reason) ELSE quarantine_reason END,
+    status_reason = COALESCE($8, 'system_unexpected_error'),
+    status_reason_updated_at = NOW()
 WHERE id = $1 AND worker_id = $2 AND fencing_token = $4
   AND status = 'active'::feed_status
 RETURNING status::text, failure_count, retry_after
@@ -331,7 +339,10 @@ CREATE_FEED_SQL = """\
 WITH new_feed AS (
     INSERT INTO feeds (name, source_type)
     VALUES ($1, $2)
-    RETURNING id, name, source_type, status, failure_count, worker_id, last_heartbeat, last_processed_filename, last_bookmark_time, created_at
+    RETURNING id, name, source_type, status, status_reason,
+              status_reason_updated_at, failure_count, worker_id,
+              last_heartbeat, last_processed_filename,
+              last_bookmark_time, created_at
 ),
 new_props AS (
     INSERT INTO feed_properties (feed_id, source_feed_id, external_id, source_type, tags)
@@ -344,7 +355,8 @@ JOIN new_props np ON TRUE;
 """
 
 GET_FEED_SQL = """\
-SELECT f.id, f.name, f.source_type, f.status, f.failure_count,
+SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
+       f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
        f.last_bookmark_time, f.created_at,
        fp.source_feed_id, fp.external_id, fp.tags
@@ -354,7 +366,8 @@ WHERE f.id = $1
 """
 
 LIST_FEEDS_SQL = """\
-SELECT f.id, f.name, f.source_type, f.status, f.failure_count,
+SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
+       f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
        f.last_bookmark_time, f.created_at,
        fp.source_feed_id, fp.external_id, fp.tags
@@ -377,10 +390,16 @@ WITH updated AS (
         worker_id = NULL,
         unclaimed_since = NOW(),
         quarantine_reason = NULL,
-        last_heartbeat = NOW()
+        last_heartbeat = NOW(),
+        status_reason_updated_at = CASE
+            WHEN status_reason IS NOT NULL THEN NOW()
+            ELSE status_reason_updated_at
+        END,
+        status_reason = NULL
     WHERE id = $1
     RETURNING id, name, source_type, status, failure_count, worker_id,
-              last_heartbeat, last_processed_filename, last_bookmark_time, created_at
+              status_reason, status_reason_updated_at, last_heartbeat,
+              last_processed_filename, last_bookmark_time, created_at
 )
 SELECT u.*, fp.source_feed_id, fp.external_id, fp.tags
 FROM updated u
@@ -392,7 +411,10 @@ WITH updated_feed AS (
     UPDATE feeds
     SET name = $2
     WHERE id = $1
-    RETURNING id, name, source_type, status, failure_count, worker_id, last_heartbeat, last_processed_filename, last_bookmark_time, created_at
+    RETURNING id, name, source_type, status, status_reason,
+              status_reason_updated_at, failure_count, worker_id,
+              last_heartbeat, last_processed_filename,
+              last_bookmark_time, created_at
 ),
 updated_props AS (
     UPDATE feed_properties
