@@ -1756,6 +1756,7 @@ async def test_reset_clears_stale_status_reason_with_clear_timestamp_and_raw_qua
     assert feed["worker_id"] is None
     assert feed["status_reason"] is None
     status_reason_updated_at = feed["status_reason_updated_at"]
+    assert status_reason_updated_at is not None
     assert status_reason_updated_at > old_reason_ts
     row = await _get_feed_diagnostics(db_pool, feed_id)
     assert row["quarantine_reason"] is None
