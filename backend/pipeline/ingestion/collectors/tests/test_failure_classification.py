@@ -14,6 +14,14 @@ from backend.pipeline.ingestion.models import CollectorFailure
 from backend.pipeline.storage.feed_store import FeedStatusReason
 
 
+def _require_item_failure(value: ItemFailure | None) -> ItemFailure:
+    """Return a typed item failure for tests that intentionally expect one."""
+    if value is None:
+        msg = "Expected ItemFailure, got None"
+        raise AssertionError(msg)
+    return value
+
+
 class TestItemFailureAggregation(unittest.TestCase):
     """Shared item-failure promotion rules."""
 
@@ -84,7 +92,7 @@ class TestItemFailureAggregation(unittest.TestCase):
             succeeded_count=0,
         )
 
-        self.assertIsNotNone(result)
+        result = _require_item_failure(result)
         self.assertIs(
             result.status_reason,
             FeedStatusReason.SOURCE_UNREACHABLE,
@@ -109,7 +117,7 @@ class TestItemFailureAggregation(unittest.TestCase):
             succeeded_count=0,
         )
 
-        self.assertIsNotNone(result)
+        result = _require_item_failure(result)
         self.assertIs(
             result.status_reason,
             FeedStatusReason.SYSTEM_COLLECTOR_ERROR,

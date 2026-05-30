@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlencode, urljoin
 
+import aiohttp
+
 from backend.pipeline.common.constants import (
     AUDIO_FORMAT,
     CHUNK_DURATION_SECONDS,
@@ -108,9 +110,9 @@ def _headers_from_ffmpeg_auth_header(auth_header: str) -> dict[str, str]:
     return headers
 
 
-def _probe_keeps_raw_reason(probe_failure: CollectorFailure | None) -> bool:
+def _probe_keeps_raw_reason(probe_failure: CollectorFailure) -> bool:
     """Return whether ambiguous probe evidence should preserve raw ffmpeg reason."""
-    return probe_failure is None or (
+    return (
         probe_failure.status_reason is FeedStatusReason.SYSTEM_COLLECTOR_ERROR
         and str(probe_failure)
         in {"stream_available", "stream_probe_inconclusive"}
@@ -127,7 +129,7 @@ async def _probe_stream_once(
         async with resources.http_session.get(
             url,
             headers=_headers_from_ffmpeg_auth_header(auth_header),
-            timeout=_STREAM_PROBE_TIMEOUT_SEC,
+            timeout=aiohttp.ClientTimeout(total=_STREAM_PROBE_TIMEOUT_SEC),
         ) as response:
             classified = _classify_stream_http_status(response.status)
             if classified is not None:
@@ -348,7 +350,9 @@ async def capture_icecast_stream(  # noqa: PLR0912, PLR0915
                             url,
                             auth_header,
                         )
-                        if _probe_keeps_raw_reason(probe_failure):
+                        if probe_failure is None or _probe_keeps_raw_reason(
+                            probe_failure
+                        ):
                             raise collector_failure(
                                 FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
                                 raw_exit_reason,
@@ -382,7 +386,9 @@ async def capture_icecast_stream(  # noqa: PLR0912, PLR0915
                         url,
                         auth_header,
                     )
-                    if _probe_keeps_raw_reason(probe_failure):
+                    if probe_failure is None or _probe_keeps_raw_reason(
+                        probe_failure
+                    ):
                         raise collector_failure(
                             FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
                             "capture_timeout",
