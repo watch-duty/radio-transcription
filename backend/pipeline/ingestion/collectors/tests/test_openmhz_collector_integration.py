@@ -28,8 +28,8 @@ from backend.pipeline.ingestion.collectors.tests.conftest import (
 )
 from backend.pipeline.ingestion.models import CollectorFailure
 from backend.pipeline.storage.feed_store import (
-    FeedStore,
     FeedStatusReason,
+    FeedStore,
     LeasedFeed,
     SourceType,
 )

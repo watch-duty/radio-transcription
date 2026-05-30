@@ -17,6 +17,14 @@ from backend.pipeline.ingestion.models import AudioMimeType, CollectorFailure
 from backend.pipeline.storage.feed_store import FeedStatusReason, SourceType
 
 
+def _require_item_failure(value: ItemFailure | None) -> ItemFailure:
+    """Return a typed item failure for tests that intentionally expect one."""
+    if value is None:
+        msg = "Expected ItemFailure, got None"
+        raise AssertionError(msg)
+    return value
+
+
 class TestParseFilenameTimestamp(unittest.TestCase):
     def test_valid_filename(self) -> None:
         filename = "CHANNEL 2026-05-20 12-00-00.mp3"
@@ -65,12 +73,12 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
             self.session, "http://url", self.shutdown
         )
         self.assertIsNone(result.audio_bytes)
-        self.assertIsNotNone(result.failure)
+        failure = _require_item_failure(result.failure)
         self.assertIs(
-            result.failure.status_reason,
+            failure.status_reason,
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
-        self.assertEqual(result.failure.reason, "item_download_failed")
+        self.assertEqual(failure.reason, "item_download_failed")
 
     async def test_auth_status_returns_item_failure(self) -> None:
         resp = MagicMock(status_code=403)
@@ -81,12 +89,12 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIsNone(result.audio_bytes)
-        self.assertIsNotNone(result.failure)
+        failure = _require_item_failure(result.failure)
         self.assertIs(
-            result.failure.status_reason,
+            failure.status_reason,
             FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
         )
-        self.assertEqual(result.failure.reason, "item_http_403")
+        self.assertEqual(failure.reason, "item_http_403")
 
     async def test_rate_limit_status_returns_item_failure(self) -> None:
         resp = MagicMock(status_code=429)
@@ -97,12 +105,12 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIsNone(result.audio_bytes)
-        self.assertIsNotNone(result.failure)
+        failure = _require_item_failure(result.failure)
         self.assertIs(
-            result.failure.status_reason,
+            failure.status_reason,
             FeedStatusReason.SOURCE_RATE_LIMITED,
         )
-        self.assertEqual(result.failure.reason, "item_http_429")
+        self.assertEqual(failure.reason, "item_http_429")
 
     @patch(
         "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
@@ -135,12 +143,12 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
             self.session, "http://url", self.shutdown
         )
         self.assertIsNone(result.audio_bytes)
-        self.assertIsNotNone(result.failure)
+        failure = _require_item_failure(result.failure)
         self.assertIs(
-            result.failure.status_reason,
+            failure.status_reason,
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
-        self.assertEqual(result.failure.reason, "item_download_failed")
+        self.assertEqual(failure.reason, "item_download_failed")
         self.assertEqual(
             self.session.get.call_count, collector._DOWNLOAD_MAX_RETRIES
         )
