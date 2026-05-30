@@ -94,7 +94,8 @@ async def _get_feed_diagnostics(
     row = await pool.fetchrow(
         "SELECT status, failure_count, worker_id, fencing_token,"
         " retry_after, quarantine_reason, status_reason,"
-        " status_reason_updated_at FROM feeds WHERE id = $1::uuid",
+        " status_reason_updated_at, last_processed_filename"
+        " FROM feeds WHERE id = $1::uuid",
         str(feed_id),
     )
     if row is None:
