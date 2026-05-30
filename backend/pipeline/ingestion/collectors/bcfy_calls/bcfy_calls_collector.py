@@ -70,14 +70,6 @@ class AuthError(Exception):
     """Raised when Broadcastify Calls API returns 401 or 403."""
 
 
-class JwtConfigError(RuntimeError):
-    """Raised when Broadcastify JWT Secret Manager configuration is missing."""
-
-
-class JwtFetchError(RuntimeError):
-    """Raised when Broadcastify JWT Secret Manager access fails."""
-
-
 @dataclasses.dataclass(frozen=True)
 class _FetchCallsResult:
     payload: dict[str, Any] | None = None
@@ -109,8 +101,10 @@ def _get_jwt_token() -> str:
     project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
     secret_id = os.getenv("BROADCASTIFY_JWT_SECRET_ID")
     if not project_id or not secret_id:
-        msg = "GOOGLE_CLOUD_PROJECT and BROADCASTIFY_JWT_SECRET_ID must be set"
-        raise JwtConfigError(msg)
+        raise collector_failure(
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            "calls_jwt_config_missing",
+        )
 
     client = secretmanager.SecretManagerServiceClient()
     name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
@@ -118,8 +112,11 @@ def _get_jwt_token() -> str:
         response = client.access_secret_version(request={"name": name})
         return response.payload.data.decode("UTF-8").strip()
     except Exception as e:
-        msg = f"Failed to access secret {name}"
-        raise JwtFetchError(msg) from e
+        logger.exception("Failed to access secret %s: %s", name, e)
+        raise collector_failure(
+            FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+            "calls_jwt_secret_access_failed",
+        ) from e
 
 
 def _get_jwt_lock() -> asyncio.Lock:
@@ -178,7 +175,11 @@ async def _get_shared_jwt_token(
             if _jwt_state.refresh_task is task:
                 _jwt_state.refresh_task = None
                 should_log = True
-        if should_log and not isinstance(e, JwtConfigError):
+        is_config_failure = (
+            isinstance(e, CollectorFailure)
+            and e.status_reason is FeedStatusReason.SYSTEM_CONFIGURATION_INVALID
+        )
+        if should_log and not is_config_failure:
             logger.warning(
                 "Failed to fetch Broadcastify JWT token from Secret Manager",
                 exc_info=e,
@@ -215,8 +216,15 @@ async def _get_shared_jwt_token_with_retry(
                 force_refresh=force_refresh,
                 stale_token=stale_token,
             )
-        except JwtConfigError:
-            raise
+        except CollectorFailure as e:
+            if e.status_reason is FeedStatusReason.SYSTEM_CONFIGURATION_INVALID:
+                raise
+            jwt_failures = await _handle_loop_failure(
+                feed_id,
+                jwt_failures,
+                shutdown_event,
+                ItemFailure(e.status_reason, str(e)),
+            )
         except Exception:
             jwt_failures = await _handle_loop_failure(
                 feed_id,
@@ -224,7 +232,7 @@ async def _get_shared_jwt_token_with_retry(
                 shutdown_event,
                 ItemFailure(
                     FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-                    "jwt_secret_unavailable",
+                    "calls_jwt_secret_access_failed",
                 ),
             )
     return None

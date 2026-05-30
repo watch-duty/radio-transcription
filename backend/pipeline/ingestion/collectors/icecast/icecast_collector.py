@@ -61,11 +61,10 @@ def _build_auth_header() -> str:
     user = os.getenv("BROADCASTIFY_USERNAME")
     password = os.getenv("BROADCASTIFY_PASSWORD")
     if not user or not password:
-        msg = (
-            "BROADCASTIFY_USERNAME and BROADCASTIFY_PASSWORD "
-            "env vars must be set"
+        raise collector_failure(
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            "missing_broadcastify_credentials",
         )
-        raise ValueError(msg)
     credentials = f"{user}:{password}"
     encoded = base64.b64encode(credentials.encode()).decode()
     return f"Authorization: Basic {encoded}\r\n"
@@ -442,6 +441,7 @@ async def _create_ffmpeg_process(
         "-reconnect_at_eof", "1",
         "-reconnect_streamed", "1",
         "-reconnect_delay_max", "2",
+        "-reconnect_on_http_error", "429,500,502,503,504",
         "-analyzeduration", "0",
         "-probesize", "32768",
         "-fflags", "nobuffer+flush_packets+discardcorrupt",

@@ -78,8 +78,13 @@ class TestGetJwtToken(unittest.TestCase):
 
     @patch.dict(os.environ, {}, clear=True)
     def test_missing_env(self) -> None:
-        with self.assertRaisesRegex(RuntimeError, "must be set"):
+        with self.assertRaises(CollectorFailure) as ctx:
             bcfy_calls_collector._get_jwt_token()
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        )
+        self.assertEqual(str(ctx.exception), "calls_jwt_config_missing")
 
     @patch.dict(
         os.environ,
@@ -93,8 +98,13 @@ class TestGetJwtToken(unittest.TestCase):
         mock_client = MagicMock()
         mock_smc.return_value = mock_client
         mock_client.access_secret_version.side_effect = Exception("API error")
-        with self.assertRaisesRegex(RuntimeError, "Failed to access secret"):
+        with self.assertRaises(CollectorFailure) as ctx:
             bcfy_calls_collector._get_jwt_token()
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+        )
+        self.assertEqual(str(ctx.exception), "calls_jwt_secret_access_failed")
 
 
 class TestSharedJwtToken(unittest.IsolatedAsyncioTestCase):
@@ -1521,7 +1531,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             ctx.exception.status_reason,
             FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
         )
-        self.assertEqual(str(ctx.exception), "jwt_secret_unavailable")
+        self.assertEqual(str(ctx.exception), "calls_jwt_secret_access_failed")
         self.assertEqual(mock_fetch.call_count, 1)
         self.assertEqual(mock_jwt.call_count, 11)
 
