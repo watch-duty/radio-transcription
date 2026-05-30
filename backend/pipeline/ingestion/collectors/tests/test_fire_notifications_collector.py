@@ -417,6 +417,51 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chunks[0].audio_bytes, b"mp3_bytes")
         self.assertEqual(list(self.processed_uuids), ["uuid2"])
 
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
+        new_callable=AsyncMock,
+    )
+    async def test_all_duration_probe_failures_promote_collector_error(
+        self, mock_download: AsyncMock
+    ) -> None:
+        mock_download.return_value = collector._DownloadResult(
+            audio_bytes=b"mp3_bytes"
+        )
+        files = [
+            {
+                "type": "file",
+                "name": "CHAN 2026-05-20 12-00-00.mp3",
+                "uuid": "uuid1",
+            },
+        ]
+
+        with (
+            patch.object(collector, "logger"),
+            patch(
+                "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
+                side_effect=RuntimeError("ffprobe failed"),
+            ),
+            self.assertRaises(CollectorFailure) as ctx,
+        ):
+            async for _ in collector._process_file_list(
+                files,
+                self.session,
+                self.shutdown,
+                "session-id",
+                self.feed,  # type: ignore
+                self.processed_uuids,
+                "CHAN",
+                "http://mock-s3-bucket",
+            ):
+                pass
+
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        )
+        self.assertEqual(str(ctx.exception), "duration_probe_failed")
+        self.assertEqual(len(self.processed_uuids), 0)
+
     async def test_no_eligible_files_does_not_raise(self) -> None:
         files = [
             {"type": "dir", "name": "folders"},
@@ -512,6 +557,78 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
             FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
         )
         self.assertEqual(str(ctx.exception), "missing_source_feed_id")
+
+    async def test_missing_s3_base_raises_typed_configuration_failure(
+        self,
+    ) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(CollectorFailure) as ctx:
+                async for _ in collector.fire_notifications_collector(
+                    self.feed,  # type: ignore
+                    self.shutdown,
+                    "http://base",
+                    self.resources,
+                ):
+                    pass
+
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        )
+        self.assertEqual(
+            str(ctx.exception), "missing_fire_notifications_s3_base"
+        )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._MAX_CONSECUTIVE_FAILURES",
+        1,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.AsyncSession",
+    )
+    async def test_poll_http_statuses_raise_typed_failures(
+        self,
+        mock_session_cls: MagicMock,
+    ) -> None:
+        cases = [
+            (
+                403,
+                FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+                "fn_api_http_403",
+            ),
+            (
+                404,
+                FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+                "fn_api_http_404",
+            ),
+            (429, FeedStatusReason.SOURCE_RATE_LIMITED, "fn_api_http_429"),
+            (503, FeedStatusReason.SOURCE_UNREACHABLE, "fn_api_http_503"),
+        ]
+
+        for status, expected_status_reason, expected_reason in cases:
+            with self.subTest(status=status):
+                mock_session = mock_session_cls.return_value
+                mock_session.close = AsyncMock()
+                mock_session.get = AsyncMock(
+                    return_value=MagicMock(status_code=status)
+                )
+
+                with (
+                    patch.object(collector, "logger"),
+                    self.assertRaises(CollectorFailure) as ctx,
+                ):
+                    async for _ in collector.fire_notifications_collector(
+                        self.feed,  # type: ignore
+                        self.shutdown,
+                        "http://base",
+                        self.resources,
+                    ):
+                        pass
+
+                self.assertIs(
+                    ctx.exception.status_reason, expected_status_reason
+                )
+                self.assertEqual(str(ctx.exception), expected_reason)
 
     @patch(
         "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",

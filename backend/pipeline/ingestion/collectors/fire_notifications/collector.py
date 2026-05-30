@@ -60,6 +60,24 @@ class _DownloadResult:
     failure: ItemFailure | None = None
 
 
+def _poll_status_failure(status: int) -> ItemFailure:
+    """Classify Fire Notifications poll endpoint failures."""
+    reason = f"fn_api_http_{status}"
+    if status in {401, 403}:
+        return ItemFailure(
+            FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+            reason,
+        )
+    if status == 429:
+        return ItemFailure(FeedStatusReason.SOURCE_RATE_LIMITED, reason)
+    if 400 <= status < 500:
+        return ItemFailure(
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            reason,
+        )
+    return ItemFailure(FeedStatusReason.SOURCE_UNREACHABLE, reason)
+
+
 async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
     """Sleep for *seconds*, returning ``True`` if interrupted by shutdown."""
     try:
@@ -327,7 +345,7 @@ async def _process_file_list(
         _raise_item_failure(promoted)
 
 
-async def fire_notifications_collector(  # noqa: PLR0912
+async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
     url_base: str,
@@ -337,8 +355,20 @@ async def fire_notifications_collector(  # noqa: PLR0912
 
     Yields :class:`CapturedChunk` for each new MP3 file found.
     """
-    s3_base_url = _require_env("FIRE_NOTIFICATIONS_S3_BASE")
-    headers = _build_auth_headers()
+    try:
+        s3_base_url = _require_env("FIRE_NOTIFICATIONS_S3_BASE")
+    except ValueError as e:
+        raise collector_failure(
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            "missing_fire_notifications_s3_base",
+        ) from e
+    try:
+        headers = _build_auth_headers()
+    except ValueError as e:
+        raise collector_failure(
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            "missing_fire_notifications_auth_config",
+        ) from e
 
     source_feed_id = feed.get("source_feed_id")
     if not source_feed_id:
@@ -366,6 +396,7 @@ async def fire_notifications_collector(  # noqa: PLR0912
     try:
         while not shutdown_event.is_set():
             poll_ok = False
+            poll_failure: ItemFailure | None = None
 
             try:
                 # Poll the API
@@ -389,12 +420,17 @@ async def fire_notifications_collector(  # noqa: PLR0912
                         yield chunk
                     poll_ok = True
                 else:
+                    poll_failure = _poll_status_failure(resp.status_code)
                     logger.warning(
                         "FN API returned %d: %s", resp.status_code, poll_url
                     )
             except CollectorFailure:
                 raise
             except Exception:
+                poll_failure = ItemFailure(
+                    FeedStatusReason.SOURCE_UNREACHABLE,
+                    "source_unreachable",
+                )
                 logger.warning(
                     "FN API poll error: %s",
                     poll_url,
@@ -406,9 +442,13 @@ async def fire_notifications_collector(  # noqa: PLR0912
             else:
                 consecutive_failures += 1
                 if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
-                    raise collector_failure(
+                    failure = poll_failure or ItemFailure(
                         FeedStatusReason.SOURCE_UNREACHABLE,
                         "source_unreachable",
+                    )
+                    raise collector_failure(
+                        failure.status_reason,
+                        failure.reason,
                     )
 
             # Sleep before next poll, with a small jitter

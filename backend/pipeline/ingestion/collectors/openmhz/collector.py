@@ -58,8 +58,10 @@ def _get_transport(name: str) -> TransportFactory:
     """Resolve transport by name. Reads module attributes at call time."""
     if name == "websocket":
         return websocket_transport
-    msg = f"Unknown OPENMHZ_TRANSPORT: {name!r}"
-    raise ValueError(msg)
+    raise collector_failure(
+        FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        "invalid_openmhz_transport",
+    )
 
 
 async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
@@ -227,9 +229,7 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                         )
                         if download_result.failure is not None:
                             item_outcome.record_attempt()
-                            item_outcome.record_failure(
-                                download_result.failure
-                            )
+                            item_outcome.record_failure(download_result.failure)
                             item_failure_count += 1
                             if not shutdown_event.is_set():
                                 # SLO: call_download_failed emit — OpenMHZ _download_m4a returned a classified failure
@@ -243,10 +243,7 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                                         },
                                     },
                                 )
-                            if (
-                                item_failure_count
-                                >= MAX_ITEM_DOWNLOAD_FAILURES
-                            ):
+                            if item_failure_count >= MAX_ITEM_DOWNLOAD_FAILURES:
                                 promoted = item_outcome.promoted_failure()
                                 if promoted is not None:
                                     pending_item_failure = promoted

@@ -189,6 +189,27 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(str(ctx.exception), "missing_source_feed_id")
 
+    @patch.dict("os.environ", {"OPENMHZ_TRANSPORT": "bogus"})
+    async def test_invalid_transport_raises_typed_configuration_failure(
+        self,
+    ) -> None:
+        shutdown = asyncio.Event()
+
+        with self.assertRaises(CollectorFailure) as ctx:
+            async for _ in openmhz_collector(
+                _TEST_FEED,
+                shutdown,
+                "https://api.openmhz.com/",
+                _default_resources(),
+            ):
+                pass
+
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        )
+        self.assertEqual(str(ctx.exception), "invalid_openmhz_transport")
+
     @patch(f"{_COL_MOD}.websocket_transport")
     @patch(f"{_COL_MOD}._sleep_or_shutdown", new_callable=AsyncMock)
     async def test_raises_after_max_reconnect_failures(
