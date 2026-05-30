@@ -216,6 +216,27 @@ class TestCreateFfmpegProcess(unittest.IsolatedAsyncioTestCase):
             "stderr must be PIPE, not DEVNULL — ffmpeg error context is lost otherwise",
         )
 
+    @patch(
+        "asyncio.create_subprocess_exec",
+        new_callable=AsyncMock,
+    )
+    async def test_reconnects_on_retryable_http_statuses(
+        self, mock_exec: AsyncMock
+    ) -> None:
+        """Ffmpeg should absorb transient HTTP failures before surfacing them."""
+        mock_exec.return_value = AsyncMock()
+
+        await icecast_collector._create_ffmpeg_process(
+            "http://example.com/stream.mp3",
+            "/tmp/chunk_%06d.flac",  # noqa: S108
+            "Authorization: Basic dGVzdDp0ZXN0\r\n",
+        )
+
+        args = mock_exec.call_args.args
+        self.assertIn("-reconnect_on_http_error", args)
+        value_index = args.index("-reconnect_on_http_error") + 1
+        self.assertEqual(args[value_index], "429,500,502,503,504")
+
 
 class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
     """Tests for the public capture_icecast_stream API."""
@@ -333,6 +354,31 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             context.exception,
             FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
             "missing_source_feed_id",
+        )
+
+    @patch.dict(os.environ, {}, clear=True)
+    async def test_missing_auth_env_raises_typed_configuration_failure(
+        self,
+    ) -> None:
+        """Missing Broadcastify stream credentials is a system config issue."""
+        feed = _make_feed("missing-auth", "123")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_resources_with_probe_status(200, reason="OK"),
+        )
+
+        with self.assertRaises(CollectorFailure) as context:
+            await gen.__anext__()
+
+        _assert_collector_failure(
+            self,
+            context.exception,
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            "missing_broadcastify_credentials",
         )
 
     async def test_invalid_input_none_source_feed_id_raises_value_error(
