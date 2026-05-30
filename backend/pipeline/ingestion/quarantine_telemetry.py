@@ -41,6 +41,7 @@ async def emit_quarantine_event(
     feed_name: str,
     source_type: str,
     reason: str,
+    status_reason: str,
 ) -> None:
     """Emit a quarantine event signal.  **Never raises.**
 
@@ -63,6 +64,7 @@ async def emit_quarantine_event(
                     "feed_id": feed_id,
                     "feed_name": feed_name,
                     "reason": reason,
+                    "status_reason": status_reason,
                     "source_type": source_type,
                 },
             },

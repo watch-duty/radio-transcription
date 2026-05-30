@@ -18,18 +18,27 @@ are internal events the runtime never sees.
 Error Handling
 --------------
 
+Collectors should keep source-specific failure classification at the collector
+boundary. The runtime can tell "collector raised a typed feed failure" from
+"pipeline failed after capture" and "unexpected bug", but it cannot safely
+infer Broadcastify/OpenMHZ/Fire Notifications semantics from raw strings.
+
 For any error inside a capture function, follow this priority:
 
-1. **Configuration** (bad creds, wrong URL): raise immediately.
-2. **Rate limit** (429): back off internally, never propagate.
+1. **Configuration** (bad creds, wrong URL): raise ``CollectorFailure``.
+2. **Rate limit** (429): back off internally first. Raise
+   ``CollectorFailure`` only if collector policy says the feed is
+   persistently rate-limited.
 3. **Transient** (500, timeout, disconnect): retry internally.
-   Skip the item if retries exhaust. Raise if the connection
-   fails persistently (e.g. 10 consecutive transport failures).
+   Skip the item if retries exhaust. Raise ``CollectorFailure`` if the
+   connection fails persistently (e.g. 10 consecutive transport failures).
 4. **Item failure** (one download 404, corrupt data): skip, log,
-   continue. Raise if ALL items in a batch fail (systemic).
+   continue. Raise only if ALL eligible items in one observation boundary
+   fail (systemic).
 5. **Data quality** (zero-length, bad timestamp): filter silently.
-6. **Unknown**: let it propagate — the runtime will record the
-   failure and release the lease.
+6. **Unknown bug**: let it propagate. The runtime records
+   ``system_unexpected_error`` as a defensive fallback; new collector code
+   should not intentionally rely on that path for known source failures.
 
 Session ID
 ----------
@@ -65,6 +74,8 @@ import dataclasses
 from typing import TYPE_CHECKING
 
 import aiohttp  # noqa: TC002 — runtime use: CaptureResources holds aiohttp.ClientSession
+
+from backend.pipeline.storage.feed_store import FeedStatusReason
 
 if TYPE_CHECKING:
     import asyncio
@@ -103,6 +114,38 @@ class AudioMimeType(StrEnum):
                 "audio/x-m4a": cls.MP4,
             }
             return aliases.get(clean_type)
+
+
+@dataclasses.dataclass(frozen=True)
+class CollectorFailure(Exception):
+    """Feed-level collector failure classified at the collector boundary.
+
+    This is intentionally small: `status_reason` is the bounded operator
+    grouping key, while `reason` is a short raw stage/detail string preserved
+    for logs and quarantine_reason. Do not put stderr, stack traces, URLs with
+    credentials, or other high-cardinality data in either field.
+    """
+
+    status_reason: FeedStatusReason | str
+    reason: str
+
+    def __post_init__(self) -> None:
+        """Normalize collector-provided values before the runtime sees them."""
+        try:
+            status_reason = FeedStatusReason(self.status_reason)
+        except (TypeError, ValueError) as e:
+            msg = f"Unknown feed status reason: {self.status_reason!r}"
+            raise ValueError(msg) from e
+
+        if not isinstance(self.reason, str) or not self.reason:
+            msg = "CollectorFailure.reason must be a non-empty string"
+            raise ValueError(msg)
+
+        object.__setattr__(self, "status_reason", status_reason)
+        object.__setattr__(self, "reason", self.reason[:200])
+
+    def __str__(self) -> str:
+        return self.reason
 
 
 @dataclasses.dataclass(frozen=True)
