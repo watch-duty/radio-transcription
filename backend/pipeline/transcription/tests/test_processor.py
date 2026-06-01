@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import grpc
 from cloudevents.http.event import CloudEvent
+from google.api_core.exceptions import PermissionDenied, ServiceUnavailable
 from google.protobuf.duration_pb2 import Duration  # type: ignore
 from google.protobuf.timestamp_pb2 import Timestamp  # type: ignore
 
@@ -398,3 +399,127 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         ]
         self.assertEqual(call_data["text"], "")
         self.assertIn("Audio payload too long", call_data["errors"][0])
+
+    def test_process_event_google_api_transient_error_propagates(self) -> None:
+        """Verifies that a transient GoogleAPICallError propagates to trigger a retry."""
+        mock_transcriber = MagicMock()
+        mock_transcriber.transcribe.side_effect = ServiceUnavailable(
+            "Transient backend error"
+        )
+
+        mock_publisher = MagicMock()
+        mock_publisher.topic_path.return_value = (
+            "projects/test-proj/topics/egress"
+        )
+        mock_audio_segments_client = MagicMock()
+
+        claim = NormalizedAudio(
+            transmission_id="tx-1111",
+            feed_id="feed-2222",
+            source_audio_uris=["gs://bucket/raw1.flac"],
+            canonical_audio_uri="gs://bucket/normalized.flac",
+            playback_audio_uri="gs://bucket/normalized.m4a",
+            feed_name="Test Feed",
+            external_id="ext-1234",
+        )
+        t_start = Timestamp(seconds=1000, nanos=0)
+        t_end = Timestamp(seconds=1005, nanos=0)
+        claim.start_timestamp.CopyFrom(t_start)
+        claim.end_timestamp.CopyFrom(t_end)
+
+        data_bytes = claim.SerializeToString()
+        envelope = {
+            "message": {
+                "data": base64.b64encode(data_bytes).decode("utf-8"),
+                "attributes": {},
+            }
+        }
+
+        cloud_event = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test-source",
+            },
+            data=envelope,
+        )
+
+        processor = TranscriptionEventProcessor(
+            project_id="test-proj",
+            output_topic="projects/test-proj/topics/egress",
+            transcriber=mock_transcriber,
+            publisher=mock_publisher,
+            audio_segments_client=mock_audio_segments_client,
+        )
+
+        # ServiceUnavailable (GoogleAPICallError with code 503) must propagate
+        with self.assertRaises(ServiceUnavailable):
+            processor.process_event(cloud_event)
+
+        mock_publisher.publish.assert_not_called()
+        mock_audio_segments_client.add_audio_segment_annotation.assert_called_once()
+        call_data = mock_audio_segments_client.add_audio_segment_annotation.call_args.kwargs[
+            "data"
+        ]
+        self.assertIn("Transient Failure", call_data["errors"][0])
+
+    def test_process_event_google_api_permanent_error_silent_drop(self) -> None:
+        """Verifies that a permanent GoogleAPICallError is caught and acknowledged without retry."""
+        mock_transcriber = MagicMock()
+        mock_transcriber.transcribe.side_effect = PermissionDenied(
+            "GCP Permission Denied"
+        )
+
+        mock_publisher = MagicMock()
+        mock_publisher.topic_path.return_value = (
+            "projects/test-proj/topics/egress"
+        )
+        mock_audio_segments_client = MagicMock()
+
+        claim = NormalizedAudio(
+            transmission_id="tx-1111",
+            feed_id="feed-2222",
+            source_audio_uris=["gs://bucket/raw1.flac"],
+            canonical_audio_uri="gs://bucket/normalized.flac",
+            playback_audio_uri="gs://bucket/normalized.m4a",
+            feed_name="Test Feed",
+            external_id="ext-1234",
+        )
+        t_start = Timestamp(seconds=1000, nanos=0)
+        t_end = Timestamp(seconds=1005, nanos=0)
+        claim.start_timestamp.CopyFrom(t_start)
+        claim.end_timestamp.CopyFrom(t_end)
+
+        data_bytes = claim.SerializeToString()
+        envelope = {
+            "message": {
+                "data": base64.b64encode(data_bytes).decode("utf-8"),
+                "attributes": {},
+            }
+        }
+
+        cloud_event = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test-source",
+            },
+            data=envelope,
+        )
+
+        processor = TranscriptionEventProcessor(
+            project_id="test-proj",
+            output_topic="projects/test-proj/topics/egress",
+            transcriber=mock_transcriber,
+            publisher=mock_publisher,
+            audio_segments_client=mock_audio_segments_client,
+        )
+
+        # PermissionDenied (GoogleAPICallError with code 403) must be caught and swallowed cleanly
+        processor.process_event(cloud_event)
+
+        mock_publisher.publish.assert_not_called()
+        mock_audio_segments_client.add_audio_segment_annotation.assert_called_once()
+        call_data = mock_audio_segments_client.add_audio_segment_annotation.call_args.kwargs[
+            "data"
+        ]
+        self.assertEqual(call_data["text"], "")
+        self.assertIn("Permanent Failure", call_data["errors"][0])
