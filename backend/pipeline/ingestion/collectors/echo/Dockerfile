@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.9-labs
 FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -13,13 +14,12 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. Install Python dependencies
-COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
-COPY pyproject.toml uv.lock ./
-# Copy the entire backend/ so uv can resolve workspace sub-projects.
-COPY backend/ ./backend/
+COPY --from=ghcr.io/astral-sh/uv:0.11.13 /uv /uvx /bin/
+COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml ./
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
-RUN uv sync --frozen --no-dev && uv pip install grpcio-tools
+RUN uv sync --frozen --no-dev --no-install-workspace && uv pip install grpcio-tools
+COPY backend/ ./backend/
 
 # 3. Compile proto definitions
 COPY protos/ ./protos
