@@ -163,6 +163,93 @@ describe('TranscriptView', () => {
     });
   });
 
+  it('sorts transcripts in descending order based on startTimestamp', async () => {
+    const mockUnsortedTranscripts = [
+      {
+        feedId: 'feed123',
+        transmissionId: '1',
+        transcript: 'Oldest',
+        canonicalAudioUri: 'gs:://foo.flac',
+        playbackAudioUri: 'gs:://foo.m4a',
+        startTimestamp: '2026-04-10T12:00:00Z',
+        endTimestamp: '2026-04-10T12:00:05Z',
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: ['gs:://foo.flac'],
+        startAudioOffset: '0s',
+        endAudioOffset: '5s',
+        evaluationDecisions: [],
+      },
+      {
+        feedId: 'feed123',
+        transmissionId: '3',
+        transcript: 'Newest',
+        canonicalAudioUri: 'gs:://foo.flac',
+        playbackAudioUri: 'gs:://foo.m4a',
+        startTimestamp: '2026-04-10T12:10:00Z',
+        endTimestamp: '2026-04-10T12:10:05Z',
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: ['gs:://foo.flac'],
+        startAudioOffset: '0s',
+        endAudioOffset: '5s',
+        evaluationDecisions: [],
+      },
+      {
+        feedId: 'feed123',
+        transmissionId: '2',
+        transcript: 'Middle',
+        canonicalAudioUri: 'gs:://foo.flac',
+        playbackAudioUri: 'gs:://foo.m4a',
+        startTimestamp: '2026-04-10T12:05:00Z',
+        endTimestamp: '2026-04-10T12:05:05Z',
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: ['gs:://foo.flac'],
+        startAudioOffset: '0s',
+        endAudioOffset: '5s',
+        evaluationDecisions: [],
+      },
+    ];
+
+    vi.mocked(listTranscripts).mockResolvedValueOnce({
+      transcripts: mockUnsortedTranscripts,
+      nextToken: undefined,
+    });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Newest')).toBeTruthy();
+      expect(screen.getByText('Middle')).toBeTruthy();
+      expect(screen.getByText('Oldest')).toBeTruthy();
+    });
+
+    const newestElement = screen
+      .getByText('Newest')
+      .closest('[id^="transcript-"]');
+    const middleElement = screen
+      .getByText('Middle')
+      .closest('[id^="transcript-"]');
+    const oldestElement = screen
+      .getByText('Oldest')
+      .closest('[id^="transcript-"]');
+
+    expect(newestElement).toBeTruthy();
+    expect(middleElement).toBeTruthy();
+    expect(oldestElement).toBeTruthy();
+
+    expect(newestElement!.compareDocumentPosition(middleElement!)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    );
+    expect(middleElement!.compareDocumentPosition(oldestElement!)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    );
+  });
+
   it('shows error message on failure', async () => {
     vi.mocked(listTranscripts).mockRejectedValueOnce(new Error('Fetch failed'));
 
@@ -381,7 +468,7 @@ describe('TranscriptView', () => {
     vi.mocked(listTranscripts)
       .mockResolvedValueOnce({
         transcripts: initialTranscripts,
-        nextToken: undefined,
+        nextToken: 'next-token-newer',
       })
       .mockResolvedValueOnce({
         transcripts: [],
@@ -408,8 +495,8 @@ describe('TranscriptView', () => {
         'feed123',
         'fake-token',
         undefined,
+        'next-token-newer',
         undefined,
-        testTimestamp,
         undefined,
         'asc',
         undefined
@@ -451,7 +538,7 @@ describe('TranscriptView', () => {
       })
       .mockResolvedValueOnce({
         transcripts: alertTranscripts,
-        nextToken: undefined,
+        nextToken: 'next-token-alert-newer',
       })
       .mockResolvedValueOnce({
         transcripts: [],
@@ -500,8 +587,8 @@ describe('TranscriptView', () => {
         'feed123',
         'fake-token',
         undefined,
+        'next-token-alert-newer',
         undefined,
-        testTimestamp,
         undefined,
         'asc',
         true
@@ -936,6 +1023,61 @@ describe('TranscriptView', () => {
         undefined,
         'desc',
         true
+      );
+    });
+  });
+
+  it('clears the timestamp filter when clicking Jump to live', async () => {
+    const testTimestamp = new Date('2026-04-10T12:00:00Z').getTime();
+    const initialTranscripts = [
+      {
+        feedId: 'feed123',
+        transmissionId: '1',
+        transcript: 'Transcript 1',
+        canonicalAudioUri: 'gs:://foo.flac',
+        playbackAudioUri: 'gs:://foo.m4a',
+        startTimestamp: '2026-04-10T12:00:00Z',
+        endTimestamp: '2026-04-10T12:00:05Z',
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: ['gs:://foo.flac'],
+        startAudioOffset: '0s',
+        endAudioOffset: '5s',
+        evaluationDecisions: [],
+      },
+    ];
+
+    vi.mocked(listTranscripts).mockResolvedValue({
+      transcripts: initialTranscripts,
+      nextToken: 'next-token-newer',
+    });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: [`/?feedId=feed123&timestamp=${testTimestamp}`] }
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Transcript 1')).toBeTruthy();
+    });
+
+    const jumpToLiveButton = screen.getByRole('button', {
+      name: /Jump to live/i,
+    });
+    expect(jumpToLiveButton).not.toBeDisabled();
+
+    fireEvent.click(jumpToLiveButton);
+
+    await waitFor(() => {
+      expect(listTranscripts).toHaveBeenLastCalledWith(
+        'feed123',
+        'fake-token',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'desc',
+        undefined
       );
     });
   });
