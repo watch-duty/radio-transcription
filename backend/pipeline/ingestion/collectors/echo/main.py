@@ -138,27 +138,25 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
         # Calculate duration of audio bytes using shared helper
         duration_ms = get_audio_duration(mp3_bytes)
 
-        # Resolve start_ts: use GCS timeCreated or fallback to filename parsing
-        time_created_str = data.get("timeCreated")
-        if time_created_str:
+        # RTL-Airband appends the filename timestamp when opening a split
+        # transmission file; GCS timeCreated is only upload finalization time.
+        try:
+            start_ts = _parse_timestamp(name)
+        except ValueError:
+            time_created_str = data.get("timeCreated")
+            if not time_created_str:
+                logger.warning("Unparseable filename, skipping: %s", name)
+                return
             try:
                 end_ts = datetime.fromisoformat(time_created_str)
                 start_ts = end_ts - timedelta(milliseconds=duration_ms)
             except ValueError:
                 logger.warning(
-                    "Failed to parse GCS timeCreated, falling back to filename: %s",
+                    "Unparseable filename and GCS timeCreated, skipping: "
+                    "name=%s timeCreated=%s",
+                    name,
                     time_created_str,
                 )
-                try:
-                    start_ts = _parse_timestamp(name)
-                except ValueError:
-                    logger.warning("Unparseable filename, skipping: %s", name)
-                    return
-        else:
-            try:
-                start_ts = _parse_timestamp(name)
-            except ValueError:
-                logger.warning("Unparseable filename, skipping: %s", name)
                 return
 
         # Upload MP3 directly to staging bucket.
@@ -246,10 +244,13 @@ def _mirror_to_dev_best_effort(bucket: str, name: str) -> None:
 # Timestamp parsing
 # ---------------------------------------------------------------------------
 def _parse_timestamp(name: str) -> datetime:
-    """Extract UTC timestamp from an Echo recording filename.
+    """Extract the UTC recording start time from an Echo filename.
 
     Expected path: {channel}-{location}/{YYYYMMDD}/{channel}_{YYYYMMDD}_{HHMMSS}.mp3
     Example: fire-ca_almaden_valley/20260326/fire_20260326_143022.mp3
+
+    RTL-Airband writes the suffix when opening the split transmission file, and
+    current Echo configs set ``localtime = False`` so that suffix is UTC.
     """
     filename = name.rsplit("/", 1)[-1]
     stem = Path(filename).stem
