@@ -56,6 +56,20 @@ export function FeedConfigurationView({
       }
     }
   }, [feedsError, onError]);
+
+  const resetForm = () => {
+    setId('');
+    setName('');
+    setSourceType(SourceType.BCFY_FEEDS);
+    setSourceFeedId('');
+    setTags([]);
+  };
+
+  const resetFormAndRefresh = () => {
+    resetForm();
+    queryClient.invalidateQueries({ queryKey: ['listFeeds', token] });
+  };
+
   const createMutation = useMutation({
     mutationFn: (newFeed: FeedCreate) => createFeed(newFeed, token!),
     onSuccess: (data) => {
@@ -78,13 +92,7 @@ export function FeedConfigurationView({
     onSuccess: (data) => {
       triggerSnackbar(`Feed "${data.name}" updated successfully!`);
       setIsEditing(false);
-      // Reset form
-      setId('');
-      setName('');
-      setSourceType(SourceType.BCFY_FEEDS);
-      setSourceFeedId('');
-      setTags([]);
-      queryClient.invalidateQueries({ queryKey: ['listFeeds', token] });
+      resetFormAndRefresh();
     },
     onError: (error: Error) => {
       onError(error, 'Updating Feed Settings');
@@ -93,16 +101,13 @@ export function FeedConfigurationView({
 
   const deleteMutation = useMutation({
     mutationFn: (feedId: string) => deleteFeed(feedId, token!),
-    onSuccess: () => {
+    onSuccess: (_, feedId) => {
       triggerSnackbar('Feed deleted successfully!');
       setIsEditing(false);
-      // Reset form
-      setId('');
-      setName('');
-      setSourceType(SourceType.BCFY_FEEDS);
-      setSourceFeedId('');
-      setTags([]);
-      queryClient.invalidateQueries({ queryKey: ['listFeeds', token] });
+      queryClient.setQueryData<Feed[]>(['listFeeds', token], (oldFeeds) => {
+        return oldFeeds ? oldFeeds.filter((feed) => feed.id !== feedId) : [];
+      });
+      resetFormAndRefresh();
     },
     onError: (error: Error) => {
       onError(error, 'Deleting Feed');
@@ -130,12 +135,7 @@ export function FeedConfigurationView({
 
   const handleCancelEdit = () => {
     setIsEditing(false);
-    // Reset form
-    setId('');
-    setName('');
-    setSourceType(SourceType.BCFY_FEEDS);
-    setSourceFeedId('');
-    setTags([]);
+    resetForm();
   };
 
   const isSubmitting =

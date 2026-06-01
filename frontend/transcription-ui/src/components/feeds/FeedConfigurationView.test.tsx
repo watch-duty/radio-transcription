@@ -604,14 +604,23 @@ describe('FeedConfigurationView', () => {
 
     const editFormCard = screen.getByTestId('feed-config-card');
 
-    // Delete button is present
-    const deleteBtn = within(editFormCard).getByRole('button', {
+    // Feed actions kebab button is present
+    const kebabBtn = within(editFormCard).getByRole('button', {
+      name: /feed actions/i,
+    });
+    expect(kebabBtn).toBeInTheDocument();
+
+    // Click kebab button
+    fireEvent.click(kebabBtn);
+
+    // Kebab menu option "Delete feed" is present
+    const deleteMenuItem = screen.getByRole('menuitem', {
       name: /Delete feed/i,
     });
-    expect(deleteBtn).toBeInTheDocument();
+    expect(deleteMenuItem).toBeInTheDocument();
 
-    // Click delete button
-    fireEvent.click(deleteBtn);
+    // Click Delete feed menu option
+    fireEvent.click(deleteMenuItem);
 
     // Verify confirmation dialog shows
     expect(screen.getByText('Verify Feed Deletion')).toBeInTheDocument();
@@ -621,10 +630,22 @@ describe('FeedConfigurationView', () => {
       )
     ).toBeInTheDocument();
 
-    // Click confirm/delete action
     const confirmDeleteBtn = screen.getByRole('button', {
       name: 'Delete',
     });
+    expect(confirmDeleteBtn).toBeDisabled();
+
+    const confirmInput = screen.getByTestId('delete-confirm-input');
+
+    // Type incorrect ID
+    fireEvent.change(confirmInput, { target: { value: 'wrong-id-xyz' } });
+    expect(confirmDeleteBtn).toBeDisabled();
+
+    // Type correct ID
+    fireEvent.change(confirmInput, { target: { value: '33156' } });
+    expect(confirmDeleteBtn).toBeEnabled();
+
+    // Click confirm/delete action
     fireEvent.click(confirmDeleteBtn);
 
     await waitFor(() => {
@@ -656,11 +677,19 @@ describe('FeedConfigurationView', () => {
     fireEvent.click(editBtn);
 
     const editFormCard = screen.getByTestId('feed-config-card');
-    const deleteBtn = within(editFormCard).getByRole('button', {
+    const kebabBtn = within(editFormCard).getByRole('button', {
+      name: /feed actions/i,
+    });
+    expect(kebabBtn).toBeInTheDocument();
+
+    fireEvent.click(kebabBtn);
+
+    const deleteMenuItem = screen.getByRole('menuitem', {
       name: /Delete feed/i,
     });
+    expect(deleteMenuItem).toBeInTheDocument();
 
-    fireEvent.click(deleteBtn);
+    fireEvent.click(deleteMenuItem);
 
     expect(screen.getByText('Verify Feed Deletion')).toBeInTheDocument();
 
