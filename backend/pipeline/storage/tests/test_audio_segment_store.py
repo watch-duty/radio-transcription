@@ -166,18 +166,64 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
     async def test_list_audio_segments(self) -> None:
         result = await self.store.list_audio_segments()
 
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0].id, str(_SEGMENT_ID))
+        self.assertEqual(len(result.segments), 1)
+        self.assertEqual(result.segments[0].id, str(_SEGMENT_ID))
         self.pool.fetch.assert_called_once_with(
-            audio_segment_queries.LIST_AUDIO_SEGMENTS_SQL, None
+            audio_segment_queries.LIST_AUDIO_SEGMENTS_DESC_SQL,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            101,
         )
 
     async def test_list_audio_segments_with_feed_id(self) -> None:
         result = await self.store.list_audio_segments([str(_FEED_ID)])
 
-        self.assertEqual(len(result), 1)
+        self.assertEqual(len(result.segments), 1)
         self.pool.fetch.assert_called_once_with(
-            audio_segment_queries.LIST_AUDIO_SEGMENTS_SQL, [_FEED_ID]
+            audio_segment_queries.LIST_AUDIO_SEGMENTS_DESC_SQL,
+            [_FEED_ID],
+            None,
+            None,
+            None,
+            None,
+            None,
+            101,
+        )
+
+    async def test_list_audio_segments_with_has_alert(self) -> None:
+        result = await self.store.list_audio_segments(has_alert=True)
+
+        self.assertEqual(len(result.segments), 1)
+        has_alert = True
+        self.pool.fetch.assert_called_once_with(
+            audio_segment_queries.LIST_AUDIO_SEGMENTS_DESC_SQL,
+            None,
+            None,
+            None,
+            None,
+            None,
+            has_alert,
+            101,
+        )
+
+    async def test_list_audio_segments_with_has_alert_false(self) -> None:
+        result = await self.store.list_audio_segments(has_alert=False)
+
+        self.assertEqual(len(result.segments), 1)
+        has_alert = False
+        self.pool.fetch.assert_called_once_with(
+            audio_segment_queries.LIST_AUDIO_SEGMENTS_DESC_SQL,
+            None,
+            None,
+            None,
+            None,
+            None,
+            has_alert,
+            101,
         )
 
     async def test_list_audio_segments_invalid_feed_id(self) -> None:
