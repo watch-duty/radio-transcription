@@ -3,7 +3,13 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from backend.pipeline.storage.audio_segment_store import SortOrder
+
+from .models import ListAudioSegmentsResponse
+
 if TYPE_CHECKING:
+    import datetime
+
     from backend.pipeline.storage.audio_segment_store import AudioSegmentStore
 
     from .models import (
@@ -23,11 +29,29 @@ class AudioSegmentService:
         self._store = store
 
     async def list_audio_segments(
-        self, feed_ids: list[str] | None = None
-    ) -> list[AudioSegment]:
-        """Lists all audio segments, optionally filtered by feed IDs."""
-        result = await self._store.list_audio_segments(feed_ids=feed_ids)
-        return result.segments
+        self,
+        feed_ids: list[str] | None = None,
+        limit: int = 100,
+        next_token: str | None = None,
+        start_time: datetime.datetime | None = None,
+        end_time: datetime.datetime | None = None,
+        order: SortOrder = SortOrder.DESC,
+        *,
+        has_alert: bool | None = None,
+    ) -> ListAudioSegmentsResponse:
+        """Lists all audio segments with annotations and pagination."""
+        result = await self._store.list_audio_segments(
+            feed_ids=feed_ids,
+            limit=limit,
+            next_token=next_token,
+            start_time=start_time,
+            end_time=end_time,
+            order=order,
+            has_alert=has_alert,
+        )
+        return ListAudioSegmentsResponse(
+            segments=result.segments, next_token=result.next_token
+        )
 
     async def create_audio_segment(
         self, segment: AudioSegmentCreate
