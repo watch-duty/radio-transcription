@@ -511,6 +511,85 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         self.assertEqual(mock_make_request.call_count, 4)
         self.assertEqual(mock_sleep.call_count, 2)
 
+    @patch("requests.Session.get")
+    def test_keyword_match_word_boundaries(self, mock_get) -> None:
+        """Test that KEYWORD_MATCH rules enforce word boundaries."""
+        mock_rule = {
+            "rule_id": "field_fire_rule",
+            "rule_name": "Field Fire Rule",
+            "is_active": True,
+            "scope": {"level": "GLOBAL", "target_feeds": []},
+            "conditions": {
+                "evaluation_type": "KEYWORD_MATCH",
+                "operator": "ANY",
+                "keywords": ["field fire"],
+                "case_sensitive": False,
+            },
+        }
+        mock_get.return_value.json.return_value = [mock_rule]
+        mock_get.return_value.status_code = 200
+
+        # Should NOT match Fairfield Fire because "field fire" is inside a word
+        text = "Fairfield Fire, Fairfield Fire, Tavolack and Flower Hill Road"
+        result = self.remote_evaluator.evaluate(text, feed_id="test_feed")
+        self.assertFalse(
+            result["is_flagged"], "Should not match substring 'Fairfield Fire'"
+        )
+
+        # Should match standalone "field fire"
+        text2 = "There is a field fire on Flower Hill Road"
+        result2 = self.remote_evaluator.evaluate(text2, feed_id="test_feed")
+        self.assertTrue(
+            result2["is_flagged"], "Should match standalone 'field fire'"
+        )
+
+    @patch("requests.Session.get")
+    def test_evaluate_empty_keyword_set_all(self, mock_get) -> None:
+        """Test that an ALL rule with empty keywords does not trigger."""
+        mock_rule = {
+            "rule_id": "malformed_all_rule",
+            "rule_name": "Malformed ALL Rule",
+            "is_active": True,
+            "scope": {"level": "GLOBAL", "target_feeds": []},
+            "conditions": {
+                "evaluation_type": "KEYWORD_MATCH",
+                "operator": "ALL",
+                "keywords": [],
+                "case_sensitive": False,
+            },
+        }
+        mock_get.return_value.json.return_value = [mock_rule]
+        mock_get.return_value.status_code = 200
+
+        # Non-empty ordinary transcript must NOT trigger
+        result = self.remote_evaluator.evaluate(
+            "There is a fire on Flower Hill Road", feed_id="test_feed"
+        )
+        self.assertFalse(result["is_flagged"])
+
+    @patch("requests.Session.get")
+    def test_evaluate_empty_string_keywords(self, mock_get) -> None:
+        """Test that whitespace-only or empty-string keywords are ignored."""
+        mock_rule = {
+            "rule_id": "empty_string_rule",
+            "rule_name": "Empty String Rule",
+            "is_active": True,
+            "scope": {"level": "GLOBAL", "target_feeds": []},
+            "conditions": {
+                "evaluation_type": "KEYWORD_MATCH",
+                "operator": "ALL",
+                "keywords": ["", "   ", "  "],
+                "case_sensitive": False,
+            },
+        }
+        mock_get.return_value.json.return_value = [mock_rule]
+        mock_get.return_value.status_code = 200
+
+        result = self.remote_evaluator.evaluate(
+            "This is a test transcript.", feed_id="test_feed"
+        )
+        self.assertFalse(result["is_flagged"])
+
 
 if __name__ == "__main__":
     unittest.main()

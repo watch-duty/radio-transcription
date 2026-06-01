@@ -380,6 +380,7 @@ export function FeedTable({
         >
           <FeedStatusIndicator
             status={feed.status}
+            substatus={feed.substatus}
             lastHeartbeat={feed.lastHeartbeat}
           />
         </TableCell>
@@ -608,7 +609,7 @@ export function FeedTable({
             <Box sx={{ flexGrow: 1, minWidth: 120, maxWidth: { sm: 160 } }}>
               <MultiSelectFilter
                 label="Status"
-                options={['Active', 'Inactive']}
+                options={['Active', 'Inactive', 'Error']}
                 value={appliedStatuses}
                 onChange={setAppliedStatuses}
                 size="small"

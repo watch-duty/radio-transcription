@@ -96,7 +96,16 @@ function getArchiveUrl(
 }
 
 function convertFeedStatusBackend(status: BackendFeedStatus): FeedStatus {
-  return status === 'active' ? 'active' : 'inactive';
+  switch (status) {
+    case 'active':
+      return 'active';
+    case 'quarantined':
+    case 'failing':
+      return 'error';
+    case 'deactivated':
+    default:
+      return 'inactive';
+  }
 }
 
 function convertFeedBackend(response: FeedBackend): Feed {
@@ -109,6 +118,7 @@ function convertFeedBackend(response: FeedBackend): Feed {
     sourceUrl: getSourceUrl(response.source_type, response.source_feed_id),
     archiveUrl: getArchiveUrl(response.source_type, response.source_feed_id),
     status: convertFeedStatusBackend(response.status),
+    substatus: response.status,
     lastHeartbeat: response.last_heartbeat ?? undefined,
     tags: response.tags,
   };
