@@ -264,7 +264,9 @@ export function AudioDisplay({
   ]);
 
   return (
-    <Box sx={{ display: 'flex', alignItems: 'flex-start', width: '100%' }}>
+    <Box
+      sx={{ display: 'flex', alignItems: 'flex-start', width: '100%', mb: 1 }}
+    >
       <Box
         sx={{ display: 'flex', mr: 1, alignItems: 'center', height: '60px' }}
       >
@@ -314,17 +316,22 @@ export function AudioDisplay({
             </Box>
           )}
         </Paper>
-        {transcripts.length > 0 && (
-          <Box
-            sx={{ display: 'flex', justifyContent: 'space-between', mt: 0.5 }}
-          >
-            {Array.from({ length: 4 }).map((_, i) => (
-              <Typography key={i} variant="caption" color="text.secondary">
-                {formatTime(startTime + (i / 3) * windowDuration)}
-              </Typography>
-            ))}
-          </Box>
-        )}
+        <Box
+          sx={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            mt: 0.5,
+            // Reserve space for the time labels even when there are no
+            // transcripts so the UI doesn't jump when transcripts are loaded.
+            visibility: transcripts.length > 0 ? 'visible' : 'hidden',
+          }}
+        >
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Typography key={i} variant="caption" color="text.secondary">
+              {formatTime(startTime + (i / 3) * windowDuration)}
+            </Typography>
+          ))}
+        </Box>
       </Box>
     </Box>
   );

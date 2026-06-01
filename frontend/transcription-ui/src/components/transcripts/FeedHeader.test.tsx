@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, screen } from '@testing-library/react';
 import type { Feed } from '@transcription/common';
+import { SourceType } from '@transcription/common';
 
+import { renderWithRouter } from '../../test/testUtils';
 import FeedHeader from './FeedHeader';
 
 describe('FeedHeader', () => {
@@ -12,10 +14,11 @@ describe('FeedHeader', () => {
     id: 'feed123',
     name: 'Test Scanner Feed',
     status: 'active',
+    substatus: 'active',
     lastHeartbeat: new Date().toISOString(),
     sourceUrl: 'https://test.example/source',
     archiveUrl: 'https://test.example/archives',
-    sourceType: 'bcfy_calls',
+    sourceType: SourceType.BCFY_CALLS,
   };
 
   beforeEach(() => {
@@ -32,22 +35,28 @@ describe('FeedHeader', () => {
   });
 
   it('renders feed name and status when available', () => {
-    render(
+    renderWithRouter(
       <FeedHeader
+        feeds={[]}
         searchedFeed={mockFeed}
+        onSelectFeed={vi.fn()}
+        feedsLoading={false}
         status="active"
         triggerSnackbar={mockTriggerSnackbar}
       />
     );
 
-    expect(screen.getByText('Test Scanner Feed')).toBeTruthy();
+    expect(screen.getAllByText('Test Scanner Feed')[0]).toBeTruthy();
     expect(screen.getByText('Active')).toBeTruthy();
   });
 
   it('displays the source type chip in the header', () => {
-    render(
+    renderWithRouter(
       <FeedHeader
+        feeds={[]}
         searchedFeed={mockFeed}
+        onSelectFeed={vi.fn()}
+        feedsLoading={false}
         triggerSnackbar={mockTriggerSnackbar}
       />
     );
@@ -56,9 +65,12 @@ describe('FeedHeader', () => {
   });
 
   it('shows source url link when sourceUrl is available', () => {
-    render(
+    renderWithRouter(
       <FeedHeader
+        feeds={[]}
         searchedFeed={mockFeed}
+        onSelectFeed={vi.fn()}
+        feedsLoading={false}
         sourceUrl="https://test.example/source"
         triggerSnackbar={mockTriggerSnackbar}
       />
@@ -72,9 +84,12 @@ describe('FeedHeader', () => {
   });
 
   it('shows archive url link when archiveUrl is available', () => {
-    render(
+    renderWithRouter(
       <FeedHeader
+        feeds={[]}
         searchedFeed={mockFeed}
+        onSelectFeed={vi.fn()}
+        feedsLoading={false}
         archiveUrl="https://test.example/archives"
         triggerSnackbar={mockTriggerSnackbar}
       />
@@ -88,13 +103,16 @@ describe('FeedHeader', () => {
   });
 
   it('does not render links when neither sourceUrl nor archiveUrl is supplied', () => {
-    render(
+    renderWithRouter(
       <FeedHeader
+        feeds={[]}
         searchedFeed={{
           ...mockFeed,
           sourceUrl: undefined,
           archiveUrl: undefined,
         }}
+        onSelectFeed={vi.fn()}
+        feedsLoading={false}
         triggerSnackbar={mockTriggerSnackbar}
       />
     );
@@ -111,9 +129,12 @@ describe('FeedHeader', () => {
       },
     });
 
-    render(
+    renderWithRouter(
       <FeedHeader
+        feeds={[]}
         searchedFeed={mockFeed}
+        onSelectFeed={vi.fn()}
+        feedsLoading={false}
         triggerSnackbar={mockTriggerSnackbar}
       />
     );
@@ -138,9 +159,12 @@ describe('FeedHeader', () => {
     vi.setSystemTime(fixedNow);
 
     try {
-      render(
+      renderWithRouter(
         <FeedHeader
+          feeds={[]}
           searchedFeed={mockFeed}
+          onSelectFeed={vi.fn()}
+          feedsLoading={false}
           status="active"
           lastHeartbeat={new Date(
             fixedNow.getTime() - 5 * 60 * 1000

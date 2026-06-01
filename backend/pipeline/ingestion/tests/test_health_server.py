@@ -19,7 +19,7 @@ def _fake_settings(
     startup_grace: float = 120.0,
     heartbeat_interval: float = 15.0,
 ) -> mock.Mock:
-    """Duck-typed stand-in for NormalizerSettings — only reads the fields /healthz uses."""
+    """Duck-typed stand-in for CollectorSettings — only reads the fields /healthz uses."""
     settings = mock.Mock()
     settings.health_check_startup_grace_sec = startup_grace
     settings.heartbeat_interval_sec = heartbeat_interval

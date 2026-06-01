@@ -161,7 +161,7 @@ export default function AppContainer({
             </ListItemButton>
           </ListItem>
           <ListItem disablePadding>
-            <ListItemButton onClick={() => handleItemClick('/feeds')} disabled>
+            <ListItemButton onClick={() => handleItemClick('/feeds')}>
               <ListItemIcon>
                 <AppRegistrationIcon />
               </ListItemIcon>
