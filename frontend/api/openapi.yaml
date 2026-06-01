@@ -1476,7 +1476,7 @@ paths:
       security: []
       parameters: []
       x-google-backend: radio-transcription-api
-  /api/v1/audio:
+  /api/v1/audioSegments:
     get:
       operationId: ListAudioSegments
       responses:
@@ -1522,7 +1522,7 @@ paths:
                   - message
                 type: object
       tags:
-        - Audio
+        - Audio Segments
       security:
         - google_id_token: []
       parameters:
