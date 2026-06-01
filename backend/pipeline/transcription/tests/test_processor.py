@@ -343,9 +343,14 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         ]
         self.assertIn("Transient Failure", call_data["errors"][0])
 
-    def test_process_event_audio_too_long_aborts_early(self) -> None:
-        """Verifies that audio duration > 60 seconds aborts early without calling the transcriber."""
+    def test_process_event_audio_too_long_permanent_failure(self) -> None:
+        """Verifies that when audio duration exceeds the transcriber's limit,
+        the transcriber raises ValueError and it is treated as a permanent failure.
+        """
         mock_transcriber = MagicMock()
+        mock_transcriber.transcribe.side_effect = ValueError(
+            "Audio payload too long for synchronous API"
+        )
         mock_publisher = MagicMock()
         mock_audio_segments_client = MagicMock()
 
@@ -388,18 +393,20 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             audio_segments_client=mock_audio_segments_client,
         )
 
-        # Must return cleanly without raising or calling transcriber
+        # Must return cleanly without raising, acknowledging the message
         processor.process_event(cloud_event)
 
-        mock_transcriber.transcribe.assert_not_called()
+        # Transcriber is called and raises the ValueError
+        mock_transcriber.transcribe.assert_called_once()
         mock_publisher.publish.assert_not_called()
 
-        # Annotation should specify that the audio payload was too long
+        # Annotation should specify that a permanent failure occurred due to the ValueError
         mock_audio_segments_client.add_audio_segment_annotation.assert_called_once()
         call_data = mock_audio_segments_client.add_audio_segment_annotation.call_args.kwargs[
             "data"
         ]
         self.assertEqual(call_data["text"], "")
+        self.assertIn("Permanent Failure", call_data["errors"][0])
         self.assertIn("Audio payload too long", call_data["errors"][0])
 
     def test_process_event_google_api_transient_error_propagates(self) -> None:

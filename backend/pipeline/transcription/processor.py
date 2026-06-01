@@ -87,18 +87,6 @@ class TranscriptionEventProcessor:
                 # Determine audio duration from start and end timestamps
                 duration_ms = self._get_duration_ms(claim)
 
-                # Fail fast if audio length exceeds maximum limit for synchronous API
-                if duration_ms > 60000:
-                    msg = f"Audio payload too long for synchronous API: {duration_ms / 1000:.2f}s"
-                    logger.error(
-                        "Permanent Failure: %s for transmission %s (feed %s)",
-                        msg,
-                        transmission_id,
-                        feed_id,
-                    )
-                    errors.append(f"Permanent Failure: {msg}")
-                    return
-
                 # Retrieve active transcriber and run Speech API
                 transcript = self.transcriber.transcribe(
                     uri=claim.canonical_audio_uri,
