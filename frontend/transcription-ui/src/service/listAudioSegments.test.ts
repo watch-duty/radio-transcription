@@ -12,7 +12,7 @@ describe('listAudioSegments', () => {
 
   it('should fetch audio segments successfully', async () => {
     const mockData = {
-      audioSegments: [
+      segments: [
         {
           id: 'segment-1',
           feedId: 'feed123',
@@ -60,7 +60,7 @@ describe('listAudioSegments', () => {
       })
     );
     expect(result).toEqual({
-      audioSegments: mockData.audioSegments,
+      segments: mockData.segments,
       nextToken: 'next-page-token',
     });
   });
@@ -68,7 +68,7 @@ describe('listAudioSegments', () => {
   it('should include isAlert in query parameter when specified', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      text: async () => JSON.stringify({ audioSegments: [] }),
+      text: async () => JSON.stringify({ segments: [] }),
       headers: {
         get: (key: string) =>
           key === 'content-type' ? 'application/json' : null,
@@ -94,7 +94,7 @@ describe('listAudioSegments', () => {
     );
   });
 
-  it('should return empty array if audioSegments missing in response', async () => {
+  it('should return empty array if segments missing in response', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       text: async () => JSON.stringify({}),
@@ -106,7 +106,7 @@ describe('listAudioSegments', () => {
 
     const result = await listAudioSegments('feed123', 'tokenXYZ', 100);
 
-    expect(result).toEqual({ audioSegments: [], nextToken: undefined });
+    expect(result).toEqual({ segments: [], nextToken: undefined });
   });
 
   it('should throw error if response not ok', async () => {
