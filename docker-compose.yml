@@ -313,7 +313,7 @@ services:
       - ./local_dev/LOCAL.env
     environment:
       - TRANSCRIPTS_API_URL=http://transcripts-api:8087/v1/transcripts
-      - AUDIO_API_URL=http://audio-segments-api:8091/v1/audio_segments
+      - AUDIO_SEGMENTS_API_URL=http://audio-segments-api:8091/v1/audio_segments
     networks:
       - pipeline-network
     depends_on:

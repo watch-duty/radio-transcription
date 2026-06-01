@@ -16,7 +16,7 @@ import {
   Tags,
 } from 'tsoa';
 
-import { AUDIO_API_URL } from '../config.js';
+import { AUDIO_SEGMENTS_API_URL } from '../config.js';
 import { HttpError, handleBackendError } from '../utils.js';
 
 interface BaseAnnotationBackend {
@@ -117,9 +117,9 @@ export class AudioController extends Controller {
       }
 
       const auth = new GoogleAuth();
-      const client = await auth.getIdTokenClient(AUDIO_API_URL!);
+      const client = await auth.getIdTokenClient(AUDIO_SEGMENTS_API_URL!);
       const response = await client.request({
-        url: `${AUDIO_API_URL}?${queryParams.toString()}`,
+        url: `${AUDIO_SEGMENTS_API_URL}?${queryParams.toString()}`,
         method: 'GET',
       });
 
