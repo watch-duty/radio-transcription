@@ -197,10 +197,10 @@ class TestHandle:
         mock_store.record_heartbeat.assert_called_once_with(feed_id)
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_gcs_time_created_used_for_start_ts(
+    def test_filename_timestamp_wins_over_gcs_time_created(
         self, mock_store, _patch_globals
     ) -> None:
-        """Verifies that when GCS timeCreated metadata is present, it is used to calculate start_ts (timeCreated - duration_ms)."""
+        """Verifies Echo recording time comes from the filename, not upload time."""
         feed_id = uuid.uuid4()
         self._set_feed(
             mock_store,
@@ -213,16 +213,44 @@ class TestHandle:
             },
         )
 
-        event = self._make_event()
-        # Add timeCreated to the CloudEvent data
+        event = self._make_event(
+            name="fire-ca/20260531/Middlebury_Regional_EMS_20260531_002818.mp3"
+        )
+        event.data["timeCreated"] = "2026-05-31T01:03:57.708000Z"
+
+        _handle(event)
+
+        pub = _patch_globals["publisher"]
+        pub.publish.assert_called_once()
+        publish_args, _ = pub.publish.call_args
+        chunk = AudioChunk()
+        chunk.ParseFromString(publish_args[1])
+
+        expected_ts = datetime(2026, 5, 31, 0, 28, 18, tzinfo=UTC)
+        assert chunk.start_timestamp.ToDatetime(UTC) == expected_ts
+
+    @pytest.mark.usefixtures("_patch_globals")
+    def test_gcs_time_created_fallback_for_unparseable_filename(
+        self, mock_store, _patch_globals
+    ) -> None:
+        """Verifies GCS time is only a fallback when the filename lacks a timestamp."""
+        feed_id = uuid.uuid4()
+        self._set_feed(
+            mock_store,
+            {
+                "id": feed_id,
+                "name": "Central Fire",
+                "external_id": "ext-id",
+                "status": "active",
+                "failure_count": 0,
+            },
+        )
+
+        event = self._make_event(name="fire-ca/20260326/badname.mp3")
         event.data["timeCreated"] = "2026-05-19T16:48:12.184784Z"
 
         _handle(event)
 
-        # Verify AudioChunk published with the correctly calculated start_ts
-        # GCS timeCreated = 16:48:12.184784 UTC
-        # get_audio_duration returns 15000ms (15s)
-        # Expected start_ts = 16:48:12.184784 - 15s = 16:47:57.184784 UTC
         pub = _patch_globals["publisher"]
         pub.publish.assert_called_once()
         publish_args, _ = pub.publish.call_args
@@ -328,6 +356,29 @@ class TestHandle:
         mock_store.resolve_echo_feed.assert_called_once()
         mock_store.record_heartbeat.assert_not_called()
         mock_store.record_failure.assert_not_called()
+
+    @pytest.mark.usefixtures("_patch_globals")
+    def test_malformed_filename_with_invalid_gcs_time_skips_gracefully(
+        self, mock_store, _patch_globals
+    ) -> None:
+        self._set_feed(
+            mock_store,
+            {
+                "id": uuid.uuid4(),
+                "name": "Central Fire",
+                "external_id": "ext-id",
+                "status": "active",
+                "failure_count": 0,
+            },
+        )
+        event = self._make_event(name="fire-ca/20260326/badname.mp3")
+        event.data["timeCreated"] = "not-a-timestamp"
+
+        _handle(event)
+
+        mock_store.record_heartbeat.assert_not_called()
+        mock_store.record_failure.assert_not_called()
+        _patch_globals["publisher"].publish.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_publish_failure_records_in_db(
