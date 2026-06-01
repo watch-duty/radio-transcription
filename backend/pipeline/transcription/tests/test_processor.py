@@ -277,7 +277,7 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         mock_transcriber = MagicMock()
         # Simulate transient gRPC UNAVAILABLE error
         grpc_err = grpc.RpcError()
-        # Mock the code method of grpc.RpcError
+        # Mock the code method of grpc.RpcError using setattr to satisfy the type checker
         mock_code = MagicMock()
         mock_code.return_value = grpc.StatusCode.UNAVAILABLE
         grpc_err.code = mock_code
