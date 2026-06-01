@@ -42,6 +42,19 @@ class RequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         """Returns the list of received requests or mocks FN API."""
         if self.path.startswith("/api/audio/"):
+            auth_header = self.headers.get("Authorization")
+            expected_auth = "Basic bW9jay11c2VyOm1vY2stcGFzc3dvcmQ="
+
+            if auth_header != expected_auth:
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", 'Basic realm="FN API"')
+                self.end_headers()
+                self.wfile.write(b"Unauthorized")
+                logger.warning(
+                    "Mock Server: Unauthorized access attempt to %s", self.path
+                )
+                return
+
             self.send_response(200)
             self.send_header("Content-type", "application/json")
             self.end_headers()
