@@ -3,12 +3,18 @@ import { useState } from 'react';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import MoreVertIcon from '@mui/icons-material/MoreVert';
 import TagIcon from '@mui/icons-material/Tag';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
 import CircularProgress from '@mui/material/CircularProgress';
+import Dialog from '@mui/material/Dialog';
+import DialogActions from '@mui/material/DialogActions';
+import DialogContent from '@mui/material/DialogContent';
+import DialogContentText from '@mui/material/DialogContentText';
+import DialogTitle from '@mui/material/DialogTitle';
 import Divider from '@mui/material/Divider';
 import FormControl from '@mui/material/FormControl';
 import FormHelperText from '@mui/material/FormHelperText';
@@ -16,6 +22,7 @@ import Grid from '@mui/material/Grid';
 import IconButton from '@mui/material/IconButton';
 import InputAdornment from '@mui/material/InputAdornment';
 import InputLabel from '@mui/material/InputLabel';
+import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import Select from '@mui/material/Select';
 import Stack from '@mui/material/Stack';
@@ -63,6 +70,7 @@ interface FeedConfigurationEditProps {
   setFeedTags: (tags: Tag[]) => void;
   onCreateFeed: (payload: FeedCreate) => Promise<void>;
   onUpdateFeed: (payload: FeedUpdate) => Promise<void>;
+  onDeleteFeed?: () => Promise<void>;
   onCancel: () => void;
   isSubmitting: boolean;
 }
@@ -79,6 +87,7 @@ export function FeedConfigurationEdit({
   setFeedTags,
   onCreateFeed,
   onUpdateFeed,
+  onDeleteFeed,
   onCancel,
   isSubmitting,
 }: FeedConfigurationEditProps) {
@@ -90,6 +99,25 @@ export function FeedConfigurationEdit({
   const [validationErrors, setValidationErrors] = useState<
     Record<string, string>
   >({});
+
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
+  const menuOpen = Boolean(menuAnchorEl);
+  const [confirmFeedSourceId, setConfirmFeedSourceId] = useState('');
+
+  const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
+    setMenuAnchorEl(event.currentTarget);
+  };
+
+  const handleMenuClose = () => {
+    setMenuAnchorEl(null);
+  };
+
+  const handleDeleteClick = () => {
+    handleMenuClose();
+    setConfirmFeedSourceId('');
+    setIsDeleteDialogOpen(true);
+  };
 
   const handleKeyChange = (val: string) => {
     setNewTagKey(val);
@@ -119,6 +147,7 @@ export function FeedConfigurationEdit({
     setNewTagKey('');
     setNewTagValue('');
     setValidationErrors({});
+    setIsDeleteDialogOpen(false);
   };
 
   // Tag interactions
@@ -277,6 +306,14 @@ export function FeedConfigurationEdit({
       }
     } catch {
       // Errors are typically caught and propagated in Mutate onError side-effects
+    }
+  };
+
+  const handleDeleteConfirm = async () => {
+    setConfirmFeedSourceId('');
+    setIsDeleteDialogOpen(false);
+    if (onDeleteFeed) {
+      await onDeleteFeed();
     }
   };
 
@@ -539,8 +576,10 @@ export function FeedConfigurationEdit({
               sx={{
                 display: 'flex',
                 justifyContent: 'flex-end',
-                gap: 2,
+                alignItems: 'center',
+                width: '100%',
                 mt: 1,
+                gap: 2,
               }}
             >
               {isEditing && (
@@ -554,24 +593,121 @@ export function FeedConfigurationEdit({
                 </Button>
               )}
 
-              <Button
-                type="submit"
-                variant="contained"
-                disabled={isSubmitting}
-                sx={{ textTransform: 'none' }}
-              >
-                {isSubmitting ? (
-                  <CircularProgress size={20} color="inherit" />
-                ) : isEditing ? (
-                  'Save changes'
-                ) : (
-                  'Register feed'
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Button
+                  type="submit"
+                  variant="contained"
+                  disabled={isSubmitting}
+                  sx={{ textTransform: 'none' }}
+                >
+                  {isSubmitting ? (
+                    <CircularProgress size={20} color="inherit" />
+                  ) : isEditing ? (
+                    'Save changes'
+                  ) : (
+                    'Register feed'
+                  )}
+                </Button>
+
+                {isEditing && (
+                  <>
+                    <IconButton
+                      aria-label="feed actions"
+                      aria-controls={menuOpen ? 'feed-actions-menu' : undefined}
+                      aria-haspopup="true"
+                      aria-expanded={menuOpen ? 'true' : undefined}
+                      onClick={handleMenuOpen}
+                      disabled={isSubmitting}
+                      size="small"
+                    >
+                      <MoreVertIcon />
+                    </IconButton>
+                    <Menu
+                      id="feed-actions-menu"
+                      anchorEl={menuAnchorEl}
+                      open={menuOpen}
+                      onClose={handleMenuClose}
+                      transformOrigin={{
+                        vertical: 'top',
+                        horizontal: 'right',
+                      }}
+                      anchorOrigin={{
+                        vertical: 'bottom',
+                        horizontal: 'right',
+                      }}
+                    >
+                      <MenuItem
+                        onClick={handleDeleteClick}
+                        disabled={isSubmitting}
+                        sx={{ color: 'error.main' }}
+                      >
+                        Delete feed
+                      </MenuItem>
+                    </Menu>
+                  </>
                 )}
-              </Button>
+              </Box>
             </Box>
           </Stack>
         </Box>
       </CardContent>
+
+      <Dialog
+        open={isDeleteDialogOpen}
+        onClose={() => {
+          setConfirmFeedSourceId('');
+          setIsDeleteDialogOpen(false);
+        }}
+        aria-labelledby="delete-feed-dialog-title"
+        aria-describedby="delete-feed-dialog-description"
+      >
+        <DialogTitle id="delete-feed-dialog-title">
+          Verify Feed Deletion
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText id="delete-feed-dialog-description" sx={{ mb: 2 }}>
+            Are you sure you want to delete the feed, along with associated
+            metadata, transcripts, and annotations?
+          </DialogContentText>
+          <DialogContentText sx={{ mb: 1, fontWeight: 'bold' }}>
+            To confirm, type the Source Feed ID "{feedSourceId}" below:
+          </DialogContentText>
+          <TextField
+            fullWidth
+            size="small"
+            variant="outlined"
+            value={confirmFeedSourceId}
+            onChange={(e) => setConfirmFeedSourceId(e.target.value)}
+            placeholder={feedSourceId}
+            disabled={isSubmitting}
+            slotProps={{
+              htmlInput: { 'data-testid': 'delete-confirm-input' },
+            }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => {
+              setConfirmFeedSourceId('');
+              setIsDeleteDialogOpen(false);
+            }}
+            color="primary"
+            disabled={isSubmitting}
+            sx={{ textTransform: 'none' }}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleDeleteConfirm}
+            color="error"
+            variant="contained"
+            disabled={confirmFeedSourceId !== feedSourceId || isSubmitting}
+            sx={{ textTransform: 'none' }}
+          >
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Card>
   );
 }
