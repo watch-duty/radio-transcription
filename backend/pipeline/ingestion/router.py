@@ -6,6 +6,9 @@ from typing import TYPE_CHECKING
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     bcfy_calls_collector,
 )
+from backend.pipeline.ingestion.collectors.fire_notifications import (
+    collector as fn_collector_module,
+)
 from backend.pipeline.ingestion.collectors.icecast import icecast_collector
 from backend.pipeline.ingestion.collectors.openmhz import (
     collector as openmhz_collector_module,
@@ -21,7 +24,7 @@ if TYPE_CHECKING:
         CaptureResources,
         CollectorFn,
     )
-    from backend.pipeline.ingestion.settings import NormalizerSettings
+    from backend.pipeline.ingestion.settings import CollectorSettings
     from backend.pipeline.storage.feed_store import LeasedFeed
 
 BCFY_FEEDS_URL_BASE = os.environ.get(
@@ -31,6 +34,7 @@ BCFY_CALLS_URL_BASE = os.environ.get(
     "BCFY_CALLS_URL_BASE", "https://api.bcfy.io/calls/v1/live/"
 )
 OPENMHZ_URL_BASE = "https://api.openmhz.com/"
+FIRE_NOTIFICATIONS_URL_BASE = os.environ.get("FIRE_NOTIFICATIONS_URL_BASE", "")
 
 # Typed registry: ty/mypy checks each value matches CollectorFn.
 # Adding a new collector = 1 import + 1 dict entry.
@@ -47,6 +51,10 @@ _COLLECTORS: dict[SourceType, tuple[CollectorFn, str]] = {
         openmhz_collector_module.openmhz_collector,
         OPENMHZ_URL_BASE,
     ),
+    SourceType.FIRE_NOTIFICATIONS: (
+        fn_collector_module.fire_notifications_collector,
+        FIRE_NOTIFICATIONS_URL_BASE,
+    ),
 }
 
 
@@ -56,7 +64,7 @@ def supported_source_types() -> list[str]:
 
 
 def resolve_topic_path(
-    source_type: SourceType, settings: NormalizerSettings
+    source_type: SourceType, settings: CollectorSettings
 ) -> str:
     """Determines the Pub/Sub topic path based on the source type."""
     if source_type == SourceType.BCFY_FEEDS:

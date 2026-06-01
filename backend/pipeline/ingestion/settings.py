@@ -27,6 +27,7 @@ _DEFAULT_CAPS: dict[SourceType, int] = {
     SourceType.BCFY_FEEDS: 240,
     SourceType.BCFY_CALLS: 600,
     SourceType.OPENMHZ: 900,
+    SourceType.FIRE_NOTIFICATIONS: 300,
 }
 
 
@@ -48,9 +49,9 @@ def _load_caps_from_env() -> dict[SourceType, int]:
 
 
 @dataclass(frozen=True, kw_only=True)
-class NormalizerSettings:
+class CollectorSettings:
     """
-    Configuration for the NormalizerRuntime, loaded from environment variables.
+    Configuration for the CollectorRuntime, loaded from environment variables.
 
     All fields have sensible defaults except ``audio_staging_bucket`` and
     ``pubsub_topic_path`` which are required. AlloyDB connection parameters

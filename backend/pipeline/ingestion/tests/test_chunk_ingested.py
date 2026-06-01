@@ -28,8 +28,8 @@ from unittest import mock
 import aiohttp
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
+from backend.pipeline.ingestion.collector_runtime import CollectorRuntime
 from backend.pipeline.ingestion.models import CapturedChunk, CaptureResources
-from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
 from backend.pipeline.storage.feed_store import (
     LeasedFeed,
     SourceType,
@@ -54,7 +54,7 @@ _GOLDEN_DIR = pathlib.Path(__file__).parent / "golden"
 
 
 def _make_settings(**overrides: object) -> mock.MagicMock:
-    """Mirror of test_runtime._make_settings: real-valued mock NormalizerSettings."""
+    """Mirror of test_collector_runtime._make_settings: real-valued mock CollectorSettings."""
     defaults: dict[str, object] = {
         "worker_id": _WORKER_ID,
         "max_feeds_per_worker": 250,
@@ -97,7 +97,7 @@ def _mock_pubsub_publish(
     message_id: str = "test-message-id",
 ) -> mock._patch:
     return mock.patch(
-        "backend.pipeline.ingestion.normalizer_runtime."
+        "backend.pipeline.ingestion.collector_runtime."
         "gcp_helper.publish_audio_chunk",
         new_callable=mock.AsyncMock,
         return_value=message_id,
@@ -106,7 +106,7 @@ def _mock_pubsub_publish(
 
 def _mock_upload_audio(gcs_path: str = "gs://b/p") -> mock._patch:
     return mock.patch(
-        "backend.pipeline.ingestion.normalizer_runtime."
+        "backend.pipeline.ingestion.collector_runtime."
         "gcp_helper.upload_staged_audio",
         new_callable=mock.AsyncMock,
         return_value=gcs_path,
@@ -132,7 +132,7 @@ def _build_runtime_for_one_chunk(
     chunk: CapturedChunk,
     *,
     bookmark_ok: bool,
-) -> NormalizerRuntime:
+) -> CollectorRuntime:
     """Construct a runtime wired to yield a single chunk then stop.
 
     When bookmark_ok=True we set shutdown so _process_feed returns cleanly
@@ -148,7 +148,7 @@ def _build_runtime_for_one_chunk(
     ):
         yield chunk
 
-    rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
+    rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
     rt._shutdown = asyncio.Event()
     rt._lease_lost = asyncio.Event()
     rt._capture_resources = CaptureResources(
@@ -175,7 +175,7 @@ class TestChunkIngestedEmit(unittest.IsolatedAsyncioTestCase):
             _mock_upload_audio(),
             _mock_pubsub_publish(),
             self.assertLogs(
-                "backend.pipeline.ingestion.normalizer_runtime",
+                "backend.pipeline.ingestion.collector_runtime",
                 level=logging.INFO,
             ) as cm,
         ):
@@ -188,8 +188,7 @@ class TestChunkIngestedEmit(unittest.IsolatedAsyncioTestCase):
                 # "process dies here" semantics.
                 with (
                     mock.patch(
-                        "backend.pipeline.ingestion."
-                        "normalizer_runtime.os._exit",
+                        "backend.pipeline.ingestion.collector_runtime.os._exit",
                         side_effect=SystemExit(1),
                     ),
                     mock.patch("logging.shutdown"),

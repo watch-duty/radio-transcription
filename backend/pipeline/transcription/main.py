@@ -11,6 +11,7 @@ import functions_framework
 from cloudevents.http.event import CloudEvent
 from google.cloud import pubsub_v1
 
+from backend.pipeline.common.clients import audio_segments_client
 from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.normalization.common.enums import TranscriberType
@@ -88,11 +89,25 @@ class TranscriptionServiceContainer:
             transcriber = self.get_transcriber(project_id)
             publisher = self.get_publisher()
 
+            api_url = os.environ.get("AUDIO_SEGMENTS_API_URL")
+            audio_segments_client_instance = None
+            if api_url:
+                logger.info("Initializing AudioSegmentsClient at: %s", api_url)
+                audio_segments_client_instance = (
+                    audio_segments_client.AudioSegmentsClient(api_url=api_url)
+                )
+            else:
+                logger.error(
+                    "Missing AUDIO_SEGMENTS_API_URL environment variable."
+                    "Transcripts will not be written to DB."
+                )
+
             self._processor = TranscriptionEventProcessor(
                 project_id=project_id,
                 output_topic=output_topic,
                 transcriber=transcriber,
                 publisher=publisher,
+                audio_segments_client=audio_segments_client_instance,
             )
         return self._processor
 

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import requests
 from google.protobuf import json_format
 
-from backend.pipeline.common.auth import get_id_token
+from backend.pipeline.common.auth_client import get_id_token
 from backend.pipeline.common.env import is_gcp_env
 from backend.pipeline.common.exceptions import AlreadyExistsError
 

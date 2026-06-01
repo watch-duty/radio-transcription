@@ -7,17 +7,13 @@ WORKDIR /app
 
 ENV PYTHONPATH=/app
 
-# 1. Install dependencies
-COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
+# 1. Install locked, scoped dependencies
+COPY --from=ghcr.io/astral-sh/uv:0.9.28 /uv /uvx /bin/
 COPY pyproject.toml uv.lock ./
-# We intentionally copy the entire backend/ directory before running uv sync.
-# This ensures that ALL workspace sub-projects (e.g. transcription, ingestion) have
-# their corresponding pyproject.toml files present. Without this, uv cannot resolve
-# the local workspace dependencies defined in the root pyproject.toml.
 COPY backend/ ./backend/
-ENV UV_PROJECT_ENVIRONMENT=/app/.venv
-ENV PATH="/app/.venv/bin:$PATH"
-RUN uv sync --frozen --no-dev && uv pip install grpcio-tools
+RUN uv export --package evaluation-function --no-dev --locked --no-emit-project -o requirements.txt && \
+    uv pip install --system -r requirements.txt && \
+    uv pip install --system grpcio-tools
 COPY protos/ ./protos
 
 # 2. Create the directory for the generated files

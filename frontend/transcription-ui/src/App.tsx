@@ -18,8 +18,8 @@ import { ApiError } from '@transcription/common';
 import AppContainer from './components/AppContainer';
 import Login from './components/Login';
 import LoginModal from './components/common/LoginModal';
+import FeedConfigurationView from './components/feeds/FeedConfigurationView';
 import FeedSearchView from './components/feeds/FeedSearchView';
-import FeedsView from './components/feeds/FeedsView';
 import RulesView from './components/rules/RulesView';
 import TranscriptView from './components/transcripts/TranscriptView';
 import { useAuth } from './context/AuthContext';
@@ -134,6 +134,15 @@ function App() {
 
   const prefersDarkMode = useMediaQuery('(prefers-color-scheme: dark)');
   const theme = createTheme({
+    breakpoints: {
+      values: {
+        xs: 0,
+        sm: 768,
+        md: 900,
+        lg: 1200,
+        xl: 1536,
+      },
+    },
     palette: {
       mode: prefersDarkMode ? 'dark' : 'light',
     },
@@ -146,6 +155,16 @@ function App() {
               paddingBottom: '6px',
             },
           },
+        },
+      },
+      MuiBadge: {
+        styleOverrides: {
+          badge: ({ ownerState, theme }) => ({
+            ...(ownerState.color === 'default' && {
+              backgroundColor: theme.palette.text.secondary,
+              color: theme.palette.background.paper,
+            }),
+          }),
         },
       },
     },
@@ -192,6 +211,7 @@ function App() {
                 <>
                   <title>Radio Transcription</title>
                   <FeedSearchView
+                    title="Feeds"
                     triggerSnackbar={triggerSnackbar}
                     onError={handleError}
                   />
@@ -224,7 +244,10 @@ function App() {
               element={
                 <>
                   <title>Feeds - Radio Transcription</title>
-                  <FeedsView />
+                  <FeedConfigurationView
+                    triggerSnackbar={triggerSnackbar}
+                    onError={handleError}
+                  />
                 </>
               }
             />

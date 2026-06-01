@@ -38,6 +38,9 @@ def _create_and_cleanup_feed(
         async def _cleanup_db() -> None:
             conn = await asyncpg.connect(**_conn_kwargs)
             await conn.execute(
+                "DELETE FROM audio_segments WHERE feed_id = $1::uuid", feed_id
+            )
+            await conn.execute(
                 "DELETE FROM transcripts WHERE feed_id = $1::uuid", feed_id
             )
             await conn.close()

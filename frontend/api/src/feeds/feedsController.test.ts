@@ -1,4 +1,4 @@
-import type { SourceType } from '@transcription/common';
+import { SourceType } from '@transcription/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FeedsController } from './feedsController.js';
@@ -32,6 +32,7 @@ describe('FeedsController', () => {
     source_feed_id: 'src_123',
     external_id: 'ext_123',
     status: 'active',
+    substatus: 'active',
     last_heartbeat: '2024-01-01T00:00:00Z',
   };
 
@@ -44,6 +45,7 @@ describe('FeedsController', () => {
     sourceUrl: 'https://openmhz.com/system/src_123',
     archiveUrl: undefined,
     status: 'active',
+    substatus: 'active',
     lastHeartbeat: '2024-01-01T00:00:00Z',
   };
 
@@ -136,7 +138,7 @@ describe('FeedsController', () => {
       const controller = new FeedsController();
       const payload = {
         name: 'Test Feed',
-        sourceType: 'openmhz' as const,
+        sourceType: SourceType.OPENMHZ,
         sourceFeedId: 'src_123',
         externalId: 'ext_123',
       };
@@ -165,7 +167,7 @@ describe('FeedsController', () => {
       const controller = new FeedsController();
       const payload = {
         name: 'Test Feed',
-        sourceType: 'openmhz' as const,
+        sourceType: SourceType.OPENMHZ,
         sourceFeedId: 'src_123',
         externalId: 'ext_123',
         tags: [{ key: 'county', value: 'Fulton' }],
@@ -187,6 +189,96 @@ describe('FeedsController', () => {
           tags: [{ key: 'county', value: 'Fulton' }],
         },
       });
+    });
+  });
+
+  describe('updateFeed', () => {
+    it('should return converted feed on success', async () => {
+      mockRequest.mockResolvedValueOnce({ data: mockBackendFeed });
+
+      const controller = new FeedsController();
+      const payload = {
+        name: 'Updated Feed',
+        externalId: 'ext_123',
+      };
+      const result = await controller.updateFeed('feed_123', payload);
+
+      expect(result).toEqual(expectedFrontendFeed);
+      expect(mockRequest).toHaveBeenCalledWith({
+        url: 'http://feeds-api.example.com/feed_123',
+        method: 'PUT',
+        data: {
+          name: 'Updated Feed',
+          external_id: 'ext_123',
+          tags: undefined,
+        },
+      });
+    });
+
+    it('should update feed with tags on success', async () => {
+      const mockFeedWithTags = {
+        ...mockBackendFeed,
+        name: 'Updated Feed',
+        tags: [{ key: 'county', value: 'Fulton' }],
+      };
+      mockRequest.mockResolvedValueOnce({ data: mockFeedWithTags });
+
+      const controller = new FeedsController();
+      const payload = {
+        name: 'Updated Feed',
+        externalId: 'ext_123',
+        tags: [{ key: 'county', value: 'Fulton' }],
+      };
+      const result = await controller.updateFeed('feed_123', payload);
+
+      expect(result).toEqual({
+        ...expectedFrontendFeed,
+        name: 'Updated Feed',
+        tags: [{ key: 'county', value: 'Fulton' }],
+      });
+      expect(mockRequest).toHaveBeenCalledWith({
+        url: 'http://feeds-api.example.com/feed_123',
+        method: 'PUT',
+        data: {
+          name: 'Updated Feed',
+          external_id: 'ext_123',
+          tags: [{ key: 'county', value: 'Fulton' }],
+        },
+      });
+    });
+
+    it('should throw on 404', async () => {
+      const error = new Error('Not Found') as Error & {
+        response?: { status: number };
+      };
+      error.response = { status: 404 };
+      mockRequest.mockRejectedValueOnce(error);
+
+      const controller = new FeedsController();
+      const payload = {
+        name: 'Updated Feed',
+        externalId: 'ext_123',
+      };
+      await expect(controller.updateFeed('feed_123', payload)).rejects.toThrow(
+        /Not Found/
+      );
+    });
+
+    it('should throw on non-404 API error', async () => {
+      const error = new Error('Server Error') as Error & {
+        response?: { status: number; data?: unknown };
+      };
+      error.response = { status: 500, data: 'Internal Server Error' };
+      mockRequest.mockRejectedValueOnce(error);
+
+      const controller = new FeedsController();
+      const payload = {
+        name: 'Updated Feed',
+        externalId: 'ext_123',
+      };
+      await expect(controller.updateFeed('feed_123', payload)).rejects.toThrow(
+        /Server Error/
+      );
     });
   });
 
@@ -393,9 +485,9 @@ describe('FeedsController', () => {
   describe('status conversion', () => {
     const testCases = [
       { backend: 'active', expected: 'active' },
-      { backend: 'failing', expected: 'inactive' },
+      { backend: 'failing', expected: 'error' },
       { backend: 'unclaimed', expected: 'inactive' },
-      { backend: 'quarantined', expected: 'inactive' },
+      { backend: 'quarantined', expected: 'error' },
       { backend: 'deactivated', expected: 'inactive' },
     ];
 

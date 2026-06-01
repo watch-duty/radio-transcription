@@ -8,7 +8,10 @@ from typing import TYPE_CHECKING, TypedDict
 import asyncpg
 import asyncpg.exceptions
 
-from backend.pipeline.common.exceptions import FeedAlreadyExistsError
+from backend.pipeline.common.exceptions import (
+    FeedAlreadyExistsError,
+    FeedNameAlreadyExistsError,
+)
 from backend.pipeline.storage.feed_queries import (
     COUNT_HELD_BY_TYPE_SQL,
     CREATE_FEED_SQL,
@@ -20,6 +23,7 @@ from backend.pipeline.storage.feed_queries import (
     RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
     REPORT_FAILURE_SQL,
     RESET_FEED_SQL,
+    UPDATE_FEED_SQL,
     UPDATE_PROGRESS_SQL,
     build_acquire_feeds_batch_sql,
     build_acquire_feeds_recovery_sql,
@@ -47,7 +51,7 @@ class SourceType(enum.StrEnum):
            and ``006_seed_source_types.sql``.
         3. **Per-type cap registry** — add an entry to
            ``backend.pipeline.ingestion.settings._DEFAULT_CAPS``. This
-           dict drives ``NormalizerSettings.caps``, ``FeedStore``'s
+           dict drives ``CollectorSettings.caps``, ``FeedStore``'s
            generated acquire-batch SQL, and the ``claim_types`` filter on
            the recovery path. **Skipping this step means VM workers
            will silently never claim feeds of the new type** — neither
@@ -62,6 +66,7 @@ class SourceType(enum.StrEnum):
     # Echo uses a separate cloud function for ingestion instead of VMs.
     ECHO = "echo"
     OPENMHZ = "openmhz"
+    FIRE_NOTIFICATIONS = "fire_notifications"
 
 
 class FeedStatus(enum.StrEnum):
@@ -143,7 +148,7 @@ class FeedStore:
             is generated at construction time with one MATERIALIZED CTE
             per type. Defaults to every ``SourceType`` except ``ECHO``
             (Echo feeds are served by a separate cloud function and
-            are never leased here). ``NormalizerRuntime`` passes
+            are never leased here). ``CollectorRuntime`` passes
             ``list(settings.caps.keys())`` so the SQL shape and the
             runtime's per-type budgets are seeded from the same set.
 
@@ -237,9 +242,9 @@ class FeedStore:
         Update the feed's bookmark and heartbeat after a successful write.
 
         This is a fenced operation — it only succeeds if the given worker still
-        holds the lease AND the fencing token matches. A ``False`` return
-        indicates the lease was lost and the worker should stop processing
-        this feed.
+        holds the lease AND the fencing token matches. It intentionally remains
+        allowed for deactivated rows so one in-flight bookmark can finish after
+        an admin stop.
 
         Args:
             feed_id: UUID of the feed to update.
@@ -323,7 +328,9 @@ class FeedStore:
         backoff_max_sec) + random(0-10s) jitter``.
 
         This is a fenced operation — it only succeeds if the given worker
-        still holds the lease AND the fencing token matches.
+        still holds an active lease AND the fencing token matches. A
+        deactivated feed is an administrative terminal state until reset, so
+        failure reporting returns ``None`` instead of changing status.
 
         Args:
             feed_id: UUID of the feed that failed.
@@ -395,7 +402,9 @@ class FeedStore:
         the feed if this call fails.
 
         This is a fenced operation — it only succeeds if the given worker
-        still holds the lease AND the fencing token matches.
+        still holds an active lease AND the fencing token matches. A
+        deactivated feed is an administrative terminal state until reset, so
+        release is a no-op for deactivated rows.
 
         Args:
             feed_id: UUID of the feed to release.
@@ -559,9 +568,9 @@ class FeedStore:
         Primary use: ``_shutdown_sequence`` calls this once after
         cancelling all feed tasks. The cancelled tasks return without
         running their normal-completion ``release_feed`` (see the
-        ``_process_feed`` shutdown branch), so this single
-        ``WHERE worker_id = $1`` UPDATE is what actually flips them
-        back to ``unclaimed``.
+        ``_process_feed`` shutdown branch), so this single UPDATE flips
+        active rows back to ``unclaimed``. Deactivated rows stay deactivated
+        even if they still carry this worker's metadata.
 
         Secondary defensive role: catches any straggler row where an
         earlier per-feed ``release_feed`` call failed mid-lifetime
@@ -629,11 +638,65 @@ class FeedStore:
                 },
             )
             raise FeedAlreadyExistsError(source_type_str, source_feed_id) from e
+        except asyncpg.exceptions.ForeignKeyViolationError as e:
+            logger.warning(
+                "Invalid source type provided",
+                extra={
+                    "source_type": source_type_str,
+                },
+            )
+            msg = f"Invalid source type '{source_type_str}'"
+            raise ValueError(msg) from e
 
         if row is None:
             msg = f"Failed to create feed {name}"
             raise ValueError(msg)
 
+        return self._row_to_feed(row)
+
+    async def update_feed(
+        self,
+        feed_id: uuid.UUID,
+        name: str,
+        external_id: str,
+        tags: list[dict[str, str]] | None = None,
+    ) -> Feed | None:
+        """Update an existing feed record.
+
+        Updates the feed in the `feeds` table and its corresponding
+        properties in the `feed_properties` table.
+        """
+        if not external_id:
+            msg = "external_id cannot be empty"
+            raise ValueError(msg)
+
+        try:
+            row = await self._pool.fetchrow(
+                UPDATE_FEED_SQL,
+                feed_id,
+                name,
+                external_id,
+                json.dumps(tags or []),
+            )
+        except asyncpg.exceptions.UniqueViolationError as e:
+            logger.warning(
+                "Feed update conflicts with existing feed name",
+                extra={
+                    "feed_name": name,
+                },
+            )
+            raise FeedNameAlreadyExistsError(name) from e
+
+        if row is None:
+            return None
+
+        logger.info(
+            "Feed updated successfully",
+            extra={
+                "feed_id": str(feed_id),
+                "feed_name": name,
+            },
+        )
         return self._row_to_feed(row)
 
     async def get_feed(self, feed_id: uuid.UUID) -> Feed | None:
@@ -656,7 +719,11 @@ class FeedStore:
         return [self._row_to_feed(row) for row in rows]
 
     async def deactivate_feed(self, feed_id: uuid.UUID) -> bool:
-        """Deactivate a feed by ID (soft delete).
+        """Deactivate a feed by ID.
+
+        Deactivation is an administrative terminal state until reset. The
+        active worker metadata is intentionally preserved so the heartbeat
+        path can cancel any running task gracefully.
 
         Returns True if the feed status was set to deactivated, False otherwise.
         """
@@ -666,7 +733,8 @@ class FeedStore:
     async def reset_feed(self, feed_id: uuid.UUID) -> Feed | None:
         """Reset a feed to an unclaimed, unassigned state.
 
-        Sets ``status = 'unclaimed'``, ``failure_count = 0``, clears
+        This is the explicit reactivation path for deactivated or quarantined
+        feeds. Sets ``status = 'unclaimed'``, ``failure_count = 0``, clears
         ``worker_id``, and updates ``last_heartbeat`` for the given feed.
         Returns the updated feed, or ``None`` if no feed with that ID exists.
 

@@ -10,14 +10,17 @@ if TYPE_CHECKING:
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 
 from backend.pipeline.common.auth import verify_oidc_token
-from backend.pipeline.common.exceptions import FeedAlreadyExistsError
+from backend.pipeline.common.exceptions import (
+    FeedAlreadyExistsError,
+    FeedNameAlreadyExistsError,
+)
 from backend.pipeline.storage.connection import (
     close_pool,
     create_pool_with_retry,
 )
 from backend.pipeline.storage.feed_store import FeedStore
 
-from .models import Feed, FeedCreate
+from .models import Feed, FeedCreate, FeedUpdate
 from .service import FeedService
 
 logger = logging.getLogger(__name__)
@@ -88,6 +91,39 @@ async def get_feed(
     return feed
 
 
+@app.put(
+    "/v1/feeds/{feed_id}",
+    response_model=Feed,
+    tags=["feeds"],
+)
+async def update_feed(
+    request: Request,
+    feed_id: str,
+    feed_in: FeedUpdate,
+) -> Feed:
+    """Update an existing feed."""
+    service: FeedService = request.app.state.feed_service
+    try:
+        feed = await service.update_feed(feed_id, feed_in)
+        if not feed:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Feed {feed_id} not found",
+            )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except FeedNameAlreadyExistsError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(e),
+        )
+    else:
+        return feed
+
+
 @app.get(
     "/v1/feeds",
     response_model=list[Feed],
@@ -110,7 +146,7 @@ async def deactivate_feed(
     request: Request,
     feed_id: str,
 ) -> None:
-    """Deactivate a feed (soft delete)."""
+    """Deactivate a feed until an explicit reset."""
     service: FeedService = request.app.state.feed_service
     success = await service.deactivate_feed(feed_id)
     if not success:
