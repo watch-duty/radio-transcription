@@ -7,7 +7,9 @@ and highly unit-testable.
 import base64
 import logging
 
+import grpc
 from cloudevents.http.event import CloudEvent
+from google.api_core.exceptions import GoogleAPICallError
 from google.cloud import pubsub_v1
 
 from backend.pipeline.common.clients import audio_segments_client
@@ -69,13 +71,7 @@ class TranscriptionEventProcessor:
                 return
 
             # Parse claim-check payload
-            try:
-                data_bytes = base64.b64decode(raw_data)
-                claim = NormalizedAudio()
-                claim.ParseFromString(data_bytes)
-            except Exception as e:
-                logger.exception("Failed to parse NormalizedAudio: %s", e)
-                raise
+            claim = self._parse_claim(raw_data)
 
             feed_id = claim.feed_id
             transmission_id = claim.transmission_id
@@ -89,15 +85,19 @@ class TranscriptionEventProcessor:
 
             try:
                 # Determine audio duration from start and end timestamps
-                start_ms = (
-                    claim.start_timestamp.seconds * MS_PER_SECOND
-                    + claim.start_timestamp.nanos // NANOS_PER_MS
-                )
-                end_ms = (
-                    claim.end_timestamp.seconds * MS_PER_SECOND
-                    + claim.end_timestamp.nanos // NANOS_PER_MS
-                )
-                duration_ms = max(0, int(end_ms - start_ms))
+                duration_ms = self._get_duration_ms(claim)
+
+                # Fail fast if audio length exceeds maximum limit for synchronous API
+                if duration_ms > 60000:
+                    msg = f"Audio payload too long for synchronous API: {duration_ms / 1000:.2f}s"
+                    logger.error(
+                        "Permanent Failure: %s for transmission %s (feed %s)",
+                        msg,
+                        transmission_id,
+                        feed_id,
+                    )
+                    errors.append(f"Permanent Failure: {msg}")
+                    return
 
                 # Retrieve active transcriber and run Speech API
                 transcript = self.transcriber.transcribe(
@@ -154,13 +154,25 @@ class TranscriptionEventProcessor:
                     feed_id,
                 )
             except Exception as e:
+                if _is_transient_exception(e):
+                    logger.warning(
+                        "Transient failure processing transcription claim for transmission %s (feed %s): %s. "
+                        "Retrying...",
+                        transmission_id,
+                        feed_id,
+                        e,
+                    )
+                    errors.append(f"Transient Failure: {e}")
+                    raise
+
                 logger.exception(
-                    "Failed to process transcription claim for transmission %s (feed %s): %s",
+                    "Permanent failure processing transcription claim for transmission %s (feed %s): %s. "
+                    "Acknowledging message without retry.",
                     transmission_id,
                     feed_id,
                     e,
                 )
-                errors.append(f"Exception: {e}")
+                errors.append(f"Permanent Failure: {e}")
             finally:
                 if transmission_id:
                     self._write_transcript_annotation(
@@ -168,6 +180,30 @@ class TranscriptionEventProcessor:
                         transcript or "",
                         errors,
                     )
+
+    def _get_duration_ms(self, claim: NormalizedAudio) -> int:
+        """Determine audio duration in milliseconds from start and end timestamps."""
+        start_ms = (
+            claim.start_timestamp.seconds * MS_PER_SECOND
+            + claim.start_timestamp.nanos // NANOS_PER_MS
+        )
+        end_ms = (
+            claim.end_timestamp.seconds * MS_PER_SECOND
+            + claim.end_timestamp.nanos // NANOS_PER_MS
+        )
+        return max(0, int(end_ms - start_ms))
+
+    def _parse_claim(self, raw_data: str) -> NormalizedAudio:
+        """Parses the base64 encoded NormalizedAudio protobuf payload."""
+        try:
+            data_bytes = base64.b64decode(raw_data)
+            claim = NormalizedAudio()
+            claim.ParseFromString(data_bytes)
+        except Exception as e:
+            logger.exception("Failed to parse NormalizedAudio: %s", e)
+            raise
+        else:
+            return claim
 
     def _write_transcript_annotation(
         self, transmission_id: str, transcript: str, errors: list[str]
@@ -198,3 +234,33 @@ class TranscriptionEventProcessor:
                 transmission_id,
                 write_err,
             )
+
+
+def _is_transient_exception(e: Exception) -> bool:
+    """Determines if an exception is transient and should be retried."""
+    # Check Google API exceptions
+    if isinstance(e, GoogleAPICallError):
+        # HTTP 429 (Too Many Requests), HTTP 409 (Conflict/Aborted) or HTTP 5xx (Server Errors) are transient
+        if e.code in (429, 409) or (e.code and e.code >= 500):
+            return True
+        return False
+
+    # Check gRPC exceptions
+    if isinstance(e, grpc.RpcError):
+        code = e.code()
+        if code in (
+            grpc.StatusCode.UNAVAILABLE,
+            grpc.StatusCode.DEADLINE_EXCEEDED,
+            grpc.StatusCode.RESOURCE_EXHAUSTED,
+            grpc.StatusCode.INTERNAL,
+            grpc.StatusCode.ABORTED,
+        ):
+            return True
+        return False
+
+    # Check standard connection/timeout errors
+    if isinstance(e, (ConnectionError, TimeoutError)):
+        return True
+
+    # Any other exceptions (ValueError, InvalidArgument, PermissionDenied, AttributeError, etc.) are permanent
+    return False
