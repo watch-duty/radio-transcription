@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import collections
 import datetime
 import logging
@@ -30,6 +31,15 @@ _DOWNLOAD_MAX_RETRIES = 3
 _DOWNLOAD_BACKOFF_BASE_SEC = 1.0
 _POLL_INTERVAL_SEC = 30.0
 _MAX_CONSECUTIVE_FAILURES = 10
+
+
+def _build_auth_headers() -> dict[str, str]:
+    """Build HTTP Basic Authorization headers from env vars, raising if missing."""
+    user = _require_env("FIRE_NOTIFICATIONS_USER")
+    password = _require_env("FIRE_NOTIFICATIONS_PASSWORD")
+    credentials = f"{user}:{password}"
+    encoded = base64.b64encode(credentials.encode()).decode()
+    return {"Authorization": f"Basic {encoded}"}
 
 
 async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
@@ -232,6 +242,7 @@ async def fire_notifications_collector(
     Yields :class:`CapturedChunk` for each new MP3 file found.
     """
     s3_base_url = _require_env("FIRE_NOTIFICATIONS_S3_BASE")
+    headers = _build_auth_headers()
 
     source_feed_id = feed.get("source_feed_id")
     if not source_feed_id:
@@ -263,7 +274,9 @@ async def fire_notifications_collector(
 
             try:
                 # Poll the API
-                resp = await session.get(poll_url, timeout=10.0)
+                resp = await session.get(
+                    poll_url, headers=headers, timeout=10.0
+                )
                 if resp.status_code == 200:
                     data = resp.json()
                     files = data.get("files", [])
