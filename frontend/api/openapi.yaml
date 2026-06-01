@@ -375,6 +375,116 @@ components:
         - code
       type: object
       additionalProperties: false
+    AudioClassification:
+      enum:
+        - SPEECH_DETECTED
+        - UNCLASSIFIED
+      type: string
+    AnnotationType:
+      enum:
+        - TRANSCRIPT
+        - EVALUATION
+      type: string
+    TranscriptAnnotationData:
+      properties:
+        text:
+          type: string
+        errors:
+          items:
+            type: string
+          type: array
+      required:
+        - text
+        - errors
+      type: object
+      additionalProperties: false
+    EvaluationAnnotationData:
+      properties:
+        decisions:
+          items:
+            type: string
+          type: array
+        errors:
+          items:
+            type: string
+          type: array
+      required:
+        - decisions
+        - errors
+      type: object
+      additionalProperties: false
+    Annotation:
+      properties:
+        type:
+          $ref: "#/components/schemas/AnnotationType"
+        createdAt:
+          type: string
+        data:
+          anyOf:
+            - $ref: "#/components/schemas/TranscriptAnnotationData"
+            - $ref: "#/components/schemas/EvaluationAnnotationData"
+      required:
+        - type
+        - createdAt
+        - data
+      type: object
+      additionalProperties: false
+    AudioSegment:
+      properties:
+        id:
+          type: string
+        feedId:
+          type: string
+        classification:
+          $ref: "#/components/schemas/AudioClassification"
+        startTimestamp:
+          type: string
+        endTimestamp:
+          type: string
+        missingPriorContext:
+          type: boolean
+        missingPostContext:
+          type: boolean
+        sourceAudioUris:
+          items:
+            type: string
+          type: array
+        canonicalAudioUri:
+          type: string
+        startAudioOffset:
+          type: string
+        endAudioOffset:
+          type: string
+        playbackAudioUri:
+          type: string
+        createdAt:
+          type: string
+        annotations:
+          items:
+            $ref: "#/components/schemas/Annotation"
+          type: array
+      required:
+        - id
+        - feedId
+        - classification
+        - startTimestamp
+        - endTimestamp
+        - missingPriorContext
+        - missingPostContext
+        - sourceAudioUris
+        - createdAt
+        - annotations
+      type: object
+      additionalProperties: false
+    ListAudioSegmentsQueryParams:
+      properties:
+        feedIds:
+          items:
+            type: string
+          type: array
+          description: Optional list of feed IDs to filter by.
+      type: object
+      additionalProperties: false
   securitySchemes:
     google_id_token:
       type: oauth2
@@ -1365,6 +1475,65 @@ paths:
         - Auth
       security: []
       parameters: []
+      x-google-backend: radio-transcription-api
+  /api/v1/audio:
+    get:
+      operationId: ListAudioSegments
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: "#/components/schemas/AudioSegment"
+                type: array
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      tags:
+        - Audio
+      security:
+        - google_id_token: []
+      parameters:
+        - description: Optional list of feed IDs to filter by.
+          in: query
+          name: feedIds
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
       x-google-backend: radio-transcription-api
 servers:
   - url: https://${radio_transcription_api_service_name}/
