@@ -1,3 +1,4 @@
+import functools
 import logging
 import re
 from abc import ABC, abstractmethod
@@ -14,6 +15,31 @@ from backend.pipeline.common.rules import models
 from backend.pipeline.schema_types import EvaluationErrorType
 
 logger = logging.getLogger(__name__)
+
+
+@functools.lru_cache(maxsize=1024)
+def _get_compiled_keyword_regex(
+    keywords: tuple[str, ...],
+    *,
+    case_sensitive: bool,
+    operator: models.LogicalOperator,
+) -> re.Pattern | list[re.Pattern]:
+    flags = 0 if case_sensitive else re.IGNORECASE
+
+    def _to_pattern(k: str) -> str:
+        pattern = ""
+        if k and re.match(r"^\w", k):
+            pattern += r"\b"
+        pattern += re.escape(k)
+        if k and re.match(r"\w$", k):
+            pattern += r"\b"
+        return pattern
+
+    if operator == models.LogicalOperator.ANY:
+        combined_pattern = "|".join(f"(?:{_to_pattern(k)})" for k in keywords)
+        return re.compile(combined_pattern, flags)
+
+    return [re.compile(_to_pattern(k), flags) for k in keywords]
 
 
 class EvaluationResult(TypedDict):
@@ -64,17 +90,49 @@ class BaseTextEvaluator(ABC):
             return bool(re.search(conditions.expression, text, flags))
 
         if isinstance(conditions, models.KeywordConditions):
-            flags = 0 if conditions.case_sensitive else re.IGNORECASE
+            # Filter out empty, empty-string, or whitespace-only keywords
+            valid_keywords = [
+                k.strip() for k in conditions.keywords if k and k.strip()
+            ]
+            if not valid_keywords:
+                return False
+
+            # 1. Fast-path substring pre-check using optimized in-operator
+            target_text = text if conditions.case_sensitive else text.lower()
+            keywords_to_check = (
+                valid_keywords
+                if conditions.case_sensitive
+                else [k.lower() for k in valid_keywords]
+            )
+
+            has_substrings = True
             if conditions.operator == models.LogicalOperator.ANY:
-                return any(
-                    re.search(re.escape(k), text, flags)
-                    for k in conditions.keywords
+                has_substrings = any(
+                    k in target_text for k in keywords_to_check
                 )
-            if conditions.operator == models.LogicalOperator.ALL:
-                return all(
-                    re.search(re.escape(k), text, flags)
-                    for k in conditions.keywords
+            elif conditions.operator == models.LogicalOperator.ALL:
+                has_substrings = all(
+                    k in target_text for k in keywords_to_check
                 )
+
+            if not has_substrings:
+                return False
+
+            # 2. Retrieve cached/compiled regex for precise word boundary verification
+            compiled = _get_compiled_keyword_regex(
+                tuple(valid_keywords),
+                case_sensitive=conditions.case_sensitive,
+                operator=conditions.operator,
+            )
+
+            if conditions.operator == models.LogicalOperator.ANY and isinstance(
+                compiled, re.Pattern
+            ):
+                return bool(compiled.search(text))
+            if conditions.operator == models.LogicalOperator.ALL and isinstance(
+                compiled, list
+            ):
+                return all(bool(p.search(text)) for p in compiled)
 
         # For now, we skip GroupConditions as it requires a rule lookup
         return False
