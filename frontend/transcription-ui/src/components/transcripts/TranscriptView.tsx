@@ -648,7 +648,7 @@ export function TranscriptView({
           virtuosoRef.current?.scrollToIndex({
             index,
             align: 'center',
-            behavior: 'smooth',
+            behavior: 'auto',
           });
           hasScrolledToTarget.current = true;
         }, 100);
@@ -699,6 +699,20 @@ export function TranscriptView({
       }
       return prev;
     });
+
+    // Given that clearing the date effectively jumps to live, we will
+    // navigate to the top of the table in case the user is scrolled
+    // down in the table.
+    if (date === null) {
+      setTimeout(() => {
+        virtuosoRef.current?.scrollToIndex({
+          index: 0,
+          align: 'center',
+          behavior: 'auto',
+        });
+      }, 100);
+      hasScrolledToTarget.current = false;
+    }
   };
 
   const handleFeedSelect = (feedId: string) => {
