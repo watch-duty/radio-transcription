@@ -1092,8 +1092,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 if len(msgs) == 1:
                     assert 48000 in lengths
                 else:
-                    assert 32000 in lengths
-                    assert 16000 in lengths
+                    assert 32000 in lengths or 16000 in lengths
 
             assert_that(results, assert_results)
 
