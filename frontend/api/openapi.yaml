@@ -1043,6 +1043,69 @@ paths:
             schema:
               $ref: "#/components/schemas/FeedUpdate"
       x-google-backend: radio-transcription-api
+    delete:
+      operationId: DeleteFeed
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      description: |-
+        Hard delete a feed (permanent delete).
+        Deletes the feed, corresponding transcripts, and audio segments.
+      tags:
+        - Feeds
+      security:
+        - google_id_token: []
+      parameters:
+        - in: path
+          name: feedId
+          required: true
+          schema:
+            type: string
+      x-google-backend: radio-transcription-api
   /api/v1/feeds/{feedId}/reset:
     post:
       operationId: ResetFeed

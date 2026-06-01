@@ -156,6 +156,25 @@ async def deactivate_feed(
         )
 
 
+@app.delete(
+    "/v1/feeds/{feed_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["feeds"],
+)
+async def delete_feed(
+    request: Request,
+    feed_id: str,
+) -> None:
+    """Hard delete a feed, along with all its transcripts and audio segments."""
+    service: FeedService = request.app.state.feed_service
+    success = await service.delete_feed(feed_id)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Feed {feed_id} not found",
+        )
+
+
 @app.post(
     "/v1/feeds/{feed_id}/reset",
     response_model=Feed,

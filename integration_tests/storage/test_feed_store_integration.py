@@ -1365,23 +1365,79 @@ async def test_list_feeds_returns_all_feeds(
 async def test_delete_feed_succeeds(
     db_pool: asyncpg.Pool, store: FeedStore
 ) -> None:
-    """deactivate_feed deactivates the feed and returns True."""
-    feed_id = await _insert_feed(db_pool, "Delete Test Feed")
+    """delete_feed hard deletes the feed along with transcripts, audio segments, and annotations."""
+    # 1. Insert a feed
+    feed_id = await _insert_feed(db_pool, "Hard Delete Test Feed")
 
-    result = await store.deactivate_feed(feed_id)
+    # 2. Insert a transcript for the feed
+    transmission_id = uuid.uuid4()
+    await db_pool.execute(
+        """
+        INSERT INTO transcripts (transmission_id, feed_id, transcript, start_timestamp, end_timestamp, created_at)
+        VALUES ($1, $2, $3, NOW() - INTERVAL '10 seconds', NOW(), NOW())
+        """,
+        str(transmission_id),
+        str(feed_id),
+        "Test transcript to be deleted",
+    )
+
+    # 3. Insert an audio segment for the feed
+    segment_id = uuid.uuid4()
+    await db_pool.execute(
+        """
+        INSERT INTO audio_segments (id, feed_id, classification, start_timestamp, end_timestamp, created_at)
+        VALUES ($1, $2, 'SPEECH_DETECTED', NOW() - INTERVAL '10 seconds', NOW(), NOW())
+        """,
+        str(segment_id),
+        str(feed_id),
+    )
+
+    # 4. Insert an annotation for the audio segment
+    await db_pool.execute(
+        """
+        INSERT INTO annotations (audio_segment_id, type, data, created_at)
+        VALUES ($1, 'TRANSCRIPT', '{"text": "hello world"}', NOW())
+        """,
+        str(segment_id),
+    )
+
+    # 5. Perform the delete_feed call
+    result = await store.delete_feed(feed_id)
 
     assert result is True
-    # Verify deactivated
-    row = await db_pool.fetchrow(
-        "SELECT status FROM feeds WHERE id = $1", feed_id
+
+    # 6. Verify the feed is deleted from feeds table
+    row = await db_pool.fetchrow("SELECT 1 FROM feeds WHERE id = $1", feed_id)
+    assert row is None
+
+    # 7. Verify feed properties are deleted (cascade)
+    row_props = await db_pool.fetchrow(
+        "SELECT 1 FROM feed_properties WHERE feed_id = $1", feed_id
     )
-    assert row is not None
-    assert row["status"] == "deactivated"
+    assert row_props is None
+
+    # 8. Verify transcripts are deleted (CTE)
+    row_trans = await db_pool.fetchrow(
+        "SELECT 1 FROM transcripts WHERE feed_id = $1", feed_id
+    )
+    assert row_trans is None
+
+    # 9. Verify audio segments are deleted (CTE)
+    row_segs = await db_pool.fetchrow(
+        "SELECT 1 FROM audio_segments WHERE feed_id = $1", feed_id
+    )
+    assert row_segs is None
+
+    # 10. Verify annotations are deleted (cascade)
+    row_annots = await db_pool.fetchrow(
+        "SELECT 1 FROM annotations WHERE audio_segment_id = $1", segment_id
+    )
+    assert row_annots is None
 
 
 async def test_delete_feed_returns_false_if_not_found(store: FeedStore) -> None:
-    """deactivate_feed returns False for non-existent ID."""
-    result = await store.deactivate_feed(uuid.uuid4())
+    """delete_feed returns False for a non-existent feed ID."""
+    result = await store.delete_feed(uuid.uuid4())
     assert result is False
 
 
