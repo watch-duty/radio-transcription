@@ -246,21 +246,19 @@ def _is_transient_exception(e: Exception) -> bool:
         return False
 
     # Check gRPC exceptions
-    if isinstance(e, grpc.RpcError):
-        code_fn = getattr(e, "code", None)
-        if code_fn and callable(code_fn):
-            try:
-                code = code_fn()
-                if code in (
-                    grpc.StatusCode.UNAVAILABLE,
-                    grpc.StatusCode.DEADLINE_EXCEEDED,
-                    grpc.StatusCode.RESOURCE_EXHAUSTED,
-                    grpc.StatusCode.INTERNAL,
-                    grpc.StatusCode.ABORTED,
-                ):
-                    return True
-            except (AttributeError, TypeError, ValueError):
-                pass
+    if isinstance(e, grpc.Call):
+        try:
+            code = e.code()
+            if code in (
+                grpc.StatusCode.UNAVAILABLE,
+                grpc.StatusCode.DEADLINE_EXCEEDED,
+                grpc.StatusCode.RESOURCE_EXHAUSTED,
+                grpc.StatusCode.INTERNAL,
+                grpc.StatusCode.ABORTED,
+            ):
+                return True
+        except (AttributeError, TypeError, ValueError):
+            pass
         return False
 
     # Check standard connection/timeout errors

@@ -274,13 +274,15 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
 
     def test_process_event_transient_error_propagates(self) -> None:
         """Verifies that a transient exception raised during transcription propagates so Pub/Sub retries."""
+
+        class MockGrpcCallError(grpc.RpcError, grpc.Call):
+            """Mock exception implementing both RpcError and grpc.Call."""
+
+            def code(self) -> grpc.StatusCode:
+                return grpc.StatusCode.UNAVAILABLE
+
         mock_transcriber = MagicMock()
-        # Simulate transient gRPC UNAVAILABLE error
-        grpc_err = grpc.RpcError()
-        # Mock the code method of grpc.RpcError using setattr to satisfy the type checker
-        mock_code = MagicMock()
-        mock_code.return_value = grpc.StatusCode.UNAVAILABLE
-        grpc_err.code = mock_code  # type: ignore
+        grpc_err = MockGrpcCallError()
         mock_transcriber.transcribe.side_effect = grpc_err
 
         mock_publisher = MagicMock()
