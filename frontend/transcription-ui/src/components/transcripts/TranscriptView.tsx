@@ -39,7 +39,6 @@ interface TranscriptViewProps {
 export type ListTranscriptsPage = {
   nextToken?: string;
   order: 'asc' | 'desc';
-  isInitial?: boolean;
 };
 
 export type ListTranscriptsData = {
@@ -275,12 +274,7 @@ export function TranscriptView({
       alertFilter,
     ],
     queryFn: async ({ pageParam }) => {
-      const { nextToken, isInitial } = pageParam;
-      let { order } = pageParam;
-
-      if (isInitial && searchedTimestamp) {
-        order = 'asc';
-      }
+      const { nextToken, order } = pageParam;
 
       // We only fetch the timestamp on the initial load. On subsequent loads,
       // the cursor-based positioning of the database in nextToken handles the rest.
@@ -310,8 +304,7 @@ export function TranscriptView({
       return { ...response, order };
     },
     initialPageParam: {
-      order: 'desc',
-      isInitial: true,
+      order: searchedTimestamp ? 'asc' : 'desc',
     },
     // Note: TanStack Query automatically manages the bidirectional pagination state for us.
     // - `getNextPageParam` is always passed the LAST page in the cache (oldest) to continue scanning backward.
@@ -362,13 +355,18 @@ export function TranscriptView({
     const allTranscripts =
       listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? [];
     const seenIds = new Set<string>();
-    return allTranscripts.filter((transcript) => {
+    const uniqueTranscripts = allTranscripts.filter((transcript) => {
       if (seenIds.has(transcript.transmissionId)) {
         return false;
       }
       seenIds.add(transcript.transmissionId);
       return true;
     });
+    return uniqueTranscripts.sort(
+      (a, b) =>
+        new Date(b.startTimestamp).getTime() -
+        new Date(a.startTimestamp).getTime()
+    );
   }, [listTranscriptsResponse]);
 
   // Keep the ref in sync with the transcripts so that audio lifecycle callbacks can access the latest list.
