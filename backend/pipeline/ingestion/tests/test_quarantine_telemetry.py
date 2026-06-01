@@ -29,6 +29,7 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
                 feed_name="Test Feed",
                 source_type="bcfy_feeds",
                 reason=reason,
+                status_reason="system_unexpected_error",
             )
 
         self.assertEqual(len(cm.records), 1)
@@ -41,6 +42,10 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record.json_fields["feed_id"], "abc-123")
         self.assertEqual(record.json_fields["feed_name"], "Test Feed")
         self.assertEqual(record.json_fields["reason"], reason)
+        self.assertEqual(
+            record.json_fields["status_reason"],
+            "system_unexpected_error",
+        )
         self.assertEqual(record.json_fields["source_type"], "bcfy_feeds")
         # Reason is also interpolated into the message so the Logs Explorer
         # summary row shows it without expanding the structured payload.
@@ -58,18 +63,23 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
             feed_name="Test Feed",
             source_type="bcfy_feeds",
             reason="r",
+            status_reason="source_offline",
         )
+
+        expected_labels = {
+            "feed_id": "abc-123",
+            "feed_name": "Test Feed",
+            "source_type": "bcfy_feeds",
+        }
 
         mock_client.write_time_series.assert_awaited_once_with(
             metric_type="custom.googleapis.com/feeds/quarantine_events",
-            labels={
-                "feed_id": "abc-123",
-                "feed_name": "Test Feed",
-                "source_type": "bcfy_feeds",
-            },
+            labels=expected_labels,
             value=1,
             resource_labels={"project_id": "test-project"},
         )
+        status_reason_key = "status_reason"
+        self.assertNotIn(status_reason_key, expected_labels)
 
     async def test_skips_metric_when_not_configured(self) -> None:
         """No metric call when project ID is None."""
@@ -81,6 +91,7 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
             feed_name="F",
             source_type="s",
             reason="r",
+            status_reason="system_unexpected_error",
         )
 
         self.assertIsNone(quarantine_telemetry._client)
@@ -98,6 +109,7 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
             feed_name="F",
             source_type="s",
             reason="r",
+            status_reason="system_unexpected_error",
         )
 
     async def test_never_raises_even_if_logging_fails(self) -> None:
@@ -115,6 +127,7 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
                 feed_name="F",
                 source_type="s",
                 reason="r",
+                status_reason="system_unexpected_error",
             )
 
     async def test_log_emitted_even_when_metric_fails(self) -> None:
@@ -133,6 +146,7 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
                 feed_name="F",
                 source_type="s",
                 reason="r",
+                status_reason="system_unexpected_error",
             )
 
         # The ERROR log was emitted before the metric call failed, and it
@@ -142,6 +156,10 @@ class TestEmitQuarantineEvent(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(error_records), 1)
         record = cast("Any", error_records[0])
         self.assertEqual(record.json_fields["reason"], "r")
+        self.assertEqual(
+            record.json_fields["status_reason"],
+            "system_unexpected_error",
+        )
 
 
 class TestConfigure(unittest.TestCase):
@@ -201,6 +219,7 @@ class TestFeedQuarantinedGoldenFile(unittest.IsolatedAsyncioTestCase):
                 feed_name="Test Feed",
                 source_type="bcfy_feeds",
                 reason="r",
+                status_reason="system_unexpected_error",
             )
 
         self.assertEqual(len(cm.records), 1)

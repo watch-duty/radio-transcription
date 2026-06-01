@@ -5,6 +5,7 @@
     "feed_id",
     "feed_name",
     "reason",
+    "status_reason",
     "source_type"
   ],
   "_note": "Key-set only (no value equality). Test asserts set(record.json_fields.keys()) == set(golden['expected_keys']). Per D-13, one of three goldens in backend/pipeline/ingestion/tests/golden/. Keys alphabetized for diff readability (D-12 convention)."
