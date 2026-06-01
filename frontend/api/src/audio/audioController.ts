@@ -98,8 +98,8 @@ export class ListAudioSegmentsQueryParams {
   feedIds?: string[];
 }
 
-@Route('api/v1/audio')
-@Tags('Audio')
+@Route('api/v1/audioSegments')
+@Tags('Audio Segments')
 @Response<{ message: string }>(401, 'Unauthorized')
 @Response<{ message: string }>(403, 'Forbidden')
 @Response<{ message: string }>(500, 'Internal Server Error')
