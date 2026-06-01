@@ -359,6 +359,33 @@ describe('FeedsController', () => {
     });
   });
 
+  describe('deleteFeed', () => {
+    it('should return 204 on success', async () => {
+      mockRequest.mockResolvedValueOnce({ status: 204 });
+
+      const controller = new FeedsController();
+      await controller.deleteFeed('feed_123');
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        url: 'http://feeds-api.example.com/feed_123',
+        method: 'DELETE',
+      });
+    });
+
+    it('should throw on 404', async () => {
+      const error = new Error('Not Found') as Error & {
+        response?: { status: number };
+      };
+      error.response = { status: 404 };
+      mockRequest.mockRejectedValueOnce(error);
+
+      const controller = new FeedsController();
+      await expect(controller.deleteFeed('feed_123')).rejects.toThrow(
+        /Not Found/
+      );
+    });
+  });
+
   describe('sourceUrl computation', () => {
     async function listFeedsWithSourceType(
       sourceType: string,
