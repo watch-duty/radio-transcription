@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import collections
 import datetime
 import os
@@ -249,7 +250,11 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
 
 @patch.dict(
     os.environ,
-    {"FIRE_NOTIFICATIONS_S3_BASE": "http://mock-s3-bucket"},
+    {
+        "FIRE_NOTIFICATIONS_S3_BASE": "http://mock-s3-bucket",
+        "FIRE_NOTIFICATIONS_USER": "test-user",
+        "FIRE_NOTIFICATIONS_PASSWORD": "test-password",
+    },
 )
 class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
@@ -335,6 +340,41 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(chunks), 0)
         self.assertEqual(mock_session.get.call_count, 11)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.AsyncSession",
+    )
+    async def test_polling_passes_authorization_header(
+        self, mock_session_cls: MagicMock, mock_sleep: AsyncMock
+    ) -> None:
+        mock_sleep.return_value = True  # Trigger immediate exit from loop
+        mock_session = mock_session_cls.return_value
+        mock_session.close = AsyncMock()
+
+        resp_ok = MagicMock(status_code=200)
+        resp_ok.json.return_value = {"files": []}
+        mock_session.get = AsyncMock(return_value=resp_ok)
+
+        collector_generator = collector.fire_notifications_collector(
+            self.feed,  # type: ignore
+            self.shutdown,
+            "http://base",
+            self.resources,
+        )
+
+        async for _ in collector_generator:
+            pass
+
+        expected_auth = base64.b64encode(b"test-user:test-password").decode()
+        mock_session.get.assert_called_once_with(
+            "http://base/CHAN",
+            headers={"Authorization": f"Basic {expected_auth}"},
+            timeout=10.0,
+        )
 
 
 if __name__ == "__main__":
