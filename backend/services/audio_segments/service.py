@@ -26,7 +26,8 @@ class AudioSegmentService:
         self, feed_ids: list[str] | None = None
     ) -> list[AudioSegment]:
         """Lists all audio segments, optionally filtered by feed IDs."""
-        return await self._store.list_audio_segments(feed_ids)
+        result = await self._store.list_audio_segments(feed_ids=feed_ids)
+        return result.segments
 
     async def create_audio_segment(
         self, segment: AudioSegmentCreate
