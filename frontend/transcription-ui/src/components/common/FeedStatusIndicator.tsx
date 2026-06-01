@@ -50,7 +50,6 @@ export function FeedStatusIndicator({
         gap: 1,
         minWidth: 0,
         overflow: 'hidden',
-        width: '100%',
       }}
     >
       <Tooltip title={substatusText}>
