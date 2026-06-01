@@ -23,6 +23,8 @@ ENV PATH="/app/.venv/bin:$PATH"
 # Copy workspace pyproject.toml files to satisfy uv workspace requirement
 COPY backend/pipeline/normalization/pyproject.toml ./backend/pipeline/normalization/
 COPY backend/pipeline/transcription/pyproject.toml ./backend/pipeline/transcription/
+COPY backend/pipeline/evaluation/pyproject.toml ./backend/pipeline/evaluation/
+COPY backend/pipeline/notification/pyproject.toml ./backend/pipeline/notification/
 RUN uv sync --frozen --no-dev
 
 # 4. Copy necessary application source code

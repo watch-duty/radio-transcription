@@ -18,6 +18,8 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 COPY backend/pipeline/normalization/pyproject.toml ./backend/pipeline/normalization/
 COPY backend/pipeline/transcription/pyproject.toml ./backend/pipeline/transcription/
+COPY backend/pipeline/evaluation/pyproject.toml ./backend/pipeline/evaluation/
+COPY backend/pipeline/notification/pyproject.toml ./backend/pipeline/notification/
 RUN uv sync --frozen --no-dev && uv pip install grpcio-tools
 
 COPY protos/ ./protos
