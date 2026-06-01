@@ -7,7 +7,7 @@ const allowedOrigin = process.env.ALLOWED_ORIGIN;
 const transcriptsApiUrl = process.env.TRANSCRIPTS_API_URL;
 const rulesApiUrl = process.env.RULES_API_URL;
 const feedsStoreApiUrl = process.env.FEEDS_STORE_API_URL;
-const audioApiUrl = process.env.AUDIO_SEGMENTS_API_URL;
+const audioSegmentsApiUrl = process.env.AUDIO_SEGMENTS_API_URL;
 const projectId = process.env.PROJECT_ID;
 const apiPublicUrl = process.env.API_PUBLIC_URL;
 const googleClientId = process.env.GOOGLE_AUTH_CLIENT_ID;
@@ -29,7 +29,7 @@ if (!feedsStoreApiUrl) {
   throw new Error('FEEDS_STORE_API_URL environment variable is not set');
 }
 
-if (!audioApiUrl) {
+if (!audioSegmentsApiUrl) {
   throw new Error('AUDIO_SEGMENTS_API_URL environment variable is not set');
 }
 
@@ -53,7 +53,7 @@ export const ALLOWED_ORIGIN = allowedOrigin;
 export const TRANSCRIPTS_API_URL = transcriptsApiUrl;
 export const RULES_API_URL = rulesApiUrl;
 export const FEEDS_STORE_API_URL = feedsStoreApiUrl;
-export const AUDIO_SEGMENTS_API_URL = audioApiUrl;
+export const AUDIO_SEGMENTS_API_URL = audioSegmentsApiUrl;
 export const PROJECT_ID = projectId;
 export const API_PUBLIC_URL = apiPublicUrl;
 export const GOOGLE_AUTH_CLIENT_ID = googleClientId;
