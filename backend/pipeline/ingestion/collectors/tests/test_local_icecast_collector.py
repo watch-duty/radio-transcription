@@ -110,7 +110,9 @@ class TestLocalIcecastCollector(unittest.IsolatedAsyncioTestCase):
             self.assertIsInstance(
                 shutdown_event_arg, local_icecast_collector.asyncio.Event
             )
-            self.assertEqual(url_base_arg, local_icecast_collector.BCFY_FEEDS_URL_BASE)
+            self.assertEqual(
+                url_base_arg, local_icecast_collector.BCFY_FEEDS_URL_BASE
+            )
 
             # Ensure two chunk files were written and include expected bytes.
             written_files = sorted(
