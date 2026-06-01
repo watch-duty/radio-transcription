@@ -20,6 +20,7 @@ from backend.pipeline.ingestion.models import (
     CaptureResources,
 )
 from backend.pipeline.ingestion.slo_contract import (
+    EVENT_TYPE_BCFY_JWT_FETCH_FAILED,
     EVENT_TYPE_CALL_AUTH_FAILURE,
     EVENT_TYPE_CALL_DOWNLOAD_FAILED,
 )
@@ -40,8 +41,32 @@ _MAX_CONSECUTIVE_FAILURES = 10
 _KNOWN_AUDIO_FORMATS = frozenset({"mp3", "m4a", "wav", "ogg", "aac", "flac"})
 
 
+class _JwtCacheState:
+    token: str | None
+    refresh_task: asyncio.Task[str] | None
+    lock: asyncio.Lock | None
+    lock_loop: asyncio.AbstractEventLoop | None
+
+    def __init__(self) -> None:
+        self.token = None
+        self.refresh_task = None
+        self.lock = None
+        self.lock_loop = None
+
+
+_jwt_state = _JwtCacheState()
+
+
 class AuthError(Exception):
     """Raised when Broadcastify Calls API returns 401 or 403."""
+
+
+class JwtConfigError(RuntimeError):
+    """Raised when Broadcastify JWT Secret Manager configuration is missing."""
+
+
+class JwtFetchError(RuntimeError):
+    """Raised when Broadcastify JWT Secret Manager access fails."""
 
 
 async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
@@ -64,7 +89,7 @@ def _get_jwt_token() -> str:
     secret_id = os.getenv("BROADCASTIFY_JWT_SECRET_ID")
     if not project_id or not secret_id:
         msg = "GOOGLE_CLOUD_PROJECT and BROADCASTIFY_JWT_SECRET_ID must be set"
-        raise RuntimeError(msg)
+        raise JwtConfigError(msg)
 
     client = secretmanager.SecretManagerServiceClient()
     name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
@@ -72,9 +97,108 @@ def _get_jwt_token() -> str:
         response = client.access_secret_version(request={"name": name})
         return response.payload.data.decode("UTF-8").strip()
     except Exception as e:
-        logger.exception("Failed to access secret %s: %s", name, e)
         msg = f"Failed to access secret {name}"
-        raise RuntimeError(msg) from e
+        raise JwtFetchError(msg) from e
+
+
+def _get_jwt_lock() -> asyncio.Lock:
+    """Return a lazy lock tied to the current running loop."""
+    loop = asyncio.get_running_loop()
+    if _jwt_state.lock is None or _jwt_state.lock_loop is not loop:
+        _jwt_state.lock = asyncio.Lock()
+        _jwt_state.lock_loop = loop
+    return _jwt_state.lock
+
+
+def _reset_jwt_cache_for_tests() -> None:
+    """Reset module-level JWT cache state for unit tests."""
+    _jwt_state.token = None
+    _jwt_state.refresh_task = None
+    _jwt_state.lock = None
+    _jwt_state.lock_loop = None
+
+
+async def _get_shared_jwt_token(
+    *,
+    force_refresh: bool = False,
+    stale_token: str | None = None,
+) -> str:
+    """Fetch the shared Broadcastify JWT with cooperative async singleflight."""
+    if _jwt_state.token is not None and not force_refresh:
+        return _jwt_state.token
+
+    lock = _get_jwt_lock()
+    async with lock:
+        if _jwt_state.token is not None and not force_refresh:
+            return _jwt_state.token
+        if (
+            force_refresh
+            and stale_token is not None
+            and _jwt_state.token is not None
+            and _jwt_state.token != stale_token
+        ):
+            return _jwt_state.token
+        if _jwt_state.refresh_task is None:
+            _jwt_state.refresh_task = asyncio.create_task(
+                asyncio.to_thread(_get_jwt_token)
+            )
+        task = _jwt_state.refresh_task
+
+    try:
+        token = await asyncio.shield(task)
+    except Exception as e:
+        should_log = False
+        async with lock:
+            if _jwt_state.refresh_task is task:
+                _jwt_state.refresh_task = None
+                should_log = True
+        if should_log and not isinstance(e, JwtConfigError):
+            logger.warning(
+                "Failed to fetch Broadcastify JWT token from Secret Manager",
+                exc_info=e,
+                extra={
+                    "json_fields": {
+                        "event_type": EVENT_TYPE_BCFY_JWT_FETCH_FAILED,
+                    },
+                },
+            )
+        raise
+
+    async with lock:
+        if _jwt_state.refresh_task is task:
+            _jwt_state.token = token
+            _jwt_state.refresh_task = None
+            return token
+        if _jwt_state.token is not None:
+            return _jwt_state.token
+        return token
+
+
+async def _get_shared_jwt_token_with_retry(
+    feed_id: object,
+    shutdown_event: asyncio.Event,
+    *,
+    force_refresh: bool = False,
+    stale_token: str | None = None,
+) -> str | None:
+    """Retry transient shared JWT fetch failures without releasing the lease."""
+    jwt_failures = 0
+    while not shutdown_event.is_set():
+        try:
+            return await _get_shared_jwt_token(
+                force_refresh=force_refresh,
+                stale_token=stale_token,
+            )
+        except JwtConfigError:
+            raise
+        except Exception:
+            jwt_failures = await _handle_loop_failure(
+                feed_id,
+                jwt_failures,
+                shutdown_event,
+                terminal_reason="jwt_secret_unavailable",
+            )
+    return None
 
 
 def _raise_for_fatal_status(
@@ -346,12 +470,13 @@ async def _handle_loop_failure(
     feed_id: object,
     consecutive_failures: int,
     shutdown_event: asyncio.Event,
+    *,
+    terminal_reason: str = "source_unreachable",
 ) -> int:
     """Increment failure count, raise if exceeded, and sleep."""
     consecutive_failures += 1
     if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
-        msg = "source_unreachable"
-        raise RuntimeError(msg)
+        raise RuntimeError(terminal_reason)
     await _sleep_or_shutdown(shutdown_event, _POLL_INTERVAL_SEC)
     return consecutive_failures
 
@@ -393,8 +518,9 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
         msg = "missing_source_feed_id"
         raise ValueError(msg)
 
-    # Fetch token in a thread to prevent blocking the event loop at startup
-    jwt_token = await asyncio.to_thread(_get_jwt_token)
+    jwt_token = await _get_shared_jwt_token_with_retry(feed_id, shutdown_event)
+    if jwt_token is None:
+        return
 
     normalized_url_base = url_base if url_base.endswith("/") else f"{url_base}/"
     headers = {"Authorization": f"Bearer {jwt_token}"}
@@ -493,17 +619,16 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                     },
                 },
             )
-            try:
-                jwt_token = await asyncio.to_thread(_get_jwt_token)
-                headers["Authorization"] = f"Bearer {jwt_token}"
-            except Exception as e:
-                # Use warning, not exception — the catch-all handler in
-                # normalizer_runtime calls logger.exception, which already
-                # includes this exception's traceback via __cause__.
-                # Logging it here too duplicates the stack trace.
-                logger.warning("Failed to refresh JWT token: %s", e)
-                msg = "auth_failed"
-                raise RuntimeError(msg) from e
+            refreshed_token = await _get_shared_jwt_token_with_retry(
+                feed_id,
+                shutdown_event,
+                force_refresh=True,
+                stale_token=jwt_token,
+            )
+            if refreshed_token is None:
+                return
+            jwt_token = refreshed_token
+            headers["Authorization"] = f"Bearer {jwt_token}"
             consecutive_failures = await _handle_loop_failure(
                 feed_id, consecutive_failures, shutdown_event
             )
