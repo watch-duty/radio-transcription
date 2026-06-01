@@ -99,7 +99,7 @@ class TestAudioSegmentsAPI(unittest.TestCase):
                 "next_token": "token123",
                 "start_time": start_time,
                 "end_time": end_time,
-                "order": "ASC",
+                "order": "asc",
                 "has_alert": True,
             },
         )
@@ -164,7 +164,7 @@ class TestAudioSegmentsAPI(unittest.TestCase):
         }
         response = self.client.post("/v1/audio_segments", json=payload)
         self.assertEqual(
-            response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY
+            response.status_code, status.HTTP_422_UNPROCESSABLE_CONTENT
         )
 
     def test_add_transcript_annotation_success(self) -> None:
@@ -244,7 +244,7 @@ class TestAudioSegmentsAPI(unittest.TestCase):
             f"/v1/audio_segments/{_SEGMENT_ID}/annotations", json=payload
         )
         self.assertEqual(
-            response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY
+            response.status_code, status.HTTP_422_UNPROCESSABLE_CONTENT
         )
 
 
