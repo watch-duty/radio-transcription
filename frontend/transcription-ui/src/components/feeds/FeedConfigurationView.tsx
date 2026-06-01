@@ -10,6 +10,7 @@ import { SourceType } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { createFeed } from '../../service/createFeed';
+import { deleteFeed } from '../../service/deleteFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { updateFeed } from '../../service/updateFeed';
 import { FeedConfigurationEdit } from './FeedConfigurationEdit';
@@ -55,6 +56,20 @@ export function FeedConfigurationView({
       }
     }
   }, [feedsError, onError]);
+
+  const resetForm = () => {
+    setId('');
+    setName('');
+    setSourceType(SourceType.BCFY_FEEDS);
+    setSourceFeedId('');
+    setTags([]);
+  };
+
+  const resetFormAndRefresh = () => {
+    resetForm();
+    queryClient.invalidateQueries({ queryKey: ['listFeeds', token] });
+  };
+
   const createMutation = useMutation({
     mutationFn: (newFeed: FeedCreate) => createFeed(newFeed, token!),
     onSuccess: (data) => {
@@ -77,16 +92,25 @@ export function FeedConfigurationView({
     onSuccess: (data) => {
       triggerSnackbar(`Feed "${data.name}" updated successfully!`);
       setIsEditing(false);
-      // Reset form
-      setId('');
-      setName('');
-      setSourceType(SourceType.BCFY_FEEDS);
-      setSourceFeedId('');
-      setTags([]);
-      queryClient.invalidateQueries({ queryKey: ['listFeeds', token] });
+      resetFormAndRefresh();
     },
     onError: (error: Error) => {
       onError(error, 'Updating Feed Settings');
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (feedId: string) => deleteFeed(feedId, token!),
+    onSuccess: (_, feedId) => {
+      triggerSnackbar('Feed deleted successfully!');
+      setIsEditing(false);
+      queryClient.setQueryData<Feed[]>(['listFeeds', token], (oldFeeds) => {
+        return oldFeeds ? oldFeeds.filter((feed) => feed.id !== feedId) : [];
+      });
+      resetFormAndRefresh();
+    },
+    onError: (error: Error) => {
+      onError(error, 'Deleting Feed');
     },
   });
 
@@ -111,15 +135,13 @@ export function FeedConfigurationView({
 
   const handleCancelEdit = () => {
     setIsEditing(false);
-    // Reset form
-    setId('');
-    setName('');
-    setSourceType(SourceType.BCFY_FEEDS);
-    setSourceFeedId('');
-    setTags([]);
+    resetForm();
   };
 
-  const isSubmitting = createMutation.isPending || updateMutation.isPending;
+  const isSubmitting =
+    createMutation.isPending ||
+    updateMutation.isPending ||
+    deleteMutation.isPending;
 
   return (
     <Box
@@ -185,6 +207,9 @@ export function FeedConfigurationView({
             onUpdateFeed={(payload: FeedUpdate) =>
               handleUpdateFeed(id, payload)
             }
+            onDeleteFeed={async () => {
+              await deleteMutation.mutateAsync(id);
+            }}
             onCancel={handleCancelEdit}
             isSubmitting={isSubmitting}
           />
