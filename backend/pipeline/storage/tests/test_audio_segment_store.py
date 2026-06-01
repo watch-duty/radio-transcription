@@ -4,6 +4,8 @@ import datetime
 import unittest
 import uuid
 
+import asyncpg
+
 from backend.pipeline.storage import audio_segment_queries
 from backend.pipeline.storage.audio_segment_store import AudioSegmentStore
 from backend.pipeline.storage.tests.connection_util import make_mock_pool
@@ -104,6 +106,16 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
                 "invalid-uuid", AnnotationType.TRANSCRIPT, {"text": "hello"}
             )
         self.assertIn("Invalid segment_id UUID", str(cm.exception))
+
+    async def test_add_annotation_segment_not_found(self) -> None:
+        self.pool.fetchrow.side_effect = (
+            asyncpg.exceptions.ForeignKeyViolationError()
+        )
+        with self.assertRaises(ValueError) as cm:
+            await self.store.add_annotation(
+                str(_SEGMENT_ID), AnnotationType.TRANSCRIPT, {"text": "hello"}
+            )
+        self.assertIn("does not exist", str(cm.exception))
 
     async def test_create_audio_segment_success(self) -> None:
         new_row = _AUDIO_SEGMENT_ROW.copy()

@@ -9,6 +9,7 @@ import {
   Controller,
   Extension,
   Get,
+  Path,
   Queries,
   Response,
   Route,
@@ -93,27 +94,41 @@ function convertAudioSegmentBackend(
 
 export class ListAudioSegmentsQueryParams {
   /**
-   * Optional list of feed IDs to filter by.
+   * @isInt
    */
-  feedIds?: string[];
+  limit: number = 100;
+  nextToken?: string;
+  startTime?: string;
+  endTime?: string;
+  order?: 'asc' | 'desc';
+  isAlert?: boolean;
 }
 
-@Route('api/v1/audio')
-@Tags('Audio')
+@Route('api/v1/audioSegments')
+@Tags('Audio Segments')
 @Response<{ message: string }>(401, 'Unauthorized')
 @Response<{ message: string }>(403, 'Forbidden')
+@Response<{ message: string }>(404, 'Not Found')
 @Response<{ message: string }>(500, 'Internal Server Error')
 export class AudioController extends Controller {
-  @Get('')
+  @Get('{feedId}')
   @Security('google_id_token')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async listAudioSegments(
+    @Path() feedId: string,
     @Queries() query: ListAudioSegmentsQueryParams
-  ): Promise<AudioSegment[]> {
+  ): Promise<{ audioSegments: AudioSegment[]; nextToken: string | undefined }> {
     try {
       const queryParams = new URLSearchParams();
-      if (query.feedIds) {
-        query.feedIds.forEach((id) => queryParams.append('feed_ids', id));
+      queryParams.append('feed_ids', [feedId].toString());
+      if (query.limit) queryParams.append('limit', query.limit.toString());
+      if (query.nextToken) queryParams.append('next_token', query.nextToken);
+      if (query.startTime) queryParams.append('start_time', query.startTime);
+      if (query.endTime) queryParams.append('end_time', query.endTime);
+      if (query.order) queryParams.append('order', query.order);
+      // Can be true/false, just not undefined.
+      if (query.isAlert !== undefined) {
+        queryParams.append('is_alert', query.isAlert.toString());
       }
 
       const auth = new GoogleAuth();
@@ -123,8 +138,14 @@ export class AudioController extends Controller {
         method: 'GET',
       });
 
-      const data = response.data as AudioSegmentBackend[];
-      return data.map(convertAudioSegmentBackend);
+      const data = response.data as {
+        audioSegments: AudioSegmentBackend[];
+        nextToken?: string;
+      };
+      return {
+        audioSegments: data.audioSegments.map(convertAudioSegmentBackend),
+        nextToken: data.nextToken,
+      };
     } catch (error: unknown) {
       const { status, message } = handleBackendError(
         error,
