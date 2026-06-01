@@ -62,9 +62,20 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
               flexDirection: 'row',
               alignItems: 'center',
               gap: 1,
+              flexGrow: 1,
+              minWidth: 0,
             }}
           >
-            <Typography component="h1" sx={{ fontWeight: 'bold' }}>
+            <Typography
+              component="h1"
+              sx={{
+                fontWeight: 'bold',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                minWidth: 0,
+              }}
+            >
               {searchedFeed.name}
             </Typography>
             <Chip label={searchedFeed.sourceType} size="small" />
