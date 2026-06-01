@@ -1,3 +1,5 @@
+import * as express from 'express';
+
 import type {
   BackendFeedStatus,
   Feed,
@@ -17,6 +19,7 @@ import {
   Path,
   Post,
   Put,
+  Request,
   Response,
   Route,
   Security,
@@ -24,8 +27,13 @@ import {
   Tags,
 } from 'tsoa';
 
+import { GoogleUser } from '../authentication.js';
 import { FEEDS_STORE_API_URL } from '../config.js';
 import { HttpError, handleBackendError } from '../utils.js';
+
+interface AuthenticatedRequest extends express.Request {
+  user?: GoogleUser;
+}
 
 interface BaseFeedBackend {
   name: string;
@@ -257,7 +265,15 @@ export class FeedsController extends Controller {
   @Response<{ message: string }>(404, 'Not Found')
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
-  public async resetFeed(@Path() feedId: string): Promise<Feed> {
+  public async resetFeed(
+    @Path() feedId: string,
+    @Request() request: express.Request
+  ): Promise<Feed> {
+    const user = (request as AuthenticatedRequest).user;
+    if (!user?.isAdmin) {
+      throw new HttpError(401, 'Unauthorized: Admin privileges required');
+    }
+
     const client = await this.getClient();
     try {
       const response = await client.request<FeedBackend>({
@@ -286,7 +302,15 @@ export class FeedsController extends Controller {
   @Response<{ message: string }>(404, 'Not Found')
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
-  public async deactivateFeed(@Path() feedId: string): Promise<void> {
+  public async deactivateFeed(
+    @Path() feedId: string,
+    @Request() request: express.Request
+  ): Promise<void> {
+    const user = (request as AuthenticatedRequest).user;
+    if (!user?.isAdmin) {
+      throw new HttpError(401, 'Unauthorized: Admin privileges required');
+    }
+
     const client = await this.getClient();
     try {
       await client.request({
@@ -314,7 +338,15 @@ export class FeedsController extends Controller {
   @Response<{ message: string }>(404, 'Not Found')
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
-  public async deleteFeed(@Path() feedId: string): Promise<void> {
+  public async deleteFeed(
+    @Path() feedId: string,
+    @Request() request: express.Request
+  ): Promise<void> {
+    const user = (request as AuthenticatedRequest).user;
+    if (!user?.isAdmin) {
+      throw new HttpError(401, 'Unauthorized: Admin privileges required');
+    }
+
     const client = await this.getClient();
     try {
       await client.request({

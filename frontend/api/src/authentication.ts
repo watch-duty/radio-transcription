@@ -2,12 +2,15 @@ import * as express from 'express';
 
 import * as jwt from 'jsonwebtoken';
 
+import { ADMIN_EMAILS } from './config.js';
+
 export interface GoogleUser {
   email: string;
   email_verified: boolean;
   sub: string; // The user's unique Google ID
   aud: string; // The client ID or audience
   iss: string; // The issuer (e.g., https://accounts.google.com)
+  isAdmin?: boolean; // Special admin user flag
 }
 
 export function expressAuthentication(
@@ -31,14 +34,20 @@ export function expressAuthentication(
       );
     }
     // API Gateway already verified the signature at this point
-    const decoded = jwt.decode(token);
+    const decoded = jwt.decode(token) as GoogleUser | null;
 
     if (!decoded) {
       return Promise.reject(new Error('Invalid JWT token'));
     }
 
+    if (decoded.email) {
+      decoded.isAdmin = ADMIN_EMAILS.includes(decoded.email.toLowerCase());
+    } else {
+      decoded.isAdmin = false;
+    }
+
     // The resolved value is what gets injected into your controllers
-    return Promise.resolve(decoded as GoogleUser);
+    return Promise.resolve(decoded);
   }
 
   return Promise.reject(new Error(`Unknown security name: ${securityName}`));

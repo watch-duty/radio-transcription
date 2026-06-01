@@ -1,3 +1,5 @@
+import type * as express from 'express';
+
 import { SourceType } from '@transcription/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -283,17 +285,32 @@ describe('FeedsController', () => {
   });
 
   describe('resetFeed', () => {
+    const mockAdminRequest = {
+      user: { isAdmin: true },
+    } as unknown as express.Request;
+
     it('should return converted feed on success', async () => {
       mockRequest.mockResolvedValueOnce({ data: mockBackendFeed });
 
       const controller = new FeedsController();
-      const result = await controller.resetFeed('feed_123');
+      const result = await controller.resetFeed('feed_123', mockAdminRequest);
 
       expect(result).toEqual(expectedFrontendFeed);
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://feeds-api.example.com/feed_123/reset',
         method: 'POST',
       });
+    });
+
+    it('should throw 401 unauthorized if the user is not an admin', async () => {
+      const mockNonAdminReq = {
+        user: { isAdmin: false },
+      } as unknown as express.Request;
+      const controller = new FeedsController();
+
+      await expect(
+        controller.resetFeed('feed_123', mockNonAdminReq)
+      ).rejects.toThrow(/Unauthorized/);
     });
 
     it('should throw on 404', async () => {
@@ -304,9 +321,9 @@ describe('FeedsController', () => {
       mockRequest.mockRejectedValueOnce(error);
 
       const controller = new FeedsController();
-      await expect(controller.resetFeed('feed_123')).rejects.toThrow(
-        /Not Found/
-      );
+      await expect(
+        controller.resetFeed('feed_123', mockAdminRequest)
+      ).rejects.toThrow(/Not Found/);
     });
 
     it('should throw on non-404 API error', async () => {
@@ -317,27 +334,31 @@ describe('FeedsController', () => {
       mockRequest.mockRejectedValueOnce(error);
 
       const controller = new FeedsController();
-      await expect(controller.resetFeed('feed_123')).rejects.toThrow(
-        /Server Error/
-      );
+      await expect(
+        controller.resetFeed('feed_123', mockAdminRequest)
+      ).rejects.toThrow(/Server Error/);
     });
 
     it('should throw on unexpected error', async () => {
       mockRequest.mockRejectedValueOnce(new Error('Network Error'));
 
       const controller = new FeedsController();
-      await expect(controller.resetFeed('feed_123')).rejects.toThrow(
-        /Network Error/
-      );
+      await expect(
+        controller.resetFeed('feed_123', mockAdminRequest)
+      ).rejects.toThrow(/Network Error/);
     });
   });
 
   describe('deactivateFeed', () => {
+    const mockAdminRequest = {
+      user: { isAdmin: true },
+    } as unknown as express.Request;
+
     it('should return 204 on success', async () => {
       mockRequest.mockResolvedValueOnce({ status: 204 });
 
       const controller = new FeedsController();
-      await controller.deactivateFeed('feed_123');
+      await controller.deactivateFeed('feed_123', mockAdminRequest);
 
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://feeds-api.example.com/feed_123/deactivate',
@@ -345,6 +366,17 @@ describe('FeedsController', () => {
       });
     });
 
+    it('should throw 401 unauthorized if the user is not an admin', async () => {
+      const mockNonAdminReq = {
+        user: { isAdmin: false },
+      } as unknown as express.Request;
+      const controller = new FeedsController();
+
+      await expect(
+        controller.deactivateFeed('feed_123', mockNonAdminReq)
+      ).rejects.toThrow(/Unauthorized/);
+    });
+
     it('should throw on 404', async () => {
       const error = new Error('Not Found') as Error & {
         response?: { status: number };
@@ -353,18 +385,22 @@ describe('FeedsController', () => {
       mockRequest.mockRejectedValueOnce(error);
 
       const controller = new FeedsController();
-      await expect(controller.deactivateFeed('feed_123')).rejects.toThrow(
-        /Not Found/
-      );
+      await expect(
+        controller.deactivateFeed('feed_123', mockAdminRequest)
+      ).rejects.toThrow(/Not Found/);
     });
   });
 
   describe('deleteFeed', () => {
+    const mockAdminRequest = {
+      user: { isAdmin: true },
+    } as unknown as express.Request;
+
     it('should return 204 on success', async () => {
       mockRequest.mockResolvedValueOnce({ status: 204 });
 
       const controller = new FeedsController();
-      await controller.deleteFeed('feed_123');
+      await controller.deleteFeed('feed_123', mockAdminRequest);
 
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://feeds-api.example.com/feed_123',
@@ -372,6 +408,17 @@ describe('FeedsController', () => {
       });
     });
 
+    it('should throw 401 unauthorized if the user is not an admin', async () => {
+      const mockNonAdminReq = {
+        user: { isAdmin: false },
+      } as unknown as express.Request;
+      const controller = new FeedsController();
+
+      await expect(
+        controller.deleteFeed('feed_123', mockNonAdminReq)
+      ).rejects.toThrow(/Unauthorized/);
+    });
+
     it('should throw on 404', async () => {
       const error = new Error('Not Found') as Error & {
         response?: { status: number };
@@ -380,9 +427,9 @@ describe('FeedsController', () => {
       mockRequest.mockRejectedValueOnce(error);
 
       const controller = new FeedsController();
-      await expect(controller.deleteFeed('feed_123')).rejects.toThrow(
-        /Not Found/
-      );
+      await expect(
+        controller.deleteFeed('feed_123', mockAdminRequest)
+      ).rejects.toThrow(/Not Found/);
     });
   });
 

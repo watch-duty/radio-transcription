@@ -58,3 +58,8 @@ export const PROJECT_ID = projectId;
 export const API_PUBLIC_URL = apiPublicUrl;
 export const GOOGLE_AUTH_CLIENT_ID = googleClientId;
 export const GOOGLE_AUTH_CLIENT_SECRET = googleClientSecret;
+
+export const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
+  .split(',')
+  .map((email) => email.trim().toLowerCase())
+  .filter((email) => email.length > 0);
