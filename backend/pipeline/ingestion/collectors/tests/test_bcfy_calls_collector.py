@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import datetime
 import os
+import threading
+import time
 import unittest
 import uuid
 from typing import Any, cast
@@ -34,6 +36,9 @@ class TestSleepOrShutdown(unittest.IsolatedAsyncioTestCase):
 
 
 class TestGetJwtToken(unittest.TestCase):
+    def setUp(self) -> None:
+        bcfy_calls_collector._reset_jwt_cache_for_tests()
+
     @patch.dict(
         os.environ,
         {"GOOGLE_CLOUD_PROJECT": "proj", "BROADCASTIFY_JWT_SECRET_ID": "sec"},
@@ -75,6 +80,145 @@ class TestGetJwtToken(unittest.TestCase):
         mock_client.access_secret_version.side_effect = Exception("API error")
         with self.assertRaisesRegex(RuntimeError, "Failed to access secret"):
             bcfy_calls_collector._get_jwt_token()
+
+
+class TestSharedJwtToken(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        bcfy_calls_collector._reset_jwt_cache_for_tests()
+
+    async def asyncTearDown(self) -> None:
+        bcfy_calls_collector._reset_jwt_cache_for_tests()
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._get_jwt_token"
+    )
+    async def test_concurrent_callers_share_one_fetch(
+        self, mock_jwt: MagicMock
+    ) -> None:
+        def _slow_fetch() -> str:
+            time.sleep(0.01)
+            return "token"
+
+        mock_jwt.side_effect = _slow_fetch
+
+        tokens = await asyncio.gather(
+            *[bcfy_calls_collector._get_shared_jwt_token() for _ in range(50)]
+        )
+
+        self.assertEqual(set(tokens), {"token"})
+        self.assertEqual(mock_jwt.call_count, 1)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._get_jwt_token"
+    )
+    async def test_cache_hit_does_not_fetch_again(
+        self, mock_jwt: MagicMock
+    ) -> None:
+        mock_jwt.return_value = "token"
+
+        first = await bcfy_calls_collector._get_shared_jwt_token()
+        second = await bcfy_calls_collector._get_shared_jwt_token()
+
+        self.assertEqual(first, "token")
+        self.assertEqual(second, "token")
+        self.assertEqual(mock_jwt.call_count, 1)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._get_jwt_token"
+    )
+    async def test_concurrent_force_refresh_shares_one_fetch(
+        self, mock_jwt: MagicMock
+    ) -> None:
+        mock_jwt.side_effect = ["old-token", "new-token"]
+        old_token = await bcfy_calls_collector._get_shared_jwt_token()
+
+        tokens = await asyncio.gather(
+            *[
+                bcfy_calls_collector._get_shared_jwt_token(
+                    force_refresh=True,
+                    stale_token=old_token,
+                )
+                for _ in range(50)
+            ]
+        )
+
+        self.assertEqual(set(tokens), {"new-token"})
+        self.assertEqual(mock_jwt.call_count, 2)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._get_jwt_token"
+    )
+    async def test_stale_token_refresh_reuses_newer_cache(
+        self, mock_jwt: MagicMock
+    ) -> None:
+        mock_jwt.side_effect = ["old-token", "new-token"]
+        old_token = await bcfy_calls_collector._get_shared_jwt_token()
+        refreshed = await bcfy_calls_collector._get_shared_jwt_token(
+            force_refresh=True,
+            stale_token=old_token,
+        )
+        reused = await bcfy_calls_collector._get_shared_jwt_token(
+            force_refresh=True,
+            stale_token=old_token,
+        )
+
+        self.assertEqual(refreshed, "new-token")
+        self.assertEqual(reused, "new-token")
+        self.assertEqual(mock_jwt.call_count, 2)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._get_jwt_token"
+    )
+    async def test_failed_refresh_clears_in_flight_task(
+        self, mock_jwt: MagicMock
+    ) -> None:
+        mock_jwt.side_effect = [
+            RuntimeError("temporary secret failure"),
+            "token",
+        ]
+
+        with self.assertRaisesRegex(RuntimeError, "temporary secret failure"):
+            await bcfy_calls_collector._get_shared_jwt_token()
+
+        token = await bcfy_calls_collector._get_shared_jwt_token()
+
+        self.assertEqual(token, "token")
+        self.assertEqual(mock_jwt.call_count, 2)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._get_jwt_token"
+    )
+    async def test_cancelled_waiter_does_not_duplicate_fetch(
+        self, mock_jwt: MagicMock
+    ) -> None:
+        started = asyncio.Event()
+        proceed = threading.Event()
+        loop = asyncio.get_running_loop()
+
+        def _slow_fetch() -> str:
+            loop.call_soon_threadsafe(started.set)
+            self.assertTrue(proceed.wait(timeout=2.0))
+            return "token"
+
+        mock_jwt.side_effect = _slow_fetch
+
+        task = asyncio.create_task(bcfy_calls_collector._get_shared_jwt_token())
+        await started.wait()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+        proceed.set()
+        token = await bcfy_calls_collector._get_shared_jwt_token()
+
+        self.assertEqual(token, "token")
+        self.assertEqual(mock_jwt.call_count, 1)
 
 
 class TestRaiseForFatalStatus(unittest.TestCase):
@@ -666,6 +810,7 @@ class TestHandleLoopFailure(unittest.IsolatedAsyncioTestCase):
 
 class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
+        bcfy_calls_collector._reset_jwt_cache_for_tests()
         self.shutdown = asyncio.Event()
         self.feed = {
             "id": uuid.uuid4(),
@@ -1006,6 +1151,99 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_concurrent_startup_uses_one_jwt_fetch(
+        self, mock_sleep: AsyncMock, mock_fetch: AsyncMock, mock_jwt: MagicMock
+    ) -> None:
+        def _slow_fetch() -> str:
+            time.sleep(0.01)
+            return "token"
+
+        async def _fetch_then_shutdown(*args, **kwargs):
+            shutdown = args[6]
+            shutdown.set()
+            return {"calls": []}
+
+        mock_jwt.side_effect = _slow_fetch
+        mock_fetch.side_effect = _fetch_then_shutdown
+        mock_sleep.return_value = True
+
+        async def _consume(feed_index: int) -> None:
+            feed = dict(self.feed)
+            feed["id"] = uuid.uuid4()
+            feed["source_feed_id"] = f"sid{feed_index}"
+            shutdown = asyncio.Event()
+            async for _ in bcfy_calls_collector.capture_bcfy_calls(
+                cast("LeasedFeed", feed),
+                shutdown,
+                self.url_base,
+                _default_resources(),
+            ):
+                pass
+
+        await asyncio.gather(*[_consume(i) for i in range(50)])
+
+        self.assertEqual(mock_jwt.call_count, 1)
+        self.assertEqual(mock_fetch.call_count, 50)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_auth_refresh_reuses_newer_cached_token(
+        self, mock_sleep: AsyncMock, mock_fetch: AsyncMock, mock_jwt: MagicMock
+    ) -> None:
+        mock_jwt.side_effect = ["old-token", "new-token"]
+        old_token = await bcfy_calls_collector._get_shared_jwt_token()
+
+        async def _fetch_side_effect(*args, **kwargs):
+            headers = args[2]
+            if headers["Authorization"] == f"Bearer {old_token}":
+                msg = "Auth failure"
+                raise bcfy_calls_collector.AuthError(msg)
+            self.shutdown.set()
+            return {"calls": []}
+
+        await bcfy_calls_collector._get_shared_jwt_token(
+            force_refresh=True,
+            stale_token=old_token,
+        )
+        mock_fetch.side_effect = _fetch_side_effect
+        mock_sleep.return_value = False
+
+        chunks = [
+            c
+            async for c in bcfy_calls_collector.capture_bcfy_calls(
+                self.leased_feed,
+                self.shutdown,
+                self.url_base,
+                _default_resources(),
+            )
+        ]
+
+        self.assertEqual(chunks, [])
+        self.assertEqual(mock_jwt.call_count, 2)
+        self.assertEqual(mock_fetch.call_count, 1)
+        headers = mock_fetch.call_args_list[0][0][2]
+        self.assertEqual(headers["Authorization"], "Bearer new-token")
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
+        new_callable=AsyncMock,
+    )
+    @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._download_audio",
         new_callable=AsyncMock,
     )
@@ -1086,11 +1324,16 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
         new_callable=AsyncMock,
     )
-    async def test_max_consecutive_failures_auth_error(
+    async def test_auth_refresh_secret_failures_retry_before_terminal_error(
         self, mock_sleep: AsyncMock, mock_fetch: AsyncMock, mock_jwt: MagicMock
     ) -> None:
-        # AuthError triggers token refresh; refresh also fails → RuntimeError("auth_failed")
-        mock_jwt.side_effect = ["token", Exception("secret unavailable")]
+        # AuthError triggers a token refresh; repeated Secret Manager failures
+        # are retried while keeping the lease before surfacing a JWT-specific
+        # terminal reason.
+        mock_jwt.side_effect = [
+            "token",
+            *[Exception("secret unavailable")] * 10,
+        ]
         mock_fetch.side_effect = bcfy_calls_collector.AuthError("Auth failure")
         mock_sleep.return_value = False
 
@@ -1102,8 +1345,9 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
                 _default_resources(),
             ):
                 pass
-        self.assertEqual(str(ctx.exception), "auth_failed")
+        self.assertEqual(str(ctx.exception), "jwt_secret_unavailable")
         self.assertEqual(mock_fetch.call_count, 1)
+        self.assertEqual(mock_jwt.call_count, 11)
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
@@ -1198,6 +1442,9 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
 class TestCaptureBcfyCallsReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
     """RCPT-04: capture_bcfy_calls stamps receipt_time per-call iteration."""
 
+    def setUp(self) -> None:
+        bcfy_calls_collector._reset_jwt_cache_for_tests()
+
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls"
         ".bcfy_calls_collector._get_jwt_token",
@@ -1265,6 +1512,7 @@ class TestBcfyCallsCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
     """LOG-02: bcfy_calls emits call_download_failed at _create_chunk_from_call caller."""
 
     def setUp(self) -> None:
+        bcfy_calls_collector._reset_jwt_cache_for_tests()
         self.feed_uuid = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
         self.feed: dict[str, object] = {
             "id": self.feed_uuid,
@@ -1512,6 +1760,7 @@ class TestBcfyCallsHttp01(unittest.IsolatedAsyncioTestCase):
     """
 
     def setUp(self) -> None:
+        bcfy_calls_collector._reset_jwt_cache_for_tests()
         self.feed_uuid = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
         self.feed: dict[str, object] = {
             "id": self.feed_uuid,
@@ -1702,6 +1951,7 @@ class TestCaptureBcfyCallsResumePosition(unittest.IsolatedAsyncioTestCase):
     """capture_bcfy_calls page-sort and cross-lease resume behavior."""
 
     def setUp(self) -> None:
+        bcfy_calls_collector._reset_jwt_cache_for_tests()
         self.shutdown = asyncio.Event()
         self.feed: dict[str, Any] = {
             "id": uuid.uuid4(),
