@@ -19,6 +19,7 @@ export async function listAudioSegments(
   if (startTime) params.append('startTime', startTime.toString());
   if (endTime) params.append('endTime', endTime.toString());
   if (order) params.append('order', order);
+  // Can be true/false, just not undefined.
   if (isAlert !== undefined) params.append('isAlert', isAlert.toString());
   if (params.toString()) {
     url += `?${params.toString()}`;
