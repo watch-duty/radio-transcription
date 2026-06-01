@@ -32,6 +32,7 @@ from backend.pipeline.normalization.common.constants import (
 from backend.pipeline.normalization.common.datatypes import (
     ChunkMetadata,
     FeedMetadata,
+    NormalizationDlqOutput,
     NormalizationResult,
     TranscriptionResult,
 )
@@ -81,7 +82,7 @@ class ParseAndKeyFn(beam.DoFn):
     @override
     def process(
         self, element: PubsubMessage, *args: Any, **kwargs: Any
-    ) -> Iterator[tuple[str, ChunkMetadata] | beam.pvalue.TaggedOutput]:
+    ) -> Iterator[tuple[str, ChunkMetadata] | NormalizationDlqOutput]:
         """Extracts the feed_id and parses the protobuf payload."""
 
         def _raise(msg: str) -> None:
@@ -174,7 +175,7 @@ class SerializeFn(beam.DoFn):
     def process(
         self,
         element: TranscriptionResult,
-    ) -> Iterator[PubsubMessage | beam.pvalue.TaggedOutput]:
+    ) -> Iterator[PubsubMessage | NormalizationDlqOutput]:
         def _raise(msg: str) -> None:
             raise ValueError(msg)
 
@@ -258,7 +259,7 @@ class SerializeNormalizationClaimFn(beam.DoFn):
     def process(
         self,
         element: NormalizationResult,
-    ) -> Iterator[PubsubMessage | beam.pvalue.TaggedOutput]:
+    ) -> Iterator[PubsubMessage | NormalizationDlqOutput]:
         def _raise(msg: str) -> None:
             raise ValueError(msg)
 

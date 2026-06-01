@@ -2,7 +2,7 @@
 
 from typing import Final
 
-DEAD_LETTER_QUEUE_TAG: Final = "transcription_dlq"
+DEAD_LETTER_QUEUE_TAG: Final = "normalization_dlq"
 
 # Pipeline Defaults
 DEFAULT_SIGNIFICANT_GAP_MS: Final = 800

@@ -15,7 +15,7 @@ straightforward, light-speed unit testing capabilities.
 import logging as std_logging
 from collections.abc import Callable, Iterator
 from dataclasses import replace
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 from apache_beam.metrics import Metrics
@@ -130,7 +130,7 @@ class StitcherEngine:
     ) -> tuple[
         list[
             tuple[str, datatypes.FlushRequest]
-            | tuple[Literal["transcription_dlq"], dict[str, Any]]
+            | datatypes.NormalizationRawDlqOutput
         ],
         int,
     ]:
@@ -190,8 +190,7 @@ class StitcherEngine:
         last_start_ms_state: Any,
         timer_manager: Any,
     ) -> Iterator[
-        tuple[str, datatypes.FlushRequest]
-        | tuple[Literal["transcription_dlq"], dict[str, Any]]
+        tuple[str, datatypes.FlushRequest] | datatypes.NormalizationRawDlqOutput
     ]:
         """Orchestrates stale flushes when watermarks cross the timeout threshold.
 
@@ -274,7 +273,7 @@ class StitcherEngine:
                     "Error yielding stale buffer for feed %s", feed_id
                 )
                 yield (
-                    "transcription_dlq",
+                    trans_constants.DEAD_LETTER_QUEUE_TAG,
                     {"error": str(e), "feed_id": feed_id, "stale_flush": True},
                 )
 
@@ -411,7 +410,7 @@ class StitcherEngine:
     ) -> tuple[
         list[
             tuple[str, datatypes.FlushRequest]
-            | tuple[Literal["transcription_dlq"], dict[str, Any]]
+            | datatypes.NormalizationRawDlqOutput
         ],
         datatypes.TransmissionContext,
         int,
@@ -546,7 +545,7 @@ class StitcherEngine:
                 chunk.timestamp_ms + common_constants.MS_PER_SECOND
             )
             return (
-                [("transcription_dlq", dlq_payload)],
+                [(trans_constants.DEAD_LETTER_QUEUE_TAG, dlq_payload)],
                 curr_context,
                 fallback_expected,
             )
