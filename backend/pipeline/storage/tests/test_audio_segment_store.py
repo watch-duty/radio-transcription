@@ -183,12 +183,6 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
         self.pool.fetch.assert_called_once_with(
             audio_segment_queries.LIST_AUDIO_SEGMENTS_DESC_SQL,
             None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            101,
         )
 
     async def test_list_audio_segments_with_feed_id(self) -> None:
@@ -198,44 +192,6 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
         self.pool.fetch.assert_called_once_with(
             audio_segment_queries.LIST_AUDIO_SEGMENTS_DESC_SQL,
             [_FEED_ID],
-            None,
-            None,
-            None,
-            None,
-            None,
-            101,
-        )
-
-    async def test_list_audio_segments_with_has_alert(self) -> None:
-        result = await self.store.list_audio_segments(has_alert=True)
-
-        self.assertEqual(len(result.segments), 1)
-        has_alert = True
-        self.pool.fetch.assert_called_once_with(
-            audio_segment_queries.LIST_AUDIO_SEGMENTS_DESC_SQL,
-            None,
-            None,
-            None,
-            None,
-            None,
-            has_alert,
-            101,
-        )
-
-    async def test_list_audio_segments_with_has_alert_false(self) -> None:
-        result = await self.store.list_audio_segments(has_alert=False)
-
-        self.assertEqual(len(result.segments), 1)
-        has_alert = False
-        self.pool.fetch.assert_called_once_with(
-            audio_segment_queries.LIST_AUDIO_SEGMENTS_DESC_SQL,
-            None,
-            None,
-            None,
-            None,
-            None,
-            has_alert,
-            101,
         )
 
     async def test_list_audio_segments_invalid_feed_id(self) -> None:
