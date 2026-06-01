@@ -19,6 +19,7 @@ import type {
 import { SourceType } from '@transcription/common';
 
 import { createFeed } from '../../service/createFeed';
+import { deleteFeed } from '../../service/deleteFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { updateFeed } from '../../service/updateFeed';
 import { renderWithQueryClient } from '../../test/testUtils';
@@ -35,6 +36,10 @@ vi.mock('../../service/createFeed', () => ({
 
 vi.mock('../../service/updateFeed', () => ({
   updateFeed: vi.fn(),
+}));
+
+vi.mock('../../service/deleteFeed', () => ({
+  deleteFeed: vi.fn(),
 }));
 
 // Mock AuthContext
@@ -76,6 +81,7 @@ describe('FeedConfigurationView', () => {
 
     // Default mock for listing feeds
     vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
+    vi.mocked(deleteFeed).mockResolvedValue(undefined);
 
     // Mock window.scrollTo since JSDOM does not implement it
     window.scrollTo = vi.fn();
@@ -580,5 +586,96 @@ describe('FeedConfigurationView', () => {
       screen.getByText('Both key and value must be populated to add a tag.')
     ).toBeInTheDocument();
     expect(createFeed).not.toHaveBeenCalled();
+  });
+
+  it('should show Delete feed button under edit mode, open confirmation dialog, and call deleteFeed API on confirm', async () => {
+    vi.mocked(deleteFeed).mockResolvedValue(undefined);
+
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Marin Fire Dispatch')).toBeInTheDocument();
+    });
+
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Marin Fire Dispatch',
+    });
+    fireEvent.click(editBtn);
+
+    const editFormCard = screen.getByTestId('feed-config-card');
+
+    // Delete button is present
+    const deleteBtn = within(editFormCard).getByRole('button', {
+      name: /Delete feed/i,
+    });
+    expect(deleteBtn).toBeInTheDocument();
+
+    // Click delete button
+    fireEvent.click(deleteBtn);
+
+    // Verify confirmation dialog shows
+    expect(screen.getByText('Verify Feed Deletion')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Are you sure you want to delete the feed, along with associated metadata, transcripts, and annotations?'
+      )
+    ).toBeInTheDocument();
+
+    // Click confirm/delete action
+    const confirmDeleteBtn = screen.getByRole('button', {
+      name: 'Delete',
+    });
+    fireEvent.click(confirmDeleteBtn);
+
+    await waitFor(() => {
+      expect(deleteFeed).toHaveBeenCalledTimes(1);
+      expect(deleteFeed).toHaveBeenCalledWith('feed-1', 'fake-jwt-token-xyz');
+
+      // Verify success visuals
+      expect(mockTriggerSnackbar).toHaveBeenCalledWith(
+        'Feed deleted successfully!'
+      );
+
+      // Verify transitions back to Create Mode
+      expect(screen.getByText('Register New Feed')).toBeInTheDocument();
+    });
+  });
+
+  it('should not call deleteFeed API if delete confirmation is cancelled', async () => {
+    vi.mocked(deleteFeed).mockResolvedValue(undefined);
+
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Marin Fire Dispatch')).toBeInTheDocument();
+    });
+
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Marin Fire Dispatch',
+    });
+    fireEvent.click(editBtn);
+
+    const editFormCard = screen.getByTestId('feed-config-card');
+    const deleteBtn = within(editFormCard).getByRole('button', {
+      name: /Delete feed/i,
+    });
+
+    fireEvent.click(deleteBtn);
+
+    expect(screen.getByText('Verify Feed Deletion')).toBeInTheDocument();
+
+    const cancelDeleteBtn = screen.getByRole('button', {
+      name: 'Cancel',
+    });
+    fireEvent.click(cancelDeleteBtn);
+
+    // Dialog should be gone
+    await waitFor(() => {
+      expect(
+        screen.queryByText('Verify Feed Deletion')
+      ).not.toBeInTheDocument();
+    });
+
+    expect(deleteFeed).not.toHaveBeenCalled();
   });
 });
