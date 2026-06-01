@@ -1,7 +1,13 @@
+import io
+import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+
+import urllib3
+from urllib3.response import HTTPResponse
 
 from backend.pipeline.evaluation.rules_evaluation import evaluator
+from backend.pipeline.schema_types import EvaluationErrorType
 
 
 class TestTextEvaluator(unittest.TestCase):
@@ -311,12 +317,64 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         self.assertTrue(result2["is_flagged"])
         self.assertEqual(mock_get.call_count, 1)  # Still 1
 
+    @patch("backend.pipeline.evaluation.rules_evaluation.evaluator.is_gcp_env")
+    @patch("requests.Session.get")
+    def test_evaluate_refetches_rules_when_cache_ttl_is_zero(
+        self, mock_get, mock_is_gcp
+    ) -> None:
+        """Test that a zero TTL disables rule caching."""
+        mock_is_gcp.return_value = False
+        evaluator_without_cache = evaluator.RemoteTextEvaluator(
+            self.api_url,
+            cache_ttl_seconds=0,
+        )
+        mock_rule = {
+            "rule_id": "dynamic_rule",
+            "rule_name": "Dynamic Rule",
+            "is_active": True,
+            "scope": {"level": "GLOBAL", "target_feeds": []},
+            "conditions": {
+                "evaluation_type": "KEYWORD_MATCH",
+                "operator": "ANY",
+                "keywords": ["dynamic"],
+                "case_sensitive": False,
+            },
+        }
+        first_response = Mock()
+        first_response.json.return_value = []
+        first_response.status_code = 200
+        second_response = Mock()
+        second_response.json.return_value = [mock_rule]
+        second_response.status_code = 200
+        mock_get.side_effect = [first_response, second_response]
+
+        result1 = evaluator_without_cache.evaluate(
+            "dynamic message", feed_id="test_feed"
+        )
+        result2 = evaluator_without_cache.evaluate(
+            "dynamic message", feed_id="test_feed"
+        )
+
+        self.assertFalse(result1["is_flagged"])
+        self.assertTrue(result2["is_flagged"])
+        self.assertEqual(mock_get.call_count, 2)
+
+    def test_init_raises_value_error_for_negative_ttl(self) -> None:
+        """Test that negative rule cache TTLs are rejected."""
+        with self.assertRaises(ValueError) as ctx:
+            evaluator.RemoteTextEvaluator(self.api_url, cache_ttl_seconds=-5)
+
+        self.assertEqual(
+            str(ctx.exception),
+            "cache_ttl_seconds must be non-negative",
+        )
+
     def test_evaluate_missing_feed_id(self) -> None:
         """Test that missing feed_id returns ERROR_FEED_ID_MISSING rule."""
         result = self.remote_evaluator.evaluate("Some text", feed_id="")
         self.assertFalse(result["is_flagged"])
         self.assertIn(
-            evaluator.evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_FEED_ID_MISSING,
+            EvaluationErrorType.ERROR_FEED_ID_MISSING,
             result["errors"],
         )
 
@@ -330,9 +388,207 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         )
         self.assertFalse(result["is_flagged"])
         self.assertIn(
-            evaluator.evaluated_pb2.EvaluatedTranscribedAudio.EvaluationErrorType.ERROR_RULES_FETCH_FAILED,
+            EvaluationErrorType.ERROR_RULES_FETCH_FAILED,
             result["errors"],
         )
+
+    @patch("time.sleep", return_value=None)
+    @patch("urllib3.connectionpool.HTTPConnectionPool._make_request")
+    def test_evaluate_rules_fetch_retry_on_timeout_exhausted(
+        self, mock_make_request, mock_sleep
+    ) -> None:
+        """Test that a retryable timeout error retries 3 times and then fails."""
+        mock_make_request.side_effect = urllib3.exceptions.ReadTimeoutError(
+            Mock(), "/v1/rules", "Read timed out"
+        )
+
+        result = self.remote_evaluator.evaluate(
+            "Some text", feed_id="test_feed"
+        )
+        self.assertFalse(result["is_flagged"])
+        self.assertIn(
+            EvaluationErrorType.ERROR_RULES_FETCH_FAILED,
+            result["errors"],
+        )
+        # total=3 means 1 initial attempt + 3 retries = 4 attempts total
+        self.assertEqual(mock_make_request.call_count, 4)
+        self.assertEqual(mock_sleep.call_count, 2)
+
+    @patch("time.sleep", return_value=None)
+    @patch("urllib3.connectionpool.HTTPConnectionPool._make_request")
+    def test_evaluate_rules_fetch_retry_and_succeed(
+        self, mock_make_request, mock_sleep
+    ) -> None:
+        """Test that a transient timeout error succeeds on a later retry."""
+        mock_rule = {
+            "rule_id": "test_rule_1",
+            "rule_name": "Test Rule 1",
+            "is_active": True,
+            "scope": {"level": "GLOBAL", "target_feeds": []},
+            "conditions": {
+                "evaluation_type": "KEYWORD_MATCH",
+                "operator": "ANY",
+                "keywords": ["test"],
+                "case_sensitive": False,
+            },
+        }
+
+        success_body = json.dumps([mock_rule]).encode("utf-8")
+        success_response = HTTPResponse(
+            body=io.BytesIO(success_body),
+            headers={"Content-Type": "application/json"},
+            status=200,
+            preload_content=False,
+        )
+
+        # Fail first 2 times with Timeout, succeed on 3rd time
+        mock_make_request.side_effect = [
+            urllib3.exceptions.ReadTimeoutError(
+                Mock(), "/v1/rules", "Read timed out 1"
+            ),
+            urllib3.exceptions.ReadTimeoutError(
+                Mock(), "/v1/rules", "Read timed out 2"
+            ),
+            success_response,
+        ]
+
+        result = self.remote_evaluator.evaluate(
+            "This is a test message.", feed_id="test_feed"
+        )
+        self.assertTrue(result["is_flagged"])
+        self.assertEqual(mock_make_request.call_count, 3)
+        self.assertEqual(mock_sleep.call_count, 1)
+
+    @patch("time.sleep", return_value=None)
+    @patch("urllib3.connectionpool.HTTPConnectionPool._make_request")
+    def test_evaluate_rules_fetch_no_retry_on_404(
+        self, mock_make_request, mock_sleep
+    ) -> None:
+        """Test that non-retryable client errors (e.g. 404) fail immediately without retrying."""
+        mock_response = HTTPResponse(
+            body=io.BytesIO(b"[]"),
+            headers={"Content-Type": "application/json"},
+            status=404,
+            preload_content=False,
+        )
+        mock_make_request.return_value = mock_response
+
+        result = self.remote_evaluator.evaluate(
+            "Some text", feed_id="test_feed"
+        )
+        self.assertFalse(result["is_flagged"])
+        self.assertIn(
+            EvaluationErrorType.ERROR_RULES_FETCH_FAILED,
+            result["errors"],
+        )
+        # exactly 1 attempt
+        self.assertEqual(mock_make_request.call_count, 1)
+        mock_sleep.assert_not_called()
+
+    @patch("time.sleep", return_value=None)
+    @patch("urllib3.connectionpool.HTTPConnectionPool._make_request")
+    def test_evaluate_rules_fetch_retry_on_503_server_error(
+        self, mock_make_request, mock_sleep
+    ) -> None:
+        """Test that retryable server errors (503) retry and fail after exhausting attempts."""
+        mock_response = HTTPResponse(
+            body=io.BytesIO(b"[]"),
+            headers={"Content-Type": "application/json"},
+            status=503,
+            preload_content=False,
+        )
+        mock_make_request.return_value = mock_response
+
+        result = self.remote_evaluator.evaluate(
+            "Some text", feed_id="test_feed"
+        )
+        self.assertFalse(result["is_flagged"])
+        self.assertIn(
+            EvaluationErrorType.ERROR_RULES_FETCH_FAILED,
+            result["errors"],
+        )
+        # 1 initial attempt + 3 retries = 4 attempts total
+        self.assertEqual(mock_make_request.call_count, 4)
+        self.assertEqual(mock_sleep.call_count, 2)
+
+    @patch("requests.Session.get")
+    def test_keyword_match_word_boundaries(self, mock_get) -> None:
+        """Test that KEYWORD_MATCH rules enforce word boundaries."""
+        mock_rule = {
+            "rule_id": "field_fire_rule",
+            "rule_name": "Field Fire Rule",
+            "is_active": True,
+            "scope": {"level": "GLOBAL", "target_feeds": []},
+            "conditions": {
+                "evaluation_type": "KEYWORD_MATCH",
+                "operator": "ANY",
+                "keywords": ["field fire"],
+                "case_sensitive": False,
+            },
+        }
+        mock_get.return_value.json.return_value = [mock_rule]
+        mock_get.return_value.status_code = 200
+
+        # Should NOT match Fairfield Fire because "field fire" is inside a word
+        text = "Fairfield Fire, Fairfield Fire, Tavolack and Flower Hill Road"
+        result = self.remote_evaluator.evaluate(text, feed_id="test_feed")
+        self.assertFalse(
+            result["is_flagged"], "Should not match substring 'Fairfield Fire'"
+        )
+
+        # Should match standalone "field fire"
+        text2 = "There is a field fire on Flower Hill Road"
+        result2 = self.remote_evaluator.evaluate(text2, feed_id="test_feed")
+        self.assertTrue(
+            result2["is_flagged"], "Should match standalone 'field fire'"
+        )
+
+    @patch("requests.Session.get")
+    def test_evaluate_empty_keyword_set_all(self, mock_get) -> None:
+        """Test that an ALL rule with empty keywords does not trigger."""
+        mock_rule = {
+            "rule_id": "malformed_all_rule",
+            "rule_name": "Malformed ALL Rule",
+            "is_active": True,
+            "scope": {"level": "GLOBAL", "target_feeds": []},
+            "conditions": {
+                "evaluation_type": "KEYWORD_MATCH",
+                "operator": "ALL",
+                "keywords": [],
+                "case_sensitive": False,
+            },
+        }
+        mock_get.return_value.json.return_value = [mock_rule]
+        mock_get.return_value.status_code = 200
+
+        # Non-empty ordinary transcript must NOT trigger
+        result = self.remote_evaluator.evaluate(
+            "There is a fire on Flower Hill Road", feed_id="test_feed"
+        )
+        self.assertFalse(result["is_flagged"])
+
+    @patch("requests.Session.get")
+    def test_evaluate_empty_string_keywords(self, mock_get) -> None:
+        """Test that whitespace-only or empty-string keywords are ignored."""
+        mock_rule = {
+            "rule_id": "empty_string_rule",
+            "rule_name": "Empty String Rule",
+            "is_active": True,
+            "scope": {"level": "GLOBAL", "target_feeds": []},
+            "conditions": {
+                "evaluation_type": "KEYWORD_MATCH",
+                "operator": "ALL",
+                "keywords": ["", "   ", "  "],
+                "case_sensitive": False,
+            },
+        }
+        mock_get.return_value.json.return_value = [mock_rule]
+        mock_get.return_value.status_code = 200
+
+        result = self.remote_evaluator.evaluate(
+            "This is a test transcript.", feed_id="test_feed"
+        )
+        self.assertFalse(result["is_flagged"])
 
 
 if __name__ == "__main__":

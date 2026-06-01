@@ -20,5 +20,6 @@ import os
 
 os.environ.setdefault("AUDIO_STAGING_BUCKET", "test-staging-bucket")
 os.environ.setdefault(
-    "RAW_AUDIO_TOPIC", "projects/test-project/topics/raw-audio"
+    "SEGMENTED_PUBSUB_TOPIC_PATH",
+    "projects/test-project/topics/segmented-audio",
 )

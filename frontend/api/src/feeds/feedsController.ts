@@ -3,9 +3,10 @@ import type {
   Feed,
   FeedCreate,
   FeedStatus,
-  SourceType,
+  FeedUpdate,
   Tag,
 } from '@transcription/common';
+import { SourceType } from '@transcription/common';
 import { GoogleAuth } from 'google-auth-library';
 import {
   Body,
@@ -14,6 +15,7 @@ import {
   Get,
   Path,
   Post,
+  Put,
   Response,
   Route,
   Security,
@@ -44,21 +46,27 @@ interface FeedCreateBackend extends BaseFeedBackend {
   tags?: Tag[];
 }
 
+interface FeedUpdateBackend {
+  name: string;
+  external_id: string;
+  tags?: Tag[];
+}
+
 function getSourceUrl(
   sourceType: SourceType,
   sourceFeedId: string | undefined
 ): string | undefined {
   if (!sourceFeedId) return undefined;
   switch (sourceType) {
-    case 'bcfy_feeds':
+    case SourceType.BCFY_FEEDS:
       return `https://www.broadcastify.com/listen/feed/${sourceFeedId}`;
-    case 'bcfy_calls':
+    case SourceType.BCFY_CALLS:
       return `https://www.broadcastify.com/calls/tg/${sourceFeedId.replace(/-/g, '/')}`;
-    case 'openmhz':
+    case SourceType.OPENMHZ:
       return `https://openmhz.com/system/${sourceFeedId}`;
-    case 'echo':
+    case SourceType.ECHO:
       return undefined;
-    case 'fire_notifications':
+    case SourceType.FIRE_NOTIFICATIONS:
       return undefined;
     default:
       return undefined;
@@ -72,15 +80,15 @@ function getArchiveUrl(
   if (!sourceFeedId) return undefined;
 
   switch (sourceType) {
-    case 'bcfy_feeds':
+    case SourceType.BCFY_FEEDS:
       return `https://www.broadcastify.com/archives/feed/${sourceFeedId}`;
-    case 'bcfy_calls':
+    case SourceType.BCFY_CALLS:
       return `https://www.broadcastify.com/calls/tg/${sourceFeedId.replace(/-/g, '/')}/archives`;
-    case 'openmhz':
+    case SourceType.OPENMHZ:
       return undefined;
-    case 'echo':
+    case SourceType.ECHO:
       return undefined;
-    case 'fire_notifications':
+    case SourceType.FIRE_NOTIFICATIONS:
       return undefined;
     default:
       return undefined;
@@ -88,7 +96,16 @@ function getArchiveUrl(
 }
 
 function convertFeedStatusBackend(status: BackendFeedStatus): FeedStatus {
-  return status === 'active' ? 'active' : 'inactive';
+  switch (status) {
+    case 'active':
+      return 'active';
+    case 'quarantined':
+    case 'failing':
+      return 'error';
+    case 'deactivated':
+    default:
+      return 'inactive';
+  }
 }
 
 function convertFeedBackend(response: FeedBackend): Feed {
@@ -101,6 +118,7 @@ function convertFeedBackend(response: FeedBackend): Feed {
     sourceUrl: getSourceUrl(response.source_type, response.source_feed_id),
     archiveUrl: getArchiveUrl(response.source_type, response.source_feed_id),
     status: convertFeedStatusBackend(response.status),
+    substatus: response.status,
     lastHeartbeat: response.last_heartbeat ?? undefined,
     tags: response.tags,
   };
@@ -113,6 +131,14 @@ function convertFeedCreate(create: FeedCreate): FeedCreateBackend {
     source_feed_id: create.sourceFeedId,
     external_id: create.externalId,
     tags: create.tags,
+  };
+}
+
+function convertFeedUpdate(update: FeedUpdate): FeedUpdateBackend {
+  return {
+    name: update.name,
+    external_id: update.externalId,
+    tags: update.tags,
   };
 }
 
@@ -187,6 +213,38 @@ export class FeedsController extends Controller {
       return convertFeedBackend(response.data);
     } catch (error: unknown) {
       const { status, message } = handleBackendError(error, 'creating feed');
+      throw new HttpError(status, message);
+    }
+  }
+
+  /**
+   * Update an existing feed (Full override).
+   * The fields passed here will fully override the fields stored. There is no coalesing done, so make sure these are the final desired fields.
+   */
+  @Put('{feedId}')
+  @Security('google_id_token')
+  @Response<{ message: string }>(401, 'Unauthorized')
+  @Response<{ message: string }>(403, 'Forbidden')
+  @Response<{ message: string }>(404, 'Not Found')
+  @Response<{ message: string }>(500, 'Internal Server Error')
+  @Extension('x-google-backend', 'radio-transcription-api')
+  public async updateFeed(
+    @Path() feedId: string,
+    @Body() requestBody: FeedUpdate
+  ): Promise<Feed> {
+    try {
+      const client = await this.getClient();
+      const response = await client.request<FeedBackend>({
+        url: `${FEEDS_STORE_API_URL}/${feedId}`,
+        method: 'PUT',
+        data: convertFeedUpdate(requestBody),
+      });
+      return convertFeedBackend(response.data);
+    } catch (error: unknown) {
+      const { status, message } = handleBackendError(
+        error,
+        `updating feed ${feedId}`
+      );
       throw new HttpError(status, message);
     }
   }

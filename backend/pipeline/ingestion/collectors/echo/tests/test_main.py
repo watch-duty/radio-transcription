@@ -13,6 +13,7 @@ import pytest
 from google.api_core.exceptions import NotFound
 
 from backend.pipeline.ingestion.collectors.echo.main import (
+    SEGMENTED_PUBSUB_TOPIC_PATH,
     _handle,
     _parse_timestamp,
 )
@@ -186,6 +187,7 @@ class TestHandle:
         pub = _patch_globals["publisher"]
         pub.publish.assert_called_once()
         publish_args, call_kwargs = pub.publish.call_args
+        assert publish_args[0] == SEGMENTED_PUBSUB_TOPIC_PATH
         assert call_kwargs["source_type"] == "echo"
         chunk = AudioChunk()
         chunk.ParseFromString(publish_args[1])
@@ -459,7 +461,7 @@ class TestModuleImportFailFast:
         # spawned subprocess ensures _require_env raises.
         clean_env = os.environ.copy()
         clean_env.pop("AUDIO_STAGING_BUCKET", None)
-        clean_env.pop("RAW_AUDIO_TOPIC", None)
+        clean_env.pop("SEGMENTED_PUBSUB_TOPIC_PATH", None)
 
         result = subprocess.run(
             [
@@ -476,13 +478,35 @@ class TestModuleImportFailFast:
             f"expected non-zero exit, got {result.returncode}; "
             f"stdout={result.stdout!r}; stderr={result.stderr!r}"
         )
-        # First _require_env call in main.py is AUDIO_STAGING_BUCKET
-        # (statement order is fixed by D-01 / plan 01-01 Task 1: the
-        # declaration sequence at module top is AUDIO_STAGING_BUCKET then
-        # RAW_AUDIO_TOPIC, so the first ValueError surfaces the former).
+        # First _require_env call in main.py is AUDIO_STAGING_BUCKET, so the
+        # first ValueError surfaces the former.
         assert "AUDIO_STAGING_BUCKET" in result.stderr, (
             f"expected AUDIO_STAGING_BUCKET in stderr; got {result.stderr!r}"
         )
         assert "Required environment variable" in result.stderr, (
             f"expected canonical _require_env message; got {result.stderr!r}"
+        )
+
+    def test_module_import_accepts_segmented_topic(self) -> None:
+        clean_env = os.environ.copy()
+        clean_env["AUDIO_STAGING_BUCKET"] = "test-staging-bucket"
+        clean_env["SEGMENTED_PUBSUB_TOPIC_PATH"] = (
+            "projects/test/topics/segmented-audio-test"
+        )
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import backend.pipeline.ingestion.collectors.echo.main",
+            ],
+            env=clean_env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode == 0, (
+            f"expected import to succeed; "
+            f"stdout={result.stdout!r}; stderr={result.stderr!r}"
         )

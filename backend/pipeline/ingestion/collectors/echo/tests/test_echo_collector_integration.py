@@ -41,7 +41,7 @@ _SQL_DIR = (
 _FAKE_GCS_PORT = 4443
 _ECHO_BUCKET = "wd-echo-recordings-test"
 _STAGING_BUCKET = "ingestion-staging-test"
-_RAW_AUDIO_TOPIC = "projects/test/topics/raw-audio-test"
+_SEGMENTED_PUBSUB_TOPIC_PATH = "projects/test/topics/segmented-audio-test"
 
 
 def _docker_available() -> bool:
@@ -217,7 +217,11 @@ class TestEchoCollectorIntegration(unittest.TestCase):
             patch.object(echo_main, "gcs_client", self.gcs),
             patch.object(echo_main, "pubsub_client", mock_pubsub),
             patch.object(echo_main, "feed_store", store),
-            patch.object(echo_main, "RAW_AUDIO_TOPIC", _RAW_AUDIO_TOPIC),
+            patch.object(
+                echo_main,
+                "SEGMENTED_PUBSUB_TOPIC_PATH",
+                _SEGMENTED_PUBSUB_TOPIC_PATH,
+            ),
             patch.object(echo_main, "STAGING_BUCKET", _STAGING_BUCKET),
             patch.object(echo_main, "get_audio_duration", return_value=15000),
         ):
