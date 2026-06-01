@@ -1476,6 +1476,31 @@ class TestDeactivateFeed(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result)
 
 
+class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.delete_feed."""
+
+    async def test_delete_succeeds(self) -> None:
+        """True is returned when the feed is successfully deleted."""
+        pool = make_mock_pool(execute_result="DELETE 1")
+        store = FeedStore(pool)
+
+        result = await store.delete_feed(_FEED_ID)
+
+        self.assertTrue(result)
+        pool.execute.assert_called_once_with(
+            feed_queries.DELETE_FEED_SQL, _FEED_ID
+        )
+
+    async def test_delete_fails_when_not_found(self) -> None:
+        """False is returned when no feed is deleted."""
+        pool = make_mock_pool(execute_result="DELETE 0")
+        store = FeedStore(pool)
+
+        result = await store.delete_feed(_FEED_ID)
+
+        self.assertFalse(result)
+
+
 class TestResetFeed(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.reset_feed."""
 

@@ -20,3 +20,15 @@ uv run python -m grpc_tools.protoc -I protos --python_out=backend/pipeline/schem
 ```
 
 Once the wrappers are generated into `backend/pipeline/schema_types`, other local components can immediately import the generated schema modules (for example, `backend.pipeline.schema_types.<name>_pb2`).
+
+## Echo Recording Timestamps
+
+Echo per-transmission MP3 files are produced by RTL-Airband with
+`split_on_transmission = True`. For current Echo configs, RTL-Airband appends
+`_YYYYMMDD_HHMMSS` when it opens a new recording file, so that filename suffix
+is the UTC recording start time.
+
+Do not treat GCS object metadata such as `timeCreated` as capture time. It is
+the object finalization/upload time and can be delayed or batched. Echo ingestion
+should use the filename timestamp as the primary recording time source and only
+fall back to GCS object time when the filename cannot be parsed.
