@@ -13,7 +13,11 @@ from backend.pipeline.common.exceptions import (
     FeedAlreadyExistsError,
     FeedNameAlreadyExistsError,
 )
-from backend.pipeline.storage.feed_store import FeedStore, SourceType
+from backend.pipeline.storage.feed_store import (
+    FeedStatusReason,
+    FeedStore,
+    SourceType,
+)
 
 
 @pytest.fixture
@@ -75,8 +79,23 @@ async def _insert_feed(
 
 async def _get_feed_status(pool: asyncpg.Pool, feed_id: uuid.UUID) -> dict:
     """Read a feed row back from the database."""
+    row = await _get_feed_diagnostics(pool, feed_id)
+    return {
+        key: row[key]
+        for key in ("status", "failure_count", "worker_id", "fencing_token")
+    }
+
+
+async def _get_feed_diagnostics(
+    pool: asyncpg.Pool,
+    feed_id: uuid.UUID,
+) -> dict:
+    """Read lifecycle and diagnostic feed fields from the database."""
     row = await pool.fetchrow(
-        "SELECT status, failure_count, worker_id, fencing_token FROM feeds WHERE id = $1::uuid",
+        "SELECT status, failure_count, worker_id, fencing_token,"
+        " retry_after, quarantine_reason, status_reason,"
+        " status_reason_updated_at, last_processed_filename"
+        " FROM feeds WHERE id = $1::uuid",
         str(feed_id),
     )
     if row is None:
@@ -603,6 +622,83 @@ async def test_progress_update_succeeds_with_correct_worker(
     assert row["failure_count"] == 0
 
 
+async def test_progress_clears_stale_status_reason_and_stamps_clear_time(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """Successful progress clears a stale canonical reason with a clear timestamp."""
+    old_reason_ts = datetime.datetime(2026, 5, 29, 12, 0, tzinfo=datetime.UTC)
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool,
+        "Progress Reason Feed",
+        status="active",
+        worker_id=worker,
+        last_heartbeat_age_seconds=10,
+        failure_count=1,
+    )
+    await db_pool.execute(
+        "UPDATE feeds SET status_reason = $1,"
+        " status_reason_updated_at = $2 WHERE id = $3",
+        FeedStatusReason.SOURCE_OFFLINE.value,
+        old_reason_ts,
+        feed_id,
+    )
+
+    result = await store.update_feed_progress(
+        feed_id,
+        worker,
+        "gs://bucket/path/file.ogg",
+        0,
+        None,
+    )
+
+    assert result is True
+    row = await _get_feed_diagnostics(db_pool, feed_id)
+    assert row["status"] == "active"
+    assert row["failure_count"] == 0
+    assert row["status_reason"] is None
+    status_reason_updated_at = row["status_reason_updated_at"]
+    assert status_reason_updated_at > old_reason_ts
+
+
+async def test_progress_with_null_status_reason_leaves_reason_timestamp_unchanged(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """Successful progress does not churn reason timestamps without a stale reason."""
+    old_reason_ts = datetime.datetime(2026, 5, 29, 12, 0, tzinfo=datetime.UTC)
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool,
+        "Progress Null Reason Feed",
+        status="active",
+        worker_id=worker,
+        last_heartbeat_age_seconds=10,
+        failure_count=1,
+    )
+    await db_pool.execute(
+        "UPDATE feeds SET status_reason = NULL,"
+        " status_reason_updated_at = $1 WHERE id = $2",
+        old_reason_ts,
+        feed_id,
+    )
+
+    result = await store.update_feed_progress(
+        feed_id,
+        worker,
+        "gs://bucket/path/file.ogg",
+        0,
+        None,
+    )
+
+    assert result is True
+    row = await _get_feed_diagnostics(db_pool, feed_id)
+    assert row["status_reason"] is None
+    status_reason_updated_at = row["status_reason_updated_at"]
+    assert status_reason_updated_at == old_reason_ts
+
+
 async def test_progress_update_fails_with_wrong_worker(
     db_pool: asyncpg.Pool, store: FeedStore
 ) -> None:
@@ -632,13 +728,21 @@ async def test_progress_update_succeeds_for_deactivated_owned_feed(
 ) -> None:
     """An in-flight bookmark write may finish after admin deactivation."""
     worker = uuid.uuid4()
+    old_reason_ts = datetime.datetime(2026, 5, 29, 12, 0, tzinfo=datetime.UTC)
     feed_id = await _insert_feed(
         db_pool,
         "Deactivated In Flight Feed",
         status="deactivated",
         worker_id=worker,
         last_heartbeat_age_seconds=10,
-        failure_count=1,
+        failure_count=2,
+    )
+    await db_pool.execute(
+        "UPDATE feeds SET status_reason = $1,"
+        " status_reason_updated_at = $2 WHERE id = $3",
+        FeedStatusReason.SOURCE_UNREACHABLE.value,
+        old_reason_ts,
+        feed_id,
     )
 
     result = await store.update_feed_progress(
@@ -650,15 +754,13 @@ async def test_progress_update_succeeds_for_deactivated_owned_feed(
     )
 
     assert result is True
-    row = await db_pool.fetchrow(
-        "SELECT status, failure_count, last_processed_filename "
-        "FROM feeds WHERE id = $1::uuid",
-        str(feed_id),
-    )
-    assert row is not None
+    row = await _get_feed_diagnostics(db_pool, feed_id)
     assert row["status"] == "deactivated"
     assert row["failure_count"] == 0
     assert row["last_processed_filename"] == "gs://bucket/path/deactivated.ogg"
+    assert row["worker_id"] == worker
+    assert row["status_reason"] is None
+    assert row["status_reason_updated_at"] > old_reason_ts
 
 
 # -- Tests: report_feed_failure ---------------------------------------
@@ -683,6 +785,104 @@ async def test_failure_sets_status_to_failing(
     assert row["status"] == "failing"
     assert row["failure_count"] == 1
     assert row["worker_id"] is None
+
+
+async def test_failure_records_canonical_reason_and_timestamp(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """Failure writes the explicit canonical reason separately from raw detail."""
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool,
+        "Source Offline Feed",
+        status="active",
+        worker_id=worker,
+        last_heartbeat_age_seconds=10,
+    )
+
+    await store.report_feed_failure(
+        feed_id,
+        worker,
+        0,
+        reason="raw_404",
+        status_reason=FeedStatusReason.SOURCE_OFFLINE,
+    )
+
+    row = await _get_feed_diagnostics(db_pool, feed_id)
+    assert row["status"] == "failing"
+    assert row["failure_count"] == 1
+    assert row["worker_id"] is None
+    assert row["status_reason"] == "source_offline"
+    assert row["status_reason_updated_at"] is not None
+    assert row["quarantine_reason"] is None
+
+
+async def test_failure_without_status_reason_records_unexpected_fallback(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """Legacy failure calls store the temporary compatibility fallback reason."""
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool,
+        "Untyped Failure Feed",
+        status="active",
+        worker_id=worker,
+        last_heartbeat_age_seconds=10,
+    )
+
+    await store.report_feed_failure(
+        feed_id,
+        worker,
+        0,
+        reason="raw_untyped",
+    )
+
+    row = await _get_feed_diagnostics(db_pool, feed_id)
+    assert row["status_reason"] == "system_unexpected_error"
+    assert row["status_reason_updated_at"] is not None
+
+
+async def test_failure_update_fails_after_deactivation_without_rewriting_reason(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """A stale worker cannot rewrite diagnostics after operator deactivation."""
+    old_reason_ts = datetime.datetime(2026, 5, 29, 12, 0, tzinfo=datetime.UTC)
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool,
+        "Failure Deactivated Feed",
+        status="active",
+        worker_id=worker,
+        last_heartbeat_age_seconds=10,
+        failure_count=2,
+    )
+    await db_pool.execute(
+        "UPDATE feeds SET status_reason = $1,"
+        " status_reason_updated_at = $2 WHERE id = $3",
+        FeedStatusReason.SOURCE_UNREACHABLE.value,
+        old_reason_ts,
+        feed_id,
+    )
+    assert await store.deactivate_feed(feed_id) is True
+
+    result = await store.report_feed_failure(
+        feed_id,
+        worker,
+        0,
+        reason="raw",
+        status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+    )
+
+    assert result is None
+    row = await _get_feed_diagnostics(db_pool, feed_id)
+    assert row["status"] == "deactivated"
+    assert row["failure_count"] == 2
+    assert row["worker_id"] == worker
+    assert row["status_reason"] == "source_unreachable"
+    assert row["status_reason_updated_at"] == old_reason_ts
 
 
 async def test_failure_escalation_to_quarantine(
@@ -727,6 +927,38 @@ async def test_failure_preserves_deactivated_feed(
     assert row["status"] == "deactivated"
     assert row["failure_count"] == 2
     assert row["worker_id"] == worker
+
+
+async def test_quarantine_preserves_raw_reason_separately_from_canonical_reason(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """Quarantine keeps raw forensic detail separate from canonical reason."""
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool,
+        "Collector Error Feed",
+        status="active",
+        worker_id=worker,
+        last_heartbeat_age_seconds=10,
+        failure_count=4,
+    )
+
+    await store.report_feed_failure(
+        feed_id,
+        worker,
+        0,
+        reason="ffmpeg_exit_1",
+        status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+    )
+
+    row = await _get_feed_diagnostics(db_pool, feed_id)
+    assert row["status"] == "quarantined"
+    assert row["failure_count"] == 5
+    quarantine_reason = row["quarantine_reason"]
+    assert quarantine_reason == "ffmpeg_exit_1"
+    assert row["status_reason"] == "system_collector_error"
+    assert row["status_reason_updated_at"] is not None
 
 
 async def test_failing_feed_not_leased_before_retry_after(
@@ -1099,6 +1331,43 @@ async def test_progress_update_fails_with_wrong_fencing_token(
     assert result is False
 
 
+async def test_progress_update_fails_with_wrong_fencing_token_leaves_reason_fields(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """A fenced-out progress write leaves diagnostic reason fields unchanged."""
+    old_reason_ts = datetime.datetime(2026, 5, 29, 12, 0, tzinfo=datetime.UTC)
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool,
+        "Progress Fenced Reason Feed",
+        status="active",
+        worker_id=worker,
+        last_heartbeat_age_seconds=10,
+    )
+    await db_pool.execute(
+        "UPDATE feeds SET status_reason = $1,"
+        " status_reason_updated_at = $2 WHERE id = $3",
+        FeedStatusReason.SOURCE_UNREACHABLE.value,
+        old_reason_ts,
+        feed_id,
+    )
+
+    result = await store.update_feed_progress(
+        feed_id,
+        worker,
+        "gs://bucket/path/file.ogg",
+        999,
+        None,
+    )
+
+    assert result is False
+    row = await _get_feed_diagnostics(db_pool, feed_id)
+    assert row["status_reason"] == "source_unreachable"
+    status_reason_updated_at = row["status_reason_updated_at"]
+    assert status_reason_updated_at == old_reason_ts
+
+
 async def test_release_feed_fails_with_wrong_fencing_token(
     db_pool: asyncpg.Pool, store: FeedStore
 ) -> None:
@@ -1137,6 +1406,45 @@ async def test_report_feed_failure_fails_with_wrong_fencing_token(
     row = await _get_feed_status(db_pool, feed_id)
     assert row["status"] == "active"
     assert row["failure_count"] == 0
+
+
+async def test_report_feed_failure_fails_with_wrong_fencing_token_leaves_reason_fields(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """A fenced-out failure write leaves diagnostic reason fields unchanged."""
+    old_reason_ts = datetime.datetime(2026, 5, 29, 12, 0, tzinfo=datetime.UTC)
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool,
+        "Failure Fenced Reason Feed",
+        status="active",
+        worker_id=worker,
+        last_heartbeat_age_seconds=10,
+    )
+    await db_pool.execute(
+        "UPDATE feeds SET status_reason = $1,"
+        " status_reason_updated_at = $2 WHERE id = $3",
+        FeedStatusReason.SOURCE_UNREACHABLE.value,
+        old_reason_ts,
+        feed_id,
+    )
+
+    result = await store.report_feed_failure(
+        feed_id,
+        worker,
+        999,
+        reason="raw",
+        status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+    )
+
+    assert result is None
+    row = await _get_feed_diagnostics(db_pool, feed_id)
+    assert row["status"] == "active"
+    assert row["failure_count"] == 0
+    assert row["status_reason"] == "source_unreachable"
+    status_reason_updated_at = row["status_reason_updated_at"]
+    assert status_reason_updated_at == old_reason_ts
 
 
 # -- Tests: last_bookmark_time ------------------------------------------------
@@ -1471,6 +1779,72 @@ async def test_reset_feed_succeeds(
     assert row["status"] == "unclaimed"
     assert row["failure_count"] == 0
     assert row["worker_id"] is None
+
+
+async def test_reset_clears_stale_status_reason_with_clear_timestamp_and_raw_quarantine_reason(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """Reset clears stale canonical and raw quarantine reasons."""
+    old_reason_ts = datetime.datetime(2026, 5, 29, 12, 0, tzinfo=datetime.UTC)
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool,
+        "Reason Reset Feed",
+        status="quarantined",
+        failure_count=5,
+        worker_id=worker,
+        last_heartbeat_age_seconds=1000,
+    )
+    await db_pool.execute(
+        "UPDATE feeds SET quarantine_reason = $1, status_reason = $2,"
+        " status_reason_updated_at = $3 WHERE id = $4",
+        "raw outage",
+        FeedStatusReason.SOURCE_UNREACHABLE.value,
+        old_reason_ts,
+        feed_id,
+    )
+
+    feed = await store.reset_feed(feed_id)
+
+    assert feed is not None
+    assert feed["status"] == "unclaimed"
+    assert feed["failure_count"] == 0
+    assert feed["worker_id"] is None
+    assert feed["status_reason"] is None
+    status_reason_updated_at = feed["status_reason_updated_at"]
+    assert status_reason_updated_at is not None
+    assert status_reason_updated_at > old_reason_ts
+    row = await _get_feed_diagnostics(db_pool, feed_id)
+    assert row["quarantine_reason"] is None
+
+
+async def test_reset_with_null_status_reason_leaves_reason_timestamp_unchanged(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """Reset keeps the reason timestamp stable when no canonical reason exists."""
+    old_reason_ts = datetime.datetime(2026, 5, 29, 12, 0, tzinfo=datetime.UTC)
+    feed_id = await _insert_feed(
+        db_pool,
+        "Null Reason Reset Feed",
+        status="quarantined",
+        failure_count=5,
+        last_heartbeat_age_seconds=1000,
+    )
+    await db_pool.execute(
+        "UPDATE feeds SET status_reason = NULL,"
+        " status_reason_updated_at = $1 WHERE id = $2",
+        old_reason_ts,
+        feed_id,
+    )
+
+    feed = await store.reset_feed(feed_id)
+
+    assert feed is not None
+    assert feed["status_reason"] is None
+    status_reason_updated_at = feed["status_reason_updated_at"]
+    assert status_reason_updated_at == old_reason_ts
 
 
 async def test_reset_feed_returns_none_if_not_found(store: FeedStore) -> None:
