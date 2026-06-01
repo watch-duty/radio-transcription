@@ -4,10 +4,10 @@ import json
 import uuid
 from typing import TYPE_CHECKING
 
+import asyncpg
+
 if TYPE_CHECKING:
     import datetime
-
-    import asyncpg
 
 from pydantic import TypeAdapter
 
@@ -69,12 +69,16 @@ class AudioSegmentStore:
 
         data_json = json.dumps(data)
 
-        row = await self._pool.fetchrow(
-            audio_segment_queries.ADD_ANNOTATION_SQL,
-            uid,
-            annotation_type,
-            data_json,
-        )
+        try:
+            row = await self._pool.fetchrow(
+                audio_segment_queries.ADD_ANNOTATION_SQL,
+                uid,
+                annotation_type,
+                data_json,
+            )
+        except asyncpg.exceptions.ForeignKeyViolationError as e:
+            msg = f"Audio segment {segment_id} does not exist."
+            raise ValueError(msg) from e
 
         if row is None:
             msg = f"Unable to add annotation for segment {segment_id}."
