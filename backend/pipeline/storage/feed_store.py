@@ -16,6 +16,7 @@ from backend.pipeline.storage.feed_queries import (
     COUNT_HELD_BY_TYPE_SQL,
     CREATE_FEED_SQL,
     DEACTIVATE_FEED_SQL,
+    DELETE_FEED_SQL,
     GET_FEED_SQL,
     LIST_FEEDS_SQL,
     RELEASE_FEED_SQL,
@@ -729,6 +730,17 @@ class FeedStore:
         """
         result = await self._pool.execute(DEACTIVATE_FEED_SQL, feed_id)
         return result == "UPDATE 1"
+
+    async def delete_feed(self, feed_id: uuid.UUID) -> bool:
+        """Hard delete a feed by ID.
+
+        Deletes the feed itself, along with all referencing database entities
+        (transcripts, audio segments, annotations, and feed properties).
+
+        Returns True if the feed was successfully deleted, False otherwise.
+        """
+        result = await self._pool.execute(DELETE_FEED_SQL, feed_id)
+        return result == "DELETE 1"
 
     async def reset_feed(self, feed_id: uuid.UUID) -> Feed | None:
         """Reset a feed to an unclaimed, unassigned state.
