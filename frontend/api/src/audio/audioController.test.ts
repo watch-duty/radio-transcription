@@ -86,26 +86,77 @@ describe('listAudioSegments', () => {
     mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
 
     const controller = new AudioController();
-    const result = await controller.listAudioSegments({});
+    const result = await controller.listAudioSegments('test', { limit: 100, isAlert: false, });
 
     expect(result).toEqual(expectedResult);
     expect(mockRequest).toHaveBeenCalledWith({
-      url: 'http://audio-segments.example.com?',
+      url: 'http://audio-segments.example.com?feed_ids=test&limit=100&is_alert=false',
       method: 'GET',
     });
   });
 
-  it('should forward feedIds query parameters if provided', async () => {
+  it('should forward is_alert parameter if true', async () => {
     const mockBackendResponse: unknown[] = [];
     mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
 
     const controller = new AudioController();
-    await controller.listAudioSegments({
-      feedIds: ['feed-1', 'feed-2'],
+    await controller.listAudioSegments('test', {
+      limit: 100,
+      isAlert: true,
     });
 
     expect(mockRequest).toHaveBeenCalledWith({
-      url: 'http://audio-segments.example.com?feed_ids=feed-1&feed_ids=feed-2',
+      url: 'http://audio-segments.example.com?feed_ids=test&limit=100&is_alert=true',
+      method: 'GET',
+    });
+  });
+
+  it('should forward is_alert parameter if false', async () => {
+    const mockBackendResponse: unknown[] = [];
+    mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
+
+    const controller = new AudioController();
+    await controller.listAudioSegments('test', {
+      limit: 100,
+      isAlert: false,
+    });
+
+    expect(mockRequest).toHaveBeenCalledWith({
+      url: 'http://audio-segments.example.com?feed_ids=test&limit=100&is_alert=false',
+      method: 'GET',
+    });
+  });
+
+  it('should not forward is_alert parameter if undefined', async () => {
+    const mockBackendResponse: unknown[] = [];
+    mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
+
+    const controller = new AudioController();
+    await controller.listAudioSegments('test', {
+      limit: 100,
+    });
+
+    expect(mockRequest).toHaveBeenCalledWith({
+      url: 'http://audio-segments.example.com?feed_ids=test&limit=100',
+      method: 'GET',
+    });
+  });
+
+  it('should forward other query parameters if provided', async () => {
+    const mockBackendResponse: unknown[] = [];
+    mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
+
+    const controller = new AudioController();
+    await controller.listAudioSegments('test', {
+      limit: 50,
+      nextToken: 'next-page-token',
+      startTime: '2026-01-01T10:00:00Z',
+      endTime: '2026-01-01T11:00:00Z',
+      order: 'asc',
+    });
+
+    expect(mockRequest).toHaveBeenCalledWith({
+      url: 'http://audio-segments.example.com?feed_ids=test&limit=50&next_token=next-page-token&start_time=2026-01-01T10%3A00%3A00Z&end_time=2026-01-01T11%3A00%3A00Z&order=asc',
       method: 'GET',
     });
   });
@@ -115,8 +166,8 @@ describe('listAudioSegments', () => {
     mockRequest.mockRejectedValueOnce(new Error(errorMessage));
     const controller = new AudioController();
 
-    await expect(controller.listAudioSegments({})).rejects.toThrow(
-      /Backend Connection Failed/
-    );
+    await expect(
+      controller.listAudioSegments('test', { limit: 100, isAlert: false })
+    ).rejects.toThrow(/Backend Connection Failed/);
   });
 });
