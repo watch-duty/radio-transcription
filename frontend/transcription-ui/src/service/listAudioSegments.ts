@@ -11,7 +11,7 @@ export async function listAudioSegments(
   endTime?: string,
   order?: 'asc' | 'desc',
   isAlert?: boolean
-): Promise<{ audioSegments: AudioSegment[]; nextToken: string | undefined }> {
+): Promise<{ segments: AudioSegment[]; nextToken: string | undefined }> {
   let url = `${import.meta.env.VITE_API_BASE_URL}/api/v1/audioSegments/${feedId}`;
   const params = new URLSearchParams();
   if (limit) params.append('limit', limit.toString());
@@ -26,7 +26,7 @@ export async function listAudioSegments(
   }
 
   const data = await apiFetch<{
-    audioSegments: AudioSegment[];
+    segments: AudioSegment[];
     nextToken: string | undefined;
   }>(url, {
     headers: {
@@ -35,7 +35,7 @@ export async function listAudioSegments(
   });
 
   return {
-    audioSegments: data.audioSegments || [],
+    segments: data.segments || [],
     nextToken: data.nextToken,
   };
 }
