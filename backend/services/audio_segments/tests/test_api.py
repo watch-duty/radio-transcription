@@ -175,6 +175,23 @@ class TestAudioSegmentsAPI(unittest.TestCase):
         self.assertEqual(data["data"]["decisions"], ["rule-1"])
         self.mock_service.add_annotation.assert_called_once()
 
+    def test_add_annotation_segment_not_found(self) -> None:
+        """Test adding an annotation to a non-existent segment."""
+        payload = {
+            "type": "TRANSCRIPT",
+            "data": {"text": "hello test", "errors": []},
+        }
+        self.mock_service.add_annotation.side_effect = ValueError(
+            f"Audio segment {_SEGMENT_ID} does not exist."
+        )
+
+        response = self.client.post(
+            f"/v1/audio_segments/{_SEGMENT_ID}/annotations", json=payload
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        data = response.json()
+        self.assertIn("does not exist", data["detail"])
+
     def test_add_annotation_parsing_error(self) -> None:
         """Test adding an annotation with invalid payload formats."""
         payload = {
