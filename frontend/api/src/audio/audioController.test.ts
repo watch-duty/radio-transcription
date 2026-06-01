@@ -72,7 +72,6 @@ describe('listAudioSegments', () => {
         createdAt: '2026-01-01T10:02:00Z',
         annotations: [
           {
-            audioSegmentId: 'segment-1',
             type: 'TRANSCRIPT',
             createdAt: '2026-01-01T10:03:00Z',
             data: {
