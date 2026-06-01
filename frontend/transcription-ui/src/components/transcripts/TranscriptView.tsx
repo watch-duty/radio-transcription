@@ -25,7 +25,6 @@ import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { listTranscripts } from '../../service/listTranscripts';
 import { getAudioUrl } from '../../utils/audioUtils';
-import { roundUpToNearestMinute } from '../../utils/timeUtils';
 import AudioDisplay from '../audio/AudioDisplay';
 import FeedSearchView from '../feeds/FeedSearchView';
 import FeedHeader from './FeedHeader';
@@ -40,6 +39,7 @@ interface TranscriptViewProps {
 export type ListTranscriptsPage = {
   nextToken?: string;
   order: 'asc' | 'desc';
+  isInitial?: boolean;
 };
 
 export type ListTranscriptsData = {
@@ -275,13 +275,18 @@ export function TranscriptView({
       alertFilter,
     ],
     queryFn: async ({ pageParam }) => {
-      const { nextToken, order } = pageParam;
+      const { nextToken, isInitial } = pageParam;
+      let { order } = pageParam;
+
+      if (isInitial && searchedTimestamp) {
+        order = 'asc';
+      }
 
       // We only fetch the timestamp on the initial load. On subsequent loads,
       // the cursor-based positioning of the database in nextToken handles the rest.
       const originalTimestampMs =
         !nextToken && searchedTimestamp
-          ? roundUpToNearestMinute(searchedTimestamp).getTime()
+          ? searchedTimestamp.getTime()
           : undefined;
 
       const response = await listTranscripts(
@@ -306,6 +311,7 @@ export function TranscriptView({
     },
     initialPageParam: {
       order: 'desc',
+      isInitial: true,
     },
     // Note: TanStack Query automatically manages the bidirectional pagination state for us.
     // - `getNextPageParam` is always passed the LAST page in the cache (oldest) to continue scanning backward.
@@ -313,27 +319,29 @@ export function TranscriptView({
     // Because each page stores its own `nextToken` and `order`, the framework naturally isolates the
     // forward and backward pagination bookmarks without us needing to maintain separate local state for them.
     getNextPageParam: (lastPage) => {
-      // We only fetch older transcripts (descending order). Because the initial
-      // page is in descending order, we can just use the nextToken.
-      if (lastPage.order !== 'desc') return undefined;
-      return lastPage.nextToken
-        ? { order: 'desc', nextToken: lastPage.nextToken }
+      // 1. If we are already fetching older transcripts ('desc'), continue scanning backward.
+      if (lastPage.order === 'desc') {
+        return lastPage.nextToken
+          ? { order: 'desc', nextToken: lastPage.nextToken }
+          : undefined;
+      }
+      // 2. If the initial load was 'asc' (searching from a timestamp), and the user scrolls down
+      // to load older transcripts, we start fetching them in 'desc' order starting from the searched timestamp.
+      return searchedTimestamp
+        ? { order: 'desc', nextToken: undefined }
         : undefined;
     },
     getPreviousPageParam: (firstPage) => {
       // 1. If no timestamp was searched, we are at the "live" head. No newer transcripts exist.
       if (!searchedTimestamp) return undefined;
-      // 2. If we are already fetching newer transcripts ('asc') and hit the end, stop.
+      // 2. If we are fetching newer transcripts ('asc') and hit the end, stop.
       if (firstPage.order === 'asc') {
         return firstPage.nextToken
           ? { order: 'asc', nextToken: firstPage.nextToken }
           : undefined;
       }
-      // 3. Initial load (order === 'desc'): Start fetching newer transcripts from the base timestamp.
-      return {
-        order: 'asc',
-        nextToken: undefined,
-      };
+      // 3. If we are in a descending page load, we cannot fetch newer transcripts directly from it.
+      return undefined;
     },
     enabled: !!token && !!searchedFeedId && isFeedsSuccess,
     refetchOnWindowFocus: false,
@@ -350,11 +358,18 @@ export function TranscriptView({
       ? transcriptsDataUpdatedAt
       : null;
 
-  const transcripts = useMemo(
-    () =>
-      listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? [],
-    [listTranscriptsResponse]
-  );
+  const transcripts = useMemo(() => {
+    const allTranscripts =
+      listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? [];
+    const seenIds = new Set<string>();
+    return allTranscripts.filter((transcript) => {
+      if (seenIds.has(transcript.transmissionId)) {
+        return false;
+      }
+      seenIds.add(transcript.transmissionId);
+      return true;
+    });
+  }, [listTranscriptsResponse]);
 
   // Keep the ref in sync with the transcripts so that audio lifecycle callbacks can access the latest list.
   useEffect(() => {

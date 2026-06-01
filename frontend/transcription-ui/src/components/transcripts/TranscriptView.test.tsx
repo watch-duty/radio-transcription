@@ -381,7 +381,7 @@ describe('TranscriptView', () => {
     vi.mocked(listTranscripts)
       .mockResolvedValueOnce({
         transcripts: initialTranscripts,
-        nextToken: undefined,
+        nextToken: 'next-token-newer',
       })
       .mockResolvedValueOnce({
         transcripts: [],
@@ -408,8 +408,8 @@ describe('TranscriptView', () => {
         'feed123',
         'fake-token',
         undefined,
+        'next-token-newer',
         undefined,
-        testTimestamp,
         undefined,
         'asc',
         undefined
@@ -451,7 +451,7 @@ describe('TranscriptView', () => {
       })
       .mockResolvedValueOnce({
         transcripts: alertTranscripts,
-        nextToken: undefined,
+        nextToken: 'next-token-alert-newer',
       })
       .mockResolvedValueOnce({
         transcripts: [],
@@ -500,8 +500,8 @@ describe('TranscriptView', () => {
         'feed123',
         'fake-token',
         undefined,
+        'next-token-alert-newer',
         undefined,
-        testTimestamp,
         undefined,
         'asc',
         true
