@@ -127,6 +127,7 @@ class StitcherContext:
     buffer_duration_ms: int = 0
     speech_segments: list[TimeRange] = field(default_factory=list)
     traceparent: str | None = None
+    prior_audio_tail: bytes | None = None
 
 
 @dataclass(frozen=True)
