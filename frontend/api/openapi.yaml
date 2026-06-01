@@ -478,11 +478,23 @@ components:
       additionalProperties: false
     ListAudioSegmentsQueryParams:
       properties:
-        feedIds:
-          items:
-            type: string
-          type: array
-          description: Optional list of feed IDs to filter by.
+        limit:
+          type: integer
+          format: int32
+          default: 100
+        nextToken:
+          type: string
+        startTime:
+          type: string
+        endTime:
+          type: string
+        order:
+          type: string
+          enum:
+            - asc
+            - desc
+        isAlert:
+          type: boolean
       type: object
       additionalProperties: false
   securitySchemes:
@@ -1476,7 +1488,7 @@ paths:
       security: []
       parameters: []
       x-google-backend: radio-transcription-api
-  /api/v1/audioSegments:
+  /api/v1/audioSegments/{feedId}:
     get:
       operationId: ListAudioSegments
       responses:
@@ -1485,9 +1497,16 @@ paths:
           content:
             application/json:
               schema:
-                items:
-                  $ref: "#/components/schemas/AudioSegment"
-                type: array
+                properties:
+                  nextToken:
+                    type: string
+                  audioSegments:
+                    items:
+                      $ref: "#/components/schemas/AudioSegment"
+                    type: array
+                required:
+                  - audioSegments
+                type: object
         "401":
           description: Unauthorized
           content:
@@ -1501,6 +1520,17 @@ paths:
                 type: object
         "403":
           description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "404":
+          description: Not Found
           content:
             application/json:
               schema:
@@ -1526,14 +1556,46 @@ paths:
       security:
         - google_id_token: []
       parameters:
-        - description: Optional list of feed IDs to filter by.
-          in: query
-          name: feedIds
+        - in: path
+          name: feedId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: limit
           required: false
           schema:
-            type: array
-            items:
-              type: string
+            default: 100
+            format: int32
+            type: integer
+        - in: query
+          name: nextToken
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: startTime
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: endTime
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: order
+          required: false
+          schema:
+            type: string
+            enum:
+              - asc
+              - desc
+        - in: query
+          name: isAlert
+          required: false
+          schema:
+            type: boolean
       x-google-backend: radio-transcription-api
 servers:
   - url: https://${radio_transcription_api_service_name}/
