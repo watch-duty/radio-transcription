@@ -10,6 +10,7 @@ import logging
 from cloudevents.http.event import CloudEvent
 from google.cloud import pubsub_v1
 
+from backend.pipeline.common.clients import audio_segments_client
 from backend.pipeline.common.constants import (
     MS_PER_SECOND,
     NANOS_PER_MS,
@@ -22,6 +23,7 @@ from backend.pipeline.schema_types.transcribed_audio_pb2 import (
     TranscribedAudio,
 )
 from backend.pipeline.transcription.transcribers.base import Transcriber
+from backend.services.audio_segments import models as audio_segments_models
 
 CHIRP_UNINTELLIGIBLE_MARKER = "[UNINTELLIGIBLE]"
 
@@ -40,11 +42,14 @@ class TranscriptionEventProcessor:
         output_topic: str,
         transcriber: Transcriber,
         publisher: pubsub_v1.PublisherClient,
+        audio_segments_client: audio_segments_client.AudioSegmentsClient
+        | None = None,
     ) -> None:
         self.project_id = project_id
         self.output_topic = output_topic
         self.transcriber = transcriber
         self.publisher = publisher
+        self.audio_segments_client = audio_segments_client
 
     def process_event(self, cloud_event: CloudEvent) -> None:
         """Decodes, processes, and transcribes the given CloudEvent."""
@@ -55,6 +60,9 @@ class TranscriptionEventProcessor:
         with with_tracer_context(
             traceparent, "transcribe_claim_check", __name__
         ):
+            errors = []
+            transcript = ""
+            transmission_id = ""
             raw_data = pubsub_message.get("data", "")
             if not raw_data:
                 logger.error("Bad Request: Missing Pub/Sub data payload")
@@ -101,6 +109,7 @@ class TranscriptionEventProcessor:
                     logger.info(
                         "Speech API returned empty transcription. Using fallback unintelligible marker."
                     )
+                    errors.append("Empty transcription from Speech Model")
                     transcript = CHIRP_UNINTELLIGIBLE_MARKER
 
                 # Build TranscribedAudio egress protobuf message
@@ -151,4 +160,41 @@ class TranscriptionEventProcessor:
                     feed_id,
                     e,
                 )
-                return
+                errors.append(f"Exception: {e}")
+            finally:
+                if transmission_id:
+                    self._write_transcript_annotation(
+                        transmission_id,
+                        transcript or "",
+                        errors,
+                    )
+
+    def _write_transcript_annotation(
+        self, transmission_id: str, transcript: str, errors: list[str]
+    ) -> None:
+        """Writes transcript annotation to audio segments API."""
+        if self.audio_segments_client is None:
+            return
+
+        try:
+            annotation_data = {
+                "text": transcript,
+                "errors": errors,
+            }
+            self.audio_segments_client.add_audio_segment_annotation(
+                audio_segment_id=transmission_id,
+                annotation_type=(
+                    audio_segments_models.AnnotationType.TRANSCRIPT
+                ),
+                data=annotation_data,
+            )
+            logger.info(
+                "Successfully added transcript annotation for segment %s",
+                transmission_id,
+            )
+        except Exception as write_err:
+            logger.exception(
+                "Failed to add transcript annotation for segment %s: %s",
+                transmission_id,
+                write_err,
+            )
