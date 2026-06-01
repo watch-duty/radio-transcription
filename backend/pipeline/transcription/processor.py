@@ -238,32 +238,26 @@ class TranscriptionEventProcessor:
 
 def _is_transient_exception(e: Exception) -> bool:
     """Determines if an exception is transient and should be retried."""
-    # Check Google API exceptions
-    if isinstance(e, GoogleAPICallError):
-        # HTTP 429 (Too Many Requests), HTTP 409 (Conflict/Aborted) or HTTP 5xx (Server Errors) are transient
-        if e.code in (429, 409) or (e.code and e.code >= 500):
+    match e:
+        case GoogleAPICallError() if e.code in (429, 409) or (
+            e.code and e.code >= 500
+        ):
             return True
-        return False
-
-    # Check gRPC exceptions
-    if isinstance(e, grpc.Call):
-        try:
-            code = e.code()
-            if code in (
-                grpc.StatusCode.UNAVAILABLE,
-                grpc.StatusCode.DEADLINE_EXCEEDED,
-                grpc.StatusCode.RESOURCE_EXHAUSTED,
-                grpc.StatusCode.INTERNAL,
-                grpc.StatusCode.ABORTED,
-            ):
-                return True
-        except (AttributeError, TypeError, ValueError):
-            pass
-        return False
-
-    # Check standard connection/timeout errors
-    if isinstance(e, (ConnectionError, TimeoutError)):
-        return True
-
-    # Any other exceptions (ValueError, InvalidArgument, PermissionDenied, AttributeError, etc.) are permanent
-    return False
+        case grpc.Call():
+            try:
+                match e.code():
+                    case (
+                        grpc.StatusCode.UNAVAILABLE
+                        | grpc.StatusCode.DEADLINE_EXCEEDED
+                        | grpc.StatusCode.RESOURCE_EXHAUSTED
+                        | grpc.StatusCode.INTERNAL
+                        | grpc.StatusCode.ABORTED
+                    ):
+                        return True
+            except (AttributeError, TypeError, ValueError):
+                pass
+            return False
+        case ConnectionError() | TimeoutError():
+            return True
+        case _:
+            return False
