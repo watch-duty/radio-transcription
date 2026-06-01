@@ -9,12 +9,12 @@ import {
   Controller,
   Extension,
   Get,
+  Path,
   Queries,
   Response,
   Route,
   Security,
   Tags,
-  Path,
 } from 'tsoa';
 
 import { AUDIO_SEGMENTS_API_URL } from '../config.js';

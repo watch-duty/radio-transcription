@@ -86,7 +86,10 @@ describe('listAudioSegments', () => {
     mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
 
     const controller = new AudioController();
-    const result = await controller.listAudioSegments('test', { limit: 100, isAlert: false, });
+    const result = await controller.listAudioSegments('test', {
+      limit: 100,
+      isAlert: false,
+    });
 
     expect(result).toEqual(expectedResult);
     expect(mockRequest).toHaveBeenCalledWith({
