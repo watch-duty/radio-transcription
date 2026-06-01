@@ -27,7 +27,7 @@ describe('listAudioSegments', () => {
 
   it('should return converted data on success', async () => {
     const mockBackendResponse = {
-      audioSegments: [
+      segments: [
         {
           id: 'segment-1',
           feed_id: 'feed-1',
@@ -59,7 +59,7 @@ describe('listAudioSegments', () => {
     };
 
     const expectedResult = {
-      audioSegments: [
+      segments: [
         {
           id: 'segment-1',
           feedId: 'feed-1',
@@ -105,7 +105,7 @@ describe('listAudioSegments', () => {
   });
 
   it('should forward is_alert parameter if true', async () => {
-    const mockBackendResponse = { audioSegments: [] };
+    const mockBackendResponse = { segments: [] };
     mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
 
     const controller = new AudioController();
@@ -121,7 +121,7 @@ describe('listAudioSegments', () => {
   });
 
   it('should forward is_alert parameter if false', async () => {
-    const mockBackendResponse = { audioSegments: [] };
+    const mockBackendResponse = { segments: [] };
     mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
 
     const controller = new AudioController();
@@ -137,7 +137,7 @@ describe('listAudioSegments', () => {
   });
 
   it('should not forward is_alert parameter if undefined', async () => {
-    const mockBackendResponse = { audioSegments: [] };
+    const mockBackendResponse = { segments: [] };
     mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
 
     const controller = new AudioController();
@@ -152,7 +152,7 @@ describe('listAudioSegments', () => {
   });
 
   it('should forward other query parameters if provided', async () => {
-    const mockBackendResponse = { audioSegments: [] };
+    const mockBackendResponse = { segments: [] };
     mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
 
     const controller = new AudioController();
