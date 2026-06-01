@@ -1497,9 +1497,16 @@ paths:
           content:
             application/json:
               schema:
-                items:
-                  $ref: "#/components/schemas/AudioSegment"
-                type: array
+                properties:
+                  nextToken:
+                    type: string
+                  audioSegments:
+                    items:
+                      $ref: "#/components/schemas/AudioSegment"
+                    type: array
+                required:
+                  - audioSegments
+                type: object
         "401":
           description: Unauthorized
           content:

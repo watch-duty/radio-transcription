@@ -117,7 +117,7 @@ export class AudioController extends Controller {
   public async listAudioSegments(
     @Path() feedId: string,
     @Queries() query: ListAudioSegmentsQueryParams
-  ): Promise<AudioSegment[]> {
+  ): Promise<{ audioSegments: AudioSegment[]; nextToken: string | undefined }> {
     try {
       const queryParams = new URLSearchParams();
       queryParams.append('feed_ids', [feedId].toString());
@@ -138,8 +138,14 @@ export class AudioController extends Controller {
         method: 'GET',
       });
 
-      const data = response.data as AudioSegmentBackend[];
-      return data.map(convertAudioSegmentBackend);
+      const data = response.data as {
+        audioSegments: AudioSegmentBackend[];
+        nextToken?: string;
+      };
+      return {
+        audioSegments: data.audioSegments.map(convertAudioSegmentBackend),
+        nextToken: data.nextToken,
+      };
     } catch (error: unknown) {
       const { status, message } = handleBackendError(
         error,

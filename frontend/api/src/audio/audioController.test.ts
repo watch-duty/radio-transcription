@@ -26,62 +26,68 @@ describe('listAudioSegments', () => {
   });
 
   it('should return converted data on success', async () => {
-    const mockBackendResponse = [
-      {
-        id: 'segment-1',
-        feed_id: 'feed-1',
-        classification: 'SPEECH_DETECTED',
-        start_timestamp: '2026-01-01T10:00:00Z',
-        end_timestamp: '2026-01-01T10:01:00Z',
-        missing_prior_context: false,
-        missing_post_context: false,
-        source_audio_uris: ['gs://bucket/audio.ogg'],
-        canonical_audio_uri: 'gs://bucket/canonical.ogg',
-        start_audio_offset: 'PT5S',
-        end_audio_offset: 'PT10S',
-        playback_audio_uri: 'https://example.com/playback.mp3',
-        created_at: '2026-01-01T10:02:00Z',
-        annotations: [
-          {
-            audio_segment_id: 'segment-1',
-            type: 'TRANSCRIPT',
-            created_at: '2026-01-01T10:03:00Z',
-            data: {
-              text: 'Hello world',
-              errors: [],
+    const mockBackendResponse = {
+      audioSegments: [
+        {
+          id: 'segment-1',
+          feed_id: 'feed-1',
+          classification: 'SPEECH_DETECTED',
+          start_timestamp: '2026-01-01T10:00:00Z',
+          end_timestamp: '2026-01-01T10:01:00Z',
+          missing_prior_context: false,
+          missing_post_context: false,
+          source_audio_uris: ['gs://bucket/audio.ogg'],
+          canonical_audio_uri: 'gs://bucket/canonical.ogg',
+          start_audio_offset: 'PT5S',
+          end_audio_offset: 'PT10S',
+          playback_audio_uri: 'https://example.com/playback.mp3',
+          created_at: '2026-01-01T10:02:00Z',
+          annotations: [
+            {
+              audio_segment_id: 'segment-1',
+              type: 'TRANSCRIPT',
+              created_at: '2026-01-01T10:03:00Z',
+              data: {
+                text: 'Hello world',
+                errors: [],
+              },
             },
-          },
-        ],
-      },
-    ];
+          ],
+        },
+      ],
+      nextToken: 'next-page-token',
+    };
 
-    const expectedResult = [
-      {
-        id: 'segment-1',
-        feedId: 'feed-1',
-        classification: 'SPEECH_DETECTED',
-        startTimestamp: '2026-01-01T10:00:00Z',
-        endTimestamp: '2026-01-01T10:01:00Z',
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: ['gs://bucket/audio.ogg'],
-        canonicalAudioUri: 'gs://bucket/canonical.ogg',
-        startAudioOffset: 'PT5S',
-        endAudioOffset: 'PT10S',
-        playbackAudioUri: 'https://example.com/playback.mp3',
-        createdAt: '2026-01-01T10:02:00Z',
-        annotations: [
-          {
-            type: 'TRANSCRIPT',
-            createdAt: '2026-01-01T10:03:00Z',
-            data: {
-              text: 'Hello world',
-              errors: [],
+    const expectedResult = {
+      audioSegments: [
+        {
+          id: 'segment-1',
+          feedId: 'feed-1',
+          classification: 'SPEECH_DETECTED',
+          startTimestamp: '2026-01-01T10:00:00Z',
+          endTimestamp: '2026-01-01T10:01:00Z',
+          missingPriorContext: false,
+          missingPostContext: false,
+          sourceAudioUris: ['gs://bucket/audio.ogg'],
+          canonicalAudioUri: 'gs://bucket/canonical.ogg',
+          startAudioOffset: 'PT5S',
+          endAudioOffset: 'PT10S',
+          playbackAudioUri: 'https://example.com/playback.mp3',
+          createdAt: '2026-01-01T10:02:00Z',
+          annotations: [
+            {
+              type: 'TRANSCRIPT',
+              createdAt: '2026-01-01T10:03:00Z',
+              data: {
+                text: 'Hello world',
+                errors: [],
+              },
             },
-          },
-        ],
-      },
-    ];
+          ],
+        },
+      ],
+      nextToken: 'next-page-token',
+    };
 
     mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
 
@@ -99,7 +105,7 @@ describe('listAudioSegments', () => {
   });
 
   it('should forward is_alert parameter if true', async () => {
-    const mockBackendResponse: unknown[] = [];
+    const mockBackendResponse = { audioSegments: [] };
     mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
 
     const controller = new AudioController();
@@ -115,7 +121,7 @@ describe('listAudioSegments', () => {
   });
 
   it('should forward is_alert parameter if false', async () => {
-    const mockBackendResponse: unknown[] = [];
+    const mockBackendResponse = { audioSegments: [] };
     mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
 
     const controller = new AudioController();
@@ -131,7 +137,7 @@ describe('listAudioSegments', () => {
   });
 
   it('should not forward is_alert parameter if undefined', async () => {
-    const mockBackendResponse: unknown[] = [];
+    const mockBackendResponse = { audioSegments: [] };
     mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
 
     const controller = new AudioController();
@@ -146,7 +152,7 @@ describe('listAudioSegments', () => {
   });
 
   it('should forward other query parameters if provided', async () => {
-    const mockBackendResponse: unknown[] = [];
+    const mockBackendResponse = { audioSegments: [] };
     mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
 
     const controller = new AudioController();
