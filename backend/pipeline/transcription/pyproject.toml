@@ -16,6 +16,7 @@ dependencies = [
     "pydantic>=2.12.5",
     # Adding betterproto because it is required to load the generated betterproto schema types.
     "betterproto>=2.0.0b6",
+    "radio-transcription-common",
 ]
 
 [tool.setuptools]
