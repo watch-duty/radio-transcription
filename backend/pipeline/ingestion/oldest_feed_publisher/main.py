@@ -45,7 +45,7 @@ from typing import TYPE_CHECKING
 import functions_framework
 
 from backend.pipeline.common.clients.monitoring_client import MonitoringClient
-from backend.pipeline.common.logging import setup_logging
+from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.storage.connection import create_pool_from_settings
 from backend.pipeline.storage.settings import AlloyDBSettings
 

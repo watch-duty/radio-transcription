@@ -18,7 +18,7 @@ from google.cloud import secretmanager
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from backend.pipeline.common.logging import setup_logging
+from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.ingestion.settings import _require_env
 
 if TYPE_CHECKING:
