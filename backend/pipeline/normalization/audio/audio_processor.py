@@ -39,6 +39,8 @@ logger = get_task_logger(
     __name__, {"system": "transcription", "component": "audio-processor"}
 )
 
+DEFAULT_FFMPEG_TIMEOUT_SEC = 30
+
 
 def get_gcs_client() -> storage.Client:
     """Initialize and return a GCS Client. Used natively by the audio processor for isolation."""
@@ -158,7 +160,7 @@ class AudioProcessor:
                 input=in_mem_file.getvalue(),
                 capture_output=True,
                 check=False,
-                timeout=30,
+                timeout=DEFAULT_FFMPEG_TIMEOUT_SEC,
             )
             if process.returncode != 0:
                 logger.error(
@@ -252,7 +254,7 @@ class AudioProcessor:
                 input=audio_buffer.tobytes(),
                 capture_output=True,
                 check=False,
-                timeout=30,
+                timeout=DEFAULT_FFMPEG_TIMEOUT_SEC,
             )
             if process.returncode != 0:
                 logger.error(
@@ -301,7 +303,7 @@ class AudioProcessor:
                 input=audio_buffer.tobytes(),
                 capture_output=True,
                 check=False,
-                timeout=30,
+                timeout=DEFAULT_FFMPEG_TIMEOUT_SEC,
             )
 
             if process.returncode != 0:

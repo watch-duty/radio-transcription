@@ -8,6 +8,8 @@ import tempfile
 
 logger = logging.getLogger(__name__)
 
+FFPROBE_TIMEOUT_SEC = 10
+
 
 def get_audio_duration(audio_bytes: bytes) -> int:
     """Calculate duration of audio bytes using ffprobe.
@@ -39,7 +41,7 @@ def get_audio_duration(audio_bytes: bytes) -> int:
                 ],
                 capture_output=True,
                 check=True,
-                timeout=10,
+                timeout=FFPROBE_TIMEOUT_SEC,
             )
         duration_sec = float(result.stdout.decode().strip())
         return int(duration_sec * 1000)
