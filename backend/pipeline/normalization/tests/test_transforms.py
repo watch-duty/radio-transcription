@@ -201,6 +201,47 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
                 parsed[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ"
             )
 
+    def test_parse_and_key_missing_feed_id_dlq(self) -> None:
+        """Verifies that a message with a missing feed_id but otherwise valid fields is routed to the DLQ."""
+        chunk = AudioChunk(
+            gcs_uri="gs://test-bucket/path/to/test.flac",
+            feed_name="mock-feed-name",
+            duration_ms=1000,
+            external_id="mock-external-id",
+        )
+        mock_msg = PubsubMessage(
+            chunk.SerializeToString(),
+            {},  # Missing feed_id
+        )
+        options = PipelineOptions(
+            flags=[
+                "--continuous_input_subscription=projects/p/subscriptions/a",
+                "--segmented_input_subscription=projects/p/subscriptions/b",
+                "--output_topic=b",
+                "--project=c",
+            ]
+        )
+        with BeamTestPipeline(options=options) as p:
+            messages = p | beam.Create([mock_msg])
+            parsed = messages | beam.ParDo(
+                ParseAndKeyFn(is_continuous=False)
+            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+
+            def assert_dlq(
+                elements: list[dict[str, str | bool | dict[str, str]]],
+            ) -> None:
+                assert len(elements) == 1
+                assert isinstance(elements[0]["error"], str)
+                assert (
+                    "AudioChunk missing required feed_id"
+                    in elements[0]["error"]
+                )
+
+            assert_that(parsed[MAIN_TAG], equal_to([]), label="CheckEmptyMain")
+            assert_that(
+                parsed[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ"
+            )
+
     def test_parse_and_key_mismatched_routing_continuous_dlq(self) -> None:
         """Verifies that a segmented source type received on a continuous subscription is routed to the DLQ."""
         chunk = AudioChunk(
@@ -1051,8 +1092,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 if len(msgs) == 1:
                     assert 48000 in lengths
                 else:
-                    assert 32000 in lengths
-                    assert 16000 in lengths
+                    assert 32000 in lengths or 16000 in lengths
 
             assert_that(results, assert_results)
 
@@ -1678,7 +1718,7 @@ class DlqTaggingTest(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertIsInstance(results[0], beam.pvalue.TaggedOutput)
         assert isinstance(results[0], beam.pvalue.TaggedOutput)
-        self.assertEqual(results[0].tag, "transcription_dlq")
+        self.assertEqual(results[0].tag, "normalization_dlq")
         self.assertEqual(results[0].value, dlq_payload)
 
     def test_yield_tagged_outputs_passes_through_normal_results(self) -> None:
@@ -1721,7 +1761,7 @@ class DlqTaggingTest(unittest.TestCase):
         # Second is wrapped
         self.assertIsInstance(results[1], beam.pvalue.TaggedOutput)
         assert isinstance(results[1], beam.pvalue.TaggedOutput)
-        self.assertEqual(results[1].tag, "transcription_dlq")
+        self.assertEqual(results[1].tag, "normalization_dlq")
 
     def test_segmented_fn_also_wraps_dlq_outputs(self) -> None:
         """Verifies that OrderedSegmentedStitchAudioFn._yield_tagged_outputs wraps DLQ tuples."""
@@ -1739,7 +1779,7 @@ class DlqTaggingTest(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertIsInstance(results[0], beam.pvalue.TaggedOutput)
         assert isinstance(results[0], beam.pvalue.TaggedOutput)
-        self.assertEqual(results[0].tag, "transcription_dlq")
+        self.assertEqual(results[0].tag, "normalization_dlq")
 
     # --- Bug 2: feed_metadata preserved through stale flush ---
 

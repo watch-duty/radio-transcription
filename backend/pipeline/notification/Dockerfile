@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.9-labs
 FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -7,17 +8,15 @@ WORKDIR /app
 
 ENV PYTHONPATH=/app
 
-# 1. Install dependencies
-COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
-COPY pyproject.toml uv.lock ./
-# We intentionally copy the entire backend/ directory before running uv sync.
-# This ensures that ALL workspace sub-projects (e.g. transcription, ingestion) have
-# their corresponding pyproject.toml files present. Without this, uv cannot resolve
-# the local workspace dependencies defined in the root pyproject.toml.
+# 1. Install locked, scoped dependencies
+COPY --from=ghcr.io/astral-sh/uv:0.11.13 /uv /uvx /bin/
+COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml ./
+
+RUN uv export --package notification-function --no-dev --locked --no-emit-project -o requirements.txt && \
+    uv pip install --system -r requirements.txt && \
+    uv pip install --system grpcio-tools
+
 COPY backend/ ./backend/
-ENV UV_PROJECT_ENVIRONMENT=/app/.venv
-ENV PATH="/app/.venv/bin:$PATH"
-RUN uv sync --frozen --no-dev && uv pip install grpcio-tools
 COPY protos/ ./protos
 
 # 2. Create the directory for the generated files

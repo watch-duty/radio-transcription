@@ -39,6 +39,12 @@ class TestSloContractLiterals(unittest.TestCase):
             "call_auth_failure",
         )
 
+    def test_event_type_bcfy_jwt_fetch_failed_literal(self) -> None:
+        self.assertEqual(
+            slo_contract.EVENT_TYPE_BCFY_JWT_FETCH_FAILED,
+            "bcfy_jwt_fetch_failed",
+        )
+
     def test_metric_type_quarantine_events_literal(self) -> None:
         self.assertEqual(
             slo_contract.METRIC_TYPE_QUARANTINE_EVENTS,
@@ -61,6 +67,7 @@ class TestSloContractAll(unittest.TestCase):
             "EVENT_TYPE_CALL_DOWNLOAD_FAILED",
             "EVENT_TYPE_FEED_QUARANTINED",
             "EVENT_TYPE_CALL_AUTH_FAILURE",
+            "EVENT_TYPE_BCFY_JWT_FETCH_FAILED",
             "METRIC_TYPE_QUARANTINE_EVENTS",
             "INGESTION_LOGGER_PATH",
         }

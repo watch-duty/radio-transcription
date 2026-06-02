@@ -32,6 +32,7 @@ from backend.pipeline.normalization.common.constants import (
 from backend.pipeline.normalization.common.datatypes import (
     ChunkMetadata,
     FeedMetadata,
+    NormalizationDlqOutput,
     NormalizationResult,
     TranscriptionResult,
 )
@@ -81,7 +82,7 @@ class ParseAndKeyFn(beam.DoFn):
     @override
     def process(
         self, element: PubsubMessage, *args: Any, **kwargs: Any
-    ) -> Iterator[tuple[str, ChunkMetadata] | beam.pvalue.TaggedOutput]:
+    ) -> Iterator[tuple[str, ChunkMetadata] | NormalizationDlqOutput]:
         """Extracts the feed_id and parses the protobuf payload."""
 
         def _raise(msg: str) -> None:
@@ -97,6 +98,9 @@ class ParseAndKeyFn(beam.DoFn):
             with tracer.start_as_current_span(
                 "receive_audio_chunk_for_normalization", context=context
             ):
+                if not feed_id:
+                    msg = "AudioChunk missing required feed_id"
+                    _raise(msg)
                 if not chunk_proto.gcs_uri:
                     msg = "AudioChunk missing required gcs_uri"
                     _raise(msg)
@@ -139,6 +143,12 @@ class ParseAndKeyFn(beam.DoFn):
                     is_continuous=self.is_continuous,
                     traceparent=traceparent,
                 )
+                logger.debug(
+                    "Parsed AudioChunk feed_id=%s gcs_uri=%s duration=%dms",
+                    feed_id,
+                    chunk_proto.gcs_uri,
+                    chunk_proto.duration_ms,
+                )
                 outputs.append((feed_id, metadata))
         except Exception as e:
             msg = f"Failed to parse or validate payload: {e}"
@@ -165,7 +175,7 @@ class SerializeFn(beam.DoFn):
     def process(
         self,
         element: TranscriptionResult,
-    ) -> Iterator[PubsubMessage | beam.pvalue.TaggedOutput]:
+    ) -> Iterator[PubsubMessage | NormalizationDlqOutput]:
         def _raise(msg: str) -> None:
             raise ValueError(msg)
 
@@ -249,7 +259,7 @@ class SerializeNormalizationClaimFn(beam.DoFn):
     def process(
         self,
         element: NormalizationResult,
-    ) -> Iterator[PubsubMessage | beam.pvalue.TaggedOutput]:
+    ) -> Iterator[PubsubMessage | NormalizationDlqOutput]:
         def _raise(msg: str) -> None:
             raise ValueError(msg)
 

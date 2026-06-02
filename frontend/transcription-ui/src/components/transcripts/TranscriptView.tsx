@@ -4,10 +4,10 @@ import type { VirtuosoHandle } from 'react-virtuoso';
 
 import { Howl } from 'howler';
 
-import { Checkbox, FormControlLabel } from '@mui/material';
 import Box from '@mui/material/Box';
-import Button from '@mui/material/Button';
+import Checkbox from '@mui/material/Checkbox';
 import CircularProgress from '@mui/material/CircularProgress';
+import FormControlLabel from '@mui/material/FormControlLabel';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import {
@@ -25,14 +25,9 @@ import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { listTranscripts } from '../../service/listTranscripts';
 import { getAudioUrl } from '../../utils/audioUtils';
-import {
-  getInitialTimestamp,
-  roundUpToNearestMinute,
-} from '../../utils/timeUtils';
 import AudioDisplay from '../audio/AudioDisplay';
-import DateTimePicker from '../common/DateTimePicker';
+import FeedSearchView from '../feeds/FeedSearchView';
 import FeedHeader from './FeedHeader';
-import FeedSearch from './FeedSearch';
 import TranscriptActionsBar from './TranscriptActionsBar';
 import TranscriptDisplay from './TranscriptDisplay';
 
@@ -50,6 +45,8 @@ export type ListTranscriptsData = {
   transcripts: Transcript[];
 } & ListTranscriptsPage;
 
+export type AlertFilter = 'all' | 'alerts';
+
 const DEFAULT_REFRESH_INTERVAL = 10000;
 const MAX_TRANSCRIPTS_POLLING_ITERATIONS = 10;
 const FEED_POLLING_INTERVAL_MS = 15000; // 15 seconds
@@ -64,25 +61,47 @@ export function TranscriptView({
   const queryClient = useQueryClient();
 
   const [searchParams, setSearchParams] = useSearchParams();
+  const targetFeedId = searchParams.get('feedId');
   const targetTransmissionId = searchParams.get('transmissionId');
+  const targetTimestampParam = searchParams.get('timestamp');
+
+  // Need to memoize the timestamp since Dates are compared by object reference.
+  const targetTimestamp = useMemo(
+    () =>
+      targetTimestampParam ? new Date(Number(targetTimestampParam)) : null,
+    [targetTimestampParam]
+  );
+
+  const [searchedFeedId, setSearchedFeedId] = useState<string>(
+    targetFeedId || ''
+  );
+  const [searchedTimestamp, setSearchedTimestamp] = useState<Date | null>(
+    targetTimestamp
+  );
 
   const [newMessageCount, setNewMessageCount] = useState(0);
   const [playLatestAudio, setPlayLatestAudio] = useState(true);
 
-  const [feedId, setFeedId] = useState<string>(
-    () => searchParams.get('feedId') || ''
-  );
-  const [searchedFeedId, setSearchedFeedId] = useState<string>(
-    () => searchParams.get('feedId') || ''
-  );
-  const [timestamp, setTimestamp] = useState<Date | null>(() =>
-    getInitialTimestamp(searchParams)
-  );
-  const [searchedTimestamp, setSearchedTimestamp] = useState<Date | null>(() =>
-    getInitialTimestamp(searchParams)
-  );
+  // Effect which sets the searched feed ID based on the search params changing.
+  useEffect(() => {
+    if (targetFeedId) {
+      setSearchedFeedId(targetFeedId);
+    } else {
+      setSearchedFeedId('');
+    }
+  }, [targetFeedId]);
+
+  // Effect which sets the searched timestamp based on the search params changing.
+  useEffect(() => {
+    if (targetTimestamp) {
+      setSearchedTimestamp(targetTimestamp);
+    } else {
+      setSearchedTimestamp(null);
+    }
+  }, [targetTimestamp]);
 
   const [redactTranscripts, setRedactTranscripts] = useState(false);
+  const [alertFilter, setAlertFilter] = useState<AlertFilter>('all');
 
   const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
     useState<string | null>(null);
@@ -201,11 +220,6 @@ export function TranscriptView({
     return new Map(feeds.map((f) => [f.id, f]));
   }, [feeds]);
 
-  // Memoizing the selected feed object derived from the feedId state.
-  const selectedFeed = useMemo(() => {
-    return feedIdToFeedMap.get(feedId) || null;
-  }, [feedIdToFeedMap, feedId]);
-
   const searchedFeed = feedIdToFeedMap.get(searchedFeedId) || null;
 
   useEffect(() => {
@@ -252,7 +266,13 @@ export function TranscriptView({
     QueryKey,
     ListTranscriptsPage
   >({
-    queryKey: ['listTranscripts', token, searchedFeedId, searchedTimestamp],
+    queryKey: [
+      'listTranscripts',
+      token,
+      searchedFeedId,
+      searchedTimestamp,
+      alertFilter,
+    ],
     queryFn: async ({ pageParam }) => {
       const { nextToken, order } = pageParam;
 
@@ -260,7 +280,7 @@ export function TranscriptView({
       // the cursor-based positioning of the database in nextToken handles the rest.
       const originalTimestampMs =
         !nextToken && searchedTimestamp
-          ? roundUpToNearestMinute(searchedTimestamp).getTime()
+          ? searchedTimestamp.getTime()
           : undefined;
 
       const response = await listTranscripts(
@@ -270,7 +290,8 @@ export function TranscriptView({
         nextToken,
         /*startTime=*/ order === 'asc' ? originalTimestampMs : undefined,
         /*endTime=*/ order === 'desc' ? originalTimestampMs : undefined,
-        order
+        order,
+        alertFilter === 'alerts' ? true : undefined
       );
 
       // The API returns transcripts in ascending order, meaning that the first transcript in
@@ -283,7 +304,7 @@ export function TranscriptView({
       return { ...response, order };
     },
     initialPageParam: {
-      order: 'desc',
+      order: searchedTimestamp ? 'asc' : 'desc',
     },
     // Note: TanStack Query automatically manages the bidirectional pagination state for us.
     // - `getNextPageParam` is always passed the LAST page in the cache (oldest) to continue scanning backward.
@@ -291,27 +312,29 @@ export function TranscriptView({
     // Because each page stores its own `nextToken` and `order`, the framework naturally isolates the
     // forward and backward pagination bookmarks without us needing to maintain separate local state for them.
     getNextPageParam: (lastPage) => {
-      // We only fetch older transcripts (descending order). Because the initial
-      // page is in descending order, we can just use the nextToken.
-      if (lastPage.order !== 'desc') return undefined;
-      return lastPage.nextToken
-        ? { order: 'desc', nextToken: lastPage.nextToken }
+      // 1. If we are already fetching older transcripts ('desc'), continue scanning backward.
+      if (lastPage.order === 'desc') {
+        return lastPage.nextToken
+          ? { order: 'desc', nextToken: lastPage.nextToken }
+          : undefined;
+      }
+      // 2. If the initial load was 'asc' (searching from a timestamp), and the user scrolls down
+      // to load older transcripts, we start fetching them in 'desc' order starting from the searched timestamp.
+      return searchedTimestamp
+        ? { order: 'desc', nextToken: undefined }
         : undefined;
     },
     getPreviousPageParam: (firstPage) => {
       // 1. If no timestamp was searched, we are at the "live" head. No newer transcripts exist.
       if (!searchedTimestamp) return undefined;
-      // 2. If we are already fetching newer transcripts ('asc') and hit the end, stop.
+      // 2. If we are fetching newer transcripts ('asc') and hit the end, stop.
       if (firstPage.order === 'asc') {
         return firstPage.nextToken
           ? { order: 'asc', nextToken: firstPage.nextToken }
           : undefined;
       }
-      // 3. Initial load (order === 'desc'): Start fetching newer transcripts from the base timestamp.
-      return {
-        order: 'asc',
-        nextToken: undefined,
-      };
+      // 3. If we are in a descending page load, we cannot fetch newer transcripts directly from it.
+      return undefined;
     },
     enabled: !!token && !!searchedFeedId && isFeedsSuccess,
     refetchOnWindowFocus: false,
@@ -328,11 +351,23 @@ export function TranscriptView({
       ? transcriptsDataUpdatedAt
       : null;
 
-  const transcripts = useMemo(
-    () =>
-      listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? [],
-    [listTranscriptsResponse]
-  );
+  const transcripts = useMemo(() => {
+    const allTranscripts =
+      listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? [];
+    const seenIds = new Set<string>();
+    const uniqueTranscripts = allTranscripts.filter((transcript) => {
+      if (seenIds.has(transcript.transmissionId)) {
+        return false;
+      }
+      seenIds.add(transcript.transmissionId);
+      return true;
+    });
+    return uniqueTranscripts.sort(
+      (a, b) =>
+        new Date(b.startTimestamp).getTime() -
+        new Date(a.startTimestamp).getTime()
+    );
+  }, [listTranscriptsResponse]);
 
   // Keep the ref in sync with the transcripts so that audio lifecycle callbacks can access the latest list.
   useEffect(() => {
@@ -430,7 +465,8 @@ export function TranscriptView({
           // Query for transcripts with a start time greater than our current newest
           /*startTime=*/ new Date(newestTimestamp).getTime(),
           /*endTime=*/ undefined,
-          /*order=*/ 'asc'
+          /*order=*/ 'asc',
+          alertFilter === 'alerts' ? true : undefined
         );
 
         if (response.transcripts && response.transcripts.length > 0) {
@@ -446,7 +482,7 @@ export function TranscriptView({
 
     // Reverse the array so the newest transcripts are at index 0 for prepending
     return allNewTranscripts.reverse();
-  }, [newestTimestamp, searchedFeedId, token]);
+  }, [newestTimestamp, searchedFeedId, token, alertFilter]);
 
   /**
    * Merges newly polled transcripts into the top of the infinite query cache.
@@ -457,7 +493,13 @@ export function TranscriptView({
       if (!token) return [];
       let updatedTranscripts: Transcript[] = [];
       queryClient.setQueryData<InfiniteData<ListTranscriptsData>>(
-        ['listTranscripts', token, searchedFeedId, searchedTimestamp],
+        [
+          'listTranscripts',
+          token,
+          searchedFeedId,
+          searchedTimestamp,
+          alertFilter,
+        ],
         (oldData) => {
           if (!oldData) return oldData;
 
@@ -486,7 +528,7 @@ export function TranscriptView({
       );
       return updatedTranscripts;
     },
-    [token, searchedFeedId, searchedTimestamp, queryClient]
+    [token, searchedFeedId, searchedTimestamp, alertFilter, queryClient]
   );
 
   /**
@@ -606,7 +648,7 @@ export function TranscriptView({
           virtuosoRef.current?.scrollToIndex({
             index,
             align: 'center',
-            behavior: 'smooth',
+            behavior: 'auto',
           });
           hasScrolledToTarget.current = true;
         }, 100);
@@ -648,7 +690,6 @@ export function TranscriptView({
   };
 
   const handleFilterByDateTime = (date: Date | null) => {
-    setTimestamp(date);
     setSearchedTimestamp(date);
     setSearchParams((prev) => {
       if (date) {
@@ -658,11 +699,65 @@ export function TranscriptView({
       }
       return prev;
     });
+
+    // Given that clearing the date effectively jumps to live, we will
+    // navigate to the top of the table in case the user is scrolled
+    // down in the table.
+    if (date === null) {
+      setTimeout(() => {
+        virtuosoRef.current?.scrollToIndex({
+          index: 0,
+          align: 'center',
+          behavior: 'auto',
+        });
+      }, 100);
+      hasScrolledToTarget.current = false;
+    }
+  };
+
+  const handleFeedSelect = (feedId: string) => {
+    setSearchedFeedId(feedId);
+    // Stop audio
+    currentAudio.current?.stop();
+    currentAudio.current?.unload();
+    // Reset all state
+    handleFilterByDateTime(null);
+    setNewMessageCount(0);
+    setCurrentlyPlayingTransmissionId(null);
+    setHighlightedTransmissionId(null);
+    setIsViewAtTopOfTranscripts(true);
+    setPlaybackEndedForId(null);
+    setIsAudioPlaying(false);
+    // Update URL params
+    setSearchParams((prev) => {
+      prev.set('feedId', feedId);
+      prev.delete('transmissionId');
+      return prev;
+    });
   };
 
   if (!token) {
     return null;
   }
+
+  if (!searchedFeedId) {
+    return (
+      <FeedSearchView
+        title="Select a feed to view transcripts"
+        triggerSnackbar={triggerSnackbar}
+        onError={onError}
+      />
+    );
+  }
+
+  const customSourceUrl = searchedFeed?.tags?.find(
+    (t) => t.key === 'source_url'
+  )?.value;
+  const customArchiveUrl = searchedFeed?.tags?.find(
+    (t) => t.key === 'archive_url'
+  )?.value;
+  const sourceUrl = customSourceUrl || searchedFeed?.sourceUrl;
+  const archiveUrl = customArchiveUrl || searchedFeed?.archiveUrl;
 
   return (
     <Box
@@ -674,70 +769,13 @@ export function TranscriptView({
         height: 'calc(100vh)',
       }}
     >
-      <Box
-        sx={{
-          display: 'flex',
-          gap: 2,
-          mb: 1,
-          alignItems: 'center',
-          width: '100%',
-        }}
-      >
-        <FeedSearch
-          feeds={feeds ?? []}
-          selectedFeed={selectedFeed}
-          onFeedSelect={setFeedId}
-          isFetching={feedsFetching}
-        />
-
-        <DateTimePicker
-          label="Date/time"
-          dateTime={timestamp}
-          setDateTime={setTimestamp}
-          width="15%"
-        />
-
-        <Button
-          variant="contained"
-          onClick={() => {
-            if (!feedId) {
-              return;
-            }
-
-            const newParams: Record<string, string> = { feedId: feedId.trim() };
-            if (timestamp) {
-              newParams.timestamp = timestamp.getTime().toString();
-            }
-            setSearchedFeedId(feedId);
-            setSearchedTimestamp(timestamp);
-            setSearchParams(newParams);
-
-            if (searchedFeedId === feedId) {
-              queryClient.resetQueries({
-                queryKey: [
-                  'listTranscripts',
-                  token,
-                  searchedFeedId,
-                  searchedTimestamp,
-                ],
-              });
-            }
-          }}
-          disabled={feedsFetching || isTranscriptsInitialLoading || !feedId}
-          sx={{ minWidth: '100px', height: '40px', textTransform: 'none' }}
-        >
-          {isTranscriptsInitialLoading ? (
-            <CircularProgress size={24} color="inherit" />
-          ) : (
-            'Load transcripts'
-          )}
-        </Button>
-      </Box>
-
       <FeedHeader
+        feeds={feeds || []}
         searchedFeed={searchedFeed}
-        sourceUrl={searchedFeed?.sourceUrl}
-        archiveUrl={searchedFeed?.archiveUrl}
+        onSelectFeed={handleFeedSelect}
+        feedsLoading={feedsFetching}
+        sourceUrl={sourceUrl}
+        archiveUrl={archiveUrl}
         status={activeFeedData?.status ?? searchedFeed?.status}
         lastHeartbeat={
           activeFeedData?.lastHeartbeat ?? searchedFeed?.lastHeartbeat
@@ -749,6 +787,8 @@ export function TranscriptView({
         sx={{
           display: 'flex',
           justifyContent: 'flex-end',
+          alignItems: 'center',
+          gap: 2,
           // This space allows room for the alert icon which hovers above the AudioDisplay.
           mb: 2.5,
         }}
@@ -783,42 +823,43 @@ export function TranscriptView({
           flexDirection: 'column',
         }}
       >
+        <TranscriptActionsBar
+          searchedTimestamp={searchedTimestamp}
+          hasNewerTranscripts={hasNewerTranscripts}
+          redactTranscripts={redactTranscripts}
+          setRedactTranscripts={setRedactTranscripts}
+          dateTime={searchedTimestamp}
+          setDateTime={handleFilterByDateTime}
+          alertFilter={alertFilter}
+          setAlertFilter={setAlertFilter}
+          onClickViewLatest={() => handleFilterByDateTime(null)}
+        />
         {transcripts.length > 0 ? (
-          <>
-            <TranscriptActionsBar
-              hasNewerTranscripts={hasNewerTranscripts}
-              redactTranscripts={redactTranscripts}
-              setRedactTranscripts={setRedactTranscripts}
-              dateTime={searchedTimestamp}
-              setDateTime={handleFilterByDateTime}
-              onClickViewLatest={() => handleFilterByDateTime(null)}
-            />
-            <TranscriptDisplay
-              ref={virtuosoRef}
-              transcripts={transcripts}
-              groupCounts={groupCounts}
-              groupTitles={groupTitles}
-              setIsViewAtTopOfTranscripts={setIsViewAtTopOfTranscripts}
-              hasNewerTranscripts={hasNewerTranscripts}
-              isFetchingNewerTranscripts={isFetchingNewerTranscripts}
-              fetchNewerTranscripts={fetchNewerTranscripts}
-              isTranscriptsFetching={isTranscriptsFetching}
-              isTranscriptsPolling={isTranscriptsPolling}
-              hasOlderTranscripts={hasOlderTranscripts}
-              isFetchingOlderTranscripts={isFetchingOlderTranscripts}
-              fetchOlderTranscripts={fetchOlderTranscripts}
-              transcriptsLastUpdated={transcriptsLastUpdated}
-              triggerSnackbar={triggerSnackbar}
-              ruleIdToNameMap={ruleIdToNameMap}
-              rulesLoading={rulesLoading}
-              onToggleAudio={toggleAudio}
-              isAudioPlaying={isAudioPlaying}
-              currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
-              highlightedTransmissionId={highlightedTransmissionId}
-              redactTranscripts={redactTranscripts}
-              onRowClick={handleRowClick}
-            />
-          </>
+          <TranscriptDisplay
+            ref={virtuosoRef}
+            transcripts={transcripts}
+            groupCounts={groupCounts}
+            groupTitles={groupTitles}
+            setIsViewAtTopOfTranscripts={setIsViewAtTopOfTranscripts}
+            hasNewerTranscripts={hasNewerTranscripts}
+            isFetchingNewerTranscripts={isFetchingNewerTranscripts}
+            fetchNewerTranscripts={fetchNewerTranscripts}
+            isTranscriptsFetching={isTranscriptsFetching}
+            isTranscriptsPolling={isTranscriptsPolling}
+            hasOlderTranscripts={hasOlderTranscripts}
+            isFetchingOlderTranscripts={isFetchingOlderTranscripts}
+            fetchOlderTranscripts={fetchOlderTranscripts}
+            transcriptsLastUpdated={transcriptsLastUpdated}
+            triggerSnackbar={triggerSnackbar}
+            ruleIdToNameMap={ruleIdToNameMap}
+            rulesLoading={rulesLoading}
+            onToggleAudio={toggleAudio}
+            isAudioPlaying={isAudioPlaying}
+            currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
+            highlightedTransmissionId={highlightedTransmissionId}
+            redactTranscripts={redactTranscripts}
+            onRowClick={handleRowClick}
+          />
         ) : feedsFetching || isTranscriptsInitialLoading ? (
           <Box
             sx={{
@@ -827,7 +868,7 @@ export function TranscriptView({
               mt: theme.spacing(2),
             }}
           >
-            <CircularProgress />
+            <CircularProgress data-testid="loading-spinner" />
           </Box>
         ) : transcriptsError ? (
           <Typography

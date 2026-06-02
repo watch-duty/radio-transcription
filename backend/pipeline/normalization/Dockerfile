@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.9-labs
 # Use Apache Beam Python SDK as the base image
 # IMPORTANT: When updating the version tag here, you must also update the
 # apache-beam dependency version in backend/pipeline/normalization/pyproject.toml.
@@ -13,7 +14,7 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy uv from the official image
-COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.13 /uv /uvx /bin/
 
 # Copy the Flex Template Launcher from Google's base image
 COPY --from=gcr.io/dataflow-templates-base/python313-template-launcher-base:latest /opt/google/dataflow/python_template_launcher /opt/google/dataflow/python_template_launcher
@@ -21,8 +22,7 @@ COPY --from=gcr.io/dataflow-templates-base/python313-template-launcher-base:late
 WORKDIR /app
 
 # Copy lockfiles and manifests
-COPY pyproject.toml uv.lock ./
-COPY backend/pipeline/normalization/pyproject.toml ./backend/pipeline/normalization/pyproject.toml
+COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml ./
 
 # Set environment variables for uv to use system python
 ENV UV_PROJECT_ENVIRONMENT="/usr/local/"

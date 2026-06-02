@@ -83,6 +83,8 @@ components:
           enum:
             - asc
             - desc
+        isAlert:
+          type: boolean
       type: object
       additionalProperties: false
     ScopeLevel:
@@ -255,6 +257,15 @@ components:
       enum:
         - active
         - inactive
+        - error
+    BackendFeedStatus:
+      type: string
+      enum:
+        - unclaimed
+        - active
+        - failing
+        - quarantined
+        - deactivated
     Tag:
       properties:
         key:
@@ -267,13 +278,13 @@ components:
       type: object
       additionalProperties: false
     SourceType:
-      type: string
       enum:
         - bcfy_feeds
         - bcfy_calls
         - echo
         - openmhz
         - fire_notifications
+      type: string
     Feed:
       properties:
         name:
@@ -292,6 +303,8 @@ components:
           type: string
         status:
           $ref: "#/components/schemas/FeedStatus"
+        substatus:
+          $ref: "#/components/schemas/BackendFeedStatus"
         lastHeartbeat:
           type: string
         tags:
@@ -303,6 +316,7 @@ components:
         - sourceType
         - id
         - status
+        - substatus
       type: object
       additionalProperties: false
     FeedCreate:
@@ -326,6 +340,21 @@ components:
         - externalId
       type: object
       additionalProperties: false
+    FeedUpdate:
+      properties:
+        name:
+          type: string
+        externalId:
+          type: string
+        tags:
+          items:
+            $ref: "#/components/schemas/Tag"
+          type: array
+      required:
+        - name
+        - externalId
+      type: object
+      additionalProperties: false
     OpenApiSpec:
       properties: {}
       type: object
@@ -344,6 +373,128 @@ components:
           type: string
       required:
         - code
+      type: object
+      additionalProperties: false
+    AudioClassification:
+      enum:
+        - SPEECH_DETECTED
+        - UNCLASSIFIED
+      type: string
+    AnnotationType:
+      enum:
+        - TRANSCRIPT
+        - EVALUATION
+      type: string
+    TranscriptAnnotationData:
+      properties:
+        text:
+          type: string
+        errors:
+          items:
+            type: string
+          type: array
+      required:
+        - text
+        - errors
+      type: object
+      additionalProperties: false
+    EvaluationAnnotationData:
+      properties:
+        decisions:
+          items:
+            type: string
+          type: array
+        errors:
+          items:
+            type: string
+          type: array
+      required:
+        - decisions
+        - errors
+      type: object
+      additionalProperties: false
+    Annotation:
+      properties:
+        type:
+          $ref: "#/components/schemas/AnnotationType"
+        createdAt:
+          type: string
+        data:
+          anyOf:
+            - $ref: "#/components/schemas/TranscriptAnnotationData"
+            - $ref: "#/components/schemas/EvaluationAnnotationData"
+      required:
+        - type
+        - createdAt
+        - data
+      type: object
+      additionalProperties: false
+    AudioSegment:
+      properties:
+        id:
+          type: string
+        feedId:
+          type: string
+        classification:
+          $ref: "#/components/schemas/AudioClassification"
+        startTimestamp:
+          type: string
+        endTimestamp:
+          type: string
+        missingPriorContext:
+          type: boolean
+        missingPostContext:
+          type: boolean
+        sourceAudioUris:
+          items:
+            type: string
+          type: array
+        canonicalAudioUri:
+          type: string
+        startAudioOffset:
+          type: string
+        endAudioOffset:
+          type: string
+        playbackAudioUri:
+          type: string
+        createdAt:
+          type: string
+        annotations:
+          items:
+            $ref: "#/components/schemas/Annotation"
+          type: array
+      required:
+        - id
+        - feedId
+        - classification
+        - startTimestamp
+        - endTimestamp
+        - missingPriorContext
+        - missingPostContext
+        - sourceAudioUris
+        - createdAt
+        - annotations
+      type: object
+      additionalProperties: false
+    ListAudioSegmentsQueryParams:
+      properties:
+        limit:
+          type: integer
+          format: int32
+          default: 100
+        nextToken:
+          type: string
+        startTime:
+          type: string
+        endTime:
+          type: string
+        order:
+          type: string
+          enum:
+            - asc
+            - desc
+        isAlert:
+          type: boolean
       type: object
       additionalProperties: false
   securitySchemes:
@@ -457,6 +608,11 @@ paths:
             enum:
               - asc
               - desc
+        - in: query
+          name: isAlert
+          required: false
+          schema:
+            type: boolean
       x-google-backend: radio-transcription-api
   /api/v1/rules:
     get:
@@ -936,6 +1092,142 @@ paths:
           schema:
             type: string
       x-google-backend: radio-transcription-api
+    put:
+      operationId: UpdateFeed
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Feed"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      description: |-
+        Update an existing feed (Full override).
+        The fields passed here will fully override the fields stored. There is no coalesing done, so make sure these are the final desired fields.
+      tags:
+        - Feeds
+      security:
+        - google_id_token: []
+      parameters:
+        - in: path
+          name: feedId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FeedUpdate"
+      x-google-backend: radio-transcription-api
+    delete:
+      operationId: DeleteFeed
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      description: |-
+        Hard delete a feed (permanent delete).
+        Deletes the feed, corresponding transcripts, and audio segments.
+      tags:
+        - Feeds
+      security:
+        - google_id_token: []
+      parameters:
+        - in: path
+          name: feedId
+          required: true
+          schema:
+            type: string
+      x-google-backend: radio-transcription-api
   /api/v1/feeds/{feedId}/reset:
     post:
       operationId: ResetFeed
@@ -1195,6 +1487,115 @@ paths:
         - Auth
       security: []
       parameters: []
+      x-google-backend: radio-transcription-api
+  /api/v1/audioSegments/{feedId}:
+    get:
+      operationId: ListAudioSegments
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                properties:
+                  nextToken:
+                    type: string
+                  audioSegments:
+                    items:
+                      $ref: "#/components/schemas/AudioSegment"
+                    type: array
+                required:
+                  - audioSegments
+                type: object
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      tags:
+        - Audio Segments
+      security:
+        - google_id_token: []
+      parameters:
+        - in: path
+          name: feedId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: limit
+          required: false
+          schema:
+            default: 100
+            format: int32
+            type: integer
+        - in: query
+          name: nextToken
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: startTime
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: endTime
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: order
+          required: false
+          schema:
+            type: string
+            enum:
+              - asc
+              - desc
+        - in: query
+          name: isAlert
+          required: false
+          schema:
+            type: boolean
       x-google-backend: radio-transcription-api
 servers:
   - url: https://${radio_transcription_api_service_name}/

@@ -7,7 +7,6 @@ from apache_beam.metrics import Metrics
 from backend.pipeline.common.constants import MS_PER_SECOND
 from backend.pipeline.normalization.common.constants import (
     DEFAULT_VAD_POST_ROLL_MS,
-    DEFAULT_VAD_PRE_ROLL_MS,
 )
 from backend.pipeline.normalization.common.datatypes import (
     AppendBufferAction,
@@ -523,48 +522,15 @@ class AudioStitchingStateMachine:
                 is_max_duration_exceeded=is_max_duration_exceeded,
             )
 
-            if ctx.transmission_start_time_ms is None:
-                is_natural_gap = (
-                    ctx.last_segment_end_time_ms is not None
-                    and (file_start_ms + global_start_ms)
-                    > ctx.last_segment_end_time_ms
-                )
-                if ctx.missing_prior_context and is_natural_gap:
-                    ctx.missing_prior_context = False
-
-                ctx.transmission_start_time_ms = file_start_ms + global_start_ms
-                append_start = max(0, global_start_ms - DEFAULT_VAD_PRE_ROLL_MS)
-                ctx.start_audio_offset_ms = append_start
-                ctx.buffer_start_time_ms = file_start_ms + append_start
-            else:
-                append_start = (
-                    audio_append_cursor_ms
-                    if audio_append_cursor_ms is not None
-                    else 0
-                )
-
-            append_end = min(
-                (
-                    len(chunk_data.audio)
-                    // (chunk_data.sample_rate // MS_PER_SECOND)
-                ),
-                global_end_ms + DEFAULT_VAD_POST_ROLL_MS,
+            audio_append_cursor_ms = self._append_speech_audio_to_buffer(
+                chunk_data=chunk_data,
+                ctx=ctx,
+                file_start_ms=file_start_ms,
+                global_start_ms=global_start_ms,
+                global_end_ms=global_end_ms,
+                audio_append_cursor_ms=audio_append_cursor_ms,
+                actions=actions,
             )
-
-            if append_end > append_start:
-                actions.append(
-                    AppendBufferAction(
-                        audio_buffer=chunk_data.audio[
-                            append_start
-                            * (
-                                chunk_data.sample_rate // MS_PER_SECOND
-                            ) : append_end
-                            * (chunk_data.sample_rate // MS_PER_SECOND)
-                        ]
-                    )
-                )
-                audio_append_cursor_ms = append_end
-                ctx.buffer_duration_ms += append_end - append_start
 
             if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
                 ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
@@ -588,3 +554,59 @@ class AudioStitchingStateMachine:
             ScheduleStaleTimerAction(deadline_ms=expected_stale_deadline_ms)
         )
         return actions
+
+    def _append_speech_audio_to_buffer(
+        self,
+        chunk_data: AudioChunkData,
+        ctx: StitcherContext,
+        file_start_ms: int,
+        global_start_ms: int,
+        global_end_ms: int,
+        audio_append_cursor_ms: int | None,
+        actions: list[StateMachineAction],
+    ) -> int | None:
+        """Calculates speech boundaries and appends clean, boundary-clamped padded audio to buffer."""
+        if ctx.transmission_start_time_ms is None:
+            is_natural_gap = (
+                ctx.last_segment_end_time_ms is not None
+                and (file_start_ms + global_start_ms)
+                > ctx.last_segment_end_time_ms
+            )
+            if ctx.missing_prior_context and is_natural_gap:
+                ctx.missing_prior_context = False
+
+            ctx.transmission_start_time_ms = file_start_ms + global_start_ms
+
+            # Pristine canonical slice starting exactly at the VAD onset boundary
+            append_start = max(0, global_start_ms)
+            ctx.start_audio_offset_ms = 0
+            ctx.buffer_start_time_ms = file_start_ms + append_start
+        else:
+            append_start = (
+                audio_append_cursor_ms
+                if audio_append_cursor_ms is not None
+                else 0
+            )
+
+        append_end = min(
+            (
+                len(chunk_data.audio)
+                // (chunk_data.sample_rate // MS_PER_SECOND)
+            ),
+            global_end_ms,
+        )
+
+        if append_end > append_start:
+            current_audio = chunk_data.audio[
+                append_start
+                * (chunk_data.sample_rate // MS_PER_SECOND) : append_end
+                * (chunk_data.sample_rate // MS_PER_SECOND)
+            ]
+            appended_audio = current_audio
+            buffer_added_duration = append_end - append_start
+
+            actions.append(AppendBufferAction(audio_buffer=appended_audio))
+            audio_append_cursor_ms = append_end
+            ctx.buffer_duration_ms += buffer_added_duration
+
+        return audio_append_cursor_ms

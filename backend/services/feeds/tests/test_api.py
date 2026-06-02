@@ -6,7 +6,10 @@ from fastapi import status
 from fastapi.testclient import TestClient
 
 from backend.pipeline.common.auth import verify_oidc_token
-from backend.pipeline.common.exceptions import FeedAlreadyExistsError
+from backend.pipeline.common.exceptions import (
+    FeedAlreadyExistsError,
+    FeedNameAlreadyExistsError,
+)
 from backend.pipeline.storage.feed_store import FeedStatus, SourceType
 from backend.services.feeds.main import app
 from backend.services.feeds.models import Feed, Tag
@@ -194,6 +197,23 @@ class TestFeedsAPI(unittest.TestCase):
         response = self.client.post(f"/v1/feeds/{feed_id}/deactivate")
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
+    def test_delete_feed_success(self) -> None:
+        """Test deleting a feed successfully."""
+        feed_id = uuid.uuid4()
+        self.mock_service.delete_feed.return_value = True
+
+        response = self.client.delete(f"/v1/feeds/{feed_id}")
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.mock_service.delete_feed.assert_called_once_with(str(feed_id))
+
+    def test_delete_feed_not_found(self) -> None:
+        """Test deleting a non-existent feed returns 404."""
+        feed_id = uuid.uuid4()
+        self.mock_service.delete_feed.return_value = False
+        response = self.client.delete(f"/v1/feeds/{feed_id}")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
     def test_reset_feed_success(self) -> None:
         """Test resetting a feed successfully."""
         feed_id = uuid.uuid4()
@@ -223,6 +243,60 @@ class TestFeedsAPI(unittest.TestCase):
         response = self.client.post(f"/v1/feeds/{feed_id}/reset")
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_update_feed_success(self) -> None:
+        """Test updating a feed successfully."""
+        feed_id = uuid.uuid4()
+        payload = {
+            "name": "Updated Feed",
+            "external_id": "ext_456",
+        }
+        mock_feed = Feed(
+            id=feed_id,
+            name="Updated Feed",
+            source_type=SourceType.BCFY_FEEDS,
+            source_feed_id="123",
+            external_id="ext_456",
+            status=FeedStatus.ACTIVE,
+            last_heartbeat=None,
+        )
+        self.mock_service.update_feed.return_value = mock_feed
+
+        response = self.client.put(f"/v1/feeds/{feed_id}", json=payload)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertEqual(data["id"], str(feed_id))
+        self.assertEqual(data["name"], "Updated Feed")
+        self.mock_service.update_feed.assert_called_once()
+
+    def test_update_feed_not_found(self) -> None:
+        """Test updating a non-existent feed returns 404."""
+        feed_id = uuid.uuid4()
+        payload = {
+            "name": "Updated Feed",
+            "external_id": "ext_456",
+        }
+        self.mock_service.update_feed.return_value = None
+
+        response = self.client.put(f"/v1/feeds/{feed_id}", json=payload)
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_update_feed_name_already_exists(self) -> None:
+        """Test updating a feed with conflicting name returns 409."""
+        feed_id = uuid.uuid4()
+        payload = {
+            "name": "Updated Feed",
+            "external_id": "ext_456",
+        }
+        self.mock_service.update_feed.side_effect = FeedNameAlreadyExistsError(
+            "Updated Feed"
+        )
+
+        response = self.client.put(f"/v1/feeds/{feed_id}", json=payload)
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
 
 
 if __name__ == "__main__":

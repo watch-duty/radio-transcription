@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.9-labs
 FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -7,10 +8,14 @@ WORKDIR /app
 
 ENV PYTHONPATH=/app
 
-# 1. Install dependencies
-COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
-COPY backend/pipeline/transcription/pyproject.toml ./pyproject.toml
-RUN uv pip install --system -r pyproject.toml && uv pip install --system grpcio-tools
+# 1. Install locked, scoped dependencies
+COPY --from=ghcr.io/astral-sh/uv:0.11.13 /uv /uvx /bin/
+COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml ./
+
+RUN uv export --package transcription-function --no-dev --locked --no-emit-project -o requirements.txt && \
+    uv pip install --system -r requirements.txt && \
+    uv pip install --system grpcio-tools
+
 COPY backend/ ./backend/
 COPY protos/ ./protos
 

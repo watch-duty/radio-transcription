@@ -27,19 +27,21 @@ from backend.pipeline.ingestion.models import (
     AudioMimeType,
     CapturedChunk,
     CaptureResources,
+    CollectorFailure,
 )
 from backend.pipeline.ingestion.retry import (
     LeaseExpiredError,
     retry_with_lease_check,
 )
 from backend.pipeline.ingestion.router import resolve_topic_path
-from backend.pipeline.ingestion.settings import NormalizerSettings
+from backend.pipeline.ingestion.settings import CollectorSettings
 from backend.pipeline.ingestion.slo_contract import EVENT_TYPE_CHUNK_INGESTED
 from backend.pipeline.storage.connection import (
     close_pool,
     create_pool_with_retry,
 )
 from backend.pipeline.storage.feed_store import (
+    FeedStatusReason,
     FeedStore,
     HeartbeatResult,
     LeasedFeed,
@@ -57,8 +59,20 @@ CaptureFn = Callable[
 ]
 logger = logging.getLogger(__name__)
 
+_PIPELINE_GCS_UPLOAD_FAILED = "gcs_upload_failed"
+_PIPELINE_PUBSUB_PUBLISH_FAILED = "pubsub_publish_failed"
+_PIPELINE_BOOKMARK_WRITE_FAILED = "bookmark_write_failed"
 
-class NormalizerRuntime:
+
+class _PipelineFailure(Exception):
+    """Post-capture runtime side-effect failure with a stable stage tag."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class CollectorRuntime:
     """
     Generic runtime orchestrator for a fleet of async feed-processing tasks.
 
@@ -67,7 +81,7 @@ class NormalizerRuntime:
     an OS daemon thread (immune to event loop starvation), and detecting fence
     violations (immediate ``os._exit(1)`` on any lost lease).
 
-    Normalizer authors provide a single ``capture_fn`` async generator that
+    Collector authors provide a single ``capture_fn`` async generator that
     yields audio chunks. The runtime handles everything else.
 
     Design target: 250 concurrent feeds per GCE instance on a Managed
@@ -87,21 +101,21 @@ class NormalizerRuntime:
 
     Args:
         capture_fn: Async generator factory ``(feed, shutdown_event) -> AsyncIterator[CapturedChunk]``.
-        settings: Runtime configuration. Defaults to ``NormalizerSettings()``.
+        settings: Runtime configuration. Defaults to ``CollectorSettings()``.
 
     """
 
     def __init__(
         self,
         capture_fn: CaptureFn,
-        settings: NormalizerSettings | None = None,
+        settings: CollectorSettings | None = None,
     ) -> None:
         if settings is None:
-            from backend.pipeline.ingestion.settings import NormalizerSettings  # noqa: I001, PLC0415
+            from backend.pipeline.ingestion.settings import CollectorSettings  # noqa: I001, PLC0415
 
-            settings = NormalizerSettings()
+            settings = CollectorSettings()
         self._capture_fn = capture_fn
-        self._normalizer_settings = settings
+        self._collector_settings = settings
         # threading.Event (not asyncio.Event) — the heartbeat OS thread
         # can't use asyncio primitives; it needs a thread-safe signal.
         self._thread_stop = threading.Event()
@@ -147,7 +161,7 @@ class NormalizerRuntime:
         # Without this, the default limit of 100 means ~150 uploads always
         # queue at the 250-feed target, adding latency and event-loop overhead.
         self._gcs_client = gcs_client.GcsClient(
-            max_connections=self._normalizer_settings.max_feeds_per_worker,
+            max_connections=self._collector_settings.max_feeds_per_worker,
         )
         self._pubsub_client = pubsub_client.PubSubClient()
         # Shared state published to the /healthz handler. feed_tasks is held
@@ -167,9 +181,9 @@ class NormalizerRuntime:
         concurrent feed tasks each generating frequent I/O completions.
         """
         logger.info(
-            "Starting NormalizerRuntime worker_id=%s max_feeds=%d",
-            self._normalizer_settings.worker_id,
-            self._normalizer_settings.max_feeds_per_worker,
+            "Starting CollectorRuntime worker_id=%s max_feeds=%d",
+            self._collector_settings.worker_id,
+            self._collector_settings.max_feeds_per_worker,
         )
         asyncio.run(self._main(), loop_factory=uvloop.new_event_loop)
 
@@ -196,7 +210,7 @@ class NormalizerRuntime:
         for sig in (signal.SIGTERM, signal.SIGINT):
             self._loop.add_signal_handler(sig, _on_signal, sig)
 
-        settings = self._normalizer_settings
+        settings = self._collector_settings
         # command_timeout: bounds query execution on established connections.
         # timeout (connect): bounds TCP handshake — without it, a VPC subnet
         # silently dropping packets hangs connect() for 2+ min (Linux TCP
@@ -349,7 +363,7 @@ class NormalizerRuntime:
         """
         # cgroup v2 (unified hierarchy; expected on COS / GKE / Cloud Run)
         try:
-            raw = NormalizerRuntime._CGROUP_V2_LIMIT_PATH.read_text().strip()
+            raw = CollectorRuntime._CGROUP_V2_LIMIT_PATH.read_text().strip()
         except OSError:
             pass
         else:
@@ -362,7 +376,7 @@ class NormalizerRuntime:
             return val if val > 0 else None
         # cgroup v1 fallback (legacy hosts; should not be reachable on COS)
         try:
-            raw = NormalizerRuntime._CGROUP_V1_LIMIT_PATH.read_text().strip()
+            raw = CollectorRuntime._CGROUP_V1_LIMIT_PATH.read_text().strip()
         except OSError:
             return None
         try:
@@ -370,7 +384,7 @@ class NormalizerRuntime:
         except ValueError:
             return None
         if (
-            val >= NormalizerRuntime._CGROUP_V1_UNBOUNDED_SENTINEL_THRESHOLD
+            val >= CollectorRuntime._CGROUP_V1_UNBOUNDED_SENTINEL_THRESHOLD
             or val <= 0
         ):
             return None
@@ -394,13 +408,13 @@ class NormalizerRuntime:
         """
         try:
             return int(
-                NormalizerRuntime._CGROUP_V2_USAGE_PATH.read_text().strip(),
+                CollectorRuntime._CGROUP_V2_USAGE_PATH.read_text().strip(),
             )
         except (OSError, ValueError):
             pass
         try:
             return int(
-                NormalizerRuntime._CGROUP_V1_USAGE_PATH.read_text().strip(),
+                CollectorRuntime._CGROUP_V1_USAGE_PATH.read_text().strip(),
             )
         except (OSError, ValueError):
             return None
@@ -440,7 +454,7 @@ class NormalizerRuntime:
 
             if self._paused_for_memory.is_set():
                 if await self._sleep_or_shutdown(
-                    self._normalizer_settings.rss_watchdog_poll_interval_sec,
+                    self._collector_settings.rss_watchdog_poll_interval_sec,
                 ):
                     return
                 continue
@@ -454,11 +468,11 @@ class NormalizerRuntime:
             # no other worker can steal leases either.
             try:
                 total_slack = (
-                    self._normalizer_settings.max_feeds_per_worker
+                    self._collector_settings.max_feeds_per_worker
                     - len(self._feed_tasks)
                 )
                 if total_slack > 0:
-                    s = self._normalizer_settings
+                    s = self._collector_settings
                     caps = s.caps
                     # Pull the authoritative per-type held count from the
                     # DB before apportioning. See FeedStore.count_held_by_type
@@ -590,16 +604,16 @@ class NormalizerRuntime:
                             len(primary),
                             len(leases) - len(primary),
                             len(self._feed_tasks),
-                            self._normalizer_settings.max_feeds_per_worker,
+                            self._collector_settings.max_feeds_per_worker,
                         )
             except Exception:
                 logger.exception(
                     "Lease acquisition failed -- will retry in %.1fs",
-                    self._normalizer_settings.lease_poll_interval_sec,
+                    self._collector_settings.lease_poll_interval_sec,
                 )
 
             if await self._sleep_or_shutdown(
-                self._normalizer_settings.lease_poll_interval_sec,
+                self._collector_settings.lease_poll_interval_sec,
             ):
                 return
 
@@ -738,9 +752,199 @@ class NormalizerRuntime:
 
     def _get_pubsub_topic_path(self, feed: LeasedFeed) -> str:
         """Determines the Pub/Sub topic path based on the feed source type."""
-        return resolve_topic_path(
-            feed["source_type"], self._normalizer_settings
+        return resolve_topic_path(feed["source_type"], self._collector_settings)
+
+    async def _process_captured_chunk(
+        self,
+        feed: LeasedFeed,
+        captured_chunk: CapturedChunk,
+        seq_for_chunk: int,
+        worker_id: uuid.UUID,
+        fencing_token: int,
+        topic_path: str,
+        chunk_extension: str,
+        chunk_content_type: str,
+    ) -> None:
+        """Run post-capture upload, publish, bookmark, and SLO logging."""
+        settings = self._collector_settings
+        try:
+            gcs_uri = await retry_with_lease_check(
+                gcp_helper.upload_staged_audio,
+                self._gcs_client,
+                captured_chunk.audio_bytes,
+                feed,
+                settings.audio_staging_bucket,
+                seq_for_chunk,
+                fencing_token,
+                chunk_extension,
+                chunk_content_type,
+                lease_lost=self._lease_lost,
+                shutdown=self._shutdown,
+                max_retries=settings.gcs_upload_max_retries,
+                base_delay_sec=settings.gcs_upload_retry_base_delay_sec,
+                max_delay_sec=settings.gcs_upload_retry_max_delay_sec,
+                retryable=(
+                    aiohttp.ClientError,
+                    asyncio.TimeoutError,
+                    OSError,
+                ),
+                operation_name="GCS upload",
+            )
+        except (asyncio.CancelledError, LeaseExpiredError):
+            raise
+        except Exception as exc:
+            raise _PipelineFailure(_PIPELINE_GCS_UPLOAD_FAILED) from exc
+
+        duration_ms = int(
+            (
+                captured_chunk.chunk_end_time - captured_chunk.chunk_start_time
+            ).total_seconds()
+            * 1000
         )
+        try:
+            message_id = await gcp_helper.publish_audio_chunk(
+                self._pubsub_client,
+                topic_path,
+                str(feed["id"]),
+                feed["name"],
+                feed["external_id"],
+                gcs_uri,
+                start_timestamp=captured_chunk.chunk_start_time,
+                session_id=captured_chunk.session_id,
+                source_type=feed["source_type"],
+                duration_ms=duration_ms,
+            )
+        except (asyncio.CancelledError, LeaseExpiredError):
+            raise
+        except Exception as exc:
+            raise _PipelineFailure(_PIPELINE_PUBSUB_PUBLISH_FAILED) from exc
+
+        logger.info(
+            "Published message %s for feed %s",
+            message_id,
+            feed["name"],
+        )
+
+        try:
+            ok = await retry_with_lease_check(
+                self._store.update_feed_progress,
+                feed["id"],
+                worker_id,
+                gcs_uri,
+                fencing_token,
+                # bcfy_calls supplies the API `ts` resume cursor;
+                # stream collectors leave it None -> end_ts fallback.
+                captured_chunk.resume_position or captured_chunk.chunk_end_time,
+                lease_lost=self._lease_lost,
+                shutdown=self._shutdown,
+                max_retries=settings.bookmark_max_retries,
+                base_delay_sec=settings.bookmark_retry_base_delay_sec,
+                max_delay_sec=settings.bookmark_retry_max_delay_sec,
+                retryable=(
+                    asyncpg.PostgresConnectionError,
+                    asyncpg.InterfaceError,
+                    OSError,
+                ),
+                operation_name="bookmark write",
+            )
+        except (asyncio.CancelledError, LeaseExpiredError):
+            raise
+        except Exception as exc:
+            raise _PipelineFailure(_PIPELINE_BOOKMARK_WRITE_FAILED) from exc
+
+        if not ok:
+            # If the batched heartbeat is healthy (renewing every 15s),
+            # leases cannot be stolen within the 60s abandonment window.
+            # A stolen lease means the heartbeat mechanism itself failed
+            # systemically -- cancelling one task while 249 others may
+            # also be compromised is unsafe. os._exit(1) is deliberate.
+            # MIG auto-heals within seconds; total downtime per feed:
+            # ~60s (abandonment window) + ~5s (instance restart).
+            logger.critical(
+                "Fence violation on bookmark for feed %s -- terminating",
+                feed["name"],
+            )
+            # logging.shutdown() flushes background logging threads
+            # (e.g. Cloud Logging's CloudLoggingHandler) that os._exit
+            # would bypass.
+            logging.shutdown()
+            os._exit(1)
+
+        # SLO: chunk_ingested emit -- strictly-after-bookmark-ok
+        chunk_ingested_payload: dict[str, object] = {
+            "event_type": EVENT_TYPE_CHUNK_INGESTED,
+            "feed_id": str(feed["id"]),
+            "source_type": feed["source_type"],
+        }
+        if captured_chunk.receipt_time is not None:
+            raw_latency_sec = (
+                datetime.datetime.now(datetime.UTC)
+                - captured_chunk.receipt_time
+            ).total_seconds()
+            chunk_ingested_payload["processing_latency_sec"] = max(
+                0.0, round(raw_latency_sec, 2)
+            )
+            if raw_latency_sec < 0:
+                chunk_ingested_payload["latency_clamped"] = True
+        logger.info(
+            "Chunk ingested",
+            extra={"json_fields": chunk_ingested_payload},
+        )
+
+    async def _record_feed_failure(
+        self,
+        feed: LeasedFeed,
+        worker_id: uuid.UUID,
+        fencing_token: int,
+        *,
+        reason: str,
+        status_reason: FeedStatusReason,
+    ) -> None:
+        """Persist a classified feed failure through the fenced store path."""
+        logger.exception(
+            "Feed processing error: feed=%s reason=%s",
+            feed["name"],
+            reason,
+            extra={
+                "json_fields": {
+                    "feed_id": str(feed["id"]),
+                    "source_type": str(feed["source_type"]),
+                    "reason": reason,
+                    "status_reason": status_reason.value,
+                },
+            },
+        )
+        # SAFETY: _releasing_feeds invariant -- add BEFORE the first await
+        # that drops the lease (report_feed_failure sets worker_id=NULL).
+        self._releasing_feeds.add(feed["id"])
+        try:
+            status = await self._store.report_feed_failure(
+                feed["id"],
+                worker_id,
+                fencing_token,
+                self._collector_settings.feed_failure_threshold,
+                reason=reason,
+                status_reason=status_reason,
+            )
+            if status == "quarantined":
+                await quarantine_telemetry.emit_quarantine_event(
+                    feed_id=str(feed["id"]),
+                    feed_name=feed["name"],
+                    source_type=str(feed["source_type"]),
+                    reason=reason,
+                    status_reason=status_reason.value,
+                )
+        except Exception:
+            # 60s abandonment window is the safety net if this fails.
+            logger.exception(
+                "Failed to record failure for feed %s",
+                feed["name"],
+            )
+        finally:
+            # SAFETY: No await between discard() and return. This ensures
+            # _heartbeat_cycle cannot observe a state where the feed is
+            # absent from _releasing_feeds but the task is not yet .done().
+            self._releasing_feeds.discard(feed["id"])
 
     async def _process_feed(self, feed: LeasedFeed) -> None:  # noqa: PLR0912, PLR0915
         """
@@ -750,9 +954,8 @@ class NormalizerRuntime:
         bookmarks progress with fence violation detection.
         """
         chunk_seq = 0
-        worker_id = self._normalizer_settings.worker_id
+        worker_id = self._collector_settings.worker_id
         fencing_token = feed["fencing_token"]
-        settings = self._normalizer_settings
         _fallback_session_id: str | None = None
         topic_path = self._get_pubsub_topic_path(feed)
 
@@ -807,7 +1010,6 @@ class NormalizerRuntime:
                                 captured_chunk.mime_type
                             ]
 
-                    session_id = captured_chunk.session_id
                     # Bump chunk_seq up-front for every captured chunk, success or
                     # failure. Reusing a seq across chunks is unsafe: combined with
                     # second-precision upload timestamps and the 412-treated-as-
@@ -815,118 +1017,15 @@ class NormalizerRuntime:
                     # chunk's metadata pointing at the previous chunk's audio bytes.
                     seq_for_chunk = chunk_seq
                     chunk_seq += 1
-                    # Pipeline phase: upload + publish + bookmark. Any failure here
-                    # (network, gax, paused-key, our-code-bug) propagates to the
-                    # outer except Exception arm, which records the reason and
-                    # quarantines after threshold strikes. The worker is dumb;
-                    # the operator triages from the `feed_quarantined` log entry
-                    # (or `quarantine_reason` in AlloyDB for forensics).
-                    gcs_uri = await retry_with_lease_check(
-                        gcp_helper.upload_staged_audio,
-                        self._gcs_client,
-                        captured_chunk.audio_bytes,
+                    await self._process_captured_chunk(
                         feed,
-                        settings.audio_staging_bucket,
+                        captured_chunk,
                         seq_for_chunk,
+                        worker_id,
                         fencing_token,
+                        topic_path,
                         chunk_extension,
                         chunk_content_type,
-                        lease_lost=self._lease_lost,
-                        shutdown=self._shutdown,
-                        max_retries=settings.gcs_upload_max_retries,
-                        base_delay_sec=settings.gcs_upload_retry_base_delay_sec,
-                        max_delay_sec=settings.gcs_upload_retry_max_delay_sec,
-                        retryable=(
-                            aiohttp.ClientError,
-                            asyncio.TimeoutError,
-                            OSError,
-                        ),
-                        operation_name="GCS upload",
-                    )
-                    duration_ms = int(
-                        (
-                            captured_chunk.chunk_end_time
-                            - captured_chunk.chunk_start_time
-                        ).total_seconds()
-                        * 1000
-                    )
-                    message_id = await gcp_helper.publish_audio_chunk(
-                        self._pubsub_client,
-                        topic_path,
-                        str(feed["id"]),
-                        feed["name"],
-                        feed["external_id"],
-                        gcs_uri,
-                        start_timestamp=captured_chunk.chunk_start_time,
-                        session_id=session_id,
-                        source_type=feed["source_type"],
-                        duration_ms=duration_ms,
-                    )
-                    logger.info(
-                        "Published message %s for feed %s",
-                        message_id,
-                        feed["name"],
-                    )
-
-                    ok = await retry_with_lease_check(
-                        self._store.update_feed_progress,
-                        feed["id"],
-                        worker_id,
-                        gcs_uri,
-                        fencing_token,
-                        # bcfy_calls supplies the API `ts` resume cursor;
-                        # stream collectors leave it None -> end_ts fallback.
-                        captured_chunk.resume_position
-                        or captured_chunk.chunk_end_time,
-                        lease_lost=self._lease_lost,
-                        shutdown=self._shutdown,
-                        max_retries=settings.bookmark_max_retries,
-                        base_delay_sec=settings.bookmark_retry_base_delay_sec,
-                        max_delay_sec=settings.bookmark_retry_max_delay_sec,
-                        retryable=(
-                            asyncpg.PostgresConnectionError,
-                            asyncpg.InterfaceError,
-                            OSError,
-                        ),
-                        operation_name="bookmark write",
-                    )
-                    if not ok:
-                        # If the batched heartbeat is healthy (renewing every 15s),
-                        # leases cannot be stolen within the 60s abandonment window.
-                        # A stolen lease means the heartbeat mechanism itself failed
-                        # systemically -- cancelling one task while 249 others may
-                        # also be compromised is unsafe. os._exit(1) is deliberate.
-                        # MIG auto-heals within seconds; total downtime per feed:
-                        # ~60s (abandonment window) + ~5s (instance restart).
-                        logger.critical(
-                            "Fence violation on bookmark for feed %s -- terminating",
-                            feed["name"],
-                        )
-                        # logging.shutdown() flushes background logging threads
-                        # (e.g. Cloud Logging's CloudLoggingHandler) that os._exit
-                        # would bypass.
-                        logging.shutdown()
-                        os._exit(1)
-
-                    # SLO: chunk_ingested emit -- strictly-after-bookmark-ok
-                    chunk_ingested_payload: dict[str, object] = {
-                        "event_type": EVENT_TYPE_CHUNK_INGESTED,
-                        "feed_id": str(feed["id"]),
-                        "source_type": feed["source_type"],
-                    }
-                    if captured_chunk.receipt_time is not None:
-                        raw_latency_sec = (
-                            datetime.datetime.now(datetime.UTC)
-                            - captured_chunk.receipt_time
-                        ).total_seconds()
-                        chunk_ingested_payload["processing_latency_sec"] = max(
-                            0.0, round(raw_latency_sec, 2)
-                        )
-                        if raw_latency_sec < 0:
-                            chunk_ingested_payload["latency_clamped"] = True
-                    logger.info(
-                        "Chunk ingested",
-                        extra={"json_fields": chunk_ingested_payload},
                     )
 
                     if self._shutdown.is_set():
@@ -956,49 +1055,38 @@ class NormalizerRuntime:
             )
             return
 
-        except Exception as e:
-            # Single catch-all: every failure (source-side, pipeline-side, code
-            # bug) goes through report_feed_failure with a reason string. The
-            # worker doesn't try to attribute fault; the operator reads the
-            # reason from the structured `feed_quarantined` log entry (and/or
-            # `feeds.quarantine_reason` for AlloyDB-side forensics) and decides
-            # what to investigate. Transient failures auto-recover because
-            # failure_count resets to 0 on the next successful publish.
-            reason = str(e)[:200] if str(e) else type(e).__name__
-            logger.exception(
-                "Feed processing error: feed=%s reason=%s",
-                feed["name"],
-                reason,
+        except CollectorFailure as e:
+            await self._record_feed_failure(
+                feed,
+                worker_id,
+                fencing_token,
+                reason=e.reason,
+                status_reason=e.status_reason,
             )
-            # SAFETY: _releasing_feeds invariant -- add BEFORE the first await
-            # that drops the lease (report_feed_failure sets worker_id=NULL).
-            self._releasing_feeds.add(feed["id"])
-            try:
-                status = await self._store.report_feed_failure(
-                    feed["id"],
-                    worker_id,
-                    fencing_token,
-                    self._normalizer_settings.feed_failure_threshold,
-                    reason=reason,
-                )
-                if status == "quarantined":
-                    await quarantine_telemetry.emit_quarantine_event(
-                        feed_id=str(feed["id"]),
-                        feed_name=feed["name"],
-                        source_type=str(feed["source_type"]),
-                        reason=reason,
-                    )
-            except Exception:
-                # 60s abandonment window is the safety net if this fails.
-                logger.exception(
-                    "Failed to record failure for feed %s",
-                    feed["name"],
-                )
-            finally:
-                # SAFETY: No await between discard() and return. This ensures
-                # _heartbeat_cycle cannot observe a state where the feed is
-                # absent from _releasing_feeds but the task is not yet .done().
-                self._releasing_feeds.discard(feed["id"])
+            return
+
+        except _PipelineFailure as e:
+            await self._record_feed_failure(
+                feed,
+                worker_id,
+                fencing_token,
+                reason=e.reason,
+                status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            )
+            return
+
+        except Exception as e:
+            # Transitional catch-all for bugs or untyped collector failures.
+            # Source-specific attribution belongs in collectors that raise
+            # CollectorFailure; the runtime only records the explicit fallback.
+            reason = str(e)[:200] if str(e) else type(e).__name__
+            await self._record_feed_failure(
+                feed,
+                worker_id,
+                fencing_token,
+                reason=reason,
+                status_reason=FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
+            )
             return
 
         # Normal completion (capture generator exhausted)
@@ -1030,7 +1118,7 @@ class NormalizerRuntime:
         consecutive slow cycles could exceed the 60s abandonment window,
         triggering unnecessary ``os._exit(1)``.
         """
-        interval = self._normalizer_settings.heartbeat_interval_sec
+        interval = self._collector_settings.heartbeat_interval_sec
         next_tick = time.monotonic() + interval
 
         while not self._thread_stop.is_set():
@@ -1044,7 +1132,7 @@ class NormalizerRuntime:
                     self._loop,
                 )
                 future.result(
-                    timeout=self._normalizer_settings.heartbeat_stall_timeout_sec,
+                    timeout=self._collector_settings.heartbeat_stall_timeout_sec,
                 )
             except concurrent.futures.TimeoutError:
                 # CRITICAL: must be concurrent.futures.TimeoutError, NOT the
@@ -1055,7 +1143,7 @@ class NormalizerRuntime:
                 logger.critical(
                     "Event loop stall -- heartbeat did not complete "
                     "in %ds, terminating",
-                    self._normalizer_settings.heartbeat_stall_timeout_sec,
+                    self._collector_settings.heartbeat_stall_timeout_sec,
                 )
                 logging.shutdown()  # flush before os._exit bypasses handlers
                 os._exit(1)
@@ -1094,7 +1182,7 @@ class NormalizerRuntime:
         trip. No periodic-poll logging — at 2s polling, 1800 lines/hour
         would dominate Cloud Logging quota.
         """
-        s = self._normalizer_settings
+        s = self._collector_settings
         poll_interval = s.rss_watchdog_poll_interval_sec
         pause_threshold = s.rss_watchdog_pause_threshold
         exit_threshold = s.rss_watchdog_exit_threshold
@@ -1232,7 +1320,7 @@ class NormalizerRuntime:
             HeartbeatResult
         ] = await self._heartbeat_store.renew_heartbeats_batch_diagnostic(
             list(active.keys()),
-            self._normalizer_settings.worker_id,
+            self._collector_settings.worker_id,
         )
 
         # Retention signal is now DB-authoritative worker ownership, not
@@ -1260,7 +1348,7 @@ class NormalizerRuntime:
         # existing retry_with_lease_check wrapper + _lease_lost event
         # gracefully handles that outcome without depending on the
         # heartbeat's retained_ids observation.
-        worker_id = self._normalizer_settings.worker_id
+        worker_id = self._collector_settings.worker_id
         retained_ids = {
             r["id"] for r in results if r["current_worker"] == worker_id
         }
@@ -1276,6 +1364,12 @@ class NormalizerRuntime:
                     logger.info(
                         "Feed %s deactivated; cancelling task",
                         fid,
+                        extra={
+                            "json_fields": {
+                                "event_type": "feed_deactivated_task_cancelled",
+                                "feed_id": str(fid),
+                            },
+                        },
                     )
                     active[fid].cancel()
 
@@ -1395,7 +1489,7 @@ class NormalizerRuntime:
         if self._feed_tasks:
             _done, pending = await asyncio.wait(
                 self._feed_tasks.values(),
-                timeout=self._normalizer_settings.task_cancel_budget_sec,
+                timeout=self._collector_settings.task_cancel_budget_sec,
             )
             if pending:
                 # PITFALLS.md Pitfall 9: asyncio.wait does NOT cancel
@@ -1419,7 +1513,7 @@ class NormalizerRuntime:
                     "explicitly cancelling and proceeding to release. "
                     "names=%s",
                     len(pending),
-                    self._normalizer_settings.task_cancel_budget_sec,
+                    self._collector_settings.task_cancel_budget_sec,
                     names,
                 )
                 for task in pending:
@@ -1442,7 +1536,7 @@ class NormalizerRuntime:
         # flip self-balancing across surviving workers, so the
         # batched+jittered stagger the scaling plan originally prescribed
         # is no longer needed.
-        worker_id = self._normalizer_settings.worker_id
+        worker_id = self._collector_settings.worker_id
         logger.info(
             "Releasing all leases owned by worker %s",
             worker_id,

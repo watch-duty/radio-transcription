@@ -1,3 +1,4 @@
+# Notification pipeline sender entrypoint
 import base64
 import logging
 import os
@@ -7,7 +8,7 @@ import functions_framework
 import requests
 from cloudevents.http.event import CloudEvent
 
-from backend.pipeline.common import auth, env
+from backend.pipeline.common import auth_client, env
 from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.common.storage.redis_service import RedisService
 from backend.pipeline.common.tracing_utils import (
@@ -50,7 +51,7 @@ def _get_feed_tags(feed_id: str) -> list[Tag] | None:
     headers = {}
 
     if env.is_gcp_env():
-        token = auth.get_id_token(FEEDS_API_URL)
+        token = auth_client.get_id_token(FEEDS_API_URL)
         headers["Authorization"] = f"Bearer {token}"
 
     try:
@@ -120,6 +121,7 @@ def convert_to_notification(
         missing_prior_context=evaluated_transcribed_audio.missing_prior_context,
         missing_post_context=evaluated_transcribed_audio.missing_post_context,
         evaluation_decisions=evaluated_transcribed_audio.evaluation_decisions,
+        evaluation_errors=evaluated_transcribed_audio.errors,
         canonical_audio_uri=evaluated_transcribed_audio.canonical_audio_uri,
         playback_audio_uri=evaluated_transcribed_audio.playback_audio_uri,
         feed_name=evaluated_transcribed_audio.feed_name,
