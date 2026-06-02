@@ -280,8 +280,8 @@ export function FeedTable({
   const sortConfigColumn = sortConfig.column;
   const columns = [
     { key: 'name', display: 'Name' },
-    { key: 'status', display: 'Status' },
     { key: 'type', display: 'Type' },
+    { key: 'status', display: 'Status' },
   ];
   const tableHeader = (
     <TableRow
