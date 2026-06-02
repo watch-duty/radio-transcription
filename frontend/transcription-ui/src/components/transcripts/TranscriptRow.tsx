@@ -8,9 +8,10 @@ import ListItem from '@mui/material/ListItem';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
-import type {
-  AudioSegment,
-  TranscriptAnnotationData,
+import {
+  AudioClassification,
+  type AudioSegment,
+  type TranscriptAnnotationData,
 } from '@transcription/common';
 
 import {
@@ -61,11 +62,17 @@ export function TranscriptRow({
       return 'Waiting for transcription';
     }
 
-    if (!transcriptAnnotation.text) {
+    if (transcriptAnnotation.errors.length > 0) {
       return 'Transcription unavailable';
     }
 
     return transcriptAnnotation.text;
+  }
+
+  // Only show speech-detected audio segments in the transcript list
+  if (transcript.classification !== AudioClassification.SPEECH_DETECTED) {
+    console.warn("Skipping audio segment", transcript.id, "classification", transcript.classification);
+    return null;
   }
 
   const evaluationAnnotation = findEvaluationAnnotationData(
@@ -203,7 +210,7 @@ export function TranscriptRow({
                 }
               }}
               sx={{ cursor: 'copy' }}
-              disabled={!transcriptAnnotation}
+              disabled={!transcriptAnnotation || transcriptAnnotation.errors.length > 0}
             >
               <ContentCopyIcon fontSize="small" />
             </IconButton>

@@ -36,7 +36,7 @@ describe('AudioDisplay', () => {
         highlightedTransmissionId={null}
       />
     );
-    expect(screen.getByText('No transcripts loaded')).toBeTruthy();
+    expect(screen.getByText('No audio found')).toBeTruthy();
   });
 
   it('should render transcripts when provided', () => {
@@ -69,7 +69,7 @@ describe('AudioDisplay', () => {
       />
     );
 
-    expect(screen.queryByText('No transcripts loaded')).toBeNull();
+    expect(screen.queryByText('No audio found')).toBeNull();
 
     const paper = container.querySelector('.MuiPaper-root');
     expect(paper).toBeTruthy();

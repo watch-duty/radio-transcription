@@ -314,7 +314,7 @@ export function AudioDisplay({
               }}
             >
               <Typography variant="body2" color="text.secondary">
-                No transcripts loaded
+                No audio found
               </Typography>
             </Box>
           )}
