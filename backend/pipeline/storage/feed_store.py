@@ -33,8 +33,8 @@ from backend.pipeline.storage.feed_queries import (
 )
 from backend.pipeline.storage.pagination_utils import (
     SortOrder,
-    decode_timestamp_cursor,
-    get_paginated_results_with_timestamp,
+    decode_cursor,
+    get_paginated_results,
 )
 
 if TYPE_CHECKING:
@@ -777,7 +777,7 @@ class FeedStore:
         cursor_ts = None
         cursor_uid = None
         if next_token:
-            cursor_ts, cursor_uid = decode_timestamp_cursor(next_token)
+            cursor_ts, cursor_uid = decode_cursor(next_token)
 
         is_asc = order == SortOrder.ASC or order == "asc"
         query = LIST_FEEDS_ASC_SQL if is_asc else LIST_FEEDS_DESC_SQL
@@ -796,7 +796,7 @@ class FeedStore:
             limit + 1,
         )
 
-        rows, new_next_token = get_paginated_results_with_timestamp(
+        rows, new_next_token = get_paginated_results(
             rows, limit, "created_at", "id"
         )
 

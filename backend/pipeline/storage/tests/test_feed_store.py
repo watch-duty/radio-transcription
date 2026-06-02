@@ -1474,14 +1474,16 @@ class TestListFeeds(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         # Generate a token representing a cursor
-        token = encode_cursor(_FEED_ID)
+        cursor_ts = datetime.datetime(2024, 1, 1, 12, 0, 0)
+        token = encode_cursor(cursor_ts, _FEED_ID)
 
         await store.list_feeds(limit=10, next_token=token)
 
         args = pool.fetch.call_args[0]
-        # Parameters should be (query, cursor_uid, limit + 1)
-        self.assertEqual(args[1], _FEED_ID)
-        self.assertEqual(args[2], 11)
+        # Parameters should be (query, cursor_ts, cursor_uid, source_types, statuses, tags_json, limit + 1)
+        self.assertEqual(args[1], cursor_ts)
+        self.assertEqual(args[2], _FEED_ID)
+        self.assertEqual(args[6], 11)
 
 
 class TestDeactivateFeed(unittest.IsolatedAsyncioTestCase):
