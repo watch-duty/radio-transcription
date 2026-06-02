@@ -178,7 +178,9 @@ export function FeedTable({
         }
       });
     });
-    return uniqueTags;
+    return uniqueTags.sort(
+      (a, b) => a.key.localeCompare(b.key) || a.value.localeCompare(b.value)
+    );
   }, [feeds]);
 
   // Calculate unique source types across all feeds
@@ -294,6 +296,7 @@ export function FeedTable({
     >
       {columns.map(({ key, display }) => (
         <TableCell
+          key={key}
           component="div"
           role="columnheader"
           sx={{

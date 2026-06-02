@@ -70,8 +70,8 @@ async def test_audio_segments_api_routes(
     )
     assert get_res.status_code == 200, f"Failed to list: {get_res.text}"
     data = get_res.json()
-    assert len(data) >= 1
-    found = any(item["id"] == segment_id for item in data)
+    assert len(data["segments"]) >= 1
+    found = any(item["id"] == segment_id for item in data["segments"])
     assert found, f"Created segment {segment_id} not found in /audio_segments"
 
     # 3. POST: Add an annotation to the audio segment
@@ -98,7 +98,9 @@ async def test_audio_segments_api_routes(
     )
     assert get_res2.status_code == 200
     data2 = get_res2.json()
-    target_segment = next(item for item in data2 if item["id"] == segment_id)
+    target_segment = next(
+        item for item in data2["segments"] if item["id"] == segment_id
+    )
     assert len(target_segment["annotations"]) >= 1
     first_ann = target_segment["annotations"][0]
     assert first_ann["type"] == "TRANSCRIPT"
