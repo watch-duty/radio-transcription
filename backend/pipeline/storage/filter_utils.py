@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import base64
-import collections.abc
 import datetime
-from enum import StrEnum
-import typing
 import uuid
+from enum import StrEnum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import collections.abc
+    import typing
 
 
 class SortOrder(StrEnum):
@@ -35,13 +38,13 @@ def encode_cursor(ts: datetime.datetime, uid: uuid.UUID) -> str:
 def get_paginated_results(
     rows: collections.abc.Sequence[typing.Any],
     limit: int,
-    ts_key: str,
+    timestamp_key: str,
     id_key: str,
 ) -> tuple[collections.abc.Sequence[typing.Any], str | None]:
     """Slice rows exceeding limit and generate a pagination token."""
     if len(rows) > limit:
         sliced_rows = rows[:limit]
         last_row = sliced_rows[-1]
-        token = encode_cursor(last_row[ts_key], last_row[id_key])
+        token = encode_cursor(last_row[timestamp_key], last_row[id_key])
         return sliced_rows, token
     return rows, None

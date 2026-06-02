@@ -14,6 +14,7 @@ from backend.pipeline.common.exceptions import (
     FeedNameAlreadyExistsError,
 )
 from backend.pipeline.storage.feed_store import (
+    FeedStatus,
     FeedStatusReason,
     FeedStore,
     SourceType,

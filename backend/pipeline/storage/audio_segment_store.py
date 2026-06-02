@@ -1,18 +1,20 @@
 from __future__ import annotations
 
-import datetime
 import json
 import uuid
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import asyncpg
 from pydantic import TypeAdapter
+
+if TYPE_CHECKING:
+    import datetime
 
 from backend.pipeline.storage import audio_segment_queries
 from backend.pipeline.storage.filter_utils import (
     SortOrder,
     decode_cursor,
-    encode_cursor,
     get_paginated_results,
 )
 from backend.services.audio_segments.models import (
@@ -185,7 +187,9 @@ class AudioSegmentStore:
             limit + 1,
         )
 
-        rows, new_next_token = get_paginated_results(rows, limit, "end_timestamp", "id")
+        rows, new_next_token = get_paginated_results(
+            rows, limit, "end_timestamp", "id"
+        )
 
         segments = [
             AudioSegment.model_validate(self._prepare_audio_segment(row))

@@ -1,19 +1,10 @@
 from __future__ import annotations
 
-import datetime
-from dataclasses import dataclass
-import uuid
 import enum
 import json
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypedDict
-
-from backend.pipeline.storage.filter_utils import (
-    SortOrder,
-    decode_cursor,
-    encode_cursor,
-    get_paginated_results,
-)
 
 import asyncpg
 import asyncpg.exceptions
@@ -40,9 +31,16 @@ from backend.pipeline.storage.feed_queries import (
     build_acquire_feeds_batch_sql,
     build_acquire_feeds_recovery_sql,
 )
+from backend.pipeline.storage.filter_utils import (
+    SortOrder,
+    decode_cursor,
+    get_paginated_results,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    import datetime
+    import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -767,7 +765,7 @@ class FeedStore:
         *,
         limit: int = 100,
         next_token: str | None = None,
-        order: SortOrder = SortOrder.DESC,
+        order: SortOrder | str = SortOrder.DESC,
         source_types: list[str] | None = None,
         statuses: list[str] | None = None,
         tags: list[dict[str, str]] | None = None,
@@ -781,12 +779,8 @@ class FeedStore:
         if next_token:
             cursor_ts, cursor_uid = decode_cursor(next_token)
 
-        is_asc = order == SortOrder.ASC
-        query = (
-            LIST_FEEDS_ASC_SQL
-            if is_asc
-            else LIST_FEEDS_DESC_SQL
-        )
+        is_asc = order == SortOrder.ASC or order == "asc"
+        query = LIST_FEEDS_ASC_SQL if is_asc else LIST_FEEDS_DESC_SQL
 
         tags_json = None
         if tags:
@@ -802,7 +796,9 @@ class FeedStore:
             tags_json,
         )
 
-        rows, new_next_token = get_paginated_results(rows, limit, "created_at", "id")
+        rows, new_next_token = get_paginated_results(
+            rows, limit, "created_at", "id"
+        )
 
         feeds = [self._row_to_feed(row) for row in rows]
         return PaginatedFeeds(feeds, new_next_token)
