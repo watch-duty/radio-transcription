@@ -296,13 +296,14 @@ class UploadRawSegmentFn(beam.DoFn):
             # Construct raw segment GCS path
             flac_path = f"raw_segments/{request.feed_id}/{dt:%Y/%m/%d}/{request.segment_id}.flac"
 
-            if self.staging_audio_bucket and self.gcs_client:
-                bucket = self.gcs_client.bucket(self.staging_audio_bucket)
-                blob = bucket.blob(flac_path)
-                blob.upload_from_string(flac_bytes, content_type="audio/flac")
-                gcs_uri = f"gs://{self.staging_audio_bucket}/{flac_path}"
-            else:
-                gcs_uri = f"gs://dummy-staging-bucket/{flac_path}"
+            if not self.staging_audio_bucket:
+                err_msg = "staging_audio_bucket is not configured"
+                raise ValueError(err_msg)  # noqa: TRY301
+
+            bucket = self.gcs_client.bucket(self.staging_audio_bucket)
+            blob = bucket.blob(flac_path)
+            blob.upload_from_string(flac_bytes, content_type="audio/flac")
+            gcs_uri = f"gs://{self.staging_audio_bucket}/{flac_path}"
 
             # Build SegmentedAudio claim-check protobuf message
             start_timestamp = Timestamp()

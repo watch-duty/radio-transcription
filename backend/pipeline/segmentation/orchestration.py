@@ -79,6 +79,13 @@ def get_pipeline(
         options.stale_timeout_ms or DEFAULT_STALE_TIMEOUT_MS
     )
 
+    if not options.staging_audio_bucket:
+        err_msg = (
+            "Invalid pipeline configuration: staging_audio_bucket must be set. "
+            "This bucket is required to stage raw segmented audio chunks."
+        )
+        raise ValueError(err_msg)
+
     if ooo_timeout_continuous >= stale_timeout_continuous:
         err_msg = (
             f"Invalid pipeline configuration: stale_timeout_ms ({stale_timeout_continuous}) must be strictly "
