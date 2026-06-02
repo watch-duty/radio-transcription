@@ -16,6 +16,7 @@ from backend.pipeline.storage.feed_queries import (
     COUNT_HELD_BY_TYPE_SQL,
     CREATE_FEED_SQL,
     DEACTIVATE_FEED_SQL,
+    DELETE_FEED_SQL,
     GET_FEED_SQL,
     LIST_FEEDS_SQL,
     RELEASE_FEED_SQL,
@@ -87,6 +88,19 @@ class FeedStatus(enum.StrEnum):
     DEACTIVATED = "deactivated"
 
 
+class FeedStatusReason(enum.StrEnum):
+    """Canonical abnormal feed reason stored in ``feeds.status_reason``."""
+
+    SOURCE_OFFLINE = "source_offline"
+    SOURCE_UNREACHABLE = "source_unreachable"
+    SOURCE_RATE_LIMITED = "source_rate_limited"
+    SYSTEM_AUTHENTICATION_FAILED = "system_authentication_failed"
+    SYSTEM_CONFIGURATION_INVALID = "system_configuration_invalid"
+    SYSTEM_COLLECTOR_ERROR = "system_collector_error"
+    SYSTEM_PIPELINE_ERROR = "system_pipeline_error"
+    SYSTEM_UNEXPECTED_ERROR = "system_unexpected_error"
+
+
 class LeasedFeed(TypedDict):
     """Feed details returned after a successful lease acquisition."""
 
@@ -116,6 +130,8 @@ class Feed(TypedDict):
     name: str
     source_type: SourceType
     status: FeedStatus
+    status_reason: FeedStatusReason | None
+    status_reason_updated_at: datetime.datetime | None
     failure_count: int
     worker_id: uuid.UUID | None
     last_heartbeat: datetime.datetime | None
@@ -184,6 +200,18 @@ class FeedStore:
         except ValueError as e:
             msg = f"Unknown status {row['status']!r} for feed {row['id']}"
             raise ValueError(msg) from e
+        status_reason_raw = row["status_reason"]
+        if status_reason_raw is None:
+            status_reason = None
+        else:
+            try:
+                status_reason = FeedStatusReason(status_reason_raw)
+            except ValueError as e:
+                msg = (
+                    f"Unknown status reason {status_reason_raw!r} "
+                    f"for feed {row['id']}"
+                )
+                raise ValueError(msg) from e
 
         tags = row.get("tags")
         if tags is not None:
@@ -194,6 +222,8 @@ class FeedStore:
             name=row["name"],
             source_type=source_type,
             status=status,
+            status_reason=status_reason,
+            status_reason_updated_at=row["status_reason_updated_at"],
             failure_count=row["failure_count"],
             worker_id=row["worker_id"],
             last_heartbeat=row["last_heartbeat"],
@@ -316,13 +346,15 @@ class FeedStore:
         backoff_max_sec: int = 600,
         *,
         reason: str | None = None,
+        status_reason: FeedStatusReason | None = None,
     ) -> str | None:
         """Report a feed failure with exponential backoff.
 
         Atomically increments ``failure_count``, computes ``retry_after``
         with exponential backoff + jitter, and transitions to
         ``'quarantined'`` if *failure_threshold* is reached.  On quarantine
-        transition, ``quarantine_reason`` is populated from *reason*.
+        transition, ``quarantine_reason`` is populated from raw *reason*.
+        The canonical *status_reason* is stored in ``feeds.status_reason``.
 
         Backoff formula: ``min(backoff_base_sec * 2^failure_count,
         backoff_max_sec) + random(0-10s) jitter``.
@@ -346,6 +378,9 @@ class FeedStore:
                 ``None`` (default) writes SQL NULL — preferred over an empty
                 string so triage queries can use ``WHERE quarantine_reason
                 IS NOT NULL``.
+            status_reason: Canonical reason code for the current abnormal
+                feed condition. ``None`` lets SQL store the compatibility
+                fallback ``system_unexpected_error``.
 
         Returns:
             The new feed status (``'failing'`` or ``'quarantined'``) if
@@ -353,6 +388,7 @@ class FeedStore:
             already lost.
 
         """
+        status_reason_value = status_reason.value if status_reason is not None else None  # fmt: skip
         row = await self._pool.fetchrow(
             REPORT_FAILURE_SQL,
             feed_id,
@@ -362,6 +398,7 @@ class FeedStore:
             backoff_max_sec,
             backoff_base_sec,
             reason,  # $7 — populates quarantine_reason on transition
+            status_reason_value,
         )
         if row is None:
             return None
@@ -729,6 +766,17 @@ class FeedStore:
         """
         result = await self._pool.execute(DEACTIVATE_FEED_SQL, feed_id)
         return result == "UPDATE 1"
+
+    async def delete_feed(self, feed_id: uuid.UUID) -> bool:
+        """Hard delete a feed by ID.
+
+        Deletes the feed itself, along with all referencing database entities
+        (transcripts, audio segments, annotations, and feed properties).
+
+        Returns True if the feed was successfully deleted, False otherwise.
+        """
+        result = await self._pool.execute(DELETE_FEED_SQL, feed_id)
+        return result == "DELETE 1"
 
     async def reset_feed(self, feed_id: uuid.UUID) -> Feed | None:
         """Reset a feed to an unclaimed, unassigned state.

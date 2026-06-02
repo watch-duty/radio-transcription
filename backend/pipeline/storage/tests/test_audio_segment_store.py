@@ -4,6 +4,8 @@ import datetime
 import unittest
 import uuid
 
+import asyncpg
+
 from backend.pipeline.storage import audio_segment_queries
 from backend.pipeline.storage.audio_segment_store import AudioSegmentStore
 from backend.pipeline.storage.tests.connection_util import make_mock_pool
@@ -105,6 +107,16 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             )
         self.assertIn("Invalid segment_id UUID", str(cm.exception))
 
+    async def test_add_annotation_segment_not_found(self) -> None:
+        self.pool.fetchrow.side_effect = (
+            asyncpg.exceptions.ForeignKeyViolationError()
+        )
+        with self.assertRaises(ValueError) as cm:
+            await self.store.add_annotation(
+                str(_SEGMENT_ID), AnnotationType.TRANSCRIPT, {"text": "hello"}
+            )
+        self.assertIn("does not exist", str(cm.exception))
+
     async def test_create_audio_segment_success(self) -> None:
         new_row = _AUDIO_SEGMENT_ROW.copy()
         new_row.pop("annotations", None)
@@ -166,18 +178,32 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
     async def test_list_audio_segments(self) -> None:
         result = await self.store.list_audio_segments()
 
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0].id, str(_SEGMENT_ID))
+        self.assertEqual(len(result.segments), 1)
+        self.assertEqual(result.segments[0].id, str(_SEGMENT_ID))
         self.pool.fetch.assert_called_once_with(
-            audio_segment_queries.LIST_AUDIO_SEGMENTS_SQL, None
+            audio_segment_queries.LIST_AUDIO_SEGMENTS_DESC_SQL,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            101,
         )
 
     async def test_list_audio_segments_with_feed_id(self) -> None:
         result = await self.store.list_audio_segments([str(_FEED_ID)])
 
-        self.assertEqual(len(result), 1)
+        self.assertEqual(len(result.segments), 1)
         self.pool.fetch.assert_called_once_with(
-            audio_segment_queries.LIST_AUDIO_SEGMENTS_SQL, [_FEED_ID]
+            audio_segment_queries.LIST_AUDIO_SEGMENTS_DESC_SQL,
+            [_FEED_ID],
+            None,
+            None,
+            None,
+            None,
+            None,
+            101,
         )
 
     async def test_list_audio_segments_invalid_feed_id(self) -> None:

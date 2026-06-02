@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.9-labs
 FROM python:3.13-slim
 
 # Set environment variables
@@ -10,18 +11,13 @@ ENV PORT=8080
 WORKDIR /app
 
 # 1. Install uv as the package manager
-COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.13 /uv /uvx /bin/
 
-# 2. Copy project configuration files
-COPY pyproject.toml uv.lock ./
-
-# 3. Create virtual environment and install dependencies
+# 2. Create virtual environment and copy project configuration files dynamically
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Copy workspace pyproject.toml files to satisfy uv workspace requirement
-COPY backend/pipeline/normalization/pyproject.toml ./backend/pipeline/normalization/
-COPY backend/pipeline/transcription/pyproject.toml ./backend/pipeline/transcription/
+COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml ./
 RUN uv sync --frozen --no-dev
 
 # 4. Copy necessary application source code

@@ -1,14 +1,13 @@
 from __future__ import annotations
 
+import base64
+import datetime
 import json
 import uuid
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from enum import StrEnum
 
-if TYPE_CHECKING:
-    import datetime
-
-    import asyncpg
-
+import asyncpg
 from pydantic import TypeAdapter
 
 from backend.pipeline.storage import audio_segment_queries
@@ -22,13 +21,41 @@ from backend.services.audio_segments.models import (
 annotation_adapter = TypeAdapter(Annotation)
 
 
+class SortOrder(StrEnum):
+    ASC = "asc"
+    DESC = "desc"
+
+
+@dataclass
+class PaginatedAudioSegments:
+    segments: list[AudioSegment]
+    next_token: str | None
+
+
 class AudioSegmentStore:
     """Storage layer for audio segments and annotations against AlloyDB."""
 
     def __init__(self, pool: asyncpg.Pool) -> None:
         self._pool = pool
 
-    def _prepare_annotation_row(self, row_dict: dict) -> dict:
+    def _decode_cursor(
+        self, next_token: str
+    ) -> tuple[datetime.datetime, uuid.UUID]:
+        """Decode a base64 pagination token into a timestamp and UUID."""
+        try:
+            decoded = base64.b64decode(next_token).decode("utf-8")
+            ts_str, uid_str = decoded.split("|")
+            return datetime.datetime.fromisoformat(ts_str), uuid.UUID(uid_str)
+        except Exception as e:
+            msg = f"Invalid next_token: {e}"
+            raise ValueError(msg)
+
+    def _encode_cursor(self, ts: datetime.datetime, uid: uuid.UUID) -> str:
+        """Encode a timestamp and UUID into a base64 pagination token."""
+        token_str = f"{ts.isoformat()}|{uid}"
+        return base64.b64encode(token_str.encode("utf-8")).decode("utf-8")
+
+    def _prepare_annotation(self, row_dict: dict) -> dict:
         """Prepare an annotation dictionary for Pydantic validation."""
         if row_dict.get("audio_segment_id"):
             row_dict["audio_segment_id"] = str(row_dict["audio_segment_id"])
@@ -39,7 +66,7 @@ class AudioSegmentStore:
 
         return row_dict
 
-    def _prepare_audio_segment_row(self, row: asyncpg.Record) -> dict:
+    def _prepare_audio_segment(self, row: asyncpg.Record) -> dict:
         """Prepare a database row for Pydantic validation as an AudioSegment."""
         data = dict(row)
         if data.get("id"):
@@ -52,7 +79,7 @@ class AudioSegmentStore:
             if isinstance(annotations, str):
                 annotations = json.loads(annotations)
             data["annotations"] = [
-                self._prepare_annotation_row(ann) for ann in annotations
+                self._prepare_annotation(ann) for ann in annotations
             ]
 
         return data
@@ -69,19 +96,23 @@ class AudioSegmentStore:
 
         data_json = json.dumps(data)
 
-        row = await self._pool.fetchrow(
-            audio_segment_queries.ADD_ANNOTATION_SQL,
-            uid,
-            annotation_type,
-            data_json,
-        )
+        try:
+            row = await self._pool.fetchrow(
+                audio_segment_queries.ADD_ANNOTATION_SQL,
+                uid,
+                annotation_type,
+                data_json,
+            )
+        except asyncpg.exceptions.ForeignKeyViolationError as e:
+            msg = f"Audio segment {segment_id} does not exist."
+            raise ValueError(msg) from e
 
         if row is None:
             msg = f"Unable to add annotation for segment {segment_id}."
             raise ValueError(msg)
 
         return annotation_adapter.validate_python(
-            self._prepare_annotation_row(dict(row))
+            self._prepare_annotation(dict(row))
         )
 
     async def create_audio_segment(
@@ -127,11 +158,19 @@ class AudioSegmentStore:
             msg = "Unable to create audio segment."
             raise ValueError(msg)
 
-        return AudioSegment.model_validate(self._prepare_audio_segment_row(row))
+        return AudioSegment.model_validate(self._prepare_audio_segment(row))
 
     async def list_audio_segments(
-        self, feed_ids: list[str] | None = None
-    ) -> list[AudioSegment]:
+        self,
+        feed_ids: list[str] | None = None,
+        limit: int = 100,
+        next_token: str | None = None,
+        start_time: datetime.datetime | None = None,
+        end_time: datetime.datetime | None = None,
+        order: SortOrder = SortOrder.DESC,
+        *,
+        has_alert: bool | None = None,
+    ) -> PaginatedAudioSegments:
         """List all audio segments bundled with their annotations."""
         feed_uuids = None
         if feed_ids:
@@ -141,12 +180,42 @@ class AudioSegmentStore:
                 msg = f"Invalid feed_id UUID in list: {feed_ids}"
                 raise ValueError(msg) from e
 
-        rows = await self._pool.fetch(
-            audio_segment_queries.LIST_AUDIO_SEGMENTS_SQL,
-            feed_uuids,
+        cursor_ts = None
+        cursor_uid = None
+        if next_token:
+            cursor_ts, cursor_uid = self._decode_cursor(next_token)
+
+        is_asc = order == SortOrder.ASC
+        query = (
+            audio_segment_queries.LIST_AUDIO_SEGMENTS_ASC_SQL
+            if is_asc
+            else audio_segment_queries.LIST_AUDIO_SEGMENTS_DESC_SQL
         )
 
-        return [
-            AudioSegment.model_validate(self._prepare_audio_segment_row(row))
+        rows = await self._pool.fetch(
+            query,
+            feed_uuids,
+            cursor_ts,
+            cursor_uid,
+            start_time,
+            end_time,
+            has_alert,
+            limit + 1,
+        )
+
+        has_more = len(rows) > limit
+        if has_more:
+            rows = rows[:limit]
+            last_row = rows[-1]
+            new_next_token = self._encode_cursor(
+                last_row["end_timestamp"], last_row["id"]
+            )
+        else:
+            new_next_token = None
+
+        segments = [
+            AudioSegment.model_validate(self._prepare_audio_segment(row))
             for row in rows
         ]
+
+        return PaginatedAudioSegments(segments, new_next_token)
