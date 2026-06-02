@@ -11,29 +11,29 @@ import type {
   InfiniteData,
   InfiniteQueryObserverResult,
 } from '@tanstack/react-query';
-import type { Transcript } from '@transcription/common';
+import type { AudioSegment } from '@transcription/common';
 
 import { getRelativeTimeString } from '../../utils/timeUtils';
 import TranscriptRow from './TranscriptRow';
-import type { ListTranscriptsData } from './TranscriptView';
+import type { ListAudioSegmentsData } from './TranscriptView';
 
 export interface TranscriptDisplayProps {
   ref?: React.Ref<VirtuosoHandle>;
-  transcripts: Transcript[];
+  transcripts: AudioSegment[];
   groupCounts: number[];
   groupTitles: string[];
   setIsViewAtTopOfTranscripts: (atTop: boolean) => void;
   hasNewerTranscripts: boolean;
   isFetchingNewerTranscripts: boolean;
   fetchNewerTranscripts: () => Promise<
-    InfiniteQueryObserverResult<InfiniteData<ListTranscriptsData>, Error>
+    InfiniteQueryObserverResult<InfiniteData<ListAudioSegmentsData>, Error>
   >;
   isTranscriptsFetching: boolean;
   isTranscriptsPolling: boolean;
   hasOlderTranscripts: boolean;
   isFetchingOlderTranscripts: boolean;
   fetchOlderTranscripts: () => Promise<
-    InfiniteQueryObserverResult<InfiniteData<ListTranscriptsData>, Error>
+    InfiniteQueryObserverResult<InfiniteData<ListAudioSegmentsData>, Error>
   >;
   // Unix timestamp in ms when the transcripts query last updated with a success.
   transcriptsLastUpdated: number | null;
@@ -169,7 +169,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
           const transcript = transcripts[index];
           return (
             <TranscriptRow
-              key={transcript.transmissionId}
+              key={transcript.id}
               transcript={transcript}
               index={index}
               totalTranscripts={transcripts.length}
@@ -180,9 +180,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
               currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
               triggerSnackbar={triggerSnackbar}
               showHeader={false}
-              isHighlighted={
-                transcript.transmissionId === highlightedTransmissionId
-              }
+              isHighlighted={transcript.id === highlightedTransmissionId}
               redactTranscripts={redactTranscripts}
               onRowClick={onRowClick}
             />
@@ -210,9 +208,9 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
                         result.data &&
                         (
                           result.data.pages[0] as {
-                            transcripts: Transcript[];
+                            segments: AudioSegment[];
                           }
-                        )?.transcripts.length === 0
+                        )?.segments.length === 0
                       ) {
                         triggerSnackbar('No newer transcripts found');
                       }

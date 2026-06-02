@@ -7,15 +7,16 @@ import IconButton from '@mui/material/IconButton';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import { type Theme, useTheme } from '@mui/material/styles';
-import type { Transcript } from '@transcription/common';
+import { type AudioSegment } from '@transcription/common';
 import WavesurferPlayer from '@wavesurfer/react';
 
+import { findEvaluationAnnotationData } from '../../utils/annotationUtils';
 import { getAudioUrl } from '../../utils/audioUtils';
 import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { CustomAlertIcon } from '../common/AlertIcon';
 
 interface AudioDisplayProps {
-  transcripts: Transcript[];
+  transcripts: AudioSegment[];
   currentlyPlayingTransmissionId: string | null;
   highlightedTransmissionId: string | null;
   onClipClick: (transmissionId: string) => void;
@@ -157,7 +158,7 @@ export function AudioDisplay({
   }, [userDuration]);
 
   const firstTranscript = transcripts[0];
-  const firstTranscriptId = firstTranscript?.transmissionId || null;
+  const firstTranscriptId = firstTranscript?.id || null;
   const firstTranscriptEndTimestamp = firstTranscript?.endTimestamp || null;
 
   // Reset windowEndTime when first transcript changes
@@ -185,9 +186,7 @@ export function AudioDisplay({
 
     const targetId = highlightedTransmissionId || playingId;
     if (targetId) {
-      const targetTranscript = transcripts.find(
-        (t) => t.transmissionId === targetId
-      );
+      const targetTranscript = transcripts.find((t) => t.id === targetId);
       if (targetTranscript) {
         const tStart = new Date(targetTranscript.startTimestamp).getTime();
         const tEnd = new Date(targetTranscript.endTimestamp).getTime();
@@ -241,16 +240,20 @@ export function AudioDisplay({
         const left = ((visibleStart - startTime) / windowDuration) * 100;
         const width = ((visibleEnd - visibleStart) / windowDuration) * 100;
 
-        const url = getAudioUrl(t.playbackAudioUri);
+        const url = t.playbackAudioUri ? getAudioUrl(t.playbackAudioUri) : '';
 
+        const evaluationAnnotation = findEvaluationAnnotationData(
+          t.annotations
+        );
         return {
-          id: t.transmissionId,
+          id: t.id,
           url,
           left,
           width,
-          isAudioPlaying: t.transmissionId === currentlyPlayingTransmissionId,
-          isHighlighted: t.transmissionId === highlightedTransmissionId,
-          hasAlert: t.evaluationDecisions && t.evaluationDecisions.length > 0,
+          isAudioPlaying: t.id === currentlyPlayingTransmissionId,
+          isHighlighted: t.id === highlightedTransmissionId,
+          hasAlert:
+            !!evaluationAnnotation && evaluationAnnotation.decisions.length > 0,
         };
       });
 

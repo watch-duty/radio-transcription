@@ -3,7 +3,7 @@ import PlayArrowIcon from '@mui/icons-material/PlayCircleFilledOutlined';
 import IconButton from '@mui/material/IconButton';
 
 export interface AudioPlayerProps {
-  audioUri: string;
+  audioUri?: string;
   transmissionId: string;
   onToggleAudio: (transmissionId: string, audioUri: string) => void;
   isAudioPlaying: boolean;
@@ -24,10 +24,13 @@ function AudioPlayer({
     <IconButton
       onClick={(e) => {
         e.stopPropagation();
-        onToggleAudio(transmissionId, audioUri);
+        if (audioUri) {
+          onToggleAudio(transmissionId, audioUri);
+        }
       }}
       color="primary"
       aria-label={showPauseIcon ? 'pause' : 'play'}
+      disabled={!audioUri}
     >
       {showPauseIcon ? <PauseIcon /> : <PlayArrowIcon />}
     </IconButton>

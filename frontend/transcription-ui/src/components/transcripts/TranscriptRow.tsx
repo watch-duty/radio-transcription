@@ -8,13 +8,20 @@ import ListItem from '@mui/material/ListItem';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
-import type { Transcript } from '@transcription/common';
+import type {
+  AudioSegment,
+  TranscriptAnnotationData,
+} from '@transcription/common';
 
+import {
+  findEvaluationAnnotationData,
+  findTranscriptAnnotationData,
+} from '../../utils/annotationUtils';
 import AudioPlayer from '../audio/AudioPlayer';
 import AlertTooltip from './AlertTooltip';
 
 interface TranscriptRowProps {
-  transcript: Transcript;
+  transcript: AudioSegment;
   index: number;
   totalTranscripts: number;
   ruleIdToNameMap: Map<string, string>;
@@ -47,6 +54,26 @@ export function TranscriptRow({
   const theme = useTheme();
   const currentDate = new Date(transcript.startTimestamp);
 
+  function renderTranscriptionText(
+    transcriptAnnotation: TranscriptAnnotationData | null
+  ): string {
+    if (!transcriptAnnotation) {
+      return 'Waiting for transcription';
+    }
+
+    if (!transcriptAnnotation.text) {
+      return 'Transcription unavailable';
+    }
+
+    return transcriptAnnotation.text;
+  }
+
+  const evaluationAnnotation = findEvaluationAnnotationData(
+    transcript.annotations
+  );
+  const transcriptAnnotation = findTranscriptAnnotationData(
+    transcript.annotations
+  );
   return (
     <Fragment>
       {showHeader && (
@@ -84,7 +111,7 @@ export function TranscriptRow({
         </ListItem>
       )}
       <ListItem
-        id={`transcript-${transcript.transmissionId}`}
+        id={`transcript-${transcript.id}`}
         divider={index < totalTranscripts - 1}
         className="compactTable"
         sx={{
@@ -98,7 +125,7 @@ export function TranscriptRow({
             bgcolor: isHighlighted ? 'action.selected' : 'action.hover',
           },
         }}
-        onClick={() => onRowClick(transcript.transmissionId)}
+        onClick={() => onRowClick(transcript.id)}
       >
         <Box
           sx={{
@@ -109,7 +136,7 @@ export function TranscriptRow({
           }}
         >
           <AlertTooltip
-            evaluationDecisions={transcript.evaluationDecisions}
+            evaluationDecisions={evaluationAnnotation?.decisions ?? []}
             ruleIdToNameMap={ruleIdToNameMap}
             rulesLoading={rulesLoading}
           />
@@ -146,7 +173,7 @@ export function TranscriptRow({
         </Box>
         <AudioPlayer
           audioUri={transcript.playbackAudioUri}
-          transmissionId={transcript.transmissionId}
+          transmissionId={transcript.id}
           onToggleAudio={onToggleAudio}
           isAudioPlaying={isAudioPlaying}
           currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
@@ -161,7 +188,7 @@ export function TranscriptRow({
             opacity: redactTranscripts ? 0.6 : 1,
           }}
         >
-          {transcript.transcript}
+          {renderTranscriptionText(transcriptAnnotation)}
         </Typography>
         <Box sx={{ display: 'flex', gap: 1, flexShrink: 0 }}>
           <Tooltip title="Copy transcript">
@@ -169,11 +196,14 @@ export function TranscriptRow({
               size="small"
               aria-label="copy transcript"
               onClick={(e) => {
-                e.stopPropagation();
-                navigator.clipboard.writeText(transcript.transcript);
-                triggerSnackbar('Transcript copied');
+                if (transcriptAnnotation?.text) {
+                  e.stopPropagation();
+                  navigator.clipboard.writeText(transcriptAnnotation.text);
+                  triggerSnackbar('Transcript copied');
+                }
               }}
               sx={{ cursor: 'copy' }}
+              disabled={!transcriptAnnotation}
             >
               <ContentCopyIcon fontSize="small" />
             </IconButton>
@@ -188,10 +218,7 @@ export function TranscriptRow({
                   window.location.origin + window.location.pathname
                 );
                 url.searchParams.set('feedId', transcript.feedId);
-                url.searchParams.set(
-                  'transmissionId',
-                  transcript.transmissionId
-                );
+                url.searchParams.set('transmissionId', transcript.id);
                 url.searchParams.set(
                   'timestamp',
                   new Date(transcript.startTimestamp).getTime().toString()

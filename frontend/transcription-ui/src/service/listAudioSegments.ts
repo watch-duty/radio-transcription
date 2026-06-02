@@ -5,10 +5,10 @@ import { apiFetch } from '../utils/apiUtils';
 export async function listAudioSegments(
   feedId: string,
   token: string,
-  limit: number,
+  limit?: number,
   nextToken?: string,
-  startTime?: string,
-  endTime?: string,
+  startTime?: number,
+  endTime?: number,
   order?: 'asc' | 'desc',
   isAlert?: boolean
 ): Promise<{ segments: AudioSegment[]; nextToken: string | undefined }> {
