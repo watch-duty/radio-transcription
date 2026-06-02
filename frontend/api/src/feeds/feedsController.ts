@@ -1,4 +1,4 @@
-import * as express from 'express';
+import type { Request as ExpressRequest } from 'express';
 
 import type {
   BackendFeedStatus,
@@ -31,7 +31,7 @@ import { GoogleUser } from '../authentication.js';
 import { FEEDS_STORE_API_URL } from '../config.js';
 import { HttpError, handleBackendError } from '../utils.js';
 
-interface AuthenticatedRequest extends express.Request {
+interface AuthenticatedRequest extends ExpressRequest {
   user?: GoogleUser;
 }
 
@@ -211,7 +211,15 @@ export class FeedsController extends Controller {
   @Response<{ message: string }>(403, 'Forbidden')
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
-  public async createFeed(@Body() requestBody: FeedCreate): Promise<Feed> {
+  public async createFeed(
+    @Request() request: ExpressRequest,
+    @Body() requestBody: FeedCreate
+  ): Promise<Feed> {
+    const user = (request as AuthenticatedRequest).user;
+    if (!user?.isAdmin) {
+      throw new HttpError(403, 'Forbidden');
+    }
+
     try {
       const client = await this.getClient();
       const response = await client.request<FeedBackend>({
@@ -238,9 +246,15 @@ export class FeedsController extends Controller {
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async updateFeed(
+    @Request() request: ExpressRequest,
     @Path() feedId: string,
     @Body() requestBody: FeedUpdate
   ): Promise<Feed> {
+    const user = (request as AuthenticatedRequest).user;
+    if (!user?.isAdmin) {
+      throw new HttpError(403, 'Forbidden');
+    }
+
     try {
       const client = await this.getClient();
       const response = await client.request<FeedBackend>({
@@ -267,11 +281,11 @@ export class FeedsController extends Controller {
   @Extension('x-google-backend', 'radio-transcription-api')
   public async resetFeed(
     @Path() feedId: string,
-    @Request() request: express.Request
+    @Request() request: ExpressRequest
   ): Promise<Feed> {
     const user = (request as AuthenticatedRequest).user;
     if (!user?.isAdmin) {
-      throw new HttpError(401, 'Unauthorized: Admin privileges required');
+      throw new HttpError(403, 'Forbidden');
     }
 
     const client = await this.getClient();
@@ -304,11 +318,11 @@ export class FeedsController extends Controller {
   @Extension('x-google-backend', 'radio-transcription-api')
   public async deactivateFeed(
     @Path() feedId: string,
-    @Request() request: express.Request
+    @Request() request: ExpressRequest
   ): Promise<void> {
     const user = (request as AuthenticatedRequest).user;
     if (!user?.isAdmin) {
-      throw new HttpError(401, 'Unauthorized: Admin privileges required');
+      throw new HttpError(403, 'Forbidden');
     }
 
     const client = await this.getClient();
@@ -340,11 +354,11 @@ export class FeedsController extends Controller {
   @Extension('x-google-backend', 'radio-transcription-api')
   public async deleteFeed(
     @Path() feedId: string,
-    @Request() request: express.Request
+    @Request() request: ExpressRequest
   ): Promise<void> {
     const user = (request as AuthenticatedRequest).user;
     if (!user?.isAdmin) {
-      throw new HttpError(401, 'Unauthorized: Admin privileges required');
+      throw new HttpError(403, 'Forbidden');
     }
 
     const client = await this.getClient();

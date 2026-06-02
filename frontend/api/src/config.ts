@@ -68,7 +68,7 @@ const CACHE_TTL_MS = 15000; // 15 seconds
 
 export async function getAdminEmails(): Promise<string[]> {
   const now = Date.now();
-  if (cachedAdminEmails && (now - lastCacheFetch < CACHE_TTL_MS)) {
+  if (cachedAdminEmails && now - lastCacheFetch < CACHE_TTL_MS) {
     return cachedAdminEmails;
   }
 
@@ -87,7 +87,10 @@ export async function getAdminEmails(): Promise<string[]> {
         return emails;
       }
     } catch (err) {
-      console.error(`Error reading admin emails secret file at ${adminEmailsPath}:`, err);
+      console.error(
+        `Error reading admin emails secret file at ${adminEmailsPath}:`,
+        err
+      );
     }
   }
 

@@ -1,3 +1,5 @@
+import type { Request as ExpressRequest } from 'express';
+
 import type {
   LogicalOperator,
   Rule,
@@ -17,6 +19,7 @@ import {
   Post,
   Put,
   Queries,
+  Request,
   Response,
   Route,
   Security,
@@ -24,8 +27,13 @@ import {
   Tags,
 } from 'tsoa';
 
+import type { GoogleUser } from '../authentication.js';
 import { RULES_API_URL } from '../config.js';
 import { HttpError, handleBackendError } from '../utils.js';
+
+interface AuthenticatedRequest extends ExpressRequest {
+  user?: GoogleUser;
+}
 
 interface ScopeResponse {
   level: ScopeLevel;
@@ -283,7 +291,14 @@ export class RulesController extends Controller {
   @Response<{ message: string }>(403, 'Forbidden')
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
-  public async createRule(@Body() requestBody: RuleCreate): Promise<Rule> {
+  public async createRule(
+    @Request() request: ExpressRequest,
+    @Body() requestBody: RuleCreate
+  ): Promise<Rule> {
+    const user = (request as AuthenticatedRequest).user;
+    if (!user?.isAdmin) {
+      throw new HttpError(403, 'Forbidden');
+    }
     try {
       const client = await this.getClient();
       const response = await client.request({
@@ -306,9 +321,14 @@ export class RulesController extends Controller {
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async updateRule(
+    @Request() request: ExpressRequest,
     @Path() ruleId: string,
     @Body() requestBody: RuleUpdate
   ): Promise<Rule> {
+    const user = (request as AuthenticatedRequest).user;
+    if (!user?.isAdmin) {
+      throw new HttpError(403, 'Forbidden');
+    }
     try {
       const client = await this.getClient();
       const response = await client.request({
@@ -334,7 +354,14 @@ export class RulesController extends Controller {
   @Response<{ message: string }>(404, 'Not Found')
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
-  public async deleteRule(@Path() ruleId: string): Promise<void> {
+  public async deleteRule(
+    @Request() request: ExpressRequest,
+    @Path() ruleId: string
+  ): Promise<void> {
+    const user = (request as AuthenticatedRequest).user;
+    if (!user?.isAdmin) {
+      throw new HttpError(403, 'Forbidden');
+    }
     try {
       const client = await this.getClient();
       await client.request({
