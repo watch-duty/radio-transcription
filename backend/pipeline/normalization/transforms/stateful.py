@@ -71,7 +71,12 @@ def _write_transmission_context(
     state_cell: Any,
     context: datatypes.TransmissionContext,
 ) -> None:
-    """Writes the context to transmission state or clears it completely if it is an empty IdleFeedState."""
+    """Writes the context to transmission state or clears it completely if it is an empty IdleFeedState.
+
+    Pruning completely empty IdleFeedStates from the database prevents session memory leaks and
+    ensures that subsequent independent audio chunks start with a clean slate (initiating a new
+    ActiveStitchingState and a fresh traceparent, effectively preventing Trace Context Hijacking).
+    """
     if (
         isinstance(context, datatypes.IdleFeedState)
         and not context.out_of_order_buffer
