@@ -36,6 +36,8 @@ export interface ConfirmationDialogProps {
   confirmInputValue?: string;
   /** Instructional text above the confirmation match text input field */
   confirmInputLabel?: string;
+  /** Optional custom data-testid for the challenge input field */
+  confirmInputTestId?: string;
   /** Triggers when the cancel button is clicked or the dialog is closed */
   onClose: () => void;
   /** Triggers when the primary confirm button is clicked */
@@ -54,6 +56,7 @@ export function ConfirmationDialog({
   showConfirmInput = false,
   confirmInputValue = '',
   confirmInputLabel = '',
+  confirmInputTestId = 'delete-confirm-input',
   onClose,
   onConfirm,
   isSubmitting = false,
@@ -106,7 +109,7 @@ export function ConfirmationDialog({
               placeholder={confirmInputValue}
               disabled={isSubmitting}
               slotProps={{
-                htmlInput: { 'data-testid': 'delete-confirm-input' },
+                htmlInput: { 'data-testid': confirmInputTestId },
               }}
             />
           </>

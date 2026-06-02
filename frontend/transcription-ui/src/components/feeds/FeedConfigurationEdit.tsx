@@ -61,6 +61,33 @@ const SOURCE_TYPE_OPTIONS: {
   },
 ];
 
+const DIALOG_CONFIG = {
+  delete: {
+    title: 'Verify Feed Deletion',
+    description:
+      'Are you sure you want to delete the feed, along with associated metadata, transcripts, and annotations?',
+    confirmLabel: 'Delete',
+    confirmColor: 'error' as const,
+    showConfirmInput: true,
+  },
+  reset: {
+    title: 'Verify Feed Reset',
+    description:
+      'Are you sure you want to reset this feed? This will re-enable the feed processing.',
+    confirmLabel: 'Reset',
+    confirmColor: 'primary' as const,
+    showConfirmInput: false,
+  },
+  deactivate: {
+    title: 'Verify Feed Deactivation',
+    description:
+      'Are you sure you want to deactivate this feed? Feed processing will stop until the feed is explicitly reset.',
+    confirmLabel: 'Deactivate',
+    confirmColor: 'error' as const,
+    showConfirmInput: false,
+  },
+};
+
 interface FeedConfigurationEditProps {
   isEditing: boolean;
   feedName: string;
@@ -117,16 +144,7 @@ export function FeedConfigurationEdit({
   const [lastActiveDialog, setLastActiveDialog] = useState<
     'delete' | 'reset' | 'deactivate' | null
   >(null);
-  const [prevActiveDialog, setPrevActiveDialog] = useState<
-    'delete' | 'reset' | 'deactivate' | null
-  >(null);
 
-  if (activeDialog !== prevActiveDialog) {
-    setPrevActiveDialog(activeDialog);
-    if (activeDialog !== null) {
-      setLastActiveDialog(activeDialog);
-    }
-  }
   const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
   const menuOpen = Boolean(menuAnchorEl);
 
@@ -141,16 +159,19 @@ export function FeedConfigurationEdit({
   const handleDeleteClick = () => {
     handleMenuClose();
     setActiveDialog('delete');
+    setLastActiveDialog('delete');
   };
 
   const handleResetClick = () => {
     handleMenuClose();
     setActiveDialog('reset');
+    setLastActiveDialog('reset');
   };
 
   const handleDeactivateClick = () => {
     handleMenuClose();
     setActiveDialog('deactivate');
+    setLastActiveDialog('deactivate');
   };
 
   const handleDialogClose = () => {
@@ -358,6 +379,11 @@ export function FeedConfigurationEdit({
       // Errors are typically caught and propagated in Mutate onError side-effects
     }
   };
+
+  const currentDialogType = activeDialog || lastActiveDialog;
+  const dialogConfig = currentDialogType
+    ? DIALOG_CONFIG[currentDialogType]
+    : null;
 
   return (
     <Card
@@ -716,37 +742,11 @@ export function FeedConfigurationEdit({
 
       <ConfirmationDialog
         open={activeDialog !== null}
-        title={
-          (activeDialog || lastActiveDialog) === 'delete'
-            ? 'Verify Feed Deletion'
-            : (activeDialog || lastActiveDialog) === 'reset'
-              ? 'Verify Feed Reset'
-              : (activeDialog || lastActiveDialog) === 'deactivate'
-                ? 'Verify Feed Deactivation'
-                : ''
-        }
-        description={
-          (activeDialog || lastActiveDialog) === 'delete'
-            ? 'Are you sure you want to delete the feed, along with associated metadata, transcripts, and annotations?'
-            : (activeDialog || lastActiveDialog) === 'reset'
-              ? 'Are you sure you want to reset this feed? This will re-enable the feed processing.'
-              : (activeDialog || lastActiveDialog) === 'deactivate'
-                ? 'Are you sure you want to deactivate this feed? Feed processing will stop until the feed is explicitly reset.'
-                : ''
-        }
-        confirmLabel={
-          (activeDialog || lastActiveDialog) === 'delete'
-            ? 'Delete'
-            : (activeDialog || lastActiveDialog) === 'reset'
-              ? 'Reset'
-              : (activeDialog || lastActiveDialog) === 'deactivate'
-                ? 'Deactivate'
-                : ''
-        }
-        confirmColor={
-          (activeDialog || lastActiveDialog) === 'reset' ? 'primary' : 'error'
-        }
-        showConfirmInput={(activeDialog || lastActiveDialog) === 'delete'}
+        title={dialogConfig?.title ?? ''}
+        description={dialogConfig?.description ?? ''}
+        confirmLabel={dialogConfig?.confirmLabel ?? ''}
+        confirmColor={dialogConfig?.confirmColor}
+        showConfirmInput={dialogConfig?.showConfirmInput}
         confirmInputValue={feedSourceId}
         confirmInputLabel={`To confirm, type the Source Feed ID "${feedSourceId}" below:`}
         onClose={handleDialogClose}
