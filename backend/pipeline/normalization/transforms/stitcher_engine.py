@@ -10,6 +10,67 @@ completely decoupled from Apache Beam runtime boundaries. It exposes:
 By abstracting all non-Beam logic into this stateless execution engine, we
 enforce 100% pickling/serialization safety for Dataflow workers and achieve
 straightforward, light-speed unit testing capabilities.
+
+================================================================================
+STATEFUL STITCHING ARCHITECTURE & COORDINATION FLOW
+================================================================================
+
+1. COORDINATION SEQUENCE
+   Every time a raw audio chunk arrives at the stateful DoFn boundary (stateful.py):
+
+   [stateful.py] (Beam DoFn)
+         │
+         ├─► 1. Reads state cell (IdleFeedState or ActiveStitchingState)
+         ├─► 2. Processes chunk through sequence Buffer (chronological restoration)
+         │      ├─► If chunk is in the future: buffers it (sets out-of-order timer)
+         │      └─► If chunk is ready: releases sorted "elements_to_emit" list
+         │
+         └─► 3. Drains elements_to_emit and loops over each element:
+                │
+                ├─► A. If DB context is Idle, transitions it to Active using stashed metadata
+                │
+                ├─► B. Delegates chunk execution to [StitcherEngine.process_ordering_chunk()]
+                │      │
+                │      ├─► Downloads raw audio FLAC bytes from GCS
+                │      ├─► Performs ONNX speech Voice Activity Detection (VAD)
+                │      ├─► Passes chunk data to stateless [AudioStitchingStateMachine] (FSM)
+                │      │     └─► Returns a list of imperative StateMachineActions:
+                │      │
+                │      └─► Loops over StateMachineActions (in _apply_stitcher_actions):
+                │            ├─► AppendBufferAction: Appends PCM audio to persistent buffer
+                │            │
+                │            ├─► FlushAction: Concatenates accumulated buffer, generates
+                │            │   FlushRequest, clears buffer, and transitions context
+                │            │   locally to IdleFeedState.
+                │            │
+                │            └─► UpdateStateAction: Saves active timestamps, VAD priming tails,
+                │                and contributing URIs. If the same chunk restarted speech
+                │                immediately after a flush (forced split), transitions
+                │                IdleFeedState back to ActiveStitchingState.
+                │
+                └─► C. Commits the updated context back to the database
+                       └─► If IdleFeedState is empty (quiet feed), deletes it completely via
+                           state_cell.clear() to prune DB and isolate Trace parents.
+
+2. PERSISTENT STATE SCHEMA
+   Persistent checkpoints are stored as a oneof TransmissionContextProto:
+   * IdleFeedState: Tracks quiet feeds (no active speech). Stores out_of_order_buffer
+     (jitter buffer) and order_timer_active (watermark gap timers).
+   * ActiveStitchingState: Tracks active speech collection. Stores session_id,
+     contributing_audio_uris, stale_start_time_ms, traceparent, and prior_audio_tail
+     (cached trailing PCM samples to prime the next chunk's ONNX VAD).
+
+3. KEY STATEFUL HEURISTICS
+   * Trace Context Hijacking Prevention: On any flush/reset, the active session context
+     is reset to IdleFeedState, and completely deleted from storage if the feed remains
+     quiet. This guarantees that subsequent chunks arriving minutes later start with an
+     empty state, initiating a fresh ActiveStitchingState and traceparent.
+   * Stashed Context: When splitting segment files > 60s, the first FlushAction transitions
+     context to Idle. Stashing a copy of original session details (active_session_id,
+     feed_metadata, sample_rate) before the loop ensures the second split part can safely
+     re-initialize itself to ActiveStitchingState without TypeErrors or AttributeErrors.
+   * Database Pruning: Quiet IdleFeedStates are evicting from the DB entirely using
+     state_cell.clear() inside _write_transmission_context to prevent memory leaks.
 """
 
 import logging as std_logging
