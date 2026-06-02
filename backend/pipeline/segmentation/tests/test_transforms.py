@@ -47,15 +47,6 @@ from backend.pipeline.segmentation.transforms.stateless import (
 )
 from backend.pipeline.segmentation.utils import get_duration_ms
 
-# Test Helper: override ChunkMetadata locally in tests to default is_continuous to True
-_OriginalChunkMetadata = ChunkMetadata
-
-
-def ChunkMetadata(*args: Any, **kwargs: Any) -> Any:
-    kwargs.setdefault("is_continuous", True)
-    return _OriginalChunkMetadata(*args, **kwargs)
-
-
 # Configure dynamic mock interception for process-level shared GCS clients
 # using standard unittest module lifecycle hooks to avoid any type ignore annotations.
 original_acquire = SHARED_RESOURCE_HANDLE.acquire
@@ -118,9 +109,9 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
         )
         with BeamTestPipeline(options=options) as p:
             messages = p | beam.Create([mock_msg])
-            parsed = messages | beam.ParDo(
-                ParseAndKeyFn(is_continuous=True)
-            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+            parsed = messages | beam.ParDo(ParseAndKeyFn()).with_outputs(
+                DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG
+            )
             assert_that(
                 parsed[MAIN_TAG],
                 equal_to(
@@ -135,6 +126,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
                                     feed_name="mock-feed-name",
                                     external_id="mock-external-id",
                                 ),
+                                is_continuous=True,
                             ),
                         )
                     ]
@@ -162,9 +154,9 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
         )
         with BeamTestPipeline(options=options) as p:
             messages = p | beam.Create([mock_msg])
-            parsed = messages | beam.ParDo(
-                ParseAndKeyFn(is_continuous=False)
-            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+            parsed = messages | beam.ParDo(ParseAndKeyFn()).with_outputs(
+                DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG
+            )
 
             def assert_dlq(
                 elements: list[dict[str, str | bool | dict[str, str]]],
@@ -203,9 +195,9 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
         )
         with BeamTestPipeline(options=options) as p:
             messages = p | beam.Create([mock_msg])
-            parsed = messages | beam.ParDo(
-                ParseAndKeyFn(is_continuous=False)
-            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+            parsed = messages | beam.ParDo(ParseAndKeyFn()).with_outputs(
+                DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG
+            )
 
             def assert_dlq(
                 elements: list[dict[str, str | bool | dict[str, str]]],
@@ -222,46 +214,6 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
                 parsed[DEAD_LETTER_QUEUE_TAG], assert_dlq, label="CheckDLQ"
             )
 
-    def test_parse_and_key_mismatched_routing_continuous_dlq(self) -> None:
-        """Verifies that a segmented source type received on a continuous subscription is routed to the DLQ."""
-        chunk = ContinuousAudio(
-            gcs_uri="gs://test-bucket/path/to/test.flac",
-            session_id="mock-session-id",
-            feed_name="mock-feed-name",
-            duration_ms=1000,
-            feed_id="test-feed",
-            external_id="mock-external-id",
-        )
-        mock_msg = PubsubMessage(
-            chunk.SerializeToString(),
-            {"feed_id": "test-feed", "source_type": "echo"},
-        )
-        options = PipelineOptions(
-            flags=[
-                "--continuous_input_subscription=projects/p/subscriptions/a",
-                "--output_topic=b",
-                "--project=c",
-            ]
-        )
-        with BeamTestPipeline(options=options) as p:
-            messages = p | beam.Create([mock_msg])
-            parsed = messages | beam.ParDo(
-                ParseAndKeyFn(is_continuous=True)
-            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
-
-            def assert_dlq(
-                elements: list[dict[str, str | bool | dict[str, str]]],
-            ) -> None:
-                assert len(elements) == 1
-                assert isinstance(elements[0]["error"], str)
-                assert (
-                    "Received segmented source type 'echo' on continuous subscription"
-                    in elements[0]["error"]
-                )
-
-            assert_that(parsed[MAIN_TAG], equal_to([]))
-            assert_that(parsed[DEAD_LETTER_QUEUE_TAG], assert_dlq)
-
     def test_parse_and_key_span_lifecycle(self) -> None:
         """Verifies that ParseAndKeyFn doesn't leak trace context scope on execution."""
         chunk = ContinuousAudio(
@@ -277,7 +229,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             {"feed_id": "test-feed"},
         )
 
-        fn = ParseAndKeyFn(is_continuous=True)
+        fn = ParseAndKeyFn()
         fn.setup()
 
         span_before = get_current_span()

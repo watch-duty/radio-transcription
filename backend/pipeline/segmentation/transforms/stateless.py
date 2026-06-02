@@ -70,15 +70,10 @@ class ParseAndKeyFn(beam.DoFn):
     Routes messages missing required attributes or with invalid payload to the DLQ.
     Yields a tuple of `(feed_id, ChunkMetadata)` to establish a deterministic routing key
     for all subsequent stateful operations on that feed.
-
-    Args:
-        is_continuous: Whether this instance is processing continuous feeds (e.g. BCFY_FEEDS).
-            Determines whether session_id is required and sets the flag on ChunkMetadata.
-            Set by orchestration based on which Pub/Sub subscription the message arrived from.
     """
 
-    def __init__(self, *, is_continuous: bool) -> None:
-        self.is_continuous = is_continuous
+    def __init__(self) -> None:
+        pass
 
     @override
     def setup(self) -> None:
@@ -110,25 +105,12 @@ class ParseAndKeyFn(beam.DoFn):
                 if not chunk_proto.gcs_uri:
                     msg = "ContinuousAudio missing required gcs_uri"
                     _raise(msg)
-                if self.is_continuous and not chunk_proto.session_id:
-                    msg = "ContinuousAudio missing required session_id for continuous feed"
+                if not chunk_proto.session_id:
+                    msg = "ContinuousAudio missing required session_id"
                     _raise(msg)
                 if not chunk_proto.feed_name:
                     msg = "ContinuousAudio missing required feed_name"
                     _raise(msg)
-
-                source_type = (
-                    element.attributes.get("source_type")
-                    if element.attributes
-                    else None
-                )
-                if source_type:
-                    if self.is_continuous and source_type != "bcfy_feeds":
-                        msg = f"Received segmented source type '{source_type}' on continuous subscription"
-                        _raise(msg)
-                    elif not self.is_continuous and source_type == "bcfy_feeds":
-                        msg = f"Received continuous source type '{source_type}' on segmented subscription"
-                        _raise(msg)
 
                 traceparent = (
                     element.attributes.get("traceparent")
@@ -137,16 +119,13 @@ class ParseAndKeyFn(beam.DoFn):
                 )
                 metadata = ChunkMetadata(
                     gcs_uri=chunk_proto.gcs_uri,
-                    # For segmented feeds, session_id is typically the call ID set by ingestion.
-                    # Fall back to feed_id (not a static string) so per-feed session change
-                    # detection in the ordering buffer remains meaningful.
                     session_id=chunk_proto.session_id or feed_id,
                     duration_ms=chunk_proto.duration_ms,
                     feed_metadata=FeedMetadata(
                         feed_name=chunk_proto.feed_name,
                         external_id=chunk_proto.external_id,
                     ),
-                    is_continuous=self.is_continuous,
+                    is_continuous=True,
                     traceparent=traceparent,
                 )
                 logger.debug(

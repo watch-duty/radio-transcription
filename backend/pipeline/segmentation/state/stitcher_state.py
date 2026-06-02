@@ -42,35 +42,6 @@ class AudioStitchingStateMachine:
         self, chunk_data: AudioChunkData, ctx: StitcherContext
     ) -> list[StateMachineAction]:
         """Evaluates an incoming chunk against the state machine to produce imperative actions."""
-        if self.config.isolate_segmented_chunks:
-            # Force isolation: clear context of any previous chunk's state
-            self._reset_transmission_context(ctx)
-            ctx.missing_prior_context = False
-
-            actions: list[StateMachineAction] = []
-
-            # Segmented chunks are evaluated entirely in isolation
-            if chunk_data.speech_segments:
-                new_actions = self._process_speech_segments(chunk_data, ctx)
-                actions.extend(new_actions)
-
-                # If there's accumulated speech in the buffer, force-flush the tail
-                if ctx.transmission_start_time_ms is not None:
-                    actions.append(
-                        self._flush_current_transmission(
-                            reason="Flushing isolated segmented chunk tail",
-                            ctx=ctx,
-                        )
-                    )
-                    self._reset_transmission_context(ctx)
-            else:
-                actions.append(
-                    DropAction(reason="Discarding silent segmented chunk")
-                )
-
-            actions.append(UpdateStateAction())
-            return actions
-
         # 0. Detect if this is an out-of-order LATE chunk
         is_late_chunk = (
             ctx.expected_next_chunk_start_ms is not None

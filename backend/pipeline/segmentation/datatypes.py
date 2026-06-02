@@ -133,7 +133,6 @@ class StitchAudioConfig:
     max_transmission_duration_ms: int
     route_to_dlq: bool = True
     backfill_lateness_threshold_ms: int = DEFAULT_BACKFILL_LATENESS_THRESHOLD_MS
-    isolate_segmented_chunks: bool = False
 
     def __post_init__(self) -> None:
         """Validates the dataclass variables."""

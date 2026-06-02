@@ -112,7 +112,7 @@ def get_pipeline(
     continuous_parsed = (
         continuous_messages
         | "ParseAndKeyContinuous"
-        >> beam.ParDo(ParseAndKeyFn(is_continuous=True)).with_outputs(
+        >> beam.ParDo(ParseAndKeyFn()).with_outputs(
             DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG
         )
     )
@@ -130,7 +130,6 @@ def get_pipeline(
         route_to_dlq=options.route_to_dlq
         if options.route_to_dlq is not None
         else True,
-        isolate_segmented_chunks=False,
     )
 
     continuous_stitching = continuous_parsed[
