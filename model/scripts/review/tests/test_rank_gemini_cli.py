@@ -69,7 +69,10 @@ def _required_args(paths: dict[str, Path]) -> list[str]:
     ]
 
 
-def _fake_ranked_rows() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+def _fake_ranked_rows() -> tuple[
+    list[dict[str, object]],
+    list[dict[str, object]],
+]:
     ranked = [
         {
             "rank": 1,
@@ -87,7 +90,13 @@ def _fake_ranked_rows() -> tuple[list[dict[str, object]], list[dict[str, object]
 class _FakeRunner:
     instances: list["_FakeRunner"] = []
 
-    def __init__(self, _client: object, *, model_id: str, **_kwargs: object) -> None:
+    def __init__(
+        self,
+        _client: object,
+        *,
+        model_id: str,
+        **_kwargs: object,
+    ) -> None:
         self.model_id = model_id
         self.instances.append(self)
 
