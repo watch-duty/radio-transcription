@@ -772,12 +772,11 @@ class FeedStore:
     ) -> PaginatedFeeds:
         """List all feeds with keyset pagination and optional filters.
 
-        Retrieves feeds ordered by creation time.
+        Retrieves feeds ordered by creation time, using ID-based keyset pagination.
         """
-        cursor_ts = None
         cursor_uid = None
         if next_token:
-            cursor_ts, cursor_uid = decode_cursor(next_token)
+            cursor_uid = decode_cursor(next_token)
 
         is_asc = order == SortOrder.ASC or order == "asc"
         query = LIST_FEEDS_ASC_SQL if is_asc else LIST_FEEDS_DESC_SQL
@@ -788,7 +787,6 @@ class FeedStore:
 
         rows = await self._pool.fetch(
             query,
-            cursor_ts,
             cursor_uid,
             limit + 1,
             source_types,
@@ -797,7 +795,7 @@ class FeedStore:
         )
 
         rows, new_next_token = get_paginated_results(
-            rows, limit, "created_at", "id"
+            rows, limit, "id"
         )
 
         feeds = [self._row_to_feed(row) for row in rows]

@@ -1472,18 +1472,16 @@ class TestListFeeds(unittest.IsolatedAsyncioTestCase):
         """The next_token parameter is decoded and forwarded as SQL parameters."""
         pool = make_mock_pool(fetch_result=[])
         store = FeedStore(pool)
-        
+
         # Generate a token representing a cursor
-        ts = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
-        token = encode_cursor(ts, _FEED_ID)
+        token = encode_cursor(_FEED_ID)
 
         await store.list_feeds(limit=10, next_token=token)
 
         args = pool.fetch.call_args[0]
-        # Parameters should be (query, cursor_ts, cursor_uid, limit + 1)
-        self.assertEqual(args[1], ts)
-        self.assertEqual(args[2], _FEED_ID)
-        self.assertEqual(args[3], 11)
+        # Parameters should be (query, cursor_uid, limit + 1)
+        self.assertEqual(args[1], _FEED_ID)
+        self.assertEqual(args[2], 11)
 
 
 class TestDeactivateFeed(unittest.IsolatedAsyncioTestCase):
