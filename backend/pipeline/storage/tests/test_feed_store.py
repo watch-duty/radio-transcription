@@ -18,6 +18,7 @@ from backend.pipeline.storage.feed_store import (
     HeartbeatResult,
     SourceType,
 )
+from backend.pipeline.storage.filter_utils import encode_cursor
 from backend.pipeline.storage.tests.connection_util import make_mock_pool
 
 _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
@@ -191,7 +192,8 @@ class TestStatusReasonSqlProjection(unittest.TestCase):
         for sql in (
             feed_queries.CREATE_FEED_SQL,
             feed_queries.GET_FEED_SQL,
-            feed_queries.LIST_FEEDS_SQL,
+            feed_queries.LIST_FEEDS_DESC_SQL,
+            feed_queries.LIST_FEEDS_ASC_SQL,
             feed_queries.RESET_FEED_SQL,
             feed_queries.UPDATE_FEED_SQL,
         ):
@@ -1427,10 +1429,11 @@ class TestListFeeds(unittest.IsolatedAsyncioTestCase):
 
         result = await store.list_feeds()
 
-        self.assertEqual(len(result), 2)
-        self.assertEqual(result[0]["id"], _FEED_ID)
-        self.assertEqual(result[1]["id"], _FEED_ID_B)
-        self.assertEqual(result[1]["source_type"], SourceType.OPENMHZ)
+        self.assertEqual(len(result.feeds), 2)
+        self.assertIsNone(result.next_token)
+        self.assertEqual(result.feeds[0]["id"], _FEED_ID)
+        self.assertEqual(result.feeds[1]["id"], _FEED_ID_B)
+        self.assertEqual(result.feeds[1]["source_type"], SourceType.OPENMHZ)
 
     async def test_list_feeds_returns_tags(self) -> None:
         """Tags are returned in the Feed dicts when they exist."""
@@ -1445,10 +1448,42 @@ class TestListFeeds(unittest.IsolatedAsyncioTestCase):
 
         result = await store.list_feeds()
 
-        self.assertEqual(len(result), 1)
+        self.assertEqual(len(result.feeds), 1)
         self.assertEqual(
-            result[0]["tags"], [{"key": "county", "value": "Fulton"}]
+            result.feeds[0]["tags"], [{"key": "county", "value": "Fulton"}]
         )
+
+    async def test_list_feeds_pagination_next_token(self) -> None:
+        """next_token is returned when there are more pages."""
+        rows = [
+            _full_feed_row(name="Feed A"),
+            _full_feed_row(id=_FEED_ID_B, name="Feed B"),
+        ]
+        pool = make_mock_pool(fetch_result=rows)
+        store = FeedStore(pool)
+
+        # Limit is 1, but we have 2 rows
+        result = await store.list_feeds(limit=1)
+
+        self.assertEqual(len(result.feeds), 1)
+        self.assertIsNotNone(result.next_token)
+
+    async def test_list_feeds_decodes_and_uses_cursor(self) -> None:
+        """The next_token parameter is decoded and forwarded as SQL parameters."""
+        pool = make_mock_pool(fetch_result=[])
+        store = FeedStore(pool)
+        
+        # Generate a token representing a cursor
+        ts = datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC)
+        token = encode_cursor(ts, _FEED_ID)
+
+        await store.list_feeds(limit=10, next_token=token)
+
+        args = pool.fetch.call_args[0]
+        # Parameters should be (query, cursor_ts, cursor_uid, limit + 1)
+        self.assertEqual(args[1], ts)
+        self.assertEqual(args[2], _FEED_ID)
+        self.assertEqual(args[3], 11)
 
 
 class TestDeactivateFeed(unittest.IsolatedAsyncioTestCase):

@@ -10,7 +10,7 @@ from backend.pipeline.common.exceptions import (
     FeedAlreadyExistsError,
     FeedNameAlreadyExistsError,
 )
-from backend.pipeline.storage.feed_store import FeedStatus, SourceType
+from backend.pipeline.storage.feed_store import FeedStatus, SourceType, SortOrder
 from backend.services.feeds.main import app
 from backend.services.feeds.models import Feed, Tag
 
@@ -175,10 +175,52 @@ class TestFeedsAPI(unittest.TestCase):
 
     def test_list_feeds(self) -> None:
         """Test listing feeds."""
-        self.mock_service.list_feeds.return_value = []
+        from backend.services.feeds.models import ListFeedsResponse
+        self.mock_service.list_feeds.return_value = ListFeedsResponse(feeds=[], next_token=None)
         response = self.client.get("/v1/feeds")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIsInstance(response.json(), list)
+        data = response.json()
+        self.assertIsInstance(data["feeds"], list)
+        self.assertIsNone(data["next_token"])
+
+    def test_list_feeds_pagination(self) -> None:
+        """Test listing feeds with pagination query parameters."""
+        from backend.services.feeds.models import ListFeedsResponse
+        self.mock_service.list_feeds.return_value = ListFeedsResponse(feeds=[], next_token="some_token")
+        response = self.client.get("/v1/feeds", params={"limit": 10, "next_token": "token_xyz", "order": "asc"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertEqual(data["next_token"], "some_token")
+        self.mock_service.list_feeds.assert_called_once_with(
+            limit=10,
+            next_token="token_xyz",
+            order=SortOrder.ASC,
+            source_types=None,
+            statuses=None,
+            tags=None
+        )
+
+    def test_list_feeds_filters(self) -> None:
+        """Test listing feeds with optional query filters."""
+        from backend.services.feeds.models import ListFeedsResponse
+        self.mock_service.list_feeds.return_value = ListFeedsResponse(feeds=[], next_token=None)
+        response = self.client.get(
+            "/v1/feeds",
+            params={
+                "source_types": ["bcfy_feeds", "openmhz"],
+                "statuses": ["active", "quarantined"],
+                "tags": ["county:Fulton", "state:GA"]
+            }
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.mock_service.list_feeds.assert_called_once_with(
+            limit=100,
+            next_token=None,
+            order=SortOrder.DESC,
+            source_types=["bcfy_feeds", "openmhz"],
+            statuses=["active", "quarantined"],
+            tags=["county:Fulton", "state:GA"]
+        )
 
     def test_deactivate_feed_success(self) -> None:
         """Test deactivating a feed successfully."""

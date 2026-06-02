@@ -1,16 +1,19 @@
 from __future__ import annotations
 
-import base64
 import datetime
 import json
 import uuid
 from dataclasses import dataclass
-from enum import StrEnum
 
 import asyncpg
 from pydantic import TypeAdapter
 
 from backend.pipeline.storage import audio_segment_queries
+from backend.pipeline.storage.filter_utils import (
+    SortOrder,
+    decode_cursor,
+    encode_cursor,
+)
 from backend.services.audio_segments.models import (
     Annotation,
     AnnotationType,
@@ -19,11 +22,6 @@ from backend.services.audio_segments.models import (
 )
 
 annotation_adapter = TypeAdapter(Annotation)
-
-
-class SortOrder(StrEnum):
-    ASC = "asc"
-    DESC = "desc"
 
 
 @dataclass
@@ -37,23 +35,6 @@ class AudioSegmentStore:
 
     def __init__(self, pool: asyncpg.Pool) -> None:
         self._pool = pool
-
-    def _decode_cursor(
-        self, next_token: str
-    ) -> tuple[datetime.datetime, uuid.UUID]:
-        """Decode a base64 pagination token into a timestamp and UUID."""
-        try:
-            decoded = base64.b64decode(next_token).decode("utf-8")
-            ts_str, uid_str = decoded.split("|")
-            return datetime.datetime.fromisoformat(ts_str), uuid.UUID(uid_str)
-        except Exception as e:
-            msg = f"Invalid next_token: {e}"
-            raise ValueError(msg)
-
-    def _encode_cursor(self, ts: datetime.datetime, uid: uuid.UUID) -> str:
-        """Encode a timestamp and UUID into a base64 pagination token."""
-        token_str = f"{ts.isoformat()}|{uid}"
-        return base64.b64encode(token_str.encode("utf-8")).decode("utf-8")
 
     def _prepare_annotation(self, row_dict: dict) -> dict:
         """Prepare an annotation dictionary for Pydantic validation."""
@@ -183,7 +164,7 @@ class AudioSegmentStore:
         cursor_ts = None
         cursor_uid = None
         if next_token:
-            cursor_ts, cursor_uid = self._decode_cursor(next_token)
+            cursor_ts, cursor_uid = decode_cursor(next_token)
 
         is_asc = order == SortOrder.ASC
         query = (
@@ -207,7 +188,7 @@ class AudioSegmentStore:
         if has_more:
             rows = rows[:limit]
             last_row = rows[-1]
-            new_next_token = self._encode_cursor(
+            new_next_token = encode_cursor(
                 last_row["end_timestamp"], last_row["id"]
             )
         else:

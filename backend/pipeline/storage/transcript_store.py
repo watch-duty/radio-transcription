@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-import base64
 import datetime
 import uuid
 from dataclasses import dataclass
-from enum import StrEnum
+from backend.pipeline.storage.filter_utils import (
+    SortOrder,
+    decode_cursor,
+    encode_cursor,
+)
 
 import asyncpg
 import asyncpg.exceptions
@@ -15,11 +18,6 @@ from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
 )
 
 from . import transcript_queries
-
-
-class SortOrder(StrEnum):
-    ASC = "asc"
-    DESC = "desc"
 
 
 @dataclass
@@ -80,23 +78,6 @@ class TranscriptStore:
             msg.errors.extend(row["evaluation_errors"])
 
         return msg
-
-    def _decode_cursor(
-        self, next_token: str
-    ) -> tuple[datetime.datetime, uuid.UUID]:
-        """Decode a base64 pagination token into a timestamp and UUID."""
-        try:
-            decoded = base64.b64decode(next_token).decode("utf-8")
-            ts_str, uid_str = decoded.split("|")
-            return datetime.datetime.fromisoformat(ts_str), uuid.UUID(uid_str)
-        except Exception as e:
-            msg = f"Invalid next_token: {e}"
-            raise ValueError(msg)
-
-    def _encode_cursor(self, ts: datetime.datetime, uid: uuid.UUID) -> str:
-        """Encode a timestamp and UUID into a base64 pagination token."""
-        token_str = f"{ts.isoformat()}|{uid}"
-        return base64.b64encode(token_str.encode("utf-8")).decode("utf-8")
 
     async def create_transcript(
         self, transcript: EvaluatedTranscribedAudio
@@ -189,7 +170,7 @@ class TranscriptStore:
         cursor_ts = None
         cursor_uid = None
         if next_token:
-            cursor_ts, cursor_uid = self._decode_cursor(next_token)
+            cursor_ts, cursor_uid = decode_cursor(next_token)
 
         is_asc = order == SortOrder.ASC or order == "asc"
         query = (
@@ -213,7 +194,7 @@ class TranscriptStore:
         if has_more:
             rows = rows[:limit]
             last_row = rows[-1]
-            new_next_token = self._encode_cursor(
+            new_next_token = encode_cursor(
                 last_row["end_timestamp"], last_row["transmission_id"]
             )
         else:
@@ -237,7 +218,7 @@ class TranscriptStore:
         cursor_ts = None
         cursor_uid = None
         if next_token:
-            cursor_ts, cursor_uid = self._decode_cursor(next_token)
+            cursor_ts, cursor_uid = decode_cursor(next_token)
 
         is_asc = order == SortOrder.ASC or order == "asc"
         query = (
@@ -260,7 +241,7 @@ class TranscriptStore:
         if has_more:
             rows = rows[:limit]
             last_row = rows[-1]
-            new_next_token = self._encode_cursor(
+            new_next_token = encode_cursor(
                 last_row["end_timestamp"], last_row["transmission_id"]
             )
         else:
