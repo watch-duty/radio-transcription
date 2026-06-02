@@ -149,12 +149,11 @@ class EvaluationEventProcessor:
             ):
                 encoded_data = evaluated_payload.SerializeToString()
                 # TODO (https://linear.app/watchduty/issue/GOO-245/): Handle publish failure.
-                active_traceparent = get_current_traceparent() or traceparent
                 future = self.publisher.get_publisher().publish(
                     self.output_topic_path,
                     encoded_data,
                     ordering_key=evaluated_payload.feed_id,
-                    traceparent=active_traceparent,
+                    traceparent=get_current_traceparent(),
                 )
                 message_id = future.result(timeout=5.0)
                 logger.info(
