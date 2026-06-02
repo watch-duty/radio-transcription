@@ -8,7 +8,7 @@ from google.api_core.retry import Retry
 from google.cloud import speech_v2 as cloud_speech
 from google.cloud.speech_v2 import SpeechClient
 
-from backend.pipeline.common.logging import get_task_logger
+from backend.pipeline.common.log_helper import get_task_logger
 from backend.pipeline.common.utils import ConfigBase
 from backend.pipeline.transcription.transcribers.base import Transcriber
 

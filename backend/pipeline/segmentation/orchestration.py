@@ -18,7 +18,7 @@ from apache_beam.options.pipeline_options import (
     StandardOptions,
 )
 
-from backend.pipeline.common.logging import get_task_logger
+from backend.pipeline.common.log_helper import get_task_logger
 from backend.pipeline.segmentation import coders as trans_coders
 from backend.pipeline.segmentation.constants import (
     DEAD_LETTER_QUEUE_TAG,

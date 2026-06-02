@@ -2,7 +2,7 @@
 
 import heapq
 
-from backend.pipeline.common.logging import get_task_logger
+from backend.pipeline.common.log_helper import get_task_logger
 from backend.pipeline.schema_types import (
     streaming_state as bp_state,
 )

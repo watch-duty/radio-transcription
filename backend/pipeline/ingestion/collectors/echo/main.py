@@ -22,7 +22,7 @@ from opentelemetry import trace
 from backend.pipeline.common.audio_duration import get_audio_duration
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.gcp_helper import publish_segmented_audio_sync
-from backend.pipeline.common.logging import setup_logging
+from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.ingestion.settings import _require_env
 from backend.pipeline.storage.sync_connection import connect_db
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
