@@ -76,6 +76,8 @@ def get_paginated_results_with_timestamp(
     if len(rows) > limit:
         sliced_rows = rows[:limit]
         last_row = sliced_rows[-1]
-        token = encode_timestamp_cursor(last_row[timestamp_key], last_row[id_key])
+        token = encode_timestamp_cursor(
+            last_row[timestamp_key], last_row[id_key]
+        )
         return sliced_rows, token
     return rows, None
