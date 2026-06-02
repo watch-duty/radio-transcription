@@ -15,13 +15,13 @@ const { mockGetToken, mockRefreshAccessToken, mockSetCredentials, mockState } =
   }));
 
 vi.mock('google-auth-library', () => {
-  const OAuth2Client = vi.fn().mockImplementation(() => {
-    return {
-      getToken: mockGetToken,
-      refreshAccessToken: mockRefreshAccessToken,
-      setCredentials: mockSetCredentials,
-    };
-  });
+  class MockOAuth2Client {
+    getToken = mockGetToken;
+    refreshAccessToken = mockRefreshAccessToken;
+    setCredentials = mockSetCredentials;
+  }
+
+  const OAuth2Client = MockOAuth2Client;
   return { OAuth2Client };
 });
 
