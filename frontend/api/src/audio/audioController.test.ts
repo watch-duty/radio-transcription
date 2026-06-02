@@ -11,12 +11,13 @@ vi.mock('../config.js', () => ({
 const mockRequest = vi.fn();
 
 vi.mock('google-auth-library', () => {
+  class MockGoogleAuth {
+    getIdTokenClient = vi.fn().mockResolvedValue({
+      request: mockRequest,
+    });
+  }
   return {
-    GoogleAuth: vi.fn().mockImplementation(() => ({
-      getIdTokenClient: vi.fn().mockResolvedValue({
-        request: mockRequest,
-      }),
-    })),
+    GoogleAuth: MockGoogleAuth,
   };
 });
 
