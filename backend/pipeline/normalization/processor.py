@@ -275,8 +275,16 @@ class NormalizationEventProcessor:
             end_audio_offset=segmented_audio.end_audio_offset,
             feed_name=segmented_audio.feed_name,
             external_id=segmented_audio.external_id,
-            audio_classification=SegmentedAudio.AudioClassification.Name(
-                segmented_audio.audio_classification
+            audio_classification=(
+                "AUDIO_CLASSIFICATION_SPEECH"
+                if segmented_audio.audio_classification
+                == SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH
+                else (
+                    "AUDIO_CLASSIFICATION_NO_SPEECH"
+                    if segmented_audio.audio_classification
+                    == SegmentedAudio.AUDIO_CLASSIFICATION_NO_SPEECH
+                    else "AUDIO_CLASSIFICATION_UNSPECIFIED"
+                )
             ),
         )
 
