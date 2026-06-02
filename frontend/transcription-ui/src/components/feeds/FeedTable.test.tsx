@@ -310,4 +310,40 @@ describe('FeedTable', () => {
     expect(screen.getByText('Alpha Radio')).toBeTruthy();
     expect(screen.queryByText('Bravo Scanner')).toBeNull();
   });
+
+  it('does not duplicate group headers for tags in the dropdown', () => {
+    const feedsWithInterleavedTags: Feed[] = [
+      {
+        id: 'feed-1',
+        name: 'Alpha Radio',
+        sourceType: SourceType.BCFY_FEEDS,
+        status: 'active',
+        substatus: 'active',
+        tags: [
+          { key: 'County', value: 'Marin' },
+          { key: 'Agency', value: 'Fire' },
+        ],
+      },
+      {
+        id: 'feed-2',
+        name: 'Bravo Scanner',
+        sourceType: SourceType.OPENMHZ,
+        status: 'inactive',
+        substatus: 'deactivated',
+        tags: [{ key: 'County', value: 'Sonoma' }],
+      },
+    ];
+
+    renderFeedTable({ feeds: feedsWithInterleavedTags, isLoading: false });
+
+    const tagsInput = screen.getByLabelText('Tags');
+    fireEvent.focus(tagsInput);
+    fireEvent.keyDown(tagsInput, { key: 'ArrowDown' });
+
+    const listbox = screen.getByRole('listbox');
+
+    // There should be exactly one 'County' group header
+    const countyHeaders = within(listbox).getAllByText('County');
+    expect(countyHeaders).toHaveLength(1);
+  });
 });
