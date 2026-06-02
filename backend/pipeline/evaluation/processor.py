@@ -155,7 +155,7 @@ class EvaluationEventProcessor:
                     ordering_key=evaluated_payload.feed_id,
                     traceparent=get_current_traceparent(),
                 )
-                message_id = future.result()
+                message_id = future.result(timeout=5.0)
                 logger.info(
                     "Success! Published enriched message %s to %s",
                     message_id,

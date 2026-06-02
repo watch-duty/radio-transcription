@@ -51,6 +51,7 @@ class RequestHandler:
                     "Content-Type": "application/json",
                     "X-Api-Key": NOTIFICATION_ENDPOINT_API_KEY,
                 },
+                timeout=5.0,
             )
             self.logger.info(f"Status code: ${response.status}")
             self.logger.info(f"Response body: ${response.data.decode('utf-8')}")

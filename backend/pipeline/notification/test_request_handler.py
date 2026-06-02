@@ -52,6 +52,7 @@ class TestRequestHandler(TestCase):
                 "Content-Type": "application/json",
                 "X-Api-Key": "test-key-123",
             },
+            timeout=5.0,
         )
 
     @mock.patch("backend.pipeline.notification.request_handler.PoolManager")
