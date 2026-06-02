@@ -185,6 +185,43 @@ class TestContextSelection(unittest.TestCase):
             ["first prediction", "third prediction"],
         )
 
+    def test_previous_context_uses_source_order_for_row_index_ties(
+        self,
+    ) -> None:
+        from common import ranking
+
+        rows = [
+            _row("tie-prior", 1),
+            _row("tie-current", 1),
+            _row("future", 2),
+        ]
+        source_rows = ranking.ordered_source_rows(rows)
+        cache_by_audio_id = {
+            "tie-prior": _entry(
+                ranking,
+                "tie-prior",
+                "prior tie prediction",
+                row_index=1,
+            ),
+            "future": _entry(
+                ranking,
+                "future",
+                "future prediction",
+                row_index=2,
+            ),
+        }
+
+        context = ranking.previous_prediction_context(
+            source_rows,
+            _row("tie-current", 1),
+            cache_by_audio_id,
+        )
+
+        self.assertEqual(
+            [entry.audio_segment_id for entry in context],
+            ["tie-prior"],
+        )
+
     def test_previous_context_caps_1000_events_to_500_rows(self) -> None:
         from common import ranking
 
@@ -259,7 +296,9 @@ class TestPredictionCacheCompatibility(unittest.TestCase):
 
 
 class TestWerRanking(unittest.TestCase):
-    def test_score_ranked_rows_sorts_and_excludes_empty_references(self) -> None:
+    def test_score_ranked_rows_sorts_and_excludes_empty_references(
+        self,
+    ) -> None:
         from common import ranking
 
         normalizer_calls = []

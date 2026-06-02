@@ -241,10 +241,20 @@ def previous_prediction_context(
 
     source_group = str(current_row["source_group"])
     current_row_index = int(current_row["row_index"])
+    current_audio_id = str(current_row["audio_segment_id"])
+    source_group_rows = source_rows.get(source_group, [])
+    current_position = _source_row_position(source_group_rows, current_audio_id)
+    if current_position is None:
+        candidate_rows = [
+            row
+            for row in source_group_rows
+            if int(row["row_index"]) < current_row_index
+        ]
+    else:
+        candidate_rows = list(source_group_rows[:current_position])
+
     context_entries: list[PredictionCacheEntry] = []
-    for row in source_rows.get(source_group, []):
-        if int(row["row_index"]) >= current_row_index:
-            continue
+    for row in candidate_rows:
         audio_id = str(row["audio_segment_id"])
         entry = cache_by_audio_id.get(audio_id)
         if entry is None or not _entry_successful(entry):
@@ -419,6 +429,16 @@ def _stable_hash(prefix: str, payload: dict[str, object]) -> str:
     ).encode("utf-8")
     digest = hashlib.sha256(encoded).hexdigest()
     return f"{prefix}-{digest}"
+
+
+def _source_row_position(
+    rows: collections.abc.Sequence[collections.abc.Mapping[str, object]],
+    audio_segment_id: str,
+) -> int | None:
+    for index, row in enumerate(rows):
+        if str(row["audio_segment_id"]) == audio_segment_id:
+            return index
+    return None
 
 
 def _entry_value(
