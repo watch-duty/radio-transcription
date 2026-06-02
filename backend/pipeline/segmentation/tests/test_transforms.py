@@ -41,6 +41,7 @@ from backend.pipeline.segmentation.datatypes import (
 from backend.pipeline.segmentation.transforms.stateful import (
     SHARED_RESOURCE_HANDLE,
     OrderedContinuousStitchAudioFn,
+    OrderedSegmentedStitchAudioFn,
 )
 from backend.pipeline.segmentation.transforms.stateless import (
     ParseAndKeyFn,
