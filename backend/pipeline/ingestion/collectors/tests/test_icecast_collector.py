@@ -614,6 +614,47 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
+    async def test_ffmpeg_http_status_survives_retry_log_flood(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Classification keeps HTTP status evidence outside the log tail."""
+        retry_noise = [
+            f"retry log line {index}\n".encode()
+            for index in range(icecast_collector.STDERR_TAIL_LINES + 5)
+        ]
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=7784,
+            wait_delay=0.0,
+            wait_result=8,
+            stderr_lines=[
+                b"HTTP error 429 Too Many Requests\n",
+                *retry_noise,
+            ],
+        )
+
+        feed = _make_feed("rate-limited-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_resources_with_probe_status(200, reason="OK"),
+        )
+        with self.assertRaises(CollectorFailure) as context:
+            await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+
+        _assert_collector_failure(
+            self,
+            context.exception,
+            FeedStatusReason.SOURCE_RATE_LIMITED,
+            "stream_http_429",
+        )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
     async def test_ffmpeg_error_exit_code_http_503_unreachable(
         self, mock_create_ffmpeg: AsyncMock
     ) -> None:

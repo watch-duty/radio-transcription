@@ -153,12 +153,17 @@ async def _probe_stream_once(
 async def _drain_stderr(
     stderr: asyncio.StreamReader,
     tail: collections.deque[str],
+    http_status_lines: collections.deque[str],
 ) -> None:
     """Read stderr line-by-line, keeping only the last *STDERR_TAIL_LINES* in *tail*.
 
     Draining prevents the OS pipe buffer from filling, which would deadlock
     ffmpeg on long-running streams.  The tail buffer provides error context
     when the process exits with a non-zero code.
+
+    HTTP status lines are retained separately from the diagnostic tail because
+    ffmpeg can emit many retry lines after the first 429/5xx.  Classification
+    must not depend on the original HTTP error surviving the rolling log tail.
 
     Exceptions are caught and logged so they cannot mask exceptions from
     the caller's ``try`` block when this task is awaited in ``finally``.
@@ -168,7 +173,10 @@ async def _drain_stderr(
             line = await stderr.readline()
             if not line:  # EOF — process closed stderr
                 break
-            tail.append(line.decode("utf-8", errors="replace").rstrip())
+            text = line.decode("utf-8", errors="replace").rstrip()
+            tail.append(text)
+            if _HTTP_STATUS_RE.search(text):
+                http_status_lines.append(text)
     except asyncio.CancelledError:
         raise
     except Exception:
@@ -244,8 +252,11 @@ async def capture_icecast_stream(  # noqa: PLR0912, PLR0915
         stderr_tail: collections.deque[str] = collections.deque(
             maxlen=STDERR_TAIL_LINES
         )
+        stderr_http_status_lines: collections.deque[str] = collections.deque(
+            maxlen=STDERR_TAIL_LINES
+        )
         drain_task = asyncio.create_task(
-            _drain_stderr(process.stderr, stderr_tail)
+            _drain_stderr(process.stderr, stderr_tail, stderr_http_status_lines)
         )
         logger.info(
             "Feed %s (%s): Started ffmpeg segmenter (PID: %s)",
@@ -341,7 +352,14 @@ async def capture_icecast_stream(  # noqa: PLR0912, PLR0915
                             if exit_code < 0
                             else f"ffmpeg_exit_{exit_code}"
                         )
-                        classified = _classify_ffmpeg_stderr(stderr_snippet)
+                        classification_text = (
+                            "\n".join(stderr_http_status_lines)
+                            if stderr_http_status_lines
+                            else stderr_snippet
+                        )
+                        classified = _classify_ffmpeg_stderr(
+                            classification_text
+                        )
                         if classified is not None:
                             raise classified
                         probe_failure = await _probe_stream_once(
@@ -377,7 +395,12 @@ async def capture_icecast_stream(  # noqa: PLR0912, PLR0915
                         READ_TIMEOUT_SEC,
                         stderr_snippet,
                     )
-                    classified = _classify_ffmpeg_stderr(stderr_snippet)
+                    classification_text = (
+                        "\n".join(stderr_http_status_lines)
+                        if stderr_http_status_lines
+                        else stderr_snippet
+                    )
+                    classified = _classify_ffmpeg_stderr(classification_text)
                     if classified is not None:
                         raise classified
                     probe_failure = await _probe_stream_once(
