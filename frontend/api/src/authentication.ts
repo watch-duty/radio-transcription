@@ -2,7 +2,7 @@ import * as express from 'express';
 
 import * as jwt from 'jsonwebtoken';
 
-import { ADMIN_EMAILS } from './config.js';
+import { getAdminEmails } from './config.js';
 
 export interface GoogleUser {
   email: string;
@@ -13,7 +13,7 @@ export interface GoogleUser {
   isAdmin?: boolean; // Special admin user flag
 }
 
-export function expressAuthentication(
+export async function expressAuthentication(
   request: express.Request,
   securityName: string,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -41,10 +41,11 @@ export function expressAuthentication(
     }
 
     if (decoded.email) {
-      // An empty ADMIN_EMAILS list means everyone is an admin
+      const adminEmails = await getAdminEmails();
+      // An empty adminEmails list means everyone is an admin
       decoded.isAdmin =
-        ADMIN_EMAILS.length === 0 ||
-        ADMIN_EMAILS.includes(decoded.email.toLowerCase());
+        adminEmails.length === 0 ||
+        adminEmails.includes(decoded.email.toLowerCase());
     } else {
       decoded.isAdmin = false;
     }

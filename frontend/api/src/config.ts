@@ -1,3 +1,5 @@
+import * as fs from 'fs';
+
 /**
  * Environment variables for the API. Keeping this in a centralized file to
  * alert at build time if an environment variable is missing.
@@ -59,7 +61,37 @@ export const API_PUBLIC_URL = apiPublicUrl;
 export const GOOGLE_AUTH_CLIENT_ID = googleClientId;
 export const GOOGLE_AUTH_CLIENT_SECRET = googleClientSecret;
 
-export const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
-  .split(',')
-  .map((email) => email.trim().toLowerCase())
-  .filter((email) => email.length > 0);
+// Keep track of cached emails, last fetch timestamp, and default TTL (10 seconds)
+let cachedAdminEmails: string[] | null = null;
+let lastCacheFetch = 0;
+const CACHE_TTL_MS = 15000; // 15 seconds
+
+export async function getAdminEmails(): Promise<string[]> {
+  const now = Date.now();
+  if (cachedAdminEmails && (now - lastCacheFetch < CACHE_TTL_MS)) {
+    return cachedAdminEmails;
+  }
+
+  const adminEmailsPath = process.env.ADMIN_EMAILS_PATH;
+  if (adminEmailsPath) {
+    try {
+      if (fs.existsSync(adminEmailsPath)) {
+        const content = await fs.promises.readFile(adminEmailsPath, 'utf8');
+        const emails = content
+          .split(',')
+          .map((email) => email.trim().toLowerCase())
+          .filter((email) => email.length > 0);
+
+        cachedAdminEmails = emails;
+        lastCacheFetch = now;
+        return emails;
+      }
+    } catch (err) {
+      console.error(`Error reading admin emails secret file at ${adminEmailsPath}:`, err);
+    }
+  }
+
+  lastCacheFetch = now;
+  // If no file was found, return an empty list.
+  return [];
+}

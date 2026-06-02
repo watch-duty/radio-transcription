@@ -12,9 +12,7 @@ const { mockState } = vi.hoisted(() => ({
 }));
 
 vi.mock('./config.js', () => ({
-  get ADMIN_EMAILS() {
-    return mockState.adminEmails;
-  },
+  getAdminEmails: vi.fn(() => Promise.resolve(mockState.adminEmails)),
 }));
 
 vi.mock('jsonwebtoken', () => ({
