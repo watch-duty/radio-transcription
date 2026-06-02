@@ -1,3 +1,4 @@
+# Notification pipeline sender entrypoint
 import base64
 import logging
 import os

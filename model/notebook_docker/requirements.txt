@@ -16,6 +16,7 @@ jupyterlab-vim
 peft
 evaluate
 tensorboardX
+tensorboard
 matplotlib
 seaborn
 scipy
