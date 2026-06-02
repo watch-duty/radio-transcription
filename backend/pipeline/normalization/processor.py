@@ -2,15 +2,10 @@
 
 import base64
 import datetime
-import io
 import logging
-import subprocess
-import tempfile
 import urllib.parse
-from pathlib import Path
 
-import numpy as np
-import soundfile as sf
+import grpc
 from cloudevents.http.event import CloudEvent
 from google.cloud import pubsub_v1, storage
 
@@ -108,16 +103,28 @@ class NormalizationEventProcessor:
             )
 
             try:
-                # 1. Download and decode raw audio bytes from GCS staging
-                audio_data, sample_rate = self._download_and_decode(
-                    raw_audio_uri
-                )
+                # 1. Download raw audio bytes from GCS staging
+                raw_audio_bytes = self._download_raw_audio(raw_audio_uri)
 
-                # 2. Run bandpass filters and compress high-amplitude volume spikes
-                flac_bytes, processed_audio = self._normalize_buffer(
-                    audio_data,
-                    sample_rate,
-                )
+                # 2. Determine formats based on raw audio GCS URI extension, copying where possible
+                lower_uri = raw_audio_uri.lower()
+                if lower_uri.endswith(".flac"):
+                    flac_bytes = raw_audio_bytes
+                    m4a_bytes = self.audio_processor.transcode_to_m4a(
+                        flac_bytes
+                    )
+                elif lower_uri.endswith(".m4a"):
+                    m4a_bytes = raw_audio_bytes
+                    flac_bytes = self.audio_processor.transcode_to_flac(
+                        m4a_bytes
+                    )
+                else:
+                    flac_bytes = self.audio_processor.transcode_to_flac(
+                        raw_audio_bytes
+                    )
+                    m4a_bytes = self.audio_processor.transcode_to_m4a(
+                        raw_audio_bytes
+                    )
 
                 # 3. Upload lossless FLAC and playback M4A to GCS canonical bucket
                 dt = datetime.datetime.fromtimestamp(
@@ -131,24 +138,23 @@ class NormalizationEventProcessor:
                 )
                 m4a_path = f"playback/{feed_id}/{dt:%Y/%m/%d}/{segment_id}.m4a"
 
-                canonical_audio_uri, playback_audio_uri = (
-                    self.audio_uploader.upload_audio_derivatives(
-                        bucket_name=self.canonical_audio_bucket,
-                        flac_path=flac_path,
-                        m4a_path=m4a_path,
-                        flac_bytes=flac_bytes,
-                        processed_audio=processed_audio,
-                        export_m4a_fn=lambda buf: (
-                            self.audio_processor.export_m4a(buf, sample_rate)
-                        ),
-                    )
+                canonical_audio_uri = self.audio_uploader.upload_bytes(
+                    data=flac_bytes,
+                    bucket_name=self.canonical_audio_bucket,
+                    destination_path=flac_path,
+                    content_type="audio/flac",
                 )
-                canonical_audio_uri = (
-                    f"gs://{self.canonical_audio_bucket}/{flac_path}"
+                logger.info(
+                    "Uploaded stitched audio to %s", canonical_audio_uri
                 )
-                playback_audio_uri = (
-                    f"gs://{self.canonical_audio_bucket}/{m4a_path}"
+
+                playback_audio_uri = self.audio_uploader.upload_bytes(
+                    data=m4a_bytes,
+                    bucket_name=self.canonical_audio_bucket,
+                    destination_path=m4a_path,
+                    content_type="audio/mp4",
                 )
+                logger.info("Uploaded playback audio to %s", playback_audio_uri)
 
                 # 4. Persist audio segment metadata record to AlloyDB database
                 self._persist_segment(
@@ -176,10 +182,8 @@ class NormalizationEventProcessor:
                 # Re-raise exception to let functions framework retry transient Pub/Sub errors
                 raise
 
-    def _download_and_decode(
-        self, raw_audio_uri: str
-    ) -> tuple[np.ndarray, int]:
-        """Downloads raw audio bytes from GCS and decodes them to a numpy buffer."""
+    def _download_raw_audio(self, raw_audio_uri: str) -> bytes:
+        """Downloads raw audio bytes from GCS staging."""
         parsed_uri = urllib.parse.urlparse(raw_audio_uri)
         bucket_name = parsed_uri.netloc
         blob_name = parsed_uri.path.lstrip("/")
@@ -190,70 +194,7 @@ class NormalizationEventProcessor:
             logger.error(err_msg)
             raise FileNotFoundError(err_msg)
 
-        raw_audio_bytes = blob.download_as_bytes()
-
-        in_mem_file = io.BytesIO(raw_audio_bytes)
-        with tempfile.NamedTemporaryFile(
-            suffix=".flac", delete=False
-        ) as temp_file:
-            temp_filename = temp_file.name
-
-        try:
-            process = subprocess.run(
-                [
-                    "ffmpeg",
-                    "-y",
-                    "-i",
-                    "pipe:0",
-                    "-f",
-                    "flac",
-                    temp_filename,
-                ],
-                input=in_mem_file.getvalue(),
-                capture_output=True,
-                check=False,
-                timeout=DEFAULT_FFMPEG_TIMEOUT_SEC,
-            )
-            if process.returncode != 0:
-                logger.error(
-                    f"ffmpeg error during audio decode: {process.stderr.decode()}"
-                )
-                msg = "Failed to decode audio via ffmpeg"
-                raise RuntimeError(msg)
-
-            audio_data, sample_rate = sf.read(temp_filename, dtype="int16")
-        finally:
-            try:
-                Path(temp_filename).unlink()
-            except OSError:
-                pass
-
-        return audio_data, sample_rate
-
-    def _normalize_buffer(
-        self,
-        audio_data: np.ndarray,
-        sample_rate: int,
-    ) -> tuple[bytes, np.ndarray]:
-        """Normalizes the audio buffer using a dummy segment spanning the entire length."""
-        duration_ms = int(len(audio_data) / sample_rate * MS_PER_SECOND)
-        dummy_segments = [TimeRange(start_ms=0, end_ms=duration_ms)]
-
-        res = self.audio_processor.process_buffer(
-            audio_data,
-            sample_rate=sample_rate,
-            speech_segments=dummy_segments,
-        )
-
-        if (
-            not res.success
-            or res.flac_bytes is None
-            or res.processed_audio is None
-        ):
-            err_msg = "AudioProcessor normalization failed"
-            raise RuntimeError(err_msg)
-
-        return res.flac_bytes, res.processed_audio
+        return blob.download_as_bytes()
 
     def _persist_segment(
         self,

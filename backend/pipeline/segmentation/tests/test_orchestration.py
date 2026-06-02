@@ -20,6 +20,8 @@ def test_pipeline_topology_typehints() -> None:
             "projects/test-project/topics/out",
             "--dlq_topic",
             "projects/test-project/topics/dlq",
+            "--staging_audio_bucket",
+            "test-staging-bucket",
         ]
     )
 
@@ -44,6 +46,8 @@ def test_pipeline_invalid_timeout() -> None:
             "projects/test-project/topics/out",
             "--dlq_topic",
             "projects/test-project/topics/dlq",
+            "--staging_audio_bucket",
+            "test-staging-bucket",
             "--continuous_out_of_order_timeout_ms",
             "80000",
             "--stale_timeout_ms",

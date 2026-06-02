@@ -594,6 +594,7 @@ class AudioStitchingStateMachine:
                 )
             )
             self._reset_transmission_context(ctx)
+            ctx.missing_prior_context = False
 
         for segment in processed_segments:
             # Calculate where to start to avoid overlap
