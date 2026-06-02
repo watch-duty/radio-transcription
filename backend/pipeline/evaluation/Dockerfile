@@ -10,7 +10,7 @@ ENV PYTHONPATH=/app
 
 # 1. Install locked, scoped dependencies
 COPY --from=ghcr.io/astral-sh/uv:0.11.13 /uv /uvx /bin/
-COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml ./
+COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml backend/services/*/pyproject.toml ./
 
 RUN uv export --package evaluation-function --no-dev --locked --no-emit-project -o requirements.txt && \
     uv pip install --system -r requirements.txt && \

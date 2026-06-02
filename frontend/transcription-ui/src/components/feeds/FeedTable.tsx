@@ -184,7 +184,9 @@ export function FeedTable({
         }
       });
     });
-    return uniqueTags;
+    return uniqueTags.sort(
+      (a, b) => a.key.localeCompare(b.key) || a.value.localeCompare(b.value)
+    );
   }, [feeds]);
 
   // Calculate unique source types across all feeds

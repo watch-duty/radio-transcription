@@ -33,7 +33,6 @@ from backend.pipeline.normalization.common.datatypes import (
     ChunkMetadata,
     FeedMetadata,
     FlushRequest,
-    IdleFeedState,
     NormalizationResult,
     NormalizeAudioConfig,
     OrderRestorerConfig,
@@ -1211,7 +1210,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         self.assertEqual(
             get_duration_ms(flush_request.speech_segments[0]), 3000
         )
-        self.assertIsInstance(mock_state_context.read(), IdleFeedState)
+        self.assertIsNone(mock_state_context.read())
 
     @patch(
         "backend.pipeline.normalization.audio.audio_processor.AudioProcessor"
@@ -1320,9 +1319,8 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
             )
         )
 
-        # Assert that the state context has reset to IdleFeedState!
-        # IdleFeedState has no prior_audio_tail field, representing a completely clean restart
-        self.assertIsInstance(mock_state_context.read(), IdleFeedState)
+        # Assert that the state context has been completely cleared!
+        self.assertIsNone(mock_state_context.read())
 
     @patch(
         "backend.pipeline.normalization.audio.audio_processor.AudioProcessor"
@@ -1855,8 +1853,8 @@ class DlqTaggingTest(unittest.TestCase):
         # feed_metadata must be preserved from the active context, not lost on state re-read
         self.assertIsNotNone(flush_request.feed_metadata)
         self.assertEqual(flush_request.feed_metadata, expected_feed_metadata)
-        # State should now be IdleFeedState (context reset after flush)
-        self.assertIsInstance(mock_state_context.read(), IdleFeedState)
+        # State should now be completely cleared after flush
+        self.assertIsNone(mock_state_context.read())
 
     @patch(
         "backend.pipeline.normalization.transforms.stitcher_engine.audio_processor.AudioProcessor"

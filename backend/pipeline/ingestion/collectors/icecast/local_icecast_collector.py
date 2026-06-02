@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import aiohttp
 
 from backend.pipeline.common.constants import AUDIO_FORMAT
-from backend.pipeline.common.logging import setup_logging
+from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.ingestion.collectors.icecast.icecast_collector import (
     capture_icecast_stream,
 )

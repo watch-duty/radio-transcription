@@ -15,8 +15,8 @@ COPY --from=ghcr.io/astral-sh/uv:0.11.13 /uv /uvx /bin/
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
-COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml ./
-RUN uv sync --frozen --no-dev && uv pip install grpcio-tools
+COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml backend/services/*/pyproject.toml ./
+RUN uv sync --frozen --no-dev --package audio-segments-service && uv pip install grpcio-tools
 
 COPY protos/ ./protos
 
