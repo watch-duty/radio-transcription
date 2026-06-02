@@ -4,6 +4,7 @@ from backend.pipeline.transcription.transcribers.base import Transcriber
 
 logger = logging.getLogger(__name__)
 
+
 class LocalApiTranscriber(Transcriber):
     """Transcriber that calls a local HTTP API for transcription."""
 
@@ -16,11 +17,17 @@ class LocalApiTranscriber(Transcriber):
             health_url = self.api_url.replace("/transcribe", "/health")
             resp = requests.get(health_url, timeout=2)
             if resp.status_code == 200:
-                logger.info("Successfully connected to local whisper API health check.")
+                logger.info(
+                    "Successfully connected to local whisper API health check."
+                )
             else:
-                logger.warning(f"Local whisper API health check returned {resp.status_code}")
+                logger.warning(
+                    f"Local whisper API health check returned {resp.status_code}"
+                )
         except Exception as e:
-            logger.warning(f"Could not connect to local whisper API during setup: {e}")
+            logger.warning(
+                f"Could not connect to local whisper API during setup: {e}"
+            )
 
     def transcribe(
         self,
@@ -40,14 +47,18 @@ class LocalApiTranscriber(Transcriber):
                 files = {"file": ("audio.flac", audio_data, "audio/flac")}
                 resp = requests.post(self.api_url, files=files, timeout=60)
             else:
-                logger.warning("No audio_data or uri provided to LocalApiTranscriber.")
+                logger.warning(
+                    "No audio_data or uri provided to LocalApiTranscriber."
+                )
                 return None
-                
+
             if resp.status_code == 200:
                 result = resp.json()
                 return result.get("text")
             else:
-                logger.error(f"Local whisper API returned error {resp.status_code}: {resp.text}")
+                logger.error(
+                    f"Local whisper API returned error {resp.status_code}: {resp.text}"
+                )
                 return None
         except Exception as e:
             logger.error(f"Error calling local whisper API: {e}")

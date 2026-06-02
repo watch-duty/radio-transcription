@@ -13,7 +13,9 @@ from backend.pipeline.transcription.transcribers.mock import (
     MockConfig,
     MockTranscriber,
 )
-from backend.pipeline.transcription.transcribers.local_api import LocalApiTranscriber
+from backend.pipeline.transcription.transcribers.local_api import (
+    LocalApiTranscriber,
+)
 
 
 def get_transcriber(
