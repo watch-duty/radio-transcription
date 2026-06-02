@@ -327,9 +327,17 @@ describe('FeedTable', () => {
       {
         id: 'feed-2',
         name: 'Bravo Scanner',
-        sourceType: SourceType.OPENMHZ,
-        status: 'inactive',
-        substatus: 'deactivated',
+        sourceType: SourceType.BCFY_FEEDS,
+        status: 'active',
+        substatus: 'active',
+        tags: [{ key: 'State', value: 'CA' }],
+      },
+      {
+        id: 'feed-3',
+        name: 'Charlie Scanner',
+        sourceType: SourceType.BCFY_FEEDS,
+        status: 'active',
+        substatus: 'active',
         tags: [{ key: 'County', value: 'Sonoma' }],
       },
     ];
