@@ -18,7 +18,7 @@ from backend.pipeline.storage.feed_store import (
     HeartbeatResult,
     SourceType,
 )
-from backend.pipeline.storage.filter_utils import encode_cursor
+from backend.pipeline.storage.pagination_utils import encode_cursor
 from backend.pipeline.storage.tests.connection_util import make_mock_pool
 
 _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")

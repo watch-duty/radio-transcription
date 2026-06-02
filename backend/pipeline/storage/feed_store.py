@@ -31,7 +31,7 @@ from backend.pipeline.storage.feed_queries import (
     build_acquire_feeds_batch_sql,
     build_acquire_feeds_recovery_sql,
 )
-from backend.pipeline.storage.filter_utils import (
+from backend.pipeline.storage.pagination_utils import (
     SortOrder,
     decode_cursor,
     get_paginated_results,
