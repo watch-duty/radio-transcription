@@ -17,7 +17,7 @@ vi.mock('google-auth-library', () => {
     });
   }
   return {
-    GoogleAuth: vi.fn().mockImplementation(() => new MockGoogleAuth()),
+    GoogleAuth: MockGoogleAuth,
   };
 });
 
