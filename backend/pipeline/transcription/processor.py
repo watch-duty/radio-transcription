@@ -128,7 +128,7 @@ class TranscriptionEventProcessor:
                 )
 
                 attrs: dict[str, str] = {}
-                active_traceparent = get_current_traceparent()
+                active_traceparent = get_current_traceparent() or traceparent
                 if active_traceparent:
                     attrs["traceparent"] = active_traceparent
 

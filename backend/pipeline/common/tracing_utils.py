@@ -50,7 +50,11 @@ def setup_tracing(*, use_batch: bool = True) -> None:
         if isinstance(current_provider, TracerProvider):
             return
 
-        project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or ""
+        project_id = (
+            os.environ.get("GOOGLE_CLOUD_PROJECT")
+            or os.environ.get("PROJECT_ID")
+            or ""
+        )
         provider = TracerProvider()
         exporter = CloudTraceSpanExporter(project_id=project_id)
 
@@ -79,7 +83,11 @@ def get_trace_attributes() -> dict[str, str]:
     if len(traceparent_parts) >= 3:
         trace_id = traceparent_parts[1]
         span_id = traceparent_parts[2]
-        project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or ""
+        project_id = (
+            os.environ.get("GOOGLE_CLOUD_PROJECT")
+            or os.environ.get("PROJECT_ID")
+            or ""
+        )
         return {
             "trace": f"projects/{project_id}/traces/{trace_id}",
             "spanId": span_id,
