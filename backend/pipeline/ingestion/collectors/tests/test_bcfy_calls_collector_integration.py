@@ -18,6 +18,9 @@ from testcontainers.postgres import PostgresContainer
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client
+from backend.pipeline.ingestion.collectors.bcfy_calls import (
+    bcfy_calls_collector,
+)
 from backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector import (
     capture_bcfy_calls,
 )
@@ -126,6 +129,7 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         cls.db_container.stop()
 
     async def asyncSetUp(self) -> None:
+        bcfy_calls_collector._reset_jwt_cache_for_tests()
         self.pool = await asyncpg.create_pool(
             host=self._db_host,
             port=self._db_port,
@@ -146,6 +150,7 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         await self.gcs.close()
         os.environ.pop("STORAGE_EMULATOR_HOST", None)
         await self.pool.close()
+        bcfy_calls_collector._reset_jwt_cache_for_tests()
 
     # -- Helpers ----------------------------------------------------------
 

@@ -104,7 +104,12 @@ def _get_jwt_token() -> str:
 def _get_jwt_lock() -> asyncio.Lock:
     """Return a lazy lock tied to the current running loop."""
     loop = asyncio.get_running_loop()
-    if _jwt_state.lock is None or _jwt_state.lock_loop is not loop:
+    loop_changed = (
+        _jwt_state.lock_loop is not None and _jwt_state.lock_loop is not loop
+    )
+    if loop_changed:
+        _jwt_state.refresh_task = None
+    if _jwt_state.lock is None or loop_changed:
         _jwt_state.lock = asyncio.Lock()
         _jwt_state.lock_loop = loop
     return _jwt_state.lock

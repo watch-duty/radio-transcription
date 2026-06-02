@@ -220,6 +220,31 @@ class TestSharedJwtToken(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(token, "token")
         self.assertEqual(mock_jwt.call_count, 1)
 
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._get_jwt_token"
+    )
+    async def test_loop_change_drops_stale_refresh_task(
+        self, mock_jwt: MagicMock
+    ) -> None:
+        old_loop = asyncio.new_event_loop()
+        try:
+            stale_task = cast("asyncio.Task[str]", old_loop.create_future())
+            stale_task.cancel()
+            bcfy_calls_collector._jwt_state.lock = asyncio.Lock()
+            bcfy_calls_collector._jwt_state.lock_loop = old_loop
+            bcfy_calls_collector._jwt_state.refresh_task = stale_task
+        finally:
+            old_loop.close()
+
+        mock_jwt.return_value = "token"
+
+        token = await bcfy_calls_collector._get_shared_jwt_token()
+
+        self.assertEqual(token, "token")
+        self.assertEqual(mock_jwt.call_count, 1)
+        self.assertIsNone(bcfy_calls_collector._jwt_state.refresh_task)
+
 
 class TestRaiseForFatalStatus(unittest.TestCase):
     def test_fatal_statuses(self) -> None:
