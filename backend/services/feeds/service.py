@@ -4,9 +4,7 @@ import logging
 import uuid
 from typing import TYPE_CHECKING
 
-from backend.pipeline.storage.feed_store import SortOrder
-
-from .models import Feed, FeedCreate, FeedUpdate, ListFeedsResponse
+from .models import Feed, FeedCreate, FeedUpdate
 
 if TYPE_CHECKING:
     from backend.pipeline.storage.feed_store import FeedStore
@@ -66,36 +64,10 @@ class FeedService:
             return None
         return Feed.model_validate(store_feed)
 
-    async def list_feeds(
-        self,
-        limit: int = 100,
-        next_token: str | None = None,
-        order: SortOrder = SortOrder.DESC,
-        *,
-        source_types: list[str] | None = None,
-        statuses: list[str] | None = None,
-        tags: list[str] | None = None,
-    ) -> ListFeedsResponse:
-        """Lists all feeds with pagination and filters."""
-        parsed_tags = []
-        if tags:
-            for tag in tags:
-                if ":" in tag:
-                    k, v = tag.split(":", 1)
-                    parsed_tags.append({"key": k, "value": v})
-
-        result = await self._store.list_feeds(
-            limit=limit,
-            next_token=next_token,
-            order=order,
-            source_types=source_types,
-            statuses=statuses,
-            tags=parsed_tags or None,
-        )
-        return ListFeedsResponse(
-            feeds=[Feed.model_validate(f) for f in result.feeds],
-            next_token=result.next_token,
-        )
+    async def list_feeds(self) -> list[Feed]:
+        """Lists all feeds."""
+        store_feeds = await self._store.list_feeds()
+        return [Feed.model_validate(f) for f in store_feeds.feeds]
 
     async def deactivate_feed(self, feed_id: str) -> bool:
         """Deactivates a feed by ID."""

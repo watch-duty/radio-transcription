@@ -37,11 +37,6 @@ export interface Feed extends BaseFeed {
   tags?: Tag[];
 }
 
-export interface ListFeedsResponse {
-  feeds: Feed[];
-  nextToken?: string;
-}
-
 export interface FeedCreate extends BaseFeed {
   sourceFeedId: string;
   externalId: string;

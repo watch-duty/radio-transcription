@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 
 from backend.pipeline.common.auth import verify_oidc_token
 from backend.pipeline.common.exceptions import (
@@ -18,9 +18,9 @@ from backend.pipeline.storage.connection import (
     close_pool,
     create_pool_with_retry,
 )
-from backend.pipeline.storage.feed_store import FeedStore, SortOrder
+from backend.pipeline.storage.feed_store import FeedStore
 
-from .models import Feed, FeedCreate, FeedUpdate, ListFeedsResponse
+from .models import Feed, FeedCreate, FeedUpdate
 from .service import FeedService
 
 logger = logging.getLogger(__name__)
@@ -126,28 +126,15 @@ async def update_feed(
 
 @app.get(
     "/v1/feeds",
-    response_model=ListFeedsResponse,
+    response_model=list[Feed],
     tags=["feeds"],
 )
 async def list_feeds(
     request: Request,
-    limit: int = 100,
-    next_token: str | None = None,
-    order: SortOrder = SortOrder.DESC,
-    source_types: list[str] | None = Query(None),
-    statuses: list[str] | None = Query(None),
-    tags: list[str] | None = Query(None),
-) -> ListFeedsResponse:
-    """List all feeds with pagination and optional filters."""
+) -> list[Feed]:
+    """List all feeds."""
     service: FeedService = request.app.state.feed_service
-    return await service.list_feeds(
-        limit=limit,
-        next_token=next_token,
-        order=order,
-        source_types=source_types,
-        statuses=statuses,
-        tags=tags,
-    )
+    return await service.list_feeds()
 
 
 @app.post(
