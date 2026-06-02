@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.9-labs
 FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -57,13 +58,8 @@ ENV MALLOC_ARENA_MAX=2
 # passed into create_subprocess_exec. NOT applied today.
 
 # 2. Install dependencies
-COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
-COPY pyproject.toml uv.lock ./
-# Copy only workspace pyproject.toml files to satisfy uv workspace requirement
-COPY backend/pipeline/normalization/pyproject.toml ./backend/pipeline/normalization/
-COPY backend/pipeline/transcription/pyproject.toml ./backend/pipeline/transcription/
-COPY backend/pipeline/evaluation/pyproject.toml ./backend/pipeline/evaluation/
-COPY backend/pipeline/notification/pyproject.toml ./backend/pipeline/notification/
+COPY --from=ghcr.io/astral-sh/uv:0.11.13 /uv /uvx /bin/
+COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml ./
 
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
