@@ -4,6 +4,7 @@ import base64
 import datetime
 import logging
 import urllib.parse
+from typing import cast
 
 from cloudevents.http.event import CloudEvent
 from google.cloud import pubsub_v1, storage
@@ -275,7 +276,10 @@ class NormalizationEventProcessor:
             end_audio_offset=segmented_audio.end_audio_offset,
             feed_name=segmented_audio.feed_name,
             external_id=segmented_audio.external_id,
-            audio_classification=segmented_audio.audio_classification,
+            audio_classification=cast(
+                NormalizedAudio.AudioClassification,
+                int(segmented_audio.audio_classification),
+            ),
         )
 
         topic_name = self.output_topic.split("/")[-1]

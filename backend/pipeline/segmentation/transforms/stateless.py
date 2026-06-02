@@ -13,7 +13,7 @@ and are highly optimized for parallel worker execution:
 import datetime
 import io
 from collections.abc import Iterator
-from typing import Any, override
+from typing import Any, override, cast
 
 import apache_beam as beam
 import numpy as np
@@ -355,7 +355,10 @@ class UploadRawSegmentFn(beam.DoFn):
                 end_audio_offset=end_offset,
                 feed_name=request.feed_metadata.feed_name,
                 external_id=request.feed_metadata.external_id,
-                audio_classification=request.audio_classification,
+                audio_classification=cast(
+                    SegmentedAudio.AudioClassification,
+                    request.audio_classification,
+                ),
                 raw_audio_uri=gcs_uri,
             )
 
