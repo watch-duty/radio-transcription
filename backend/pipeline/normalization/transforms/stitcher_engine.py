@@ -485,6 +485,11 @@ class StitcherEngine:
                 )
 
                 # 3. Initialize State Machine context
+                ctx_traceparent = (
+                    curr_context.traceparent
+                    if curr_context.stale_start_time_ms is not None
+                    else chunk.traceparent
+                )
                 ctx = datatypes.StitcherContext(
                     feed_id=feed_id,
                     current_gcs_uri=chunk.gcs_uri,
@@ -500,7 +505,7 @@ class StitcherEngine:
                     end_audio_offset_ms=None,
                     buffer_duration_ms=curr_context.buffer_duration_ms,
                     speech_segments=curr_context.speech_segments.copy(),
-                    traceparent=curr_context.traceparent,
+                    traceparent=ctx_traceparent,
                     prior_audio_tail=curr_context.prior_audio_tail,
                 )
 
@@ -607,6 +612,7 @@ class StitcherEngine:
                         speech_segments=ctx.speech_segments,
                         prior_audio_tail=prior_tail,
                         sample_rate=chunk_data.sample_rate,
+                        traceparent=ctx.traceparent,
                     )
                 case datatypes.ScheduleStaleTimerAction():
                     timer_manager.schedule(
