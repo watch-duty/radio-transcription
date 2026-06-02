@@ -1500,12 +1500,12 @@ paths:
                 properties:
                   nextToken:
                     type: string
-                  audioSegments:
+                  segments:
                     items:
                       $ref: "#/components/schemas/AudioSegment"
                     type: array
                 required:
-                  - audioSegments
+                  - segments
                 type: object
         "401":
           description: Unauthorized

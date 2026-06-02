@@ -6,6 +6,7 @@ from fastapi import status
 from fastapi.testclient import TestClient
 
 from backend.pipeline.common.auth import verify_oidc_token
+from backend.pipeline.storage.audio_segment_store import SortOrder
 from backend.services.audio_segments.main import app
 from backend.services.audio_segments.models import (
     AnnotationType,
@@ -13,6 +14,7 @@ from backend.services.audio_segments.models import (
     AudioSegment,
     EvaluationAnnotation,
     EvaluationAnnotationData,
+    ListAudioSegmentsResponse,
     TranscriptAnnotation,
     TranscriptAnnotationData,
 )
@@ -59,17 +61,57 @@ class TestAudioSegmentsAPI(unittest.TestCase):
             created_at=datetime.datetime(2026, 1, 1, 0, 2, tzinfo=datetime.UTC),
             annotations=[],
         )
-        self.mock_service.list_audio_segments.return_value = [mock_segment]
+        self.mock_service.list_audio_segments.return_value = (
+            ListAudioSegmentsResponse(segments=[mock_segment])
+        )
 
         response = self.client.get(
             "/v1/audio_segments", params={"feed_ids": [_FEED_ID]}
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data = response.json()
-        self.assertEqual(len(data), 1)
-        self.assertEqual(data[0]["id"], _SEGMENT_ID)
+        self.assertEqual(len(data["segments"]), 1)
+        self.assertEqual(data["segments"][0]["id"], _SEGMENT_ID)
         self.mock_service.list_audio_segments.assert_called_once_with(
-            [_FEED_ID]
+            feed_ids=[_FEED_ID],
+            limit=100,
+            next_token=None,
+            start_time=None,
+            end_time=None,
+            order=SortOrder.DESC,
+            has_alert=None,
+        )
+
+    def test_list_audio_segments_with_filters(self) -> None:
+        """Test listing audio segments with all filters."""
+        self.mock_service.list_audio_segments.return_value = (
+            ListAudioSegmentsResponse(segments=[])
+        )
+
+        start_time = "2026-01-01T00:00:00Z"
+        end_time = "2026-01-01T01:00:00Z"
+
+        response = self.client.get(
+            "/v1/audio_segments",
+            params={
+                "feed_ids": [_FEED_ID],
+                "limit": 10,
+                "next_token": "token123",
+                "start_time": start_time,
+                "end_time": end_time,
+                "order": "asc",
+                "has_alert": True,
+            },
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.mock_service.list_audio_segments.assert_called_once_with(
+            feed_ids=[_FEED_ID],
+            limit=10,
+            next_token="token123",
+            start_time=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+            end_time=datetime.datetime(2026, 1, 1, 1, tzinfo=datetime.UTC),
+            order=SortOrder.ASC,
+            has_alert=True,
         )
 
     def test_create_audio_segment_success(self) -> None:
@@ -122,7 +164,7 @@ class TestAudioSegmentsAPI(unittest.TestCase):
         }
         response = self.client.post("/v1/audio_segments", json=payload)
         self.assertEqual(
-            response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY
+            response.status_code, status.HTTP_422_UNPROCESSABLE_CONTENT
         )
 
     def test_add_transcript_annotation_success(self) -> None:
@@ -202,7 +244,7 @@ class TestAudioSegmentsAPI(unittest.TestCase):
             f"/v1/audio_segments/{_SEGMENT_ID}/annotations", json=payload
         )
         self.assertEqual(
-            response.status_code, status.HTTP_422_UNPROCESSABLE_ENTITY
+            response.status_code, status.HTTP_422_UNPROCESSABLE_CONTENT
         )
 
 
