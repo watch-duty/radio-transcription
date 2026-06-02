@@ -4,13 +4,14 @@ import type {
   FeedCreate,
   FeedStatus,
   FeedUpdate,
-  SourceType,
   Tag,
 } from '@transcription/common';
+import { SourceType } from '@transcription/common';
 import { GoogleAuth } from 'google-auth-library';
 import {
   Body,
   Controller,
+  Delete,
   Extension,
   Get,
   Path,
@@ -58,15 +59,15 @@ function getSourceUrl(
 ): string | undefined {
   if (!sourceFeedId) return undefined;
   switch (sourceType) {
-    case 'bcfy_feeds':
+    case SourceType.BCFY_FEEDS:
       return `https://www.broadcastify.com/listen/feed/${sourceFeedId}`;
-    case 'bcfy_calls':
+    case SourceType.BCFY_CALLS:
       return `https://www.broadcastify.com/calls/tg/${sourceFeedId.replace(/-/g, '/')}`;
-    case 'openmhz':
+    case SourceType.OPENMHZ:
       return `https://openmhz.com/system/${sourceFeedId}`;
-    case 'echo':
+    case SourceType.ECHO:
       return undefined;
-    case 'fire_notifications':
+    case SourceType.FIRE_NOTIFICATIONS:
       return undefined;
     default:
       return undefined;
@@ -80,15 +81,15 @@ function getArchiveUrl(
   if (!sourceFeedId) return undefined;
 
   switch (sourceType) {
-    case 'bcfy_feeds':
+    case SourceType.BCFY_FEEDS:
       return `https://www.broadcastify.com/archives/feed/${sourceFeedId}`;
-    case 'bcfy_calls':
+    case SourceType.BCFY_CALLS:
       return `https://www.broadcastify.com/calls/tg/${sourceFeedId.replace(/-/g, '/')}/archives`;
-    case 'openmhz':
+    case SourceType.OPENMHZ:
       return undefined;
-    case 'echo':
+    case SourceType.ECHO:
       return undefined;
-    case 'fire_notifications':
+    case SourceType.FIRE_NOTIFICATIONS:
       return undefined;
     default:
       return undefined;
@@ -96,7 +97,16 @@ function getArchiveUrl(
 }
 
 function convertFeedStatusBackend(status: BackendFeedStatus): FeedStatus {
-  return status === 'active' ? 'active' : 'inactive';
+  switch (status) {
+    case 'active':
+      return 'active';
+    case 'quarantined':
+    case 'failing':
+      return 'error';
+    case 'deactivated':
+    default:
+      return 'inactive';
+  }
 }
 
 function convertFeedBackend(response: FeedBackend): Feed {
@@ -109,6 +119,7 @@ function convertFeedBackend(response: FeedBackend): Feed {
     sourceUrl: getSourceUrl(response.source_type, response.source_feed_id),
     archiveUrl: getArchiveUrl(response.source_type, response.source_feed_id),
     status: convertFeedStatusBackend(response.status),
+    substatus: response.status,
     lastHeartbeat: response.last_heartbeat ?? undefined,
     tags: response.tags,
   };
@@ -281,6 +292,34 @@ export class FeedsController extends Controller {
       await client.request({
         url: `${FEEDS_STORE_API_URL}/${feedId}/deactivate`,
         method: 'POST',
+      });
+    } catch (error: unknown) {
+      const { status, message } = handleBackendError(
+        error,
+        `deleting feed ${feedId}`
+      );
+      throw new HttpError(status, message);
+    }
+  }
+
+  /**
+   * Hard delete a feed (permanent delete).
+   * Deletes the feed, corresponding transcripts, and audio segments.
+   */
+  @Delete('{feedId}')
+  @Security('google_id_token')
+  @SuccessResponse('204', 'No Content')
+  @Response<{ message: string }>(401, 'Unauthorized')
+  @Response<{ message: string }>(403, 'Forbidden')
+  @Response<{ message: string }>(404, 'Not Found')
+  @Response<{ message: string }>(500, 'Internal Server Error')
+  @Extension('x-google-backend', 'radio-transcription-api')
+  public async deleteFeed(@Path() feedId: string): Promise<void> {
+    const client = await this.getClient();
+    try {
+      await client.request({
+        url: `${FEEDS_STORE_API_URL}/${feedId}`,
+        method: 'DELETE',
       });
     } catch (error: unknown) {
       const { status, message } = handleBackendError(

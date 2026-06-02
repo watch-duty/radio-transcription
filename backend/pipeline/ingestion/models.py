@@ -18,18 +18,27 @@ are internal events the runtime never sees.
 Error Handling
 --------------
 
+Collectors should keep source-specific failure classification at the collector
+boundary. The runtime can tell "collector raised a typed feed failure" from
+"pipeline failed after capture" and "unexpected bug", but it cannot safely
+infer Broadcastify/OpenMHZ/Fire Notifications semantics from raw strings.
+
 For any error inside a capture function, follow this priority:
 
-1. **Configuration** (bad creds, wrong URL): raise immediately.
-2. **Rate limit** (429): back off internally, never propagate.
+1. **Configuration** (bad creds, wrong URL): raise ``CollectorFailure``.
+2. **Rate limit** (429): back off internally first. Raise
+   ``CollectorFailure`` only if collector policy says the feed is
+   persistently rate-limited.
 3. **Transient** (500, timeout, disconnect): retry internally.
-   Skip the item if retries exhaust. Raise if the connection
-   fails persistently (e.g. 10 consecutive transport failures).
+   Skip the item if retries exhaust. Raise ``CollectorFailure`` if the
+   connection fails persistently (e.g. 10 consecutive transport failures).
 4. **Item failure** (one download 404, corrupt data): skip, log,
-   continue. Raise if ALL items in a batch fail (systemic).
+   continue. Raise only if ALL eligible items in one observation boundary
+   fail (systemic).
 5. **Data quality** (zero-length, bad timestamp): filter silently.
-6. **Unknown**: let it propagate — the runtime will record the
-   failure and release the lease.
+6. **Unknown bug**: let it propagate. The runtime records
+   ``system_unexpected_error`` as a defensive fallback; new collector code
+   should not intentionally rely on that path for known source failures.
 
 Session ID
 ----------
@@ -65,6 +74,8 @@ import dataclasses
 from typing import TYPE_CHECKING
 
 import aiohttp  # noqa: TC002 — runtime use: CaptureResources holds aiohttp.ClientSession
+
+from backend.pipeline.storage.feed_store import FeedStatusReason
 
 if TYPE_CHECKING:
     import asyncio
@@ -103,6 +114,47 @@ class AudioMimeType(StrEnum):
                 "audio/x-m4a": cls.MP4,
             }
             return aliases.get(clean_type)
+
+
+@dataclasses.dataclass(init=False, eq=False)
+class CollectorFailure(Exception):
+    """Feed-level collector failure classified at the collector boundary.
+
+    This is intentionally small: `status_reason` is the bounded operator
+    grouping key, while `reason` is a short raw stage/detail string preserved
+    for logs and quarantine_reason. Do not put stderr, stack traces, URLs with
+    credentials, or other high-cardinality data in either field.
+    """
+
+    status_reason: FeedStatusReason
+    reason: str
+
+    def __init__(
+        self,
+        status_reason: FeedStatusReason | str,
+        reason: str,
+    ) -> None:
+        """Normalize collector-provided values before the runtime sees them."""
+        try:
+            normalized_status_reason = FeedStatusReason(status_reason)
+        except (TypeError, ValueError) as e:
+            msg = f"Unknown feed status reason: {status_reason!r}"
+            raise ValueError(msg) from e
+
+        if not isinstance(reason, str) or not reason:
+            msg = "CollectorFailure.reason must be a non-empty string"
+            raise ValueError(msg)
+
+        # Exception instances must remain runtime-mutable: Python sets
+        # __traceback__, __context__, and __cause__ while propagating them.
+        # A frozen dataclass breaks that machinery, so keep only the payload
+        # normalized and bounded.
+        self.status_reason = normalized_status_reason
+        self.reason = reason[:200]
+        Exception.__init__(self, self.reason)
+
+    def __str__(self) -> str:
+        return self.reason
 
 
 @dataclasses.dataclass(frozen=True)
@@ -144,7 +196,7 @@ class CapturedChunk:
 class CaptureResources:
     """Runtime-owned resources passed to capture functions.
 
-    Constructed once in NormalizerRuntime._main() and lifecycle-managed
+    Constructed once in CollectorRuntime._main() and lifecycle-managed
     by the runtime: http_session is closed in _shutdown_sequence after
     _gcs_client.close() (followed by a 250ms SSL-teardown sleep, per
     aiohttp's documented graceful-shutdown idiom for SSL).

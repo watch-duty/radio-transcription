@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.9-labs
 FROM python:3.13-slim
 
 # Set environment variables
@@ -9,15 +10,12 @@ ENV PORT=8080
 
 WORKDIR /app
 
-COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
-
-COPY pyproject.toml uv.lock ./
+COPY --from=ghcr.io/astral-sh/uv:0.11.13 /uv /uvx /bin/
 
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
-COPY backend/pipeline/normalization/pyproject.toml ./backend/pipeline/normalization/
-COPY backend/pipeline/transcription/pyproject.toml ./backend/pipeline/transcription/
+COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml ./
 RUN uv sync --frozen --no-dev && uv pip install grpcio-tools
 
 COPY protos/ ./protos

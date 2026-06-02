@@ -88,6 +88,25 @@ class FeedService:
             )
         return success
 
+    async def delete_feed(self, feed_id: str) -> bool:
+        """Hard deletes a feed by ID, along with all referencing data."""
+        try:
+            uid = uuid.UUID(feed_id)
+        except ValueError:
+            return False
+        success = await self._store.delete_feed(uid)
+        if success:
+            logger.info(
+                "Feed hard deleted",
+                extra={
+                    "json_fields": {
+                        "event_type": "feed_hard_deleted",
+                        "feed_id": str(uid),
+                    },
+                },
+            )
+        return success
+
     async def reset_feed(self, feed_id: str) -> Feed | None:
         """Reset a failed, quarantined, or deactivated feed to an unclaimed state.
 

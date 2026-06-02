@@ -68,6 +68,7 @@ dev = [
   "pre-commit>=4.5.1",
   "soundfile>=0.12.1",
   "pyopenssl>=26.0.0",
+  "deepdiff>=9.1.0",
 ]
 
 [tool.ruff]
@@ -158,6 +159,7 @@ ignore = [
   "SIM108",  # Use ternary operator instead of `if`-`else`-block
   "SIM117",  # Use a single `with` statement with multiple contexts
   "SIM118",  # Use `key in dict` instead of `key in dict.keys()`
+  "TD002",   # Missing author in TODO
   "TID252",  # Prefer absolute imports over relative imports from parent modules
   "TRY401",  # Redundant exception object included in `logging.exception` call
   "UP007",   # Use `X | Y` for type annotations

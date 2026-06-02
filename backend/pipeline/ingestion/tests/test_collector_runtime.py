@@ -3,17 +3,24 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import datetime
+import logging
 import unittest
 import uuid
+from typing import Any, cast
 from unittest import mock
 
 import aiohttp
 import asyncpg
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
-from backend.pipeline.ingestion.models import CapturedChunk, CaptureResources
-from backend.pipeline.ingestion.normalizer_runtime import NormalizerRuntime
+from backend.pipeline.ingestion.collector_runtime import CollectorRuntime
+from backend.pipeline.ingestion.models import (
+    CapturedChunk,
+    CaptureResources,
+    CollectorFailure,
+)
 from backend.pipeline.storage.feed_store import (
+    FeedStatusReason,
     HeartbeatResult,
     LeasedFeed,
     SourceType,
@@ -57,10 +64,44 @@ _FEED = LeasedFeed(
 )
 
 
+class TestCollectorFailureContract(unittest.TestCase):
+    """Tests for the typed collector failure boundary contract."""
+
+    def test_carries_status_reason_and_reason(self) -> None:
+        """CollectorFailure exposes canonical and raw failure data."""
+        exc = CollectorFailure(
+            FeedStatusReason.SOURCE_OFFLINE,
+            "source_offline",
+        )
+
+        self.assertIs(exc.status_reason, FeedStatusReason.SOURCE_OFFLINE)
+        self.assertEqual(exc.reason, "source_offline")
+        self.assertEqual(str(exc), "source_offline")
+
+    def test_normalizes_status_reason_values(self) -> None:
+        """CollectorFailure accepts canonical DB text values at the boundary."""
+        exc = CollectorFailure(
+            "source_offline",
+            "source_offline",
+        )
+
+        self.assertIs(exc.status_reason, FeedStatusReason.SOURCE_OFFLINE)
+        self.assertEqual(exc.reason, "source_offline")
+
+    def test_allows_python_exception_runtime_fields(self) -> None:
+        """CollectorFailure remains compatible with Python exception handling."""
+        exc = CollectorFailure(
+            FeedStatusReason.SOURCE_OFFLINE,
+            "source_offline",
+        )
+
+        exc.__traceback__ = None
+
+
 def _mock_pubsub_publish(message_id: str = "test-message-id") -> mock._patch:
     """Patch publish_audio_chunk to return a fixed message id (at call site)."""
     return mock.patch(
-        "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.publish_audio_chunk",
+        "backend.pipeline.ingestion.collector_runtime.gcp_helper.publish_audio_chunk",
         new_callable=mock.AsyncMock,
         return_value=message_id,
     )
@@ -75,14 +116,14 @@ def _mock_upload_audio(gcs_path: str = "gs://b/p") -> mock._patch:
     boundary the code actually invokes.
     """
     return mock.patch(
-        "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.upload_staged_audio",
+        "backend.pipeline.ingestion.collector_runtime.gcp_helper.upload_staged_audio",
         new_callable=mock.AsyncMock,
         return_value=gcs_path,
     )
 
 
 def _make_settings(**overrides) -> mock.MagicMock:
-    """Build a mock NormalizerSettings with sensible defaults."""
+    """Build a mock CollectorSettings with sensible defaults."""
     defaults = {
         "worker_id": _WORKER_ID,
         "max_feeds_per_worker": 250,
@@ -147,14 +188,14 @@ def _make_settings(**overrides) -> mock.MagicMock:
     return m
 
 
-def _make_runtime(**settings_overrides) -> NormalizerRuntime:
+def _make_runtime(**settings_overrides) -> CollectorRuntime:
     """Build a runtime with a mock capture_fn and settings."""
 
     async def _dummy_capture(feed, shutdown, _resources):
         yield _make_captured_chunk(b"chunk")
 
     settings = _make_settings(**settings_overrides)
-    rt = NormalizerRuntime(capture_fn=_dummy_capture, settings=settings)
+    rt = CollectorRuntime(capture_fn=_dummy_capture, settings=settings)
     # Pre-initialize _lease_lost and _capture_resources so tests don't need _main().
     rt._lease_lost = asyncio.Event()
     rt._capture_resources = _default_resources()
@@ -227,10 +268,10 @@ class TestReapCompletedTasks(unittest.IsolatedAsyncioTestCase):
 
         with (
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.logger",
+                "backend.pipeline.ingestion.collector_runtime.logger",
             ) as mock_logger,
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.os._exit",
+                "backend.pipeline.ingestion.collector_runtime.os._exit",
             ) as mock_exit,
         ):
             rt._reap_completed_tasks()
@@ -330,7 +371,7 @@ class TestProcessFeedFenceViolation(unittest.IsolatedAsyncioTestCase):
         async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
-        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
@@ -342,7 +383,7 @@ class TestProcessFeedFenceViolation(unittest.IsolatedAsyncioTestCase):
             _mock_upload_audio(),
             _mock_pubsub_publish(),
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.os._exit",
+                "backend.pipeline.ingestion.collector_runtime.os._exit",
             ) as mock_exit,
             mock.patch("logging.shutdown"),
         ):
@@ -359,7 +400,7 @@ class TestProcessFeedShutdown(unittest.IsolatedAsyncioTestCase):
         async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
-        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._shutdown.set()
         rt._lease_lost = asyncio.Event()
@@ -383,7 +424,7 @@ class TestProcessFeedNormalCompletion(unittest.IsolatedAsyncioTestCase):
         async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
-        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
@@ -402,7 +443,7 @@ class TestProcessFeedNormalCompletion(unittest.IsolatedAsyncioTestCase):
         async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
-        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
@@ -425,7 +466,7 @@ class TestProcessFeedTimestamps(unittest.IsolatedAsyncioTestCase):
         async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
-        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
@@ -444,7 +485,7 @@ class TestProcessFeedTimestamps(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(len(args), 6)
             self.assertEqual(
-                args[1], rt._normalizer_settings.continuous_pubsub_topic_path
+                args[1], rt._collector_settings.continuous_pubsub_topic_path
             )
             self.assertEqual(args[2], str(_FEED["id"]))
             self.assertEqual(args[3], "Test Feed")
@@ -474,9 +515,7 @@ class TestProcessFeedSessionId(unittest.IsolatedAsyncioTestCase):
             yield dataclasses.replace(chunk1, session_id="test-session-id")
             yield dataclasses.replace(chunk2, session_id="test-session-id")
 
-        rt = NormalizerRuntime(
-            capture_fn=_two_chunks, settings=_make_settings()
-        )
+        rt = CollectorRuntime(capture_fn=_two_chunks, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
@@ -659,7 +698,7 @@ class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
         ]
 
         with mock.patch(
-            "backend.pipeline.ingestion.normalizer_runtime.os._exit",
+            "backend.pipeline.ingestion.collector_runtime.os._exit",
         ) as mock_exit:
             await rt._heartbeat_cycle()
             mock_exit.assert_not_called()
@@ -683,7 +722,7 @@ class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
 
         with (
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.os._exit",
+                "backend.pipeline.ingestion.collector_runtime.os._exit",
             ) as mock_exit,
             mock.patch("logging.shutdown"),
         ):
@@ -707,7 +746,7 @@ class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
         ]
 
         with mock.patch(
-            "backend.pipeline.ingestion.normalizer_runtime.os._exit",
+            "backend.pipeline.ingestion.collector_runtime.os._exit",
         ) as mock_exit:
             await rt._heartbeat_cycle()
             mock_exit.assert_not_called()
@@ -731,7 +770,7 @@ class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
         ]
 
         with mock.patch(
-            "backend.pipeline.ingestion.normalizer_runtime.os._exit",
+            "backend.pipeline.ingestion.collector_runtime.os._exit",
         ) as mock_exit:
             await rt._heartbeat_cycle()
             mock_exit.assert_not_called()
@@ -755,11 +794,11 @@ class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
 
         with (
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.os._exit",
+                "backend.pipeline.ingestion.collector_runtime.os._exit",
             ),
             mock.patch("logging.shutdown"),
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.logger",
+                "backend.pipeline.ingestion.collector_runtime.logger",
             ) as mock_logger,
         ):
             await rt._heartbeat_cycle()
@@ -789,11 +828,11 @@ class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
 
         with (
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.os._exit",
+                "backend.pipeline.ingestion.collector_runtime.os._exit",
             ),
             mock.patch("logging.shutdown"),
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.logger",
+                "backend.pipeline.ingestion.collector_runtime.logger",
             ) as mock_logger,
         ):
             await rt._heartbeat_cycle()
@@ -859,10 +898,10 @@ class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
     """Tests for pool creation in _main."""
 
     @mock.patch(
-        "backend.pipeline.ingestion.normalizer_runtime.FeedStore",
+        "backend.pipeline.ingestion.collector_runtime.FeedStore",
     )
     @mock.patch(
-        "backend.pipeline.ingestion.normalizer_runtime.create_pool_with_retry",
+        "backend.pipeline.ingestion.collector_runtime.create_pool_with_retry",
         new_callable=mock.AsyncMock,
     )
     async def test_heartbeat_pool_uses_create_pool_helper(
@@ -874,13 +913,19 @@ class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
         rt = _make_runtime()
 
         with (
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.aiohttp.TCPConnector"
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.aiohttp.ClientSession"
+            ),
             mock.patch.object(rt, "_leasing_loop", new_callable=mock.AsyncMock),
             mock.patch.object(
                 rt, "_shutdown_sequence", new_callable=mock.AsyncMock
             ),
             mock.patch("threading.Thread"),
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.health_server.start",
+                "backend.pipeline.ingestion.collector_runtime.health_server.start",
                 new_callable=mock.AsyncMock,
             ),
         ):
@@ -930,7 +975,7 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
         rt._gcs_client = mock.AsyncMock()
 
         with mock.patch(
-            "backend.pipeline.ingestion.normalizer_runtime.close_pool",
+            "backend.pipeline.ingestion.collector_runtime.close_pool",
             new_callable=mock.AsyncMock,
         ) as mock_close_pool:
             await rt._shutdown_sequence()
@@ -967,11 +1012,11 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
 
         with (
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.close_pool",
+                "backend.pipeline.ingestion.collector_runtime.close_pool",
                 new_callable=mock.AsyncMock,
             ),
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.asyncio.sleep",
+                "backend.pipeline.ingestion.collector_runtime.asyncio.sleep",
                 new_callable=mock.AsyncMock,
             ) as mock_sleep,
         ):
@@ -1057,25 +1102,21 @@ class TestCalculateBranchLimits(unittest.TestCase):
     def test_cold_start_bounds_sum_at_total_slack(self) -> None:
         # max_feeds_per_worker=250, all held=0 → sum must be exactly 250.
         held = dict.fromkeys(self.CAPS, 0)
-        limits = NormalizerRuntime._calculate_branch_limits(
-            250, self.CAPS, held
-        )
+        limits = CollectorRuntime._calculate_branch_limits(250, self.CAPS, held)
         self.assertEqual(sum(limits.values()), 250)
         self.assertTrue(all(v >= 0 for v in limits.values()))
 
     def test_plan_target_800_bounds_sum(self) -> None:
         # max_feeds_per_worker=800 (scaling-plan target), all held=0.
         held = dict.fromkeys(self.CAPS, 0)
-        limits = NormalizerRuntime._calculate_branch_limits(
-            800, self.CAPS, held
-        )
+        limits = CollectorRuntime._calculate_branch_limits(800, self.CAPS, held)
         self.assertEqual(sum(limits.values()), 800)
 
     def test_slack_exceeds_cap_sum_clamps_at_caps(self) -> None:
         # total_slack=2000 > sum(caps)=1740 → each branch gets its cap,
         # leftover slack is unassigned.
         held = dict.fromkeys(self.CAPS, 0)
-        limits = NormalizerRuntime._calculate_branch_limits(
+        limits = CollectorRuntime._calculate_branch_limits(
             2000, self.CAPS, held
         )
         self.assertEqual(limits[SourceType.BCFY_FEEDS], 240)
@@ -1089,9 +1130,7 @@ class TestCalculateBranchLimits(unittest.TestCase):
             SourceType.BCFY_CALLS: 0,
             SourceType.OPENMHZ: 0,
         }
-        limits = NormalizerRuntime._calculate_branch_limits(
-            250, self.CAPS, held
-        )
+        limits = CollectorRuntime._calculate_branch_limits(250, self.CAPS, held)
         self.assertEqual(limits[SourceType.BCFY_FEEDS], 0)
         self.assertEqual(sum(limits.values()), 250)
 
@@ -1103,15 +1142,13 @@ class TestCalculateBranchLimits(unittest.TestCase):
             SourceType.BCFY_CALLS: 0,
             SourceType.OPENMHZ: 0,
         }
-        limits = NormalizerRuntime._calculate_branch_limits(
-            300, self.CAPS, held
-        )
+        limits = CollectorRuntime._calculate_branch_limits(300, self.CAPS, held)
         self.assertLessEqual(limits[SourceType.BCFY_FEEDS], 10)
         self.assertEqual(sum(limits.values()), 300)
 
     def test_zero_slack_returns_all_zeros(self) -> None:
         held = dict.fromkeys(self.CAPS, 0)
-        limits = NormalizerRuntime._calculate_branch_limits(0, self.CAPS, held)
+        limits = CollectorRuntime._calculate_branch_limits(0, self.CAPS, held)
         self.assertEqual(limits, dict.fromkeys(self.CAPS, 0))
 
     def test_negative_held_defensive_does_not_overrun_cap(self) -> None:
@@ -1122,7 +1159,7 @@ class TestCalculateBranchLimits(unittest.TestCase):
             SourceType.BCFY_CALLS: 0,
             SourceType.OPENMHZ: 0,
         }
-        limits = NormalizerRuntime._calculate_branch_limits(
+        limits = CollectorRuntime._calculate_branch_limits(
             1000, self.CAPS, held
         )
         # Each branch still bounded at its cap even with corrupted held.
@@ -1135,9 +1172,7 @@ class TestCalculateBranchLimits(unittest.TestCase):
         # holds). The function must not KeyError; missing keys default
         # to held=0 → full headroom for that branch.
         held: dict[SourceType, int] = {SourceType.BCFY_FEEDS: 100}
-        limits = NormalizerRuntime._calculate_branch_limits(
-            250, self.CAPS, held
-        )
+        limits = CollectorRuntime._calculate_branch_limits(250, self.CAPS, held)
         # BCFY_CALLS and OPENMHZ have no entry in `held` — both should
         # be treated as held=0 with full cap-sized headroom.
         self.assertEqual(sum(limits.values()), 250)
@@ -1273,7 +1308,7 @@ class TestHeartbeatLoopSetsLeaseLost(unittest.IsolatedAsyncioTestCase):
 
         with (
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.os._exit",
+                "backend.pipeline.ingestion.collector_runtime.os._exit",
             ),
             mock.patch("logging.shutdown"),
         ):
@@ -1295,7 +1330,7 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
-        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
@@ -1309,7 +1344,7 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
 
         with (
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.upload_staged_audio",
+                "backend.pipeline.ingestion.collector_runtime.gcp_helper.upload_staged_audio",
                 upload_mock,
             ),
             _mock_pubsub_publish(),
@@ -1327,7 +1362,7 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
-        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
@@ -1337,7 +1372,7 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
 
         with (
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.upload_staged_audio",
+                "backend.pipeline.ingestion.collector_runtime.gcp_helper.upload_staged_audio",
                 mock.AsyncMock(return_value="gs://b/p"),
             ),
             _mock_pubsub_publish(),
@@ -1354,7 +1389,7 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
-        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
@@ -1371,7 +1406,7 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
 
         with (
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.gcp_helper.upload_staged_audio",
+                "backend.pipeline.ingestion.collector_runtime.gcp_helper.upload_staged_audio",
                 mock.AsyncMock(return_value="gs://b/p"),
             ),
             _mock_pubsub_publish(),
@@ -1395,7 +1430,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             msg = "capture_failed"
             raise RuntimeError(msg)
 
-        rt = NormalizerRuntime(
+        rt = CollectorRuntime(
             capture_fn=_failing_capture, settings=_make_settings()
         )
         rt._shutdown = asyncio.Event()
@@ -1410,7 +1445,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             _mock_upload_audio(),
             _mock_pubsub_publish(),
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.quarantine_telemetry"
+                "backend.pipeline.ingestion.collector_runtime.quarantine_telemetry"
             ) as mock_telemetry,
         ):
             mock_telemetry.emit_quarantine_event = mock.AsyncMock()
@@ -1421,6 +1456,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             feed_name="Test Feed",
             source_type="bcfy_feeds",
             reason="capture_failed",
+            status_reason="system_unexpected_error",
         )
         # _releasing_feeds cleaned up
         self.assertEqual(rt._releasing_feeds, set())
@@ -1433,7 +1469,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             msg = "capture_failed"
             raise RuntimeError(msg)
 
-        rt = NormalizerRuntime(
+        rt = CollectorRuntime(
             capture_fn=_failing_capture, settings=_make_settings()
         )
         rt._shutdown = asyncio.Event()
@@ -1448,7 +1484,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             _mock_upload_audio(),
             _mock_pubsub_publish(),
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.quarantine_telemetry"
+                "backend.pipeline.ingestion.collector_runtime.quarantine_telemetry"
             ) as mock_telemetry,
         ):
             mock_telemetry.emit_quarantine_event = mock.AsyncMock()
@@ -1478,7 +1514,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
                 yield _make_captured_chunk(b"audio")
                 raise RuntimeError(_msg)
 
-            rt = NormalizerRuntime(
+            rt = CollectorRuntime(
                 capture_fn=_failing_capture, settings=_make_settings()
             )
             rt._shutdown = asyncio.Event()
@@ -1495,6 +1531,211 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             rt._store.report_feed_failure.assert_awaited_once()
             kwargs = rt._store.report_feed_failure.await_args.kwargs
             self.assertEqual(kwargs["reason"], expected_reason)
+            self.assertIs(
+                kwargs["status_reason"],
+                FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
+            )
+
+    async def test_typed_collector_failure_persists_carried_status_reason(
+        self,
+    ) -> None:
+        """CollectorFailure carries canonical and raw reasons to storage."""
+
+        async def _failing_capture(feed, shutdown, _resources):
+            raise CollectorFailure(
+                FeedStatusReason.SOURCE_OFFLINE,
+                "source_offline",
+            )
+            yield _make_captured_chunk(b"audio")
+
+        rt = CollectorRuntime(
+            capture_fn=_failing_capture,
+            settings=_make_settings(),
+        )
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.report_feed_failure.return_value = "failing"
+        rt._releasing_feeds = set()
+
+        await rt._process_feed(_FEED)
+
+        rt._store.report_feed_failure.assert_awaited_once()
+        kwargs = rt._store.report_feed_failure.await_args.kwargs
+        self.assertEqual(kwargs["reason"], "source_offline")
+        self.assertIs(
+            kwargs["status_reason"],
+            FeedStatusReason.SOURCE_OFFLINE,
+        )
+
+    async def test_collector_failure_string_status_reason_persists(
+        self,
+    ) -> None:
+        """String status reason values are normalized before runtime logging."""
+        status_reason = "source_offline"
+
+        async def _failing_capture(feed, shutdown, _resources):
+            raise CollectorFailure(
+                status_reason,
+                "source_offline",
+            )
+            yield _make_captured_chunk(b"audio")
+
+        rt = CollectorRuntime(
+            capture_fn=_failing_capture,
+            settings=_make_settings(),
+        )
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.report_feed_failure.return_value = "failing"
+        rt._releasing_feeds = set()
+
+        await rt._process_feed(_FEED)
+
+        rt._store.report_feed_failure.assert_awaited_once()
+        kwargs = rt._store.report_feed_failure.await_args.kwargs
+        self.assertEqual(kwargs["reason"], "source_offline")
+        self.assertIs(
+            kwargs["status_reason"],
+            FeedStatusReason.SOURCE_OFFLINE,
+        )
+
+    async def test_gcs_upload_failure_records_pipeline_error(self) -> None:
+        """Upload failures after a valid chunk use the GCS stage tag."""
+
+        async def _one_chunk(feed, shutdown, _resources):
+            yield _make_captured_chunk(b"audio")
+
+        rt = CollectorRuntime(
+            capture_fn=_one_chunk,
+            settings=_make_settings(gcs_upload_max_retries=0),
+        )
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.report_feed_failure.return_value = "failing"
+        rt._releasing_feeds = set()
+
+        with mock.patch(
+            "backend.pipeline.ingestion.collector_runtime.gcp_helper.upload_staged_audio",
+            mock.AsyncMock(side_effect=RuntimeError("gcs boom")),
+        ):
+            await rt._process_feed(_FEED)
+
+        rt._store.report_feed_failure.assert_awaited_once()
+        kwargs = rt._store.report_feed_failure.await_args.kwargs
+        self.assertEqual(kwargs["reason"], "gcs_upload_failed")
+        self.assertIs(
+            kwargs["status_reason"],
+            FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        )
+
+    async def test_pubsub_publish_failure_records_pipeline_error(self) -> None:
+        """Pub/Sub failures after a valid chunk use the publish stage tag."""
+
+        async def _one_chunk(feed, shutdown, _resources):
+            yield _make_captured_chunk(b"audio")
+
+        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.report_feed_failure.return_value = "failing"
+        rt._releasing_feeds = set()
+
+        with (
+            _mock_upload_audio(),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.gcp_helper.publish_audio_chunk",
+                mock.AsyncMock(side_effect=RuntimeError("pubsub boom")),
+            ),
+        ):
+            await rt._process_feed(_FEED)
+
+        rt._store.report_feed_failure.assert_awaited_once()
+        kwargs = rt._store.report_feed_failure.await_args.kwargs
+        self.assertEqual(kwargs["reason"], "pubsub_publish_failed")
+        self.assertIs(
+            kwargs["status_reason"],
+            FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        )
+
+    async def test_bookmark_write_failure_records_pipeline_error(self) -> None:
+        """Bookmark failures after a valid chunk use the bookmark stage tag."""
+
+        async def _one_chunk(feed, shutdown, _resources):
+            yield _make_captured_chunk(b"audio")
+
+        rt = CollectorRuntime(
+            capture_fn=_one_chunk,
+            settings=_make_settings(bookmark_max_retries=0),
+        )
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress.side_effect = RuntimeError(
+            "bookmark boom"
+        )
+        rt._store.report_feed_failure.return_value = "failing"
+        rt._releasing_feeds = set()
+
+        with _mock_upload_audio(), _mock_pubsub_publish():
+            await rt._process_feed(_FEED)
+
+        rt._store.report_feed_failure.assert_awaited_once()
+        kwargs = rt._store.report_feed_failure.await_args.kwargs
+        self.assertEqual(kwargs["reason"], "bookmark_write_failed")
+        self.assertIs(
+            kwargs["status_reason"],
+            FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        )
+
+    async def test_failure_log_includes_runtime_reason_fields(self) -> None:
+        """Runtime failure logs include canonical and raw reason fields."""
+
+        async def _failing_capture(feed, shutdown, _resources):
+            msg = "capture_failed"
+            raise RuntimeError(msg)
+            yield _make_captured_chunk(b"audio")
+
+        rt = CollectorRuntime(
+            capture_fn=_failing_capture,
+            settings=_make_settings(),
+        )
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.report_feed_failure.return_value = "failing"
+        rt._releasing_feeds = set()
+
+        with self.assertLogs(
+            "backend.pipeline.ingestion.collector_runtime",
+            level=logging.ERROR,
+        ) as cm:
+            await rt._process_feed(_FEED)
+
+        failure_records = [
+            record
+            for record in cm.records
+            if getattr(record, "json_fields", None)
+        ]
+        self.assertEqual(len(failure_records), 1)
+        record = failure_records[0]
+        json_fields = cast("dict[str, Any]", record.__dict__["json_fields"])
+        self.assertEqual(json_fields["feed_id"], str(_FEED_ID))
+        self.assertEqual(json_fields["source_type"], "bcfy_feeds")
+        self.assertEqual(json_fields["reason"], "capture_failed")
+        self.assertEqual(
+            json_fields["status_reason"],
+            "system_unexpected_error",
+        )
 
 
 class TestProcessFeedPublishAttributes(unittest.IsolatedAsyncioTestCase):
@@ -1513,7 +1754,7 @@ class TestProcessFeedPublishAttributes(unittest.IsolatedAsyncioTestCase):
                 session_id=chunk_session_id,
             )
 
-        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
@@ -1548,9 +1789,7 @@ class TestProcessFeedPublishAttributes(unittest.IsolatedAsyncioTestCase):
                 session_id=sid_b,
             )
 
-        rt = NormalizerRuntime(
-            capture_fn=_two_chunks, settings=_make_settings()
-        )
+        rt = CollectorRuntime(capture_fn=_two_chunks, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
@@ -1573,7 +1812,7 @@ class TestProcessFeedPublishAttributes(unittest.IsolatedAsyncioTestCase):
         async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")  # session_id=None
 
-        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
@@ -1597,7 +1836,7 @@ class TestProcessFeedPublishAttributes(unittest.IsolatedAsyncioTestCase):
         async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
-        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
@@ -1625,7 +1864,7 @@ class TestRssWatchdogDebounce(unittest.TestCase):
 
     def _drive_samples(
         self,
-        rt: NormalizerRuntime,
+        rt: CollectorRuntime,
         limit_bytes: int,
         usage_samples: list[int],
     ) -> None:
@@ -1689,7 +1928,7 @@ class TestRssWatchdogExitSemantics(unittest.TestCase):
 
     def _drive_samples_with_loop(
         self,
-        rt: NormalizerRuntime,
+        rt: CollectorRuntime,
         limit_bytes: int,
         usage_samples: list[int],
     ) -> tuple[mock.MagicMock, mock.MagicMock]:
@@ -1709,7 +1948,7 @@ class TestRssWatchdogExitSemantics(unittest.TestCase):
                 side_effect=usage_samples,
             ),
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.os._exit",
+                "backend.pipeline.ingestion.collector_runtime.os._exit",
             ) as mock_exit,
             mock.patch("logging.shutdown"),
         ):
@@ -1758,7 +1997,7 @@ class TestRssWatchdogWarmupGrace(unittest.TestCase):
 
     def _drive_samples_with_time(
         self,
-        rt: NormalizerRuntime,
+        rt: CollectorRuntime,
         limit_bytes: int,
         usage_samples: list[int],
         time_sequence: list[float],
@@ -1777,7 +2016,7 @@ class TestRssWatchdogWarmupGrace(unittest.TestCase):
                 side_effect=usage_samples,
             ),
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.time.monotonic",
+                "backend.pipeline.ingestion.collector_runtime.time.monotonic",
                 side_effect=time_sequence,
             ),
         ):
@@ -1886,7 +2125,7 @@ class TestRssWatchdogIntegration(unittest.IsolatedAsyncioTestCase):
                 side_effect=usage_samples,
             ),
             mock.patch(
-                "backend.pipeline.ingestion.normalizer_runtime.os._exit",
+                "backend.pipeline.ingestion.collector_runtime.os._exit",
             ) as mock_exit,
             mock.patch("logging.shutdown"),
         ):
@@ -1987,11 +2226,11 @@ class TestSubTimeoutEscape(unittest.IsolatedAsyncioTestCase):
         try:
             with (
                 mock.patch(
-                    "backend.pipeline.ingestion.normalizer_runtime.os._exit",
+                    "backend.pipeline.ingestion.collector_runtime.os._exit",
                 ) as mock_exit,
                 mock.patch("logging.shutdown"),
                 self.assertLogs(
-                    "backend.pipeline.ingestion.normalizer_runtime",
+                    "backend.pipeline.ingestion.collector_runtime",
                     level="WARNING",
                 ) as log_cm,
             ):
@@ -2045,7 +2284,7 @@ class TestLogPayloadBound(unittest.TestCase):
             pending.append(t)
 
         # Reproduce the production formatting EXACTLY as written in
-        # normalizer_runtime.py _shutdown_sequence (Task 2 D-04).
+        # collector_runtime.py _shutdown_sequence (Task 2 D-04).
         # If a future refactor accidentally interpolates `pending`
         # (the list of Task objects) instead of `names` (list of
         # strings), this assertion catches it because Task repr
@@ -2101,7 +2340,7 @@ class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
                 resume_position=resume,
             )
 
-        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
@@ -2132,7 +2371,7 @@ class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
                 # resume_position defaults to None (stream/push collectors).
             )
 
-        rt = NormalizerRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()

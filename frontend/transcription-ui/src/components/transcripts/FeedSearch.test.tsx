@@ -9,6 +9,7 @@ import {
   within,
 } from '@testing-library/react';
 import type { Feed } from '@transcription/common';
+import { SourceType } from '@transcription/common';
 
 import { FeedSearch } from './FeedSearch';
 
@@ -17,20 +18,23 @@ describe('FeedSearch', () => {
     {
       id: 'zulu-feed',
       name: 'Zulu Feed',
-      sourceType: 'bcfy_feeds',
+      sourceType: SourceType.BCFY_FEEDS,
       status: 'active',
+      substatus: 'active',
     },
     {
       id: 'alpha-feed',
       name: 'Alpha Feed',
-      sourceType: 'bcfy_feeds',
+      sourceType: SourceType.BCFY_FEEDS,
       status: 'active',
+      substatus: 'active',
     },
     {
       id: 'charlie-feed',
       name: 'Charlie Feed',
-      sourceType: 'bcfy_feeds',
+      sourceType: SourceType.BCFY_FEEDS,
       status: 'active',
+      substatus: 'active',
     },
   ];
 
