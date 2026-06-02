@@ -17,7 +17,8 @@ dependencies = [
     "feeds-service",
     "rules-service",
     "transcripts-service",
-    "normalization-pipeline",
+    "segmentation-pipeline",
+    "normalization-function",
     "transcription-function",
     "evaluation-function",
     "notification-function",
@@ -61,6 +62,7 @@ dev = [
   "soundfile>=0.12.1",
   "pyopenssl>=26.0.0",
   "deepdiff>=9.1.0",
+  "types-protobuf",
 ]
 
 [tool.ruff]
@@ -250,6 +252,7 @@ pythonVersion = "3.13"
 [tool.uv.workspace]
 members = [
     "backend/pipeline/common",
+    "backend/pipeline/segmentation",
     "backend/pipeline/normalization",
     "backend/pipeline/transcription",
     "backend/pipeline/evaluation",
@@ -266,7 +269,8 @@ audio-segments-service = { workspace = true }
 feeds-service = { workspace = true }
 rules-service = { workspace = true }
 transcripts-service = { workspace = true }
-normalization-pipeline = { workspace = true }
+segmentation-pipeline = { workspace = true }
+normalization-function = { workspace = true }
 transcription-function = { workspace = true }
 evaluation-function = { workspace = true }
 notification-function = { workspace = true }

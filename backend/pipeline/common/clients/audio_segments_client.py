@@ -29,6 +29,10 @@ class AudioSegmentsClient:
             max_retries: The maximum number of retries for transient network errors.
         """
         self.api_url = api_url.rstrip("/")
+        if self.api_url.endswith("/v1/audio_segments"):
+            self.api_url = self.api_url[: -len("/v1/audio_segments")].rstrip(
+                "/"
+            )
         self.session = create_resilient_session(
             max_retries=max_retries,
             backoff_factor=0.5,  # [0.5s, 1.0s, 2.0s]

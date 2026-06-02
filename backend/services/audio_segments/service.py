@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import TYPE_CHECKING
 
 from backend.pipeline.storage.audio_segment_store import SortOrder
@@ -57,6 +58,7 @@ class AudioSegmentService:
         self, segment: AudioSegmentCreate
     ) -> AudioSegment:
         """Saves a single audio segment using the store."""
+        segment_uuid = uuid.UUID(segment.id) if segment.id else None
         return await self._store.create_audio_segment(
             feed_id=segment.feed_id,
             classification=segment.classification,
@@ -69,6 +71,7 @@ class AudioSegmentService:
             playback_audio_uri=segment.playback_audio_uri,
             missing_prior_context=segment.missing_prior_context,
             missing_post_context=segment.missing_post_context,
+            segment_id=segment_uuid,
         )
 
     async def add_annotation(

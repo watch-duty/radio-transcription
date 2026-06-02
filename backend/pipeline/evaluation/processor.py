@@ -84,14 +84,14 @@ class EvaluationEventProcessor:
             def _raise(msg: str) -> None:
                 raise ValueError(msg)
 
-            if not new_audio.transmission_id:
-                _raise("transmission_id is required")
+            if not new_audio.segment_id:
+                _raise("segment_id is required")
             if not new_audio.feed_id:
                 _raise("feed_id is required")
             if not new_audio.transcript:
                 _raise("transcript is required")
             if not new_audio.source_audio_uris:
-                msg = f"TranscribedAudio missing source_audio_uris for feed_id: {new_audio.feed_id} (transmission: {new_audio.transmission_id})"
+                msg = f"TranscribedAudio missing source_audio_uris for feed_id: {new_audio.feed_id} (segment: {new_audio.segment_id})"
                 _raise(msg)
 
             # 2. Evaluate
@@ -99,9 +99,9 @@ class EvaluationEventProcessor:
             evaluated_payload = self.evaluation_service.evaluate(new_audio)
             if not evaluated_payload:
                 logger.error(
-                    "Evaluation returned no payload for feed %s and transmission %s. Skipping.",
+                    "Evaluation returned no payload for feed %s and segment %s. Skipping.",
                     new_audio.feed_id,
-                    new_audio.transmission_id,
+                    new_audio.segment_id,
                 )
                 return
 
@@ -112,8 +112,8 @@ class EvaluationEventProcessor:
                 self.transcripts_client.create_transcript(evaluated_payload)
             except AlreadyExistsError:
                 logger.warning(
-                    "Transcript already exists for transmission %s which indicates we already processed this transmission. Continuing.",
-                    evaluated_payload.transmission_id,
+                    "Transcript already exists for segment %s which indicates we already processed this segment. Continuing.",
+                    evaluated_payload.segment_id,
                 )
 
             # 3.5 Write to Annotation Segments table
@@ -127,18 +127,18 @@ class EvaluationEventProcessor:
                         "errors": list(evaluated_payload.errors),
                     }
                     self.audio_segments_client.add_audio_segment_annotation(
-                        audio_segment_id=new_audio.transmission_id,
+                        audio_segment_id=new_audio.segment_id,
                         annotation_type=AnnotationType.EVALUATION,
                         data=annotation_data,
                     )
                     logger.info(
                         "Successfully added evaluation annotation for segment %s",
-                        new_audio.transmission_id,
+                        new_audio.segment_id,
                     )
                 except Exception as e:
                     logger.exception(
                         "Failed to add evaluation annotation for segment %s: %s",
-                        new_audio.transmission_id,
+                        new_audio.segment_id,
                         e,
                     )
 

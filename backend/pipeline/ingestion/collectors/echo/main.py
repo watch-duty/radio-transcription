@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 import os
-import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -20,10 +19,10 @@ from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
 from opentelemetry import trace
 
-from backend.pipeline.common.audio import get_audio_duration
+from backend.pipeline.common.audio_duration import get_audio_duration
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
-from backend.pipeline.common.gcp_helper import publish_audio_chunk_sync
-from backend.pipeline.common.log_helper import setup_logging
+from backend.pipeline.common.gcp_helper import publish_segmented_audio_sync
+from backend.pipeline.common.logging import setup_logging
 from backend.pipeline.ingestion.settings import _require_env
 from backend.pipeline.storage.sync_connection import connect_db
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
@@ -178,19 +177,16 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
                     "MP3 already exists, skipping upload: %s", staging_uri
                 )
 
-        # Publish AudioChunk with deterministic session_id for dedup.
         feed_id_str = str(feed["id"])
-        session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, staging_uri))
         publisher = pubsub_client.get_publisher()
 
-        publish_audio_chunk_sync(
+        publish_segmented_audio_sync(
             publisher,
             SEGMENTED_PUBSUB_TOPIC_PATH,
             feed_id_str,
             feed["name"],
             feed["external_id"],
             staging_uri,
-            session_id,
             start_ts,
             duration_ms=duration_ms,
             source_type="echo",

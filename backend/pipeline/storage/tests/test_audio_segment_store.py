@@ -158,6 +158,49 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             None,
         )
 
+    async def test_create_audio_segment_with_custom_id(self) -> None:
+        new_row = _AUDIO_SEGMENT_ROW.copy()
+        new_row.pop("annotations", None)
+        self.pool.fetchrow.return_value = new_row
+        custom_segment_id = uuid.UUID("11111111-2222-3333-4444-555555555555")
+
+        result = await self.store.create_audio_segment(
+            feed_id=str(_FEED_ID),
+            classification=AudioClassification.SPEECH_DETECTED,
+            start_timestamp=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+            end_timestamp=datetime.datetime(
+                2026, 1, 1, 0, 1, tzinfo=datetime.UTC
+            ),
+            source_audio_uris=["gs://bucket/audio1.ogg"],
+            canonical_audio_uri="gs://bucket/canonical.ogg",
+            start_audio_offset=datetime.timedelta(seconds=5),
+            end_audio_offset=datetime.timedelta(seconds=10),
+            playback_audio_uri=None,
+            missing_prior_context=False,
+            missing_post_context=False,
+            segment_id=custom_segment_id,
+        )
+
+        self.assertEqual(result.id, str(_SEGMENT_ID))
+        self.assertEqual(result.feed_id, str(_FEED_ID))
+        missing_prior_context = False
+        missing_post_context = False
+        self.pool.fetchrow.assert_called_once_with(
+            audio_segment_queries.CREATE_AUDIO_SEGMENT_SQL,
+            custom_segment_id,
+            _FEED_ID,
+            AudioClassification.SPEECH_DETECTED,
+            datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+            datetime.datetime(2026, 1, 1, 0, 1, tzinfo=datetime.UTC),
+            missing_prior_context,
+            missing_post_context,
+            ["gs://bucket/audio1.ogg"],
+            "gs://bucket/canonical.ogg",
+            datetime.timedelta(seconds=5),
+            datetime.timedelta(seconds=10),
+            None,
+        )
+
     async def test_create_audio_segment_invalid_feed_id(self) -> None:
         with self.assertRaises(ValueError) as cm:
             await self.store.create_audio_segment(

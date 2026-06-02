@@ -44,9 +44,9 @@ class TranscriptService:
             )
         )
 
-    async def get_transcript(self, transmission_id: str) -> Transcript | None:
-        """Fetches a transcript by transmission ID."""
-        msg = await self._store.get_transcript(transmission_id)
+    async def get_transcript(self, segment_id: str) -> Transcript | None:
+        """Fetches a transcript by segment ID."""
+        msg = await self._store.get_transcript(segment_id)
         if not msg:
             return None
         return Transcript(
@@ -117,6 +117,6 @@ class TranscriptService:
             next_token=result.next_token,
         )
 
-    async def delete_transcript(self, transmission_id: str) -> bool:
-        """Deletes a transcript by transmission ID."""
-        return await self._store.delete_transcript(transmission_id)
+    async def delete_transcript(self, segment_id: str) -> bool:
+        """Deletes a transcript by segment ID."""
+        return await self._store.delete_transcript(segment_id)

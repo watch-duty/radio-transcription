@@ -11,10 +11,10 @@ message NormalizedAudio {
 
   // --- Identifiers & Base Metadata ---
   
-  // A unique, deterministic identifier for this specific transmission (formatted as a RFC 4122 UUID).
-  string transmission_id = 1;
+  // A unique, deterministic identifier for this specific audio segment (formatted as a RFC 4122 UUID).
+  string segment_id = 1;
 
-  // The unique identifier of the radio feed this transmission originated from (formatted as a RFC 4122 UUID).
+  // The unique identifier of the radio feed this segment originated from (formatted as a RFC 4122 UUID).
   string feed_id = 2;
 
 
@@ -55,4 +55,14 @@ message NormalizedAudio {
 
   // The ID used for mapping the feed ID within the application.
   string external_id = 13;
+
+  enum AudioClassification {
+    AUDIO_CLASSIFICATION_UNSPECIFIED = 0;
+    AUDIO_CLASSIFICATION_SPEECH = 1;
+    AUDIO_CLASSIFICATION_NO_SPEECH = 2;
+  }
+
+  // The classification of the audio segment (speech vs. non-speech).
+  AudioClassification audio_classification = 14;
 }
+

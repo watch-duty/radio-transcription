@@ -7,12 +7,10 @@ from unittest.mock import MagicMock
 import grpc
 from cloudevents.http.event import CloudEvent
 from google.api_core.exceptions import PermissionDenied, ServiceUnavailable
-from google.protobuf.duration_pb2 import Duration  # type: ignore
-from google.protobuf.timestamp_pb2 import Timestamp  # type: ignore
+from google.protobuf.duration_pb2 import Duration
+from google.protobuf.timestamp_pb2 import Timestamp
 
-from backend.pipeline.schema_types.normalized_audio_pb2 import (
-    NormalizedAudio,
-)
+from backend.pipeline.schema_types.normalized_audio_pb2 import NormalizedAudio
 from backend.pipeline.schema_types.transcribed_audio_pb2 import (
     TranscribedAudio,
 )
@@ -41,7 +39,7 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
 
         # Build dummy claim proto
         claim = NormalizedAudio(
-            transmission_id="tx-1111",
+            segment_id="tx-1111",
             feed_id="feed-2222",
             missing_prior_context=False,
             missing_post_context=False,
@@ -112,7 +110,7 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         out_proto = TranscribedAudio()
         out_proto.ParseFromString(call_args.kwargs["data"])
         self.assertEqual(out_proto.transcript, "Hello world")
-        self.assertEqual(out_proto.transmission_id, "tx-1111")
+        self.assertEqual(out_proto.segment_id, "tx-1111")
         self.assertEqual(out_proto.feed_name, "Test Feed")
         self.assertEqual(
             out_proto.canonical_audio_uri, "gs://bucket/normalized.flac"
@@ -130,6 +128,61 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
                 "errors": [],
             },
         )
+
+    def test_process_event_non_speech_skip(self) -> None:
+        """Verifies that non-speech transmissions early exit and skip transcription/annotations."""
+        # Setup mocks
+        mock_transcriber = MagicMock()
+        mock_publisher = MagicMock()
+        mock_audio_segments_client = MagicMock()
+
+        # Build dummy claim proto with AUDIO_CLASSIFICATION_NO_SPEECH
+        claim = NormalizedAudio(
+            segment_id="tx-1111",
+            feed_id="feed-2222",
+            missing_prior_context=False,
+            missing_post_context=False,
+            source_audio_uris=["gs://bucket/raw1.flac"],
+            canonical_audio_uri="gs://bucket/normalized.flac",
+            playback_audio_uri="gs://bucket/normalized.m4a",
+            feed_name="Test Feed",
+            external_id="ext-1234",
+            audio_classification=NormalizedAudio.AUDIO_CLASSIFICATION_NO_SPEECH,
+        )
+
+        # Serialize and wrap in Pub/Sub envelope
+        data_bytes = claim.SerializeToString()
+        envelope = {
+            "message": {
+                "data": base64.b64encode(data_bytes).decode("utf-8"),
+                "attributes": {},
+                "messageId": "msg-1",
+            }
+        }
+
+        cloud_event = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test-source",
+            },
+            data=envelope,
+        )
+
+        processor = TranscriptionEventProcessor(
+            project_id="test-proj",
+            output_topic="projects/test-proj/topics/egress",
+            transcriber=mock_transcriber,
+            publisher=mock_publisher,
+            audio_segments_client=mock_audio_segments_client,
+        )
+
+        # Run process_event
+        processor.process_event(cloud_event)
+
+        # Verify transcriber and publisher were NOT called, and no annotations were written
+        mock_transcriber.transcribe.assert_not_called()
+        mock_publisher.publish.assert_not_called()
+        mock_audio_segments_client.add_audio_segment_annotation.assert_not_called()
 
     def test_process_event_empty_transcription(self) -> None:
         """Verifies behavior when speech API returns empty transcription."""
@@ -149,7 +202,7 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
 
         # Build dummy claim proto
         claim = NormalizedAudio(
-            transmission_id="tx-1111",
+            segment_id="tx-1111",
             feed_id="feed-2222",
             missing_prior_context=False,
             missing_post_context=False,
@@ -221,7 +274,7 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         mock_audio_segments_client = MagicMock()
 
         claim = NormalizedAudio(
-            transmission_id="tx-1111",
+            segment_id="tx-1111",
             feed_id="feed-2222",
             source_audio_uris=["gs://bucket/raw1.flac"],
             canonical_audio_uri="gs://bucket/normalized.flac",
@@ -292,7 +345,7 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         mock_audio_segments_client = MagicMock()
 
         claim = NormalizedAudio(
-            transmission_id="tx-1111",
+            segment_id="tx-1111",
             feed_id="feed-2222",
             source_audio_uris=["gs://bucket/raw1.flac"],
             canonical_audio_uri="gs://bucket/normalized.flac",
@@ -355,7 +408,7 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         mock_audio_segments_client = MagicMock()
 
         claim = NormalizedAudio(
-            transmission_id="tx-1111",
+            segment_id="tx-1111",
             feed_id="feed-2222",
             source_audio_uris=["gs://bucket/raw1.flac"],
             canonical_audio_uri="gs://bucket/normalized.flac",
@@ -423,7 +476,7 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         mock_audio_segments_client = MagicMock()
 
         claim = NormalizedAudio(
-            transmission_id="tx-1111",
+            segment_id="tx-1111",
             feed_id="feed-2222",
             source_audio_uris=["gs://bucket/raw1.flac"],
             canonical_audio_uri="gs://bucket/normalized.flac",
@@ -485,7 +538,7 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         mock_audio_segments_client = MagicMock()
 
         claim = NormalizedAudio(
-            transmission_id="tx-1111",
+            segment_id="tx-1111",
             feed_id="feed-2222",
             source_audio_uris=["gs://bucket/raw1.flac"],
             canonical_audio_uri="gs://bucket/normalized.flac",

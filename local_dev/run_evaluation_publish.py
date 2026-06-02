@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # For testing payloads sent to the Pub/Sub between the Transcription and Rules
 # Evaluation services.
 SAMPLE_TRANSCRIPTION_MESSAGE_WITH_EVENT = TranscribedAudio(
-    transmission_id="test-trans-123",
+    segment_id="test-trans-123",
     transcript="evacuation needed immediately",
     source_audio_uris=["chunk1", "chunk2"],
     feed_id="test-feed",
@@ -24,7 +24,7 @@ SAMPLE_TRANSCRIPTION_MESSAGE_WITH_EVENT = TranscribedAudio(
 )
 
 SAMPLE_TRANSCRIPTION_MESSAGE_NO_EVENT = TranscribedAudio(
-    transmission_id="test-trans-123",
+    segment_id="test-trans-123",
     transcript="parade at 123 main street",
     source_audio_uris=["chunk1", "chunk2"],
     feed_id="test-feed",

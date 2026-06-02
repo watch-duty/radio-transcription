@@ -1,6 +1,6 @@
 -- Idempotent: IF NOT EXISTS allows safe re-application during Terraform runs.
 CREATE TABLE IF NOT EXISTS transcripts (
-    transmission_id         UUID PRIMARY KEY,
+    segment_id              UUID PRIMARY KEY,
     feed_id                 UUID NOT NULL REFERENCES feeds(id),
     transcript              TEXT NOT NULL,
     start_timestamp         TIMESTAMP WITH TIME ZONE NOT NULL,

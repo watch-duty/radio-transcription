@@ -129,6 +129,7 @@ class AudioSegmentStore:
         *,
         missing_prior_context: bool,
         missing_post_context: bool,
+        segment_id: uuid.UUID | None = None,
     ) -> AudioSegment:
         """Create a new audio segment."""
         try:
@@ -137,7 +138,8 @@ class AudioSegmentStore:
             msg = f"Invalid feed_id UUID: {feed_id}"
             raise ValueError(msg) from e
 
-        segment_id = uuid.uuid4()
+        if segment_id is None:
+            segment_id = uuid.uuid4()
         row = await self._pool.fetchrow(
             audio_segment_queries.CREATE_AUDIO_SEGMENT_SQL,
             segment_id,

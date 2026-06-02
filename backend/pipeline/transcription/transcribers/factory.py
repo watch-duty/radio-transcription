@@ -3,7 +3,7 @@
 Exposes get_transcriber using standard statically-typed imports from sibling modules.
 """
 
-from backend.pipeline.normalization.common.enums import TranscriberType
+from backend.pipeline.transcription.enums import TranscriberType
 from backend.pipeline.transcription.transcribers.base import Transcriber
 from backend.pipeline.transcription.transcribers.chirp import (
     ChirpConfig,

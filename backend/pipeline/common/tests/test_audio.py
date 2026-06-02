@@ -3,7 +3,7 @@ import subprocess
 import unittest
 from unittest.mock import MagicMock, patch
 
-from backend.pipeline.common.audio import get_audio_duration
+from backend.pipeline.common.audio_duration import get_audio_duration
 
 _ffmpeg_available = shutil.which("ffmpeg") is not None
 

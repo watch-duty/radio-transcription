@@ -99,9 +99,20 @@ class TestCollectorFailureContract(unittest.TestCase):
 
 
 def _mock_pubsub_publish(message_id: str = "test-message-id") -> mock._patch:
-    """Patch publish_audio_chunk to return a fixed message id (at call site)."""
+    """Patch publish_continuous_audio to return a fixed message id (at call site)."""
     return mock.patch(
-        "backend.pipeline.ingestion.collector_runtime.gcp_helper.publish_audio_chunk",
+        "backend.pipeline.ingestion.collector_runtime.gcp_helper.publish_continuous_audio",
+        new_callable=mock.AsyncMock,
+        return_value=message_id,
+    )
+
+
+def _mock_segmented_pubsub_publish(
+    message_id: str = "test-message-id",
+) -> mock._patch:
+    """Patch publish_segmented_audio to return a fixed message id (at call site)."""
+    return mock.patch(
+        "backend.pipeline.ingestion.collector_runtime.gcp_helper.publish_segmented_audio",
         new_callable=mock.AsyncMock,
         return_value=message_id,
     )
@@ -590,7 +601,10 @@ class TestProcessFeedTopicRouting(unittest.IsolatedAsyncioTestCase):
             source_feed_id="123",
         )
 
-        with _mock_upload_audio(), _mock_pubsub_publish() as mock_publish:
+        with (
+            _mock_upload_audio(),
+            _mock_segmented_pubsub_publish() as mock_publish,
+        ):
             await rt._process_feed(segmented_feed)
 
             mock_publish.assert_called_once()
@@ -1651,7 +1665,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         with (
             _mock_upload_audio(),
             mock.patch(
-                "backend.pipeline.ingestion.collector_runtime.gcp_helper.publish_audio_chunk",
+                "backend.pipeline.ingestion.collector_runtime.gcp_helper.publish_continuous_audio",
                 mock.AsyncMock(side_effect=RuntimeError("pubsub boom")),
             ),
         ):
@@ -1739,7 +1753,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
 
 
 class TestProcessFeedPublishAttributes(unittest.IsolatedAsyncioTestCase):
-    """Contract tests: publish_audio_chunk must receive session_id and source_type."""
+    """Contract tests: publish_continuous_audio must receive session_id and source_type."""
 
     async def test_uses_chunk_session_id(self) -> None:
         """Runtime publishes with the session_id from CapturedChunk."""
@@ -1831,7 +1845,7 @@ class TestProcessFeedPublishAttributes(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(kwargs["session_id"])
 
     async def test_source_type_passed(self) -> None:
-        """publish_audio_chunk receives source_type matching the feed."""
+        """publish_continuous_audio receives source_type matching the feed."""
 
         async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")

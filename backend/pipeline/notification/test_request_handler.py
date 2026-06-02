@@ -31,7 +31,7 @@ class TestRequestHandler(TestCase):
         mock_response.data = b'{"success": true}'
         mock_http.request.return_value = mock_response
 
-        notification = AlertNotification(transmission_id="123")
+        notification = AlertNotification(segment_id="123")
         self.handler.send_notification(notification)
 
         mock_pool_manager.assert_called_once_with(
@@ -41,7 +41,7 @@ class TestRequestHandler(TestCase):
             "POST",
             "https://api.example.com/mock",
             body=(
-                '{"transmissionId": "123", "feedId": "", "transcript": "", '
+                '{"segmentId": "123", "feedId": "", "transcript": "", '
                 '"missingPriorContext": false, "missingPostContext": false, '
                 '"sourceAudioUris": [], "canonicalAudioUri": "", '
                 '"evaluationDecisions": [], "playbackAudioUri": "", '
@@ -65,7 +65,7 @@ class TestRequestHandler(TestCase):
             ),
         ]
 
-        notification = AlertNotification(transmission_id="123")
+        notification = AlertNotification(segment_id="123")
 
         with self.assertRaises(MaxRetryError):
             self.handler.send_notification(notification)

@@ -3,19 +3,24 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
+import uuid
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
 from google.cloud.pubsub_v1.publisher.exceptions import (
     PublishToPausedOrderingKeyException,
 )
+from google.protobuf.duration_pb2 import Duration  # type: ignore
+from google.protobuf.timestamp_pb2 import Timestamp  # type: ignore
 from opentelemetry import trace
 from opentelemetry.trace.propagation.tracecontext import (
     TraceContextTextMapPropagator,
 )
 
 from backend.pipeline.common import tracing_utils
-from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
+from backend.pipeline.common import utils as common_utils
+from backend.pipeline.schema_types.continuous_audio_pb2 import ContinuousAudio
+from backend.pipeline.schema_types.segmented_audio_pb2 import SegmentedAudio
 
 if TYPE_CHECKING:
     from google.cloud import pubsub_v1
@@ -211,7 +216,7 @@ async def download_audio(gcs_client: GcsClient, gcs_uri: str) -> bytes:
 # -----------------------------------------------------------------------------
 
 
-def publish_audio_chunk_sync(
+def publish_continuous_audio_sync(
     publisher: pubsub_v1.PublisherClient,
     topic_path: str,
     feed_id: str,
@@ -223,13 +228,13 @@ def publish_audio_chunk_sync(
     duration_ms: int,
     source_type: str | None = None,
 ) -> str:
-    """Publish an AudioChunk to Pub/Sub and return the message ID.
+    """Publish a ContinuousAudio message synchronously to Pub/Sub and return the message ID.
 
     This is the synchronous core used by both sync callers (e.g. Echo
     ingestion) and the async wrapper below.
     """
-    with tracer.start_as_current_span("publish_raw_audio_chunk"):
-        audio_chunk_msg = AudioChunk(
+    with tracer.start_as_current_span("publish_continuous_audio"):
+        audio_chunk_msg = ContinuousAudio(
             gcs_uri=gcs_uri,
             feed_id=feed_id,
             feed_name=feed_name,
@@ -264,7 +269,7 @@ def publish_audio_chunk_sync(
         return future.result()
 
 
-async def publish_audio_chunk(
+async def publish_continuous_audio(
     pubsub_client: PubSubClient,
     topic_path: str,
     feed_id: str,
@@ -276,14 +281,14 @@ async def publish_audio_chunk(
     duration_ms: int,
     source_type: str | None = None,
 ) -> str:
-    """Asynchronously publish an AudioChunk to Pub/Sub.
+    """Asynchronously publish a ContinuousAudio message to Pub/Sub.
 
     Leverages asyncio.wrap_future to await the background gRPC thread pool
     non-blockingly, ensuring other asyncio tasks remain responsive.
     """
-    with tracer.start_as_current_span("publish_raw_audio_chunk"):
+    with tracer.start_as_current_span("publish_continuous_audio"):
         publisher = pubsub_client.get_publisher()
-        audio_chunk_msg = AudioChunk(
+        audio_chunk_msg = ContinuousAudio(
             gcs_uri=gcs_uri,
             feed_id=feed_id,
             feed_name=feed_name,
@@ -326,6 +331,160 @@ async def publish_audio_chunk(
             # RuntimeError (publisher stopped) or ValueError (unseen key).
             # Neither should occur here in normal operation, but a crash on
             # the failure-cleanup path itself would be worse than swallowing.
+            try:
+                publisher.resume_publish(topic_path, ordering_key=feed_id)
+            except (RuntimeError, ValueError):
+                logger.exception(
+                    "resume_publish failed for feed=%s topic=%s",
+                    feed_id,
+                    topic_path,
+                )
+            raise
+
+
+def publish_segmented_audio_sync(
+    publisher: pubsub_v1.PublisherClient,
+    topic_path: str,
+    feed_id: str,
+    feed_name: str,
+    external_id: str,
+    gcs_uri: str,
+    start_timestamp: datetime.datetime,
+    duration_ms: int,
+    source_type: str | None = None,
+) -> str:
+    """Publish a SegmentedAudio message synchronously to Pub/Sub and return the message ID."""
+    with tracer.start_as_current_span("publish_segmented_audio"):
+        if not external_id:
+            segment_id = str(uuid.uuid4())
+        else:
+            segment_id = common_utils.generate_segment_id(feed_id, external_id)
+        end_timestamp = start_timestamp + datetime.timedelta(
+            milliseconds=duration_ms
+        )
+
+        start_ts = Timestamp()
+        start_ts.FromMicroseconds(int(start_timestamp.timestamp() * 1000000))
+
+        end_ts = Timestamp()
+        end_ts.FromMicroseconds(int(end_timestamp.timestamp() * 1000000))
+
+        start_offset = Duration(seconds=0, nanos=0)
+        end_offset = Duration(
+            seconds=duration_ms // 1000,
+            nanos=(duration_ms % 1000) * 1000000,
+        )
+
+        segmented_msg = SegmentedAudio(
+            segment_id=segment_id,
+            feed_id=feed_id,
+            start_timestamp=start_ts,
+            end_timestamp=end_ts,
+            missing_prior_context=False,
+            missing_post_context=False,
+            source_audio_uris=[gcs_uri],
+            start_audio_offset=start_offset,
+            end_audio_offset=end_offset,
+            feed_name=feed_name,
+            external_id=external_id,
+            audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH,
+            raw_audio_uri=gcs_uri,
+        )
+
+        attrs: dict[str, str] = {
+            "feed_id": feed_id,
+            "gcs_uri": gcs_uri,
+            "timestamp_ms": str(int(start_timestamp.timestamp() * 1000)),
+        }
+        if source_type is not None:
+            attrs["source_type"] = source_type
+
+        carrier: dict[str, str] = {}
+        TraceContextTextMapPropagator().inject(carrier)
+        if "traceparent" in carrier:
+            attrs["traceparent"] = carrier["traceparent"]
+
+        future = publisher.publish(
+            topic_path,
+            segmented_msg.SerializeToString(),
+            ordering_key=feed_id,
+            **attrs,
+        )
+        return future.result()
+
+
+async def publish_segmented_audio(
+    pubsub_client: PubSubClient,
+    topic_path: str,
+    feed_id: str,
+    feed_name: str,
+    external_id: str,
+    gcs_uri: str,
+    start_timestamp: datetime.datetime,
+    duration_ms: int,
+    source_type: str | None = None,
+) -> str:
+    """Asynchronously publish a SegmentedAudio message to Pub/Sub."""
+    with tracer.start_as_current_span("publish_segmented_audio"):
+        publisher = pubsub_client.get_publisher()
+        if not external_id:
+            segment_id = str(uuid.uuid4())
+        else:
+            segment_id = common_utils.generate_segment_id(feed_id, external_id)
+        end_timestamp = start_timestamp + datetime.timedelta(
+            milliseconds=duration_ms
+        )
+
+        start_ts = Timestamp()
+        start_ts.FromMicroseconds(int(start_timestamp.timestamp() * 1000000))
+
+        end_ts = Timestamp()
+        end_ts.FromMicroseconds(int(end_timestamp.timestamp() * 1000000))
+
+        start_offset = Duration(seconds=0, nanos=0)
+        end_offset = Duration(
+            seconds=duration_ms // 1000,
+            nanos=(duration_ms % 1000) * 1000000,
+        )
+
+        segmented_msg = SegmentedAudio(
+            segment_id=segment_id,
+            feed_id=feed_id,
+            start_timestamp=start_ts,
+            end_timestamp=end_ts,
+            missing_prior_context=False,
+            missing_post_context=False,
+            source_audio_uris=[gcs_uri],
+            start_audio_offset=start_offset,
+            end_audio_offset=end_offset,
+            feed_name=feed_name,
+            external_id=external_id,
+            audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH,
+            raw_audio_uri=gcs_uri,
+        )
+
+        attrs: dict[str, str] = {
+            "feed_id": feed_id,
+            "gcs_uri": gcs_uri,
+            "timestamp_ms": str(int(start_timestamp.timestamp() * 1000)),
+        }
+        if source_type is not None:
+            attrs["source_type"] = source_type
+
+        carrier: dict[str, str] = {}
+        TraceContextTextMapPropagator().inject(carrier)
+        if "traceparent" in carrier:
+            attrs["traceparent"] = carrier["traceparent"]
+
+        future = publisher.publish(
+            topic_path,
+            segmented_msg.SerializeToString(),
+            ordering_key=feed_id,
+            **attrs,
+        )
+        try:
+            return await asyncio.wrap_future(future)
+        except PublishToPausedOrderingKeyException:
             try:
                 publisher.resume_publish(topic_path, ordering_key=feed_id)
             except (RuntimeError, ValueError):

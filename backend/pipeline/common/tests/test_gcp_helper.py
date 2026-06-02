@@ -13,7 +13,7 @@ from yarl import URL
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
-from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
+from backend.pipeline.schema_types.continuous_audio_pb2 import ContinuousAudio
 from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 
 _DUMMY_REQUEST_INFO = aiohttp.RequestInfo(
@@ -395,8 +395,8 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.exception.status, 500)
 
 
-class TestPublishAudioChunkSync(unittest.TestCase):
-    """Test suite for the synchronous publish_audio_chunk_sync function."""
+class TestPublishContinuousAudioSync(unittest.TestCase):
+    """Test suite for the synchronous publish_continuous_audio_sync function."""
 
     def test_sets_timestamp_ordering_key_and_attributes(self) -> None:
         mock_now = datetime.datetime(2026, 3, 5, 12, 0, tzinfo=datetime.UTC)
@@ -405,7 +405,7 @@ class TestPublishAudioChunkSync(unittest.TestCase):
         _, mock_publisher = _make_pubsub_client()
         mock_publisher.publish.return_value = mock_future
 
-        result = gcp_helper.publish_audio_chunk_sync(
+        result = gcp_helper.publish_continuous_audio_sync(
             mock_publisher,
             topic_path="projects/test/topics/audio",
             feed_id="feed-42",
@@ -426,7 +426,7 @@ class TestPublishAudioChunkSync(unittest.TestCase):
 
         self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
 
-        chunk = AudioChunk()
+        chunk = ContinuousAudio()
         chunk.ParseFromString(publish_args[1])
         self.assertEqual(chunk.gcs_uri, "gs://bucket/audio.flac")
         self.assertEqual(chunk.feed_id, "feed-42")
@@ -443,7 +443,7 @@ class TestPublishAudioChunkSync(unittest.TestCase):
         _, mock_publisher = _make_pubsub_client()
         mock_publisher.publish.return_value = mock_future
 
-        gcp_helper.publish_audio_chunk_sync(
+        gcp_helper.publish_continuous_audio_sync(
             mock_publisher,
             topic_path="projects/test/topics/audio",
             feed_id="feed-1",
@@ -476,7 +476,7 @@ class TestPublishAudioChunkSync(unittest.TestCase):
             "opentelemetry.trace.propagation.tracecontext.TraceContextTextMapPropagator.inject",
             side_effect=mock_inject,
         ):
-            gcp_helper.publish_audio_chunk_sync(
+            gcp_helper.publish_continuous_audio_sync(
                 mock_publisher,
                 topic_path="projects/test/topics/audio",
                 feed_id="feed-1",
@@ -497,8 +497,8 @@ class TestPublishAudioChunkSync(unittest.TestCase):
         )
 
 
-class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
-    """Test suite for the async publish_audio_chunk wrapper."""
+class TestPublishContinuousAudio(unittest.IsolatedAsyncioTestCase):
+    """Test suite for the async publish_continuous_audio wrapper."""
 
     async def test_injects_traceparent_attribute_async(self) -> None:
         """Verifies that async publish logic serializes active traceparent context."""
@@ -518,7 +518,7 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
             "opentelemetry.trace.propagation.tracecontext.TraceContextTextMapPropagator.inject",
             side_effect=mock_inject,
         ):
-            await gcp_helper.publish_audio_chunk(
+            await gcp_helper.publish_continuous_audio(
                 mock_pubsub_client,
                 topic_path="projects/test/topics/audio",
                 feed_id="feed-42",
@@ -545,7 +545,7 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
         fut.set_result("message-123")
         mock_publisher.publish.return_value = fut
 
-        result = await gcp_helper.publish_audio_chunk(
+        result = await gcp_helper.publish_continuous_audio(
             mock_pubsub_client,
             topic_path="projects/test/topics/audio",
             feed_id="feed-42",
@@ -560,7 +560,7 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, "message-123")
         mock_publisher.publish.assert_called_once()
         publish_args, publish_kwargs = mock_publisher.publish.call_args
-        chunk = AudioChunk()
+        chunk = ContinuousAudio()
         chunk.ParseFromString(publish_args[1])
         self.assertEqual(chunk.feed_name, "Central Fire")
         self.assertEqual(chunk.external_id, "ext-id")
@@ -576,7 +576,7 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
         mock_publisher.publish.return_value = fut
 
         with self.assertRaises(PublishToPausedOrderingKeyException):
-            await gcp_helper.publish_audio_chunk(
+            await gcp_helper.publish_continuous_audio(
                 mock_pubsub_client,
                 topic_path="projects/test/topics/audio",
                 feed_id="feed-42",
@@ -611,7 +611,7 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
                 mock_publisher.resume_publish.side_effect = resume_exc
 
                 with self.assertRaises(PublishToPausedOrderingKeyException):
-                    await gcp_helper.publish_audio_chunk(
+                    await gcp_helper.publish_continuous_audio(
                         mock_pubsub_client,
                         topic_path="projects/test/topics/audio",
                         feed_id="feed-42",

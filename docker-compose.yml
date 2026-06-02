@@ -34,7 +34,7 @@ services:
       - pipeline-network
     volumes:
       - ./local_dev/gcs_init.py:/app/gcs_init.py
-      - ./backend/pipeline/normalization/tests/test_data:/app/data
+      - ./backend/pipeline/segmentation/tests/test_data:/app/data
     working_dir: /app
     command: sh -c "pip install google-cloud-storage && python gcs_init.py"
 
@@ -104,15 +104,42 @@ services:
     build:
       context: .
       dockerfile: backend/pipeline/normalization/Dockerfile
-    entrypoint: ["python3", "backend/pipeline/normalization/main.py"]
+    ports:
+      - "8083:8083"
+    environment:
+      - PORT=8083
+      - CANONICAL_AUDIO_BUCKET=$AUDIO_CANONICAL_BUCKET
+      - OUTPUT_TOPIC=projects/local-project/topics/normalized-audio
+      - AUDIO_SEGMENTS_API_URL=http://audio-segments-api:8091/v1/audio_segments
+      - PROJECT_ID=$GOOGLE_CLOUD_PROJECT
+    env_file:
+      - ./local_dev/LOCAL.env
+    networks:
+      - pipeline-network
+    depends_on:
+      pubsub-emulator:
+        condition: service_started
+      pubsub-init:
+        condition: service_completed_successfully
+      gcs-emulator:
+        condition: service_started
+      gcs-init:
+        condition: service_completed_successfully
+      audio-segments-api:
+        condition: service_healthy
+
+  segmentation:
+    build:
+      context: .
+      dockerfile: backend/pipeline/segmentation/Dockerfile
+    entrypoint: ["python3", "backend/pipeline/segmentation/main.py"]
     # DirectRunner doesn't support deduplication, so we need to give an empty field here to disable it.
     command: >
       --continuous_input_subscription projects/$GOOGLE_CLOUD_PROJECT/subscriptions/$CONTINUOUS_AUDIO_SUBSCRIPTION
-      --segmented_input_subscription projects/$GOOGLE_CLOUD_PROJECT/subscriptions/$SEGMENTED_AUDIO_SUBSCRIPTION
-      --output_topic projects/$GOOGLE_CLOUD_PROJECT/topics/normalized-audio
+      --output_topic projects/$GOOGLE_CLOUD_PROJECT/topics/segmented-audio
       --project $GOOGLE_CLOUD_PROJECT
       --id_label ""
-      --canonical_audio_bucket $AUDIO_CANONICAL_BUCKET
+      --staging_audio_bucket $AUDIO_STAGING_BUCKET
     env_file:
       - ./local_dev/LOCAL.env
     networks:
@@ -141,7 +168,7 @@ services:
       - TRANSCRIBER_TYPE=mock
     command: ["functions-framework", "--source=backend/pipeline/transcription/main.py", "--target=transcribe_claim_check", "--signature-type=cloudevent", "--port=8084"]
     healthcheck:
-      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8084))"]
+      test: ["CMD", "/bin/bash", "-c", "exec 3<>/dev/tcp/localhost/8084"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -162,7 +189,7 @@ services:
       - ./local_dev/run_evaluation_publish.py:/app/run_evaluation_publish.py
     command: ["functions-framework", "--source=backend/pipeline/evaluation/main.py", "--target=evaluate_transcribed_audio_segment", "--signature-type=cloudevent", "--port=8080"]
     healthcheck:
-      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8080))"]
+      test: ["CMD", "/bin/bash", "-c", "exec 3<>/dev/tcp/localhost/8080"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -186,7 +213,7 @@ services:
       - REDIS_HOST=redis
     command: ["functions-framework", "--source=backend/pipeline/notification/send_notification.py", "--target=send_notification", "--signature-type=cloudevent", "--port=8081"]
     healthcheck:
-      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8081))"]
+      test: ["CMD", "/bin/bash", "-c", "exec 3<>/dev/tcp/localhost/8081"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -207,7 +234,7 @@ services:
       - ./local_dev/LOCAL.env
     command: ["uvicorn", "backend.services.rules.main:app", "--host", "0.0.0.0", "--port", "8086"]
     healthcheck:
-      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8086))"]
+      test: ["CMD", "/bin/bash", "-c", "exec 3<>/dev/tcp/localhost/8086"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -227,7 +254,7 @@ services:
       - ./local_dev/LOCAL.env
     command: ["uvicorn", "backend.services.transcripts.main:app", "--host", "0.0.0.0", "--port", "8087"]
     healthcheck:
-      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8087))"]
+      test: ["CMD", "/bin/bash", "-c", "exec 3<>/dev/tcp/localhost/8087"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -247,7 +274,7 @@ services:
       - ./local_dev/LOCAL.env
     command: ["uvicorn", "backend.services.feeds.main:app", "--host", "0.0.0.0", "--port", "8089"]
     healthcheck:
-      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8089))"]
+      test: ["CMD", "/bin/bash", "-c", "exec 3<>/dev/tcp/localhost/8089"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -267,7 +294,7 @@ services:
       - ./local_dev/LOCAL.env
     command: ["uvicorn", "backend.services.audio_segments.main:app", "--host", "0.0.0.0", "--port", "8091"]
     healthcheck:
-      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8091))"]
+      test: ["CMD", "/bin/bash", "-c", "exec 3<>/dev/tcp/localhost/8091"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -295,7 +322,7 @@ services:
       - "8090:8090"
     volumes:
       - ./local_dev/mock_audio_server.py:/app/mock_audio_server.py:ro
-      - ./backend/pipeline/normalization/tests/test_data/test_bcfy.flac:/data/test_bcfy.flac:ro
+      - ./backend/pipeline/segmentation/tests/test_data/test_bcfy.flac:/data/test_bcfy.flac:ro
     working_dir: /app
     env_file:
       - ./local_dev/LOCAL.env
@@ -354,6 +381,8 @@ services:
       gcs-emulator:
         condition: service_started
       normalization:
+        condition: service_started
+      segmentation:
         condition: service_started
       transcription:
         condition: service_started

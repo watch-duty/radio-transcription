@@ -69,7 +69,7 @@ class TestSendNotification(TestCase):
 
         evaluated_payload = EvaluatedTranscribedAudio(
             transcript="This is a test!",
-            transmission_id="1234",
+            segment_id="1234",
             source_audio_uris=["gs://foo/bar.flac"],
             feed_name="asdf",
             external_id="ext-id",
@@ -94,11 +94,11 @@ class TestSendNotification(TestCase):
 
         expected_notification = AlertNotification(
             transcript="This is a test!",
-            transmission_id="1234",
+            segment_id="1234",
             source_audio_uris=["gs://foo/bar.flac"],
             feed_name="asdf",
             external_id="ext-id",
-            app_url="https://app.example.com/transcripts?feedId=&transmissionId=1234&timestamp=1000000",
+            app_url="https://app.example.com/transcripts?feedId=&segmentId=1234&timestamp=1000000",
         )
         expected_notification.start_audio_offset.seconds = 10
         expected_notification.end_audio_offset.seconds = 20
@@ -133,7 +133,7 @@ class TestSendNotification(TestCase):
 
         evaluated_payload = EvaluatedTranscribedAudio(
             transcript="This has errors!",
-            transmission_id="5678",
+            segment_id="5678",
             source_audio_uris=["gs://foo/bar.flac"],
             feed_name="asdf",
             external_id="ext-id",
@@ -157,11 +157,11 @@ class TestSendNotification(TestCase):
 
         expected_notification = AlertNotification(
             transcript="This has errors!",
-            transmission_id="5678",
+            segment_id="5678",
             source_audio_uris=["gs://foo/bar.flac"],
             feed_name="asdf",
             external_id="ext-id",
-            app_url="https://app.example.com/transcripts?feedId=&transmissionId=5678&timestamp=1000000",
+            app_url="https://app.example.com/transcripts?feedId=&segmentId=5678&timestamp=1000000",
             evaluation_errors=[EvaluationErrorType.ERROR_RULES_FETCH_FAILED],
         )
         expected_notification.start_audio_offset.seconds = 10
@@ -184,7 +184,7 @@ class TestSendNotification(TestCase):
         mock_dedupe.process_notification.return_value = False
 
         evaluated_payload = EvaluatedTranscribedAudio(
-            transcript="This is a test!", transmission_id="1234"
+            transcript="This is a test!", segment_id="1234"
         )
         raw_data = base64.b64encode(evaluated_payload.SerializeToString())
         event_data = {"message": {"data": raw_data, "messageId": "1234"}}
@@ -225,7 +225,7 @@ class TestSendNotification(TestCase):
 
         evaluated_payload = EvaluatedTranscribedAudio(
             transcript="This is a test!",
-            transmission_id="1234",
+            segment_id="1234",
         )
         raw_data = base64.b64encode(evaluated_payload.SerializeToString())
         event_data = {
@@ -253,7 +253,7 @@ class TestSendNotification(TestCase):
     def test_convert_to_notification_encodes_epoch_timestamp(self) -> None:
         evaluated_payload = EvaluatedTranscribedAudio(
             feed_id="feed-1",
-            transmission_id="tx-1",
+            segment_id="tx-1",
         )
         evaluated_payload.start_timestamp.seconds = 1776280988
         evaluated_payload.start_timestamp.nanos = 990000000
@@ -265,7 +265,7 @@ class TestSendNotification(TestCase):
 
         self.assertEqual(
             notification.app_url,
-            "https://app.example.com/transcripts?feedId=feed-1&transmissionId=tx-1"
+            "https://app.example.com/transcripts?feedId=feed-1&segmentId=tx-1"
             "&timestamp=1776280988990",
         )
         self.assertEqual(notification.start_timestamp.seconds, 1776280988)
