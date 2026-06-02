@@ -34,7 +34,7 @@ from backend.pipeline.segmentation.datatypes import (
 )
 from backend.pipeline.segmentation.options import TranscriptionOptions
 from backend.pipeline.segmentation.transforms.stateful import (
-    OrderedContinuousStitchAudioFn,
+    OrderedStitchAudioFn,
 )
 from backend.pipeline.segmentation.transforms.stateless import (
     ParseAndKeyFn,
@@ -135,8 +135,8 @@ def get_pipeline(
 
     continuous_stitching = continuous_parsed[
         MAIN_TAG
-    ] | "OrderedContinuousStitchAudio" >> beam.ParDo(
-        OrderedContinuousStitchAudioFn(
+    ] | "OrderedStitchAudio" >> beam.ParDo(
+        OrderedStitchAudioFn(
             order_config=OrderRestorerConfig(
                 out_of_order_timeout_ms=ooo_timeout_continuous,
             ),
