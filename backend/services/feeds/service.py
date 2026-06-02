@@ -5,6 +5,7 @@ import uuid
 from typing import TYPE_CHECKING
 
 from backend.pipeline.storage.feed_store import SortOrder
+
 from .models import Feed, FeedCreate, FeedUpdate, ListFeedsResponse
 
 if TYPE_CHECKING:
@@ -69,7 +70,7 @@ class FeedService:
         self,
         limit: int = 100,
         next_token: str | None = None,
-        order: SortOrder | str = SortOrder.DESC,
+        order: SortOrder = SortOrder.DESC,
         *,
         source_types: list[str] | None = None,
         statuses: list[str] | None = None,
@@ -89,7 +90,7 @@ class FeedService:
             order=order,
             source_types=source_types,
             statuses=statuses,
-            tags=parsed_tags if parsed_tags else None,
+            tags=parsed_tags or None,
         )
         return ListFeedsResponse(
             feeds=[Feed.model_validate(f) for f in result.feeds],

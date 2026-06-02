@@ -38,9 +38,9 @@ from backend.pipeline.storage.pagination_utils import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
     import datetime
     import uuid
+    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -765,7 +765,7 @@ class FeedStore:
         *,
         limit: int = 100,
         next_token: str | None = None,
-        order: SortOrder | str = SortOrder.DESC,
+        order: SortOrder = SortOrder.DESC,
         source_types: list[str] | None = None,
         statuses: list[str] | None = None,
         tags: list[dict[str, str]] | None = None,
@@ -794,9 +794,7 @@ class FeedStore:
             tags_json,
         )
 
-        rows, new_next_token = get_paginated_results(
-            rows, limit, "id"
-        )
+        rows, new_next_token = get_paginated_results(rows, limit, "id")
 
         feeds = [self._row_to_feed(row) for row in rows]
         return PaginatedFeeds(feeds, new_next_token)
