@@ -272,7 +272,10 @@ class TestReviewPoolAssembly(unittest.TestCase):
             item["audio_segment_id"],
             review.audio_segment_id(metadata),
         )
-        self.assertEqual(item["source_window_id"], review.source_window_id(rows[0]))
+        self.assertEqual(
+            item["source_window_id"],
+            review.source_window_id(rows[0]),
+        )
         self.assertEqual(item["model_ready_audio_uri"], "gs://bucket/a.flac")
         self.assertEqual(item["original_audio_uri"], "gs://bucket/original.wav")
         self.assertEqual(item["offset"], 1.25)

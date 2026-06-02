@@ -25,6 +25,19 @@ REQUIRED_REVIEW_ROW_FIELDS = (
     "text",
 )
 
+DUPLICATE_REPORT_FIELDS = (
+    "audio_segment_id",
+    "model_ready_audio_uri",
+    "original_audio_uri",
+    "offset",
+    "duration",
+    "source_group",
+    "row_index",
+    "split",
+    "dataset_name",
+    "text",
+)
+
 
 @dataclasses.dataclass(frozen=True)
 class GcsObjectMetadata:
@@ -89,6 +102,20 @@ class ReviewManifestRow:
 
 
 ReviewRowInput = ReviewManifestRow | collections.abc.Mapping[str, object]
+
+
+class DuplicateAudioSegmentError(ValueError):
+    """Raised when two or more review rows share exact audio identity.
+
+    Attributes:
+        duplicates: Duplicate report rows containing the D-13 audit fields.
+    """
+
+    def __init__(self, duplicates: list[dict[str, object]]) -> None:
+        super().__init__(
+            f"duplicate audio_segment_id values found: {len(duplicates)} rows"
+        )
+        self.duplicates = duplicates
 
 
 def load_review_manifest_rows(
@@ -236,6 +263,86 @@ def source_window_id(row: ReviewRowInput) -> str:
     )
 
 
+def build_review_pool(
+    rows: collections.abc.Iterable[ReviewRowInput],
+    *,
+    metadata_by_uri: collections.abc.Mapping[str, GcsObjectMetadata],
+) -> list[dict[str, object]]:
+    """Attach review identities and audit metadata to validated rows.
+
+    Args:
+        rows: Review manifest rows.
+        metadata_by_uri: GCS object metadata keyed by `model_ready_audio_uri`.
+
+    Returns:
+        Enriched review-pool rows.
+
+    Raises:
+        ValueError: If metadata is missing for a row.
+        DuplicateAudioSegmentError: If exact audio identities are duplicated.
+    """
+    enriched_rows = []
+    for row in rows:
+        row_dict = _row_to_dict(row)
+        model_ready_audio_uri = str(row_dict["model_ready_audio_uri"])
+        metadata = metadata_by_uri.get(model_ready_audio_uri)
+        if metadata is None:
+            raise ValueError(
+                "missing GCS metadata for model_ready_audio_uri "
+                f"{model_ready_audio_uri}"
+            )
+
+        row_dict.update(
+            {
+                "audio_segment_id": audio_segment_id(metadata),
+                "source_window_id": source_window_id(row),
+                "md5_hash": metadata.md5_hash,
+                "crc32c_hash": metadata.crc32c_hash,
+                "size": metadata.size,
+                "generation": metadata.generation,
+                "storage_url": metadata.storage_url,
+                "model_ready_audio_uri": metadata.uri,
+            }
+        )
+        enriched_rows.append(row_dict)
+
+    if find_duplicate_audio_segment_ids(enriched_rows):
+        raise DuplicateAudioSegmentError(duplicate_report_rows(enriched_rows))
+    return enriched_rows
+
+
+def find_duplicate_audio_segment_ids(
+    rows: collections.abc.Iterable[collections.abc.Mapping[str, object]],
+) -> list[str]:
+    """Return duplicate audio segment IDs in first-seen order."""
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    duplicate_seen: set[str] = set()
+    for row in rows:
+        audio_id = str(row["audio_segment_id"])
+        if audio_id in seen and audio_id not in duplicate_seen:
+            duplicates.append(audio_id)
+            duplicate_seen.add(audio_id)
+        seen.add(audio_id)
+    return duplicates
+
+
+def duplicate_report_rows(
+    rows: collections.abc.Iterable[collections.abc.Mapping[str, object]],
+) -> list[dict[str, object]]:
+    """Return duplicate rows with the exact maintainer audit fields."""
+    row_list = list(rows)
+    duplicate_ids = set(find_duplicate_audio_segment_ids(row_list))
+    report_rows = []
+    for row in row_list:
+        if str(row["audio_segment_id"]) not in duplicate_ids:
+            continue
+        report_rows.append(
+            {field: row[field] for field in DUPLICATE_REPORT_FIELDS}
+        )
+    return report_rows
+
+
 def _review_row_from_mapping(
     raw_row: collections.abc.Mapping[str, object],
     *,
@@ -262,6 +369,12 @@ def _review_row_from_mapping(
         dataset_name=str(raw_row["dataset_name"]),
         text="" if raw_row["text"] is None else str(raw_row["text"]),
     )
+
+
+def _row_to_dict(row: ReviewRowInput) -> dict[str, object]:
+    if isinstance(row, ReviewManifestRow):
+        return row.to_dict()
+    return {field: row[field] for field in REQUIRED_REVIEW_ROW_FIELDS}
 
 
 def _row_value(row: ReviewRowInput, field: str) -> object:
