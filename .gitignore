@@ -24,6 +24,7 @@ mise.*.local.toml
 .vscode/settings.json
 .zed/settings.json
 .claude
+*.swp
 
 # npm
 npm-debug.log*
