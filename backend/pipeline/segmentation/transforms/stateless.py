@@ -355,16 +355,8 @@ class UploadRawSegmentFn(beam.DoFn):
                 end_audio_offset=end_offset,
                 feed_name=request.feed_metadata.feed_name,
                 external_id=request.feed_metadata.external_id,
-                audio_classification=(
-                    "AUDIO_CLASSIFICATION_SPEECH"
-                    if request.audio_classification
-                    == SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH
-                    else (
-                        "AUDIO_CLASSIFICATION_NO_SPEECH"
-                        if request.audio_classification
-                        == SegmentedAudio.AUDIO_CLASSIFICATION_NO_SPEECH
-                        else "AUDIO_CLASSIFICATION_UNSPECIFIED"
-                    )
+                audio_classification=SegmentedAudio.AudioClassification.Name(
+                    request.audio_classification
                 ),
                 raw_audio_uri=gcs_uri,
             )
