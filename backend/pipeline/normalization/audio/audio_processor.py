@@ -158,6 +158,7 @@ class AudioProcessor:
                 input=in_mem_file.getvalue(),
                 capture_output=True,
                 check=False,
+                timeout=30,
             )
             if process.returncode != 0:
                 logger.error(
@@ -251,6 +252,7 @@ class AudioProcessor:
                 input=audio_buffer.tobytes(),
                 capture_output=True,
                 check=False,
+                timeout=30,
             )
             if process.returncode != 0:
                 logger.error(
@@ -299,6 +301,7 @@ class AudioProcessor:
                 input=audio_buffer.tobytes(),
                 capture_output=True,
                 check=False,
+                timeout=30,
             )
 
             if process.returncode != 0:

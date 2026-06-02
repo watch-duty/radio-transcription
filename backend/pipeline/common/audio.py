@@ -39,6 +39,7 @@ def get_audio_duration(audio_bytes: bytes) -> int:
                 ],
                 capture_output=True,
                 check=True,
+                timeout=10,
             )
         duration_sec = float(result.stdout.decode().strip())
         return int(duration_sec * 1000)
