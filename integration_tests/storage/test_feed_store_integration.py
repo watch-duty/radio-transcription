@@ -14,7 +14,6 @@ from backend.pipeline.common.exceptions import (
     FeedNameAlreadyExistsError,
 )
 from backend.pipeline.storage.feed_store import (
-    FeedStatus,
     FeedStatusReason,
     FeedStore,
     SourceType,
@@ -1644,7 +1643,7 @@ async def test_get_feed_returns_none_if_not_found(store: FeedStore) -> None:
 # -- Tests: list_feeds ------------------------------------------------
 
 
-async def test_list_feeds_returns_all_feeds(
+async def test_list_feeds_returns_all_feeds_ordered_desc(
     db_pool: asyncpg.Pool, store: FeedStore
 ) -> None:
     """list_feeds retrieves all feeds ordered by created_at DESC."""
@@ -1658,7 +1657,7 @@ async def test_list_feeds_returns_all_feeds(
     result = await store.list_feeds()
 
     feeds = result.feeds
-    assert len(feeds) >= 2
+    assert len(feeds) == 2
     # The most recently created should be first
     assert feeds[0]["id"] == feed_id_b
     assert feeds[0]["source_feed_id"] == "src_b"
@@ -1670,47 +1669,118 @@ async def test_list_feeds_returns_all_feeds(
 
     assert result.next_token is None
 
-    # Test limit/pagination
-    paginated_result = await store.list_feeds(limit=1)
-    assert len(paginated_result.feeds) == 1
-    assert paginated_result.next_token is not None
 
-    # Test keyset navigation using next_token
-    next_page = await store.list_feeds(limit=1, next_token=paginated_result.next_token)
-    assert len(next_page.feeds) == 1
-    assert next_page.feeds[0]["id"] == feed_id_a
-
-    # Test filtering by source_types
-    bcfy_feeds = await store.list_feeds(source_types=["bcfy_feeds"])
-    assert len(bcfy_feeds.feeds) >= 2
-    assert all(f["source_type"] == SourceType.BCFY_FEEDS for f in bcfy_feeds.feeds)
-
-    openmhz_feeds = await store.list_feeds(source_types=["openmhz"])
-    assert len(openmhz_feeds.feeds) == 0
-
-    # Test filtering by statuses
-    unclaimed_feeds = await store.list_feeds(statuses=["unclaimed"])
-    assert len(unclaimed_feeds.feeds) >= 2
-    assert all(f["status"] == FeedStatus.UNCLAIMED for f in unclaimed_feeds.feeds)
-
-    active_feeds = await store.list_feeds(statuses=["active"])
-    assert len(active_feeds.feeds) == 0
-
-    # Test filtering by tags
-    feed_with_tag = await store.create_feed(
-        name="Tagged Feed",
-        source_type="bcfy_feeds",
-        source_feed_id="src_tagged",
-        external_id="ext_tagged",
-        tags=[{"key": "region", "value": "West"}]
+async def test_list_feeds_limit_and_pagination(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """list_feeds supports limit and next_token keyset pagination."""
+    feed_id_a = await _insert_feed(
+        db_pool, "Feed A", source_feed_id="src_a", external_id="ext_a"
+    )
+    feed_id_b = await _insert_feed(
+        db_pool, "Feed B", source_feed_id="src_b", external_id="ext_b"
     )
 
-    filtered_tags_yes = await store.list_feeds(tags=[{"key": "region", "value": "West"}])
-    assert len(filtered_tags_yes.feeds) == 1
-    assert filtered_tags_yes.feeds[0]["id"] == feed_with_tag["id"]
+    # Page 1
+    page1 = await store.list_feeds(limit=1)
+    assert len(page1.feeds) == 1
+    assert page1.feeds[0]["id"] == feed_id_b
+    assert page1.next_token is not None
 
-    filtered_tags_no = await store.list_feeds(tags=[{"key": "region", "value": "East"}])
-    assert len(filtered_tags_no.feeds) == 0
+    # Page 2 using next_token
+    page2 = await store.list_feeds(limit=1, next_token=page1.next_token)
+    assert len(page2.feeds) == 1
+    assert page2.feeds[0]["id"] == feed_id_a
+    assert page2.next_token is None
+
+
+async def test_list_feeds_filter_by_source_type(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """list_feeds filters results by source_types."""
+    feed_id_a = await _insert_feed(
+        db_pool, "Feed A", source_type="bcfy_feeds", source_feed_id="src_a"
+    )
+    feed_id_b = await _insert_feed(
+        db_pool, "Feed B", source_type="openmhz", source_feed_id="src_b"
+    )
+
+    # Filter by bcfy_feeds
+    bcfy_result = await store.list_feeds(source_types=["bcfy_feeds"])
+    assert len(bcfy_result.feeds) == 1
+    assert bcfy_result.feeds[0]["id"] == feed_id_a
+
+    # Filter by openmhz
+    openmhz_result = await store.list_feeds(source_types=["openmhz"])
+    assert len(openmhz_result.feeds) == 1
+    assert openmhz_result.feeds[0]["id"] == feed_id_b
+
+    # Filter by both
+    both_result = await store.list_feeds(source_types=["bcfy_feeds", "openmhz"])
+    assert len(both_result.feeds) == 2
+
+
+async def test_list_feeds_filter_by_status(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """list_feeds filters results by statuses."""
+    feed_id_a = await _insert_feed(db_pool, "Feed A", source_feed_id="src_a")
+    # Modify the status of Feed A to active
+    await db_pool.execute(
+        "UPDATE feeds SET status = $1 WHERE id = $2",
+        "active",
+        feed_id_a,
+    )
+
+    feed_id_b = await _insert_feed(db_pool, "Feed B", source_feed_id="src_b")
+
+    # Filter by active status
+    active_result = await store.list_feeds(statuses=["active"])
+    assert len(active_result.feeds) == 1
+    assert active_result.feeds[0]["id"] == feed_id_a
+
+    # Filter by unclaimed status
+    unclaimed_result = await store.list_feeds(statuses=["unclaimed"])
+    assert len(unclaimed_result.feeds) == 1
+    assert unclaimed_result.feeds[0]["id"] == feed_id_b
+
+
+async def test_list_feeds_filter_by_tags(store: FeedStore) -> None:
+    """list_feeds filters results by tag containment."""
+    feed_a = await store.create_feed(
+        name="Feed A",
+        source_type="bcfy_feeds",
+        source_feed_id="src_a",
+        external_id="ext_a",
+        tags=[{"key": "region", "value": "West"}],
+    )
+    feed_b = await store.create_feed(
+        name="Feed B",
+        source_type="bcfy_feeds",
+        source_feed_id="src_b",
+        external_id="ext_b",
+        tags=[{"key": "region", "value": "East"}],
+    )
+
+    # Filter matching tag
+    result_west = await store.list_feeds(
+        tags=[{"key": "region", "value": "West"}]
+    )
+    assert len(result_west.feeds) == 1
+    assert result_west.feeds[0]["id"] == feed_a["id"]
+
+    # Filter other tag
+    result_east = await store.list_feeds(
+        tags=[{"key": "region", "value": "East"}]
+    )
+    assert len(result_east.feeds) == 1
+    assert result_east.feeds[0]["id"] == feed_b["id"]
+
+    # Filter non-matching tag
+    result_none = await store.list_feeds(
+        tags=[{"key": "region", "value": "South"}]
+    )
+    assert len(result_none.feeds) == 0
 
 
 # -- Tests: delete_feed ------------------------------------------------
