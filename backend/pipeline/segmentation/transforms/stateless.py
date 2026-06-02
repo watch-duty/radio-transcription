@@ -266,7 +266,7 @@ class UploadRawSegmentFn(beam.DoFn):
     ) -> None:
         self.staging_audio_bucket = staging_audio_bucket
         self.project_id = project_id
-        self.gcs_client = None
+        self.gcs_client: storage.Client | None = None
 
     @override
     def setup(self) -> None:
@@ -304,6 +304,9 @@ class UploadRawSegmentFn(beam.DoFn):
                 err_msg = "staging_audio_bucket is not configured"
                 raise ValueError(err_msg)  # noqa: TRY301
 
+            if self.gcs_client is None:
+                gcs_err = "gcs_client is not initialized"
+                raise RuntimeError(gcs_err)  # noqa: TRY301
             bucket = self.gcs_client.bucket(self.staging_audio_bucket)
             blob = bucket.blob(flac_path)
             blob.upload_from_string(flac_bytes, content_type="audio/flac")

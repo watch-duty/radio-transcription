@@ -43,6 +43,7 @@ message FlushRequestProto {
   optional int64 start_audio_offset_ms = 11;
   optional int64 end_audio_offset_ms = 12;
   repeated TimeRangeProto speech_segments = 13;
+  optional string traceparent = 14;
   enum AudioClassification {
     AUDIO_CLASSIFICATION_UNSPECIFIED = 0;
     AUDIO_CLASSIFICATION_SPEECH = 1;

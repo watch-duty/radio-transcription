@@ -48,9 +48,7 @@ class NormalizationEventProcessor:
         self.gcs_client = gcs_client or storage.Client(project=self.project_id)
 
         # Set up specialized shared audio processing components
-        self.audio_processor = audio_processor.AudioProcessor(
-            gcs_client_instance=self.gcs_client,
-        )
+        self.audio_processor = audio_processor.AudioProcessor()
         self.audio_processor.setup()
 
         self.audio_uploader = gcs_uploader.GCSAudioUploader(

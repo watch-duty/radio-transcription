@@ -10,8 +10,8 @@ import aiohttp
 from google.cloud.pubsub_v1.publisher.exceptions import (
     PublishToPausedOrderingKeyException,
 )
-from google.protobuf.duration_pb2 import Duration  # type: ignore
-from google.protobuf.timestamp_pb2 import Timestamp  # type: ignore
+from google.protobuf.duration_pb2 import Duration
+from google.protobuf.timestamp_pb2 import Timestamp
 from opentelemetry import trace
 from opentelemetry.trace.propagation.tracecontext import (
     TraceContextTextMapPropagator,

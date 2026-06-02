@@ -23,12 +23,19 @@ from google.cloud import storage
 
 from backend.pipeline.common import constants as common_constants
 from backend.pipeline.common.log_helper import get_task_logger
+from backend.pipeline.schema_types import streaming_state_pb2 as bp_state_pb2
 from backend.pipeline.segmentation import constants as trans_constants
 from backend.pipeline.segmentation import datatypes
 from backend.pipeline.segmentation import utils as trans_utils
 from backend.pipeline.segmentation.audio import processor as audio_processor
 from backend.pipeline.segmentation.audio import vad
 from backend.pipeline.segmentation.state import stitcher_state
+
+_AUDIO_CLASSIFICATION_MAP = {
+    0: bp_state_pb2.FlushRequestProto.AUDIO_CLASSIFICATION_UNSPECIFIED,
+    1: bp_state_pb2.FlushRequestProto.AUDIO_CLASSIFICATION_SPEECH,
+    2: bp_state_pb2.FlushRequestProto.AUDIO_CLASSIFICATION_NO_SPEECH,
+}
 
 logger = get_task_logger(
     __name__, {"system": "transcription", "component": "stitcher-engine"}
@@ -252,26 +259,27 @@ class StitcherEngine:
                 )
                 self.stale_flushes.inc()
 
+                flush_req = datatypes.FlushRequest(
+                    buffer=np.concatenate(audio_buffer).tobytes(),
+                    feed_id=feed_id,
+                    session_id=curr_ctx.session_id,
+                    contributing_audio_uris=processed_uris,
+                    time_range=time_range,
+                    missing_prior_context=curr_ctx.missing_prior_context,
+                    missing_post_context=True,
+                    start_audio_offset_ms=curr_ctx.start_audio_offset_ms,
+                    end_audio_offset_ms=end_time_ms
+                    - curr_ctx.buffer_start_time_ms,
+                    speech_segments=curr_ctx.speech_segments,
+                    segment_id=segment_id,
+                    feed_metadata=curr_ctx.feed_metadata,
+                    sample_rate=curr_ctx.sample_rate
+                    or common_constants.SAMPLE_RATE_HZ,
+                )
+                flush_req.traceparent = curr_ctx.traceparent
                 yield (
                     feed_id,
-                    datatypes.FlushRequest(
-                        buffer=np.concatenate(audio_buffer).tobytes(),
-                        feed_id=feed_id,
-                        session_id=curr_ctx.session_id,
-                        contributing_audio_uris=processed_uris,
-                        time_range=time_range,
-                        missing_prior_context=curr_ctx.missing_prior_context,
-                        missing_post_context=True,
-                        start_audio_offset_ms=curr_ctx.start_audio_offset_ms,
-                        end_audio_offset_ms=end_time_ms
-                        - curr_ctx.buffer_start_time_ms,
-                        speech_segments=curr_ctx.speech_segments,
-                        segment_id=segment_id,
-                        feed_metadata=curr_ctx.feed_metadata,
-                        sample_rate=curr_ctx.sample_rate
-                        or common_constants.SAMPLE_RATE_HZ,
-                        traceparent=curr_ctx.traceparent,
-                    ),
+                    flush_req,
                 )
             except Exception as e:
                 if not self.stitch_config.route_to_dlq:
@@ -349,27 +357,31 @@ class StitcherEngine:
 
             last_start_ms_state.write(current_start_ms)
 
+            flush_req = datatypes.FlushRequest(
+                buffer=np.concatenate(audio_buffer).tobytes(),
+                feed_id=action.feed_id,
+                session_id=session_id,
+                contributing_audio_uris=processed_uris,
+                time_range=action.time_range,
+                missing_prior_context=action.missing_prior_context,
+                missing_post_context=action.missing_post_context,
+                start_audio_offset_ms=action.start_audio_offset_ms,
+                end_audio_offset_ms=action.end_audio_offset_ms,
+                speech_segments=action.speech_segments,
+                segment_id=segment_id,
+                feed_metadata=curr_context.feed_metadata,
+                sample_rate=curr_context.sample_rate
+                or (chunk_data.sample_rate if chunk_data else None)
+                or common_constants.SAMPLE_RATE_HZ,
+                audio_classification=_AUDIO_CLASSIFICATION_MAP.get(
+                    action.audio_classification,
+                    bp_state_pb2.FlushRequestProto.AUDIO_CLASSIFICATION_UNSPECIFIED,
+                ),
+            )
+            flush_req.traceparent = action.traceparent
             yield (
                 action.feed_id,
-                datatypes.FlushRequest(
-                    buffer=np.concatenate(audio_buffer).tobytes(),
-                    feed_id=action.feed_id,
-                    session_id=session_id,
-                    contributing_audio_uris=processed_uris,
-                    time_range=action.time_range,
-                    missing_prior_context=action.missing_prior_context,
-                    missing_post_context=action.missing_post_context,
-                    start_audio_offset_ms=action.start_audio_offset_ms,
-                    end_audio_offset_ms=action.end_audio_offset_ms,
-                    speech_segments=action.speech_segments,
-                    segment_id=segment_id,
-                    feed_metadata=curr_context.feed_metadata,
-                    sample_rate=curr_context.sample_rate
-                    or (chunk_data.sample_rate if chunk_data else None)
-                    or common_constants.SAMPLE_RATE_HZ,
-                    traceparent=action.traceparent,
-                    audio_classification=action.audio_classification,
-                ),
+                flush_req,
             )
 
         if action.clear_state:

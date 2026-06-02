@@ -97,8 +97,8 @@ class CoderVerificationTest(unittest.TestCase):
             start_audio_offset_ms=10,
             end_audio_offset_ms=990,
             speech_segments=[datatypes.TimeRange(100, 900)],
-            traceparent="traceparent-id",
         )
+        request.traceparent = "traceparent-id"
 
         encoded = coder.encode(request)
         self.assertTrue(coder.is_deterministic())
