@@ -79,7 +79,7 @@ every eligible attempted item in that boundary fails:
 - If no eligible items were attempted, or at least one item succeeded, do not
   record a feed failure.
 
-The helper for this policy is `aggregate_item_failures`.
+The helper for this policy is `ItemBatchOutcome`.
 
 ## Adding a VM Collector
 
@@ -102,7 +102,7 @@ The helper for this policy is `aggregate_item_failures`.
    Raise `CollectorFailure` only after the source-specific policy says the
    feed-level observation is persistent or systemic.
 7. Use `missing_source_feed_id_failure`, `collector_failure`, and
-   `aggregate_item_failures` instead of open-coded exception strings.
+   `ItemBatchOutcome` instead of open-coded exception strings and counters.
 8. Add focused tests beside the collector. Tests should cover chunk success,
    each feed-level `FeedStatusReason` mapping, skip/non-failure paths,
    shutdown behavior, and item-failure aggregation if the collector downloads

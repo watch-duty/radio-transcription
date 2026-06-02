@@ -16,8 +16,8 @@ import aiohttp
 from google.cloud import secretmanager
 
 from backend.pipeline.ingestion.collectors.failure_classification import (
+    ItemBatchOutcome,
     ItemFailure,
-    aggregate_item_failures,
     collector_failure,
     missing_source_feed_id_failure,
 )
@@ -712,9 +712,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
             calls = _extract_calls_from_response(bcfy_calls)
 
             if calls:
-                attempted_count = 0
-                succeeded_count = 0
-                item_failures: list[ItemFailure] = []
+                outcome = ItemBatchOutcome()
                 # Sort the page by the API index time `ts` so the per-call
                 # resume cursor advances monotonically; data-loss is then
                 # bounded to the accepted tie case (calls sharing a `ts`).
@@ -730,7 +728,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                     if not audio_url or audio_url in seen_urls:
                         continue
 
-                    attempted_count += 1
+                    outcome.record_attempt()
                     call_result = _normalize_call_chunk_result(
                         await _create_chunk_from_call(
                             session,
@@ -742,7 +740,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                         )
                     )
                     if call_result.failure is not None:
-                        item_failures.append(call_result.failure)
+                        outcome.record_failure(call_result.failure)
 
                     chunk = call_result.chunk
                     if not chunk:
@@ -761,18 +759,14 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                         continue
 
                     yield chunk
-                    succeeded_count += 1
+                    outcome.record_chunk_produced()
 
                     # Only mark as seen and update pagination after a successful
                     # yield, confirming the chunk was handed off to the pipeline.
                     seen_urls.append(audio_url)
                     # Reset consecutive failures on successful yield
                     consecutive_failures = 0
-                promoted = aggregate_item_failures(
-                    item_failures,
-                    attempted_count=attempted_count,
-                    succeeded_count=succeeded_count,
-                )
+                promoted = outcome.promoted_failure()
                 if promoted is not None:
                     _raise_item_failure(promoted)
             # Update last_bookmark_time_unix for pagination AFTER processing

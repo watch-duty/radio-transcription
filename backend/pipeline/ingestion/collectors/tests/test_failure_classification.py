@@ -5,8 +5,8 @@ from __future__ import annotations
 import unittest
 
 from backend.pipeline.ingestion.collectors.failure_classification import (
+    ItemBatchOutcome,
     ItemFailure,
-    aggregate_item_failures,
     collector_failure,
     missing_source_feed_id_failure,
 )
@@ -22,7 +22,7 @@ def _require_item_failure(value: ItemFailure | None) -> ItemFailure:
     return value
 
 
-class TestItemFailureAggregation(unittest.TestCase):
+class TestItemBatchOutcome(unittest.TestCase):
     """Shared item-failure promotion rules."""
 
     def test_item_failure_preserves_status_reason_and_reason(self) -> None:
@@ -38,43 +38,36 @@ class TestItemFailureAggregation(unittest.TestCase):
         self.assertEqual(failure.reason, "download_failed")
 
     def test_no_attempted_items_returns_none(self) -> None:
-        self.assertIsNone(
-            aggregate_item_failures(
-                [],
-                attempted_count=0,
-                succeeded_count=0,
-            ),
-        )
+        outcome = ItemBatchOutcome()
+
+        self.assertIsNone(outcome.promoted_failure())
 
     def test_any_success_returns_none(self) -> None:
+        outcome = ItemBatchOutcome()
         failure = ItemFailure(
             FeedStatusReason.SOURCE_UNREACHABLE,
             "download_failed",
         )
+        outcome.record_attempt()
+        outcome.record_failure(failure)
+        outcome.record_chunk_produced()
 
-        self.assertIsNone(
-            aggregate_item_failures(
-                [failure],
-                attempted_count=1,
-                succeeded_count=1,
-            ),
-        )
+        self.assertIsNone(outcome.promoted_failure())
 
     def test_missing_classified_failure_returns_none(self) -> None:
+        outcome = ItemBatchOutcome()
         failure = ItemFailure(
             FeedStatusReason.SOURCE_UNREACHABLE,
             "download_failed",
         )
+        outcome.record_attempt()
+        outcome.record_failure(failure)
+        outcome.record_attempt()
 
-        self.assertIsNone(
-            aggregate_item_failures(
-                [failure],
-                attempted_count=2,
-                succeeded_count=0,
-            ),
-        )
+        self.assertIsNone(outcome.promoted_failure())
 
     def test_same_reason_all_failed_returns_that_failure(self) -> None:
+        outcome = ItemBatchOutcome()
         failures = [
             ItemFailure(
                 FeedStatusReason.SOURCE_UNREACHABLE,
@@ -85,12 +78,11 @@ class TestItemFailureAggregation(unittest.TestCase):
                 "download_failed",
             ),
         ]
+        for failure in failures:
+            outcome.record_attempt()
+            outcome.record_failure(failure)
 
-        result = aggregate_item_failures(
-            failures,
-            attempted_count=2,
-            succeeded_count=0,
-        )
+        result = outcome.promoted_failure()
 
         result = _require_item_failure(result)
         self.assertIs(
@@ -100,6 +92,7 @@ class TestItemFailureAggregation(unittest.TestCase):
         self.assertEqual(result.reason, "download_failed")
 
     def test_mixed_reason_all_failed_returns_collector_error(self) -> None:
+        outcome = ItemBatchOutcome()
         failures = [
             ItemFailure(
                 FeedStatusReason.SOURCE_UNREACHABLE,
@@ -110,12 +103,11 @@ class TestItemFailureAggregation(unittest.TestCase):
                 "bad_url",
             ),
         ]
+        for failure in failures:
+            outcome.record_attempt()
+            outcome.record_failure(failure)
 
-        result = aggregate_item_failures(
-            failures,
-            attempted_count=2,
-            succeeded_count=0,
-        )
+        result = outcome.promoted_failure()
 
         result = _require_item_failure(result)
         self.assertIs(
