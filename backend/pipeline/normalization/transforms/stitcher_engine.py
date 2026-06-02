@@ -278,7 +278,7 @@ class StitcherEngine:
                 )
 
         # Clear state context cleanly
-        transmission_context.write(datatypes.IdleFeedState())
+        transmission_context.clear()
         transmission_buffer.clear()
         timer_manager.clear()
 
@@ -365,7 +365,7 @@ class StitcherEngine:
             )
 
         if action.clear_state:
-            transmission_context.write(datatypes.IdleFeedState())
+            transmission_context.clear()
             transmission_buffer.clear()
             timer_manager.clear()
 
