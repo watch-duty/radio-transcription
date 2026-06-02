@@ -676,7 +676,7 @@ export function FeedConfigurationEdit({
                         horizontal: 'right',
                       }}
                     >
-                      {feedStatus !== 'active' && (
+                      {feedStatus != null && feedStatus !== 'active' && (
                         <MenuItem
                           onClick={handleResetClick}
                           disabled={isSubmitting}
@@ -684,7 +684,7 @@ export function FeedConfigurationEdit({
                           Reset feed
                         </MenuItem>
                       )}
-                      {feedSubstatus !== 'deactivated' && (
+                      {feedSubstatus != null && feedSubstatus !== 'deactivated' && (
                         <MenuItem
                           onClick={handleDeactivateClick}
                           disabled={isSubmitting}
