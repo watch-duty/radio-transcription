@@ -60,15 +60,9 @@ export function Login() {
     <AppProvider theme={theme}>
       <SignInPage
         providers={[{ id: 'google', name: 'Google' }]}
-        signIn={async () => {
+        signIn={() => {
           setErrorMessage(null);
-          try {
-            const token = await authLogin('dummy_code');
-            setToken(token);
-            navigate('/', { replace: true });
-          } catch (error) {
-            setErrorMessage('Unable to sign in with dummy code.');
-          }
+          login();
         }}
         slots={{ subtitle: errorMessage ? LoginAlert : undefined }}
       />

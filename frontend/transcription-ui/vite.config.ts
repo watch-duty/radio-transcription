@@ -21,17 +21,9 @@ export default defineConfig({
       },
       // To prevent CORS errors with fetching from GCS on localhost
       '/gcs': {
-        target: 'http://localhost:4443',
+        target: 'https://storage.googleapis.com',
         changeOrigin: true,
-        rewrite: (path) => {
-          const match = path.match(/^\/gcs\/([^\/]+)\/(.+)$/);
-          if (match) {
-            const bucket = match[1];
-            const object = match[2];
-            return `/download/storage/v1/b/${bucket}/o/${encodeURIComponent(object)}?alt=media`;
-          }
-          return path.replace(/^\/gcs/, '');
-        },
+        rewrite: (path) => path.replace(/^\/gcs/, ''),
       },
     },
   },

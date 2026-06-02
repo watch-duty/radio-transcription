@@ -7,7 +7,6 @@ import type {
   ScopeLevel,
 } from '@transcription/common';
 import { GoogleAuth } from 'google-auth-library';
-import axios from 'axios';
 import {
   Body,
   Controller,
@@ -219,12 +218,8 @@ export class ListRulesQueryParams {
 @Response(401, 'Unauthorized')
 export class RulesController extends Controller {
   private async getClient() {
-    // For local development against local services, bypass Google Auth
-    return {
-      request: async <T>(config: any) => {
-        return await axios(config) as { data: T };
-      }
-    };
+    const auth = new GoogleAuth();
+    return await auth.getIdTokenClient(RULES_API_URL!);
   }
 
   @Get('')

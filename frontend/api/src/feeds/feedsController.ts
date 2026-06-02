@@ -8,7 +8,6 @@ import type {
 } from '@transcription/common';
 import { SourceType } from '@transcription/common';
 import { GoogleAuth } from 'google-auth-library';
-import axios from 'axios';
 import {
   Body,
   Controller,
@@ -70,8 +69,6 @@ function getSourceUrl(
       return undefined;
     case SourceType.FIRE_NOTIFICATIONS:
       return undefined;
-    case 'fire_notification':
-      return undefined;
     default:
       return undefined;
   }
@@ -93,8 +90,6 @@ function getArchiveUrl(
     case SourceType.ECHO:
       return undefined;
     case SourceType.FIRE_NOTIFICATIONS:
-      return undefined;
-    case 'fire_notifications':
       return undefined;
     default:
       return undefined;
@@ -153,12 +148,8 @@ function convertFeedUpdate(update: FeedUpdate): FeedUpdateBackend {
 @Response(401, 'Unauthorized')
 export class FeedsController extends Controller {
   private async getClient() {
-    // For local development against local services, bypass Google Auth
-    return {
-      request: async <T>(config: any) => {
-        return await axios(config) as { data: T };
-      }
-    };
+    const auth = new GoogleAuth();
+    return await auth.getIdTokenClient(FEEDS_STORE_API_URL);
   }
 
   @Get('')

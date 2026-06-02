@@ -3,7 +3,6 @@ import type {
   Transcript,
 } from '@transcription/common';
 import { GoogleAuth } from 'google-auth-library';
-import axios from 'axios';
 import {
   Controller,
   Extension,
@@ -93,8 +92,9 @@ export class TranscriptsController extends Controller {
         queryParams.append('is_alert', query.isAlert.toString());
       }
 
-      // For local development against local services, bypass Google Auth
-      const response = await axios({
+      const auth = new GoogleAuth();
+      const client = await auth.getIdTokenClient(TRANSCRIPTS_API_URL!);
+      const response = await client.request({
         url: `${TRANSCRIPTS_API_URL}?${queryParams.toString()}`,
         method: 'GET',
       });
