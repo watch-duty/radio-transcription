@@ -33,8 +33,8 @@ from backend.pipeline.storage.feed_queries import (
 )
 from backend.pipeline.storage.pagination_utils import (
     SortOrder,
-    decode_cursor,
-    get_paginated_results,
+    decode_timestamp_cursor,
+    get_paginated_results_with_timestamp,
 )
 
 if TYPE_CHECKING:
@@ -772,11 +772,12 @@ class FeedStore:
     ) -> PaginatedFeeds:
         """List all feeds with keyset pagination and optional filters.
 
-        Retrieves feeds ordered by creation time, using ID-based keyset pagination.
+        Retrieves feeds ordered by creation time, using timestamp+ID-based keyset pagination.
         """
+        cursor_ts = None
         cursor_uid = None
         if next_token:
-            cursor_uid = decode_cursor(next_token)
+            cursor_ts, cursor_uid = decode_timestamp_cursor(next_token)
 
         is_asc = order == SortOrder.ASC or order == "asc"
         query = LIST_FEEDS_ASC_SQL if is_asc else LIST_FEEDS_DESC_SQL
@@ -787,14 +788,17 @@ class FeedStore:
 
         rows = await self._pool.fetch(
             query,
+            cursor_ts,
             cursor_uid,
-            limit + 1,
             source_types,
             statuses,
             tags_json,
+            limit + 1,
         )
 
-        rows, new_next_token = get_paginated_results(rows, limit, "id")
+        rows, new_next_token = get_paginated_results_with_timestamp(
+            rows, limit, "created_at", "id"
+        )
 
         feeds = [self._row_to_feed(row) for row in rows]
         return PaginatedFeeds(feeds, new_next_token)

@@ -4,7 +4,6 @@ import type {
   FeedCreate,
   FeedStatus,
   FeedUpdate,
-  ListFeedsResponse,
   Tag,
 } from '@transcription/common';
 import { SourceType } from '@transcription/common';
@@ -17,7 +16,6 @@ import {
   Get,
   Path,
   Post,
-  Queries,
   Put,
   Response,
   Route,
@@ -145,18 +143,6 @@ function convertFeedUpdate(update: FeedUpdate): FeedUpdateBackend {
   };
 }
 
-export class ListFeedsQueryParams {
-  /**
-   * @isInt
-   */
-  limit: number = 100;
-  nextToken?: string;
-  order?: 'asc' | 'desc';
-  sourceTypes?: string[];
-  statuses?: string[];
-  tags?: string[];
-}
-
 @Route('api/v1/feeds')
 @Tags('Feeds')
 @Response(401, 'Unauthorized')
@@ -172,42 +158,14 @@ export class FeedsController extends Controller {
   @Response<{ message: string }>(403, 'Forbidden')
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
-  public async listFeeds(
-    @Queries() query: ListFeedsQueryParams
-  ): Promise<ListFeedsResponse> {
+  public async listFeeds(): Promise<Feed[]> {
     try {
-      const queryParams = new URLSearchParams();
-      if (query.limit) queryParams.append('limit', query.limit.toString());
-      if (query.nextToken) queryParams.append('next_token', query.nextToken);
-      if (query.order) queryParams.append('order', query.order);
-      if (query.sourceTypes) {
-        for (const type of query.sourceTypes) {
-          queryParams.append('source_types', type);
-        }
-      }
-      if (query.statuses) {
-        for (const status of query.statuses) {
-          queryParams.append('statuses', status);
-        }
-      }
-      if (query.tags) {
-        for (const tag of query.tags) {
-          queryParams.append('tags', tag);
-        }
-      }
-
       const client = await this.getClient();
-      const response = await client.request<{
-        feeds: FeedBackend[];
-        next_token?: string;
-      }>({
-        url: `${FEEDS_STORE_API_URL}?${queryParams.toString()}`,
+      const response = await client.request<FeedBackend[]>({
+        url: FEEDS_STORE_API_URL,
         method: 'GET',
       });
-      return {
-        feeds: response.data.feeds.map(convertFeedBackend),
-        nextToken: response.data.next_token,
-      };
+      return response.data.map(convertFeedBackend);
     } catch (error: unknown) {
       const { status, message } = handleBackendError(error, 'fetching feeds');
       throw new HttpError(status, message);
