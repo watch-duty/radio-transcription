@@ -7,7 +7,6 @@ import type {
   Tag,
 } from '@transcription/common';
 import { SourceType } from '@transcription/common';
-import { GoogleAuth } from 'google-auth-library';
 import {
   Body,
   Controller,
@@ -26,7 +25,7 @@ import {
 } from 'tsoa';
 
 import { FEEDS_STORE_API_URL } from '../config.js';
-import { HttpError, handleBackendError } from '../utils.js';
+import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
 
 interface BaseFeedBackend {
   name: string;
@@ -166,11 +165,6 @@ function convertFeedUpdate(update: FeedUpdate): FeedUpdateBackend {
 @Tags('Feeds')
 @Response(401, 'Unauthorized')
 export class FeedsController extends Controller {
-  private async getClient() {
-    const auth = new GoogleAuth();
-    return await auth.getIdTokenClient(FEEDS_STORE_API_URL);
-  }
-
   @Get('')
   @Security('google_id_token')
   @Response<{ message: string }>(401, 'Unauthorized')
@@ -201,13 +195,13 @@ export class FeedsController extends Controller {
         }
       }
 
-      const client = await this.getClient();
+      const client = await getServiceClient(FEEDS_STORE_API_URL!);
       const response = await client.request<
         FeedBackend[] | ListFeedsBackendResponse
       >({
         url: queryParams.toString()
           ? `${FEEDS_STORE_API_URL}?${queryParams.toString()}`
-          : FEEDS_STORE_API_URL,
+          : FEEDS_STORE_API_URL!,
         method: 'GET',
       });
 
@@ -229,7 +223,7 @@ export class FeedsController extends Controller {
   @Extension('x-google-backend', 'radio-transcription-api')
   public async getFeed(@Path() feedId: string): Promise<Feed> {
     try {
-      const client = await this.getClient();
+      const client = await getServiceClient(FEEDS_STORE_API_URL!);
       const response = await client.request<FeedBackend>({
         url: `${FEEDS_STORE_API_URL}/${feedId}`,
         method: 'GET',
@@ -253,7 +247,7 @@ export class FeedsController extends Controller {
   @Extension('x-google-backend', 'radio-transcription-api')
   public async createFeed(@Body() requestBody: FeedCreate): Promise<Feed> {
     try {
-      const client = await this.getClient();
+      const client = await getServiceClient(FEEDS_STORE_API_URL!);
       const response = await client.request<FeedBackend>({
         url: FEEDS_STORE_API_URL,
         method: 'POST',
@@ -282,7 +276,7 @@ export class FeedsController extends Controller {
     @Body() requestBody: FeedUpdate
   ): Promise<Feed> {
     try {
-      const client = await this.getClient();
+      const client = await getServiceClient(FEEDS_STORE_API_URL!);
       const response = await client.request<FeedBackend>({
         url: `${FEEDS_STORE_API_URL}/${feedId}`,
         method: 'PUT',
@@ -306,7 +300,7 @@ export class FeedsController extends Controller {
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async resetFeed(@Path() feedId: string): Promise<Feed> {
-    const client = await this.getClient();
+    const client = await getServiceClient(FEEDS_STORE_API_URL!);
     try {
       const response = await client.request<FeedBackend>({
         url: `${FEEDS_STORE_API_URL}/${feedId}/reset`,
@@ -335,7 +329,7 @@ export class FeedsController extends Controller {
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async deactivateFeed(@Path() feedId: string): Promise<void> {
-    const client = await this.getClient();
+    const client = await getServiceClient(FEEDS_STORE_API_URL!);
     try {
       await client.request({
         url: `${FEEDS_STORE_API_URL}/${feedId}/deactivate`,
@@ -363,7 +357,7 @@ export class FeedsController extends Controller {
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async deleteFeed(@Path() feedId: string): Promise<void> {
-    const client = await this.getClient();
+    const client = await getServiceClient(FEEDS_STORE_API_URL!);
     try {
       await client.request({
         url: `${FEEDS_STORE_API_URL}/${feedId}`,

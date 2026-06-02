@@ -1566,12 +1566,12 @@ paths:
                 properties:
                   nextToken:
                     type: string
-                  segments:
+                  audioSegments:
                     items:
                       $ref: "#/components/schemas/AudioSegment"
                     type: array
                 required:
-                  - segments
+                  - audioSegments
                 type: object
         "401":
           description: Unauthorized

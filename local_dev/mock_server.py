@@ -1,7 +1,9 @@
 """Mock server module for testing the notification pipeline locally."""
 
+import datetime
 import json
 import logging
+import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 logging.basicConfig(level=logging.INFO)
@@ -59,9 +61,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.send_header("Content-type", "application/json")
             self.end_headers()
 
-            # Generate a consistent mock file.
-            mock_uuid = "mock-uuid-1234"
-            mock_name = "MOCK-DISP 2026-05-20 12-00-00.mp3"
+            # Generate a mock file with current timestamp to simulate a stream
+            now = datetime.datetime.now(datetime.UTC)
+            mock_uuid = str(uuid.uuid4())
+            mock_name = f"MOCK-DISP {now.strftime('%Y-%m-%d %H-%M-%S')}.mp3"
 
             payload = {
                 "files": [
@@ -81,8 +84,14 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-type", "audio/mpeg")
             self.end_headers()
-            # Send dummy bytes for the audio file
-            self.wfile.write(b"\0" * 1024)
+            # Send real test audio file content
+            try:
+                with open("/data/test_bcfy.flac", "rb") as f:
+                    self.wfile.write(f.read())
+            except Exception:
+                logger.exception("Failed to read mock audio file")
+                # Fallback to dummy bytes if file not found
+                self.wfile.write(b"\0" * 1024)
             return
 
         # Default GET behavior for tracking

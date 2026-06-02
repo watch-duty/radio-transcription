@@ -23,7 +23,6 @@ export function Login() {
       try {
         const token = await authLogin(code);
         setToken(token);
-        // Navigate the user back to the previous page if it was an internal link, otherwise go to the home page.
         const isInternal =
           document.referrer && document.referrer.includes(window.location.host);
         if (isInternal) {
@@ -60,9 +59,27 @@ export function Login() {
     <AppProvider theme={theme}>
       <SignInPage
         providers={[{ id: 'google', name: 'Google' }]}
-        signIn={() => {
-          setErrorMessage(null);
-          login();
+        signIn={async () => {
+          if (import.meta.env.MODE === 'local-dev') {
+            setErrorMessage(null);
+            try {
+              const token = await authLogin('dummy_code');
+              setToken(token);
+              navigate('/', { replace: true });
+            } catch (error: unknown) {
+              if (error instanceof ApiError) {
+                setErrorMessage(
+                  'Unable to sign in with dummy code: ' + error.message
+                );
+              } else {
+                setErrorMessage(
+                  'Unable to sign in with dummy code. Please try again.'
+                );
+              }
+            }
+          } else {
+            login();
+          }
         }}
         slots={{ subtitle: errorMessage ? LoginAlert : undefined }}
       />

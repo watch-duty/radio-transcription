@@ -1,4 +1,6 @@
+import axios from 'axios';
 import { GaxiosError } from 'gaxios';
+import { GoogleAuth } from 'google-auth-library';
 
 export class HttpError extends Error {
   constructor(
@@ -49,4 +51,19 @@ export function handleBackendError(
     status,
     message: message || defaultMessage,
   };
+}
+
+export async function getServiceClient(targetUrl: string) {
+  if (process.env.BYPASS_AUTH === 'true') {
+    return {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      request: async <T>(config: any) => {
+        return (await axios(config)) as { data: T };
+      },
+    };
+  }
+
+  // Production path: use Google Auth to get ID token client
+  const auth = new GoogleAuth();
+  return await auth.getIdTokenClient(targetUrl);
 }

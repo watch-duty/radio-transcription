@@ -17,6 +17,7 @@ services:
       - notification
     env_file:
       - ./local_dev/LOCAL.env
+      - .env
     networks:
       - pipeline-network
     volumes:
@@ -30,6 +31,7 @@ services:
       - gcs-emulator
     env_file:
       - ./local_dev/LOCAL.env
+      - .env
     networks:
       - pipeline-network
     volumes:
@@ -83,6 +85,7 @@ services:
       dockerfile: backend/pipeline/ingestion/Dockerfile
     env_file:
       - ./local_dev/LOCAL.env
+      - .env
     environment:
       - CONTINUOUS_PUBSUB_TOPIC_PATH=${CONTINUOUS_TOPIC}
       - SEGMENTED_PUBSUB_TOPIC_PATH=${SEGMENTED_TOPIC}
@@ -115,6 +118,7 @@ services:
       --canonical_audio_bucket $AUDIO_CANONICAL_BUCKET
     env_file:
       - ./local_dev/LOCAL.env
+      - .env
     networks:
       - pipeline-network
     depends_on:
@@ -135,6 +139,7 @@ services:
       - "8084:8084"
     env_file:
       - ./local_dev/LOCAL.env
+      - .env
     environment:
       - OUTPUT_TOPIC=projects/local-project/topics/transcription-text-topic
       - PROJECT_ID=local-project
@@ -158,6 +163,7 @@ services:
       - "8080:8080"
     env_file:
       - ./local_dev/LOCAL.env
+      - .env
     volumes:
       - ./local_dev/run_evaluation_publish.py:/app/run_evaluation_publish.py
     command: ["functions-framework", "--source=backend/pipeline/evaluation/main.py", "--target=evaluate_transcribed_audio_segment", "--signature-type=cloudevent", "--port=8080"]
@@ -182,6 +188,7 @@ services:
       - "8081:8081"
     env_file:
       - ./local_dev/LOCAL.env
+      - .env
     environment:
       - REDIS_HOST=redis
     command: ["functions-framework", "--source=backend/pipeline/notification/send_notification.py", "--target=send_notification", "--signature-type=cloudevent", "--port=8081"]
@@ -205,6 +212,7 @@ services:
       - "8086:8086"
     env_file:
       - ./local_dev/LOCAL.env
+      - .env
     command: ["uvicorn", "backend.services.rules.main:app", "--host", "0.0.0.0", "--port", "8086"]
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8086))"]
@@ -225,6 +233,7 @@ services:
       - "8087:8087"
     env_file:
       - ./local_dev/LOCAL.env
+      - .env
     command: ["uvicorn", "backend.services.transcripts.main:app", "--host", "0.0.0.0", "--port", "8087"]
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8087))"]
@@ -245,6 +254,7 @@ services:
       - "8089:8089"
     env_file:
       - ./local_dev/LOCAL.env
+      - .env
     command: ["uvicorn", "backend.services.feeds.main:app", "--host", "0.0.0.0", "--port", "8089"]
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8089))"]
@@ -265,6 +275,7 @@ services:
       - "8091:8091"
     env_file:
       - ./local_dev/LOCAL.env
+      - .env
     command: ["uvicorn", "backend.services.audio_segments.main:app", "--host", "0.0.0.0", "--port", "8091"]
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8091))"]
@@ -300,6 +311,7 @@ services:
     working_dir: /app
     env_file:
       - ./local_dev/LOCAL.env
+      - .env
     command: python mock_audio_server.py
     networks:
       - pipeline-network
@@ -314,6 +326,7 @@ services:
       - "8095:8095"
     env_file:
       - ./local_dev/LOCAL.env
+      - .env
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8095))"]
       interval: 5s
@@ -332,6 +345,7 @@ services:
       - "8088:8080"
     env_file:
       - ./local_dev/LOCAL.env
+      - .env
     environment:
       - TRANSCRIPTS_API_URL=http://transcripts-api:8087/v1/transcripts
       - AUDIO_SEGMENTS_API_URL=http://audio-segments-api:8091/v1/audio_segments
@@ -387,6 +401,7 @@ services:
 
     env_file:
       - ./local_dev/LOCAL.env
+      - .env
     environment:
       - UV_PROJECT_ENVIRONMENT=/tmp/.venv
     volumes:

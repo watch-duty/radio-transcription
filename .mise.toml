@@ -152,6 +152,15 @@ run = """
 docker-compose logs --tail 100 -t -f {{ arg(name="service") }}
 """
 
+[tasks.dev]
+description = "Start the entire system (backend in Docker, frontend on host)"
+depends = ["dev:start"]
+run = "yarn --cwd frontend/transcription-ui run local"
+
+[tasks."dev:remote"]
+description = "Run frontend on host and connect to dev backend in GCP"
+run = "npx concurrently \"yarn --cwd frontend/api local\" \"yarn --cwd frontend/transcription-ui dev\""
+
 # ---------------------------------------------------------------------------- #
 #                              Testing Tasks                                   #
 # ---------------------------------------------------------------------------- #
