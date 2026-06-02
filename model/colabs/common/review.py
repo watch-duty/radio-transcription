@@ -301,7 +301,7 @@ def build_review_pool(
                 "size": metadata.size,
                 "generation": metadata.generation,
                 "storage_url": metadata.storage_url,
-                "model_ready_audio_uri": metadata.uri,
+                "model_ready_audio_uri": model_ready_audio_uri,
             }
         )
         enriched_rows.append(row_dict)

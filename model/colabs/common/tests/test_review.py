@@ -301,6 +301,31 @@ class TestReviewPoolAssembly(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "gs://bucket/missing.flac"):
             review.build_review_pool(rows, metadata_by_uri={})
 
+    def test_build_review_pool_preserves_manifest_audio_uri(self) -> None:
+        from common import review
+
+        rows = review.load_review_manifest_rows(
+            {"train": [_row("gs://bucket/manifest.flac", "Manifest")]}
+        )
+        metadata = review.GcsObjectMetadata(
+            uri="gs://bucket/stale-metadata.flac",
+            md5_hash="md5-manifest",
+            crc32c_hash="crc-manifest",
+            size=333,
+            generation="8",
+            storage_url="gs://bucket/stale-metadata.flac",
+        )
+
+        pool = review.build_review_pool(
+            rows,
+            metadata_by_uri={"gs://bucket/manifest.flac": metadata},
+        )
+
+        self.assertEqual(
+            pool[0]["model_ready_audio_uri"],
+            "gs://bucket/manifest.flac",
+        )
+
 
 class TestDuplicateAudioSegments(unittest.TestCase):
     def test_duplicate_audio_segment_ids_raise_with_report_rows(self) -> None:
