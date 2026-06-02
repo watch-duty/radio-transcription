@@ -245,5 +245,120 @@ class TestReviewIdentity(unittest.TestCase):
         )
 
 
+class TestReviewPoolAssembly(unittest.TestCase):
+    def test_build_review_pool_attaches_ids_and_audit_metadata(self) -> None:
+        from common import review
+
+        rows = review.load_review_manifest_rows(
+            {"train": [_row("gs://bucket/a.flac", "Engine 41")]}
+        )
+        metadata = review.GcsObjectMetadata(
+            uri="gs://bucket/a.flac",
+            md5_hash="md5-a",
+            crc32c_hash="crc-a",
+            size=321,
+            generation="7",
+            storage_url="gs://bucket/a.flac",
+        )
+
+        pool = review.build_review_pool(
+            rows,
+            metadata_by_uri={"gs://bucket/a.flac": metadata},
+        )
+
+        self.assertEqual(len(pool), 1)
+        item = pool[0]
+        self.assertEqual(
+            item["audio_segment_id"],
+            review.audio_segment_id(metadata),
+        )
+        self.assertEqual(item["source_window_id"], review.source_window_id(rows[0]))
+        self.assertEqual(item["model_ready_audio_uri"], "gs://bucket/a.flac")
+        self.assertEqual(item["original_audio_uri"], "gs://bucket/original.wav")
+        self.assertEqual(item["offset"], 1.25)
+        self.assertEqual(item["duration"], 2.5)
+        self.assertEqual(item["source_group"], "source:1")
+        self.assertEqual(item["row_index"], 7)
+        self.assertEqual(item["split"], "train")
+        self.assertEqual(item["dataset_name"], "test")
+        self.assertEqual(item["text"], "Engine 41")
+        self.assertEqual(item["md5_hash"], "md5-a")
+        self.assertEqual(item["crc32c_hash"], "crc-a")
+        self.assertEqual(item["size"], 321)
+        self.assertEqual(item["generation"], "7")
+        self.assertEqual(item["storage_url"], "gs://bucket/a.flac")
+
+    def test_build_review_pool_missing_metadata_raises(self) -> None:
+        from common import review
+
+        rows = review.load_review_manifest_rows(
+            {"train": [_row("gs://bucket/missing.flac", "Missing")]}
+        )
+
+        with self.assertRaisesRegex(ValueError, "gs://bucket/missing.flac"):
+            review.build_review_pool(rows, metadata_by_uri={})
+
+
+class TestDuplicateAudioSegments(unittest.TestCase):
+    def test_duplicate_audio_segment_ids_raise_with_report_rows(self) -> None:
+        from common import review
+
+        rows = review.load_review_manifest_rows(
+            {
+                "train": [
+                    _row("gs://bucket/a.flac", "Same", row_index=1),
+                    _row("gs://bucket/b.flac", "Same", row_index=2),
+                ]
+            }
+        )
+        metadata_by_uri = {
+            "gs://bucket/a.flac": review.GcsObjectMetadata(
+                "gs://bucket/a.flac",
+                "same-md5",
+                "crc-a",
+                100,
+                "1",
+                "gs://bucket/a.flac",
+            ),
+            "gs://bucket/b.flac": review.GcsObjectMetadata(
+                "gs://bucket/b.flac",
+                "same-md5",
+                "crc-b",
+                100,
+                "2",
+                "gs://bucket/b.flac",
+            ),
+        }
+
+        with self.assertRaises(review.DuplicateAudioSegmentError) as ctx:
+            review.build_review_pool(rows, metadata_by_uri=metadata_by_uri)
+
+        duplicate_rows = ctx.exception.duplicates
+        self.assertEqual(len(duplicate_rows), 2)
+        self.assertEqual(
+            set(duplicate_rows[0]),
+            {
+                "audio_segment_id",
+                "model_ready_audio_uri",
+                "original_audio_uri",
+                "offset",
+                "duration",
+                "source_group",
+                "row_index",
+                "split",
+                "dataset_name",
+                "text",
+            },
+        )
+        self.assertEqual(
+            [row["model_ready_audio_uri"] for row in duplicate_rows],
+            ["gs://bucket/a.flac", "gs://bucket/b.flac"],
+        )
+        self.assertEqual(
+            [row["text"] for row in duplicate_rows],
+            ["Same", "Same"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
