@@ -13,7 +13,7 @@ from backend.pipeline.storage.filter_utils import (
     SortOrder,
     decode_cursor,
     encode_cursor,
-    get_next_token,
+    get_paginated_results,
 )
 from backend.services.audio_segments.models import (
     Annotation,
@@ -185,7 +185,7 @@ class AudioSegmentStore:
             limit + 1,
         )
 
-        rows, new_next_token = get_next_token(rows, limit, "end_timestamp", "id")
+        rows, new_next_token = get_paginated_results(rows, limit, "end_timestamp", "id")
 
         segments = [
             AudioSegment.model_validate(self._prepare_audio_segment(row))

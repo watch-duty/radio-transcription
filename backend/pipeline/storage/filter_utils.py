@@ -32,7 +32,7 @@ def encode_cursor(ts: datetime.datetime, uid: uuid.UUID) -> str:
     return base64.b64encode(token_str.encode("utf-8")).decode("utf-8")
 
 
-def get_next_token(
+def get_paginated_results(
     rows: collections.abc.Sequence[typing.Any],
     limit: int,
     ts_key: str,

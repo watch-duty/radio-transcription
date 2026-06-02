@@ -12,7 +12,7 @@ from backend.pipeline.storage.filter_utils import (
     SortOrder,
     decode_cursor,
     encode_cursor,
-    get_next_token,
+    get_paginated_results,
 )
 
 import asyncpg
@@ -802,7 +802,7 @@ class FeedStore:
             tags_json,
         )
 
-        rows, new_next_token = get_next_token(rows, limit, "created_at", "id")
+        rows, new_next_token = get_paginated_results(rows, limit, "created_at", "id")
 
         feeds = [self._row_to_feed(row) for row in rows]
         return PaginatedFeeds(feeds, new_next_token)
