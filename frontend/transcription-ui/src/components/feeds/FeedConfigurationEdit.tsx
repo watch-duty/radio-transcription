@@ -29,7 +29,13 @@ import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
-import type { FeedCreate, FeedUpdate, Tag } from '@transcription/common';
+import type {
+  BackendFeedStatus,
+  FeedCreate,
+  FeedStatus,
+  FeedUpdate,
+  Tag,
+} from '@transcription/common';
 import { SourceType } from '@transcription/common';
 
 const SOURCE_TYPE_OPTIONS: {
@@ -64,6 +70,8 @@ interface FeedConfigurationEditProps {
   feedSourceType: SourceType;
   feedSourceId: string;
   feedTags: Tag[];
+  feedStatus?: FeedStatus;
+  feedSubstatus?: BackendFeedStatus;
   setFeedName: (name: string) => void;
   setFeedSourceType: (sourceType: SourceType) => void;
   setFeedSourceId: (sourceFeedId: string) => void;
@@ -71,6 +79,8 @@ interface FeedConfigurationEditProps {
   onCreateFeed: (payload: FeedCreate) => Promise<void>;
   onUpdateFeed: (payload: FeedUpdate) => Promise<void>;
   onDeleteFeed?: () => Promise<void>;
+  onDeactivateFeed?: () => Promise<void>;
+  onResetFeed?: () => Promise<void>;
   onCancel: () => void;
   isSubmitting: boolean;
 }
@@ -81,6 +91,8 @@ export function FeedConfigurationEdit({
   feedSourceType,
   feedSourceId,
   feedTags,
+  feedStatus,
+  feedSubstatus,
   setFeedName,
   setFeedSourceType,
   setFeedSourceId,
@@ -88,6 +100,8 @@ export function FeedConfigurationEdit({
   onCreateFeed,
   onUpdateFeed,
   onDeleteFeed,
+  onDeactivateFeed,
+  onResetFeed,
   onCancel,
   isSubmitting,
 }: FeedConfigurationEditProps) {
@@ -101,6 +115,8 @@ export function FeedConfigurationEdit({
   >({});
 
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isResetDialogOpen, setIsResetDialogOpen] = useState(false);
+  const [isDeactivateDialogOpen, setIsDeactivateDialogOpen] = useState(false);
   const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
   const menuOpen = Boolean(menuAnchorEl);
   const [confirmFeedSourceId, setConfirmFeedSourceId] = useState('');
@@ -117,6 +133,30 @@ export function FeedConfigurationEdit({
     handleMenuClose();
     setConfirmFeedSourceId('');
     setIsDeleteDialogOpen(true);
+  };
+
+  const handleResetClick = () => {
+    handleMenuClose();
+    setIsResetDialogOpen(true);
+  };
+
+  const handleDeactivateClick = () => {
+    handleMenuClose();
+    setIsDeactivateDialogOpen(true);
+  };
+
+  const handleResetConfirm = async () => {
+    setIsResetDialogOpen(false);
+    if (onResetFeed) {
+      await onResetFeed();
+    }
+  };
+
+  const handleDeactivateConfirm = async () => {
+    setIsDeactivateDialogOpen(false);
+    if (onDeactivateFeed) {
+      await onDeactivateFeed();
+    }
   };
 
   const handleKeyChange = (val: string) => {
@@ -636,6 +676,22 @@ export function FeedConfigurationEdit({
                         horizontal: 'right',
                       }}
                     >
+                      {feedStatus !== 'active' && (
+                        <MenuItem
+                          onClick={handleResetClick}
+                          disabled={isSubmitting}
+                        >
+                          Reset feed
+                        </MenuItem>
+                      )}
+                      {feedSubstatus !== 'deactivated' && (
+                        <MenuItem
+                          onClick={handleDeactivateClick}
+                          disabled={isSubmitting}
+                        >
+                          Deactivate feed
+                        </MenuItem>
+                      )}
                       <MenuItem
                         onClick={handleDeleteClick}
                         disabled={isSubmitting}
@@ -705,6 +761,78 @@ export function FeedConfigurationEdit({
             sx={{ textTransform: 'none' }}
           >
             Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={isResetDialogOpen}
+        onClose={() => setIsResetDialogOpen(false)}
+        aria-labelledby="reset-feed-dialog-title"
+        aria-describedby="reset-feed-dialog-description"
+      >
+        <DialogTitle id="reset-feed-dialog-title">
+          Verify Feed Reset
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText id="reset-feed-dialog-description">
+            Are you sure you want to reset this feed? This will return the feed
+            to an unclaimed status and clear the failure count.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => setIsResetDialogOpen(false)}
+            color="primary"
+            disabled={isSubmitting}
+            sx={{ textTransform: 'none' }}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleResetConfirm}
+            color="warning"
+            variant="contained"
+            disabled={isSubmitting}
+            sx={{ textTransform: 'none' }}
+          >
+            Reset
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={isDeactivateDialogOpen}
+        onClose={() => setIsDeactivateDialogOpen(false)}
+        aria-labelledby="deactivate-feed-dialog-title"
+        aria-describedby="deactivate-feed-dialog-description"
+      >
+        <DialogTitle id="deactivate-feed-dialog-title">
+          Verify Feed Deactivation
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText id="deactivate-feed-dialog-description">
+            Are you sure you want to deactivate this feed? Ingestion will stop
+            until the feed is explicitly reset.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => setIsDeactivateDialogOpen(false)}
+            color="primary"
+            disabled={isSubmitting}
+            sx={{ textTransform: 'none' }}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleDeactivateConfirm}
+            color="error"
+            variant="contained"
+            disabled={isSubmitting}
+            sx={{ textTransform: 'none' }}
+          >
+            Deactivate
           </Button>
         </DialogActions>
       </Dialog>

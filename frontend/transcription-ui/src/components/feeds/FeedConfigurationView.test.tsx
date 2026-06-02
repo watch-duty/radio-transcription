@@ -19,8 +19,10 @@ import type {
 import { SourceType } from '@transcription/common';
 
 import { createFeed } from '../../service/createFeed';
+import { deactivateFeed } from '../../service/deactivateFeed';
 import { deleteFeed } from '../../service/deleteFeed';
 import { listFeeds } from '../../service/listFeeds';
+import { resetFeed } from '../../service/resetFeed';
 import { updateFeed } from '../../service/updateFeed';
 import { renderWithQueryClient } from '../../test/testUtils';
 import FeedConfigurationView from './FeedConfigurationView';
@@ -40,6 +42,14 @@ vi.mock('../../service/updateFeed', () => ({
 
 vi.mock('../../service/deleteFeed', () => ({
   deleteFeed: vi.fn(),
+}));
+
+vi.mock('../../service/deactivateFeed', () => ({
+  deactivateFeed: vi.fn(),
+}));
+
+vi.mock('../../service/resetFeed', () => ({
+  resetFeed: vi.fn(),
 }));
 
 // Mock AuthContext
@@ -82,6 +92,8 @@ describe('FeedConfigurationView', () => {
     // Default mock for listing feeds
     vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
     vi.mocked(deleteFeed).mockResolvedValue(undefined);
+    vi.mocked(deactivateFeed).mockResolvedValue(undefined);
+    vi.mocked(resetFeed).mockResolvedValue({} as Feed);
 
     // Mock window.scrollTo since JSDOM does not implement it
     window.scrollTo = vi.fn();
@@ -706,5 +718,165 @@ describe('FeedConfigurationView', () => {
     });
 
     expect(deleteFeed).not.toHaveBeenCalled();
+  });
+
+  it('should show Deactivate feed menu item if feed is not deactivated, and call deactivateFeed API on confirm', async () => {
+    vi.mocked(deactivateFeed).mockResolvedValue(undefined);
+
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Marin Fire Dispatch')).toBeInTheDocument();
+    });
+
+    // Click Edit to enter edit mode (substatus is active, which is not deactivated)
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Marin Fire Dispatch',
+    });
+    fireEvent.click(editBtn);
+
+    const editFormCard = screen.getByTestId('feed-config-card');
+    const kebabBtn = within(editFormCard).getByRole('button', {
+      name: /feed actions/i,
+    });
+    expect(kebabBtn).toBeInTheDocument();
+
+    // Open kebab menu
+    fireEvent.click(kebabBtn);
+
+    // Menu option "Deactivate feed" should be visible Since substatus is NOT deactivated
+    const deactivateMenuItem = screen.getByRole('menuitem', {
+      name: /Deactivate feed/i,
+    });
+    expect(deactivateMenuItem).toBeInTheDocument();
+
+    // Click Deactivate
+    fireEvent.click(deactivateMenuItem);
+
+    // Verify confirmation dialog shows
+    expect(screen.getByText('Verify Feed Deactivation')).toBeInTheDocument();
+
+    const confirmDeactivateBtn = screen.getByRole('button', {
+      name: 'Deactivate',
+    });
+    fireEvent.click(confirmDeactivateBtn);
+
+    await waitFor(() => {
+      expect(deactivateFeed).toHaveBeenCalledTimes(1);
+      expect(deactivateFeed).toHaveBeenCalledWith(
+        'feed-1',
+        'fake-jwt-token-xyz'
+      );
+      expect(mockTriggerSnackbar).toHaveBeenCalledWith(
+        'Feed deactivated successfully!'
+      );
+      expect(screen.getByText('Register New Feed')).toBeInTheDocument();
+    });
+  });
+
+  it('should not show Deactivate feed menu item if feed is deactivated', async () => {
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Sonoma Sheriff dispatch')).toBeInTheDocument();
+    });
+
+    // Sonoma Sheriff dispatch has substatus: deactivated
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Sonoma Sheriff dispatch',
+    });
+    fireEvent.click(editBtn);
+
+    const editFormCard = screen.getByTestId('feed-config-card');
+    const kebabBtn = within(editFormCard).getByRole('button', {
+      name: /feed actions/i,
+    });
+    fireEvent.click(kebabBtn);
+
+    // "Deactivate feed" should not be rendered if deactivated
+    expect(
+      screen.queryByRole('menuitem', { name: /Deactivate feed/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it('should show Reset feed menu item if feed status is not active, and call resetFeed API on confirm', async () => {
+    const mockResetResult: Feed = {
+      id: 'feed-2',
+      name: 'Sonoma Sheriff dispatch',
+      sourceType: SourceType.OPENMHZ,
+      sourceFeedId: 'sonoma-county',
+      externalId: 'ca-snm-sheriff',
+      status: 'inactive',
+      substatus: 'unclaimed',
+      tags: [{ key: 'county', value: 'Sonoma' }],
+    };
+    vi.mocked(resetFeed).mockResolvedValue(mockResetResult);
+
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Sonoma Sheriff dispatch')).toBeInTheDocument();
+    });
+
+    // Click Edit for Sonoma Sheriff dispatch (status inactive)
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Sonoma Sheriff dispatch',
+    });
+    fireEvent.click(editBtn);
+
+    const editFormCard = screen.getByTestId('feed-config-card');
+    const kebabBtn = within(editFormCard).getByRole('button', {
+      name: /feed actions/i,
+    });
+    fireEvent.click(kebabBtn);
+
+    // "Reset feed" should show since status is inactive (not active)
+    const resetMenuItem = screen.getByRole('menuitem', {
+      name: /Reset feed/i,
+    });
+    expect(resetMenuItem).toBeInTheDocument();
+
+    fireEvent.click(resetMenuItem);
+
+    expect(screen.getByText('Verify Feed Reset')).toBeInTheDocument();
+
+    const confirmResetBtn = screen.getByRole('button', {
+      name: 'Reset',
+    });
+    fireEvent.click(confirmResetBtn);
+
+    await waitFor(() => {
+      expect(resetFeed).toHaveBeenCalledTimes(1);
+      expect(resetFeed).toHaveBeenCalledWith('feed-2', 'fake-jwt-token-xyz');
+      expect(mockTriggerSnackbar).toHaveBeenCalledWith(
+        'Feed "Sonoma Sheriff dispatch" reset successfully!'
+      );
+      expect(screen.getByText('Register New Feed')).toBeInTheDocument();
+    });
+  });
+
+  it('should not show Reset feed menu item if feed status is active', async () => {
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Marin Fire Dispatch')).toBeInTheDocument();
+    });
+
+    // Marin Fire Dispatch status is active
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Marin Fire Dispatch',
+    });
+    fireEvent.click(editBtn);
+
+    const editFormCard = screen.getByTestId('feed-config-card');
+    const kebabBtn = within(editFormCard).getByRole('button', {
+      name: /feed actions/i,
+    });
+    fireEvent.click(kebabBtn);
+
+    // "Reset feed" must not show since status is active
+    expect(
+      screen.queryByRole('menuitem', { name: /Reset feed/i })
+    ).not.toBeInTheDocument();
   });
 });
