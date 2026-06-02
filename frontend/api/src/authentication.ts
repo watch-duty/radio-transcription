@@ -41,7 +41,10 @@ export function expressAuthentication(
     }
 
     if (decoded.email) {
-      decoded.isAdmin = ADMIN_EMAILS.includes(decoded.email.toLowerCase());
+      // An empty ADMIN_EMAILS list means everyone is an admin
+      decoded.isAdmin =
+        ADMIN_EMAILS.length === 0 ||
+        ADMIN_EMAILS.includes(decoded.email.toLowerCase());
     } else {
       decoded.isAdmin = false;
     }
