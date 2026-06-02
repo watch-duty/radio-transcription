@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from enum import StrEnum
 import base64
+import collections.abc
 import datetime
+from enum import StrEnum
+import typing
 import uuid
 
 
@@ -28,3 +30,18 @@ def encode_cursor(ts: datetime.datetime, uid: uuid.UUID) -> str:
     """Encode a timestamp and UUID into a base64 pagination token."""
     token_str = f"{ts.isoformat()}|{uid}"
     return base64.b64encode(token_str.encode("utf-8")).decode("utf-8")
+
+
+def get_next_token(
+    rows: collections.abc.Sequence[typing.Any],
+    limit: int,
+    ts_key: str,
+    id_key: str,
+) -> tuple[collections.abc.Sequence[typing.Any], str | None]:
+    """Slice rows exceeding limit and generate a pagination token."""
+    if len(rows) > limit:
+        sliced_rows = rows[:limit]
+        last_row = sliced_rows[-1]
+        token = encode_cursor(last_row[ts_key], last_row[id_key])
+        return sliced_rows, token
+    return rows, None

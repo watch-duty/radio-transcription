@@ -12,6 +12,7 @@ from backend.pipeline.storage.filter_utils import (
     SortOrder,
     decode_cursor,
     encode_cursor,
+    get_next_token,
 )
 
 import asyncpg
@@ -763,10 +764,10 @@ class FeedStore:
 
     async def list_feeds(
         self,
+        *,
         limit: int = 100,
         next_token: str | None = None,
         order: SortOrder = SortOrder.DESC,
-        *,
         source_types: list[str] | None = None,
         statuses: list[str] | None = None,
         tags: list[dict[str, str]] | None = None,
@@ -801,15 +802,7 @@ class FeedStore:
             tags_json,
         )
 
-        has_more = len(rows) > limit
-        if has_more:
-            rows = rows[:limit]
-            last_row = rows[-1]
-            new_next_token = encode_cursor(
-                last_row["created_at"], last_row["id"]
-            )
-        else:
-            new_next_token = None
+        rows, new_next_token = get_next_token(rows, limit, "created_at", "id")
 
         feeds = [self._row_to_feed(row) for row in rows]
         return PaginatedFeeds(feeds, new_next_token)

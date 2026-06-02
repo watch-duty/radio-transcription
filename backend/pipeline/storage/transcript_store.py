@@ -7,6 +7,7 @@ from backend.pipeline.storage.filter_utils import (
     SortOrder,
     decode_cursor,
     encode_cursor,
+    get_next_token,
 )
 
 import asyncpg
@@ -190,15 +191,9 @@ class TranscriptStore:
             limit + 1,
         )
 
-        has_more = len(rows) > limit
-        if has_more:
-            rows = rows[:limit]
-            last_row = rows[-1]
-            new_next_token = encode_cursor(
-                last_row["end_timestamp"], last_row["transmission_id"]
-            )
-        else:
-            new_next_token = None
+        rows, new_next_token = get_next_token(
+            rows, limit, "end_timestamp", "transmission_id"
+        )
 
         return PaginatedTranscripts(
             [self._row_to_proto(row) for row in rows], new_next_token
@@ -237,15 +232,9 @@ class TranscriptStore:
             limit + 1,
         )
 
-        has_more = len(rows) > limit
-        if has_more:
-            rows = rows[:limit]
-            last_row = rows[-1]
-            new_next_token = encode_cursor(
-                last_row["end_timestamp"], last_row["transmission_id"]
-            )
-        else:
-            new_next_token = None
+        rows, new_next_token = get_next_token(
+            rows, limit, "end_timestamp", "transmission_id"
+        )
 
         return PaginatedTranscripts(
             [self._row_to_proto(row) for row in rows], new_next_token
