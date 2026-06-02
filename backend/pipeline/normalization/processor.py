@@ -338,9 +338,7 @@ class NormalizationEventProcessor:
             end_audio_offset=segmented_audio.end_audio_offset,
             feed_name=segmented_audio.feed_name,
             external_id=segmented_audio.external_id,
-            audio_classification=SegmentedAudio.AudioClassification.Name(
-                segmented_audio.audio_classification
-            ),
+            audio_classification=segmented_audio.audio_classification,
         )
 
         topic_name = self.output_topic.split("/")[-1]
