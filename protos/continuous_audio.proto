@@ -1,7 +1,7 @@
 syntax = "proto3";
 import "google/protobuf/timestamp.proto";
 
-message AudioChunk {
+message ContinuousAudio {
   string gcs_uri = 1;
 
   // The approximate wall-clock time when this chunk started recording. When the session
@@ -12,7 +12,7 @@ message AudioChunk {
   // A unique identifier for the continuous capture session that produced this chunk.
   // This indicates a contiguous sequence of chunks; a new session_id signals a break
   // or a newly initialized stream.
-  // Required for continuous feeds ONLY. For segmented feeds, this can be empty or omitted.
+  // Required for continuous feeds ONLY.
   optional string session_id = 3;
 
   // The duration of the audio chunk in milliseconds.
@@ -23,7 +23,6 @@ message AudioChunk {
 
   // The unique identifier of the radio feed (formatted as an RFC 4122 UUID).
   string feed_id = 7;
-
   reserved 6, 8;
   reserved "external_id";
 }
