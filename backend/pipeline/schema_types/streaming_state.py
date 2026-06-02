@@ -12,6 +12,12 @@ from typing import (
 import betterproto
 
 
+class FlushRequestProtoAudioClassification(betterproto.Enum):
+    AUDIO_CLASSIFICATION_UNSPECIFIED = 0
+    AUDIO_CLASSIFICATION_SPEECH = 1
+    AUDIO_CLASSIFICATION_NO_SPEECH = 2
+
+
 @dataclass(eq=False, repr=False)
 class TimeRangeProto(betterproto.Message):
     """Nested domain dependencies"""
@@ -71,14 +77,18 @@ class FlushRequestProto(betterproto.Message):
     traceparent: Optional[str] = betterproto.string_field(
         14, optional=True, group="_traceparent"
     )
-    audio_classification: int = betterproto.int32_field(15)
+    audio_classification: "FlushRequestProtoAudioClassification" = (
+        betterproto.enum_field(15)
+    )
 
 
 @dataclass(eq=False, repr=False)
 class IdleFeedStateProto(betterproto.Message):
     """Persistent State Checkpoints"""
 
-    out_of_order_buffer: List["BufferedChunkProto"] = betterproto.message_field(1)
+    out_of_order_buffer: List["BufferedChunkProto"] = betterproto.message_field(
+        1
+    )
     order_timer_active: bool = betterproto.bool_field(2)
 
 
@@ -109,7 +119,9 @@ class ActiveStitchingStateProto(betterproto.Message):
     missing_post_context: bool = betterproto.bool_field(11)
     buffer_duration_ms: int = betterproto.int64_field(12)
     order_timer_active: bool = betterproto.bool_field(13)
-    out_of_order_buffer: List["BufferedChunkProto"] = betterproto.message_field(14)
+    out_of_order_buffer: List["BufferedChunkProto"] = betterproto.message_field(
+        14
+    )
     last_transmission_start_ms: Optional[int] = betterproto.int64_field(
         15, optional=True, group="_last_transmission_start_ms"
     )
@@ -127,7 +139,9 @@ class ActiveStitchingStateProto(betterproto.Message):
 
 @dataclass(eq=False, repr=False)
 class TransmissionContextProto(betterproto.Message):
-    idle_state: "IdleFeedStateProto" = betterproto.message_field(1, group="context")
+    idle_state: "IdleFeedStateProto" = betterproto.message_field(
+        1, group="context"
+    )
     active_state: "ActiveStitchingStateProto" = betterproto.message_field(
         2, group="context"
     )

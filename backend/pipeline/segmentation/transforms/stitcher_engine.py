@@ -23,7 +23,7 @@ from google.cloud import storage
 
 from backend.pipeline.common import constants as common_constants
 from backend.pipeline.common.log_helper import get_task_logger
-from backend.pipeline.schema_types import streaming_state_pb2 as bp_state_pb2
+from backend.pipeline.schema_types import streaming_state as bp_state
 from backend.pipeline.segmentation import constants as trans_constants
 from backend.pipeline.segmentation import datatypes
 from backend.pipeline.segmentation import utils as trans_utils
@@ -32,9 +32,9 @@ from backend.pipeline.segmentation.audio import vad
 from backend.pipeline.segmentation.state import stitcher_state
 
 _AUDIO_CLASSIFICATION_MAP = {
-    0: bp_state_pb2.FlushRequestProto.AUDIO_CLASSIFICATION_UNSPECIFIED,
-    1: bp_state_pb2.FlushRequestProto.AUDIO_CLASSIFICATION_SPEECH,
-    2: bp_state_pb2.FlushRequestProto.AUDIO_CLASSIFICATION_NO_SPEECH,
+    0: bp_state.FlushRequestProtoAudioClassification.AUDIO_CLASSIFICATION_UNSPECIFIED,
+    1: bp_state.FlushRequestProtoAudioClassification.AUDIO_CLASSIFICATION_SPEECH,
+    2: bp_state.FlushRequestProtoAudioClassification.AUDIO_CLASSIFICATION_NO_SPEECH,
 }
 
 logger = get_task_logger(
@@ -375,7 +375,7 @@ class StitcherEngine:
                 or common_constants.SAMPLE_RATE_HZ,
                 audio_classification=_AUDIO_CLASSIFICATION_MAP.get(
                     action.audio_classification,
-                    bp_state_pb2.FlushRequestProto.AUDIO_CLASSIFICATION_UNSPECIFIED,
+                    bp_state.FlushRequestProtoAudioClassification.AUDIO_CLASSIFICATION_UNSPECIFIED,
                 ),
             )
             flush_req.traceparent = action.traceparent
