@@ -221,19 +221,23 @@ name = "audio-segments-service"
 version = "0.1.0"
 source = { editable = "backend/services/audio_segments" }
 dependencies = [
+    { name = "asyncpg" },
     { name = "fastapi" },
     { name = "google-auth" },
     { name = "pydantic" },
     { name = "radio-transcription-common" },
+    { name = "tenacity" },
     { name = "uvicorn" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "asyncpg", specifier = ">=0.29.0" },
     { name = "fastapi", specifier = ">=0.110.0" },
     { name = "google-auth", specifier = ">=2.29.0" },
     { name = "pydantic", specifier = ">=2.10.6" },
     { name = "radio-transcription-common", editable = "backend/pipeline/common" },
+    { name = "tenacity", specifier = ">=9.1.4" },
     { name = "uvicorn", specifier = ">=0.27.0" },
 ]
 
@@ -786,6 +790,7 @@ dependencies = [
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
     { name = "radio-transcription-common" },
+    { name = "tenacity" },
     { name = "uvicorn" },
 ]
 
@@ -796,6 +801,7 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2.0" },
     { name = "pydantic", specifier = ">=2.10.6" },
     { name = "radio-transcription-common", editable = "backend/pipeline/common" },
+    { name = "tenacity", specifier = ">=9.1.4" },
     { name = "uvicorn", specifier = ">=0.27.0" },
 ]
 
@@ -3026,19 +3032,23 @@ name = "rules-service"
 version = "0.1.0"
 source = { editable = "backend/services/rules" }
 dependencies = [
+    { name = "asyncpg" },
     { name = "fastapi" },
     { name = "pydantic" },
     { name = "radio-transcription-common" },
     { name = "redis" },
+    { name = "tenacity" },
     { name = "uvicorn" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "asyncpg", specifier = ">=0.29.0" },
     { name = "fastapi", specifier = ">=0.110.0" },
     { name = "pydantic", specifier = ">=2.10.6" },
     { name = "radio-transcription-common", editable = "backend/pipeline/common" },
     { name = "redis", specifier = ">=7.3.0" },
+    { name = "tenacity", specifier = ">=9.1.4" },
     { name = "uvicorn", specifier = ">=0.27.0" },
 ]
 
@@ -3225,6 +3235,7 @@ dependencies = [
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
     { name = "radio-transcription-common" },
+    { name = "tenacity" },
     { name = "uvicorn" },
 ]
 
@@ -3235,6 +3246,7 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2.0" },
     { name = "pydantic", specifier = ">=2.10.6" },
     { name = "radio-transcription-common", editable = "backend/pipeline/common" },
+    { name = "tenacity", specifier = ">=9.1.4" },
     { name = "uvicorn", specifier = ">=0.27.0" },
 ]
 
