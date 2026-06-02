@@ -684,14 +684,15 @@ export function FeedConfigurationEdit({
                           Reset feed
                         </MenuItem>
                       )}
-                      {feedSubstatus != null && feedSubstatus !== 'deactivated' && (
-                        <MenuItem
-                          onClick={handleDeactivateClick}
-                          disabled={isSubmitting}
-                        >
-                          Deactivate feed
-                        </MenuItem>
-                      )}
+                      {feedSubstatus != null &&
+                        feedSubstatus !== 'deactivated' && (
+                          <MenuItem
+                            onClick={handleDeactivateClick}
+                            disabled={isSubmitting}
+                          >
+                            Deactivate feed
+                          </MenuItem>
+                        )}
                       <MenuItem
                         onClick={handleDeleteClick}
                         disabled={isSubmitting}
