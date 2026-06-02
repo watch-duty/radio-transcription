@@ -1,5 +1,7 @@
-import requests
 import logging
+
+import requests
+
 from backend.pipeline.transcription.transcribers.base import Transcriber
 
 logger = logging.getLogger(__name__)
@@ -8,7 +10,9 @@ logger = logging.getLogger(__name__)
 class LocalApiTranscriber(Transcriber):
     """Transcriber that calls a local HTTP API for transcription."""
 
-    def __init__(self, api_url: str = "http://local-whisper:8095/transcribe"):
+    def __init__(
+        self, api_url: str = "http://local-whisper:8095/transcribe"
+    ) -> None:
         self.api_url = api_url
 
     def setup(self) -> None:
@@ -55,11 +59,10 @@ class LocalApiTranscriber(Transcriber):
             if resp.status_code == 200:
                 result = resp.json()
                 return result.get("text")
-            else:
-                logger.error(
-                    f"Local whisper API returned error {resp.status_code}: {resp.text}"
-                )
-                return None
-        except Exception as e:
-            logger.error(f"Error calling local whisper API: {e}")
+            logger.error(
+                f"Local whisper API returned error {resp.status_code}: {resp.text}"
+            )
+            return None  # noqa: TRY300
+        except Exception:
+            logger.exception("Error calling local whisper API")
             return None

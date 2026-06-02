@@ -9,12 +9,12 @@ from backend.pipeline.transcription.transcribers.chirp import (
     ChirpConfig,
     GoogleChirpV3Transcriber,
 )
+from backend.pipeline.transcription.transcribers.local_api import (
+    LocalApiTranscriber,
+)
 from backend.pipeline.transcription.transcribers.mock import (
     MockConfig,
     MockTranscriber,
-)
-from backend.pipeline.transcription.transcribers.local_api import (
-    LocalApiTranscriber,
 )
 
 

@@ -61,6 +61,7 @@ def get_audio_duration(audio_bytes: bytes) -> int:
                     ],
                     capture_output=True,
                     text=True,
+                    check=False,
                 )
                 logger.info(
                     f"Probe details for N/A file (Size: {len(audio_bytes)} bytes):\nSTDOUT:\n{probe_result.stdout}\nSTDERR:\n{probe_result.stderr}"

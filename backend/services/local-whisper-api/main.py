@@ -1,10 +1,12 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query
-from faster_whisper import WhisperModel
-import tempfile
-import os
 import logging
-from google.cloud import storage
+import tempfile
+from pathlib import Path
+from typing import Annotated, Any
 from urllib.parse import urlparse
+
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from faster_whisper import WhisperModel
+from google.cloud import storage
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -16,42 +18,46 @@ logger.info("Loading Whisper model...")
 model = WhisperModel("tiny", device="cpu", compute_type="int8")
 logger.info("Model loaded successfully.")
 
+
+class StorageClientHolder:
+    client: storage.Client | None = None
+
+
 # Initialize storage client
 # This will automatically use the emulator if STORAGE_EMULATOR_HOST is set.
 try:
-    storage_client = storage.Client()
+    StorageClientHolder.client = storage.Client()
 except Exception as e:
     logger.warning(
         f"Could not initialize default storage client: {e}. Will retry or fail on request."
     )
-    storage_client = None
 
 
-def download_blob(uri: str, local_path: str):
-    global storage_client
-    if not storage_client:
-        storage_client = storage.Client()
+def download_blob(uri: str, local_path: str) -> None:
+    if not StorageClientHolder.client:
+        StorageClientHolder.client = storage.Client()
 
     parsed_uri = urlparse(uri)
     if parsed_uri.scheme != "gs":
-        raise ValueError(
-            f"Unsupported URI scheme: {parsed_uri.scheme}. Only gs:// is supported."
-        )
+        msg = f"Unsupported URI scheme: {parsed_uri.scheme}. Only gs:// is supported."
+        raise ValueError(msg)
 
     bucket_name = parsed_uri.netloc
     blob_name = parsed_uri.path.lstrip("/")
 
     logger.info(f"Downloading {uri} to {local_path}")
-    bucket = storage_client.bucket(bucket_name)
+    bucket = StorageClientHolder.client.bucket(bucket_name)
     blob = bucket.blob(blob_name)
     blob.download_to_filename(local_path)
 
 
 @app.post("/transcribe")
 async def transcribe(
-    file: UploadFile = File(None),
-    uri: str = Query(None, description="GCS URI (gs://bucket/object)"),
-):
+    file: Annotated[UploadFile | None, File()] = None,
+    uri: Annotated[
+        str | None, Query(description="GCS URI (gs://bucket/object)")
+    ] = None,
+) -> dict[str, Any]:
     logger.info(
         f"Received transcription request. File: {file.filename if file else None}, URI: {uri}"
     )
@@ -90,13 +96,15 @@ async def transcribe(
         }
 
     except Exception as e:
-        logger.error(f"Error during transcription: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Error during transcription")
+        raise HTTPException(status_code=500, detail=str(e)) from e
     finally:
-        if tmp_path and os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+        if tmp_path:
+            tmp_file = Path(tmp_path)
+            if tmp_file.exists():  # noqa: ASYNC240
+                tmp_file.unlink()  # noqa: ASYNC240
 
 
 @app.get("/health")
-async def health():
+async def health() -> dict[str, str]:
     return {"status": "healthy"}
