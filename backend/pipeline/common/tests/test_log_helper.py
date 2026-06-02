@@ -1,7 +1,7 @@
 import logging
 from unittest import TestCase, mock
 
-from backend.pipeline.common.logging import setup_logging
+from backend.pipeline.common.log_helper import setup_logging
 
 
 class TestLogging(TestCase):
@@ -10,7 +10,7 @@ class TestLogging(TestCase):
 
     @mock.patch("backend.pipeline.common.tracing_utils.set_tracer_provider")
     @mock.patch("backend.pipeline.common.tracing_utils.CloudTraceSpanExporter")
-    @mock.patch("backend.pipeline.common.logging.cloud_logging")
+    @mock.patch("backend.pipeline.common.log_helper.cloud_logging")
     def test_setup_logging_gcp(
         self, mock_cloud_logging, mock_exporter, mock_set_provider
     ) -> None:
@@ -21,7 +21,8 @@ class TestLogging(TestCase):
         # Explicitly mock is_gcp_env to return True to trigger the GCP logging path
         with (
             mock.patch(
-                "backend.pipeline.common.logging.is_gcp_env", return_value=True
+                "backend.pipeline.common.log_helper.is_gcp_env",
+                return_value=True,
             ),
             mock.patch(
                 "backend.pipeline.common.tracing_utils.is_gcp_env",
@@ -49,7 +50,7 @@ class TestLogging(TestCase):
     def test_setup_logging_local(self, mock_basic_config) -> None:
         # Mock is_gcp_env to return False to trigger local logging path
         with mock.patch(
-            "backend.pipeline.common.logging.is_gcp_env", return_value=False
+            "backend.pipeline.common.log_helper.is_gcp_env", return_value=False
         ):
             # First call should initialize local logging
             setup_logging()

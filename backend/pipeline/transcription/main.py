@@ -12,7 +12,7 @@ from cloudevents.http.event import CloudEvent
 from google.cloud import pubsub_v1
 
 from backend.pipeline.common.clients import audio_segments_client
-from backend.pipeline.common.logging import setup_logging
+from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.normalization.common.enums import TranscriberType
 from backend.pipeline.transcription.processor import TranscriptionEventProcessor

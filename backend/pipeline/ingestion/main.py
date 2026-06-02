@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from backend.pipeline.common.logging import setup_logging
+from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.ingestion.collector_runtime import CollectorRuntime
 from backend.pipeline.ingestion.router import (
     resolve_topic_path,
