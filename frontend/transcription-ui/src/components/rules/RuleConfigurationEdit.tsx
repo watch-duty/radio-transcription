@@ -1,8 +1,6 @@
 import { useState } from 'react';
 
 import AddIcon from '@mui/icons-material/Add';
-import DeleteIcon from '@mui/icons-material/Delete';
-import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import RuleIcon from '@mui/icons-material/Rule';
 import Autocomplete from '@mui/material/Autocomplete';
@@ -21,10 +19,8 @@ import DialogTitle from '@mui/material/DialogTitle';
 import Divider from '@mui/material/Divider';
 import FormControl from '@mui/material/FormControl';
 import FormControlLabel from '@mui/material/FormControlLabel';
-import FormHelperText from '@mui/material/FormHelperText';
 import Grid from '@mui/material/Grid';
 import IconButton from '@mui/material/IconButton';
-import InputAdornment from '@mui/material/InputAdornment';
 import InputLabel from '@mui/material/InputLabel';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
@@ -32,13 +28,13 @@ import Select from '@mui/material/Select';
 import Stack from '@mui/material/Stack';
 import Switch from '@mui/material/Switch';
 import TextField from '@mui/material/TextField';
-import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import type {
   EvaluationType,
   Feed,
   LogicalOperator,
   Rule,
+  RuleConditions,
   RuleCreate,
   RuleUpdate,
   ScopeLevel,
@@ -222,7 +218,8 @@ export function RuleConfigurationEdit({
     }
 
     if (ruleScopeLevel === 'FEED_SPECIFIC' && ruleTargetFeeds.length === 0) {
-      errors.feeds = 'At least one target feed must be selected for FEED_SPECIFIC scope.';
+      errors.feeds =
+        'At least one target feed must be selected for FEED_SPECIFIC scope.';
     }
 
     if (ruleEvaluationType === 'KEYWORD_MATCH') {
@@ -238,7 +235,8 @@ export function RuleConfigurationEdit({
       }
 
       if (activeKeywords.length === 0) {
-        errors.keywords = 'At least one keyword is required for Keyword Match rules.';
+        errors.keywords =
+          'At least one keyword is required for Keyword Match rules.';
       }
     } else if (ruleEvaluationType === 'REGEX_MATCH') {
       if (!ruleRegexExpression.trim()) {
@@ -251,7 +249,8 @@ export function RuleConfigurationEdit({
       }
     } else if (ruleEvaluationType === 'RULE_GROUP') {
       if (ruleGroupChildRuleIds.length === 0) {
-        errors.childRules = 'At least one child rule must be selected for Rule Group.';
+        errors.childRules =
+          'At least one child rule must be selected for Rule Group.';
       }
     }
 
@@ -270,7 +269,7 @@ export function RuleConfigurationEdit({
     setValidationErrors({});
 
     // Include the in-progress keyword if exists
-    let finalKeywords = [...ruleKeywords];
+    const finalKeywords = [...ruleKeywords];
     if (ruleEvaluationType === 'KEYWORD_MATCH' && newKeyword.trim()) {
       const word = newKeyword.trim();
       const wordsToAdd = word
@@ -287,7 +286,7 @@ export function RuleConfigurationEdit({
     }
 
     // Build Conditions
-    let conditionsPayload: any;
+    let conditionsPayload: RuleConditions;
     if (ruleEvaluationType === 'KEYWORD_MATCH') {
       conditionsPayload = {
         evaluationType: 'KEYWORD_MATCH',
@@ -301,7 +300,7 @@ export function RuleConfigurationEdit({
         expression: ruleRegexExpression.trim(),
         flags: ruleRegexFlags.trim(),
       };
-    } else if (ruleEvaluationType === 'RULE_GROUP') {
+    } else {
       conditionsPayload = {
         evaluationType: 'RULE_GROUP',
         operator: ruleGroupOperator,
@@ -389,7 +388,10 @@ export function RuleConfigurationEdit({
         }}
       >
         <Box component="form" onSubmit={handleSubmit} noValidate>
-          <Stack spacing={1} sx={{ display: 'flex', alignItems: 'left', justifyContent: 'left'}}>
+          <Stack
+            spacing={1}
+            sx={{ display: 'flex', alignItems: 'left', justifyContent: 'left' }}
+          >
             <TextField
               fullWidth
               label="Rule Name"
@@ -399,7 +401,9 @@ export function RuleConfigurationEdit({
               value={ruleName}
               onChange={(e) => setRuleName(e.target.value)}
               error={!!validationErrors.name}
-              helperText={validationErrors.name || 'Descriptive name for the rule'}
+              helperText={
+                validationErrors.name || 'Descriptive name for the rule'
+              }
               disabled={isSubmitting}
             />
 
@@ -440,7 +444,9 @@ export function RuleConfigurationEdit({
                       labelId="scope-level-label"
                       value={ruleScopeLevel}
                       label="Scope Level"
-                      onChange={(e) => setRuleScopeLevel(e.target.value as ScopeLevel)}
+                      onChange={(e) =>
+                        setRuleScopeLevel(e.target.value as ScopeLevel)
+                      }
                     >
                       <MenuItem value="GLOBAL">Global</MenuItem>
                       <MenuItem value="FEED_SPECIFIC">Feed Specific</MenuItem>
@@ -454,7 +460,9 @@ export function RuleConfigurationEdit({
                       multiple
                       options={feeds}
                       getOptionLabel={(option) => option.name}
-                      value={feeds.filter((f) => ruleTargetFeeds.includes(f.id))}
+                      value={feeds.filter((f) =>
+                        ruleTargetFeeds.includes(f.id)
+                      )}
                       onChange={(_, selectedOptions) => {
                         setRuleTargetFeeds(selectedOptions.map((f) => f.id));
                       }}
@@ -473,7 +481,12 @@ export function RuleConfigurationEdit({
                           <Box key={key} component="li" {...optionProps}>
                             <Stack>
                               <Typography>{option.name}</Typography>
-                              <Typography variant="caption" sx={{ color: 'text.secondary' }}>Source ID: {option.sourceFeedId}</Typography>
+                              <Typography
+                                variant="caption"
+                                sx={{ color: 'text.secondary' }}
+                              >
+                                Source ID: {option.sourceFeedId}
+                              </Typography>
                             </Stack>
                           </Box>
                         );
@@ -490,7 +503,11 @@ export function RuleConfigurationEdit({
 
             {/* Conditions Section */}
             <Box>
-              <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mb: 2 }}>
+              <Stack
+                direction="row"
+                spacing={1}
+                sx={{ alignItems: 'center', mb: 2 }}
+              >
                 <RuleIcon fontSize="small" color="action" />
                 <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
                   Conditions
@@ -498,13 +515,22 @@ export function RuleConfigurationEdit({
               </Stack>
 
               {/* Evaluation Type */}
-              <FormControl fullWidth size="small" sx={{ mb: 2.5 }} disabled={isSubmitting}>
-                <InputLabel id="evaluation-type-label">Evaluation Type</InputLabel>
+              <FormControl
+                fullWidth
+                size="small"
+                sx={{ mb: 2.5 }}
+                disabled={isSubmitting}
+              >
+                <InputLabel id="evaluation-type-label">
+                  Evaluation Type
+                </InputLabel>
                 <Select
                   labelId="evaluation-type-label"
                   value={ruleEvaluationType}
                   label="Evaluation Type"
-                  onChange={(e) => setRuleEvaluationType(e.target.value as EvaluationType)}
+                  onChange={(e) =>
+                    setRuleEvaluationType(e.target.value as EvaluationType)
+                  }
                 >
                   {EVALUATION_TYPE_OPTIONS.map((opt) => (
                     <MenuItem key={opt.value} value={opt.value}>
@@ -519,13 +545,23 @@ export function RuleConfigurationEdit({
                 <Stack spacing={2}>
                   <Grid container spacing={2}>
                     <Grid size={{ xs: 12, sm: 6 }}>
-                      <FormControl fullWidth size="small" disabled={isSubmitting}>
-                        <InputLabel id="keyword-operator-label">Logical Operator</InputLabel>
+                      <FormControl
+                        fullWidth
+                        size="small"
+                        disabled={isSubmitting}
+                      >
+                        <InputLabel id="keyword-operator-label">
+                          Logical Operator
+                        </InputLabel>
                         <Select
                           labelId="keyword-operator-label"
                           value={ruleKeywordOperator}
                           label="Logical Operator"
-                          onChange={(e) => setRuleKeywordOperator(e.target.value as LogicalOperator)}
+                          onChange={(e) =>
+                            setRuleKeywordOperator(
+                              e.target.value as LogicalOperator
+                            )
+                          }
                         >
                           <MenuItem value="ANY">ANY (OR)</MenuItem>
                           <MenuItem value="ALL">ALL (AND)</MenuItem>
@@ -537,7 +573,9 @@ export function RuleConfigurationEdit({
                         control={
                           <Checkbox
                             checked={ruleKeywordCaseSensitive}
-                            onChange={(e) => setRuleKeywordCaseSensitive(e.target.checked)}
+                            onChange={(e) =>
+                              setRuleKeywordCaseSensitive(e.target.checked)
+                            }
                             disabled={isSubmitting}
                           />
                         }
@@ -547,7 +585,11 @@ export function RuleConfigurationEdit({
                   </Grid>
 
                   {/* Add Keywords */}
-                  <Stack direction="row" spacing={1.5} sx={{ alignItems: 'flex-start' }}>
+                  <Stack
+                    direction="row"
+                    spacing={1.5}
+                    sx={{ alignItems: 'flex-start' }}
+                  >
                     <TextField
                       fullWidth
                       size="small"
@@ -557,7 +599,10 @@ export function RuleConfigurationEdit({
                       onChange={(e) => setNewKeyword(e.target.value)}
                       onKeyDown={handleKeywordKeyPress}
                       error={!!validationErrors.keywords}
-                      helperText={validationErrors.keywords || 'Separate multiple keywords with commas'}
+                      helperText={
+                        validationErrors.keywords ||
+                        'Separate multiple keywords with commas'
+                      }
                       disabled={isSubmitting}
                     />
                     <Button
@@ -585,7 +630,11 @@ export function RuleConfigurationEdit({
                     }}
                   >
                     {ruleKeywords.length === 0 ? (
-                      <Typography variant="body2" color="text.secondary" sx={{ py: 1, mx: 'auto', fontStyle: 'italic' }}>
+                      <Typography
+                        variant="body2"
+                        color="text.secondary"
+                        sx={{ py: 1, mx: 'auto', fontStyle: 'italic' }}
+                      >
                         No keywords added yet.
                       </Typography>
                     ) : (
@@ -633,12 +682,16 @@ export function RuleConfigurationEdit({
               {ruleEvaluationType === 'RULE_GROUP' ? (
                 <Stack spacing={2}>
                   <FormControl fullWidth size="small" disabled={isSubmitting}>
-                    <InputLabel id="group-operator-label">Logical Operator</InputLabel>
+                    <InputLabel id="group-operator-label">
+                      Logical Operator
+                    </InputLabel>
                     <Select
                       labelId="group-operator-label"
                       value={ruleGroupOperator}
                       label="Logical Operator"
-                      onChange={(e) => setRuleGroupOperator(e.target.value as LogicalOperator)}
+                      onChange={(e) =>
+                        setRuleGroupOperator(e.target.value as LogicalOperator)
+                      }
                     >
                       <MenuItem value="ANY">ANY (OR)</MenuItem>
                       <MenuItem value="ALL">ALL (AND)</MenuItem>
@@ -649,9 +702,13 @@ export function RuleConfigurationEdit({
                     multiple
                     options={eligibleChildRules}
                     getOptionLabel={(option) => option.ruleName}
-                    value={eligibleChildRules.filter((r) => ruleGroupChildRuleIds.includes(r.ruleId))}
+                    value={eligibleChildRules.filter((r) =>
+                      ruleGroupChildRuleIds.includes(r.ruleId)
+                    )}
                     onChange={(_, selectedOptions) => {
-                      setRuleGroupChildRuleIds(selectedOptions.map((r) => r.ruleId));
+                      setRuleGroupChildRuleIds(
+                        selectedOptions.map((r) => r.ruleId)
+                      );
                     }}
                     renderInput={(params) => (
                       <TextField
@@ -659,7 +716,10 @@ export function RuleConfigurationEdit({
                         label="Child Rules"
                         size="small"
                         error={!!validationErrors.childRules}
-                        helperText={validationErrors.childRules || 'Rules to group together'}
+                        helperText={
+                          validationErrors.childRules ||
+                          'Rules to group together'
+                        }
                       />
                     )}
                     disableCloseOnSelect
@@ -763,7 +823,8 @@ export function RuleConfigurationEdit({
         </DialogTitle>
         <DialogContent>
           <DialogContentText id="delete-rule-dialog-description" sx={{ mb: 2 }}>
-            Are you sure you want to delete the rule "{ruleName}"? This action cannot be undone.
+            Are you sure you want to delete the rule "{ruleName}"? This action
+            cannot be undone.
           </DialogContentText>
           <DialogContentText sx={{ mb: 1, fontWeight: 'bold' }}>
             To confirm, type the Rule Name "{ruleName}" below:

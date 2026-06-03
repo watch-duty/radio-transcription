@@ -11,7 +11,7 @@ import {
   waitFor,
   within,
 } from '@testing-library/react';
-import { SourceType, type Feed, type Rule } from '@transcription/common';
+import { type Feed, type Rule, SourceType } from '@transcription/common';
 
 import { createRule } from '../../service/createRule';
 import { deleteRule } from '../../service/deleteRule';
@@ -126,7 +126,9 @@ describe('RuleConfigurationView', () => {
 
     const formCard = screen.getByTestId('rule-config-card');
     expect(within(formCard).getByLabelText('Rule Name')).toBeInTheDocument();
-    expect(within(formCard).getByLabelText('Description (Optional)')).toBeInTheDocument();
+    expect(
+      within(formCard).getByLabelText('Description (Optional)')
+    ).toBeInTheDocument();
     expect(within(formCard).getByLabelText('Scope Level')).toBeInTheDocument();
 
     await waitFor(() => {
@@ -253,10 +255,14 @@ describe('RuleConfigurationView', () => {
     });
     fireEvent.click(editBtn);
 
-    expect(screen.getByText('Edit Rule: Evacuation Trigger')).toBeInTheDocument();
+    expect(
+      screen.getByText('Edit Rule: Evacuation Trigger')
+    ).toBeInTheDocument();
 
     const editFormCard = screen.getByTestId('rule-config-card');
-    expect(within(editFormCard).getByLabelText('Rule Name')).toHaveValue('Evacuation Trigger');
+    expect(within(editFormCard).getByLabelText('Rule Name')).toHaveValue(
+      'Evacuation Trigger'
+    );
 
     // Test Cancel
     const cancelBtn = within(editFormCard).getByRole('button', {
@@ -339,7 +345,9 @@ describe('RuleConfigurationView', () => {
     await waitFor(() => {
       expect(deleteRule).toHaveBeenCalledTimes(1);
       expect(deleteRule).toHaveBeenCalledWith('rule-1', 'fake-jwt-token-xyz');
-      expect(mockTriggerSnackbar).toHaveBeenCalledWith('Rule deleted successfully!');
+      expect(mockTriggerSnackbar).toHaveBeenCalledWith(
+        'Rule deleted successfully!'
+      );
     });
   });
 });

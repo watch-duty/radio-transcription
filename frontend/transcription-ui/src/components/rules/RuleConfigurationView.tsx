@@ -42,8 +42,10 @@ export function RuleConfigurationView({
   const [isActive, setIsActive] = useState(true);
   const [scopeLevel, setScopeLevel] = useState<ScopeLevel>('GLOBAL');
   const [targetFeeds, setTargetFeeds] = useState<string[]>([]);
-  const [evaluationType, setEvaluationType] = useState<EvaluationType>('KEYWORD_MATCH');
-  const [keywordOperator, setKeywordOperator] = useState<LogicalOperator>('ANY');
+  const [evaluationType, setEvaluationType] =
+    useState<EvaluationType>('KEYWORD_MATCH');
+  const [keywordOperator, setKeywordOperator] =
+    useState<LogicalOperator>('ANY');
   const [keywords, setKeywords] = useState<string[]>([]);
   const [keywordCaseSensitive, setKeywordCaseSensitive] = useState(false);
   const [regexExpression, setRegexExpression] = useState('');
@@ -156,7 +158,9 @@ export function RuleConfigurationView({
       triggerSnackbar('Rule deleted successfully!');
       setIsEditing(false);
       queryClient.setQueryData<Rule[]>(['listRules', token], (oldRules) => {
-        return oldRules ? oldRules.filter((rule) => rule.ruleId !== ruleId) : [];
+        return oldRules
+          ? oldRules.filter((rule) => rule.ruleId !== ruleId)
+          : [];
       });
       resetFormAndRefresh();
     },
@@ -305,7 +309,9 @@ export function RuleConfigurationView({
             rules={rules}
             editingRuleId={isEditing ? id : undefined}
             onCreateRule={handleCreateRule}
-            onUpdateRule={(payload: RuleUpdate) => handleUpdateRule(id, payload)}
+            onUpdateRule={(payload: RuleUpdate) =>
+              handleUpdateRule(id, payload)
+            }
             onDeleteRule={async () => {
               await deleteMutation.mutateAsync(id);
             }}

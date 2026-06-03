@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createRule } from './createRule';
 import type { RuleCreate } from '@transcription/common';
+
+import { createRule } from './createRule';
 
 describe('createRule', () => {
   const mockFetch = vi.fn();

@@ -1,11 +1,11 @@
-import { forwardRef, useMemo, useState } from 'react';
+import { forwardRef, useCallback, useMemo, useState } from 'react';
 import type { ComponentProps, HTMLAttributes } from 'react';
 import { TableVirtuoso } from 'react-virtuoso';
 
 import ClearIcon from '@mui/icons-material/Clear';
 import EditIcon from '@mui/icons-material/Edit';
-import SearchIcon from '@mui/icons-material/Search';
 import RuleIcon from '@mui/icons-material/Rule';
+import SearchIcon from '@mui/icons-material/Search';
 import TuneIcon from '@mui/icons-material/Tune';
 import Box from '@mui/material/Box';
 import Card from '@mui/material/Card';
@@ -169,23 +169,26 @@ export function RuleTable({
     }));
   };
 
-  const formatConditionsSummary = (conditions: RuleConditions): string => {
-    if (conditions.evaluationType === 'KEYWORD_MATCH') {
-      const caseStr = conditions.caseSensitive ? ' (case-sensitive)' : '';
-      return `Keywords (${conditions.operator})${caseStr}: ${conditions.keywords.join(', ')}`;
-    }
-    if (conditions.evaluationType === 'REGEX_MATCH') {
-      const flagsStr = conditions.flags ? ` / ${conditions.flags}` : '';
-      return `Regex: /${conditions.expression}${flagsStr}`;
-    }
-    if (conditions.evaluationType === 'RULE_GROUP') {
-      const childNames = conditions.childRuleIds.map(
-        (id) => ruleMap.get(id)?.ruleName || id
-      );
-      return `Rule Group (${conditions.operator}): ${childNames.join(', ')}`;
-    }
-    return '';
-  };
+  const formatConditionsSummary = useCallback(
+    (conditions: RuleConditions): string => {
+      if (conditions.evaluationType === 'KEYWORD_MATCH') {
+        const caseStr = conditions.caseSensitive ? ' (case-sensitive)' : '';
+        return `Keywords (${conditions.operator})${caseStr}: ${conditions.keywords.join(', ')}`;
+      }
+      if (conditions.evaluationType === 'REGEX_MATCH') {
+        const flagsStr = conditions.flags ? ` / ${conditions.flags}` : '';
+        return `Regex: /${conditions.expression}${flagsStr}`;
+      }
+      if (conditions.evaluationType === 'RULE_GROUP') {
+        const childNames = conditions.childRuleIds.map(
+          (id) => ruleMap.get(id)?.ruleName || id
+        );
+        return `Rule Group (${conditions.operator}): ${childNames.join(', ')}`;
+      }
+      return '';
+    },
+    [ruleMap]
+  );
 
   const filteredAndSortedRules = useMemo(() => {
     const query = searchQuery.toLowerCase().trim();
@@ -231,7 +234,14 @@ export function RuleTable({
       }
       return sortConfig.direction === 'asc' ? comparison : -comparison;
     });
-  }, [rules, searchQuery, appliedScopes, appliedStatuses, sortConfig, ruleMap]);
+  }, [
+    rules,
+    searchQuery,
+    appliedScopes,
+    appliedStatuses,
+    sortConfig,
+    formatConditionsSummary,
+  ]);
 
   const gridTemplateColumns = allowEdit
     ? '1.5fr 1fr 2fr 0.8fr 60px'
@@ -268,8 +278,12 @@ export function RuleTable({
           ) : (
             <TableSortLabel
               active={sortConfig.column === key}
-              direction={sortConfig.column === key ? sortConfig.direction : 'asc'}
-              onClick={() => handleRequestSort(key as 'name' | 'scope' | 'status')}
+              direction={
+                sortConfig.column === key ? sortConfig.direction : 'asc'
+              }
+              onClick={() =>
+                handleRequestSort(key as 'name' | 'scope' | 'status')
+              }
             >
               {display}
             </TableSortLabel>
@@ -324,7 +338,12 @@ export function RuleTable({
             {rule.ruleName}
           </Typography>
           {rule.description ? (
-            <Typography variant="caption" color="text.secondary" noWrap sx={{ maxWidth: '100%' }}>
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              noWrap
+              sx={{ maxWidth: '100%' }}
+            >
               {rule.description}
             </Typography>
           ) : null}
@@ -349,7 +368,8 @@ export function RuleTable({
             variant="outlined"
             color={rule.scope.level === 'GLOBAL' ? 'primary' : 'default'}
           />
-          {rule.scope.level === 'FEED_SPECIFIC' && rule.scope.targetFeeds.length > 0 ? (
+          {rule.scope.level === 'FEED_SPECIFIC' &&
+          rule.scope.targetFeeds.length > 0 ? (
             <Typography
               variant="caption"
               color="text.secondary"
@@ -372,7 +392,10 @@ export function RuleTable({
             minWidth: 0,
           }}
         >
-          <Typography variant="body2" sx={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
+          <Typography
+            variant="body2"
+            sx={{ fontFamily: 'monospace', wordBreak: 'break-all' }}
+          >
             {formatConditionsSummary(rule.conditions)}
           </Typography>
         </TableCell>
