@@ -1,16 +1,22 @@
 from __future__ import annotations
 
-import base64
-import datetime
 import json
 import uuid
 from dataclasses import dataclass
-from enum import StrEnum
+from typing import TYPE_CHECKING
 
 import asyncpg
 from pydantic import TypeAdapter
 
+if TYPE_CHECKING:
+    import datetime
+
 from backend.pipeline.storage import audio_segment_queries
+from backend.pipeline.storage.pagination_utils import (
+    SortOrder,
+    decode_cursor,
+    get_paginated_results,
+)
 from backend.services.audio_segments.models import (
     Annotation,
     AnnotationType,
@@ -19,11 +25,6 @@ from backend.services.audio_segments.models import (
 )
 
 annotation_adapter = TypeAdapter(Annotation)
-
-
-class SortOrder(StrEnum):
-    ASC = "asc"
-    DESC = "desc"
 
 
 @dataclass
@@ -37,23 +38,6 @@ class AudioSegmentStore:
 
     def __init__(self, pool: asyncpg.Pool) -> None:
         self._pool = pool
-
-    def _decode_cursor(
-        self, next_token: str
-    ) -> tuple[datetime.datetime, uuid.UUID]:
-        """Decode a base64 pagination token into a timestamp and UUID."""
-        try:
-            decoded = base64.b64decode(next_token).decode("utf-8")
-            ts_str, uid_str = decoded.split("|")
-            return datetime.datetime.fromisoformat(ts_str), uuid.UUID(uid_str)
-        except Exception as e:
-            msg = f"Invalid next_token: {e}"
-            raise ValueError(msg)
-
-    def _encode_cursor(self, ts: datetime.datetime, uid: uuid.UUID) -> str:
-        """Encode a timestamp and UUID into a base64 pagination token."""
-        token_str = f"{ts.isoformat()}|{uid}"
-        return base64.b64encode(token_str.encode("utf-8")).decode("utf-8")
 
     def _prepare_annotation(self, row_dict: dict) -> dict:
         """Prepare an annotation dictionary for Pydantic validation."""
@@ -183,7 +167,7 @@ class AudioSegmentStore:
         cursor_ts = None
         cursor_uid = None
         if next_token:
-            cursor_ts, cursor_uid = self._decode_cursor(next_token)
+            cursor_ts, cursor_uid = decode_cursor(next_token)
 
         is_asc = order == SortOrder.ASC
         query = (
@@ -203,15 +187,9 @@ class AudioSegmentStore:
             limit + 1,
         )
 
-        has_more = len(rows) > limit
-        if has_more:
-            rows = rows[:limit]
-            last_row = rows[-1]
-            new_next_token = self._encode_cursor(
-                last_row["end_timestamp"], last_row["id"]
-            )
-        else:
-            new_next_token = None
+        rows, new_next_token = get_paginated_results(
+            rows, limit, "end_timestamp", "id"
+        )
 
         segments = [
             AudioSegment.model_validate(self._prepare_audio_segment(row))

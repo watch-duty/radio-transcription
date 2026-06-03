@@ -70,6 +70,11 @@ const VirtuosoTableBody = forwardRef<
 ));
 VirtuosoTableBody.displayName = 'VirtuosoTableBody';
 
+const VirtuosoFillerRow = ({ height }: { height: number }) => (
+  <div style={{ height }} />
+);
+VirtuosoFillerRow.displayName = 'VirtuosoFillerRow';
+
 const VirtuosoTable = forwardRef<HTMLDivElement, ComponentProps<typeof Table>>(
   (props, ref) => (
     <Table
@@ -139,6 +144,7 @@ const VIRTUOSO_COMPONENTS = {
   TableHead: VirtuosoTableHead,
   TableRow: VirtuosoTableRow,
   TableBody: VirtuosoTableBody,
+  FillerRow: VirtuosoFillerRow,
 };
 
 export function FeedTable({
@@ -178,7 +184,9 @@ export function FeedTable({
         }
       });
     });
-    return uniqueTags;
+    return uniqueTags.sort(
+      (a, b) => a.key.localeCompare(b.key) || a.value.localeCompare(b.value)
+    );
   }, [feeds]);
 
   // Calculate unique source types across all feeds
@@ -294,6 +302,7 @@ export function FeedTable({
     >
       {columns.map(({ key, display }) => (
         <TableCell
+          key={key}
           component="div"
           role="columnheader"
           sx={{
