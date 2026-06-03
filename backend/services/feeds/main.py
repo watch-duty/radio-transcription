@@ -14,6 +14,7 @@ from backend.pipeline.common.exceptions import (
     FeedAlreadyExistsError,
     FeedNameAlreadyExistsError,
 )
+from backend.pipeline.common.fastapi_tracing import setup_fastapi_tracing
 from backend.pipeline.storage.connection import (
     close_pool,
     create_pool_with_retry,
@@ -43,6 +44,7 @@ app = FastAPI(
     lifespan=lifespan,
     dependencies=[Depends(verify_oidc_token)],
 )
+setup_fastapi_tracing(app, service_name="feeds-service")
 
 
 @app.post(
