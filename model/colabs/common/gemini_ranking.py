@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import collections.abc
+import concurrent.futures
 
 from common import prompts
 from common import ranking
@@ -206,6 +207,7 @@ def run_source_group_predictions(
     on_new_entry: (
         collections.abc.Callable[[ranking.PredictionCacheEntry], None] | None
     ) = None,
+    max_source_workers: int = 1,
 ) -> tuple[
     list[ranking.PredictionCacheEntry],
     dict[str, ranking.PredictionCacheEntry],
@@ -227,13 +229,19 @@ def run_source_group_predictions(
     """
     row_list = [dict(row) for row in source_rows]
     grouped_rows = ranking.ordered_source_rows(row_list)
-    final_cache = dict(cache_by_audio_id)
-    compatible_cache: dict[str, ranking.PredictionCacheEntry] = {}
-    new_entries: list[ranking.PredictionCacheEntry] = []
+    initial_cache = dict(cache_by_audio_id)
     max_context_rows = num_recent_events // 2
     model_id = str(getattr(runner, "model_id", DEFAULT_FULL_MODEL))
 
-    for source_group in sorted(grouped_rows):
+    def process_source_group(
+        source_group: str,
+    ) -> tuple[
+        list[ranking.PredictionCacheEntry],
+        dict[str, ranking.PredictionCacheEntry],
+    ]:
+        group_cache: dict[str, ranking.PredictionCacheEntry] = {}
+        compatible_cache: dict[str, ranking.PredictionCacheEntry] = {}
+        new_entries: list[ranking.PredictionCacheEntry] = []
         for row in grouped_rows[source_group]:
             audio_id = str(row["audio_segment_id"])
             context_entries = ranking.previous_prediction_context(
@@ -243,7 +251,7 @@ def run_source_group_predictions(
                 max_context_rows=max_context_rows,
             )
             context_fp = ranking.context_fingerprint(context_entries)
-            entry = final_cache.get(audio_id)
+            entry = initial_cache.get(audio_id)
             if entry is not None and ranking.is_cache_entry_compatible(
                 entry,
                 model_id=model_id,
@@ -252,6 +260,7 @@ def run_source_group_predictions(
                 num_recent_events=num_recent_events,
                 context_fp=context_fp,
             ):
+                group_cache[audio_id] = entry
                 compatible_cache[audio_id] = entry
                 continue
 
@@ -276,12 +285,34 @@ def run_source_group_predictions(
                 created_at=created_at,
                 error=error,
             )
-            final_cache[audio_id] = entry
+            group_cache[audio_id] = entry
             new_entries.append(entry)
             if on_new_entry is not None:
                 on_new_entry(entry)
             if not error:
                 compatible_cache[audio_id] = entry
+        return new_entries, group_cache
+
+    final_cache = dict(initial_cache)
+    new_entries: list[ranking.PredictionCacheEntry] = []
+    source_groups = sorted(grouped_rows)
+    worker_count = min(max_source_workers, len(source_groups))
+    if worker_count <= 1:
+        for source_group in source_groups:
+            group_entries, group_cache = process_source_group(source_group)
+            new_entries.extend(group_entries)
+            final_cache.update(group_cache)
+        return new_entries, final_cache
+
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=worker_count,
+    ) as executor:
+        for group_entries, group_cache in executor.map(
+            process_source_group,
+            source_groups,
+        ):
+            new_entries.extend(group_entries)
+            final_cache.update(group_cache)
 
     return new_entries, final_cache
 

@@ -436,6 +436,61 @@ class TestRankGeminiCli(unittest.TestCase):
         self.assertEqual(captured["location"], "global")
         self.assertEqual(captured["timeout_ms"], 120000)
 
+    def test_prediction_run_passes_source_workers_to_runner(self) -> None:
+        import rank_gemini
+
+        _FakeRunner.instances = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            paths = _paths(Path(tmpdir))
+            _write_jsonl(paths["review_pool"], [_row("audio-a", 1)])
+            _write_jsonl(paths["cache"], [])
+            captured: dict[str, object] = {}
+
+            def fake_run_source_group_predictions(
+                _rows: list[dict[str, object]],
+                cache_by_audio_id: dict[str, object],
+                _runner: _FakeRunner,
+                **kwargs: object,
+            ) -> tuple[list[object], dict[str, object]]:
+                captured["max_source_workers"] = kwargs["max_source_workers"]
+                return [], cache_by_audio_id
+
+            with (
+                unittest.mock.patch.object(
+                    rank_gemini.gemini_ranking,
+                    "new_vertex_client",
+                    return_value=object(),
+                ),
+                unittest.mock.patch.object(
+                    rank_gemini.gemini_ranking,
+                    "GeminiRankingRunner",
+                    _FakeRunner,
+                ),
+                unittest.mock.patch.object(
+                    rank_gemini.gemini_ranking,
+                    "run_source_group_predictions",
+                    fake_run_source_group_predictions,
+                ),
+                unittest.mock.patch.object(
+                    rank_gemini.ranking,
+                    "score_ranked_rows",
+                    return_value=_fake_ranked_rows(),
+                ),
+            ):
+                exit_code = rank_gemini.main(
+                    [
+                        "run",
+                        *_required_args(paths),
+                        "--project",
+                        "test-project",
+                        "--source-workers",
+                        "8",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(captured["max_source_workers"], 8)
+
     def test_run_defaults_full_model(self) -> None:
         import rank_gemini
 

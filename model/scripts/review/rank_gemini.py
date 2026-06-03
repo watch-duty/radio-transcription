@@ -9,6 +9,7 @@ import json
 import pathlib
 import sys
 import tempfile
+import threading
 
 from common import gcs_utils, gemini_ranking, prompts, ranking
 
@@ -17,6 +18,7 @@ DEFAULT_PREFLIGHT_MODEL = "gemini-3.1-pro-preview"
 DEFAULT_FULL_MODEL = "gemini-3.5-flash"
 DEFAULT_CACHE_FLUSH_INTERVAL = 500
 DEFAULT_REQUEST_TIMEOUT_MS = 120_000
+DEFAULT_SOURCE_WORKERS = 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -55,6 +57,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_cache_flush_arg(preflight)
     _add_request_timeout_arg(preflight)
+    _add_source_workers_arg(preflight)
     preflight.set_defaults(func=_run_predicting_command)
 
     run = sub.add_parser("run", help="Run Gemini predictions for ranking")
@@ -73,6 +76,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_cache_flush_arg(run)
     _add_request_timeout_arg(run)
+    _add_source_workers_arg(run)
     run.set_defaults(func=_run_predicting_command)
 
     rank_cache = sub.add_parser("rank-cache", help="Rank from cache only")
@@ -124,6 +128,19 @@ def _add_request_timeout_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_source_workers_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--source-workers",
+        type=_positive_int,
+        default=DEFAULT_SOURCE_WORKERS,
+        help=(
+            "Maximum source groups to process concurrently. "
+            "Rows inside each source group still run in source order. "
+            f"Defaults to {DEFAULT_SOURCE_WORKERS}."
+        ),
+    )
+
+
 def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed <= 0:
@@ -161,19 +178,23 @@ def _run_predicting_command(args: argparse.Namespace) -> int:
         num_recent_events=ranking.NUM_RECENT_EVENTS,
     )
     pending_cache_entries: list[ranking.PredictionCacheEntry] = []
+    pending_cache_entries_lock = threading.Lock()
 
     def flush_cache_entries() -> None:
-        if not pending_cache_entries:
-            return
-        _append_cache_entries(
-            args.prediction_cache_jsonl,
-            list(pending_cache_entries),
-        )
-        pending_cache_entries.clear()
+        with pending_cache_entries_lock:
+            if not pending_cache_entries:
+                return
+            entries = list(pending_cache_entries)
+            pending_cache_entries.clear()
+        _append_cache_entries(args.prediction_cache_jsonl, entries)
 
     def on_new_entry(entry: ranking.PredictionCacheEntry) -> None:
-        pending_cache_entries.append(entry)
-        if len(pending_cache_entries) >= args.cache_flush_interval:
+        should_flush = False
+        with pending_cache_entries_lock:
+            pending_cache_entries.append(entry)
+            if len(pending_cache_entries) >= args.cache_flush_interval:
+                should_flush = True
+        if should_flush:
             flush_cache_entries()
 
     try:
@@ -186,6 +207,7 @@ def _run_predicting_command(args: argparse.Namespace) -> int:
             num_recent_events=ranking.NUM_RECENT_EVENTS,
             created_at=_utc_timestamp(),
             on_new_entry=on_new_entry,
+            max_source_workers=args.source_workers,
         )
     finally:
         flush_cache_entries()

@@ -348,6 +348,46 @@ class TestSourceGroupPredictionRun(unittest.TestCase):
             ],
         )
 
+    def test_parallel_source_workers_preserve_per_source_context(
+        self,
+    ) -> None:
+        from common import gemini_ranking
+
+        runner = _RecordingRunner()
+
+        _new_entries, final_cache = gemini_ranking.run_source_group_predictions(
+            [
+                _row("audio-a1", 1, source_group="source-a"),
+                _row("audio-b1", 1, source_group="source-b"),
+                _row("audio-a2", 2, source_group="source-a"),
+                _row("audio-b2", 2, source_group="source-b"),
+            ],
+            {},
+            runner,
+            prompt_fp="prompt-fp",
+            context_policy_fp="context-policy-fp",
+            num_recent_events=1000,
+            created_at="2026-06-02T00:00:00Z",
+            max_source_workers=2,
+        )
+
+        calls_by_audio_id = {
+            audio_segment_id: context
+            for audio_segment_id, context in runner.calls
+        }
+        self.assertEqual(calls_by_audio_id["audio-a1"], [])
+        self.assertEqual(calls_by_audio_id["audio-b1"], [])
+        self.assertEqual(
+            calls_by_audio_id["audio-a2"],
+            ["generated audio-a1"],
+        )
+        self.assertEqual(
+            calls_by_audio_id["audio-b2"],
+            ["generated audio-b1"],
+        )
+        self.assertIn("audio-a2", final_cache)
+        self.assertIn("audio-b2", final_cache)
+
 
 if __name__ == "__main__":
     unittest.main()
