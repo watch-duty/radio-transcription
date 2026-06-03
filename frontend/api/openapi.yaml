@@ -319,6 +319,32 @@ components:
         - substatus
       type: object
       additionalProperties: false
+    ListFeedsQueryParams:
+      properties:
+        limit:
+          type: integer
+          format: int32
+        nextToken:
+          type: string
+        order:
+          type: string
+          enum:
+            - asc
+            - desc
+        sourceTypes:
+          items:
+            $ref: "#/components/schemas/SourceType"
+          type: array
+        statuses:
+          items:
+            $ref: "#/components/schemas/FeedStatus"
+          type: array
+        tags:
+          items:
+            type: string
+          type: array
+      type: object
+      additionalProperties: false
     FeedCreate:
       properties:
         name:
@@ -971,7 +997,47 @@ paths:
         - Feeds
       security:
         - google_id_token: []
-      parameters: []
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          schema:
+            format: int32
+            type: integer
+        - in: query
+          name: nextToken
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: order
+          required: false
+          schema:
+            type: string
+            enum:
+              - asc
+              - desc
+        - in: query
+          name: sourceTypes
+          required: false
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/SourceType"
+        - in: query
+          name: statuses
+          required: false
+          schema:
+            type: array
+            items:
+              $ref: "#/components/schemas/FeedStatus"
+        - in: query
+          name: tags
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
       x-google-backend: radio-transcription-api
     post:
       operationId: CreateFeed

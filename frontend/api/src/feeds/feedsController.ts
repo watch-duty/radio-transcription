@@ -17,6 +17,7 @@ import {
   Path,
   Post,
   Put,
+  Queries,
   Response,
   Route,
   Security,
@@ -51,6 +52,23 @@ interface FeedUpdateBackend {
   name: string;
   external_id: string;
   tags?: Tag[];
+}
+
+export class ListFeedsQueryParams {
+  /**
+   * @isInt
+   */
+  limit?: number;
+  nextToken?: string;
+  order?: 'asc' | 'desc';
+  sourceTypes?: SourceType[];
+  statuses?: FeedStatus[];
+  tags?: string[];
+}
+
+interface ListFeedsBackendResponse {
+  feeds: FeedBackend[];
+  next_token?: string;
 }
 
 function getSourceUrl(
@@ -158,14 +176,43 @@ export class FeedsController extends Controller {
   @Response<{ message: string }>(403, 'Forbidden')
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
-  public async listFeeds(): Promise<Feed[]> {
+  public async listFeeds(
+    @Queries() query?: ListFeedsQueryParams
+  ): Promise<Feed[]> {
     try {
+      const queryParams = new URLSearchParams();
+      if (query?.limit) queryParams.append('limit', query.limit.toString());
+      if (query?.nextToken) queryParams.append('next_token', query.nextToken);
+      if (query?.order) queryParams.append('order', query.order);
+      if (query?.sourceTypes) {
+        for (const st of query.sourceTypes) {
+          queryParams.append('source_types', st);
+        }
+      }
+      if (query?.statuses) {
+        for (const status of query.statuses) {
+          queryParams.append('statuses', status);
+        }
+      }
+      if (query?.tags) {
+        for (const tag of query.tags) {
+          queryParams.append('tags', tag);
+        }
+      }
+
       const client = await this.getClient();
-      const response = await client.request<FeedBackend[]>({
-        url: FEEDS_STORE_API_URL,
+      const response = await client.request<
+        FeedBackend[] | ListFeedsBackendResponse
+      >({
+        url: queryParams.toString()
+          ? `${FEEDS_STORE_API_URL}?${queryParams.toString()}`
+          : FEEDS_STORE_API_URL,
         method: 'GET',
       });
-      return response.data.map(convertFeedBackend);
+
+      return Array.isArray(response.data)
+        ? response.data.map(convertFeedBackend)
+        : response.data.feeds.map(convertFeedBackend);
     } catch (error: unknown) {
       const { status, message } = handleBackendError(error, 'fetching feeds');
       throw new HttpError(status, message);
