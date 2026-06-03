@@ -15,7 +15,7 @@ from typing import Any, override
 
 import apache_beam as beam
 from apache_beam.io.gcp.pubsub import PubsubMessage
-from google.protobuf.duration_pb2 import Duration  # type: ignore
+from google.protobuf.duration_pb2 import Duration
 from opentelemetry import trace
 
 from backend.pipeline.common.constants import (
