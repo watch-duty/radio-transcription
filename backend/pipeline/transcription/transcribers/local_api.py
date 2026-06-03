@@ -17,10 +17,8 @@ class LocalApiTranscriber(Transcriber):
 
     def setup(self) -> None:
         if not self.api_url:
-            logger.warning(
-                "LocalApiTranscriber setup: LOCAL_ASR_API_URL is not set."
-            )
-            return
+            msg = "LocalApiTranscriber setup failed: LOCAL_ASR_API_URL environment variable is not set."
+            raise ValueError(msg)
 
         logger.info(f"LocalApiTranscriber setup pointing to {self.api_url}")
         health_url = self.api_url.replace("/transcribe", "/health")

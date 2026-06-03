@@ -448,6 +448,20 @@ class TestLocalApiTranscriber(unittest.TestCase):
         with self.assertRaises(requests.exceptions.Timeout):
             transcriber.transcribe(audio_data=b"dummybytes", duration_ms=1000)
 
+    @patch.dict("os.environ", {"LOCAL_ASR_API_URL": ""})
+    def test_local_api_transcriber_setup_missing_url_raises(self) -> None:
+        transcriber = get_transcriber(
+            TranscriberType.LOCAL_WHISPER,
+            "test-project",
+            "{}",
+        )
+        with self.assertRaises(ValueError) as ctx:
+            transcriber.setup()
+        self.assertIn(
+            "LOCAL_ASR_API_URL environment variable is not set",
+            str(ctx.exception),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
