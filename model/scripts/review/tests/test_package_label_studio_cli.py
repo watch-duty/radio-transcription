@@ -7,7 +7,6 @@ import csv
 import io
 import json
 import sys
-import tempfile
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -42,7 +41,6 @@ def _ranked_row(
         "duration": 2.5,
         "source_group": "source-a",
         "row_index": rank,
-        "split": "train",
         "dataset_name": "test-dataset",
         "text": f"Engine {rank} copy",
         "prediction_text": "MODEL PREDICTION MUST NOT LEAK",
@@ -55,10 +53,11 @@ def _ranked_row(
     }
 
 
-def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
-    with path.open("w", encoding="utf-8") as output_file:
-        for row in rows:
-            output_file.write(json.dumps(row) + "\n")
+def _overlay_row(audio_segment_id: str = "audio-a") -> dict[str, object]:
+    return {
+        "audio_segment_id": audio_segment_id,
+        "replacement_transcript": "Reviewed transcript",
+    }
 
 
 class TestPackageLabelStudioCli(unittest.TestCase):
@@ -78,101 +77,13 @@ class TestPackageLabelStudioCli(unittest.TestCase):
         self.assertIn("--readme-md", help_text)
         self.assertIn("--preview-csv", help_text)
         self.assertIn("--limit", help_text)
+        self.assertIn("--correction-overlay-jsonl", help_text)
 
-    def test_local_package_outputs_omit_prediction_text(self) -> None:
+    def test_limit_is_required(self) -> None:
         import package_label_studio
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp_path = Path(tmpdir)
-            ranked_path = tmp_path / "ranked.jsonl"
-            tasks_path = tmp_path / "tasks.json"
-            xml_path = tmp_path / "label_config.xml"
-            readme_path = tmp_path / "README.md"
-            preview_path = tmp_path / "preview.csv"
-            _write_jsonl(
-                ranked_path,
-                [_ranked_row("audio-a"), _ranked_row("audio-b", rank=2)],
-            )
-
-            exit_code = package_label_studio.main(
-                [
-                    "--ranked-jsonl",
-                    str(ranked_path),
-                    "--tasks-json",
-                    str(tasks_path),
-                    "--label-config-xml",
-                    str(xml_path),
-                    "--readme-md",
-                    str(readme_path),
-                    "--preview-csv",
-                    str(preview_path),
-                    "--limit",
-                    "1",
-                ]
-            )
-
-            tasks = json.loads(tasks_path.read_text(encoding="utf-8"))
-            xml = xml_path.read_text(encoding="utf-8")
-            readme = readme_path.read_text(encoding="utf-8")
-            preview_text = preview_path.read_text(encoding="utf-8")
-            with preview_path.open(encoding="utf-8") as preview_file:
-                preview_rows = list(csv.DictReader(preview_file))
-
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(len(tasks), 1)
-        data = tasks[0]["data"]
-        self.assertEqual(data["audio"], "gs://bucket/audio-a.flac")
-        self.assertEqual(data["reference_transcript"], "Engine 1 copy")
-        self.assertEqual(data["audio_segment_id"], "audio-a")
-        self.assertEqual(data["source_window_id"], "source-window-audio-a")
-        self.assertEqual(data["context_fingerprint"], "context-fp-1")
-        self.assertNotIn("prediction_text", json.dumps(tasks))
-        self.assertIn('TextArea name="transcription"', xml)
-        self.assertIn('Choices name="review_status"', xml)
-        self.assertIn("Reviewed", xml)
-        self.assertIn("Skip", xml)
-        self.assertIn("roles/storage.objectViewer", readme)
-        self.assertIn("GCS source storage", readme)
-        self.assertIn(
-            "gcloud storage buckets add-iam-policy-binding "
-            "gs://wd-transcription-data",
-            readme,
-        )
-        self.assertIn("reference_transcript", preview_text)
-        self.assertEqual(preview_rows[0]["audio_segment_id"], "audio-a")
-        self.assertNotIn("prediction_text", preview_text)
-
-    def test_gcs_package_outputs_upload_all_artifacts(self) -> None:
-        import package_label_studio
-
-        uploaded_paths: list[str] = []
-
-        def fake_upload_file_to_blob(
-            _storage_client: object,
-            bucket_name: str,
-            blob_path: str,
-            _source_file_name: str,
-        ) -> None:
-            uploaded_paths.append(f"gs://{bucket_name}/{blob_path}")
-
-        with (
-            unittest.mock.patch.object(
-                package_label_studio,
-                "_new_storage_client",
-                return_value=object(),
-            ),
-            unittest.mock.patch.object(
-                package_label_studio.gcs_utils,
-                "download_jsonl_manifest",
-                return_value=[_ranked_row()],
-            ),
-            unittest.mock.patch.object(
-                package_label_studio.gcs_utils,
-                "upload_file_to_blob",
-                fake_upload_file_to_blob,
-            ),
-        ):
-            exit_code = package_label_studio.main(
+        with self.assertRaises(SystemExit) as ctx:
+            package_label_studio.main(
                 [
                     "--ranked-jsonl",
                     "gs://bucket/input/ranked.jsonl",
@@ -187,6 +98,101 @@ class TestPackageLabelStudioCli(unittest.TestCase):
                 ]
             )
 
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_rejects_local_shared_artifact_paths(self) -> None:
+        import package_label_studio
+
+        with self.assertRaises(SystemExit) as ctx:
+            package_label_studio.main(
+                [
+                    "--ranked-jsonl",
+                    "ranked.jsonl",
+                    "--tasks-json",
+                    "gs://bucket/output/tasks.json",
+                    "--label-config-xml",
+                    "gs://bucket/output/label_config.xml",
+                    "--readme-md",
+                    "gs://bucket/output/README.md",
+                    "--preview-csv",
+                    "gs://bucket/output/preview.csv",
+                    "--limit",
+                    "1",
+                ]
+            )
+
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_gcs_package_uploads_artifacts_and_skips_reviewed_rows(
+        self,
+    ) -> None:
+        import package_label_studio
+
+        uploaded_paths: list[str] = []
+        uploaded_text_by_path: dict[str, str] = {}
+
+        def fake_upload_file_to_blob(
+            _storage_client: object,
+            bucket_name: str,
+            blob_path: str,
+            source_file_name: str,
+        ) -> None:
+            uploaded_path = f"gs://{bucket_name}/{blob_path}"
+            uploaded_paths.append(uploaded_path)
+            uploaded_text_by_path[uploaded_path] = Path(
+                source_file_name
+            ).read_text(encoding="utf-8")
+
+        def fake_download_jsonl_manifest(
+            _storage_client: object,
+            gcs_uri: str,
+        ) -> list[dict[str, object]]:
+            if gcs_uri.endswith("/ranked.jsonl"):
+                return [
+                    _ranked_row("audio-a", rank=1),
+                    _ranked_row("audio-b", rank=2),
+                    _ranked_row("audio-c", rank=3),
+                ]
+            if gcs_uri.endswith("/overlay.jsonl"):
+                return [_overlay_row("audio-a")]
+            raise AssertionError(gcs_uri)
+
+        with (
+            unittest.mock.patch.object(
+                package_label_studio,
+                "_new_storage_client",
+                return_value=object(),
+            ),
+            unittest.mock.patch.object(
+                package_label_studio.gcs_utils,
+                "download_jsonl_manifest",
+                fake_download_jsonl_manifest,
+            ),
+            unittest.mock.patch.object(
+                package_label_studio.gcs_utils,
+                "upload_file_to_blob",
+                fake_upload_file_to_blob,
+            ),
+        ):
+            exit_code = package_label_studio.main(
+                [
+                    "--ranked-jsonl",
+                    "gs://bucket/input/ranked.jsonl",
+                    "--correction-overlay-jsonl",
+                    "gs://bucket/input/overlay.jsonl",
+                    "--tasks-json",
+                    "gs://bucket/output/tasks.json",
+                    "--label-config-xml",
+                    "gs://bucket/output/label_config.xml",
+                    "--readme-md",
+                    "gs://bucket/output/README.md",
+                    "--preview-csv",
+                    "gs://bucket/output/preview.csv",
+                    "--limit",
+                    "2",
+                ]
+            )
+
         self.assertEqual(exit_code, 0)
         self.assertEqual(
             uploaded_paths,
@@ -197,6 +203,27 @@ class TestPackageLabelStudioCli(unittest.TestCase):
                 "gs://bucket/output/preview.csv",
             ],
         )
+        tasks = json.loads(uploaded_text_by_path["gs://bucket/output/tasks.json"])
+        readme = uploaded_text_by_path["gs://bucket/output/README.md"]
+        preview_text = uploaded_text_by_path["gs://bucket/output/preview.csv"]
+        preview_rows = list(csv.DictReader(io.StringIO(preview_text)))
+
+        self.assertEqual(
+            [task["data"]["audio_segment_id"] for task in tasks],
+            ["audio-b", "audio-c"],
+        )
+        self.assertNotIn("prediction_text", json.dumps(tasks))
+        self.assertNotIn("split", json.dumps(tasks))
+        self.assertIn("Requested rows: 2", readme)
+        self.assertIn("Packaged rows: 2", readme)
+        self.assertIn("Already-reviewed rows skipped: 1", readme)
+        self.assertIn("reference_transcript", preview_text)
+        self.assertEqual(
+            [row["audio_segment_id"] for row in preview_rows],
+            ["audio-b", "audio-c"],
+        )
+        self.assertNotIn("prediction_text", preview_text)
+        self.assertNotIn("split", preview_text)
 
 
 if __name__ == "__main__":

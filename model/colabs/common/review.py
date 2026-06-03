@@ -20,7 +20,6 @@ REQUIRED_REVIEW_ROW_FIELDS = (
     "duration",
     "source_group",
     "row_index",
-    "split",
     "dataset_name",
     "text",
 )
@@ -33,7 +32,6 @@ DUPLICATE_REPORT_FIELDS = (
     "duration",
     "source_group",
     "row_index",
-    "split",
     "dataset_name",
     "text",
 )
@@ -71,7 +69,6 @@ class ReviewManifestRow:
         duration: Source duration value from the canonical manifest.
         source_group: Source grouping key used by ranking context.
         row_index: Row index from the canonical manifest.
-        split: Original manifest split label.
         dataset_name: Dataset name from the canonical manifest.
         text: Current reference transcript.
     """
@@ -82,7 +79,6 @@ class ReviewManifestRow:
     duration: object
     source_group: str
     row_index: int
-    split: str
     dataset_name: str
     text: str
 
@@ -95,7 +91,6 @@ class ReviewManifestRow:
             "duration": self.duration,
             "source_group": self.source_group,
             "row_index": self.row_index,
-            "split": self.split,
             "dataset_name": self.dataset_name,
             "text": self.text,
         }
@@ -127,8 +122,8 @@ def load_review_manifest_rows(
     """Validate and combine canonical manifests into one review pool.
 
     Args:
-        manifest_rows_by_name: Mapping from manifest label, such as `train`
-            or `eval`, to raw canonical row dicts.
+        manifest_rows_by_name: Mapping from manifest label, such as
+            `manifest-1`, to raw canonical row dicts.
 
     Returns:
         Validated review rows in manifest label order and row order.
@@ -357,6 +352,14 @@ def _review_row_from_mapping(
             "review manifest row missing required field "
             f"{missing[0]!r} in {manifest_name} row {row_number}"
         )
+    none_fields = [
+        field for field in REQUIRED_REVIEW_ROW_FIELDS if raw_row[field] is None
+    ]
+    if none_fields:
+        raise ValueError(
+            "review manifest row has null required field "
+            f"{none_fields[0]!r} in {manifest_name} row {row_number}"
+        )
 
     return ReviewManifestRow(
         model_ready_audio_uri=str(raw_row["model_ready_audio_uri"]),
@@ -365,9 +368,8 @@ def _review_row_from_mapping(
         duration=raw_row["duration"],
         source_group=str(raw_row["source_group"]),
         row_index=int(raw_row["row_index"]),
-        split=str(raw_row["split"]),
         dataset_name=str(raw_row["dataset_name"]),
-        text="" if raw_row["text"] is None else str(raw_row["text"]),
+        text=str(raw_row["text"]),
     )
 
 

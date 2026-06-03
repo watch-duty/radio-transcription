@@ -28,7 +28,6 @@ def _ranked_row(
         "duration": 2.5,
         "source_group": "source-a",
         "row_index": rank,
-        "split": "train",
         "dataset_name": "test-dataset",
         "text": text,
         "prediction_text": "MODEL PREDICTION MUST NOT LEAK",
@@ -42,7 +41,7 @@ def _ranked_row(
 
 
 class TestTaskGeneration(unittest.TestCase):
-    def test_select_ranked_rows_defaults_to_top_1000_in_input_order(
+    def test_select_ranked_rows_requires_explicit_positive_limit(
         self,
     ) -> None:
         from common import label_studio_review
@@ -52,16 +51,35 @@ class TestTaskGeneration(unittest.TestCase):
             _ranked_row("audio-b", rank=2),
         ]
 
-        self.assertEqual(label_studio_review.DEFAULT_LIMIT, 1000)
-        selected = label_studio_review.select_ranked_rows(rows)
+        with self.assertRaises(TypeError):
+            label_studio_review.select_ranked_rows(rows)  # type: ignore[call-arg]
+        with self.assertRaisesRegex(ValueError, "positive"):
+            label_studio_review.select_ranked_rows(rows, limit=0)
+
+    def test_select_ranked_rows_skips_reviewed_and_keeps_rank_order(
+        self,
+    ) -> None:
+        from common import label_studio_review
+
+        rows = [
+            _ranked_row("audio-c", rank=3),
+            _ranked_row("audio-a", rank=1),
+            _ranked_row("audio-b", rank=2),
+        ]
+
         limited = label_studio_review.select_ranked_rows(rows, limit=1)
+        selected = label_studio_review.select_ranked_rows(
+            rows,
+            limit=2,
+            reviewed_audio_segment_ids={"audio-a"},
+        )
 
         self.assertEqual(
-            [row["audio_segment_id"] for row in selected],
-            ["audio-a", "audio-b"],
+            [row["audio_segment_id"] for row in limited], ["audio-a"]
         )
         self.assertEqual(
-            [row["audio_segment_id"] for row in limited], ["audio-a"]
+            [row["audio_segment_id"] for row in selected],
+            ["audio-b", "audio-c"],
         )
 
     def test_task_data_has_rendered_and_hidden_audit_fields(self) -> None:
@@ -89,6 +107,7 @@ class TestTaskGeneration(unittest.TestCase):
         ):
             self.assertEqual(data[field], row[field])
         self.assertNotIn("prediction_text", data)
+        self.assertNotIn("split", data)
         self.assertNotIn(
             "MODEL PREDICTION MUST NOT LEAK",
             json.dumps(task, sort_keys=True),
@@ -123,6 +142,7 @@ class TestLabelConfig(unittest.TestCase):
         )
         self.assertIn('editable="true"', xml)
         self.assertIn('transcription="true"', xml)
+        self.assertIn('maxSubmissions="1"', xml)
         self.assertIn(
             '<Choices name="review_status" toName="audio" '
             'choice="single" required="true"',
@@ -142,13 +162,18 @@ class TestPackageArtifacts(unittest.TestCase):
         from common import label_studio_review
 
         preview = label_studio_review.preview_row_from_ranked_row(_ranked_row())
-        readme = label_studio_review.render_operator_readme()
+        readme = label_studio_review.render_operator_readme(
+            requested_count=3,
+            packaged_count=2,
+            already_reviewed_skipped_count=1,
+        )
 
         self.assertEqual(preview["reference_transcript"], "Engine 41 copy")
         self.assertEqual(preview["audio_segment_id"], "audio-a")
         self.assertEqual(preview["source_window_id"], "source-window-audio-a")
         self.assertEqual(preview["source_group"], "source-a")
         self.assertNotIn("prediction_text", preview)
+        self.assertNotIn("split", preview)
         self.assertNotIn("MODEL PREDICTION MUST NOT LEAK", readme)
         self.assertIn("roles/storage.objectViewer", readme)
         self.assertIn(
@@ -160,19 +185,38 @@ class TestPackageArtifacts(unittest.TestCase):
         self.assertIn("GCS source storage", readme)
         self.assertIn("Reviewed", readme)
         self.assertIn("Skip", readme)
+        self.assertIn("Requested rows: 3", readme)
+        self.assertIn("Packaged rows: 2", readme)
+        self.assertIn("Already-reviewed rows skipped: 1", readme)
+        self.assertNotIn("exclude this audio", readme)
 
     def test_build_package_returns_all_artifact_content(self) -> None:
         from common import label_studio_review
 
         package = label_studio_review.build_package(
-            [_ranked_row("audio-a"), _ranked_row("audio-b", rank=2)],
-            limit=1,
+            [
+                _ranked_row("audio-a"),
+                _ranked_row("audio-b", rank=2),
+                _ranked_row("audio-c", rank=3),
+            ],
+            limit=2,
+            reviewed_audio_segment_ids={"audio-a"},
         )
 
-        self.assertEqual(len(package.tasks), 1)
-        self.assertEqual(len(package.preview_rows), 1)
+        self.assertEqual(package.requested_count, 2)
+        self.assertEqual(package.packaged_count, 2)
+        self.assertEqual(package.already_reviewed_skipped_count, 1)
+        self.assertEqual(
+            [
+                task["data"]["audio_segment_id"]
+                for task in package.tasks
+            ],
+            ["audio-b", "audio-c"],
+        )
+        self.assertEqual(len(package.preview_rows), 2)
         self.assertIn("review_status", package.label_config_xml)
         self.assertIn("GCS source storage", package.readme_text)
+        self.assertIn("Already-reviewed rows skipped: 1", package.readme_text)
         self.assertNotIn(
             "MODEL PREDICTION MUST NOT LEAK",
             json.dumps(package.tasks, sort_keys=True),

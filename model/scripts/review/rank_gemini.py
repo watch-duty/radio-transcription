@@ -11,14 +11,13 @@ import sys
 import tempfile
 import threading
 
-from common import gcs_utils, gemini_ranking, prompts, ranking
+from common import adk_ranking, gcs_utils, prompts, ranking
 
 DEFAULT_LOCATION = "us-central1"
-DEFAULT_PREFLIGHT_MODEL = "gemini-3.1-pro-preview"
+DEFAULT_PREFLIGHT_MODEL = "gemini-3.1-flash-lite"
 DEFAULT_FULL_MODEL = "gemini-3.5-flash"
 DEFAULT_CACHE_FLUSH_INTERVAL = 500
 DEFAULT_REQUEST_TIMEOUT_MS = 120_000
-DEFAULT_SOURCE_WORKERS = 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -50,14 +49,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Gemini model for smoke/preflight predictions.",
     )
     preflight.add_argument(
-        "--limit",
+        "--sample-size",
         type=int,
         default=10,
-        help="Maximum rows to process.",
+        help="Maximum rows to process in the smoke/preflight run.",
     )
     _add_cache_flush_arg(preflight)
     _add_request_timeout_arg(preflight)
-    _add_source_workers_arg(preflight)
+    _add_retry_errors_arg(preflight)
     preflight.set_defaults(func=_run_predicting_command)
 
     run = sub.add_parser("run", help="Run Gemini predictions for ranking")
@@ -68,15 +67,9 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_FULL_MODEL,
         help="Gemini model for full ranking predictions.",
     )
-    run.add_argument(
-        "--limit",
-        type=int,
-        default=None,
-        help="Optional maximum rows to process.",
-    )
     _add_cache_flush_arg(run)
     _add_request_timeout_arg(run)
-    _add_source_workers_arg(run)
+    _add_retry_errors_arg(run)
     run.set_defaults(func=_run_predicting_command)
 
     rank_cache = sub.add_parser("rank-cache", help="Rank from cache only")
@@ -92,11 +85,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _add_artifact_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--review-pool-jsonl", required=True)
-    parser.add_argument("--prediction-cache-jsonl", required=True)
-    parser.add_argument("--ranked-jsonl", required=True)
-    parser.add_argument("--ranked-csv", required=True)
-    parser.add_argument("--excluded-jsonl", required=True)
+    parser.add_argument("--review-pool-jsonl", required=True, type=_gcs_uri)
+    parser.add_argument(
+        "--prediction-cache-jsonl",
+        required=True,
+        type=_gcs_uri,
+    )
+    parser.add_argument("--ranked-jsonl", required=True, type=_gcs_uri)
+    parser.add_argument("--ranked-csv", required=True, type=_gcs_uri)
+    parser.add_argument("--excluded-jsonl", required=True, type=_gcs_uri)
 
 
 def _add_vertex_args(parser: argparse.ArgumentParser) -> None:
@@ -128,16 +125,11 @@ def _add_request_timeout_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _add_source_workers_arg(parser: argparse.ArgumentParser) -> None:
+def _add_retry_errors_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--source-workers",
-        type=_positive_int,
-        default=DEFAULT_SOURCE_WORKERS,
-        help=(
-            "Maximum source groups to process concurrently. "
-            "Rows inside each source group still run in source order. "
-            f"Defaults to {DEFAULT_SOURCE_WORKERS}."
-        ),
+        "--retry-errors",
+        action="store_true",
+        help="Retry same-policy cached failed predictions instead of reusing them.",
     )
 
 
@@ -148,29 +140,41 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _gcs_uri(value: str) -> str:
+    if not _is_gcs_uri(value):
+        raise argparse.ArgumentTypeError("value must be a gs:// URI")
+    return value
+
+
 def _run_rank_cache(args: argparse.Namespace) -> int:
+    _ensure_fresh_output_paths(args)
     review_rows = _load_jsonl(args.review_pool_jsonl)
-    cache_by_audio_id = _load_cache(args.prediction_cache_jsonl)
+    cache_entries = _load_cache_entries(args.prediction_cache_jsonl)
+    cache_by_audio_id = _select_cache_for_rows(
+        review_rows,
+        cache_entries,
+        model_id=args.model,
+        require_complete=True,
+        include_failures=True,
+    )
     _score_and_write(args, review_rows, cache_by_audio_id)
     return 0
 
 
 def _run_predicting_command(args: argparse.Namespace) -> int:
+    _ensure_fresh_output_paths(args)
     review_rows = _load_jsonl(args.review_pool_jsonl)
-    if args.limit is not None:
-        review_rows = review_rows[: args.limit]
-    cache_by_audio_id = _load_cache(args.prediction_cache_jsonl)
+    if hasattr(args, "sample_size"):
+        review_rows = review_rows[: args.sample_size]
+    cache_entries = _load_cache_entries(args.prediction_cache_jsonl)
 
-    client = gemini_ranking.new_vertex_client(
-        args.project,
-        args.location,
-        timeout_ms=args.request_timeout_ms,
-    )
-    runner = gemini_ranking.GeminiRankingRunner(
-        client,
+    runner = adk_ranking.AdkRankingRunner(
+        project=args.project,
+        location=args.location,
         model_id=args.model,
+        request_timeout_ms=args.request_timeout_ms,
     )
-    prompt_fp = ranking.prompt_fingerprint(
+    prompt_fp = ranking.adk_prompt_fingerprint(
         prompts.GEMINI_TRANSCRIBE_SYSTEM_PROMPT,
         prompts.GEMINI_TRANSCRIBE_USER_PROMPT,
     )
@@ -198,16 +202,18 @@ def _run_predicting_command(args: argparse.Namespace) -> int:
             flush_cache_entries()
 
     try:
-        _new_entries, final_cache = gemini_ranking.run_source_group_predictions(
-            review_rows,
-            cache_by_audio_id,
-            runner,
-            prompt_fp=prompt_fp,
-            context_policy_fp=context_policy_fp,
-            num_recent_events=ranking.NUM_RECENT_EVENTS,
-            created_at=_utc_timestamp(),
-            on_new_entry=on_new_entry,
-            max_source_workers=args.source_workers,
+        _new_entries, final_cache = (
+            adk_ranking.run_source_group_predictions_adk(
+                review_rows,
+                cache_entries,
+                runner,
+                prompt_fp=prompt_fp,
+                context_policy_fp=context_policy_fp,
+                num_recent_events=ranking.NUM_RECENT_EVENTS,
+                created_at=_utc_timestamp(),
+                on_new_entry=on_new_entry,
+                retry_errors=args.retry_errors,
+            )
         )
     finally:
         flush_cache_entries()
@@ -220,7 +226,7 @@ def _score_and_write(
     review_rows: list[dict[str, object]],
     cache_by_audio_id: dict[str, ranking.PredictionCacheEntry],
 ) -> None:
-    prompt_fp = ranking.prompt_fingerprint(
+    prompt_fp = ranking.adk_prompt_fingerprint(
         prompts.GEMINI_TRANSCRIBE_SYSTEM_PROMPT,
         prompts.GEMINI_TRANSCRIBE_USER_PROMPT,
     )
@@ -269,12 +275,50 @@ def _load_jsonl_with_missing_policy(
     return rows
 
 
-def _load_cache(path: str) -> dict[str, ranking.PredictionCacheEntry]:
-    entries = {}
+def _load_cache_entries(path: str) -> list[ranking.PredictionCacheEntry]:
+    entries = []
     for row in _load_jsonl_with_missing_policy(path, missing_ok=True):
         entry = ranking.PredictionCacheEntry(**row)
-        entries[entry.audio_segment_id] = entry
+        entries.append(entry)
     return entries
+
+
+def _select_cache_for_rows(
+    review_rows: list[dict[str, object]],
+    cache_entries: list[ranking.PredictionCacheEntry],
+    *,
+    model_id: str,
+    require_complete: bool,
+    include_failures: bool,
+) -> dict[str, ranking.PredictionCacheEntry]:
+    prompt_fp = ranking.adk_prompt_fingerprint(
+        prompts.GEMINI_TRANSCRIBE_SYSTEM_PROMPT,
+        prompts.GEMINI_TRANSCRIBE_USER_PROMPT,
+    )
+    context_policy_fp = ranking.context_policy_fingerprint(
+        num_recent_events=ranking.NUM_RECENT_EVENTS,
+    )
+    selected = ranking.select_cache_entries_for_rows(
+        review_rows,
+        cache_entries,
+        model_id=model_id,
+        prompt_fp=prompt_fp,
+        context_policy_fp=context_policy_fp,
+        num_recent_events=ranking.NUM_RECENT_EVENTS,
+        include_failures=include_failures,
+    )
+    if require_complete:
+        missing = [
+            str(row["audio_segment_id"])
+            for row in review_rows
+            if str(row["audio_segment_id"]) not in selected
+        ]
+        if missing:
+            raise ValueError(
+                "prediction cache is incomplete for review rows: "
+                + ", ".join(missing[:10])
+            )
+    return selected
 
 
 def _append_cache_entries(
@@ -294,6 +338,22 @@ def _append_cache_entries(
     with local_path.open("a", encoding="utf-8") as output_file:
         for entry in entries:
             output_file.write(json.dumps(dataclasses.asdict(entry)) + "\n")
+
+
+def _ensure_fresh_output_paths(args: argparse.Namespace) -> None:
+    output_paths = [args.ranked_jsonl, args.ranked_csv, args.excluded_jsonl]
+    existing = [path for path in output_paths if _path_exists(path)]
+    if existing:
+        raise FileExistsError(
+            "final ranking output path already exists: " + ", ".join(existing)
+        )
+
+
+def _path_exists(path: str) -> bool:
+    if _is_gcs_uri(path):
+        storage_client = _new_storage_client()
+        return gcs_utils.blob_exists(storage_client, path)
+    return pathlib.Path(path).exists()
 
 
 def _write_jsonl(path: str, rows: list[dict[str, object]]) -> None:

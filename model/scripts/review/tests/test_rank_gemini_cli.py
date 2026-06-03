@@ -1,20 +1,18 @@
-"""Tests for the Phase 2 Gemini ranking CLI."""
+"""Tests for the ADK Gemini ranking CLI."""
 
 from __future__ import annotations
 
 import contextlib
 import dataclasses
 import io
-import json
+import pathlib
 import sys
-import tempfile
 import unittest
 import unittest.mock
-from pathlib import Path
 
-_REVIEW_DIR = str(Path(__file__).resolve().parent.parent)
+_REVIEW_DIR = str(pathlib.Path(__file__).resolve().parent.parent)
 _COLABS_DIR = str(
-    Path(__file__).resolve().parent.parent.parent.parent / "colabs"
+    pathlib.Path(__file__).resolve().parent.parent.parent.parent / "colabs"
 )
 if _REVIEW_DIR not in sys.path:
     sys.path.insert(0, _REVIEW_DIR)
@@ -32,40 +30,23 @@ def _row(audio_segment_id: str, row_index: int) -> dict[str, object]:
         "duration": 2.5,
         "source_group": "source-a",
         "row_index": row_index,
-        "split": "train",
         "dataset_name": "test",
         "text": "Engine 41 copy",
     }
 
 
-def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
-    with path.open("w", encoding="utf-8") as output_file:
-        for row in rows:
-            output_file.write(json.dumps(row) + "\n")
-
-
-def _paths(tmp_path: Path) -> dict[str, Path]:
-    return {
-        "review_pool": tmp_path / "review_pool.jsonl",
-        "cache": tmp_path / "cache.jsonl",
-        "ranked_jsonl": tmp_path / "ranked.jsonl",
-        "ranked_csv": tmp_path / "ranked.csv",
-        "excluded_jsonl": tmp_path / "excluded.jsonl",
-    }
-
-
-def _required_args(paths: dict[str, Path]) -> list[str]:
+def _required_args() -> list[str]:
     return [
         "--review-pool-jsonl",
-        str(paths["review_pool"]),
+        "gs://bucket/review_pool.jsonl",
         "--prediction-cache-jsonl",
-        str(paths["cache"]),
+        "gs://bucket/cache.jsonl",
         "--ranked-jsonl",
-        str(paths["ranked_jsonl"]),
+        "gs://bucket/ranked.jsonl",
         "--ranked-csv",
-        str(paths["ranked_csv"]),
+        "gs://bucket/ranked.csv",
         "--excluded-jsonl",
-        str(paths["excluded_jsonl"]),
+        "gs://bucket/excluded.jsonl",
     ]
 
 
@@ -87,17 +68,50 @@ def _fake_ranked_rows() -> tuple[
     return ranked, excluded
 
 
+def _entry(
+    ranking: object,
+    audio_segment_id: str,
+    prediction_text: str,
+    *,
+    row_index: int,
+    context_fp: str,
+    error: str = "",
+) -> object:
+    return ranking.PredictionCacheEntry(
+        audio_segment_id=audio_segment_id,
+        prediction_text=prediction_text,
+        model_id="gemini-3.5-flash",
+        prompt_fingerprint=ranking.adk_prompt_fingerprint(
+            "system",
+            "user",
+        ),
+        context_policy_fingerprint=ranking.context_policy_fingerprint(),
+        num_recent_events=ranking.NUM_RECENT_EVENTS,
+        context_fingerprint=context_fp,
+        source_group="source-a",
+        row_index=row_index,
+        model_ready_audio_uri=f"gs://bucket/{audio_segment_id}.flac",
+        created_at="2026-06-02T00:00:00Z",
+        error=error,
+    )
+
+
 class _FakeRunner:
     instances: list[_FakeRunner] = []
 
     def __init__(
         self,
-        _client: object,
         *,
+        project: str,
+        location: str,
         model_id: str,
+        request_timeout_ms: int,
         **_kwargs: object,
     ) -> None:
+        self.project = project
+        self.location = location
         self.model_id = model_id
+        self.request_timeout_ms = request_timeout_ms
         self.instances.append(self)
 
 
@@ -116,433 +130,485 @@ class TestRankGeminiCli(unittest.TestCase):
         self.assertIn("run", help_text)
         self.assertIn("rank-cache", help_text)
 
-    def test_rank_cache_writes_outputs_without_runner(self) -> None:
+    def test_preflight_help_uses_sample_size_not_limit(self) -> None:
+        import rank_gemini
+
+        output = io.StringIO()
+        with self.assertRaises(SystemExit) as ctx:
+            with contextlib.redirect_stdout(output):
+                rank_gemini.main(["preflight", "--help"])
+
+        self.assertEqual(ctx.exception.code, 0)
+        help_text = output.getvalue()
+        self.assertIn("--sample-size", help_text)
+        self.assertNotIn("--limit", help_text)
+
+    def test_run_help_has_no_limit_or_source_workers(self) -> None:
+        import rank_gemini
+
+        output = io.StringIO()
+        with self.assertRaises(SystemExit) as ctx:
+            with contextlib.redirect_stdout(output):
+                rank_gemini.main(["run", "--help"])
+
+        self.assertEqual(ctx.exception.code, 0)
+        help_text = output.getvalue()
+        self.assertNotIn("--limit", help_text)
+        self.assertNotIn("--source-workers", help_text)
+
+    def test_local_shared_artifact_paths_are_rejected(self) -> None:
+        import rank_gemini
+
+        with self.assertRaises(SystemExit):
+            rank_gemini.main(
+                [
+                    "rank-cache",
+                    "--review-pool-jsonl",
+                    "local.jsonl",
+                    "--prediction-cache-jsonl",
+                    "gs://bucket/cache.jsonl",
+                    "--ranked-jsonl",
+                    "gs://bucket/ranked.jsonl",
+                    "--ranked-csv",
+                    "gs://bucket/ranked.csv",
+                    "--excluded-jsonl",
+                    "gs://bucket/excluded.jsonl",
+                ]
+            )
+
+    def test_rank_cache_writes_outputs_without_adk_runner(self) -> None:
         import rank_gemini
         from common import ranking
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            paths = _paths(Path(tmpdir))
-            _write_jsonl(paths["review_pool"], [_row("audio-a", 1)])
-            cache_entry = ranking.PredictionCacheEntry(
-                audio_segment_id="audio-a",
-                prediction_text="Engine 42 copy",
-                model_id="gemini-3.5-flash",
-                prompt_fingerprint="prompt",
-                context_policy_fingerprint="context-policy",
-                num_recent_events=1000,
-                context_fingerprint="context",
-                source_group="source-a",
+        row = _row("audio-a", 1)
+        entry = dataclasses.replace(
+            _entry(
+                ranking,
+                "audio-a",
+                "Engine 42 copy",
                 row_index=1,
-                model_ready_audio_uri="gs://bucket/audio-a.flac",
-                created_at="2026-06-02T00:00:00Z",
-                error="",
-            )
-            _write_jsonl(paths["cache"], [dataclasses.asdict(cache_entry)])
+                context_fp=ranking.context_fingerprint([]),
+            ),
+            prompt_fingerprint=ranking.adk_prompt_fingerprint(
+                rank_gemini.prompts.GEMINI_TRANSCRIBE_SYSTEM_PROMPT,
+                rank_gemini.prompts.GEMINI_TRANSCRIBE_USER_PROMPT,
+            ),
+        )
+        written: list[str] = []
 
-            with (
-                unittest.mock.patch.object(
-                    rank_gemini.gemini_ranking,
-                    "GeminiRankingRunner",
-                    side_effect=AssertionError("runner should not be used"),
-                ),
-                unittest.mock.patch.object(
-                    rank_gemini.ranking,
-                    "score_ranked_rows",
-                    return_value=_fake_ranked_rows(),
-                ),
-            ):
-                exit_code = rank_gemini.main(
-                    ["rank-cache", *_required_args(paths)]
-                )
-
-            self.assertEqual(exit_code, 0)
-            self.assertTrue(paths["ranked_jsonl"].exists())
-            self.assertTrue(paths["ranked_csv"].exists())
-            self.assertTrue(paths["excluded_jsonl"].exists())
-            self.assertIn("ranked.csv", str(paths["ranked_csv"]))
-            self.assertIn("excluded.jsonl", str(paths["excluded_jsonl"]))
-
-    def test_missing_review_pool_raises_file_not_found(self) -> None:
-        import rank_gemini
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            paths = _paths(Path(tmpdir))
-            _write_jsonl(paths["cache"], [])
-
-            with self.assertRaises(FileNotFoundError):
-                rank_gemini.main(["rank-cache", *_required_args(paths)])
-
-    def test_missing_prediction_cache_starts_empty(self) -> None:
-        import rank_gemini
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            paths = _paths(Path(tmpdir))
-            _write_jsonl(paths["review_pool"], [_row("audio-a", 1)])
-            captured: dict[str, object] = {}
-
-            def fake_score_ranked_rows(
-                _review_rows: list[dict[str, object]],
-                cache_by_audio_id: dict[str, object],
-                **_kwargs: object,
-            ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-                captured["cache_by_audio_id"] = cache_by_audio_id
-                return _fake_ranked_rows()
-
-            with unittest.mock.patch.object(
+        with (
+            unittest.mock.patch.object(
+                rank_gemini,
+                "_path_exists",
+                return_value=False,
+            ),
+            unittest.mock.patch.object(
+                rank_gemini,
+                "_load_jsonl",
+                return_value=[row],
+            ),
+            unittest.mock.patch.object(
+                rank_gemini,
+                "_load_cache_entries",
+                return_value=[entry],
+            ),
+            unittest.mock.patch.object(
+                rank_gemini.adk_ranking,
+                "AdkRankingRunner",
+                side_effect=AssertionError("runner should not be used"),
+            ),
+            unittest.mock.patch.object(
                 rank_gemini.ranking,
                 "score_ranked_rows",
-                fake_score_ranked_rows,
-            ):
-                exit_code = rank_gemini.main(
-                    ["rank-cache", *_required_args(paths)]
-                )
+                return_value=_fake_ranked_rows(),
+            ),
+            unittest.mock.patch.object(
+                rank_gemini,
+                "_write_jsonl",
+                side_effect=lambda path, _rows: written.append(path),
+            ),
+            unittest.mock.patch.object(
+                rank_gemini,
+                "_write_ranked_csv",
+                side_effect=lambda path, _rows: written.append(path),
+            ),
+        ):
+            exit_code = rank_gemini.main(["rank-cache", *_required_args()])
 
-            self.assertEqual(exit_code, 0)
-            self.assertEqual(captured["cache_by_audio_id"], {})
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            written,
+            [
+                "gs://bucket/ranked.jsonl",
+                "gs://bucket/ranked.csv",
+                "gs://bucket/excluded.jsonl",
+            ],
+        )
 
-    def test_missing_gcs_prediction_cache_starts_empty(self) -> None:
+    def test_rank_cache_fails_when_cache_coverage_is_incomplete(self) -> None:
         import rank_gemini
 
         with (
             unittest.mock.patch.object(
                 rank_gemini,
-                "_new_storage_client",
-                return_value=object(),
+                "_path_exists",
+                return_value=False,
             ),
             unittest.mock.patch.object(
-                rank_gemini.gcs_utils,
-                "blob_exists",
-                return_value=False,
-            ) as blob_exists,
+                rank_gemini,
+                "_load_jsonl",
+                return_value=[_row("audio-a", 1)],
+            ),
             unittest.mock.patch.object(
-                rank_gemini.gcs_utils,
-                "download_jsonl_manifest",
-                side_effect=AssertionError("missing cache should not download"),
+                rank_gemini,
+                "_load_cache_entries",
+                return_value=[],
+            ),
+            unittest.mock.patch.object(
+                rank_gemini,
+                "_write_jsonl",
+                side_effect=AssertionError("must not write"),
             ),
         ):
-            cache = rank_gemini._load_cache("gs://bucket/cache.jsonl")
+            with self.assertRaisesRegex(ValueError, "cache is incomplete"):
+                rank_gemini.main(["rank-cache", *_required_args()])
 
-        self.assertEqual(cache, {})
-        blob_exists.assert_called_once()
-
-    def test_preflight_defaults_preview_model_and_respects_limit(self) -> None:
-        import rank_gemini
-
-        _FakeRunner.instances = []
-        with tempfile.TemporaryDirectory() as tmpdir:
-            paths = _paths(Path(tmpdir))
-            _write_jsonl(
-                paths["review_pool"],
-                [_row("audio-a", 1), _row("audio-b", 2), _row("audio-c", 3)],
-            )
-            _write_jsonl(paths["cache"], [])
-            captured: dict[str, object] = {}
-
-            def fake_run_source_group_predictions(
-                rows: list[dict[str, object]],
-                cache_by_audio_id: dict[str, object],
-                runner: _FakeRunner,
-                **_kwargs: object,
-            ) -> tuple[list[object], dict[str, object]]:
-                captured["row_count"] = len(rows)
-                captured["model_id"] = runner.model_id
-                return [], cache_by_audio_id
-
-            with (
-                unittest.mock.patch.object(
-                    rank_gemini.gemini_ranking,
-                    "new_vertex_client",
-                    return_value=object(),
-                ),
-                unittest.mock.patch.object(
-                    rank_gemini.gemini_ranking,
-                    "GeminiRankingRunner",
-                    _FakeRunner,
-                ),
-                unittest.mock.patch.object(
-                    rank_gemini.gemini_ranking,
-                    "run_source_group_predictions",
-                    fake_run_source_group_predictions,
-                ),
-                unittest.mock.patch.object(
-                    rank_gemini.ranking,
-                    "score_ranked_rows",
-                    return_value=_fake_ranked_rows(),
-                ),
-            ):
-                exit_code = rank_gemini.main(
-                    [
-                        "preflight",
-                        *_required_args(paths),
-                        "--project",
-                        "test-project",
-                        "--limit",
-                        "3",
-                    ]
-                )
-
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(captured["row_count"], 3)
-        self.assertEqual(captured["model_id"], "gemini-3.1-pro-preview")
-
-    def test_prediction_run_flushes_cache_entries_by_interval(self) -> None:
-        import rank_gemini
-        from common import ranking
-
-        _FakeRunner.instances = []
-        with tempfile.TemporaryDirectory() as tmpdir:
-            paths = _paths(Path(tmpdir))
-            _write_jsonl(paths["review_pool"], [_row("audio-a", 1)])
-            _write_jsonl(paths["cache"], [])
-            entry_a = ranking.PredictionCacheEntry(
-                audio_segment_id="audio-a",
-                prediction_text="Engine 41 copy",
-                model_id="gemini-3.5-flash",
-                prompt_fingerprint="prompt",
-                context_policy_fingerprint="context-policy",
-                num_recent_events=1000,
-                context_fingerprint="context",
-                source_group="source-a",
-                row_index=1,
-                model_ready_audio_uri="gs://bucket/audio-a.flac",
-                created_at="2026-06-02T00:00:00Z",
-                error="",
-            )
-            entry_b = dataclasses.replace(
-                entry_a,
-                audio_segment_id="audio-b",
-                model_ready_audio_uri="gs://bucket/audio-b.flac",
-            )
-            flushed: list[list[str]] = []
-
-            def fake_run_source_group_predictions(
-                _rows: list[dict[str, object]],
-                cache_by_audio_id: dict[str, object],
-                _runner: _FakeRunner,
-                **kwargs: object,
-            ) -> tuple[list[object], dict[str, object]]:
-                on_new_entry = kwargs["on_new_entry"]
-                on_new_entry(entry_a)
-                on_new_entry(entry_b)
-                return [entry_a, entry_b], cache_by_audio_id
-
-            def fake_append_cache_entries(
-                _path: str,
-                entries: list[ranking.PredictionCacheEntry],
-            ) -> None:
-                flushed.append([entry.audio_segment_id for entry in entries])
-
-            with (
-                unittest.mock.patch.object(
-                    rank_gemini.gemini_ranking,
-                    "new_vertex_client",
-                    return_value=object(),
-                ),
-                unittest.mock.patch.object(
-                    rank_gemini.gemini_ranking,
-                    "GeminiRankingRunner",
-                    _FakeRunner,
-                ),
-                unittest.mock.patch.object(
-                    rank_gemini.gemini_ranking,
-                    "run_source_group_predictions",
-                    fake_run_source_group_predictions,
-                ),
-                unittest.mock.patch.object(
-                    rank_gemini,
-                    "_append_cache_entries",
-                    fake_append_cache_entries,
-                ),
-                unittest.mock.patch.object(
-                    rank_gemini.ranking,
-                    "score_ranked_rows",
-                    return_value=_fake_ranked_rows(),
-                ),
-            ):
-                exit_code = rank_gemini.main(
-                    [
-                        "run",
-                        *_required_args(paths),
-                        "--project",
-                        "test-project",
-                        "--cache-flush-interval",
-                        "1",
-                    ]
-                )
-
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(flushed, [["audio-a"], ["audio-b"]])
-
-    def test_prediction_run_passes_request_timeout_to_vertex_client(
+    def test_preflight_defaults_flash_lite_and_respects_sample_size(
         self,
     ) -> None:
         import rank_gemini
 
         _FakeRunner.instances = []
-        with tempfile.TemporaryDirectory() as tmpdir:
-            paths = _paths(Path(tmpdir))
-            _write_jsonl(paths["review_pool"], [_row("audio-a", 1)])
-            _write_jsonl(paths["cache"], [])
-            captured: dict[str, object] = {}
+        captured: dict[str, object] = {}
 
-            def fake_new_vertex_client(
-                project: str,
-                location: str,
-                *,
-                timeout_ms: int,
-            ) -> object:
-                captured["project"] = project
-                captured["location"] = location
-                captured["timeout_ms"] = timeout_ms
-                return object()
+        def fake_run_source_group_predictions_adk(
+            rows: list[dict[str, object]],
+            cache_entries: list[object],
+            runner: _FakeRunner,
+            **_kwargs: object,
+        ) -> tuple[list[object], dict[str, object]]:
+            captured["row_count"] = len(rows)
+            captured["cache_entries"] = cache_entries
+            captured["model_id"] = runner.model_id
+            return [], {}
 
-            with (
-                unittest.mock.patch.object(
-                    rank_gemini.gemini_ranking,
-                    "new_vertex_client",
-                    fake_new_vertex_client,
-                ),
-                unittest.mock.patch.object(
-                    rank_gemini.gemini_ranking,
-                    "GeminiRankingRunner",
-                    _FakeRunner,
-                ),
-                unittest.mock.patch.object(
-                    rank_gemini.gemini_ranking,
-                    "run_source_group_predictions",
-                    return_value=([], {}),
-                ),
-                unittest.mock.patch.object(
-                    rank_gemini.ranking,
-                    "score_ranked_rows",
-                    return_value=_fake_ranked_rows(),
-                ),
-            ):
-                exit_code = rank_gemini.main(
-                    [
-                        "run",
-                        *_required_args(paths),
-                        "--project",
-                        "test-project",
-                        "--location",
-                        "global",
-                        "--request-timeout-ms",
-                        "120000",
-                    ]
-                )
+        with (
+            unittest.mock.patch.object(
+                rank_gemini,
+                "_path_exists",
+                return_value=False,
+            ),
+            unittest.mock.patch.object(
+                rank_gemini,
+                "_load_jsonl",
+                return_value=[
+                    _row("audio-a", 1),
+                    _row("audio-b", 2),
+                    _row("audio-c", 3),
+                ],
+            ),
+            unittest.mock.patch.object(
+                rank_gemini,
+                "_load_cache_entries",
+                return_value=[],
+            ),
+            unittest.mock.patch.object(
+                rank_gemini.adk_ranking,
+                "AdkRankingRunner",
+                _FakeRunner,
+            ),
+            unittest.mock.patch.object(
+                rank_gemini.adk_ranking,
+                "run_source_group_predictions_adk",
+                fake_run_source_group_predictions_adk,
+            ),
+            unittest.mock.patch.object(
+                rank_gemini.ranking,
+                "score_ranked_rows",
+                return_value=_fake_ranked_rows(),
+            ),
+            unittest.mock.patch.object(rank_gemini, "_write_jsonl"),
+            unittest.mock.patch.object(rank_gemini, "_write_ranked_csv"),
+        ):
+            exit_code = rank_gemini.main(
+                [
+                    "preflight",
+                    *_required_args(),
+                    "--project",
+                    "test-project",
+                    "--sample-size",
+                    "2",
+                ]
+            )
 
         self.assertEqual(exit_code, 0)
-        self.assertEqual(captured["project"], "test-project")
-        self.assertEqual(captured["location"], "global")
-        self.assertEqual(captured["timeout_ms"], 120000)
+        self.assertEqual(captured["row_count"], 2)
+        self.assertEqual(captured["model_id"], "gemini-3.1-flash-lite")
 
-    def test_prediction_run_passes_source_workers_to_runner(self) -> None:
+    def test_run_processes_all_rows_and_passes_timeout(self) -> None:
         import rank_gemini
 
         _FakeRunner.instances = []
-        with tempfile.TemporaryDirectory() as tmpdir:
-            paths = _paths(Path(tmpdir))
-            _write_jsonl(paths["review_pool"], [_row("audio-a", 1)])
-            _write_jsonl(paths["cache"], [])
-            captured: dict[str, object] = {}
+        captured: dict[str, object] = {}
 
-            def fake_run_source_group_predictions(
-                _rows: list[dict[str, object]],
-                cache_by_audio_id: dict[str, object],
-                _runner: _FakeRunner,
-                **kwargs: object,
-            ) -> tuple[list[object], dict[str, object]]:
-                captured["max_source_workers"] = kwargs["max_source_workers"]
-                return [], cache_by_audio_id
+        def fake_run_source_group_predictions_adk(
+            rows: list[dict[str, object]],
+            _cache_entries: list[object],
+            runner: _FakeRunner,
+            **kwargs: object,
+        ) -> tuple[list[object], dict[str, object]]:
+            captured["row_count"] = len(rows)
+            captured["model_id"] = runner.model_id
+            captured["retry_errors"] = kwargs["retry_errors"]
+            return [], {}
 
-            with (
-                unittest.mock.patch.object(
-                    rank_gemini.gemini_ranking,
-                    "new_vertex_client",
-                    return_value=object(),
-                ),
-                unittest.mock.patch.object(
-                    rank_gemini.gemini_ranking,
-                    "GeminiRankingRunner",
-                    _FakeRunner,
-                ),
-                unittest.mock.patch.object(
-                    rank_gemini.gemini_ranking,
-                    "run_source_group_predictions",
-                    fake_run_source_group_predictions,
-                ),
-                unittest.mock.patch.object(
-                    rank_gemini.ranking,
-                    "score_ranked_rows",
-                    return_value=_fake_ranked_rows(),
-                ),
-            ):
-                exit_code = rank_gemini.main(
-                    [
-                        "run",
-                        *_required_args(paths),
-                        "--project",
-                        "test-project",
-                        "--source-workers",
-                        "8",
-                    ]
-                )
-
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(captured["max_source_workers"], 8)
-
-    def test_run_defaults_full_model(self) -> None:
-        import rank_gemini
-
-        _FakeRunner.instances = []
-        with tempfile.TemporaryDirectory() as tmpdir:
-            paths = _paths(Path(tmpdir))
-            _write_jsonl(paths["review_pool"], [_row("audio-a", 1)])
-            _write_jsonl(paths["cache"], [])
-            captured: dict[str, object] = {}
-
-            def fake_run_source_group_predictions(
-                rows: list[dict[str, object]],
-                cache_by_audio_id: dict[str, object],
-                runner: _FakeRunner,
-                **_kwargs: object,
-            ) -> tuple[list[object], dict[str, object]]:
-                captured["model_id"] = runner.model_id
-                return [], cache_by_audio_id
-
-            with (
-                unittest.mock.patch.object(
-                    rank_gemini.gemini_ranking,
-                    "new_vertex_client",
-                    return_value=object(),
-                ),
-                unittest.mock.patch.object(
-                    rank_gemini.gemini_ranking,
-                    "GeminiRankingRunner",
-                    _FakeRunner,
-                ),
-                unittest.mock.patch.object(
-                    rank_gemini.gemini_ranking,
-                    "run_source_group_predictions",
-                    fake_run_source_group_predictions,
-                ),
-                unittest.mock.patch.object(
-                    rank_gemini.ranking,
-                    "score_ranked_rows",
-                    return_value=_fake_ranked_rows(),
-                ),
-            ):
-                exit_code = rank_gemini.main(
-                    [
-                        "run",
-                        *_required_args(paths),
-                        "--project",
-                        "test-project",
-                    ]
-                )
+        with (
+            unittest.mock.patch.object(
+                rank_gemini,
+                "_path_exists",
+                return_value=False,
+            ),
+            unittest.mock.patch.object(
+                rank_gemini,
+                "_load_jsonl",
+                return_value=[
+                    _row("audio-a", 1),
+                    _row("audio-b", 2),
+                    _row("audio-c", 3),
+                ],
+            ),
+            unittest.mock.patch.object(
+                rank_gemini,
+                "_load_cache_entries",
+                return_value=[],
+            ),
+            unittest.mock.patch.object(
+                rank_gemini.adk_ranking,
+                "AdkRankingRunner",
+                _FakeRunner,
+            ),
+            unittest.mock.patch.object(
+                rank_gemini.adk_ranking,
+                "run_source_group_predictions_adk",
+                fake_run_source_group_predictions_adk,
+            ),
+            unittest.mock.patch.object(
+                rank_gemini.ranking,
+                "score_ranked_rows",
+                return_value=_fake_ranked_rows(),
+            ),
+            unittest.mock.patch.object(rank_gemini, "_write_jsonl"),
+            unittest.mock.patch.object(rank_gemini, "_write_ranked_csv"),
+        ):
+            exit_code = rank_gemini.main(
+                [
+                    "run",
+                    *_required_args(),
+                    "--project",
+                    "test-project",
+                    "--location",
+                    "global",
+                    "--request-timeout-ms",
+                    "120000",
+                    "--retry-errors",
+                ]
+            )
 
         self.assertEqual(exit_code, 0)
+        self.assertEqual(captured["row_count"], 3)
         self.assertEqual(captured["model_id"], "gemini-3.5-flash")
+        self.assertTrue(captured["retry_errors"])
+        self.assertEqual(_FakeRunner.instances[0].project, "test-project")
+        self.assertEqual(_FakeRunner.instances[0].location, "global")
+        self.assertEqual(_FakeRunner.instances[0].request_timeout_ms, 120000)
+
+    def test_prediction_run_flushes_cache_entries_by_interval(self) -> None:
+        import rank_gemini
+        from common import ranking
+
+        entry_a = ranking.PredictionCacheEntry(
+            audio_segment_id="audio-a",
+            prediction_text="Engine 41 copy",
+            model_id="gemini-3.5-flash",
+            prompt_fingerprint="prompt",
+            context_policy_fingerprint="context-policy",
+            num_recent_events=60,
+            context_fingerprint="context",
+            source_group="source-a",
+            row_index=1,
+            model_ready_audio_uri="gs://bucket/audio-a.flac",
+            created_at="2026-06-02T00:00:00Z",
+            error="",
+        )
+        entry_b = dataclasses.replace(
+            entry_a,
+            audio_segment_id="audio-b",
+            model_ready_audio_uri="gs://bucket/audio-b.flac",
+        )
+        flushed: list[list[str]] = []
+
+        def fake_run_source_group_predictions_adk(
+            _rows: list[dict[str, object]],
+            _cache_entries: list[object],
+            _runner: _FakeRunner,
+            **kwargs: object,
+        ) -> tuple[list[object], dict[str, object]]:
+            on_new_entry = kwargs["on_new_entry"]
+            on_new_entry(entry_a)
+            on_new_entry(entry_b)
+            return [entry_a, entry_b], {}
+
+        def fake_append_cache_entries(
+            _path: str,
+            entries: list[ranking.PredictionCacheEntry],
+        ) -> None:
+            flushed.append([entry.audio_segment_id for entry in entries])
+
+        with (
+            unittest.mock.patch.object(
+                rank_gemini,
+                "_path_exists",
+                return_value=False,
+            ),
+            unittest.mock.patch.object(
+                rank_gemini,
+                "_load_jsonl",
+                return_value=[_row("audio-a", 1)],
+            ),
+            unittest.mock.patch.object(
+                rank_gemini,
+                "_load_cache_entries",
+                return_value=[],
+            ),
+            unittest.mock.patch.object(
+                rank_gemini.adk_ranking,
+                "AdkRankingRunner",
+                _FakeRunner,
+            ),
+            unittest.mock.patch.object(
+                rank_gemini.adk_ranking,
+                "run_source_group_predictions_adk",
+                fake_run_source_group_predictions_adk,
+            ),
+            unittest.mock.patch.object(
+                rank_gemini,
+                "_append_cache_entries",
+                fake_append_cache_entries,
+            ),
+            unittest.mock.patch.object(
+                rank_gemini.ranking,
+                "score_ranked_rows",
+                return_value=_fake_ranked_rows(),
+            ),
+            unittest.mock.patch.object(rank_gemini, "_write_jsonl"),
+            unittest.mock.patch.object(rank_gemini, "_write_ranked_csv"),
+        ):
+            exit_code = rank_gemini.main(
+                [
+                    "run",
+                    *_required_args(),
+                    "--project",
+                    "test-project",
+                    "--cache-flush-interval",
+                    "1",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(flushed, [["audio-a"], ["audio-b"]])
+
+    def test_existing_final_outputs_fail_before_loading_cache(self) -> None:
+        import rank_gemini
+
+        with (
+            unittest.mock.patch.object(
+                rank_gemini,
+                "_path_exists",
+                side_effect=lambda path: path == "gs://bucket/ranked.jsonl",
+            ),
+            unittest.mock.patch.object(
+                rank_gemini,
+                "_load_jsonl",
+                side_effect=AssertionError("must not read"),
+            ),
+        ):
+            with self.assertRaises(FileExistsError):
+                rank_gemini.main(["run", *_required_args(), "--project", "p"])
+
+    def test_partial_inference_failure_flushes_cache_but_writes_no_outputs(
+        self,
+    ) -> None:
+        import rank_gemini
+        from common import ranking
+
+        entry = ranking.PredictionCacheEntry(
+            audio_segment_id="audio-a",
+            prediction_text="copy",
+            model_id="gemini-3.5-flash",
+            prompt_fingerprint="prompt",
+            context_policy_fingerprint="context-policy",
+            num_recent_events=60,
+            context_fingerprint="context",
+            source_group="source-a",
+            row_index=1,
+            model_ready_audio_uri="gs://bucket/audio-a.flac",
+            created_at="2026-06-02T00:00:00Z",
+            error="",
+        )
+        flushed: list[str] = []
+
+        def fake_run_source_group_predictions_adk(
+            _rows: list[dict[str, object]],
+            _cache_entries: list[object],
+            _runner: _FakeRunner,
+            **kwargs: object,
+        ) -> tuple[list[object], dict[str, object]]:
+            kwargs["on_new_entry"](entry)
+            raise RuntimeError("fatal")
+
+        with (
+            unittest.mock.patch.object(
+                rank_gemini,
+                "_path_exists",
+                return_value=False,
+            ),
+            unittest.mock.patch.object(
+                rank_gemini,
+                "_load_jsonl",
+                return_value=[_row("audio-a", 1)],
+            ),
+            unittest.mock.patch.object(
+                rank_gemini,
+                "_load_cache_entries",
+                return_value=[],
+            ),
+            unittest.mock.patch.object(
+                rank_gemini.adk_ranking,
+                "AdkRankingRunner",
+                _FakeRunner,
+            ),
+            unittest.mock.patch.object(
+                rank_gemini.adk_ranking,
+                "run_source_group_predictions_adk",
+                fake_run_source_group_predictions_adk,
+            ),
+            unittest.mock.patch.object(
+                rank_gemini,
+                "_append_cache_entries",
+                side_effect=lambda _path, entries: flushed.extend(
+                    entry.audio_segment_id for entry in entries
+                ),
+            ),
+            unittest.mock.patch.object(
+                rank_gemini,
+                "_write_jsonl",
+                side_effect=AssertionError("must not write"),
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "fatal"):
+                rank_gemini.main(["run", *_required_args(), "--project", "p"])
+
+        self.assertEqual(flushed, ["audio-a"])
 
 
 if __name__ == "__main__":

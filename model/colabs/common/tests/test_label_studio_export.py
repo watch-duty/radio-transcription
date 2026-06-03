@@ -27,7 +27,6 @@ def _task(
             "duration": 2.5,
             "source_group": "source-a",
             "row_index": task_id,
-            "split": "train",
             "dataset_name": "test-dataset",
             "rank": 1,
             "wer": 42.5,
@@ -120,6 +119,8 @@ class TestLabelStudioExportParser(unittest.TestCase):
         self.assertEqual(row["annotation_id"], 201)
         self.assertEqual(row["annotation_completed_at"], "2026-06-03T01:00:00Z")
         serialized = json.dumps(row, sort_keys=True)
+        self.assertNotIn("split", serialized)
+        self.assertNotIn("prediction_text", serialized)
         self.assertNotIn("review_outcome", serialized)
         self.assertNotIn("transcript_state", serialized)
         self.assertNotIn("exclude_from_future_inputs", serialized)
@@ -266,6 +267,104 @@ class TestLabelStudioExportParser(unittest.TestCase):
         self.assertEqual(error["task_id"], 101)
         self.assertEqual(error["audio_segment_id"], "audio-a")
         self.assertEqual(error["annotation_id"], 402)
+
+    def test_missing_selected_reviewed_transcription_reports_error(
+        self,
+    ) -> None:
+        from common import label_studio_export
+
+        task = _task(
+            annotations=[
+                _annotation(
+                    result=[
+                        _review_status_result("Reviewed"),
+                    ],
+                )
+            ]
+        )
+
+        result = label_studio_export.parse_export_tasks([task])
+
+        self.assertEqual(result.reviewed_rows, [])
+        self.assertEqual(len(result.error_rows), 1)
+        self.assertEqual(
+            result.error_rows[0]["error_code"],
+            "missing_transcription",
+        )
+
+    def test_submitted_transcript_is_edge_stripped_and_empty_is_valid(
+        self,
+    ) -> None:
+        from common import label_studio_export
+
+        tasks = [
+            _task(
+                1,
+                audio_segment_id="audio-text",
+                annotations=[
+                    _annotation(
+                        result=[
+                            _review_status_result("Reviewed"),
+                            _transcription_result(
+                                "  Engine   41 copy  ",
+                            ),
+                        ],
+                    )
+                ],
+            ),
+            _task(
+                2,
+                audio_segment_id="audio-empty",
+                annotations=[
+                    _annotation(
+                        result=[
+                            _review_status_result("Reviewed"),
+                            _transcription_result(" \n\t "),
+                        ],
+                    )
+                ],
+            ),
+        ]
+
+        result = label_studio_export.parse_export_tasks(tasks)
+
+        self.assertEqual(result.error_rows, [])
+        rows_by_id = {
+            row["audio_segment_id"]: row for row in result.reviewed_rows
+        }
+        self.assertEqual(
+            rows_by_id["audio-text"]["submitted_transcript"],
+            "Engine   41 copy",
+        )
+        self.assertEqual(
+            rows_by_id["audio-empty"]["submitted_transcript"],
+            "",
+        )
+
+    def test_required_task_data_none_reports_error(self) -> None:
+        from common import label_studio_export
+
+        task = _task(
+            annotations=[
+                _annotation(
+                    result=[
+                        _review_status_result("Reviewed"),
+                        _transcription_result("Corrected transcript"),
+                    ],
+                )
+            ]
+        )
+        task["data"]["context_fingerprint"] = None  # type: ignore[index]
+
+        result = label_studio_export.parse_export_tasks([task])
+
+        self.assertEqual(result.reviewed_rows, [])
+        self.assertEqual(len(result.error_rows), 1)
+        self.assertEqual(
+            result.error_rows[0]["error_code"],
+            "missing_task_data_field",
+        )
+        self.assertIn("context_fingerprint", result.error_rows[0]["message"])
 
     def test_submitted_annotation_without_completed_at_uses_updated_at(
         self,

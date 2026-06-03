@@ -8,17 +8,8 @@ import dataclasses
 from common import label_studio_export
 
 
-OVERLAY_ACTION_REPLACE_REFERENCE = "replace_reference"
-OVERLAY_ACTION_EXCLUDE = "exclude"
-
-OVERLAY_STATUS_REVIEWED_EDITED = "reviewed_edited"
-OVERLAY_STATUS_REVIEWED_UNCHANGED = "reviewed_unchanged"
-OVERLAY_STATUS_REVIEWED_EMPTY = "reviewed_empty"
-
 OVERLAY_OUTPUT_FIELDS = (
     *label_studio_export.REVIEWED_OUTPUT_FIELDS,
-    "overlay_status",
-    "overlay_action",
     "replacement_transcript",
 )
 
@@ -26,14 +17,10 @@ SUMMARY_FIELDS = (
     "input_row_count",
     "overlay_row_count",
     "reviewed_total",
-    "reviewed_edited",
-    "reviewed_unchanged",
-    "reviewed_empty",
     "duplicate_superseded_count",
     "malformed_error_count",
     "matching_key",
     "source_window_fallback_matching",
-    "overlay_actions",
 )
 
 ERROR_OUTPUT_FIELDS = (
@@ -104,23 +91,23 @@ def build_latest_overlay(
     duplicate_superseded_count = 0
     for input_index, row in enumerate(rows):
         audio_segment_id = str(row["audio_segment_id"])
-        row_with_policy = _overlay_row(row)
+        row_with_replacement = _overlay_row(row)
         current = latest_by_audio_segment_id.get(audio_segment_id)
         if current is None:
             first_seen_audio_segment_ids.append(audio_segment_id)
             latest_by_audio_segment_id[audio_segment_id] = (
-                row_with_policy,
+                row_with_replacement,
                 input_index,
             )
             continue
         duplicate_superseded_count += 1
         current_row, current_index = current
-        if _latest_sort_key(row_with_policy, input_index) > _latest_sort_key(
-            current_row,
-            current_index,
-        ):
+        if _latest_sort_key(
+            row_with_replacement,
+            input_index,
+        ) > _latest_sort_key(current_row, current_index):
             latest_by_audio_segment_id[audio_segment_id] = (
-                row_with_policy,
+                row_with_replacement,
                 input_index,
             )
 
@@ -185,24 +172,8 @@ def _overlay_row(
     row: collections.abc.Mapping[str, object],
 ) -> dict[str, object]:
     submitted_transcript = str(row["submitted_transcript"])
-    original_reference_transcript = str(row["original_reference_transcript"])
-    if not submitted_transcript.strip():
-        overlay_status = OVERLAY_STATUS_REVIEWED_EMPTY
-        overlay_action = OVERLAY_ACTION_EXCLUDE
-        replacement_transcript = ""
-    elif submitted_transcript == original_reference_transcript:
-        overlay_status = OVERLAY_STATUS_REVIEWED_UNCHANGED
-        overlay_action = OVERLAY_ACTION_REPLACE_REFERENCE
-        replacement_transcript = submitted_transcript
-    else:
-        overlay_status = OVERLAY_STATUS_REVIEWED_EDITED
-        overlay_action = OVERLAY_ACTION_REPLACE_REFERENCE
-        replacement_transcript = submitted_transcript
-
     values = {field: row.get(field) for field in OVERLAY_OUTPUT_FIELDS}
-    values["overlay_status"] = overlay_status
-    values["overlay_action"] = overlay_action
-    values["replacement_transcript"] = replacement_transcript
+    values["replacement_transcript"] = submitted_transcript
     return values
 
 
@@ -238,56 +209,16 @@ def _summary(
     duplicate_superseded_count: int,
     malformed_error_count: int,
 ) -> dict[str, object]:
-    reviewed_edited = _count_status(
-        overlay_rows,
-        OVERLAY_STATUS_REVIEWED_EDITED,
-    )
-    reviewed_unchanged = _count_status(
-        overlay_rows,
-        OVERLAY_STATUS_REVIEWED_UNCHANGED,
-    )
-    reviewed_empty = _count_status(
-        overlay_rows,
-        OVERLAY_STATUS_REVIEWED_EMPTY,
-    )
-    overlay_actions = {
-        OVERLAY_ACTION_REPLACE_REFERENCE: _count_action(
-            overlay_rows,
-            OVERLAY_ACTION_REPLACE_REFERENCE,
-        ),
-        OVERLAY_ACTION_EXCLUDE: _count_action(
-            overlay_rows,
-            OVERLAY_ACTION_EXCLUDE,
-        ),
-    }
     values = {
         "input_row_count": input_row_count,
         "overlay_row_count": len(overlay_rows),
         "reviewed_total": len(overlay_rows),
-        "reviewed_edited": reviewed_edited,
-        "reviewed_unchanged": reviewed_unchanged,
-        "reviewed_empty": reviewed_empty,
         "duplicate_superseded_count": duplicate_superseded_count,
         "malformed_error_count": malformed_error_count,
         "matching_key": "audio_segment_id",
         "source_window_fallback_matching": False,
-        "overlay_actions": overlay_actions,
     }
     return {field: values[field] for field in SUMMARY_FIELDS}
-
-
-def _count_status(
-    rows: collections.abc.Sequence[collections.abc.Mapping[str, object]],
-    status: str,
-) -> int:
-    return sum(1 for row in rows if row.get("overlay_status") == status)
-
-
-def _count_action(
-    rows: collections.abc.Sequence[collections.abc.Mapping[str, object]],
-    action: str,
-) -> int:
-    return sum(1 for row in rows if row.get("overlay_action") == action)
 
 
 def _error_row(

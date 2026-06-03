@@ -47,3 +47,17 @@ GEMINI_TRANSCRIBE_SYSTEM_PROMPT = (
 )
 
 GEMINI_TRANSCRIBE_USER_PROMPT = "Transcribe this emergency radio communication segment verbatim per the rules above."
+
+ADK_PRIOR_AUDIO_WRAPPER = (
+    "Prior same-source audio segment. The following model response belongs to "
+    "this exact prior audio segment."
+)
+
+ADK_PRIOR_PREDICTION_WRAPPER = (
+    "Model transcript for the immediately preceding prior audio segment."
+)
+
+ADK_CURRENT_AUDIO_WRAPPER = (
+    "Current audio segment to transcribe. Use prior same-source audio/model "
+    "turns only as context."
+)

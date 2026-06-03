@@ -25,6 +25,7 @@ def main(argv: list[str] | None = None) -> int:
     tasks = _load_json_export(args.label_studio_export_json)
     result = label_studio_export.parse_export_tasks(tasks)
     if result.error_rows:
+        _write_jsonl(args.reviewed_jsonl, [])
         _write_jsonl(args.errors_jsonl, result.error_rows)
         return 1
 
@@ -45,11 +46,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--reviewed-jsonl",
         required=True,
+        type=_gcs_uri,
         help="Output reviewed transcript fact JSONL path.",
     )
     parser.add_argument(
         "--errors-jsonl",
         required=True,
+        type=_gcs_uri,
         help="Output structured parse error JSONL path.",
     )
     return parser
@@ -76,20 +79,14 @@ def _download_gcs_text(storage_client: object, gcs_uri: str) -> str:
 
 
 def _write_jsonl(path: str, rows: list[dict[str, object]]) -> None:
-    if _is_gcs_uri(path):
-        storage_client = _new_storage_client()
-        with tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-        ) as temp_file:
-            _write_jsonl_to_local(pathlib.Path(temp_file.name), rows)
-            temp_file.flush()
-            _upload_file(storage_client, path, temp_file.name)
-        return
-
-    local_path = pathlib.Path(path)
-    local_path.parent.mkdir(parents=True, exist_ok=True)
-    _write_jsonl_to_local(local_path, rows)
+    storage_client = _new_storage_client()
+    with tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+    ) as temp_file:
+        _write_jsonl_to_local(pathlib.Path(temp_file.name), rows)
+        temp_file.flush()
+        _upload_file(storage_client, path, temp_file.name)
 
 
 def _write_jsonl_to_local(
@@ -122,6 +119,12 @@ def _new_storage_client() -> object:
 
 def _is_gcs_uri(path: str) -> bool:
     return path.startswith("gs://")
+
+
+def _gcs_uri(value: str) -> str:
+    if not _is_gcs_uri(value):
+        raise argparse.ArgumentTypeError("must be a gs:// URI")
+    return value
 
 
 if __name__ == "__main__":

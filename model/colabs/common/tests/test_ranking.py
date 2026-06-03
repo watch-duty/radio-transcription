@@ -27,7 +27,6 @@ def _row(
         "duration": 2.5,
         "source_group": source_group,
         "row_index": row_index,
-        "split": "train",
         "dataset_name": "test",
         "text": text,
     }
@@ -42,7 +41,7 @@ def _entry(
     model_id: str = "gemini-model",
     prompt_fp: str = "prompt-fp",
     context_policy_fp: str = "context-policy-fp",
-    num_recent_events: int = 1000,
+    num_recent_events: int = 60,
     context_fp: str = "context-fp",
     source_group: str = "source-a",
     error: str = "",
@@ -70,10 +69,16 @@ class TestContextSelection(unittest.TestCase):
         first_prompt = ranking.prompt_fingerprint("system", "user")
         same_prompt = ranking.prompt_fingerprint("system", "user")
         changed_prompt = ranking.prompt_fingerprint("system", "changed")
+        changed_wrapper = ranking.prompt_fingerprint(
+            "system",
+            "user",
+            extra_parts={"wrapper": "changed"},
+        )
 
         self.assertEqual(first_prompt, same_prompt)
         self.assertTrue(first_prompt.startswith("prompt-"))
         self.assertNotEqual(first_prompt, changed_prompt)
+        self.assertNotEqual(first_prompt, changed_wrapper)
 
         default_policy = ranking.context_policy_fingerprint()
         changed_policy = ranking.context_policy_fingerprint(
@@ -222,7 +227,7 @@ class TestContextSelection(unittest.TestCase):
             ["tie-prior"],
         )
 
-    def test_previous_context_caps_1000_events_to_500_rows(self) -> None:
+    def test_previous_context_caps_60_events_to_30_rows(self) -> None:
         from common import ranking
 
         rows = [_row(f"audio-{i}", i) for i in range(501)]
@@ -246,10 +251,10 @@ class TestContextSelection(unittest.TestCase):
             cache_by_audio_id,
         )
 
-        self.assertEqual(ranking.NUM_RECENT_EVENTS, 1000)
-        self.assertEqual(ranking.MAX_CONTEXT_ROWS, 500)
+        self.assertEqual(ranking.NUM_RECENT_EVENTS, 60)
+        self.assertEqual(ranking.MAX_CONTEXT_ROWS, 30)
         self.assertEqual(len(context), ranking.MAX_CONTEXT_ROWS)
-        self.assertEqual(context[0].audio_segment_id, "audio-1")
+        self.assertEqual(context[0].audio_segment_id, "audio-471")
         self.assertEqual(context[-1].audio_segment_id, "audio-500")
 
 
@@ -265,7 +270,7 @@ class TestPredictionCacheCompatibility(unittest.TestCase):
                 model_id="gemini-model",
                 prompt_fp="prompt-fp",
                 context_policy_fp="context-policy-fp",
-                num_recent_events=1000,
+                num_recent_events=60,
                 context_fp="context-fp",
             )
         )
@@ -289,10 +294,40 @@ class TestPredictionCacheCompatibility(unittest.TestCase):
                         model_id="gemini-model",
                         prompt_fp="prompt-fp",
                         context_policy_fp="context-policy-fp",
-                        num_recent_events=1000,
+                        num_recent_events=60,
                         context_fp="context-fp",
                     )
                 )
+
+    def test_cache_selection_latest_success_wins_over_later_failure(
+        self,
+    ) -> None:
+        from common import ranking
+
+        row = _row("audio-a", 1)
+        success = _entry(
+            ranking,
+            "audio-a",
+            "success",
+            context_fp=ranking.context_fingerprint([]),
+        )
+        failure = dataclasses.replace(
+            success,
+            prediction_text="",
+            error="timeout",
+            created_at="2026-06-02T00:01:00Z",
+        )
+
+        selected = ranking.select_cache_entries_for_rows(
+            [row],
+            [success, failure],
+            model_id="gemini-model",
+            prompt_fp="prompt-fp",
+            context_policy_fp="context-policy-fp",
+            num_recent_events=60,
+        )
+
+        self.assertEqual(selected["audio-a"], success)
 
 
 class TestWerRanking(unittest.TestCase):
@@ -365,7 +400,10 @@ class TestWerRanking(unittest.TestCase):
                 context_fp=empty_context,
             )
             rows = [
-                _row("audio-a", 1, "Engine 41 copy"),
+                {
+                    **_row("audio-a", 1, "Engine 41 copy"),
+                    "md5_hash": "raw-audit",
+                },
                 _row("audio-b", 2, "Engine 41 long response"),
                 _row("audio-empty", 3, "[empty]"),
             ]
@@ -397,6 +435,8 @@ class TestWerRanking(unittest.TestCase):
         self.assertEqual(ranked_rows[0]["substitutions"], 1)
         self.assertEqual(ranked_rows[0]["hits"], 4)
         self.assertEqual(ranked_rows[0]["prediction_text"], "major error")
+        self.assertNotIn("split", ranked_rows[0])
+        self.assertNotIn("md5_hash", ranked_rows[1])
         self.assertEqual(len(compute_calls), 2)
         self.assertTrue(normalizer_calls)
         self.assertEqual(len(excluded_rows), 1)

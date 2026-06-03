@@ -1,4 +1,4 @@
-"""Build review-pool JSONL from train and eval canonical manifests."""
+"""Build review-pool JSONL from canonical manifests."""
 
 from __future__ import annotations
 
@@ -26,11 +26,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
     storage_client = _new_storage_client()
+    manifest_rows_by_name = {}
+    for index, manifest_uri in enumerate(args.manifest_jsonl, start=1):
+        manifest_rows_by_name[f"manifest-{index}"] = _load_jsonl(
+            manifest_uri,
+            storage_client,
+        )
     manifest_rows = review.load_review_manifest_rows(
-        {
-            "train": _load_jsonl(args.train_jsonl, storage_client),
-            "eval": _load_jsonl(args.eval_jsonl, storage_client),
-        }
+        manifest_rows_by_name,
     )
     metadata_by_uri = _fetch_metadata_by_uri(
         storage_client,
@@ -57,23 +60,22 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Build review-pool rows from canonical manifests.",
     )
     parser.add_argument(
-        "--train-jsonl",
+        "--manifest-jsonl",
+        action="append",
         required=True,
-        help="Input canonical train manifest JSONL path.",
-    )
-    parser.add_argument(
-        "--eval-jsonl",
-        required=True,
-        help="Input canonical eval manifest JSONL path.",
+        type=_gcs_uri,
+        help="Input canonical manifest JSONL GCS path. Repeatable.",
     )
     parser.add_argument(
         "--review-pool-jsonl",
         required=True,
+        type=_gcs_uri,
         help="Output enriched review-pool JSONL path.",
     )
     parser.add_argument(
         "--duplicates-jsonl",
         required=True,
+        type=_gcs_uri,
         help="Output duplicate exact-audio report JSONL path.",
     )
     parser.add_argument(
@@ -93,6 +95,12 @@ def _positive_int(value: str) -> int:
     if parsed <= 0:
         raise argparse.ArgumentTypeError("value must be positive")
     return parsed
+
+
+def _gcs_uri(value: str) -> str:
+    if not _is_gcs_uri(value):
+        raise argparse.ArgumentTypeError("value must be a gs:// URI")
+    return value
 
 
 def _load_jsonl(

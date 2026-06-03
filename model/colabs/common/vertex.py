@@ -20,20 +20,16 @@ import logging
 import time
 from typing import Any
 
+from common import gemini_config
+
 logger = logging.getLogger(__name__)
 
 # Canonical Gemini transcription inference setup — shared by the SFT pipeline ``_eval``
 # stage and the ``gemini_transcribe_audio`` eval notebook (single source, prevents drift).
 # Plain stdlib dicts/lists only, defined BEFORE the google-genai guard so they import
 # without the [vertex] extra.
-GEMINI_GENERATION_CONFIG = {"temperature": 0.0, "max_output_tokens": 512}
-
-GEMINI_SAFETY_SETTINGS = [
-    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-]
+GEMINI_GENERATION_CONFIG = gemini_config.GEMINI_GENERATION_CONFIG
+GEMINI_SAFETY_SETTINGS = gemini_config.GEMINI_SAFETY_SETTINGS
 
 
 def build_request(

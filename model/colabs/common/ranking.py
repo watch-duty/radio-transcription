@@ -10,12 +10,31 @@ import json
 import pathlib
 import typing
 
-from common import scoring
+from common import prompts, scoring
 
 
-NUM_RECENT_EVENTS = 1000
-MAX_CONTEXT_ROWS = NUM_RECENT_EVENTS // 2
-CONTEXT_POLICY_VERSION = "same-source-row-index-v1"
+NUM_RECENT_EVENTS = 60
+MAX_CONTEXT_ROWS = 30
+CONTEXT_POLICY_VERSION = "same-source-prior-30-adk-v1"
+
+PROMPT_WRAPPER_PARTS = {
+    "adk_prior_audio_wrapper": prompts.ADK_PRIOR_AUDIO_WRAPPER,
+    "adk_prior_prediction_wrapper": prompts.ADK_PRIOR_PREDICTION_WRAPPER,
+    "adk_current_audio_wrapper": prompts.ADK_CURRENT_AUDIO_WRAPPER,
+}
+
+REVIEW_OUTPUT_FIELDS = (
+    "audio_segment_id",
+    "source_window_id",
+    "model_ready_audio_uri",
+    "original_audio_uri",
+    "offset",
+    "duration",
+    "source_group",
+    "row_index",
+    "dataset_name",
+    "text",
+)
 
 RANKED_OUTPUT_FIELDS = (
     "rank",
@@ -32,7 +51,6 @@ RANKED_OUTPUT_FIELDS = (
     "duration",
     "source_group",
     "row_index",
-    "split",
     "dataset_name",
     "text",
     "prediction_text",
@@ -78,7 +96,12 @@ class PredictionCacheEntry:
     error: str
 
 
-def prompt_fingerprint(system_prompt: str, user_prompt: str) -> str:
+def prompt_fingerprint(
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    extra_parts: collections.abc.Mapping[str, str] | None = None,
+) -> str:
     """Return a stable fingerprint for the active Gemini prompt pair.
 
     Args:
@@ -88,12 +111,21 @@ def prompt_fingerprint(system_prompt: str, user_prompt: str) -> str:
     Returns:
         A `prompt-` prefixed SHA-256 fingerprint.
     """
-    return _stable_hash(
-        "prompt",
-        {
-            "system_prompt": system_prompt,
-            "user_prompt": user_prompt,
-        },
+    payload: dict[str, object] = {
+        "system_prompt": system_prompt,
+        "user_prompt": user_prompt,
+    }
+    if extra_parts:
+        payload["extra_parts"] = dict(sorted(extra_parts.items()))
+    return _stable_hash("prompt", payload)
+
+
+def adk_prompt_fingerprint(system_prompt: str, user_prompt: str) -> str:
+    """Return the effective prompt fingerprint for ADK review ranking."""
+    return prompt_fingerprint(
+        system_prompt,
+        user_prompt,
+        extra_parts=PROMPT_WRAPPER_PARTS,
     )
 
 
@@ -114,7 +146,7 @@ def context_policy_fingerprint(
         {
             "version": CONTEXT_POLICY_VERSION,
             "num_recent_events": num_recent_events,
-            "max_context_rows": num_recent_events // 2,
+            "max_context_rows": min(MAX_CONTEXT_ROWS, num_recent_events // 2),
         },
     )
 
@@ -170,9 +202,32 @@ def is_cache_entry_compatible(
         True only when all compatibility fields match and the entry has no
         recorded error.
     """
+    return _entry_successful(entry) and is_cache_entry_coverage_compatible(
+        entry,
+        model_id=model_id,
+        prompt_fp=prompt_fp,
+        context_policy_fp=context_policy_fp,
+        num_recent_events=num_recent_events,
+        context_fp=context_fp,
+    )
+
+
+def is_cache_entry_coverage_compatible(
+    entry: PredictionCacheEntry,
+    *,
+    model_id: str,
+    prompt_fp: str,
+    context_policy_fp: str,
+    num_recent_events: int,
+    context_fp: str,
+) -> bool:
+    """Return whether a cache entry covers the active row settings.
+
+    Unlike `is_cache_entry_compatible`, this allows failed entries to count as
+    cache coverage for `rank-cache` audit/exclusion output.
+    """
     return (
-        _entry_successful(entry)
-        and entry.model_id == model_id
+        entry.model_id == model_id
         and entry.prompt_fingerprint == prompt_fp
         and entry.context_policy_fingerprint == context_policy_fp
         and entry.num_recent_events == num_recent_events
@@ -209,6 +264,105 @@ def ordered_source_rows(
         sorted_rows = sorted(group_rows, key=lambda item: (item[0], item[1]))
         ordered[source_group] = [row for _, _, row in sorted_rows]
     return ordered
+
+
+def cache_history_by_audio_id(
+    entries: collections.abc.Iterable[PredictionCacheEntry],
+) -> dict[str, list[PredictionCacheEntry]]:
+    """Group append-only prediction cache history by audio segment ID."""
+    grouped: dict[str, list[PredictionCacheEntry]] = {}
+    for entry in entries:
+        grouped.setdefault(entry.audio_segment_id, []).append(entry)
+    return grouped
+
+
+def select_latest_compatible_cache_entry(
+    entries: collections.abc.Sequence[PredictionCacheEntry],
+    current_row: collections.abc.Mapping[str, object],
+    *,
+    model_id: str,
+    prompt_fp: str,
+    context_policy_fp: str,
+    num_recent_events: int,
+    context_fp: str,
+    include_failure: bool = True,
+) -> PredictionCacheEntry | None:
+    """Select the latest compatible cache entry for a row.
+
+    A compatible success always wins over compatible failures, even if a later
+    failure exists. If no success exists, the latest compatible failure may be
+    returned as coverage when `include_failure` is true.
+    """
+    current_uri = str(current_row["model_ready_audio_uri"])
+    compatible_successes: list[PredictionCacheEntry] = []
+    compatible_failures: list[PredictionCacheEntry] = []
+    for entry in entries:
+        if entry.model_ready_audio_uri != current_uri:
+            continue
+        if not is_cache_entry_coverage_compatible(
+            entry,
+            model_id=model_id,
+            prompt_fp=prompt_fp,
+            context_policy_fp=context_policy_fp,
+            num_recent_events=num_recent_events,
+            context_fp=context_fp,
+        ):
+            continue
+        if _entry_successful(entry):
+            compatible_successes.append(entry)
+        else:
+            compatible_failures.append(entry)
+    if compatible_successes:
+        return compatible_successes[-1]
+    if include_failure and compatible_failures:
+        return compatible_failures[-1]
+    return None
+
+
+def select_cache_entries_for_rows(
+    rows: collections.abc.Iterable[collections.abc.Mapping[str, object]],
+    cache_entries: collections.abc.Iterable[PredictionCacheEntry],
+    *,
+    model_id: str,
+    prompt_fp: str,
+    context_policy_fp: str,
+    num_recent_events: int,
+    include_failures: bool = True,
+) -> dict[str, PredictionCacheEntry]:
+    """Select active compatible cache entries for every row in source order."""
+    row_list = [dict(row) for row in rows]
+    grouped_rows = ordered_source_rows(row_list)
+    history = cache_history_by_audio_id(cache_entries)
+    selected: dict[str, PredictionCacheEntry] = {}
+    compatible_successes: dict[str, PredictionCacheEntry] = {}
+    max_context_rows = min(MAX_CONTEXT_ROWS, num_recent_events // 2)
+
+    for source_group in sorted(grouped_rows):
+        for row in grouped_rows[source_group]:
+            audio_id = str(row["audio_segment_id"])
+            context_entries = previous_prediction_context(
+                grouped_rows,
+                row,
+                compatible_successes,
+                max_context_rows=max_context_rows,
+            )
+            context_fp = context_fingerprint(context_entries)
+            entry = select_latest_compatible_cache_entry(
+                history.get(audio_id, []),
+                row,
+                model_id=model_id,
+                prompt_fp=prompt_fp,
+                context_policy_fp=context_policy_fp,
+                num_recent_events=num_recent_events,
+                context_fp=context_fp,
+                include_failure=include_failures,
+            )
+            if entry is None:
+                continue
+            selected[audio_id] = entry
+            if _entry_successful(entry):
+                compatible_successes[audio_id] = entry
+    return selected
 
 
 def previous_prediction_context(
@@ -310,7 +464,7 @@ def score_ranked_rows(
 
     scored_items: list[tuple[float, int, dict[str, object]]] = []
     excluded_rows: list[dict[str, object]] = []
-    max_context_rows = num_recent_events // 2
+    max_context_rows = min(MAX_CONTEXT_ROWS, num_recent_events // 2)
 
     for source_group in sorted(source_rows):
         for row in source_rows[source_group]:
@@ -323,7 +477,7 @@ def score_ranked_rows(
             )
             context_fp = context_fingerprint(context_entries)
             entry = cache_by_audio_id.get(audio_id)
-            if entry is None or not is_cache_entry_compatible(
+            if entry is None or not is_cache_entry_coverage_compatible(
                 entry,
                 model_id=model_id,
                 prompt_fp=prompt_fp,
@@ -337,6 +491,16 @@ def score_ranked_rows(
                         entry,
                         context_fp,
                         "missing_or_incompatible_prediction_cache",
+                    )
+                )
+                continue
+            if not _entry_successful(entry):
+                excluded_rows.append(
+                    _excluded_row(
+                        row,
+                        entry,
+                        context_fp,
+                        "prediction_failed",
                     )
                 )
                 continue
@@ -462,7 +626,7 @@ def _ranked_row(
     context_fp: str,
     metrics: collections.abc.Mapping[str, object],
 ) -> dict[str, object]:
-    output = dict(row)
+    output = _project_review_fields(row)
     output.update(
         {
             "rank": None,
@@ -491,7 +655,7 @@ def _excluded_row(
     *,
     normalized_reference: str | None = None,
 ) -> dict[str, object]:
-    output = dict(row)
+    output = _project_review_fields(row)
     output["exclusion_reason"] = exclusion_reason
     output["context_fingerprint"] = context_fp
     if normalized_reference is not None:
@@ -506,10 +670,17 @@ def _excluded_row(
                     entry.context_policy_fingerprint
                 ),
                 "num_recent_events": entry.num_recent_events,
+                "context_fingerprint": context_fp,
                 "cache_created_at": entry.created_at,
             }
         )
     return output
+
+
+def _project_review_fields(
+    row: collections.abc.Mapping[str, object],
+) -> dict[str, object]:
+    return {field: row[field] for field in REVIEW_OUTPUT_FIELDS}
 
 
 def _csv_fieldnames(

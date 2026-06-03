@@ -40,7 +40,6 @@ def _export_task(
             "duration": 2.5,
             "source_group": "source-a",
             "row_index": task_id,
-            "split": "train",
             "dataset_name": "test-dataset",
             "rank": 1,
             "wer": 42.5,
@@ -153,34 +152,69 @@ class TestParseLabelStudioExportCli(unittest.TestCase):
         self.assertIn("--errors-jsonl", help_text)
         self.assertNotIn("--reviewed-csv", help_text)
 
-    def test_local_success_writes_reviewed_jsonl_and_empty_errors(
+    def test_local_export_success_uploads_reviewed_jsonl_and_empty_errors(
         self,
     ) -> None:
         import parse_label_studio_export
 
+        uploaded_paths: list[str] = []
+        uploaded_text_by_path: dict[str, str] = {}
+
+        def fake_upload_file_to_blob(
+            _storage_client: object,
+            bucket_name: str,
+            blob_path: str,
+            source_file_name: str,
+        ) -> None:
+            uploaded_path = f"gs://{bucket_name}/{blob_path}"
+            uploaded_paths.append(uploaded_path)
+            uploaded_text_by_path[uploaded_path] = pathlib.Path(
+                source_file_name
+            ).read_text(encoding="utf-8")
+
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = pathlib.Path(tmpdir)
             export_path = tmp_path / "export.json"
-            reviewed_path = tmp_path / "reviewed.jsonl"
-            errors_path = tmp_path / "errors.jsonl"
             _write_export_json(export_path, [_valid_export_task()])
 
-            exit_code = parse_label_studio_export.main(
-                [
-                    "--label-studio-export-json",
-                    str(export_path),
-                    "--reviewed-jsonl",
-                    str(reviewed_path),
-                    "--errors-jsonl",
-                    str(errors_path),
-                ]
-            )
-
-            reviewed_rows = _read_jsonl(reviewed_path)
-            errors_text = errors_path.read_text(encoding="utf-8")
-            reviewed_csv_exists = (tmp_path / "reviewed.csv").exists()
+            with (
+                unittest.mock.patch.object(
+                    parse_label_studio_export,
+                    "_new_storage_client",
+                    return_value=object(),
+                ),
+                unittest.mock.patch.object(
+                    parse_label_studio_export.gcs_utils,
+                    "upload_file_to_blob",
+                    fake_upload_file_to_blob,
+                ),
+            ):
+                exit_code = parse_label_studio_export.main(
+                    [
+                        "--label-studio-export-json",
+                        str(export_path),
+                        "--reviewed-jsonl",
+                        "gs://bucket/output/reviewed.jsonl",
+                        "--errors-jsonl",
+                        "gs://bucket/output/errors.jsonl",
+                    ]
+                )
 
         self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            uploaded_paths,
+            [
+                "gs://bucket/output/reviewed.jsonl",
+                "gs://bucket/output/errors.jsonl",
+            ],
+        )
+        reviewed_rows = [
+            json.loads(line)
+            for line in uploaded_text_by_path[
+                "gs://bucket/output/reviewed.jsonl"
+            ].splitlines()
+            if line.strip()
+        ]
         self.assertEqual(len(reviewed_rows), 1)
         self.assertEqual(
             reviewed_rows[0]["label_studio_review_status"], "Reviewed"
@@ -189,47 +223,102 @@ class TestParseLabelStudioExportCli(unittest.TestCase):
             reviewed_rows[0]["submitted_transcript"],
             "Corrected transcript",
         )
-        self.assertEqual(errors_text, "")
-        self.assertFalse(reviewed_csv_exists)
+        self.assertNotIn("split", json.dumps(reviewed_rows[0], sort_keys=True))
+        self.assertEqual(
+            uploaded_text_by_path["gs://bucket/output/errors.jsonl"], ""
+        )
 
-    def test_local_malformed_writes_errors_and_nonzero_exit(self) -> None:
+    def test_local_export_malformed_uploads_errors_and_empty_reviewed(
+        self,
+    ) -> None:
         import parse_label_studio_export
+
+        uploaded_paths: list[str] = []
+        uploaded_text_by_path: dict[str, str] = {}
+
+        def fake_upload_file_to_blob(
+            _storage_client: object,
+            bucket_name: str,
+            blob_path: str,
+            source_file_name: str,
+        ) -> None:
+            uploaded_path = f"gs://{bucket_name}/{blob_path}"
+            uploaded_paths.append(uploaded_path)
+            uploaded_text_by_path[uploaded_path] = pathlib.Path(
+                source_file_name
+            ).read_text(encoding="utf-8")
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = pathlib.Path(tmpdir)
             export_path = tmp_path / "export.json"
-            reviewed_path = tmp_path / "reviewed.jsonl"
-            errors_path = tmp_path / "errors.jsonl"
             _write_export_json(
                 export_path,
                 [_duplicate_transcription_export_task()],
             )
 
-            exit_code = parse_label_studio_export.main(
-                [
-                    "--label-studio-export-json",
-                    str(export_path),
-                    "--reviewed-jsonl",
-                    str(reviewed_path),
-                    "--errors-jsonl",
-                    str(errors_path),
-                ]
-            )
-
-            error_rows = _read_jsonl(errors_path)
-            reviewed_text = (
-                reviewed_path.read_text(encoding="utf-8")
-                if reviewed_path.exists()
-                else ""
-            )
+            with (
+                unittest.mock.patch.object(
+                    parse_label_studio_export,
+                    "_new_storage_client",
+                    return_value=object(),
+                ),
+                unittest.mock.patch.object(
+                    parse_label_studio_export.gcs_utils,
+                    "upload_file_to_blob",
+                    fake_upload_file_to_blob,
+                ),
+            ):
+                exit_code = parse_label_studio_export.main(
+                    [
+                        "--label-studio-export-json",
+                        str(export_path),
+                        "--reviewed-jsonl",
+                        "gs://bucket/output/reviewed.jsonl",
+                        "--errors-jsonl",
+                        "gs://bucket/output/errors.jsonl",
+                    ]
+                )
 
         self.assertEqual(exit_code, 1)
-        self.assertEqual(reviewed_text, "")
+        self.assertEqual(
+            uploaded_paths,
+            [
+                "gs://bucket/output/reviewed.jsonl",
+                "gs://bucket/output/errors.jsonl",
+            ],
+        )
+        self.assertEqual(
+            uploaded_text_by_path["gs://bucket/output/reviewed.jsonl"], ""
+        )
+        error_rows = [
+            json.loads(line)
+            for line in uploaded_text_by_path[
+                "gs://bucket/output/errors.jsonl"
+            ].splitlines()
+            if line.strip()
+        ]
         self.assertEqual(len(error_rows), 1)
         self.assertEqual(error_rows[0]["error_code"], "duplicate_transcription")
         self.assertEqual(error_rows[0]["task_id"], 101)
         self.assertEqual(error_rows[0]["audio_segment_id"], "audio-a")
         self.assertEqual(error_rows[0]["annotation_id"], 201)
+
+    def test_rejects_local_reviewed_and_error_outputs(self) -> None:
+        import parse_label_studio_export
+
+        with self.assertRaises(SystemExit) as ctx:
+            parse_label_studio_export.main(
+                [
+                    "--label-studio-export-json",
+                    "export.json",
+                    "--reviewed-jsonl",
+                    "reviewed.jsonl",
+                    "--errors-jsonl",
+                    "gs://bucket/output/errors.jsonl",
+                ]
+            )
+
+        self.assertEqual(ctx.exception.code, 2)
 
     def test_gcs_input_and_output_wiring(self) -> None:
         import parse_label_studio_export

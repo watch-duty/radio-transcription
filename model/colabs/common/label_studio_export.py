@@ -29,7 +29,6 @@ REVIEWED_OUTPUT_FIELDS = (
     "duration",
     "source_group",
     "row_index",
-    "split",
     "dataset_name",
     "rank",
     "wer",
@@ -66,7 +65,6 @@ _TASK_DATA_OUTPUT_FIELDS = (
     "duration",
     "source_group",
     "row_index",
-    "split",
     "dataset_name",
     "rank",
     "wer",
@@ -281,7 +279,7 @@ def _parse_transcript(
     text = text_values[0]
     if not isinstance(text, str):
         return None, _invalid_transcription_error(task, annotation)
-    return text, None
+    return text.strip(), None
 
 
 def _invalid_transcription_error(
@@ -328,7 +326,7 @@ def _validated_task_data(
             "task missing data object",
         )
     for field in _REQUIRED_TASK_DATA_FIELDS:
-        if field not in data:
+        if field not in data or data[field] is None:
             return None, _error_row(
                 task,
                 annotation,

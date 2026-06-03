@@ -34,7 +34,6 @@ def _reviewed_row(
         "duration": 2.5,
         "source_group": "source-a",
         "row_index": 101,
-        "split": "train",
         "dataset_name": "test-dataset",
         "rank": 1,
         "wer": 42.5,
@@ -55,7 +54,7 @@ def _reviewed_row(
 
 
 class TestCorrectionOverlay(unittest.TestCase):
-    def test_build_latest_overlay_encodes_edited_unchanged_and_empty_policy(
+    def test_build_latest_overlay_emits_replacement_facts(
         self,
     ) -> None:
         from common import correction_overlay
@@ -74,7 +73,7 @@ class TestCorrectionOverlay(unittest.TestCase):
             _reviewed_row(
                 "audio-empty",
                 original_reference_transcript="Ignore bad audio",
-                submitted_transcript="   ",
+                submitted_transcript="",
             ),
         ]
 
@@ -85,48 +84,32 @@ class TestCorrectionOverlay(unittest.TestCase):
             row["audio_segment_id"]: row for row in result.overlay_rows
         }
         self.assertEqual(
-            rows_by_id["audio-edited"]["overlay_status"],
-            "reviewed_edited",
-        )
-        self.assertEqual(
-            rows_by_id["audio-edited"]["overlay_action"],
-            "replace_reference",
-        )
-        self.assertEqual(
             rows_by_id["audio-edited"]["replacement_transcript"],
             "Engine 41 copies",
-        )
-        self.assertEqual(
-            rows_by_id["audio-unchanged"]["overlay_status"],
-            "reviewed_unchanged",
-        )
-        self.assertEqual(
-            rows_by_id["audio-unchanged"]["overlay_action"],
-            "replace_reference",
         )
         self.assertEqual(
             rows_by_id["audio-unchanged"]["replacement_transcript"],
             "Medic 2 en route",
         )
         self.assertEqual(
-            rows_by_id["audio-empty"]["overlay_status"],
-            "reviewed_empty",
-        )
-        self.assertEqual(
-            rows_by_id["audio-empty"]["overlay_action"],
-            "exclude",
-        )
-        self.assertEqual(
             rows_by_id["audio-empty"]["replacement_transcript"], ""
         )
-        self.assertEqual(result.summary["reviewed_edited"], 1)
-        self.assertEqual(result.summary["reviewed_unchanged"], 1)
-        self.assertEqual(result.summary["reviewed_empty"], 1)
+        self.assertEqual(result.summary["reviewed_total"], 3)
+        self.assertEqual(result.summary["overlay_row_count"], 3)
 
         serialized = json.dumps(result.overlay_rows, sort_keys=True)
+        self.assertNotIn("overlay_status", serialized)
+        self.assertNotIn("overlay_action", serialized)
+        self.assertNotIn("exclude_from_future_inputs", serialized)
+        self.assertNotIn("review_outcome", serialized)
+        self.assertNotIn("prediction_text", serialized)
+        self.assertNotIn("split", serialized)
         self.assertNotIn("review_history", serialized)
         self.assertNotIn("review_rows", serialized)
         self.assertNotIn("annotation_history", serialized)
+        summary_serialized = json.dumps(result.summary, sort_keys=True)
+        self.assertNotIn("overlay_actions", summary_serialized)
+        self.assertNotIn("reviewed_empty", summary_serialized)
         helper_names = dir(correction_overlay)
         self.assertNotIn("apply_manifest", helper_names)
 

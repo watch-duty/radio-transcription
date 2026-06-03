@@ -26,10 +26,12 @@ def main(argv: list[str] | None = None) -> int:
     result = correction_overlay.build_latest_overlay(reviewed_rows)
     if result.error_rows:
         _write_json(args.summary_json, result.summary)
+        _write_jsonl(args.errors_jsonl, result.error_rows)
         return 1
 
     _write_jsonl(args.overlay_jsonl, result.overlay_rows)
     _write_json(args.summary_json, result.summary)
+    _write_jsonl(args.errors_jsonl, [])
     return 0
 
 
@@ -40,69 +42,55 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--reviewed-jsonl",
         required=True,
+        type=_gcs_uri,
         help="Input Phase 4 reviewed transcript fact JSONL path.",
     )
     parser.add_argument(
         "--overlay-jsonl",
         required=True,
+        type=_gcs_uri,
         help="Output latest-only correction overlay JSONL path.",
     )
     parser.add_argument(
         "--summary-json",
         required=True,
+        type=_gcs_uri,
         help="Output compact correction overlay summary JSON path.",
+    )
+    parser.add_argument(
+        "--errors-jsonl",
+        required=True,
+        type=_gcs_uri,
+        help="Output structured correction overlay error JSONL path.",
     )
     return parser
 
 
 def _load_jsonl(path: str) -> list[dict[str, object]]:
-    if _is_gcs_uri(path):
-        storage_client = _new_storage_client()
-        return gcs_utils.download_jsonl_manifest(storage_client, path)
-
-    rows = []
-    for raw_line in pathlib.Path(path).read_text(encoding="utf-8").splitlines():
-        if not raw_line.strip():
-            continue
-        row = json.loads(raw_line)
-        if not isinstance(row, dict):
-            raise TypeError("reviewed JSONL rows must be objects")
-        rows.append(row)
-    return rows
+    storage_client = _new_storage_client()
+    return gcs_utils.download_jsonl_manifest(storage_client, path)
 
 
 def _write_jsonl(path: str, rows: list[dict[str, object]]) -> None:
-    if _is_gcs_uri(path):
-        storage_client = _new_storage_client()
-        with tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-        ) as temp_file:
-            _write_jsonl_to_local(pathlib.Path(temp_file.name), rows)
-            temp_file.flush()
-            _upload_file(storage_client, path, temp_file.name)
-        return
-
-    local_path = pathlib.Path(path)
-    local_path.parent.mkdir(parents=True, exist_ok=True)
-    _write_jsonl_to_local(local_path, rows)
+    storage_client = _new_storage_client()
+    with tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+    ) as temp_file:
+        _write_jsonl_to_local(pathlib.Path(temp_file.name), rows)
+        temp_file.flush()
+        _upload_file(storage_client, path, temp_file.name)
 
 
 def _write_json(path: str, value: dict[str, object]) -> None:
-    if _is_gcs_uri(path):
-        storage_client = _new_storage_client()
-        with tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-        ) as temp_file:
-            _write_json_to_local(pathlib.Path(temp_file.name), value)
-            temp_file.flush()
-            _upload_file(storage_client, path, temp_file.name)
-        return
-
-    local_path = pathlib.Path(path)
-    local_path.parent.mkdir(parents=True, exist_ok=True)
-    _write_json_to_local(local_path, value)
+    storage_client = _new_storage_client()
+    with tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+    ) as temp_file:
+        _write_json_to_local(pathlib.Path(temp_file.name), value)
+        temp_file.flush()
+        _upload_file(storage_client, path, temp_file.name)
 
 
 def _write_jsonl_to_local(
@@ -151,6 +139,12 @@ def _new_storage_client() -> object:
 
 def _is_gcs_uri(path: str) -> bool:
     return path.startswith("gs://")
+
+
+def _gcs_uri(value: str) -> str:
+    if not _is_gcs_uri(value):
+        raise argparse.ArgumentTypeError("must be a gs:// URI")
+    return value
 
 
 if __name__ == "__main__":

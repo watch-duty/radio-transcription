@@ -91,23 +91,22 @@ class _FakeStorageClient:
 
 
 class TestReviewManifestLoading(unittest.TestCase):
-    def test_load_review_manifest_rows_combines_train_and_eval_in_order(
+    def test_load_review_manifest_rows_combines_manifests_in_order(
         self,
     ) -> None:
         from common import review
 
         rows = review.load_review_manifest_rows(
             {
-                "train": [_row("gs://bucket/train.flac", "Train")],
-                "eval": [_row("gs://bucket/eval.flac", "Eval", split="eval")],
+                "manifest-1": [_row("gs://bucket/first.flac", "First")],
+                "manifest-2": [_row("gs://bucket/second.flac", "Second")],
             }
         )
 
         self.assertEqual(
             [row.model_ready_audio_uri for row in rows],
-            ["gs://bucket/train.flac", "gs://bucket/eval.flac"],
+            ["gs://bucket/first.flac", "gs://bucket/second.flac"],
         )
-        self.assertEqual([row.split for row in rows], ["train", "eval"])
 
     def test_load_review_manifest_rows_missing_required_field_raises(
         self,
@@ -119,6 +118,17 @@ class TestReviewManifestLoading(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "model_ready_audio_uri"):
             review.load_review_manifest_rows({"train": [row]})
+
+    def test_load_review_manifest_rows_null_required_field_raises(
+        self,
+    ) -> None:
+        from common import review
+
+        row = _row("gs://bucket/null.flac", "Null")
+        row["text"] = None
+
+        with self.assertRaisesRegex(ValueError, "text"):
+            review.load_review_manifest_rows({"manifest-1": [row]})
 
 
 class TestGcsObjectMetadata(unittest.TestCase):
@@ -282,7 +292,7 @@ class TestReviewPoolAssembly(unittest.TestCase):
         self.assertEqual(item["duration"], 2.5)
         self.assertEqual(item["source_group"], "source:1")
         self.assertEqual(item["row_index"], 7)
-        self.assertEqual(item["split"], "train")
+        self.assertNotIn("split", item)
         self.assertEqual(item["dataset_name"], "test")
         self.assertEqual(item["text"], "Engine 41")
         self.assertEqual(item["md5_hash"], "md5-a")
@@ -373,7 +383,6 @@ class TestDuplicateAudioSegments(unittest.TestCase):
                 "duration",
                 "source_group",
                 "row_index",
-                "split",
                 "dataset_name",
                 "text",
             },
