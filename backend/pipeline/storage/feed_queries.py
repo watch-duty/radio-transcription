@@ -373,7 +373,7 @@ SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        fp.source_feed_id, fp.external_id, fp.tags
 FROM feeds f
 JOIN feed_properties fp ON f.id = fp.feed_id
-WHERE ($1::timestamp IS NULL OR f.created_at < $1 OR (f.created_at = $1 AND f.id < $2))
+WHERE ($1::timestamptz IS NULL OR f.created_at < $1 OR (f.created_at = $1 AND f.id < $2))
   AND ($3::text[] IS NULL OR f.source_type = ANY($3))
   AND ($4::text[] IS NULL OR f.status::text = ANY($4))
   AND ($5::jsonb IS NULL OR fp.tags @> $5::jsonb)
@@ -389,7 +389,7 @@ SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        fp.source_feed_id, fp.external_id, fp.tags
 FROM feeds f
 JOIN feed_properties fp ON f.id = fp.feed_id
-WHERE ($1::timestamp IS NULL OR f.created_at > $1 OR (f.created_at = $1 AND f.id > $2))
+WHERE ($1::timestamptz IS NULL OR f.created_at > $1 OR (f.created_at = $1 AND f.id > $2))
   AND ($3::text[] IS NULL OR f.source_type = ANY($3))
   AND ($4::text[] IS NULL OR f.status::text = ANY($4))
   AND ($5::jsonb IS NULL OR fp.tags @> $5::jsonb)
