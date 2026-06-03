@@ -56,8 +56,3 @@ class Feed(FeedBase):
     tags: list[Tag] | None = None
 
     model_config = ConfigDict(from_attributes=True)
-
-
-class ListFeedsResponse(BaseModel):
-    feeds: list[Feed]
-    next_token: str | None = None

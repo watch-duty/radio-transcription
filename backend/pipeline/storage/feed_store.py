@@ -766,8 +766,8 @@ class FeedStore:
         limit: int = 100,
         next_token: str | None = None,
         order: SortOrder = SortOrder.DESC,
-        source_types: list[SourceType] | None = None,
-        statuses: list[FeedStatus] | None = None,
+        source_types: list[str] | None = None,
+        statuses: list[str] | None = None,
         tags: list[dict[str, str]] | None = None,
     ) -> PaginatedFeeds:
         """List all feeds with keyset pagination and optional filters.
