@@ -1,4 +1,6 @@
 import logging
+import os
+import time
 
 import requests
 
@@ -10,31 +12,39 @@ logger = logging.getLogger(__name__)
 class LocalApiTranscriber(Transcriber):
     """Transcriber that calls a local HTTP API for transcription."""
 
-    def __init__(
-        self, api_url: str
-    ) -> None:
-        self.api_url = api_url
+    def __init__(self, api_url: str | None = None) -> None:
+        self.api_url = api_url or os.environ.get("LOCAL_ASR_API_URL")
 
     def setup(self) -> None:
         if not self.api_url:
-            msg = "LocalApiTranscriber api_url is not set."
-            raise ValueError(msg)
+            logger.warning("LocalApiTranscriber setup: LOCAL_ASR_API_URL is not set.")
+            return
+
         logger.info(f"LocalApiTranscriber setup pointing to {self.api_url}")
-        try:
-            health_url = self.api_url.replace("/transcribe", "/health")
-            resp = requests.get(health_url, timeout=2)
-            if resp.status_code == 200:
-                logger.info(
-                    "Successfully connected to local asr API health check."
-                )
-            else:
+        health_url = self.api_url.replace("/transcribe", "/health")
+
+        max_retries = 5
+        for attempt in range(1, max_retries + 1):
+            try:
+                resp = requests.get(health_url, timeout=2)
+                if resp.status_code == 200:
+                    logger.info(
+                        "Successfully connected to local asr API health check."
+                    )
+                    return
                 logger.warning(
-                    f"Local asr API health check returned {resp.status_code}"
+                    f"Local asr API health check returned {resp.status_code} (attempt {attempt}/{max_retries})"
                 )
-        except Exception as e:
-            logger.warning(
-                f"Could not connect to local asr API during setup: {e}"
-            )
+            except Exception as e:
+                logger.warning(
+                    f"Could not connect to local asr API (attempt {attempt}/{max_retries}): {e}"
+                )
+
+            if attempt < max_retries:
+                time.sleep(1)
+
+        msg = f"Failed to connect to local asr API health check at {health_url} after {max_retries} attempts."
+        raise RuntimeError(msg)
 
     def transcribe(
         self,
