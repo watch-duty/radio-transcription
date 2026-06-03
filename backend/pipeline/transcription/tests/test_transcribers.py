@@ -289,6 +289,7 @@ class TestMockTranscriber(unittest.TestCase):
         self.assertEqual(res2, "Second Call")
         self.assertEqual(res3, "First Call")
 
+
 class TestLocalApiTranscriber(unittest.TestCase):
     def setUp(self) -> None:
         self.env_patcher = patch.dict(
@@ -297,11 +298,24 @@ class TestLocalApiTranscriber(unittest.TestCase):
         )
         self.env_patcher.start()
 
+        self.get_patcher = patch(
+            "backend.pipeline.transcription.transcribers.local_api.requests.get"
+        )
+        self.mock_get = self.get_patcher.start()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        self.mock_get.return_value = mock_resp
+
     def tearDown(self) -> None:
         self.env_patcher.stop()
+        self.get_patcher.stop()
 
-    @patch("backend.pipeline.transcription.transcribers.local_api.requests.post")
-    def test_local_api_transcriber_success_uri(self, mock_post: MagicMock) -> None:
+    @patch(
+        "backend.pipeline.transcription.transcribers.local_api.requests.post"
+    )
+    def test_local_api_transcriber_success_uri(
+        self, mock_post: MagicMock
+    ) -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"text": "Hello from local API"}
@@ -314,7 +328,9 @@ class TestLocalApiTranscriber(unittest.TestCase):
         )
         transcriber.setup()
 
-        res = transcriber.transcribe(uri="gs://bucket/audio.flac", duration_ms=1000)
+        res = transcriber.transcribe(
+            uri="gs://bucket/audio.flac", duration_ms=1000
+        )
         self.assertEqual(res, "Hello from local API")
         mock_post.assert_called_once_with(
             "http://local-whisper:8095/transcribe",
@@ -322,8 +338,12 @@ class TestLocalApiTranscriber(unittest.TestCase):
             timeout=60,
         )
 
-    @patch("backend.pipeline.transcription.transcribers.local_api.requests.post")
-    def test_local_api_transcriber_success_bytes(self, mock_post: MagicMock) -> None:
+    @patch(
+        "backend.pipeline.transcription.transcribers.local_api.requests.post"
+    )
+    def test_local_api_transcriber_success_bytes(
+        self, mock_post: MagicMock
+    ) -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"text": "   Spoken words   "}
@@ -344,8 +364,12 @@ class TestLocalApiTranscriber(unittest.TestCase):
             timeout=60,
         )
 
-    @patch("backend.pipeline.transcription.transcribers.local_api.requests.post")
-    def test_local_api_transcriber_empty_text_returns_none(self, mock_post: MagicMock) -> None:
+    @patch(
+        "backend.pipeline.transcription.transcribers.local_api.requests.post"
+    )
+    def test_local_api_transcriber_empty_text_returns_none(
+        self, mock_post: MagicMock
+    ) -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"text": "   "}
@@ -361,8 +385,12 @@ class TestLocalApiTranscriber(unittest.TestCase):
         res = transcriber.transcribe(audio_data=b"dummybytes", duration_ms=1000)
         self.assertIsNone(res)
 
-    @patch("backend.pipeline.transcription.transcribers.local_api.requests.post")
-    def test_local_api_transcriber_http_error_propagates(self, mock_post: MagicMock) -> None:
+    @patch(
+        "backend.pipeline.transcription.transcribers.local_api.requests.post"
+    )
+    def test_local_api_transcriber_http_error_propagates(
+        self, mock_post: MagicMock
+    ) -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 500
         mock_resp.text = "Internal Server Error"
@@ -381,8 +409,12 @@ class TestLocalApiTranscriber(unittest.TestCase):
         with self.assertRaises(requests.exceptions.HTTPError):
             transcriber.transcribe(audio_data=b"dummybytes", duration_ms=1000)
 
-    @patch("backend.pipeline.transcription.transcribers.local_api.requests.post")
-    def test_local_api_transcriber_invalid_json_propagates(self, mock_post: MagicMock) -> None:
+    @patch(
+        "backend.pipeline.transcription.transcribers.local_api.requests.post"
+    )
+    def test_local_api_transcriber_invalid_json_propagates(
+        self, mock_post: MagicMock
+    ) -> None:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.side_effect = ValueError("Invalid JSON")
@@ -398,8 +430,12 @@ class TestLocalApiTranscriber(unittest.TestCase):
         with self.assertRaises(ValueError):
             transcriber.transcribe(audio_data=b"dummybytes", duration_ms=1000)
 
-    @patch("backend.pipeline.transcription.transcribers.local_api.requests.post")
-    def test_local_api_transcriber_timeout_propagates(self, mock_post: MagicMock) -> None:
+    @patch(
+        "backend.pipeline.transcription.transcribers.local_api.requests.post"
+    )
+    def test_local_api_transcriber_timeout_propagates(
+        self, mock_post: MagicMock
+    ) -> None:
         mock_post.side_effect = requests.exceptions.Timeout("Request timed out")
 
         transcriber = get_transcriber(

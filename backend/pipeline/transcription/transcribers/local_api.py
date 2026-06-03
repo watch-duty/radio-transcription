@@ -17,7 +17,9 @@ class LocalApiTranscriber(Transcriber):
 
     def setup(self) -> None:
         if not self.api_url:
-            logger.warning("LocalApiTranscriber setup: LOCAL_ASR_API_URL is not set.")
+            logger.warning(
+                "LocalApiTranscriber setup: LOCAL_ASR_API_URL is not set."
+            )
             return
 
         logger.info(f"LocalApiTranscriber setup pointing to {self.api_url}")
@@ -79,7 +81,9 @@ class LocalApiTranscriber(Transcriber):
         try:
             result = resp.json()
         except Exception:
-            logger.exception("Failed to parse JSON response from local whisper API")
+            logger.exception(
+                "Failed to parse JSON response from local whisper API"
+            )
             raise
 
         text = result.get("text")

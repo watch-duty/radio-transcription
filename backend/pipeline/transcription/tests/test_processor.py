@@ -534,10 +534,14 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         self.assertEqual(call_data["text"], "")
         self.assertIn("Permanent Failure", call_data["errors"][0])
 
-    def test_process_event_requests_timeout_transient_error_propagates(self) -> None:
+    def test_process_event_requests_timeout_transient_error_propagates(
+        self,
+    ) -> None:
         """Verifies that requests.exceptions.Timeout during transcription propagates to trigger a retry."""
         mock_transcriber = MagicMock()
-        mock_transcriber.transcribe.side_effect = requests.exceptions.Timeout("Request timed out")
+        mock_transcriber.transcribe.side_effect = requests.exceptions.Timeout(
+            "Request timed out"
+        )
 
         mock_publisher = MagicMock()
         mock_audio_segments_client = MagicMock()
@@ -590,10 +594,14 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         ]
         self.assertIn("Transient Failure", call_data["errors"][0])
 
-    def test_process_event_requests_connection_error_transient_error_propagates(self) -> None:
+    def test_process_event_requests_connection_error_transient_error_propagates(
+        self,
+    ) -> None:
         """Verifies that requests.exceptions.ConnectionError during transcription propagates to trigger a retry."""
         mock_transcriber = MagicMock()
-        mock_transcriber.transcribe.side_effect = requests.exceptions.ConnectionError("Connection refused")
+        mock_transcriber.transcribe.side_effect = (
+            requests.exceptions.ConnectionError("Connection refused")
+        )
 
         mock_publisher = MagicMock()
         mock_audio_segments_client = MagicMock()
@@ -646,13 +654,17 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         ]
         self.assertIn("Transient Failure", call_data["errors"][0])
 
-    def test_process_event_requests_http_500_transient_error_propagates(self) -> None:
+    def test_process_event_requests_http_500_transient_error_propagates(
+        self,
+    ) -> None:
         """Verifies that requests.exceptions.HTTPError (500) during transcription propagates to trigger a retry."""
         mock_transcriber = MagicMock()
 
         mock_resp = MagicMock()
         mock_resp.status_code = 500
-        http_err = requests.exceptions.HTTPError("500 Server Error", response=mock_resp)
+        http_err = requests.exceptions.HTTPError(
+            "500 Server Error", response=mock_resp
+        )
         mock_transcriber.transcribe.side_effect = http_err
 
         mock_publisher = MagicMock()
@@ -706,13 +718,17 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         ]
         self.assertIn("Transient Failure", call_data["errors"][0])
 
-    def test_process_event_requests_http_400_permanent_error_silent_drop(self) -> None:
+    def test_process_event_requests_http_400_permanent_error_silent_drop(
+        self,
+    ) -> None:
         """Verifies that requests.exceptions.HTTPError (400) during transcription is caught and silently dropped."""
         mock_transcriber = MagicMock()
 
         mock_resp = MagicMock()
         mock_resp.status_code = 400
-        http_err = requests.exceptions.HTTPError("400 Bad Request", response=mock_resp)
+        http_err = requests.exceptions.HTTPError(
+            "400 Bad Request", response=mock_resp
+        )
         mock_transcriber.transcribe.side_effect = http_err
 
         mock_publisher = MagicMock()

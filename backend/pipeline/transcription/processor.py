@@ -248,7 +248,10 @@ def _is_transient_exception(e: Exception) -> bool:
                 pass
         case ConnectionError() | TimeoutError():
             is_transient = True
-        case requests.exceptions.Timeout() | requests.exceptions.ConnectionError():
+        case (
+            requests.exceptions.Timeout()
+            | requests.exceptions.ConnectionError()
+        ):
             is_transient = True
         case requests.exceptions.HTTPError() if e.response is not None and (
             e.response.status_code == 429 or e.response.status_code >= 500
