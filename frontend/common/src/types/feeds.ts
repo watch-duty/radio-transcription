@@ -48,3 +48,9 @@ export interface FeedUpdate {
   externalId: string;
   tags?: Tag[];
 }
+
+export interface ListFeedsResponse {
+  feeds: Feed[];
+  nextToken?: string;
+}
+
