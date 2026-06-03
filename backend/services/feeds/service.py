@@ -4,16 +4,10 @@ import logging
 import uuid
 from typing import TYPE_CHECKING
 
-from backend.pipeline.storage.pagination_utils import SortOrder
-
-from .models import Feed, FeedCreate, FeedUpdate, ListFeedsResponse
+from .models import Feed, FeedCreate, FeedUpdate
 
 if TYPE_CHECKING:
-    from backend.pipeline.storage.feed_store import (
-        FeedStatus,
-        FeedStore,
-        SourceType,
-    )
+    from backend.pipeline.storage.feed_store import FeedStore
 
 logger = logging.getLogger(__name__)
 
@@ -70,29 +64,10 @@ class FeedService:
             return None
         return Feed.model_validate(store_feed)
 
-    async def list_feeds(
-        self,
-        *,
-        limit: int = 100,
-        next_token: str | None = None,
-        order: SortOrder = SortOrder.DESC,
-        source_types: list[SourceType] | None = None,
-        statuses: list[FeedStatus] | None = None,
-        tags: list[dict[str, str]] | None = None,
-    ) -> ListFeedsResponse:
+    async def list_feeds(self) -> list[Feed]:
         """Lists all feeds."""
-        store_feeds = await self._store.list_feeds(
-            limit=limit,
-            next_token=next_token,
-            order=order,
-            source_types=source_types,
-            statuses=statuses,
-            tags=tags,
-        )
-        return ListFeedsResponse(
-            feeds=[Feed.model_validate(f) for f in store_feeds.feeds],
-            next_token=store_feeds.next_token,
-        )
+        store_feeds = await self._store.list_feeds()
+        return [Feed.model_validate(f) for f in store_feeds.feeds]
 
     async def deactivate_feed(self, feed_id: str) -> bool:
         """Deactivates a feed by ID."""
