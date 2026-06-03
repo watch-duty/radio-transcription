@@ -150,23 +150,21 @@ async def list_feeds(
         try:
             tags_data = json.loads(tags)
         except json.JSONDecodeError as e:
-            err_msg = f"Invalid JSON format for tags: {e}"
+            err_msg = f"Invalid format for tags: {e}"
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=err_msg,
             ) from e
 
         if not isinstance(tags_data, list):
-            err_msg = "Tags must be a JSON list of key-value pairs"
+            err_msg = "Tags must be a JSON list with key, value entries."
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=err_msg,
             )
 
         try:
-            tags_list = [
-                Tag.model_validate(t).model_dump() for t in tags_data
-            ]
+            tags_list = [Tag.model_validate(t).model_dump() for t in tags_data]
         except ValueError as e:
             err_msg = f"Invalid format for tags: {e}"
             raise HTTPException(
