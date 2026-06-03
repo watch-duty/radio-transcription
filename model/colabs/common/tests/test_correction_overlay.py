@@ -116,7 +116,9 @@ class TestCorrectionOverlay(unittest.TestCase):
             rows_by_id["audio-empty"]["overlay_action"],
             "exclude",
         )
-        self.assertEqual(rows_by_id["audio-empty"]["replacement_transcript"], "")
+        self.assertEqual(
+            rows_by_id["audio-empty"]["replacement_transcript"], ""
+        )
         self.assertEqual(result.summary["reviewed_edited"], 1)
         self.assertEqual(result.summary["reviewed_unchanged"], 1)
         self.assertEqual(result.summary["reviewed_empty"], 1)
