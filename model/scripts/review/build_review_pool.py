@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import pathlib
 import sys
 import tempfile
 
 from common import gcs_utils, review
+
+DEFAULT_METADATA_WORKERS = 32
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -29,7 +32,11 @@ def main(argv: list[str] | None = None) -> int:
             "eval": _load_jsonl(args.eval_jsonl, storage_client),
         }
     )
-    metadata_by_uri = _fetch_metadata_by_uri(storage_client, manifest_rows)
+    metadata_by_uri = _fetch_metadata_by_uri(
+        storage_client,
+        manifest_rows,
+        max_workers=args.metadata_workers,
+    )
 
     try:
         review_pool_rows = review.build_review_pool(
@@ -69,7 +76,23 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Output duplicate exact-audio report JSONL path.",
     )
+    parser.add_argument(
+        "--metadata-workers",
+        type=_positive_int,
+        default=DEFAULT_METADATA_WORKERS,
+        help=(
+            "Maximum concurrent GCS metadata fetches. "
+            f"Defaults to {DEFAULT_METADATA_WORKERS}."
+        ),
+    )
     return parser
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be positive")
+    return parsed
 
 
 def _load_jsonl(
@@ -95,17 +118,30 @@ def _load_jsonl(
 def _fetch_metadata_by_uri(
     storage_client: object,
     manifest_rows: list[review.ReviewManifestRow],
+    *,
+    max_workers: int,
 ) -> dict[str, review.GcsObjectMetadata]:
+    unique_uris = list(
+        dict.fromkeys(row.model_ready_audio_uri for row in manifest_rows)
+    )
+    if not unique_uris:
+        return {}
+
+    def fetch(uri: str) -> tuple[str, review.GcsObjectMetadata]:
+        return uri, review.fetch_gcs_object_metadata(storage_client, uri)
+
     metadata_by_uri = {}
-    for row in manifest_rows:
-        uri = row.model_ready_audio_uri
-        if uri in metadata_by_uri:
-            continue
-        metadata_by_uri[uri] = review.fetch_gcs_object_metadata(
-            storage_client,
-            uri,
-        )
-    return metadata_by_uri
+    worker_count = min(max_workers, len(unique_uris))
+    if worker_count == 1:
+        for uri in unique_uris:
+            fetched_uri, metadata = fetch(uri)
+            metadata_by_uri[fetched_uri] = metadata
+        return metadata_by_uri
+
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=worker_count,
+    ) as executor:
+        return dict(executor.map(fetch, unique_uris))
 
 
 def _write_jsonl(path: str, rows: list[dict[str, object]]) -> None:

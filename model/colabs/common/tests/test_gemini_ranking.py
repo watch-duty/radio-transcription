@@ -99,6 +99,29 @@ class _RecordingRunner:
         return f"generated {row['audio_segment_id']}"
 
 
+class _FailingRunner:
+    model_id = "gemini-3.5-flash"
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, list[str]]] = []
+
+    def predict_one(
+        self,
+        row: dict[str, object],
+        context_entries: list[object],
+    ) -> str:
+        audio_segment_id = str(row["audio_segment_id"])
+        self.calls.append(
+            (
+                audio_segment_id,
+                [entry.prediction_text for entry in context_entries],
+            )
+        )
+        if audio_segment_id == "audio-b":
+            raise RuntimeError("transient model failure")
+        return f"generated {audio_segment_id}"
+
+
 class TestContextualContents(unittest.TestCase):
     def test_build_contextual_contents_uses_prior_prediction_turns(
         self,
@@ -260,6 +283,35 @@ class TestSourceGroupPredictionRun(unittest.TestCase):
         self.assertEqual(runner.calls[1], ("audio-b", ["generated audio-a"]))
         self.assertIn("audio-a", final_cache)
         self.assertIn("audio-b", final_cache)
+
+    def test_prediction_error_records_cache_entry_and_continues(
+        self,
+    ) -> None:
+        from common import gemini_ranking
+
+        runner = _FailingRunner()
+
+        new_entries, final_cache = gemini_ranking.run_source_group_predictions(
+            [_row("audio-a", 1), _row("audio-b", 2), _row("audio-c", 3)],
+            {},
+            runner,
+            prompt_fp="prompt-fp",
+            context_policy_fp="context-policy-fp",
+            num_recent_events=1000,
+            created_at="2026-06-02T00:00:00Z",
+        )
+
+        self.assertEqual(len(new_entries), 3)
+        self.assertEqual(final_cache["audio-b"].prediction_text, "")
+        self.assertIn("RuntimeError", final_cache["audio-b"].error)
+        self.assertEqual(
+            runner.calls,
+            [
+                ("audio-a", []),
+                ("audio-b", ["generated audio-a"]),
+                ("audio-c", ["generated audio-a"]),
+            ],
+        )
 
 
 if __name__ == "__main__":

@@ -191,6 +191,9 @@ def run_source_group_predictions(
     context_policy_fp: str,
     num_recent_events: int = ranking.NUM_RECENT_EVENTS,
     created_at: str,
+    on_new_entry: (
+        collections.abc.Callable[[ranking.PredictionCacheEntry], None] | None
+    ) = None,
 ) -> tuple[
     list[ranking.PredictionCacheEntry],
     dict[str, ranking.PredictionCacheEntry],
@@ -240,8 +243,13 @@ def run_source_group_predictions(
                 compatible_cache[audio_id] = entry
                 continue
 
-            prediction_text = runner.predict_one(row, context_entries)
-            error = "" if prediction_text.strip() else "empty_prediction"
+            try:
+                prediction_text = runner.predict_one(row, context_entries)
+            except Exception as exc:
+                prediction_text = ""
+                error = _prediction_error(exc)
+            else:
+                error = "" if prediction_text.strip() else "empty_prediction"
             entry = ranking.PredictionCacheEntry(
                 audio_segment_id=audio_id,
                 prediction_text=prediction_text,
@@ -258,10 +266,17 @@ def run_source_group_predictions(
             )
             final_cache[audio_id] = entry
             new_entries.append(entry)
+            if on_new_entry is not None:
+                on_new_entry(entry)
             if not error:
                 compatible_cache[audio_id] = entry
 
     return new_entries, final_cache
+
+
+def _prediction_error(exc: Exception) -> str:
+    message = f"{exc.__class__.__name__}: {exc}"
+    return message[:1000]
 
 
 def _require_vertex() -> None:

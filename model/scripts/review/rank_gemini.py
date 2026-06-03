@@ -15,6 +15,7 @@ from common import gcs_utils, gemini_ranking, prompts, ranking
 DEFAULT_LOCATION = "us-central1"
 DEFAULT_PREFLIGHT_MODEL = "gemini-3.1-pro-preview"
 DEFAULT_FULL_MODEL = "gemini-3.5-flash"
+DEFAULT_CACHE_FLUSH_INTERVAL = 500
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -51,6 +52,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=10,
         help="Maximum rows to process.",
     )
+    _add_cache_flush_arg(preflight)
     preflight.set_defaults(func=_run_predicting_command)
 
     run = sub.add_parser("run", help="Run Gemini predictions for ranking")
@@ -67,6 +69,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional maximum rows to process.",
     )
+    _add_cache_flush_arg(run)
     run.set_defaults(func=_run_predicting_command)
 
     rank_cache = sub.add_parser("rank-cache", help="Rank from cache only")
@@ -94,6 +97,25 @@ def _add_vertex_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--location", default=DEFAULT_LOCATION)
 
 
+def _add_cache_flush_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--cache-flush-interval",
+        type=_positive_int,
+        default=DEFAULT_CACHE_FLUSH_INTERVAL,
+        help=(
+            "Flush newly generated prediction cache entries every N rows. "
+            f"Defaults to {DEFAULT_CACHE_FLUSH_INTERVAL}."
+        ),
+    )
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be positive")
+    return parsed
+
+
 def _run_rank_cache(args: argparse.Namespace) -> int:
     review_rows = _load_jsonl(args.review_pool_jsonl)
     cache_by_audio_id = _load_cache(args.prediction_cache_jsonl)
@@ -119,17 +141,35 @@ def _run_predicting_command(args: argparse.Namespace) -> int:
     context_policy_fp = ranking.context_policy_fingerprint(
         num_recent_events=ranking.NUM_RECENT_EVENTS,
     )
+    pending_cache_entries: list[ranking.PredictionCacheEntry] = []
 
-    new_entries, final_cache = gemini_ranking.run_source_group_predictions(
-        review_rows,
-        cache_by_audio_id,
-        runner,
-        prompt_fp=prompt_fp,
-        context_policy_fp=context_policy_fp,
-        num_recent_events=ranking.NUM_RECENT_EVENTS,
-        created_at=_utc_timestamp(),
-    )
-    _append_cache_entries(args.prediction_cache_jsonl, new_entries)
+    def flush_cache_entries() -> None:
+        if not pending_cache_entries:
+            return
+        _append_cache_entries(
+            args.prediction_cache_jsonl,
+            list(pending_cache_entries),
+        )
+        pending_cache_entries.clear()
+
+    def on_new_entry(entry: ranking.PredictionCacheEntry) -> None:
+        pending_cache_entries.append(entry)
+        if len(pending_cache_entries) >= args.cache_flush_interval:
+            flush_cache_entries()
+
+    try:
+        _new_entries, final_cache = gemini_ranking.run_source_group_predictions(
+            review_rows,
+            cache_by_audio_id,
+            runner,
+            prompt_fp=prompt_fp,
+            context_policy_fp=context_policy_fp,
+            num_recent_events=ranking.NUM_RECENT_EVENTS,
+            created_at=_utc_timestamp(),
+            on_new_entry=on_new_entry,
+        )
+    finally:
+        flush_cache_entries()
     _score_and_write(args, review_rows, final_cache)
     return 0
 

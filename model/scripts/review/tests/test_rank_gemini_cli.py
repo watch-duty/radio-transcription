@@ -285,6 +285,94 @@ class TestRankGeminiCli(unittest.TestCase):
         self.assertEqual(captured["row_count"], 3)
         self.assertEqual(captured["model_id"], "gemini-3.1-pro-preview")
 
+    def test_prediction_run_flushes_cache_entries_by_interval(self) -> None:
+        import rank_gemini
+        from common import ranking
+
+        _FakeRunner.instances = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            paths = _paths(Path(tmpdir))
+            _write_jsonl(paths["review_pool"], [_row("audio-a", 1)])
+            _write_jsonl(paths["cache"], [])
+            entry_a = ranking.PredictionCacheEntry(
+                audio_segment_id="audio-a",
+                prediction_text="Engine 41 copy",
+                model_id="gemini-3.5-flash",
+                prompt_fingerprint="prompt",
+                context_policy_fingerprint="context-policy",
+                num_recent_events=1000,
+                context_fingerprint="context",
+                source_group="source-a",
+                row_index=1,
+                model_ready_audio_uri="gs://bucket/audio-a.flac",
+                created_at="2026-06-02T00:00:00Z",
+                error="",
+            )
+            entry_b = dataclasses.replace(
+                entry_a,
+                audio_segment_id="audio-b",
+                model_ready_audio_uri="gs://bucket/audio-b.flac",
+            )
+            flushed: list[list[str]] = []
+
+            def fake_run_source_group_predictions(
+                _rows: list[dict[str, object]],
+                cache_by_audio_id: dict[str, object],
+                _runner: _FakeRunner,
+                **kwargs: object,
+            ) -> tuple[list[object], dict[str, object]]:
+                on_new_entry = kwargs["on_new_entry"]
+                on_new_entry(entry_a)
+                on_new_entry(entry_b)
+                return [entry_a, entry_b], cache_by_audio_id
+
+            def fake_append_cache_entries(
+                _path: str,
+                entries: list[ranking.PredictionCacheEntry],
+            ) -> None:
+                flushed.append([entry.audio_segment_id for entry in entries])
+
+            with (
+                unittest.mock.patch.object(
+                    rank_gemini.gemini_ranking,
+                    "new_vertex_client",
+                    return_value=object(),
+                ),
+                unittest.mock.patch.object(
+                    rank_gemini.gemini_ranking,
+                    "GeminiRankingRunner",
+                    _FakeRunner,
+                ),
+                unittest.mock.patch.object(
+                    rank_gemini.gemini_ranking,
+                    "run_source_group_predictions",
+                    fake_run_source_group_predictions,
+                ),
+                unittest.mock.patch.object(
+                    rank_gemini,
+                    "_append_cache_entries",
+                    fake_append_cache_entries,
+                ),
+                unittest.mock.patch.object(
+                    rank_gemini.ranking,
+                    "score_ranked_rows",
+                    return_value=_fake_ranked_rows(),
+                ),
+            ):
+                exit_code = rank_gemini.main(
+                    [
+                        "run",
+                        *_required_args(paths),
+                        "--project",
+                        "test-project",
+                        "--cache-flush-interval",
+                        "1",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(flushed, [["audio-a"], ["audio-b"]])
+
     def test_run_defaults_full_model(self) -> None:
         import rank_gemini
 

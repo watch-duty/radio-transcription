@@ -92,6 +92,7 @@ class TestBuildReviewPoolCli(unittest.TestCase):
         self.assertIn("--eval-jsonl", help_text)
         self.assertIn("--review-pool-jsonl", help_text)
         self.assertIn("--duplicates-jsonl", help_text)
+        self.assertIn("--metadata-workers", help_text)
 
     def test_local_success_writes_review_pool_and_empty_duplicates(
         self,
@@ -234,6 +235,62 @@ class TestBuildReviewPoolCli(unittest.TestCase):
             ["gs://bucket/a.flac", "gs://bucket/b.flac"],
         )
         self.assertEqual(review_pool_text, "")
+
+    def test_metadata_workers_argument_controls_fetch_concurrency(
+        self,
+    ) -> None:
+        import build_review_pool
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = pathlib.Path(tmpdir)
+            train_path = tmp_path / "train.jsonl"
+            eval_path = tmp_path / "eval.jsonl"
+            review_pool_path = tmp_path / "review_pool.jsonl"
+            duplicates_path = tmp_path / "duplicates.jsonl"
+            _write_jsonl(train_path, [_canonical_row("gs://bucket/a.flac")])
+            _write_jsonl(eval_path, [])
+            captured: dict[str, object] = {}
+
+            def fake_fetch_metadata_by_uri(
+                _storage_client: object,
+                manifest_rows: list[object],
+                *,
+                max_workers: int,
+            ) -> dict[str, object]:
+                captured["max_workers"] = max_workers
+                row = manifest_rows[0]
+                uri = row.model_ready_audio_uri
+                return {uri: _metadata(uri, md5_hash="a.flac")}
+
+            with (
+                unittest.mock.patch.object(
+                    build_review_pool,
+                    "_new_storage_client",
+                    return_value=object(),
+                ),
+                unittest.mock.patch.object(
+                    build_review_pool,
+                    "_fetch_metadata_by_uri",
+                    fake_fetch_metadata_by_uri,
+                ),
+            ):
+                exit_code = build_review_pool.main(
+                    [
+                        "--train-jsonl",
+                        str(train_path),
+                        "--eval-jsonl",
+                        str(eval_path),
+                        "--review-pool-jsonl",
+                        str(review_pool_path),
+                        "--duplicates-jsonl",
+                        str(duplicates_path),
+                        "--metadata-workers",
+                        "7",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(captured["max_workers"], 7)
 
     def test_gcs_input_and_output_wiring(self) -> None:
         import build_review_pool
