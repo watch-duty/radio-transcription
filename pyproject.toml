@@ -252,7 +252,7 @@ convention = "google"
 
 
 [tool.ty.src]
-exclude = ["model/", "backend/services/"]
+exclude = ["model/", "backend/services/local-whisper-api/"]
 
 [tool.pyright]
 pythonVersion = "3.13"
