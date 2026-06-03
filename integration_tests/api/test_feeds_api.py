@@ -1,5 +1,7 @@
 """Integration tests for the Feeds API and Frontend Feeds Proxy API."""
 
+import base64
+import json
 import os
 from collections.abc import AsyncIterator
 
@@ -8,16 +10,25 @@ import pytest
 
 from integration_tests.feed_utils import create_test_bcfy_feed  # noqa: F401
 
+
+def generate_dummy_jwt(payload: dict) -> str:
+    header = {"alg": "HS256", "typ": "JWT"}
+
+    def b64url(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).decode("utf-8").rstrip("=")
+
+    header_segment = b64url(
+        json.dumps(header, separators=(",", ":")).encode("utf-8")
+    )
+    payload_segment = b64url(
+        json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    )
+    return f"{header_segment}.{payload_segment}.signature"
+
+
 # Dummy JWT token for frontend-api authentication
-# Basic paylod to pass auth req: {
-# "sub": "1234567890",
-# "email": "test@example.com",
-# "email_verified": true
-# }
-DUMMY_JWT = (
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
-    "eyJzdWIiOiIxMjM0NTY3ODkwIiwiZW1haWwiOiJ0ZXN0QGV4YW1wbGUuY29tIiwiZW1haWxfdmVyaWZpZWQiOnRydWV9."
-    "signature"
+DUMMY_JWT = generate_dummy_jwt(
+    {"sub": "1234567890", "email": "test@example.com", "email_verified": True}
 )
 
 
