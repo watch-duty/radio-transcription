@@ -60,38 +60,9 @@ const EVALUATION_TYPE_OPTIONS: {
 
 interface RuleConfigurationEditProps {
   isEditing: boolean;
-  ruleName: string;
-  ruleDescription: string;
-  ruleIsActive: boolean;
-  ruleScopeLevel: ScopeLevel;
-  ruleTargetFeeds: string[];
-  ruleEvaluationType: EvaluationType;
-  ruleKeywordOperator: LogicalOperator;
-  ruleKeywords: string[];
-  ruleKeywordCaseSensitive: boolean;
-  ruleRegexExpression: string;
-  ruleRegexFlags: string;
-  ruleGroupOperator: LogicalOperator;
-  ruleGroupChildRuleIds: string[];
-
-  setRuleName: (val: string) => void;
-  setRuleDescription: (val: string) => void;
-  setRuleIsActive: (val: boolean) => void;
-  setRuleScopeLevel: (val: ScopeLevel) => void;
-  setRuleTargetFeeds: (val: string[]) => void;
-  setRuleEvaluationType: (val: EvaluationType) => void;
-  setRuleKeywordOperator: (val: LogicalOperator) => void;
-  setRuleKeywords: (val: string[]) => void;
-  setRuleKeywordCaseSensitive: (val: boolean) => void;
-  setRuleRegexExpression: (val: string) => void;
-  setRuleRegexFlags: (val: string) => void;
-  setRuleGroupOperator: (val: LogicalOperator) => void;
-  setRuleGroupChildRuleIds: (val: string[]) => void;
-
+  editingRule?: Rule;
   feeds: Feed[];
   rules: Rule[];
-  editingRuleId?: string;
-
   onCreateRule: (payload: RuleCreate) => Promise<void>;
   onUpdateRule: (payload: RuleUpdate) => Promise<void>;
   onDeleteRule?: () => Promise<void>;
@@ -99,45 +70,104 @@ interface RuleConfigurationEditProps {
   isSubmitting: boolean;
 }
 
+/**
+ * RuleConfigurationEdit renders the form for creating and editing rules.
+ *
+ * Note: Following React best practices, this form manages its own local state.
+ * Parent components only pass down initial/editing data (which resets this component's
+ * state via key remounting) and callbacks to trigger the backend API updates.
+ */
 export function RuleConfigurationEdit({
   isEditing,
-  ruleName,
-  ruleDescription,
-  ruleIsActive,
-  ruleScopeLevel,
-  ruleTargetFeeds,
-  ruleEvaluationType,
-  ruleKeywordOperator,
-  ruleKeywords,
-  ruleKeywordCaseSensitive,
-  ruleRegexExpression,
-  ruleRegexFlags,
-  ruleGroupOperator,
-  ruleGroupChildRuleIds,
-
-  setRuleName,
-  setRuleDescription,
-  setRuleIsActive,
-  setRuleScopeLevel,
-  setRuleTargetFeeds,
-  setRuleEvaluationType,
-  setRuleKeywordOperator,
-  setRuleKeywords,
-  setRuleKeywordCaseSensitive,
-  setRuleRegexExpression,
-  setRuleRegexFlags,
-  setRuleGroupOperator,
-  setRuleGroupChildRuleIds,
-
+  editingRule,
   feeds,
   rules,
-  editingRuleId,
   onCreateRule,
   onUpdateRule,
   onDeleteRule,
   onCancel,
   isSubmitting,
 }: RuleConfigurationEditProps) {
+  // Local state for the rule being created/edited
+  const [ruleName, setRuleName] = useState(
+    isEditing && editingRule ? editingRule.ruleName : ''
+  );
+  const [ruleDescription, setRuleDescription] = useState(
+    isEditing && editingRule ? editingRule.description || '' : ''
+  );
+  const [ruleIsActive, setRuleIsActive] = useState(
+    isEditing && editingRule ? editingRule.isActive : true
+  );
+
+  const [ruleScopeLevel, setRuleScopeLevel] = useState<ScopeLevel>(
+    isEditing && editingRule ? editingRule.scope.level : 'GLOBAL'
+  );
+  const [ruleTargetFeeds, setRuleTargetFeeds] = useState<string[]>(
+    isEditing && editingRule ? editingRule.scope.targetFeeds : []
+  );
+
+  const [ruleEvaluationType, setRuleEvaluationType] = useState<EvaluationType>(
+    isEditing && editingRule
+      ? editingRule.conditions.evaluationType
+      : 'KEYWORD_MATCH'
+  );
+
+  // Keyword states
+  const [ruleKeywordOperator, setRuleKeywordOperator] =
+    useState<LogicalOperator>(
+      isEditing &&
+        editingRule &&
+        editingRule.conditions.evaluationType === 'KEYWORD_MATCH'
+        ? editingRule.conditions.operator
+        : 'ANY'
+    );
+  const [ruleKeywords, setRuleKeywords] = useState<string[]>(
+    isEditing &&
+      editingRule &&
+      editingRule.conditions.evaluationType === 'KEYWORD_MATCH'
+      ? editingRule.conditions.keywords
+      : []
+  );
+  const [ruleKeywordCaseSensitive, setRuleKeywordCaseSensitive] = useState(
+    isEditing &&
+      editingRule &&
+      editingRule.conditions.evaluationType === 'KEYWORD_MATCH'
+      ? editingRule.conditions.caseSensitive
+      : false
+  );
+
+  // Regex states
+  const [ruleRegexExpression, setRuleRegexExpression] = useState(
+    isEditing &&
+      editingRule &&
+      editingRule.conditions.evaluationType === 'REGEX_MATCH'
+      ? editingRule.conditions.expression
+      : ''
+  );
+  const [ruleRegexFlags, setRuleRegexFlags] = useState(
+    isEditing &&
+      editingRule &&
+      editingRule.conditions.evaluationType === 'REGEX_MATCH'
+      ? editingRule.conditions.flags
+      : ''
+  );
+
+  // Group states
+  const [ruleGroupOperator, setRuleGroupOperator] = useState<LogicalOperator>(
+    isEditing &&
+      editingRule &&
+      editingRule.conditions.evaluationType === 'RULE_GROUP'
+      ? editingRule.conditions.operator
+      : 'ANY'
+  );
+  const [ruleGroupChildRuleIds, setRuleGroupChildRuleIds] = useState<string[]>(
+    isEditing &&
+      editingRule &&
+      editingRule.conditions.evaluationType === 'RULE_GROUP'
+      ? editingRule.conditions.childRuleIds
+      : []
+  );
+
   const [newKeyword, setNewKeyword] = useState('');
   const [validationErrors, setValidationErrors] = useState<
     Record<string, string>
@@ -314,7 +344,7 @@ export function RuleConfigurationEdit({
     };
 
     try {
-      if (isEditing && editingRuleId) {
+      if (isEditing && editingRule) {
         const payload: RuleUpdate = {
           ruleName: ruleName.trim(),
           description: ruleDescription.trim() || undefined,
@@ -332,6 +362,20 @@ export function RuleConfigurationEdit({
           conditions: conditionsPayload,
         };
         await onCreateRule(payload);
+        // Reset form fields
+        setRuleName('');
+        setRuleDescription('');
+        setRuleIsActive(true);
+        setRuleScopeLevel('GLOBAL');
+        setRuleTargetFeeds([]);
+        setRuleEvaluationType('KEYWORD_MATCH');
+        setRuleKeywordOperator('ANY');
+        setRuleKeywords([]);
+        setRuleKeywordCaseSensitive(false);
+        setRuleRegexExpression('');
+        setRuleRegexFlags('');
+        setRuleGroupOperator('ANY');
+        setRuleGroupChildRuleIds([]);
       }
     } catch {
       // Errors propagated in mutate onError
@@ -348,7 +392,7 @@ export function RuleConfigurationEdit({
 
   // Filter out the rule itself if in edit mode to avoid self-reference in groups
   const eligibleChildRules = rules.filter(
-    (r) => !isEditing || r.ruleId !== editingRuleId
+    (r) => !isEditing || r.ruleId !== editingRule?.ruleId
   );
 
   return (

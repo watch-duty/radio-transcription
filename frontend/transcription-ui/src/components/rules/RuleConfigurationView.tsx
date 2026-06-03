@@ -5,14 +5,7 @@ import Box from '@mui/material/Box';
 import Grid from '@mui/material/Grid';
 import Typography from '@mui/material/Typography';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type {
-  EvaluationType,
-  LogicalOperator,
-  Rule,
-  RuleCreate,
-  RuleUpdate,
-  ScopeLevel,
-} from '@transcription/common';
+import type { Rule, RuleCreate, RuleUpdate } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { createRule } from '../../service/createRule';
@@ -37,21 +30,6 @@ export function RuleConfigurationView({
 
   const [isEditing, setIsEditing] = useState(false);
   const [id, setId] = useState('');
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [isActive, setIsActive] = useState(true);
-  const [scopeLevel, setScopeLevel] = useState<ScopeLevel>('GLOBAL');
-  const [targetFeeds, setTargetFeeds] = useState<string[]>([]);
-  const [evaluationType, setEvaluationType] =
-    useState<EvaluationType>('KEYWORD_MATCH');
-  const [keywordOperator, setKeywordOperator] =
-    useState<LogicalOperator>('ANY');
-  const [keywords, setKeywords] = useState<string[]>([]);
-  const [keywordCaseSensitive, setKeywordCaseSensitive] = useState(false);
-  const [regexExpression, setRegexExpression] = useState('');
-  const [regexFlags, setRegexFlags] = useState('i');
-  const [groupOperator, setGroupOperator] = useState<LogicalOperator>('ANY');
-  const [groupChildRuleIds, setGroupChildRuleIds] = useState<string[]>([]);
 
   const rulesErrorHandled = useRef<Error | null>(null);
   const feedsErrorHandled = useRef<Error | null>(null);
@@ -82,6 +60,10 @@ export function RuleConfigurationView({
     return [...feeds].sort((a, b) => a.name.localeCompare(b.name));
   }, [feeds]);
 
+  const editingRule = useMemo(() => {
+    return rules.find((r) => r.ruleId === id);
+  }, [rules, id]);
+
   useEffect(() => {
     if (rulesError && rulesErrorHandled.current !== rulesError) {
       rulesErrorHandled.current = rulesError;
@@ -100,34 +82,11 @@ export function RuleConfigurationView({
     }
   }, [feedsError, onError]);
 
-  const resetForm = () => {
-    setId('');
-    setName('');
-    setDescription('');
-    setIsActive(true);
-    setScopeLevel('GLOBAL');
-    setTargetFeeds([]);
-    setEvaluationType('KEYWORD_MATCH');
-    setKeywordOperator('ANY');
-    setKeywords([]);
-    setKeywordCaseSensitive(false);
-    setRegexExpression('');
-    setRegexFlags('i');
-    setGroupOperator('ANY');
-    setGroupChildRuleIds([]);
-  };
-
-  const resetFormAndRefresh = () => {
-    resetForm();
-    queryClient.invalidateQueries({ queryKey: ['listRules', token] });
-  };
-
   const createMutation = useMutation({
     mutationFn: (newRule: RuleCreate) => createRule(newRule, token!),
     onSuccess: (data) => {
       triggerSnackbar(`Rule "${data.ruleName}" created successfully!`);
       queryClient.invalidateQueries({ queryKey: ['listRules', token] });
-      resetForm();
     },
     onError: (error: Error) => {
       onError(error, 'Creating Rule');
@@ -145,7 +104,8 @@ export function RuleConfigurationView({
     onSuccess: (data) => {
       triggerSnackbar(`Rule "${data.ruleName}" updated successfully!`);
       setIsEditing(false);
-      resetFormAndRefresh();
+      setId('');
+      queryClient.invalidateQueries({ queryKey: ['listRules', token] });
     },
     onError: (error: Error) => {
       onError(error, 'Updating Rule Settings');
@@ -157,12 +117,13 @@ export function RuleConfigurationView({
     onSuccess: (_, ruleId) => {
       triggerSnackbar('Rule deleted successfully!');
       setIsEditing(false);
+      setId('');
       queryClient.setQueryData<Rule[]>(['listRules', token], (oldRules) => {
         return oldRules
           ? oldRules.filter((rule) => rule.ruleId !== ruleId)
           : [];
       });
-      resetFormAndRefresh();
+      queryClient.invalidateQueries({ queryKey: ['listRules', token] });
     },
     onError: (error: Error) => {
       onError(error, 'Deleting Rule');
@@ -180,46 +141,12 @@ export function RuleConfigurationView({
   const handleStartEdit = (rule: Rule) => {
     setIsEditing(true);
     setId(rule.ruleId);
-    setName(rule.ruleName);
-    setDescription(rule.description || '');
-    setIsActive(rule.isActive);
-    setScopeLevel(rule.scope.level);
-    setTargetFeeds(rule.scope.targetFeeds);
-
-    setEvaluationType(rule.conditions.evaluationType);
-
-    if (rule.conditions.evaluationType === 'KEYWORD_MATCH') {
-      setKeywordOperator(rule.conditions.operator);
-      setKeywords(rule.conditions.keywords);
-      setKeywordCaseSensitive(rule.conditions.caseSensitive);
-    } else {
-      setKeywordOperator('ANY');
-      setKeywords([]);
-      setKeywordCaseSensitive(false);
-    }
-
-    if (rule.conditions.evaluationType === 'REGEX_MATCH') {
-      setRegexExpression(rule.conditions.expression);
-      setRegexFlags(rule.conditions.flags);
-    } else {
-      setRegexExpression('');
-      setRegexFlags('i');
-    }
-
-    if (rule.conditions.evaluationType === 'RULE_GROUP') {
-      setGroupOperator(rule.conditions.operator);
-      setGroupChildRuleIds(rule.conditions.childRuleIds);
-    } else {
-      setGroupOperator('ANY');
-      setGroupChildRuleIds([]);
-    }
-
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleCancelEdit = () => {
     setIsEditing(false);
-    resetForm();
+    setId('');
   };
 
   const isSubmitting =
@@ -279,35 +206,9 @@ export function RuleConfigurationView({
           <RuleConfigurationEdit
             key={isEditing ? `edit-${id}` : 'register'}
             isEditing={isEditing}
-            ruleName={name}
-            ruleDescription={description}
-            ruleIsActive={isActive}
-            ruleScopeLevel={scopeLevel}
-            ruleTargetFeeds={targetFeeds}
-            ruleEvaluationType={evaluationType}
-            ruleKeywordOperator={keywordOperator}
-            ruleKeywords={keywords}
-            ruleKeywordCaseSensitive={keywordCaseSensitive}
-            ruleRegexExpression={regexExpression}
-            ruleRegexFlags={regexFlags}
-            ruleGroupOperator={groupOperator}
-            ruleGroupChildRuleIds={groupChildRuleIds}
-            setRuleName={setName}
-            setRuleDescription={setDescription}
-            setRuleIsActive={setIsActive}
-            setRuleScopeLevel={setScopeLevel}
-            setRuleTargetFeeds={setTargetFeeds}
-            setRuleEvaluationType={setEvaluationType}
-            setRuleKeywordOperator={setKeywordOperator}
-            setRuleKeywords={setKeywords}
-            setRuleKeywordCaseSensitive={setKeywordCaseSensitive}
-            setRuleRegexExpression={setRegexExpression}
-            setRuleRegexFlags={setRegexFlags}
-            setRuleGroupOperator={setGroupOperator}
-            setRuleGroupChildRuleIds={setGroupChildRuleIds}
+            editingRule={isEditing ? editingRule : undefined}
             feeds={sortedFeeds}
             rules={rules}
-            editingRuleId={isEditing ? id : undefined}
             onCreateRule={handleCreateRule}
             onUpdateRule={(payload: RuleUpdate) =>
               handleUpdateRule(id, payload)
