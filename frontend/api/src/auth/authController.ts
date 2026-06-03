@@ -1,7 +1,7 @@
 import * as express from 'express';
 
 import { OAuth2Client } from 'google-auth-library';
-import jwt from 'jsonwebtoken';
+import * as jose from 'jose';
 import {
   Body,
   Controller,
@@ -73,16 +73,15 @@ export class AuthController extends Controller {
       let idToken: string;
 
       if (requestBody.code === 'dummy_code') {
-        idToken = jwt.sign(
-          {
-            email: 'test@example.com',
-            email_verified: true,
-            sub: '12345',
-            aud: 'dummy_aud',
-            iss: 'https://accounts.google.com',
-          },
-          'dummy_secret'
-        );
+        idToken = await new jose.SignJWT({
+          email: 'test@example.com',
+          email_verified: true,
+          sub: '12345',
+          aud: 'dummy_aud',
+          iss: 'https://accounts.google.com',
+        })
+          .setProtectedHeader({ alg: 'HS256' })
+          .sign(new TextEncoder().encode('dummy_secret'));
       } else {
         const { tokens } = await client.getToken(requestBody.code);
 
