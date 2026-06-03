@@ -138,9 +138,11 @@ docker-compose up --build -d
 """
 
 [tasks."dev:stop"]
-description = "Stop all dev containers"
+description = "Stop all dev containers and release host ports"
 run = """
 docker-compose down -v --remove-orphans
+lsof -t -i :5173 | xargs kill -9 2>/dev/null || true
+lsof -t -i :8080 | xargs kill -9 2>/dev/null || true
 """
 
 [tasks."dev:log"]

@@ -31,6 +31,7 @@ vi.mock('../config.js', () => ({
   },
   GOOGLE_AUTH_CLIENT_ID: 'test-google-client-id',
   GOOGLE_AUTH_CLIENT_SECRET: 'test-google-client-secret',
+  AUTH_BACKEND: 'google',
 }));
 
 describe('AuthController', () => {

@@ -2,6 +2,8 @@ import axios from 'axios';
 import { GaxiosError } from 'gaxios';
 import { GoogleAuth } from 'google-auth-library';
 
+import { AUTH_BACKEND } from './config.js';
+
 export class HttpError extends Error {
   constructor(
     public status: number,
@@ -55,7 +57,7 @@ export function handleBackendError(
 
 export async function getServiceClient(targetUrl: string) {
   const isProduction = process.env.NODE_ENV === 'production';
-  if (process.env.BYPASS_AUTH === 'true' && !isProduction) {
+  if (AUTH_BACKEND === 'none' && !isProduction) {
     return {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       request: async <T>(config: any) => {
