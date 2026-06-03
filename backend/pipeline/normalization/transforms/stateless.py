@@ -15,7 +15,7 @@ from typing import Any, override
 
 import apache_beam as beam
 from apache_beam.io.gcp.pubsub import PubsubMessage
-from google.protobuf.duration_pb2 import Duration  # type: ignore
+from google.protobuf import duration_pb2
 from opentelemetry import trace
 
 from backend.pipeline.common.constants import (
@@ -186,7 +186,7 @@ class SerializeFn(beam.DoFn):
             if value.start_audio_offset_ms is None:
                 msg = f"Missing start_audio_offset_ms for feed_id: {value.feed_id} (session: {value.session_id})"
                 _raise(msg)
-            start_offset = Duration(
+            start_offset = duration_pb2.Duration(
                 seconds=value.start_audio_offset_ms // MICROSECONDS_PER_MS,
                 nanos=(value.start_audio_offset_ms % MICROSECONDS_PER_MS)
                 * NANOS_PER_MS,
@@ -195,7 +195,7 @@ class SerializeFn(beam.DoFn):
             if value.end_audio_offset_ms is None:
                 msg = f"Missing end_audio_offset_ms for feed_id: {value.feed_id} (session: {value.session_id})"
                 _raise(msg)
-            end_offset = Duration(
+            end_offset = duration_pb2.Duration(
                 seconds=value.end_audio_offset_ms // MICROSECONDS_PER_MS,
                 nanos=(value.end_audio_offset_ms % MICROSECONDS_PER_MS)
                 * NANOS_PER_MS,
@@ -271,7 +271,7 @@ class SerializeNormalizationClaimFn(beam.DoFn):
             if value.start_audio_offset_ms is None:
                 msg = f"Missing start_audio_offset_ms for feed_id: {value.feed_id} (session: {value.session_id})"
                 _raise(msg)
-            start_offset = Duration(
+            start_offset = duration_pb2.Duration(
                 seconds=value.start_audio_offset_ms // MICROSECONDS_PER_MS,
                 nanos=(value.start_audio_offset_ms % MICROSECONDS_PER_MS)
                 * NANOS_PER_MS,
@@ -280,7 +280,7 @@ class SerializeNormalizationClaimFn(beam.DoFn):
             if value.end_audio_offset_ms is None:
                 msg = f"Missing end_audio_offset_ms for feed_id: {value.feed_id} (session: {value.session_id})"
                 _raise(msg)
-            end_offset = Duration(
+            end_offset = duration_pb2.Duration(
                 seconds=value.end_audio_offset_ms // MICROSECONDS_PER_MS,
                 nanos=(value.end_audio_offset_ms % MICROSECONDS_PER_MS)
                 * NANOS_PER_MS,

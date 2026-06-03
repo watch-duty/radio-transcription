@@ -8,8 +8,7 @@ import grpc
 import requests
 from cloudevents.http.event import CloudEvent
 from google.api_core.exceptions import PermissionDenied, ServiceUnavailable
-from google.protobuf.duration_pb2 import Duration  # type: ignore
-from google.protobuf.timestamp_pb2 import Timestamp  # type: ignore
+from google.protobuf import duration_pb2, timestamp_pb2
 
 from backend.pipeline.schema_types.normalized_audio_pb2 import (
     NormalizedAudio,
@@ -22,6 +21,9 @@ from backend.pipeline.transcription.processor import (
     TranscriptionEventProcessor,
 )
 from backend.services.audio_segments import models as audio_segments_models
+
+Duration = duration_pb2.Duration
+Timestamp = timestamp_pb2.Timestamp
 
 
 class TranscriptionEventProcessorTest(unittest.TestCase):
