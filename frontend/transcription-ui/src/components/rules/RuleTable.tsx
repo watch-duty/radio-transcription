@@ -7,6 +7,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import RuleIcon from '@mui/icons-material/Rule';
 import SearchIcon from '@mui/icons-material/Search';
 import TuneIcon from '@mui/icons-material/Tune';
+import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Card from '@mui/material/Card';
 import Chip from '@mui/material/Chip';
@@ -312,7 +313,6 @@ export function RuleTable({
 
     return (
       <>
-        {/* Name and Description */}
         <TableCell
           component="div"
           role="cell"
@@ -349,7 +349,6 @@ export function RuleTable({
           ) : null}
         </TableCell>
 
-        {/* Scope */}
         <TableCell
           component="div"
           role="cell"
@@ -362,12 +361,7 @@ export function RuleTable({
             alignItems: 'flex-start',
           }}
         >
-          <Chip
-            label={rule.scope.level}
-            size="small"
-            variant="outlined"
-            color={rule.scope.level === 'GLOBAL' ? 'primary' : 'default'}
-          />
+          <Chip label={rule.scope.level} size="small" variant="outlined" />
           {rule.scope.level === 'FEED_SPECIFIC' &&
           rule.scope.targetFeeds.length > 0 ? (
             <Typography
@@ -382,7 +376,6 @@ export function RuleTable({
           ) : null}
         </TableCell>
 
-        {/* Conditions */}
         <TableCell
           component="div"
           role="cell"
@@ -400,20 +393,42 @@ export function RuleTable({
           </Typography>
         </TableCell>
 
-        {/* Status */}
         <TableCell
           component="div"
           role="cell"
           sx={{ borderBottom: 'none', minWidth: 0 }}
         >
-          <Chip
-            label={rule.isActive ? 'Active' : 'Inactive'}
-            size="small"
-            color={rule.isActive ? 'success' : 'default'}
-          />
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1,
+            }}
+          >
+            <Badge
+              color={rule.isActive ? 'success' : 'default'}
+              variant="dot"
+              sx={{
+                py: 0,
+                px: 0.5,
+                display: 'flex',
+                alignItems: 'center',
+                flexShrink: 0,
+              }}
+            />
+            <Typography
+              variant="body2"
+              sx={{
+                color: rule.isActive ? 'success.main' : 'text.secondary',
+                fontWeight: 600,
+                textTransform: 'uppercase',
+              }}
+            >
+              {rule.isActive ? 'Active' : 'Inactive'}
+            </Typography>
+          </Box>
         </TableCell>
 
-        {/* Actions */}
         {allowEdit ? (
           <TableCell
             align="right"
