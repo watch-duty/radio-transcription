@@ -97,8 +97,45 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.audio_segment_id, str(_SEGMENT_ID))
         self.assertEqual(result.type, "EVALUATION")
         self.assertEqual(
-            result.data.model_dump(), {"decisions": ["rule-1"], "errors": []}
+            result.data.model_dump(),
+            {"decisions": ["rule-1"], "errors": [], "rule_annotations": []},
         )
+
+    async def test_add_evaluation_annotation_with_rule_annotations(
+        self,
+    ) -> None:
+        rule_annotation = {
+            "rule_id": "rule-1",
+            "text_match": {
+                "spans": [{"start": 0, "end": 4, "matched_text": "fire"}]
+            },
+        }
+        eval_data = {
+            "decisions": ["rule-1"],
+            "errors": [],
+            "rule_annotations": [rule_annotation],
+        }
+        eval_row = {
+            "audio_segment_id": _SEGMENT_ID,
+            "type": "EVALUATION",
+            "data": eval_data,
+            "created_at": datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+            "updated_at": datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+        }
+        self.pool.fetchrow.return_value = eval_row
+
+        result = await self.store.add_annotation(
+            str(_SEGMENT_ID),
+            AnnotationType.EVALUATION,
+            eval_data,
+        )
+
+        self.assertEqual(result.data.rule_annotations[0].rule_id, "rule-1")
+        spans = result.data.rule_annotations[0].text_match.spans
+        self.assertEqual(len(spans), 1)
+        self.assertEqual(spans[0].start, 0)
+        self.assertEqual(spans[0].end, 4)
+        self.assertEqual(spans[0].matched_text, "fire")
 
     async def test_add_annotation_invalid_uuid(self) -> None:
         with self.assertRaises(ValueError) as cm:

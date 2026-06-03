@@ -18,6 +18,7 @@ import {
 import { formatDuration } from '../../utils/timeUtils';
 import AudioPlayer from '../audio/AudioPlayer';
 import AlertTooltip from './AlertTooltip';
+import HighlightedTranscript from './HighlightedTranscript';
 
 interface TranscriptRowProps {
   audioSegment: RenderableAudioSegment;

@@ -44,7 +44,15 @@ describe('listTranscripts', () => {
           playback_audio_uri: '',
           start_audio_offset: '0',
           end_audio_offset: '0',
-          evaluation_decisions: [],
+          evaluation_decisions: ['rule-1'],
+          rule_annotations: [
+            {
+              rule_id: 'rule-1',
+              text_match: {
+                spans: [{ start: 0, end: 5, matched_text: 'hello' }],
+              },
+            },
+          ],
         },
       ],
     };
@@ -64,7 +72,15 @@ describe('listTranscripts', () => {
           playbackAudioUri: '',
           startAudioOffset: '0',
           endAudioOffset: '0',
-          evaluationDecisions: [],
+          evaluationDecisions: ['rule-1'],
+          ruleAnnotations: [
+            {
+              ruleId: 'rule-1',
+              textMatch: {
+                spans: [{ start: 0, end: 5, matchedText: 'hello' }],
+              },
+            },
+          ],
         },
       ],
     };

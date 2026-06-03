@@ -6,6 +6,7 @@ from unittest.mock import ANY, Mock, patch
 import urllib3
 from urllib3.response import HTTPResponse
 
+from backend.pipeline.common.rules import models
 from backend.pipeline.evaluation.rules_evaluation import evaluator
 from backend.pipeline.schema_types import EvaluationErrorType
 
@@ -37,6 +38,31 @@ class TestTextEvaluator(unittest.TestCase):
         self.assertTrue(result["is_flagged"])
         self.assertEqual(len(result["triggered_rules"]), 1)
         self.assertEqual(result["triggered_rules"][0], "basic_fire_terms")
+        annotations = result["rule_annotations"]
+        self.assertEqual(len(annotations), 1)
+        self.assertEqual(annotations[0].rule_id, "basic_fire_terms")
+        self.assertIsNotNone(annotations[0].text_match)
+        spans = annotations[0].text_match.spans
+        self.assertEqual(len(spans), 1)
+        self.assertEqual(spans[0].start, text.index("fire"))
+        self.assertEqual(spans[0].end, text.index("fire") + 4)
+        self.assertEqual(spans[0].matched_text, "fire")
+
+    def test_case_insensitive_preserves_original_casing(self) -> None:
+        """Spans should carry the matched substring exactly as it appears in the transcript."""
+        text = "The FIRE is spreading."
+        result = self.static_evaluator.evaluate(text, feed_id="test_feed")
+        self.assertTrue(result["is_flagged"])
+        spans = result["rule_annotations"][0].text_match.spans
+        matched_texts = [s.matched_text for s in spans]
+        self.assertIn("FIRE", matched_texts)
+        self.assertIn("spreading", matched_texts)
+
+    def test_no_match_produces_no_annotation(self) -> None:
+        """Non-firing rules contribute nothing to rule_annotations."""
+        text = "The quick brown fox jumps over the dog."
+        result = self.static_evaluator.evaluate(text, feed_id="test_feed")
+        self.assertEqual(result["rule_annotations"], [])
 
     def test_basic_match_evacuation(self) -> None:
         """Test that 'evacuation' triggers the rule."""
@@ -94,6 +120,138 @@ class TestTextEvaluator(unittest.TestCase):
         self.assertTrue(
             result["is_flagged"], "Punctuation should not prevent matching."
         )
+
+
+def _keyword_rule(
+    rule_id: str,
+    keywords: list[str],
+    *,
+    operator: models.LogicalOperator = models.LogicalOperator.ANY,
+    case_sensitive: bool = False,
+) -> models.Rule:
+    return models.Rule(
+        rule_id=rule_id,
+        rule_name=rule_id,
+        is_active=True,
+        scope=models.Scope(level=models.ScopeLevel.GLOBAL),
+        conditions=models.KeywordConditions(
+            evaluation_type=models.EvaluationType.KEYWORD_MATCH,
+            operator=operator,
+            keywords=keywords,
+            case_sensitive=case_sensitive,
+        ),
+    )
+
+
+def _regex_rule(rule_id: str, expression: str, *, flags: str = "i") -> models.Rule:
+    return models.Rule(
+        rule_id=rule_id,
+        rule_name=rule_id,
+        is_active=True,
+        scope=models.Scope(level=models.ScopeLevel.GLOBAL),
+        conditions=models.RegexConditions(
+            evaluation_type=models.EvaluationType.REGEX_MATCH,
+            expression=expression,
+            flags=flags,
+        ),
+    )
+
+
+class _RulesetEvaluator(evaluator.BaseTextEvaluator):
+    """Bare evaluator used to exercise _evaluate_ruleset directly."""
+
+    def evaluate(self, text: str, feed_id: str) -> evaluator.EvaluationResult:
+        raise NotImplementedError
+
+
+class TestKeywordAnnotations(unittest.TestCase):
+    """Tests for per-rule annotation emission across keyword rules."""
+
+    def setUp(self) -> None:
+        self.evaluator = _RulesetEvaluator()
+
+    def test_any_operator_emits_all_keyword_spans(self) -> None:
+        rule = _keyword_rule("r1", ["fire", "evacuate"])
+        text = "Fire on the ridge, evacuate now"
+        result = self.evaluator._evaluate_ruleset([rule], text, "feed-1")
+        self.assertTrue(result["is_flagged"])
+        spans = result["rule_annotations"][0].text_match.spans
+        matched = [(s.start, s.end, s.matched_text) for s in spans]
+        self.assertEqual(
+            matched,
+            [(0, 4, "Fire"), (19, 27, "evacuate")],
+        )
+
+    def test_all_operator_fires_only_when_every_keyword_present(self) -> None:
+        rule = _keyword_rule(
+            "r1", ["fire", "evacuate"], operator=models.LogicalOperator.ALL
+        )
+
+        partial = self.evaluator._evaluate_ruleset(
+            [rule], "Fire on the ridge", "feed-1"
+        )
+        self.assertEqual(partial["rule_annotations"], [])
+
+        full = self.evaluator._evaluate_ruleset(
+            [rule], "Fire on the ridge, evacuate now", "feed-1"
+        )
+        self.assertEqual(len(full["rule_annotations"]), 1)
+
+    def test_case_sensitive_keyword_does_not_match_lowercase(self) -> None:
+        rule = _keyword_rule("r1", ["Fire"], case_sensitive=True)
+        result = self.evaluator._evaluate_ruleset(
+            [rule], "fire on the ridge", "feed-1"
+        )
+        self.assertEqual(result["rule_annotations"], [])
+
+    def test_multiple_rules_produce_one_annotation_each(self) -> None:
+        r1 = _keyword_rule("r1", ["fire"])
+        r2 = _keyword_rule("r2", ["evacuate"])
+        result = self.evaluator._evaluate_ruleset(
+            [r1, r2], "Fire, please evacuate", "feed-1"
+        )
+        rule_ids = [a.rule_id for a in result["rule_annotations"]]
+        self.assertEqual(rule_ids, ["r1", "r2"])
+        self.assertEqual(result["triggered_rules"], ["r1", "r2"])
+
+    def test_empty_text_returns_empty_annotations(self) -> None:
+        rule = _keyword_rule("r1", ["fire"])
+        result = self.evaluator._evaluate_ruleset([rule], "", "feed-1")
+        self.assertEqual(result["rule_annotations"], [])
+
+
+class TestRegexAnnotations(unittest.TestCase):
+    """Tests for per-rule annotation emission across regex rules."""
+
+    def setUp(self) -> None:
+        self.evaluator = _RulesetEvaluator()
+
+    def test_regex_emits_a_span_per_match(self) -> None:
+        rule = _regex_rule("r1", r"\d+")
+        result = self.evaluator._evaluate_ruleset(
+            [rule], "unit 12 to unit 34", "feed-1"
+        )
+        self.assertTrue(result["is_flagged"])
+        spans = result["rule_annotations"][0].text_match.spans
+        self.assertEqual(
+            [(s.start, s.end, s.matched_text) for s in spans],
+            [(5, 7, "12"), (16, 18, "34")],
+        )
+
+    def test_regex_case_insensitive_flag_preserves_casing(self) -> None:
+        rule = _regex_rule("r1", r"fire", flags="i")
+        result = self.evaluator._evaluate_ruleset(
+            [rule], "FIRE on the ridge", "feed-1"
+        )
+        spans = result["rule_annotations"][0].text_match.spans
+        self.assertEqual(spans[0].matched_text, "FIRE")
+
+    def test_regex_no_match_produces_no_annotation(self) -> None:
+        rule = _regex_rule("r1", r"\d+")
+        result = self.evaluator._evaluate_ruleset(
+            [rule], "no numbers here", "feed-1"
+        )
+        self.assertEqual(result["rule_annotations"], [])
 
 
 class TestRemoteTextEvaluator(unittest.TestCase):

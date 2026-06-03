@@ -1,5 +1,6 @@
 import type {
   ListTranscriptsResponse,
+  RuleAnnotation,
   Transcript,
 } from '@transcription/common';
 import {
@@ -17,6 +18,17 @@ import {
 import { TRANSCRIPTS_API_URL } from '../config.js';
 import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
 
+interface TextMatchSpanResponse {
+  start: number;
+  end: number;
+  matched_text: string;
+}
+
+interface RuleAnnotationResponse {
+  rule_id: string;
+  text_match?: { spans: TextMatchSpanResponse[] };
+}
+
 export interface TranscriptResponse {
   feed_id: string;
   segment_id: string;
@@ -31,6 +43,24 @@ export interface TranscriptResponse {
   start_audio_offset: string;
   end_audio_offset: string;
   evaluation_decisions: string[];
+  rule_annotations?: RuleAnnotationResponse[];
+}
+
+function convertRuleAnnotation(
+  response: RuleAnnotationResponse
+): RuleAnnotation {
+  return {
+    ruleId: response.rule_id,
+    textMatch: response.text_match
+      ? {
+          spans: response.text_match.spans.map((s) => ({
+            start: s.start ?? 0,
+            end: s.end ?? 0,
+            matchedText: s.matched_text ?? '',
+          })),
+        }
+      : undefined,
+  };
 }
 
 function convertTranscriptResponse(response: TranscriptResponse): Transcript {
@@ -48,6 +78,9 @@ function convertTranscriptResponse(response: TranscriptResponse): Transcript {
     startAudioOffset: response.start_audio_offset,
     endAudioOffset: response.end_audio_offset,
     evaluationDecisions: response.evaluation_decisions,
+    ruleAnnotations: (response.rule_annotations ?? []).map(
+      convertRuleAnnotation
+    ),
   };
 }
 

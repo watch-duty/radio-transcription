@@ -6,6 +6,8 @@ from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, Field
 
+from backend.pipeline.common.evaluation.annotations import RuleAnnotation
+
 
 class AudioClassification(StrEnum):
     """Enum for audio segment classification."""
@@ -34,6 +36,7 @@ class EvaluationAnnotationData(BaseModel):
 
     decisions: list[str]
     errors: list[str]
+    rule_annotations: list[RuleAnnotation] = Field(default_factory=list)
 
 
 class TranscriptAnnotation(BaseModel):

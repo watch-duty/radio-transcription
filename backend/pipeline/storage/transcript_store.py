@@ -2,15 +2,19 @@
 
 import base64
 import datetime
+import json
 import logging
 import uuid
 from typing import NamedTuple
 
 import asyncpg
+import asyncpg.exceptions
+from google.protobuf import json_format
 
 from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
+    RuleAnnotation,
 )
 from backend.pipeline.storage import transcript_queries
 from backend.pipeline.storage.pagination_utils import SortOrder
@@ -71,6 +75,18 @@ class TranscriptStore:
         if row["evaluation_errors"]:
             msg.errors.extend(row["evaluation_errors"])
 
+        raw_annotations = row["evaluation_annotations"]
+        if raw_annotations:
+            entries = (
+                json.loads(raw_annotations)
+                if isinstance(raw_annotations, str)
+                else raw_annotations
+            )
+            for entry in entries:
+                annotation_msg = RuleAnnotation()
+                json_format.ParseDict(entry, annotation_msg)
+                msg.rule_annotations.append(annotation_msg)
+
         return msg
 
     def _decode_cursor(
@@ -117,6 +133,15 @@ class TranscriptStore:
         if transcript.HasField("end_audio_offset"):
             end_offset = transcript.end_audio_offset.ToTimedelta()
 
+        annotations_json = json.dumps(
+            [
+                json_format.MessageToDict(
+                    a, preserving_proto_field_name=True
+                )
+                for a in transcript.rule_annotations
+            ]
+        )
+
         try:
             row = await self._pool.fetchrow(
                 transcript_queries.CREATE_TRANSCRIPT_SQL,
@@ -134,6 +159,7 @@ class TranscriptStore:
                 list(transcript.evaluation_decisions),
                 transcript.playback_audio_uri or None,
                 list(transcript.errors),
+                annotations_json,
             )
         except asyncpg.exceptions.UniqueViolationError as e:
             raise AlreadyExistsError(str(segment_id)) from e
