@@ -1,0 +1,161 @@
+"""Build review-pool JSONL from train and eval canonical manifests."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import pathlib
+import sys
+import tempfile
+
+from common import gcs_utils, review
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the review-pool builder CLI.
+
+    Args:
+        argv: Optional command-line argument list. Defaults to `sys.argv[1:]`.
+
+    Returns:
+        Integer process exit code.
+    """
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    storage_client = _new_storage_client()
+    manifest_rows = review.load_review_manifest_rows(
+        {
+            "train": _load_jsonl(args.train_jsonl, storage_client),
+            "eval": _load_jsonl(args.eval_jsonl, storage_client),
+        }
+    )
+    metadata_by_uri = _fetch_metadata_by_uri(storage_client, manifest_rows)
+
+    try:
+        review_pool_rows = review.build_review_pool(
+            manifest_rows,
+            metadata_by_uri=metadata_by_uri,
+        )
+    except review.DuplicateAudioSegmentError as exc:
+        _write_jsonl(args.duplicates_jsonl, exc.duplicates)
+        return 1
+
+    _write_jsonl(args.review_pool_jsonl, review_pool_rows)
+    _write_jsonl(args.duplicates_jsonl, [])
+    return 0
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Build review-pool rows from canonical manifests.",
+    )
+    parser.add_argument(
+        "--train-jsonl",
+        required=True,
+        help="Input canonical train manifest JSONL path.",
+    )
+    parser.add_argument(
+        "--eval-jsonl",
+        required=True,
+        help="Input canonical eval manifest JSONL path.",
+    )
+    parser.add_argument(
+        "--review-pool-jsonl",
+        required=True,
+        help="Output enriched review-pool JSONL path.",
+    )
+    parser.add_argument(
+        "--duplicates-jsonl",
+        required=True,
+        help="Output duplicate exact-audio report JSONL path.",
+    )
+    return parser
+
+
+def _load_jsonl(
+    path: str,
+    storage_client: object,
+) -> list[dict[str, object]]:
+    if _is_gcs_uri(path):
+        return gcs_utils.download_jsonl_manifest(storage_client, path)
+
+    rows = []
+    with pathlib.Path(path).open(encoding="utf-8") as input_file:
+        for raw_line in input_file:
+            line = raw_line.strip()
+            if not line:
+                continue
+            row = json.loads(line)
+            if not isinstance(row, dict):
+                raise TypeError("canonical manifest JSONL rows must be objects")
+            rows.append(row)
+    return rows
+
+
+def _fetch_metadata_by_uri(
+    storage_client: object,
+    manifest_rows: list[review.ReviewManifestRow],
+) -> dict[str, review.GcsObjectMetadata]:
+    metadata_by_uri = {}
+    for row in manifest_rows:
+        uri = row.model_ready_audio_uri
+        if uri in metadata_by_uri:
+            continue
+        metadata_by_uri[uri] = review.fetch_gcs_object_metadata(
+            storage_client,
+            uri,
+        )
+    return metadata_by_uri
+
+
+def _write_jsonl(path: str, rows: list[dict[str, object]]) -> None:
+    if _is_gcs_uri(path):
+        storage_client = _new_storage_client()
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+        ) as temp_file:
+            _write_jsonl_to_local(pathlib.Path(temp_file.name), rows)
+            temp_file.flush()
+            _upload_file(storage_client, path, temp_file.name)
+        return
+
+    local_path = pathlib.Path(path)
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_jsonl_to_local(local_path, rows)
+
+
+def _write_jsonl_to_local(
+    local_path: pathlib.Path,
+    rows: list[dict[str, object]],
+) -> None:
+    with local_path.open("w", encoding="utf-8") as output_file:
+        for row in rows:
+            output_file.write(
+                json.dumps(row, ensure_ascii=True, sort_keys=True)
+            )
+            output_file.write("\n")
+
+
+def _upload_file(storage_client: object, gcs_uri: str, local_path: str) -> None:
+    bucket_name, blob_path = gcs_utils.parse_gcs_uri(gcs_uri)
+    gcs_utils.upload_file_to_blob(
+        storage_client,
+        bucket_name,
+        blob_path,
+        local_path,
+    )
+
+
+def _new_storage_client() -> object:
+    from google.cloud import storage
+
+    return storage.Client()
+
+
+def _is_gcs_uri(path: str) -> bool:
+    return path.startswith("gs://")
+
+
+if __name__ == "__main__":
+    sys.exit(main())
