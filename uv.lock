@@ -3207,6 +3207,7 @@ dependencies = [
     { name = "protobuf" },
     { name = "pydantic" },
     { name = "radio-transcription-common" },
+    { name = "requests" },
 ]
 
 [package.metadata]
@@ -3223,6 +3224,7 @@ requires-dist = [
     { name = "protobuf", specifier = ">=5.29.6" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "radio-transcription-common", editable = "backend/pipeline/common" },
+    { name = "requests", specifier = ">=2.31.0" },
 ]
 
 [[package]]

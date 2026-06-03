@@ -9,7 +9,6 @@ import MenuIcon from '@mui/icons-material/Menu';
 import RuleIcon from '@mui/icons-material/Rule';
 import SettingsIcon from '@mui/icons-material/Settings';
 import TroubleshootIcon from '@mui/icons-material/Troubleshoot';
-import VoiceChatIcon from '@mui/icons-material/VoiceChat';
 import AppBar from '@mui/material/AppBar';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -143,15 +142,6 @@ export default function AppContainer({
               <ListItemText primary={'Feeds'} />
             </ListItemButton>
           </ListItem>
-          <ListItem disablePadding>
-            <ListItemButton onClick={() => handleItemClick('/transcripts')}>
-              <ListItemIcon>
-                <VoiceChatIcon />
-              </ListItemIcon>
-              <ListItemText primary={'Transcripts'} />
-            </ListItemButton>
-          </ListItem>
-          <Divider />
           <ListItem disablePadding>
             <ListItemButton onClick={() => handleItemClick('/rules')}>
               <ListItemIcon>
