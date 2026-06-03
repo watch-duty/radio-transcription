@@ -162,7 +162,12 @@ class GeminiRankingRunner:
         return extract_response_text(response)
 
 
-def new_vertex_client(project: str, location: str) -> object:
+def new_vertex_client(
+    project: str,
+    location: str,
+    *,
+    timeout_ms: int | None = None,
+) -> object:
     """Return a Vertex-backed Gemini client.
 
     Args:
@@ -176,7 +181,14 @@ def new_vertex_client(project: str, location: str) -> object:
         ImportError: If the `[vertex]` extra is not installed.
     """
     _require_vertex()
-    return genai.Client(vertexai=True, project=project, location=location)
+    client_kwargs = {
+        "vertexai": True,
+        "project": project,
+        "location": location,
+    }
+    if timeout_ms is not None:
+        client_kwargs["http_options"] = types.HttpOptions(timeout=timeout_ms)
+    return genai.Client(**client_kwargs)
 
 
 def run_source_group_predictions(

@@ -373,6 +373,69 @@ class TestRankGeminiCli(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(flushed, [["audio-a"], ["audio-b"]])
 
+    def test_prediction_run_passes_request_timeout_to_vertex_client(
+        self,
+    ) -> None:
+        import rank_gemini
+
+        _FakeRunner.instances = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            paths = _paths(Path(tmpdir))
+            _write_jsonl(paths["review_pool"], [_row("audio-a", 1)])
+            _write_jsonl(paths["cache"], [])
+            captured: dict[str, object] = {}
+
+            def fake_new_vertex_client(
+                project: str,
+                location: str,
+                *,
+                timeout_ms: int,
+            ) -> object:
+                captured["project"] = project
+                captured["location"] = location
+                captured["timeout_ms"] = timeout_ms
+                return object()
+
+            with (
+                unittest.mock.patch.object(
+                    rank_gemini.gemini_ranking,
+                    "new_vertex_client",
+                    fake_new_vertex_client,
+                ),
+                unittest.mock.patch.object(
+                    rank_gemini.gemini_ranking,
+                    "GeminiRankingRunner",
+                    _FakeRunner,
+                ),
+                unittest.mock.patch.object(
+                    rank_gemini.gemini_ranking,
+                    "run_source_group_predictions",
+                    return_value=([], {}),
+                ),
+                unittest.mock.patch.object(
+                    rank_gemini.ranking,
+                    "score_ranked_rows",
+                    return_value=_fake_ranked_rows(),
+                ),
+            ):
+                exit_code = rank_gemini.main(
+                    [
+                        "run",
+                        *_required_args(paths),
+                        "--project",
+                        "test-project",
+                        "--location",
+                        "global",
+                        "--request-timeout-ms",
+                        "120000",
+                    ]
+                )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(captured["project"], "test-project")
+        self.assertEqual(captured["location"], "global")
+        self.assertEqual(captured["timeout_ms"], 120000)
+
     def test_run_defaults_full_model(self) -> None:
         import rank_gemini
 

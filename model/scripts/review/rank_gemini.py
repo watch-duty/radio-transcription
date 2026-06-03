@@ -16,6 +16,7 @@ DEFAULT_LOCATION = "us-central1"
 DEFAULT_PREFLIGHT_MODEL = "gemini-3.1-pro-preview"
 DEFAULT_FULL_MODEL = "gemini-3.5-flash"
 DEFAULT_CACHE_FLUSH_INTERVAL = 500
+DEFAULT_REQUEST_TIMEOUT_MS = 120_000
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -53,6 +54,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Maximum rows to process.",
     )
     _add_cache_flush_arg(preflight)
+    _add_request_timeout_arg(preflight)
     preflight.set_defaults(func=_run_predicting_command)
 
     run = sub.add_parser("run", help="Run Gemini predictions for ranking")
@@ -70,6 +72,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Optional maximum rows to process.",
     )
     _add_cache_flush_arg(run)
+    _add_request_timeout_arg(run)
     run.set_defaults(func=_run_predicting_command)
 
     rank_cache = sub.add_parser("rank-cache", help="Rank from cache only")
@@ -109,6 +112,18 @@ def _add_cache_flush_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_request_timeout_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--request-timeout-ms",
+        type=_positive_int,
+        default=DEFAULT_REQUEST_TIMEOUT_MS,
+        help=(
+            "Per-request GenAI timeout in milliseconds. "
+            f"Defaults to {DEFAULT_REQUEST_TIMEOUT_MS}."
+        ),
+    )
+
+
 def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed <= 0:
@@ -129,7 +144,11 @@ def _run_predicting_command(args: argparse.Namespace) -> int:
         review_rows = review_rows[: args.limit]
     cache_by_audio_id = _load_cache(args.prediction_cache_jsonl)
 
-    client = gemini_ranking.new_vertex_client(args.project, args.location)
+    client = gemini_ranking.new_vertex_client(
+        args.project,
+        args.location,
+        timeout_ms=args.request_timeout_ms,
+    )
     runner = gemini_ranking.GeminiRankingRunner(
         client,
         model_id=args.model,

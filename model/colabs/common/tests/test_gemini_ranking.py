@@ -60,6 +60,10 @@ class _FakeGenerateContentConfig:
 class _FakeTypes:
     GenerateContentConfig = _FakeGenerateContentConfig
 
+    class HttpOptions:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+
 
 class _FakeResponse:
     def __init__(self, text: str) -> None:
@@ -231,6 +235,37 @@ class TestGeminiRankingRunner(unittest.TestCase):
         from common import gemini_ranking
 
         self.assertTrue(callable(gemini_ranking.build_contextual_contents))
+
+    def test_new_vertex_client_passes_timeout_http_options(self) -> None:
+        from common import gemini_ranking
+
+        captured: dict[str, object] = {}
+
+        class FakeGenai:
+            @staticmethod
+            def Client(**kwargs: object) -> object:
+                captured.update(kwargs)
+                return object()
+
+        original_genai = gemini_ranking.genai
+        try:
+            gemini_ranking.genai = FakeGenai
+            client = gemini_ranking.new_vertex_client(
+                "test-project",
+                "global",
+                timeout_ms=120000,
+            )
+        finally:
+            gemini_ranking.genai = original_genai
+
+        self.assertIsNotNone(client)
+        self.assertEqual(captured["vertexai"], True)
+        self.assertEqual(captured["project"], "test-project")
+        self.assertEqual(captured["location"], "global")
+        self.assertEqual(
+            captured["http_options"].kwargs,
+            {"timeout": 120000},
+        )
 
 
 class TestSourceGroupPredictionRun(unittest.TestCase):
