@@ -12,6 +12,7 @@ from backend.pipeline.common import auth_client, env
 from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.storage.redis_service import RedisService
 from backend.pipeline.common.tracing_utils import (
+    get_current_traceparent,
     setup_tracing,
     with_tracer_context,
 )
@@ -49,6 +50,10 @@ def _get_feed_tags(feed_id: str) -> list[Tag] | None:
     """Fetches tags for a given feed_id from the feeds API."""
     url = f"{FEEDS_API_URL}/v1/feeds/{feed_id}"
     headers = {}
+
+    traceparent = get_current_traceparent()
+    if traceparent:
+        headers["traceparent"] = traceparent
 
     if env.is_gcp_env():
         token = auth_client.get_id_token(FEEDS_API_URL)
