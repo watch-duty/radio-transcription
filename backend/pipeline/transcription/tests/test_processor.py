@@ -8,7 +8,6 @@ import grpc
 import requests
 from cloudevents.http.event import CloudEvent
 from google.api_core.exceptions import PermissionDenied, ServiceUnavailable
-from google.protobuf import duration_pb2, timestamp_pb2
 
 from backend.pipeline.schema_types.normalized_audio_pb2 import (
     NormalizedAudio,
@@ -21,9 +20,6 @@ from backend.pipeline.transcription.processor import (
     TranscriptionEventProcessor,
 )
 from backend.services.audio_segments import models as audio_segments_models
-
-Duration = duration_pb2.Duration
-Timestamp = timestamp_pb2.Timestamp
 
 
 class TranscriptionEventProcessorTest(unittest.TestCase):
@@ -53,17 +49,11 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
             external_id="ext-1234",
+            start_timestamp={"seconds": 1000, "nanos": 1000000},
+            end_timestamp={"seconds": 1005, "nanos": 2000000},
+            start_audio_offset={"seconds": 0, "nanos": 0},
+            end_audio_offset={"seconds": 5, "nanos": 0},
         )
-
-        # Set timestamps
-        t_start = Timestamp(seconds=1000, nanos=1000000)
-        t_end = Timestamp(seconds=1005, nanos=2000000)
-        claim.start_timestamp.CopyFrom(t_start)
-        claim.end_timestamp.CopyFrom(t_end)
-
-        # Set offsets
-        claim.start_audio_offset.CopyFrom(Duration(seconds=0, nanos=0))
-        claim.end_audio_offset.CopyFrom(Duration(seconds=5, nanos=0))
 
         # Serialize and wrap in Pub/Sub envelope
         data_bytes = claim.SerializeToString()
@@ -161,13 +151,9 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
             external_id="ext-1234",
+            start_timestamp={"seconds": 1000, "nanos": 1000000},
+            end_timestamp={"seconds": 1005, "nanos": 2000000},
         )
-
-        # Set timestamps
-        t_start = Timestamp(seconds=1000, nanos=1000000)
-        t_end = Timestamp(seconds=1005, nanos=2000000)
-        claim.start_timestamp.CopyFrom(t_start)
-        claim.end_timestamp.CopyFrom(t_end)
 
         # Serialize and wrap in Pub/Sub envelope
         data_bytes = claim.SerializeToString()
@@ -231,11 +217,9 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
             external_id="ext-1234",
+            start_timestamp={"seconds": 1000, "nanos": 0},
+            end_timestamp={"seconds": 1005, "nanos": 0},
         )
-        t_start = Timestamp(seconds=1000, nanos=0)
-        t_end = Timestamp(seconds=1005, nanos=0)
-        claim.start_timestamp.CopyFrom(t_start)
-        claim.end_timestamp.CopyFrom(t_end)
 
         data_bytes = claim.SerializeToString()
         envelope = {
@@ -302,11 +286,9 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
             external_id="ext-1234",
+            start_timestamp={"seconds": 1000, "nanos": 0},
+            end_timestamp={"seconds": 1005, "nanos": 0},
         )
-        t_start = Timestamp(seconds=1000, nanos=0)
-        t_end = Timestamp(seconds=1005, nanos=0)
-        claim.start_timestamp.CopyFrom(t_start)
-        claim.end_timestamp.CopyFrom(t_end)
 
         data_bytes = claim.SerializeToString()
         envelope = {
@@ -365,12 +347,9 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
             external_id="ext-1234",
+            start_timestamp={"seconds": 1000, "nanos": 0},
+            end_timestamp={"seconds": 1065, "nanos": 0},
         )
-        # 65 seconds duration
-        t_start = Timestamp(seconds=1000, nanos=0)
-        t_end = Timestamp(seconds=1065, nanos=0)
-        claim.start_timestamp.CopyFrom(t_start)
-        claim.end_timestamp.CopyFrom(t_end)
 
         data_bytes = claim.SerializeToString()
         envelope = {
@@ -433,11 +412,9 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
             external_id="ext-1234",
+            start_timestamp={"seconds": 1000, "nanos": 0},
+            end_timestamp={"seconds": 1005, "nanos": 0},
         )
-        t_start = Timestamp(seconds=1000, nanos=0)
-        t_end = Timestamp(seconds=1005, nanos=0)
-        claim.start_timestamp.CopyFrom(t_start)
-        claim.end_timestamp.CopyFrom(t_end)
 
         data_bytes = claim.SerializeToString()
         envelope = {
@@ -495,11 +472,9 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
             external_id="ext-1234",
+            start_timestamp={"seconds": 1000, "nanos": 0},
+            end_timestamp={"seconds": 1005, "nanos": 0},
         )
-        t_start = Timestamp(seconds=1000, nanos=0)
-        t_end = Timestamp(seconds=1005, nanos=0)
-        claim.start_timestamp.CopyFrom(t_start)
-        claim.end_timestamp.CopyFrom(t_end)
 
         data_bytes = claim.SerializeToString()
         envelope = {
@@ -556,11 +531,9 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
             external_id="ext-1234",
+            start_timestamp={"seconds": 1000, "nanos": 0},
+            end_timestamp={"seconds": 1005, "nanos": 0},
         )
-        t_start = Timestamp(seconds=1000, nanos=0)
-        t_end = Timestamp(seconds=1005, nanos=0)
-        claim.start_timestamp.CopyFrom(t_start)
-        claim.end_timestamp.CopyFrom(t_end)
 
         data_bytes = claim.SerializeToString()
         envelope = {
@@ -616,11 +589,9 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
             external_id="ext-1234",
+            start_timestamp={"seconds": 1000, "nanos": 0},
+            end_timestamp={"seconds": 1005, "nanos": 0},
         )
-        t_start = Timestamp(seconds=1000, nanos=0)
-        t_end = Timestamp(seconds=1005, nanos=0)
-        claim.start_timestamp.CopyFrom(t_start)
-        claim.end_timestamp.CopyFrom(t_end)
 
         data_bytes = claim.SerializeToString()
         envelope = {
@@ -680,11 +651,9 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
             external_id="ext-1234",
+            start_timestamp={"seconds": 1000, "nanos": 0},
+            end_timestamp={"seconds": 1005, "nanos": 0},
         )
-        t_start = Timestamp(seconds=1000, nanos=0)
-        t_end = Timestamp(seconds=1005, nanos=0)
-        claim.start_timestamp.CopyFrom(t_start)
-        claim.end_timestamp.CopyFrom(t_end)
 
         data_bytes = claim.SerializeToString()
         envelope = {
@@ -744,11 +713,9 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
             external_id="ext-1234",
+            start_timestamp={"seconds": 1000, "nanos": 0},
+            end_timestamp={"seconds": 1005, "nanos": 0},
         )
-        t_start = Timestamp(seconds=1000, nanos=0)
-        t_end = Timestamp(seconds=1005, nanos=0)
-        claim.start_timestamp.CopyFrom(t_start)
-        claim.end_timestamp.CopyFrom(t_end)
 
         data_bytes = claim.SerializeToString()
         envelope = {
