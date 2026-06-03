@@ -365,7 +365,7 @@ JOIN feed_properties fp ON f.id = fp.feed_id
 WHERE f.id = $1
 """
 
-LIST_FEEDS_SQL = """\
+LIST_FEEDS_DESC_SQL = """\
 SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
@@ -373,8 +373,30 @@ SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        fp.source_feed_id, fp.external_id, fp.tags
 FROM feeds f
 JOIN feed_properties fp ON f.id = fp.feed_id
-ORDER BY f.created_at DESC
+WHERE ($1::timestamptz IS NULL OR f.created_at < $1 OR (f.created_at = $1 AND f.id < $2))
+  AND ($3::text[] IS NULL OR f.source_type = ANY($3))
+  AND ($4::text[] IS NULL OR f.status::text = ANY($4))
+  AND ($5::jsonb IS NULL OR fp.tags @> $5::jsonb)
+ORDER BY f.created_at DESC, f.id DESC
+LIMIT $6
 """
+
+LIST_FEEDS_ASC_SQL = """\
+SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
+       f.status_reason_updated_at, f.failure_count,
+       f.worker_id, f.last_heartbeat, f.last_processed_filename,
+       f.last_bookmark_time, f.created_at,
+       fp.source_feed_id, fp.external_id, fp.tags
+FROM feeds f
+JOIN feed_properties fp ON f.id = fp.feed_id
+WHERE ($1::timestamptz IS NULL OR f.created_at > $1 OR (f.created_at = $1 AND f.id > $2))
+  AND ($3::text[] IS NULL OR f.source_type = ANY($3))
+  AND ($4::text[] IS NULL OR f.status::text = ANY($4))
+  AND ($5::jsonb IS NULL OR fp.tags @> $5::jsonb)
+ORDER BY f.created_at ASC, f.id ASC
+LIMIT $6
+"""
+
 
 DEACTIVATE_FEED_SQL = """\
 UPDATE feeds
