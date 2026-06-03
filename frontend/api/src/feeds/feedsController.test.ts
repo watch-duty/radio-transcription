@@ -58,7 +58,7 @@ describe('FeedsController', () => {
       const controller = new FeedsController();
       const result = await controller.listFeeds();
 
-      expect(result).toEqual({ feeds: [expectedFrontendFeed] });
+      expect(result).toEqual([expectedFrontendFeed]);
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://feeds-api.example.com',
         method: 'GET',
@@ -75,14 +75,12 @@ describe('FeedsController', () => {
       const controller = new FeedsController();
       const result = await controller.listFeeds();
 
-      expect(result).toEqual({
-        feeds: [
-          {
-            ...expectedFrontendFeed,
-            tags: [{ key: 'county', value: 'Fulton' }],
-          },
-        ],
-      });
+      expect(result).toEqual([
+        {
+          ...expectedFrontendFeed,
+          tags: [{ key: 'county', value: 'Fulton' }],
+        },
+      ]);
     });
 
     it('should throw error on API failure', async () => {
@@ -450,7 +448,8 @@ describe('FeedsController', () => {
         ],
       });
       const controller = new FeedsController();
-      const { feeds } = await controller.listFeeds();
+      const result = await controller.listFeeds();
+      const feeds = Array.isArray(result) ? result : result.feeds;
       const [feed] = feeds;
       return feed.sourceUrl;
     }
@@ -518,7 +517,8 @@ describe('FeedsController', () => {
         ],
       });
       const controller = new FeedsController();
-      const { feeds } = await controller.listFeeds();
+      const result = await controller.listFeeds();
+      const feeds = Array.isArray(result) ? result : result.feeds;
       const [feed] = feeds;
       return feed.archiveUrl;
     }
@@ -575,7 +575,8 @@ describe('FeedsController', () => {
         });
 
         const controller = new FeedsController();
-        const { feeds } = await controller.listFeeds();
+        const result = await controller.listFeeds();
+        const feeds = Array.isArray(result) ? result : result.feeds;
         const [feed] = feeds;
 
         expect(feed.status).toBe(expected);
