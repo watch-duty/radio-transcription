@@ -609,7 +609,9 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
             self.engine.processor = val
 
 
-@beam.typehints.with_input_types(tuple[str, datatypes.ChunkMetadata])
+@beam.typehints.with_input_types(
+    tuple[tuple[str, str], datatypes.ChunkMetadata]
+)
 @beam.typehints.with_output_types(tuple[str, datatypes.FlushRequest])
 class OrderedSegmentedStitchAudioFn(beam.DoFn):
     """Stateful Apache Beam DoFn orchestrating out-of-order sequence buffers for segmented audio feeds.
@@ -719,7 +721,7 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
     @override
     def process(
         self,
-        element: tuple[str, datatypes.ChunkMetadata],
+        element: tuple[tuple[str, str], datatypes.ChunkMetadata],
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
         transmission_buffer_state: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
@@ -731,7 +733,8 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
         tuple[str, datatypes.FlushRequest] | datatypes.NormalizationDlqOutput
     ]:
         """Intercepts chunk arrival, resolves chronological ordering, and delegates to StitcherEngine."""
-        feed_id, metadata = element
+        key, metadata = element
+        feed_id, _ = key
         traceparent = metadata.traceparent or ""
 
         results = []
@@ -752,7 +755,7 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
 
             # Handle chronological sequence buffering
             elements_to_emit, curr_context, session_changed = process_ordering(
-                element,
+                (feed_id, metadata),
                 timestamp,
                 curr_context,
                 out_of_order_timer,

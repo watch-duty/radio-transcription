@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Annotated
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 
 from backend.pipeline.common.auth import verify_oidc_token
+from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.storage.audio_segment_store import (
     AudioSegmentStore,
     SortOrder,
@@ -103,6 +104,11 @@ async def create_audio_segment(
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except AlreadyExistsError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
             detail=str(e),
         )
 

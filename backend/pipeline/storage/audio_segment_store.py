@@ -11,6 +11,7 @@ from pydantic import TypeAdapter
 if TYPE_CHECKING:
     import datetime
 
+from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.storage import audio_segment_queries
 from backend.pipeline.storage.pagination_utils import (
     SortOrder,
@@ -113,6 +114,7 @@ class AudioSegmentStore:
         *,
         missing_prior_context: bool,
         missing_post_context: bool,
+        segment_id: str | None = None,
     ) -> AudioSegment:
         """Create a new audio segment."""
         try:
@@ -121,22 +123,33 @@ class AudioSegmentStore:
             msg = f"Invalid feed_id UUID: {feed_id}"
             raise ValueError(msg) from e
 
-        segment_id = uuid.uuid4()
-        row = await self._pool.fetchrow(
-            audio_segment_queries.CREATE_AUDIO_SEGMENT_SQL,
-            segment_id,
-            feed_uuid,
-            classification,
-            start_timestamp,
-            end_timestamp,
-            missing_prior_context,
-            missing_post_context,
-            source_audio_uris,
-            canonical_audio_uri,
-            start_audio_offset,
-            end_audio_offset,
-            playback_audio_uri,
-        )
+        if segment_id:
+            try:
+                seg_uuid = uuid.UUID(segment_id)
+            except ValueError as e:
+                msg = f"Invalid segment_id UUID: {segment_id}"
+                raise ValueError(msg) from e
+        else:
+            seg_uuid = uuid.uuid4()
+
+        try:
+            row = await self._pool.fetchrow(
+                audio_segment_queries.CREATE_AUDIO_SEGMENT_SQL,
+                seg_uuid,
+                feed_uuid,
+                classification,
+                start_timestamp,
+                end_timestamp,
+                missing_prior_context,
+                missing_post_context,
+                source_audio_uris,
+                canonical_audio_uri,
+                start_audio_offset,
+                end_audio_offset,
+                playback_audio_uri,
+            )
+        except asyncpg.exceptions.UniqueViolationError as e:
+            raise AlreadyExistsError(str(seg_uuid)) from e
 
         if row is None:
             msg = "Unable to create audio segment."

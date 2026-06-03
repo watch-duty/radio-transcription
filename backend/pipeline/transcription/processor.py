@@ -84,6 +84,9 @@ class TranscriptionEventProcessor:
                 claim.canonical_audio_uri,
             )
 
+            # Ensure parent audio segment exists in database before proceeding
+            self._create_audio_segment(claim)
+
             try:
                 # Determine audio duration from start and end timestamps
                 duration_ms = self._get_duration_ms(claim)
@@ -193,6 +196,63 @@ class TranscriptionEventProcessor:
             raise
         else:
             return claim
+
+    def _create_audio_segment(self, claim: NormalizedAudio) -> None:
+        """Creates the parent audio segment in the database if it doesn't exist."""
+        if self.audio_segments_client is None:
+            return
+
+        try:
+            start_offset = None
+            if claim.HasField("start_audio_offset"):
+                start_offset = claim.start_audio_offset.ToTimedelta()
+
+            end_offset = None
+            if claim.HasField("end_audio_offset"):
+                end_offset = claim.end_audio_offset.ToTimedelta()
+
+            segment_data = {
+                "id": claim.transmission_id,
+                "feed_id": claim.feed_id,
+                "classification": "SPEECH_DETECTED",
+                "start_timestamp": claim.start_timestamp.ToDatetime().isoformat(),
+                "end_timestamp": claim.end_timestamp.ToDatetime().isoformat(),
+                "missing_prior_context": claim.missing_prior_context,
+                "missing_post_context": claim.missing_post_context,
+                "source_audio_uris": list(claim.source_audio_uris),
+                "canonical_audio_uri": claim.canonical_audio_uri or None,
+                "start_audio_offset": start_offset.total_seconds()
+                if start_offset
+                else None,
+                "end_audio_offset": end_offset.total_seconds()
+                if end_offset
+                else None,
+                "playback_audio_uri": claim.playback_audio_uri or None,
+            }
+
+            self.audio_segments_client.add_audio_segment(segment_data)
+            logger.info(
+                "Successfully created audio segment for transmission %s",
+                claim.transmission_id,
+            )
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 409:
+                logger.info(
+                    "Audio segment %s already exists. Continuing.",
+                    claim.transmission_id,
+                )
+                return
+            logger.exception(
+                "Failed to create audio segment %s: %s",
+                claim.transmission_id,
+                e,
+            )
+        except Exception as e:
+            logger.exception(
+                "Failed to create audio segment %s: %s",
+                claim.transmission_id,
+                e,
+            )
 
     def _write_transcript_annotation(
         self, transmission_id: str, transcript: str, errors: list[str]

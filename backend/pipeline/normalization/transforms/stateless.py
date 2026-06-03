@@ -98,6 +98,17 @@ class ParseAndKeyFn(beam.DoFn):
             with tracer.start_as_current_span(
                 "receive_audio_chunk_for_normalization", context=context
             ):
+                if (
+                    element.attributes is None
+                    or "traceparent" not in element.attributes
+                ):
+                    logger.warning(
+                        "No traceparent found in Pub/Sub message attributes! "
+                        "Attributes: %s, GCS URI: %s, Feed ID: %s",
+                        element.attributes,
+                        chunk_proto.gcs_uri,
+                        feed_id,
+                    )
                 if not feed_id:
                     msg = "AudioChunk missing required feed_id"
                     _raise(msg)

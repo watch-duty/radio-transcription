@@ -186,16 +186,24 @@ def get_pipeline(
     dlq_list.append(continuous_stitching[DEAD_LETTER_QUEUE_TAG])
     dlq_list.append(continuous_parsed[DEAD_LETTER_QUEUE_TAG])
 
-    segmented_stitching = segmented_parsed[
+    segmented_keyed_by_session = segmented_parsed[
         MAIN_TAG
-    ] | "OrderedSegmentedStitchAudio" >> beam.ParDo(
-        OrderedSegmentedStitchAudioFn(
-            order_config=OrderRestorerConfig(
-                out_of_order_timeout_ms=ooo_timeout_segmented,
-            ),
-            stitch_config=segmented_config,
-        )
-    ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+    ] | "KeySegmentedBySession" >> beam.Map(
+        lambda x: ((x[0], x[1].session_id), x[1])
+    )
+
+    segmented_stitching = (
+        segmented_keyed_by_session
+        | "OrderedSegmentedStitchAudio"
+        >> beam.ParDo(
+            OrderedSegmentedStitchAudioFn(
+                order_config=OrderRestorerConfig(
+                    out_of_order_timeout_ms=ooo_timeout_segmented,
+                ),
+                stitch_config=segmented_config,
+            )
+        ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+    )
     dlq_list.append(segmented_stitching[DEAD_LETTER_QUEUE_TAG])
     dlq_list.append(segmented_parsed[DEAD_LETTER_QUEUE_TAG])
 

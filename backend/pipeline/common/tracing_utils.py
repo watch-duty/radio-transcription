@@ -2,11 +2,12 @@
 
 import os
 import threading
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 
 from opentelemetry.context import Context
 from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
+from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import (
     BatchSpanProcessor,
@@ -28,7 +29,9 @@ from backend.pipeline.common.env import is_gcp_env
 _setup_lock = threading.Lock()
 
 
-def setup_tracing(*, use_batch: bool = True) -> None:
+def setup_tracing(
+    *, use_batch: bool = True, service_name: str | None = None
+) -> None:
     """Sets up tracing for the context thread-safely.
 
     Messages are sent to CloudTrace through the span provider and processor.
@@ -54,7 +57,15 @@ def setup_tracing(*, use_batch: bool = True) -> None:
         if not project_id:
             msg = "GOOGLE_CLOUD_PROJECT environment variable must be set in GCP environment."
             raise ValueError(msg)
-        provider = TracerProvider()
+
+        resolved_service_name = (
+            service_name
+            or os.environ.get("OTEL_SERVICE_NAME")
+            or os.environ.get("K_SERVICE")
+            or "radio-transcription"
+        )
+        resource = Resource(attributes={"service.name": resolved_service_name})
+        provider = TracerProvider(resource=resource)
         exporter = CloudTraceSpanExporter(project_id=project_id)
 
         if use_batch:
@@ -113,7 +124,7 @@ def with_tracer_context(
     traceparent: str,
     span_name: str,
     tracer_name: str,
-) -> Iterator[Span]:
+) -> Generator[Span]:
     """Context manager to create a trace context and start a span.
 
     Args:

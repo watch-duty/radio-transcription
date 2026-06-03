@@ -916,18 +916,31 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 TestStream(
                     coder=beam.coders.TupleCoder(
                         (
-                            beam.coders.StrUtf8Coder(),
+                            beam.coders.TupleCoder(
+                                (
+                                    beam.coders.StrUtf8Coder(),
+                                    beam.coders.StrUtf8Coder(),
+                                )
+                            ),
                             trans_coders.ChunkMetadataCoder(),
                         )
                     )
                 )
                 .advance_watermark_to(100)
                 .add_elements(
-                    [TimestampedValue(("test-feed", metadata_chunk1), 100)]
+                    [
+                        TimestampedValue(
+                            (("test-feed", "session-A"), metadata_chunk1), 100
+                        )
+                    ]
                 )
                 .advance_watermark_to(200)
                 .add_elements(
-                    [TimestampedValue(("test-feed", metadata_chunk2), 200)]
+                    [
+                        TimestampedValue(
+                            (("test-feed", "session-B"), metadata_chunk2), 200
+                        )
+                    ]
                 )
                 .advance_watermark_to_infinity()
             )
@@ -1614,7 +1627,7 @@ class OrderedSegmentedStitchAudioTest(unittest.TestCase):
 
         outputs = list(
             fn.process(
-                element=("segmented-feed", metadata),
+                element=(("segmented-feed", "same-session-id"), metadata),
                 timestamp=Timestamp(10),
                 transmission_buffer_state=mock_state_buffer,  # type: ignore
                 transmission_context_state=mock_state_context,  # type: ignore
@@ -1959,7 +1972,7 @@ class DlqTaggingTest(unittest.TestCase):
         # Process chunk (since it is segmented, it will trigger an immediate flush within the same process call)
         outputs = list(
             fn.process(
-                element=("test-feed", metadata),
+                element=(("test-feed", "test-session"), metadata),
                 timestamp=Timestamp(100),
                 transmission_buffer_state=mock_state_buffer,
                 transmission_context_state=mock_state_context,

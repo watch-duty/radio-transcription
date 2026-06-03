@@ -69,6 +69,7 @@ class AudioSegmentService:
             playback_audio_uri=segment.playback_audio_uri,
             missing_prior_context=segment.missing_prior_context,
             missing_post_context=segment.missing_post_context,
+            segment_id=segment.id,
         )
 
     async def add_annotation(

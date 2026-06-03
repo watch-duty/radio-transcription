@@ -155,6 +155,49 @@ class TestAudioSegmentsAPI(unittest.TestCase):
         self.assertEqual(data["id"], _SEGMENT_ID)
         self.mock_service.create_audio_segment.assert_called_once()
 
+    def test_create_audio_segment_with_custom_id_success(self) -> None:
+        """Test creating an audio segment with custom ID successfully."""
+        custom_id = "11111111-2222-3333-4444-555555555555"
+        payload = {
+            "id": custom_id,
+            "feed_id": _FEED_ID,
+            "classification": "SPEECH_DETECTED",
+            "start_timestamp": "2026-01-01T00:00:00Z",
+            "end_timestamp": "2026-01-01T00:01:00Z",
+            "missing_prior_context": False,
+            "missing_post_context": False,
+            "source_audio_uris": ["gs://bucket/audio1.ogg"],
+            "canonical_audio_uri": "gs://bucket/canonical.ogg",
+            "start_audio_offset": "PT5S",
+            "end_audio_offset": "PT10S",
+            "playback_audio_uri": None,
+        }
+        mock_segment = AudioSegment(
+            id=custom_id,
+            feed_id=_FEED_ID,
+            classification=AudioClassification.SPEECH_DETECTED,
+            start_timestamp=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+            end_timestamp=datetime.datetime(
+                2026, 1, 1, 0, 1, tzinfo=datetime.UTC
+            ),
+            missing_prior_context=False,
+            missing_post_context=False,
+            source_audio_uris=["gs://bucket/audio1.ogg"],
+            canonical_audio_uri="gs://bucket/canonical.ogg",
+            start_audio_offset=datetime.timedelta(seconds=5),
+            end_audio_offset=datetime.timedelta(seconds=10),
+            playback_audio_uri=None,
+            created_at=datetime.datetime(2026, 1, 1, 0, 2, tzinfo=datetime.UTC),
+            annotations=[],
+        )
+        self.mock_service.create_audio_segment.return_value = mock_segment
+
+        response = self.client.post("/v1/audio_segments", json=payload)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        data = response.json()
+        self.assertEqual(data["id"], custom_id)
+        self.mock_service.create_audio_segment.assert_called_once()
+
     def test_create_audio_segment_parsing_error(self) -> None:
         """Test creating an audio segment with invalid data formats."""
         payload = {
