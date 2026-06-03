@@ -17,7 +17,7 @@ DEFAULT_LOCATION = "us-central1"
 DEFAULT_PREFLIGHT_MODEL = "gemini-3.1-flash-lite"
 DEFAULT_FULL_MODEL = "gemini-3.5-flash"
 DEFAULT_CACHE_FLUSH_INTERVAL = 500
-DEFAULT_REQUEST_TIMEOUT_MS = 120_000
+DEFAULT_REQUEST_TIMEOUT_MS = 180_000
 
 
 def main(argv: list[str] | None = None) -> int:

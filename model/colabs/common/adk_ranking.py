@@ -12,7 +12,7 @@ from common import gemini_config, prompts, ranking
 
 DEFAULT_FULL_MODEL = "gemini-3.5-flash"
 DEFAULT_PREFLIGHT_MODEL = "gemini-3.1-flash-lite"
-DEFAULT_MAX_ATTEMPTS = 3
+DEFAULT_MAX_ATTEMPTS = 5
 DEFAULT_MAX_EMPTY_ATTEMPTS = 2
 APP_NAME = "radio_transcription_review_ranking"
 USER_ID = "review-ranking"
@@ -516,6 +516,16 @@ def _generation_config() -> object:
             "max_output_tokens"
         ],
         safety_settings=gemini_config.GEMINI_SAFETY_SETTINGS,
+        thinking_config=types.ThinkingConfig(
+            thinking_level=types.ThinkingLevel[
+                gemini_config.GEMINI_THINKING_LEVEL
+            ],
+        ),
+        http_options=types.HttpOptions(
+            retry_options=types.HttpRetryOptions(
+                **gemini_config.GEMINI_HTTP_RETRY_CONFIG,
+            ),
+        ),
     )
 
 

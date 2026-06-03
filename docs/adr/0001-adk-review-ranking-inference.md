@@ -19,6 +19,13 @@ turn per audio segment by using no tools or sub-agents and setting
 Preflight uses `gemini-3.1-flash-lite` to keep smoke validation cheap. The
 authoritative full run uses `gemini-3.5-flash`.
 
+The review-ranking ADK request config follows the merged production
+transcription notebook for request robustness: temperature `0.0`, max output
+tokens `512`, Gemini thinking level `LOW`, native GenAI HTTP retry options
+(`attempts=5`, exponential backoff up to 60 seconds), and a 180-second
+per-request timeout guard. This preserves some model reasoning while avoiding
+the higher cost/latency profile of unrestricted thinking.
+
 The authoritative `rank_gemini.py run` command has no row limit. Correct review
 ranking depends on scoring the full review dataset, so partial inference would
 produce an incomplete global ordering. Bounded smoke validation belongs to

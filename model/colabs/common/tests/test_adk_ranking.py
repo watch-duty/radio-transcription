@@ -209,6 +209,18 @@ class TestAdkPredictionExtraction(unittest.TestCase):
         self.assertEqual(len(adk_runner.loops), 2)
         self.assertIs(adk_runner.loops[0], adk_runner.loops[1])
 
+    def test_generation_config_uses_low_thinking_and_native_retry(self) -> None:
+        from common import adk_ranking
+
+        config = adk_ranking._generation_config()
+
+        self.assertEqual(config.thinking_config.thinking_level.value, "LOW")
+        retry_options = config.http_options.retry_options
+        self.assertEqual(retry_options.attempts, 5)
+        self.assertEqual(retry_options.initial_delay, 1.0)
+        self.assertEqual(retry_options.max_delay, 60.0)
+        self.assertEqual(retry_options.exp_base, 2.0)
+
 
 class TestSourceGroupPredictions(unittest.TestCase):
     def test_cache_hit_replays_linked_prior_success(self) -> None:
@@ -281,6 +293,7 @@ class TestSourceGroupPredictions(unittest.TestCase):
             prompt_fp="prompt-fp",
             context_policy_fp="context-policy-fp",
             created_at="2026-06-03T00:00:00Z",
+            max_attempts=3,
         )
 
         self.assertIn("RuntimeError", new_entries[0].error)
