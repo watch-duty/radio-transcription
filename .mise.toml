@@ -176,7 +176,7 @@ yarn --cwd frontend/transcription-ui dev
 [tasks."dev:remote"]
 description = "Run frontend on host (BFF + UI) and connect to dev backend in GCP"
 depends = ["dev:stop"]
-env = { ALLOWED_ORIGIN = false, API_PUBLIC_URL = false, AUDIO_SEGMENTS_API_URL = false, FEEDS_STORE_API_URL = false, GOOGLE_AUTH_CLIENT_ID = false, GOOGLE_AUTH_CLIENT_SECRET = false, PROJECT_ID = false, RULES_API_URL = false, TRANSCRIPTS_API_URL = false, VITE_API_BASE_URL = "", VITE_PROXY_API_TARGET = "http://localhost:8080" }
+env = { VITE_API_BASE_URL = "", VITE_PROXY_API_TARGET = "http://localhost:8080" }
 run = """
 if [ ! -f frontend/api/.env.local ] || [ ! -f frontend/transcription-ui/.env.dev.local ]; then
   echo "No configuration found. Initializing..."
