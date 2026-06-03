@@ -475,6 +475,7 @@ export function RuleConfigurationEdit({
                 />
               }
               label="Is Active"
+              sx={{ alignSelf: 'flex-start' }}
             />
 
             <Divider sx={{ my: 1 }} />
