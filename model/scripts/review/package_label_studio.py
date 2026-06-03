@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import collections.abc
 import csv
 import json
 import pathlib
 import sys
 import tempfile
 
-from common import gcs_utils
-from common import label_studio_review
-
+from common import gcs_utils, label_studio_review
 
 DEFAULT_BUCKET_URI = "gs://wd-transcription-data"
 
@@ -147,7 +146,7 @@ def _write_preview_csv(
 
 def _write_local_or_gcs(
     path: str,
-    writer: object,
+    writer: collections.abc.Callable[[pathlib.Path], None],
 ) -> None:
     if _is_gcs_uri(path):
         storage_client = _new_storage_client()
