@@ -284,7 +284,6 @@ class TestFeedsAPI(unittest.TestCase):
         detail = response.json()["detail"]
         self.assertIn("format for tags", detail)
 
-
     def test_deactivate_feed_success(self) -> None:
         """Test deactivating a feed successfully."""
         feed_id = uuid.uuid4()
