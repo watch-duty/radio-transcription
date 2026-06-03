@@ -57,6 +57,10 @@ SELECT cron.schedule(
     WITH abandoned AS MATERIALIZED (
         SELECT id, last_heartbeat FROM public.feeds
          WHERE status = 'active'::feed_status
+           -- Echo feeds are event-driven/push-based (processed via Cloud Run triggers). They
+           -- do not have active worker lease loops/heartbeats, so they remain in 'active'
+           -- status permanently once initialized and should not be swept back to 'unclaimed'.
+           AND source_type != 'echo'
            AND last_heartbeat < NOW() - INTERVAL '60 seconds'
          LIMIT 500
          FOR UPDATE SKIP LOCKED
