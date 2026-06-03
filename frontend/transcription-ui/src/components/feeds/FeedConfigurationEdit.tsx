@@ -112,8 +112,8 @@ interface FeedConfigurationEditProps {
   feedSourceType: SourceType;
   feedSourceId: string;
   feedTags: Tag[];
-  feedStatus: FeedStatus;
-  feedSubstatus: BackendFeedStatus;
+  feedStatus?: FeedStatus;
+  feedSubstatus?: BackendFeedStatus;
   setFeedName: (name: string) => void;
   setFeedSourceType: (sourceType: SourceType) => void;
   setFeedSourceId: (sourceFeedId: string) => void;
@@ -717,6 +717,7 @@ export function FeedConfigurationEdit({
                       {onResetFeed &&
                         feedStatus != null &&
                         feedStatus !== 'active' &&
+                        feedSubstatus != null &&
                         feedSubstatus !== 'unclaimed' && (
                           <MenuItem
                             onClick={handleResetClick}
