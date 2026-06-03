@@ -464,6 +464,8 @@ class VoiceActivityDetector:
 
         # 1. Perform physical audio concatenation at native sample_rate
         if prior_audio is not None and len(prior_audio) > 0:
+            if not is_fallback_priming:
+                prior_audio = self._peak_normalize(prior_audio)
             prior_len_sec = len(prior_audio) / float(sample_rate)
             extended_native = np.concatenate([prior_audio, audio_array])
         else:
