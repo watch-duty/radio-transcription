@@ -1975,3 +1975,111 @@ class DlqTaggingTest(unittest.TestCase):
         _feed_id, flush_request = outputs[0]
         # sample_rate must be 8000 (correctly resolved from chunk_data on immediate flush)
         self.assertEqual(flush_request.sample_rate, 8000)
+
+    @patch(
+        "backend.pipeline.normalization.transforms.stitcher_engine.audio_processor.AudioProcessor"
+    )
+    def test_no_trace_or_session_leak_after_stale_flush(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that clearing the state context completely on stale flush prevents any
+        traceparent or session_id from leaking to subsequent unrelated sessions.
+        """
+        mock_processor_inst = mock_audio_processor.return_value
+        chunk_data_1 = AudioChunkData(
+            start_ms=100000,
+            audio=np.zeros(16000 * 3, dtype=np.int16),
+            speech_segments=[TimeRange(0, 3000)],
+            gcs_uri="gs://bucket/chunk1.flac",
+            duration_ms=3000,
+            sample_rate=16000,
+        )
+        chunk_data_2 = AudioChunkData(
+            start_ms=200000,
+            audio=np.zeros(16000 * 3, dtype=np.int16),
+            speech_segments=[TimeRange(0, 3000)],
+            gcs_uri="gs://bucket/chunk2.flac",
+            duration_ms=3000,
+            sample_rate=16000,
+        )
+        mock_processor_inst.download_audio_and_detect.side_effect = [
+            chunk_data_1,
+            chunk_data_2,
+        ]
+
+        fn, mock_state_context, mock_state_buffer, mock_last_start_ms = (
+            self._make_fn_and_states(OrderedContinuousStitchAudioFn)
+        )
+        fn.setup()
+
+        # 1. Process first chunk (Session 1, Trace 1)
+        metadata_1 = ChunkMetadata(
+            gcs_uri="gs://bucket/chunk1.flac",
+            session_id="session-1",
+            duration_ms=3000,
+            feed_metadata=FeedMetadata(
+                feed_name="test-feed", external_id="ext-id"
+            ),
+            traceparent="traceparent-1",
+        )
+        list(
+            fn.process(
+                element=("test-feed", metadata_1),
+                timestamp=Timestamp(100),
+                transmission_buffer_state=mock_state_buffer,
+                transmission_context_state=mock_state_context,
+                last_start_ms_state=mock_last_start_ms,
+                out_of_order_timer=MagicMock(),
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        # Active context must be set to Session 1, Trace 1
+        saved_context_1 = mock_state_context.read()
+        self.assertEqual(saved_context_1.session_id, "session-1")
+        self.assertEqual(saved_context_1.traceparent, "traceparent-1")
+
+        # 2. Trigger stale flush (clears everything cleanly via .clear())
+        list(
+            fn.handle_stale_transmission_event(
+                key="test-feed",
+                transmission_buffer=mock_state_buffer,
+                transmission_context=mock_state_context,
+                last_start_ms_state=mock_last_start_ms,
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        # Verify state is completely empty
+        self.assertIsNone(mock_state_context.read())
+
+        # 3. Process second chunk (Session 2, Trace 2) after the clean reset
+        metadata_2 = ChunkMetadata(
+            gcs_uri="gs://bucket/chunk2.flac",
+            session_id="session-2",
+            duration_ms=3000,
+            feed_metadata=FeedMetadata(
+                feed_name="test-feed", external_id="ext-id"
+            ),
+            traceparent="traceparent-2",
+        )
+        list(
+            fn.process(
+                element=("test-feed", metadata_2),
+                timestamp=Timestamp(200),
+                transmission_buffer_state=mock_state_buffer,
+                transmission_context_state=mock_state_context,
+                last_start_ms_state=mock_last_start_ms,
+                out_of_order_timer=MagicMock(),
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        # Active context must now be set strictly to Session 2, Trace 2 with NO traces of Session 1!
+        saved_context_2 = mock_state_context.read()
+        self.assertIsNotNone(saved_context_2)
+        self.assertEqual(saved_context_2.session_id, "session-2")
+        self.assertEqual(saved_context_2.traceparent, "traceparent-2")
