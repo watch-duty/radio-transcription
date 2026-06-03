@@ -5,7 +5,28 @@ import subprocess
 import sys
 
 
-def check_adc(project_id="probable-symbol-492218-i7"):
+def get_gcloud_project():
+    project = os.environ.get("PROJECT_ID") or os.environ.get(
+        "GOOGLE_CLOUD_PROJECT"
+    )
+    if project:
+        return project
+    try:
+        result = subprocess.run(
+            ["gcloud", "config", "get-value", "project"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        project = result.stdout.strip()
+        if project:
+            return project
+    except Exception:
+        pass
+    return "<PROJECT_ID>"
+
+
+def check_adc():
     if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
         return
     adc_path = os.path.expanduser(
@@ -24,6 +45,7 @@ def check_adc(project_id="probable-symbol-492218-i7"):
         except Exception:
             pass
 
+    project_id = get_gcloud_project()
     print(
         "\n[ERROR] Application Default Credentials (ADC) are missing or not impersonating the dev service account."
     )
