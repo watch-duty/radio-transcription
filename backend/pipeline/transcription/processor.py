@@ -8,6 +8,7 @@ import base64
 import logging
 
 import grpc
+import requests
 from cloudevents.http.event import CloudEvent
 from google.api_core.exceptions import GoogleAPICallError
 from google.cloud import pubsub_v1
@@ -226,11 +227,12 @@ class TranscriptionEventProcessor:
 
 def _is_transient_exception(e: Exception) -> bool:
     """Determines if an exception is transient and should be retried."""
+    is_transient = False
     match e:
         case GoogleAPICallError() if e.code in (429, 409) or (
             e.code and e.code >= 500
         ):
-            return True
+            is_transient = True
         case grpc.Call():
             try:
                 match e.code():
@@ -241,11 +243,18 @@ def _is_transient_exception(e: Exception) -> bool:
                         | grpc.StatusCode.INTERNAL
                         | grpc.StatusCode.ABORTED
                     ):
-                        return True
+                        is_transient = True
             except (AttributeError, TypeError, ValueError):
                 pass
-            return False
         case ConnectionError() | TimeoutError():
-            return True
-        case _:
-            return False
+            is_transient = True
+        case (
+            requests.exceptions.Timeout()
+            | requests.exceptions.ConnectionError()
+        ):
+            is_transient = True
+        case requests.exceptions.HTTPError() if e.response is not None and (
+            e.response.status_code == 429 or e.response.status_code >= 500
+        ):
+            is_transient = True
+    return is_transient
