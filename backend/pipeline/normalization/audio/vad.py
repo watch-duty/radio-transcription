@@ -360,6 +360,23 @@ class VoiceActivityDetector:
 
         return True
 
+    def _filter_noise_segments(
+        self,
+        shifted_segments: list[tuple[float, float]],
+        vad_input: np.ndarray,
+        vad_offset_sec: float,
+        chunk_size: int,
+    ) -> list[tuple[float, float]]:
+        """Filters out transient clicks/noise segments from the list of VAD-detected segments."""
+        filtered_segments = []
+        for start, end in shifted_segments:
+            start_idx = int((start + vad_offset_sec) * TARGET_SAMPLE_RATE)
+            end_idx = int((end + vad_offset_sec) * TARGET_SAMPLE_RATE)
+            seg_signal = vad_input[start_idx:end_idx]
+            if self._is_speech_segment(seg_signal, chunk_size):
+                filtered_segments.append((start, end))
+        return filtered_segments
+
     def _extract_vad_frames(
         self,
         vad_input: np.ndarray,
@@ -545,14 +562,9 @@ class VoiceActivityDetector:
             raw_segments, vad_offset_sec
         )
 
-        # Filter out noise spikes/transients using spikiness & amplitude floor heuristics
-        filtered_segments = []
-        for start, end in shifted_segments:
-            start_idx = int((start + vad_offset_sec) * TARGET_SAMPLE_RATE)
-            end_idx = int((end + vad_offset_sec) * TARGET_SAMPLE_RATE)
-            seg_signal = vad_input[start_idx:end_idx]
-            if self._is_speech_segment(seg_signal, chunk_size):
-                filtered_segments.append((start, end))
+        filtered_segments = self._filter_noise_segments(
+            shifted_segments, vad_input, vad_offset_sec, chunk_size
+        )
 
         # Pad and merge overlapping segments using the clean native-rate duration calculation
         audio_len_sec = len(audio_array) / float(sample_rate)
