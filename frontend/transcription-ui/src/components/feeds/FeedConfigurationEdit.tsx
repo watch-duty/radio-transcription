@@ -33,7 +33,10 @@ import type {
 } from '@transcription/common';
 import { SourceType } from '@transcription/common';
 
-import { ConfirmationDialog, type ConfirmationDialogProps } from '../common/ConfirmationDialog';
+import {
+  ConfirmationDialog,
+  type ConfirmationDialogProps,
+} from '../common/ConfirmationDialog';
 
 const SOURCE_TYPE_OPTIONS: {
   value: SourceType;

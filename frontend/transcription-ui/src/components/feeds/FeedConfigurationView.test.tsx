@@ -638,7 +638,7 @@ describe('FeedConfigurationView', () => {
     expect(screen.getByText('Verify Feed Deletion')).toBeInTheDocument();
     expect(
       screen.getByText(
-        'Are you sure you want to delete the feed? This will remove the feed and any associated metadata (e.g. transcripts, annotations, etc). This action is not reversible.'
+        'Are you sure you want to delete the feed? This will remove the feed and any associated metadata (e.g. transcripts, annotations, etc.). This action is not reversible.'
       )
     ).toBeInTheDocument();
 
