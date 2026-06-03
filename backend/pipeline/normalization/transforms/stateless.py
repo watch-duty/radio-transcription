@@ -24,6 +24,7 @@ from backend.pipeline.common.constants import (
 )
 from backend.pipeline.common.tracing_utils import (
     extract_trace_context,
+    get_current_traceparent,
     setup_tracing,
 )
 from backend.pipeline.normalization.common.constants import (
@@ -229,8 +230,9 @@ class SerializeFn(beam.DoFn):
                 value.time_range.end_ms * MICROSECONDS_PER_MS
             )
             attrs: dict[str, str] = {}
-            if value.traceparent:
-                attrs["traceparent"] = value.traceparent
+            current_tp = get_current_traceparent() or value.traceparent
+            if current_tp:
+                attrs["traceparent"] = current_tp
 
             yield PubsubMessage(
                 data=proto.SerializeToString(),
@@ -312,8 +314,9 @@ class SerializeNormalizationClaimFn(beam.DoFn):
                 value.time_range.end_ms * MICROSECONDS_PER_MS
             )
             attrs: dict[str, str] = {}
-            if value.traceparent:
-                attrs["traceparent"] = value.traceparent
+            current_tp = get_current_traceparent() or value.traceparent
+            if current_tp:
+                attrs["traceparent"] = current_tp
 
             yield PubsubMessage(
                 data=proto.SerializeToString(),
