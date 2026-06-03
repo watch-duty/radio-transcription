@@ -141,8 +141,24 @@ async def list_feeds(
     order: SortOrder = SortOrder.DESC,
     source_types: Annotated[list[SourceType] | None, Query()] = None,
     statuses: Annotated[list[FeedStatus] | None, Query()] = None,
+    tags: Annotated[list[str] | None, Query()] = None,
 ) -> ListFeedsResponse:
     """List all feeds with pagination and optional filters."""
+    tags_list = None
+    if tags:
+        tags_list = []
+        for tag in tags:
+            if ":" not in tag:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Invalid tag format '{tag}'. "
+                        "Tags must be in 'key:value' format."
+                    ),
+                )
+            key, val = tag.split(":", 1)
+            tags_list.append({"key": key, "value": val})
+
     service: FeedService = request.app.state.feed_service
     return await service.list_feeds(
         limit=limit,
@@ -150,6 +166,7 @@ async def list_feeds(
         order=order,
         source_types=source_types,
         statuses=statuses,
+        tags=tags_list,
     )
 
 

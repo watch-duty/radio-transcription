@@ -202,6 +202,7 @@ class TestFeedsAPI(unittest.TestCase):
             order=SortOrder.DESC,
             source_types=None,
             statuses=None,
+            tags=None,
         )
 
     def test_list_feeds_with_filters(self) -> None:
@@ -236,7 +237,50 @@ class TestFeedsAPI(unittest.TestCase):
             order=SortOrder.ASC,
             source_types=[SourceType.BCFY_FEEDS],
             statuses=[FeedStatus.ACTIVE],
+            tags=None,
         )
+
+    def test_list_feeds_with_tags(self) -> None:
+        """Test listing feeds with tags."""
+        feed_id = uuid.uuid4()
+        mock_feed = Feed(
+            id=feed_id,
+            name="Test Feed",
+            source_type=SourceType.BCFY_FEEDS,
+            source_feed_id="123",
+            external_id="ext_123",
+            status=FeedStatus.ACTIVE,
+            last_heartbeat=None,
+        )
+        self.mock_service.list_feeds.return_value = ListFeedsResponse(
+            feeds=[mock_feed],
+            next_token=None,
+        )
+        url = "/v1/feeds?tags=region:West&tags=county:Fulton"
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertIsInstance(data["feeds"], list)
+        self.assertEqual(data["feeds"][0]["id"], str(feed_id))
+        self.mock_service.list_feeds.assert_called_once_with(
+            limit=100,
+            next_token=None,
+            order=SortOrder.DESC,
+            source_types=None,
+            statuses=None,
+            tags=[
+                {"key": "region", "value": "West"},
+                {"key": "county", "value": "Fulton"},
+            ],
+        )
+
+    def test_list_feeds_with_invalid_tag_format(self) -> None:
+        """Test that invalid tag format returns 400 Bad Request."""
+        response = self.client.get("/v1/feeds?tags=invalidtag")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        detail = response.json()["detail"]
+        self.assertIn("Tags must be in 'key:value' format", detail)
+
 
     def test_deactivate_feed_success(self) -> None:
         """Test deactivating a feed successfully."""
