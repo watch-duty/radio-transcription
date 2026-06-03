@@ -6,7 +6,6 @@ import type {
   RuleUpdate,
   ScopeLevel,
 } from '@transcription/common';
-import axios from 'axios';
 import {
   Body,
   Controller,
@@ -25,7 +24,7 @@ import {
 } from 'tsoa';
 
 import { RULES_API_URL } from '../config.js';
-import { HttpError, handleBackendError } from '../utils.js';
+import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
 
 interface ScopeResponse {
   level: ScopeLevel;
@@ -218,13 +217,7 @@ export class ListRulesQueryParams {
 @Response(401, 'Unauthorized')
 export class RulesController extends Controller {
   private async getClient() {
-    // For local development against local services, bypass Google Auth
-    return {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      request: async <T>(config: any) => {
-        return (await axios(config)) as { data: T };
-      },
-    };
+    return await getServiceClient(RULES_API_URL!);
   }
 
   @Get('')
