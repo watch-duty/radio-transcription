@@ -157,6 +157,18 @@ description = "Start the entire system (backend in Docker, frontend on host)"
 depends = ["dev:start"]
 run = "yarn --cwd frontend/transcription-ui run local"
 
+[tasks."dev:whisper:start"]
+description = "Start the dev pipeline with local Whisper STT service in Docker"
+depends = ["dev:stop"]
+run = """
+docker-compose --profile local-whisper up --build -d
+"""
+
+[tasks."dev:whisper"]
+description = "Start the entire system with local Whisper STT service (backend in Docker, frontend on host)"
+depends = ["dev:whisper:start"]
+run = "yarn --cwd frontend/transcription-ui run local"
+
 [tasks."dev:remote:init"]
 description = "Automatically fetch and configure remote dev environment variables from GCP"
 run = "python3 local_dev/setup_remote_dev.py"

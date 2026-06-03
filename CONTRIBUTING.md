@@ -53,6 +53,12 @@ This option runs the entire pipeline (ingestion, transcription, rules, database,
    ```bash
    mise run dev
    ```
+   *Alternatively, to start the local environment using the local Whisper STT service:*
+   1. Set `TRANSCRIBER_TYPE=local_whisper` in `local_dev/LOCAL.env`.
+   2. Start the system:
+      ```bash
+      mise run dev:whisper
+      ```
 2. View container logs:
    ```bash
    mise run dev:log
