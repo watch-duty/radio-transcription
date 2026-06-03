@@ -67,7 +67,7 @@ class FeedService:
     async def list_feeds(self) -> list[Feed]:
         """Lists all feeds."""
         store_feeds = await self._store.list_feeds()
-        return [Feed.model_validate(f) for f in store_feeds]
+        return [Feed.model_validate(f) for f in store_feeds.feeds]
 
     async def deactivate_feed(self, feed_id: str) -> bool:
         """Deactivates a feed by ID."""
