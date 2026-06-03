@@ -56,10 +56,13 @@ class TestTaskGeneration(unittest.TestCase):
         selected = label_studio_review.select_ranked_rows(rows)
         limited = label_studio_review.select_ranked_rows(rows, limit=1)
 
-        self.assertEqual([row["audio_segment_id"] for row in selected],
-                         ["audio-a", "audio-b"])
-        self.assertEqual([row["audio_segment_id"] for row in limited],
-                         ["audio-a"])
+        self.assertEqual(
+            [row["audio_segment_id"] for row in selected],
+            ["audio-a", "audio-b"],
+        )
+        self.assertEqual(
+            [row["audio_segment_id"] for row in limited], ["audio-a"]
+        )
 
     def test_task_data_has_rendered_and_hidden_audit_fields(self) -> None:
         from common import label_studio_review
@@ -110,8 +113,7 @@ class TestLabelConfig(unittest.TestCase):
 
         self.assertIn('<Audio name="audio" value="$audio"', xml)
         self.assertIn(
-            '<Text name="reference_transcript" '
-            'value="$reference_transcript"',
+            '<Text name="reference_transcript" value="$reference_transcript"',
             xml,
         )
         self.assertIn(
@@ -139,9 +141,7 @@ class TestPackageArtifacts(unittest.TestCase):
     def test_preview_and_readme_omit_prediction_text(self) -> None:
         from common import label_studio_review
 
-        preview = label_studio_review.preview_row_from_ranked_row(
-            _ranked_row()
-        )
+        preview = label_studio_review.preview_row_from_ranked_row(_ranked_row())
         readme = label_studio_review.render_operator_readme()
 
         self.assertEqual(preview["reference_transcript"], "Engine 41 copy")

@@ -10,11 +10,7 @@ import pathlib
 import sys
 import tempfile
 
-from common import gcs_utils
-from common import gemini_ranking
-from common import prompts
-from common import ranking
-
+from common import gcs_utils, gemini_ranking, prompts, ranking
 
 DEFAULT_LOCATION = "us-central1"
 DEFAULT_PREFLIGHT_MODEL = "gemini-3.1-pro-preview"
@@ -164,13 +160,25 @@ def _score_and_write(
 
 
 def _load_jsonl(path: str) -> list[dict[str, object]]:
+    return _load_jsonl_with_missing_policy(path, missing_ok=False)
+
+
+def _load_jsonl_with_missing_policy(
+    path: str,
+    *,
+    missing_ok: bool,
+) -> list[dict[str, object]]:
     if _is_gcs_uri(path):
         storage_client = _new_storage_client()
+        if missing_ok and not gcs_utils.blob_exists(storage_client, path):
+            return []
         return gcs_utils.download_jsonl_manifest(storage_client, path)
 
     rows: list[dict[str, object]] = []
     local_path = pathlib.Path(path)
     if not local_path.exists():
+        if not missing_ok:
+            raise FileNotFoundError(f"JSONL path not found: {path}")
         return rows
     with local_path.open(encoding="utf-8") as input_file:
         for raw_line in input_file:
@@ -182,7 +190,7 @@ def _load_jsonl(path: str) -> list[dict[str, object]]:
 
 def _load_cache(path: str) -> dict[str, ranking.PredictionCacheEntry]:
     entries = {}
-    for row in _load_jsonl(path):
+    for row in _load_jsonl_with_missing_policy(path, missing_ok=True):
         entry = ranking.PredictionCacheEntry(**row)
         entries[entry.audio_segment_id] = entry
     return entries
@@ -195,7 +203,7 @@ def _append_cache_entries(
     if not entries:
         return
     if _is_gcs_uri(path):
-        current_rows = _load_jsonl(path)
+        current_rows = _load_jsonl_with_missing_policy(path, missing_ok=True)
         current_rows.extend(dataclasses.asdict(entry) for entry in entries)
         _write_jsonl(path, current_rows)
         return

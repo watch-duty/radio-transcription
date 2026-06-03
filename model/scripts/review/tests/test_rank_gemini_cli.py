@@ -88,7 +88,7 @@ def _fake_ranked_rows() -> tuple[
 
 
 class _FakeRunner:
-    instances: list["_FakeRunner"] = []
+    instances: list[_FakeRunner] = []
 
     def __init__(
         self,
@@ -161,6 +161,69 @@ class TestRankGeminiCli(unittest.TestCase):
             self.assertTrue(paths["excluded_jsonl"].exists())
             self.assertIn("ranked.csv", str(paths["ranked_csv"]))
             self.assertIn("excluded.jsonl", str(paths["excluded_jsonl"]))
+
+    def test_missing_review_pool_raises_file_not_found(self) -> None:
+        import rank_gemini
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            paths = _paths(Path(tmpdir))
+            _write_jsonl(paths["cache"], [])
+
+            with self.assertRaises(FileNotFoundError):
+                rank_gemini.main(["rank-cache", *_required_args(paths)])
+
+    def test_missing_prediction_cache_starts_empty(self) -> None:
+        import rank_gemini
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            paths = _paths(Path(tmpdir))
+            _write_jsonl(paths["review_pool"], [_row("audio-a", 1)])
+            captured: dict[str, object] = {}
+
+            def fake_score_ranked_rows(
+                _review_rows: list[dict[str, object]],
+                cache_by_audio_id: dict[str, object],
+                **_kwargs: object,
+            ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+                captured["cache_by_audio_id"] = cache_by_audio_id
+                return _fake_ranked_rows()
+
+            with unittest.mock.patch.object(
+                rank_gemini.ranking,
+                "score_ranked_rows",
+                fake_score_ranked_rows,
+            ):
+                exit_code = rank_gemini.main(
+                    ["rank-cache", *_required_args(paths)]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(captured["cache_by_audio_id"], {})
+
+    def test_missing_gcs_prediction_cache_starts_empty(self) -> None:
+        import rank_gemini
+
+        with (
+            unittest.mock.patch.object(
+                rank_gemini,
+                "_new_storage_client",
+                return_value=object(),
+            ),
+            unittest.mock.patch.object(
+                rank_gemini.gcs_utils,
+                "blob_exists",
+                return_value=False,
+            ) as blob_exists,
+            unittest.mock.patch.object(
+                rank_gemini.gcs_utils,
+                "download_jsonl_manifest",
+                side_effect=AssertionError("missing cache should not download"),
+            ),
+        ):
+            cache = rank_gemini._load_cache("gs://bucket/cache.jsonl")
+
+        self.assertEqual(cache, {})
+        blob_exists.assert_called_once()
 
     def test_preflight_defaults_preview_model_and_respects_limit(self) -> None:
         import rank_gemini

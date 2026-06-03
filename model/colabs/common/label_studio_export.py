@@ -344,10 +344,13 @@ def _reviewed_row(
     data: collections.abc.Mapping[str, object],
     submitted_transcript: str | None,
 ) -> dict[str, object]:
+    completed_at = annotation.get("completed_at") or annotation.get(
+        "updated_at"
+    )
     row = {
         "task_id": task.get("id"),
         "annotation_id": annotation.get("id"),
-        "annotation_completed_at": annotation.get("completed_at"),
+        "annotation_completed_at": completed_at,
         "annotation_updated_at": annotation.get("updated_at"),
         "annotation_completed_by": annotation.get("completed_by"),
         "annotation_lead_time": annotation.get("lead_time"),

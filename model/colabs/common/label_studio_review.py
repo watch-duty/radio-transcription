@@ -210,10 +210,9 @@ def render_operator_readme(
             "Grant the existing Label Studio service account object read access:",
             "",
             "```sh",
-            "gcloud storage buckets add-iam-policy-binding "
-            f"{bucket_uri} \\",
-            "  --member=\"serviceAccount:LABEL_STUDIO_SERVICE_ACCOUNT\" \\",
-            "  --role=\"roles/storage.objectViewer\"",
+            f"gcloud storage buckets add-iam-policy-binding {bucket_uri} \\",
+            '  --member="serviceAccount:LABEL_STUDIO_SERVICE_ACCOUNT" \\',
+            '  --role="roles/storage.objectViewer"',
             "```",
             "",
             "Do not make audio public and do not replace `gs://` task audio "

@@ -290,7 +290,10 @@ class TestLabelStudioExportParser(unittest.TestCase):
 
         self.assertEqual(result.error_rows, [])
         self.assertEqual(len(result.reviewed_rows), 1)
-        self.assertIsNone(result.reviewed_rows[0]["annotation_completed_at"])
+        self.assertEqual(
+            result.reviewed_rows[0]["annotation_completed_at"],
+            "2026-06-03T03:01:00Z",
+        )
         self.assertEqual(
             result.reviewed_rows[0]["annotation_updated_at"],
             "2026-06-03T03:01:00Z",
