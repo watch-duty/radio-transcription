@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+import json
 import logging
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 
 from backend.pipeline.common.auth import verify_oidc_token
 from backend.pipeline.common.exceptions import (
@@ -18,9 +19,14 @@ from backend.pipeline.storage.connection import (
     close_pool,
     create_pool_with_retry,
 )
-from backend.pipeline.storage.feed_store import FeedStore
+from backend.pipeline.storage.feed_store import (
+    FeedStatus,
+    FeedStore,
+    SourceType,
+)
+from backend.pipeline.storage.pagination_utils import SortOrder
 
-from .models import Feed, FeedCreate, FeedUpdate
+from .models import Feed, FeedCreate, FeedUpdate, ListFeedsResponse, Tag
 from .service import FeedService
 
 logger = logging.getLogger(__name__)
@@ -126,15 +132,55 @@ async def update_feed(
 
 @app.get(
     "/v1/feeds",
-    response_model=list[Feed],
+    response_model=ListFeedsResponse,
     tags=["feeds"],
 )
 async def list_feeds(
     request: Request,
-) -> list[Feed]:
-    """List all feeds."""
+    limit: int = 100,
+    next_token: str | None = None,
+    order: SortOrder = SortOrder.DESC,
+    source_types: Annotated[list[SourceType] | None, Query()] = None,
+    statuses: Annotated[list[FeedStatus] | None, Query()] = None,
+    tags: str | None = None,
+) -> ListFeedsResponse:
+    """List all feeds with pagination and optional filters."""
+    tags_list = None
+    if tags:
+        try:
+            tags_data = json.loads(tags)
+        except json.JSONDecodeError as e:
+            err_msg = f"Invalid format for tags: {e}"
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=err_msg,
+            ) from e
+
+        if not isinstance(tags_data, list):
+            err_msg = "Tags must be a JSON list with key, value entries."
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=err_msg,
+            )
+
+        try:
+            tags_list = [Tag.model_validate(t).model_dump() for t in tags_data]
+        except ValueError as e:
+            err_msg = f"Invalid format for tags: {e}"
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=err_msg,
+            ) from e
+
     service: FeedService = request.app.state.feed_service
-    return await service.list_feeds()
+    return await service.list_feeds(
+        limit=limit,
+        next_token=next_token,
+        order=order,
+        source_types=source_types,
+        statuses=statuses,
+        tags=tags_list,
+    )
 
 
 @app.post(

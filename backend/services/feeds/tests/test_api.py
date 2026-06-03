@@ -11,8 +11,9 @@ from backend.pipeline.common.exceptions import (
     FeedNameAlreadyExistsError,
 )
 from backend.pipeline.storage.feed_store import FeedStatus, SourceType
+from backend.pipeline.storage.pagination_utils import SortOrder
 from backend.services.feeds.main import app
-from backend.services.feeds.models import Feed, Tag
+from backend.services.feeds.models import Feed, ListFeedsResponse, Tag
 
 
 async def skip_auth() -> dict[str, str]:
@@ -174,11 +175,114 @@ class TestFeedsAPI(unittest.TestCase):
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_list_feeds(self) -> None:
-        """Test listing feeds."""
-        self.mock_service.list_feeds.return_value = []
+        """Test listing feeds with defaults."""
+        feed_id = uuid.uuid4()
+        mock_feed = Feed(
+            id=feed_id,
+            name="Test Feed",
+            source_type=SourceType.BCFY_FEEDS,
+            source_feed_id="123",
+            external_id="ext_123",
+            status=FeedStatus.ACTIVE,
+            last_heartbeat=None,
+        )
+        self.mock_service.list_feeds.return_value = ListFeedsResponse(
+            feeds=[mock_feed],
+            next_token=None,
+        )
         response = self.client.get("/v1/feeds")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIsInstance(response.json(), list)
+        data = response.json()
+        self.assertIsInstance(data["feeds"], list)
+        self.assertEqual(data["feeds"][0]["id"], str(feed_id))
+        self.assertIsNone(data["next_token"])
+        self.mock_service.list_feeds.assert_called_once_with(
+            limit=100,
+            next_token=None,
+            order=SortOrder.DESC,
+            source_types=None,
+            statuses=None,
+            tags=None,
+        )
+
+    def test_list_feeds_with_filters(self) -> None:
+        """Test listing feeds with filters and custom pagination."""
+        feed_id = uuid.uuid4()
+        mock_feed = Feed(
+            id=feed_id,
+            name="Test Feed",
+            source_type=SourceType.BCFY_FEEDS,
+            source_feed_id="123",
+            external_id="ext_123",
+            status=FeedStatus.ACTIVE,
+            last_heartbeat=None,
+        )
+        self.mock_service.list_feeds.return_value = ListFeedsResponse(
+            feeds=[mock_feed],
+            next_token="token123",
+        )
+        url = (
+            "/v1/feeds?limit=10&next_token=token123&order=asc"
+            "&source_types=bcfy_feeds&statuses=active"
+        )
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertIsInstance(data["feeds"], list)
+        self.assertEqual(data["feeds"][0]["id"], str(feed_id))
+        self.assertEqual(data["next_token"], "token123")
+        self.mock_service.list_feeds.assert_called_once_with(
+            limit=10,
+            next_token="token123",
+            order=SortOrder.ASC,
+            source_types=[SourceType.BCFY_FEEDS],
+            statuses=[FeedStatus.ACTIVE],
+            tags=None,
+        )
+
+    def test_list_feeds_with_tags(self) -> None:
+        """Test listing feeds with tags."""
+        feed_id = uuid.uuid4()
+        mock_feed = Feed(
+            id=feed_id,
+            name="Test Feed",
+            source_type=SourceType.BCFY_FEEDS,
+            source_feed_id="123",
+            external_id="ext_123",
+            status=FeedStatus.ACTIVE,
+            last_heartbeat=None,
+        )
+        self.mock_service.list_feeds.return_value = ListFeedsResponse(
+            feeds=[mock_feed],
+            next_token=None,
+        )
+        url = (
+            '/v1/feeds?tags=[{"key":"region","value":"West"},'
+            '{"key":"county","value":"Fulton"}]'
+        )
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertIsInstance(data["feeds"], list)
+        self.assertEqual(data["feeds"][0]["id"], str(feed_id))
+        self.mock_service.list_feeds.assert_called_once_with(
+            limit=100,
+            next_token=None,
+            order=SortOrder.DESC,
+            source_types=None,
+            statuses=None,
+            tags=[
+                {"key": "region", "value": "West"},
+                {"key": "county", "value": "Fulton"},
+            ],
+        )
+
+    def test_list_feeds_with_invalid_tag_format(self) -> None:
+        """Test that invalid tag format returns 400 Bad Request."""
+        response = self.client.get("/v1/feeds?tags=invalidtag")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        detail = response.json()["detail"]
+        self.assertIn("format for tags", detail)
 
     def test_deactivate_feed_success(self) -> None:
         """Test deactivating a feed successfully."""
