@@ -31,7 +31,7 @@ VAD_DEFAULT_PEAK_FILTER_Q: Final = 1.0
 VAD_DEFAULT_THRESHOLD_ONSET: Final = 0.35
 # Raised to 0.20 to close trailing silent segments faster
 VAD_DEFAULT_THRESHOLD_OFFSET: Final = 0.20
-VAD_DEFAULT_MIN_SPEECH_DURATION_MS: Final = 100
+VAD_DEFAULT_MIN_SPEECH_DURATION_MS: Final = 200
 # Extended to 750ms to prevent whisper/dispatcher dropouts from prematurely splitting dispatches
 VAD_DEFAULT_MIN_SILENCE_DURATION_MS: Final = 750
 VAD_DEFAULT_PAD_SEC: Final = 0.3

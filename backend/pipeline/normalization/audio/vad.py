@@ -273,7 +273,7 @@ class VoiceActivityDetector:
                 )
             ]
         )
-        return eq_board(mixed_audio, TARGET_SAMPLE_RATE)
+        return eq_board(mixed_audio.astype(np.float32), TARGET_SAMPLE_RATE)
 
     def _trim_and_shift_segments(
         self,
@@ -457,8 +457,10 @@ class VoiceActivityDetector:
         audio_array = self._peak_normalize(audio_array)
 
         # Fallback Priming (Call Starts / Segment 0):
+        is_fallback_priming = False
         if prior_audio is None:
             prior_audio = self._generate_comfort_noise(sample_rate)
+            is_fallback_priming = True
 
         # 1. Perform physical audio concatenation at native sample_rate
         if prior_audio is not None and len(prior_audio) > 0:
@@ -479,14 +481,30 @@ class VoiceActivityDetector:
             extended_audio, prior_len_sec=prior_len_sec
         )
 
-        # 3. Slicing strategy:
+        # 3. Slicing strategy for VAD state warming (Lookback Priming):
+        # We run VAD starting from up to 1.5 seconds of the preamble to warm up the VAD RNN states,
+        # preventing cold-start vocal onset clipping.
+        # However, we only do this VAD state warming if we have a genuine prior audio tail.
+        # Warming up the VAD on synthetic comfort noise (is_fallback_priming=True) biases the VAD LSTM
+        # toward silence, which drastically reduces sensitivity at vocal onset.
         preamble_samples = int(prior_len_sec * TARGET_SAMPLE_RATE)
-        vad_input = (
-            preprocessed[preamble_samples:]
-            if preamble_samples > 0
-            else preprocessed
-        )
-        vad_offset_sec = 0.0
+        if is_fallback_priming:
+            vad_input = (
+                preprocessed[preamble_samples:]
+                if preamble_samples > 0
+                else preprocessed
+            )
+            vad_offset_sec = 0.0
+        else:
+            max_warmup_sec = 1.5
+            warmup_sec = min(prior_len_sec, max_warmup_sec)
+            warmup_samples = int(warmup_sec * TARGET_SAMPLE_RATE)
+            vad_input = (
+                preprocessed[preamble_samples - warmup_samples :]
+                if preamble_samples > 0
+                else preprocessed
+            )
+            vad_offset_sec = warmup_sec
 
         raw_segments = self._extract_vad_frames(
             vad_input, chunk_size, context_size
