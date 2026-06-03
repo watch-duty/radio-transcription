@@ -32,5 +32,5 @@ RUN python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_t
 
 CMD ["functions-framework", \
      "--source=backend/pipeline/normalization/main.py", \
-     "--target=normalize_segmented_audio", \
+     "--target=normalize_claim_check", \
      "--signature-type=cloudevent"]

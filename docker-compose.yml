@@ -106,14 +106,13 @@ services:
       dockerfile: backend/pipeline/normalization/Dockerfile
     ports:
       - "8083:8083"
-    environment:
-      - PORT=8083
-      - CANONICAL_AUDIO_BUCKET=$AUDIO_CANONICAL_BUCKET
-      - OUTPUT_TOPIC=projects/local-project/topics/normalized-audio
-      - AUDIO_SEGMENTS_API_URL=http://audio-segments-api:8091/v1/audio_segments
-      - PROJECT_ID=$GOOGLE_CLOUD_PROJECT
     env_file:
       - ./local_dev/LOCAL.env
+    environment:
+      - OUTPUT_TOPIC=projects/local-project/topics/normalized-audio
+      - PROJECT_ID=local-project
+      - AUDIO_CANONICAL_BUCKET=test-canonical-bucket
+    command: ["functions-framework", "--source=backend/pipeline/normalization/main.py", "--target=normalize_claim_check", "--signature-type=cloudevent", "--port=8083"]
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8083))"]
       interval: 5s
@@ -130,8 +129,6 @@ services:
         condition: service_started
       gcs-init:
         condition: service_completed_successfully
-      audio-segments-api:
-        condition: service_healthy
 
   segmentation:
     build:
