@@ -105,6 +105,18 @@ class TestVadEngine(unittest.TestCase):
         segments = self.vad.detect_speech_segments(silence, sample_rate=16000)
         self.assertEqual(segments, [])
 
+    def test_integer_inputs_converted(self) -> None:
+        """Verifies that passing integer arrays for audio_array and prior_audio does not crash and processes successfully."""
+        # 1 second of digital silence at 16kHz using int16
+        silence_int16 = np.zeros(16000, dtype=np.int16)
+        prior_int16 = np.zeros(16000, dtype=np.int16)
+
+        # This should execute successfully and return empty segments because it's pure silence
+        segments = self.vad.detect_speech_segments(
+            silence_int16, sample_rate=16000, prior_audio=prior_int16
+        )
+        self.assertEqual(segments, [])
+
     def test_synthetic_tone_rejection(self) -> None:
         """Verifies that synthetic tone (constant sine wave) is rejected by the neural VAD."""
         t = np.linspace(0, 1.0, 16000, endpoint=False)
