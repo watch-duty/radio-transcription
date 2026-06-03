@@ -4,6 +4,7 @@ import type {
   FeedCreate,
   FeedStatus,
   FeedUpdate,
+  ListFeedsResponse,
   Tag,
 } from '@transcription/common';
 import { SourceType } from '@transcription/common';
@@ -179,7 +180,7 @@ export class FeedsController extends Controller {
   @Extension('x-google-backend', 'radio-transcription-api')
   public async listFeeds(
     @Queries() query?: ListFeedsQueryParams
-  ): Promise<Feed[]> {
+  ): Promise<ListFeedsResponse> {
     try {
       const queryParams = new URLSearchParams();
       if (query?.limit) queryParams.append('limit', query.limit.toString());
@@ -211,9 +212,15 @@ export class FeedsController extends Controller {
         method: 'GET',
       });
 
-      return Array.isArray(response.data)
-        ? response.data.map(convertFeedBackend)
-        : response.data.feeds.map(convertFeedBackend);
+      const data = response.data;
+      return Array.isArray(data)
+        ? {
+            feeds: data.map(convertFeedBackend),
+          }
+        : {
+            feeds: data.feeds.map(convertFeedBackend),
+            nextToken: data.next_token,
+          };
     } catch (error: unknown) {
       const { status, message } = handleBackendError(error, 'fetching feeds');
       throw new HttpError(status, message);
