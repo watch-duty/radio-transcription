@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import unittest
 
@@ -111,6 +112,29 @@ class _FakeRunner:
         return str(output)
 
 
+class _SlowStream:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def __aiter__(self) -> "_SlowStream":
+        return self
+
+    async def __anext__(self) -> object:
+        await asyncio.sleep(60)
+        raise StopAsyncIteration
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class _FakeAdkRunner:
+    def __init__(self, stream: _SlowStream) -> None:
+        self.stream = stream
+
+    def run_async(self, **_kwargs: object) -> _SlowStream:
+        return self.stream
+
+
 class TestAdkPredictionExtraction(unittest.TestCase):
     def test_extract_final_response_text_uses_final_events_only(self) -> None:
         from common import adk_ranking
@@ -124,6 +148,21 @@ class TestAdkPredictionExtraction(unittest.TestCase):
         )
 
         self.assertEqual(text, "copy that")
+
+    def test_run_events_closes_stream_on_timeout(self) -> None:
+        from common import adk_ranking
+
+        stream = _SlowStream()
+        runner = object.__new__(adk_ranking.AdkRankingRunner)
+        runner._runner = _FakeAdkRunner(stream)
+        runner._run_config = object()
+        runner.user_id = "review-ranking"
+        runner.request_timeout_ms = 1
+
+        with self.assertRaises(asyncio.TimeoutError):
+            runner._run_events("session-a", object())
+
+        self.assertTrue(stream.closed)
 
 
 class TestSourceGroupPredictions(unittest.TestCase):
@@ -222,6 +261,32 @@ class TestSourceGroupPredictions(unittest.TestCase):
         self.assertEqual(new_entries[0].prediction_text, "")
         self.assertEqual(new_entries[0].error, "")
         self.assertEqual(final_cache["audio-a"].prediction_text, "")
+
+    def test_retry_replays_only_bounded_prior_successes(self) -> None:
+        from common import adk_ranking
+
+        rows = [_row(f"audio-{index}", index) for index in range(1, 37)]
+        outputs = [f"prediction-{index}" for index in range(1, 36)]
+        outputs.extend([RuntimeError("timeout"), "prediction-36"])
+        runner = _FakeRunner(outputs)
+
+        adk_ranking.run_source_group_predictions_adk(
+            rows,
+            [],
+            runner,
+            prompt_fp="prompt-fp",
+            context_policy_fp="context-policy-fp",
+            created_at="2026-06-03T00:00:00Z",
+            num_recent_events=60,
+        )
+
+        self.assertEqual(
+            runner.appended,
+            [
+                (f"audio-{index}", f"prediction-{index}")
+                for index in range(6, 36)
+            ],
+        )
 
     def test_cached_failure_is_skipped_unless_retry_errors(self) -> None:
         from common import adk_ranking, ranking

@@ -25,6 +25,7 @@ def main(argv: list[str] | None = None) -> int:
     reviewed_rows = _load_jsonl(args.reviewed_jsonl)
     result = correction_overlay.build_latest_overlay(reviewed_rows)
     if result.error_rows:
+        _write_jsonl(args.overlay_jsonl, [])
         _write_json(args.summary_json, result.summary)
         _write_jsonl(args.errors_jsonl, result.error_rows)
         return 1

@@ -197,7 +197,7 @@ class TestBuildCorrectionOverlayCli(unittest.TestCase):
             uploaded_text_by_path["gs://bucket/output/errors.jsonl"], ""
         )
 
-    def test_gcs_malformed_uploads_summary_and_errors_without_overlay(
+    def test_gcs_malformed_uploads_empty_overlay_summary_and_errors(
         self,
     ) -> None:
         import build_correction_overlay
@@ -253,6 +253,7 @@ class TestBuildCorrectionOverlayCli(unittest.TestCase):
         self.assertEqual(
             uploaded_paths,
             [
+                "gs://bucket/output/overlay.jsonl",
                 "gs://bucket/output/summary.json",
                 "gs://bucket/output/errors.jsonl",
             ],
@@ -270,6 +271,9 @@ class TestBuildCorrectionOverlayCli(unittest.TestCase):
         self.assertEqual(summary["malformed_error_count"], 1)
         self.assertEqual(len(error_rows), 1)
         self.assertEqual(error_rows[0]["error_code"], "missing_required_field")
+        self.assertEqual(
+            uploaded_text_by_path["gs://bucket/output/overlay.jsonl"], ""
+        )
 
 
 if __name__ == "__main__":

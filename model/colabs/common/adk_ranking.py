@@ -161,10 +161,14 @@ class AdkRankingRunner:
             )
             if self.request_timeout_ms is None:
                 return [event async for event in stream]
-            return await asyncio.wait_for(
-                _collect_async_iterable(stream),
-                timeout=self.request_timeout_ms / 1000,
-            )
+            try:
+                return await asyncio.wait_for(
+                    _collect_async_iterable(stream),
+                    timeout=self.request_timeout_ms / 1000,
+                )
+            except asyncio.TimeoutError:
+                await _close_async_iterable(stream)
+                raise
 
         return _run_async(collect())
 
@@ -294,6 +298,7 @@ def _predict_with_retries(
     error_attempts = 0
     empty_attempts = 0
     last_error = ""
+    max_context_rows = min(ranking.MAX_CONTEXT_ROWS, num_recent_events // 2)
     while True:
         try:
             prediction_text = str(runner.predict_one(session, row)).strip()
@@ -305,6 +310,7 @@ def _predict_with_retries(
                     runner,
                     session.source_group,
                     accepted_entries,
+                    max_context_rows=max_context_rows,
                 )
                 return (
                     _cache_entry(
@@ -321,7 +327,10 @@ def _predict_with_retries(
                     session,
                 )
             session = _recreate_session(
-                runner, session.source_group, accepted_entries
+                runner,
+                session.source_group,
+                accepted_entries,
+                max_context_rows=max_context_rows,
             )
             continue
 
@@ -358,7 +367,10 @@ def _predict_with_retries(
                 session,
             )
         session = _recreate_session(
-            runner, session.source_group, accepted_entries
+            runner,
+            session.source_group,
+            accepted_entries,
+            max_context_rows=max_context_rows,
         )
 
 
@@ -368,9 +380,14 @@ def _recreate_session(
     accepted_entries: list[
         tuple[dict[str, object], ranking.PredictionCacheEntry]
     ],
+    *,
+    max_context_rows: int,
 ) -> AdkSessionHandle:
     session = runner.start_session(source_group)
-    for prior_row, prior_entry in accepted_entries:
+    replay_entries = (
+        accepted_entries[-max_context_rows:] if max_context_rows > 0 else []
+    )
+    for prior_row, prior_entry in replay_entries:
         runner.append_success(session, prior_row, prior_entry)
     return session
 
@@ -405,6 +422,15 @@ def _cache_entry(
 
 async def _collect_async_iterable(stream: object) -> list[object]:
     return [event async for event in stream]
+
+
+async def _close_async_iterable(stream: object) -> None:
+    close = getattr(stream, "aclose", None)
+    if close is None:
+        return
+    result = close()
+    if inspect.isawaitable(result):
+        await result
 
 
 def _audio_content(file_uri: str, *, text: str) -> object:

@@ -13,6 +13,10 @@ def process_notebook(path: Path, *, write: bool = False) -> tuple[bool, bool]:
         sys.stderr.write(f"Error loading JSON from {path}: {e}\n")
         return False, False
 
+    if not isinstance(data, dict):
+        sys.stderr.write(f"Error loading notebook from {path}: expected object\n")
+        return False, False
+
     modified = False
     cells: Any = data.get("cells", [])
     if not isinstance(cells, list):
