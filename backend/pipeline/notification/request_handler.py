@@ -28,6 +28,7 @@ class RequestHandler:
             status_forcelist=[500, 502, 503, 504],
             allowed_methods=frozenset(["POST"]),
         )
+        self.http = PoolManager(retries=self.retry_strategy)
 
     def send_notification(self, notification: AlertNotification) -> None:
         """
@@ -40,10 +41,8 @@ class RequestHandler:
         )
         self.logger.info(f"Sending payload: {request_data}")
 
-        http = PoolManager(retries=self.retry_strategy)
-
         try:
-            response = http.request(
+            response = self.http.request(
                 "POST",
                 NOTIFICATION_ENDPOINT,
                 body=request_data,
