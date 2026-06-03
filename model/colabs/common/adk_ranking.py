@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import collections.abc
 import dataclasses
 import inspect
+import threading
 import uuid
 
 from common import gemini_config, prompts, ranking
@@ -208,12 +210,14 @@ class AdkRankingRunner:
 def run_source_group_predictions_adk(
     source_rows: collections.abc.Iterable[collections.abc.Mapping[str, object]],
     cache_entries: collections.abc.Iterable[ranking.PredictionCacheEntry],
-    runner: object,
+    runner: object | None,
     *,
     prompt_fp: str,
     context_policy_fp: str,
     num_recent_events: int = ranking.NUM_RECENT_EVENTS,
     created_at: str,
+    source_workers: int = 1,
+    runner_factory: collections.abc.Callable[[], object] | None = None,
     on_new_entry: (
         collections.abc.Callable[[ranking.PredictionCacheEntry], None] | None
     ) = None,
@@ -229,73 +233,304 @@ def run_source_group_predictions_adk(
     dict[str, ranking.PredictionCacheEntry],
 ]:
     """Generate or reuse predictions while preserving source-group order."""
+    if source_workers <= 0:
+        raise ValueError("source_workers must be positive")
+
     row_list = [dict(row) for row in source_rows]
     grouped_rows = ranking.ordered_source_rows(row_list)
     history = ranking.cache_history_by_audio_id(cache_entries)
-    final_cache: dict[str, ranking.PredictionCacheEntry] = {}
-    compatible_successes: dict[str, ranking.PredictionCacheEntry] = {}
-    new_entries: list[ranking.PredictionCacheEntry] = []
-    max_context_rows = min(ranking.MAX_CONTEXT_ROWS, num_recent_events // 2)
-    model_id = str(getattr(runner, "model_id", DEFAULT_FULL_MODEL))
+    source_group_names = sorted(grouped_rows)
+    if source_workers > 1 and runner_factory is None:
+        raise ValueError("runner_factory is required when source_workers > 1")
+    worker_count = min(source_workers, len(source_group_names) or 1)
 
-    for source_group in sorted(grouped_rows):
-        session = runner.start_session(source_group)
-        accepted_entries: list[
-            tuple[dict[str, object], ranking.PredictionCacheEntry]
-        ] = []
-        for row in grouped_rows[source_group]:
-            audio_id = str(row["audio_segment_id"])
-            context_entries = ranking.previous_prediction_context(
+    if worker_count <= 1:
+        close_runner = False
+        active_runner = runner
+        if active_runner is None:
+            if runner_factory is None:
+                raise ValueError("runner is required when source_workers=1")
+            active_runner = runner_factory()
+            close_runner = True
+        try:
+            return _run_source_groups_serial(
+                source_group_names,
                 grouped_rows,
-                row,
-                compatible_successes,
-                max_context_rows=max_context_rows,
-            )
-            context_fp = ranking.context_fingerprint(context_entries)
-            entry = ranking.select_latest_compatible_cache_entry(
-                history.get(audio_id, []),
-                row,
-                model_id=model_id,
+                history,
+                active_runner,
                 prompt_fp=prompt_fp,
                 context_policy_fp=context_policy_fp,
                 num_recent_events=num_recent_events,
-                context_fp=context_fp,
-                include_failure=not retry_errors,
-            )
-            if entry is not None:
-                final_cache[audio_id] = entry
-                if _entry_successful(entry):
-                    compatible_successes[audio_id] = entry
-                    runner.append_success(session, row, entry)
-                    accepted_entries.append((row, entry))
-                if on_progress is not None:
-                    on_progress(entry, True)
-                continue
-
-            entry, session = _predict_with_retries(
-                runner,
-                session,
-                accepted_entries,
-                row,
-                model_id=model_id,
-                prompt_fp=prompt_fp,
-                context_policy_fp=context_policy_fp,
-                num_recent_events=num_recent_events,
-                context_fp=context_fp,
                 created_at=created_at,
+                on_new_entry=on_new_entry,
+                on_progress=on_progress,
+                retry_errors=retry_errors,
                 max_attempts=max_attempts,
                 max_empty_attempts=max_empty_attempts,
             )
-            history.setdefault(audio_id, []).append(entry)
+        finally:
+            if close_runner:
+                _close_runner(active_runner)
+
+    return _run_source_groups_parallel(
+        source_group_names,
+        grouped_rows,
+        history,
+        runner_factory,
+        max_workers=worker_count,
+        prompt_fp=prompt_fp,
+        context_policy_fp=context_policy_fp,
+        num_recent_events=num_recent_events,
+        created_at=created_at,
+        on_new_entry=on_new_entry,
+        on_progress=on_progress,
+        retry_errors=retry_errors,
+        max_attempts=max_attempts,
+        max_empty_attempts=max_empty_attempts,
+    )
+
+
+def _run_source_groups_serial(
+    source_group_names: collections.abc.Sequence[str],
+    grouped_rows: collections.abc.Mapping[str, list[dict[str, object]]],
+    history: collections.abc.Mapping[
+        str,
+        collections.abc.Sequence[ranking.PredictionCacheEntry],
+    ],
+    runner: object,
+    *,
+    prompt_fp: str,
+    context_policy_fp: str,
+    num_recent_events: int,
+    created_at: str,
+    on_new_entry: (
+        collections.abc.Callable[[ranking.PredictionCacheEntry], None] | None
+    ),
+    on_progress: (
+        collections.abc.Callable[[ranking.PredictionCacheEntry, bool], None]
+        | None
+    ),
+    retry_errors: bool,
+    max_attempts: int,
+    max_empty_attempts: int,
+) -> tuple[
+    list[ranking.PredictionCacheEntry],
+    dict[str, ranking.PredictionCacheEntry],
+]:
+    new_entries: list[ranking.PredictionCacheEntry] = []
+    final_cache: dict[str, ranking.PredictionCacheEntry] = {}
+    for source_group in source_group_names:
+        group_new_entries, group_final_cache = _run_one_source_group(
+            source_group,
+            grouped_rows,
+            history,
+            runner,
+            prompt_fp=prompt_fp,
+            context_policy_fp=context_policy_fp,
+            num_recent_events=num_recent_events,
+            created_at=created_at,
+            on_new_entry=on_new_entry,
+            on_progress=on_progress,
+            retry_errors=retry_errors,
+            max_attempts=max_attempts,
+            max_empty_attempts=max_empty_attempts,
+        )
+        new_entries.extend(group_new_entries)
+        final_cache.update(group_final_cache)
+    return new_entries, final_cache
+
+
+def _run_source_groups_parallel(
+    source_group_names: collections.abc.Sequence[str],
+    grouped_rows: collections.abc.Mapping[str, list[dict[str, object]]],
+    history: collections.abc.Mapping[
+        str,
+        collections.abc.Sequence[ranking.PredictionCacheEntry],
+    ],
+    runner_factory: collections.abc.Callable[[], object],
+    *,
+    max_workers: int,
+    prompt_fp: str,
+    context_policy_fp: str,
+    num_recent_events: int,
+    created_at: str,
+    on_new_entry: (
+        collections.abc.Callable[[ranking.PredictionCacheEntry], None] | None
+    ),
+    on_progress: (
+        collections.abc.Callable[[ranking.PredictionCacheEntry, bool], None]
+        | None
+    ),
+    retry_errors: bool,
+    max_attempts: int,
+    max_empty_attempts: int,
+) -> tuple[
+    list[ranking.PredictionCacheEntry],
+    dict[str, ranking.PredictionCacheEntry],
+]:
+    thread_local = threading.local()
+    runners: list[object] = []
+    runners_lock = threading.Lock()
+
+    def runner_for_thread() -> object:
+        active_runner = getattr(thread_local, "runner", None)
+        if active_runner is None:
+            active_runner = runner_factory()
+            thread_local.runner = active_runner
+            with runners_lock:
+                runners.append(active_runner)
+        return active_runner
+
+    def run_group(
+        source_group: str,
+    ) -> tuple[
+        str,
+        list[ranking.PredictionCacheEntry],
+        dict[str, ranking.PredictionCacheEntry],
+    ]:
+        group_new_entries, group_final_cache = _run_one_source_group(
+            source_group,
+            grouped_rows,
+            history,
+            runner_for_thread(),
+            prompt_fp=prompt_fp,
+            context_policy_fp=context_policy_fp,
+            num_recent_events=num_recent_events,
+            created_at=created_at,
+            on_new_entry=on_new_entry,
+            on_progress=on_progress,
+            retry_errors=retry_errors,
+            max_attempts=max_attempts,
+            max_empty_attempts=max_empty_attempts,
+        )
+        return source_group, group_new_entries, group_final_cache
+
+    results: dict[
+        str,
+        tuple[
+            list[ranking.PredictionCacheEntry],
+            dict[str, ranking.PredictionCacheEntry],
+        ],
+    ] = {}
+    try:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix="adk-ranking-source",
+        ) as executor:
+            futures = {
+                executor.submit(run_group, source_group): source_group
+                for source_group in source_group_names
+            }
+            for future in concurrent.futures.as_completed(futures):
+                source_group, group_new_entries, group_final_cache = (
+                    future.result()
+                )
+                results[source_group] = (
+                    group_new_entries,
+                    group_final_cache,
+                )
+    finally:
+        for active_runner in runners:
+            _close_runner(active_runner)
+
+    new_entries: list[ranking.PredictionCacheEntry] = []
+    final_cache: dict[str, ranking.PredictionCacheEntry] = {}
+    for source_group in source_group_names:
+        group_new_entries, group_final_cache = results[source_group]
+        new_entries.extend(group_new_entries)
+        final_cache.update(group_final_cache)
+    return new_entries, final_cache
+
+
+def _run_one_source_group(
+    source_group: str,
+    grouped_rows: collections.abc.Mapping[str, list[dict[str, object]]],
+    history: collections.abc.Mapping[
+        str,
+        collections.abc.Sequence[ranking.PredictionCacheEntry],
+    ],
+    runner: object,
+    *,
+    prompt_fp: str,
+    context_policy_fp: str,
+    num_recent_events: int,
+    created_at: str,
+    on_new_entry: (
+        collections.abc.Callable[[ranking.PredictionCacheEntry], None] | None
+    ),
+    on_progress: (
+        collections.abc.Callable[[ranking.PredictionCacheEntry, bool], None]
+        | None
+    ),
+    retry_errors: bool,
+    max_attempts: int,
+    max_empty_attempts: int,
+) -> tuple[
+    list[ranking.PredictionCacheEntry],
+    dict[str, ranking.PredictionCacheEntry],
+]:
+    session = runner.start_session(source_group)
+    accepted_entries: list[
+        tuple[dict[str, object], ranking.PredictionCacheEntry]
+    ] = []
+    compatible_successes: dict[str, ranking.PredictionCacheEntry] = {}
+    new_entries: list[ranking.PredictionCacheEntry] = []
+    final_cache: dict[str, ranking.PredictionCacheEntry] = {}
+    max_context_rows = min(ranking.MAX_CONTEXT_ROWS, num_recent_events // 2)
+    model_id = str(getattr(runner, "model_id", DEFAULT_FULL_MODEL))
+
+    for row in grouped_rows[source_group]:
+        audio_id = str(row["audio_segment_id"])
+        context_entries = ranking.previous_prediction_context(
+            grouped_rows,
+            row,
+            compatible_successes,
+            max_context_rows=max_context_rows,
+        )
+        context_fp = ranking.context_fingerprint(context_entries)
+        entry = ranking.select_latest_compatible_cache_entry(
+            history.get(audio_id, []),
+            row,
+            model_id=model_id,
+            prompt_fp=prompt_fp,
+            context_policy_fp=context_policy_fp,
+            num_recent_events=num_recent_events,
+            context_fp=context_fp,
+            include_failure=not retry_errors,
+        )
+        if entry is not None:
             final_cache[audio_id] = entry
-            new_entries.append(entry)
-            if on_new_entry is not None:
-                on_new_entry(entry)
-            if on_progress is not None:
-                on_progress(entry, False)
             if _entry_successful(entry):
                 compatible_successes[audio_id] = entry
+                runner.append_success(session, row, entry)
                 accepted_entries.append((row, entry))
+            if on_progress is not None:
+                on_progress(entry, True)
+            continue
+
+        entry, session = _predict_with_retries(
+            runner,
+            session,
+            accepted_entries,
+            row,
+            model_id=model_id,
+            prompt_fp=prompt_fp,
+            context_policy_fp=context_policy_fp,
+            num_recent_events=num_recent_events,
+            context_fp=context_fp,
+            created_at=created_at,
+            max_attempts=max_attempts,
+            max_empty_attempts=max_empty_attempts,
+        )
+        final_cache[audio_id] = entry
+        new_entries.append(entry)
+        if on_progress is not None:
+            on_progress(entry, False)
+        if on_new_entry is not None:
+            on_new_entry(entry)
+        if _entry_successful(entry):
+            compatible_successes[audio_id] = entry
+            accepted_entries.append((row, entry))
     return new_entries, final_cache
 
 
@@ -558,6 +793,12 @@ def _prediction_error(exc: Exception) -> str:
 
 def _entry_successful(entry: ranking.PredictionCacheEntry) -> bool:
     return not str(entry.error or "").strip()
+
+
+def _close_runner(runner: object) -> None:
+    close = getattr(runner, "close", None)
+    if close is not None:
+        close()
 
 
 def _run_async(awaitable: object) -> object:

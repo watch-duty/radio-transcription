@@ -22,6 +22,7 @@ DEFAULT_FULL_MODEL = "gemini-3.5-flash"
 DEFAULT_CACHE_FLUSH_INTERVAL = 500
 DEFAULT_REQUEST_TIMEOUT_MS = 180_000
 DEFAULT_PROGRESS_INTERVAL_SECONDS = 900
+DEFAULT_SOURCE_WORKERS = 16
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -61,6 +62,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_cache_flush_arg(preflight)
     _add_request_timeout_arg(preflight)
     _add_progress_interval_arg(preflight)
+    _add_source_workers_arg(preflight)
     _add_retry_errors_arg(preflight)
     preflight.set_defaults(func=_run_predicting_command)
 
@@ -75,6 +77,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_cache_flush_arg(run)
     _add_request_timeout_arg(run)
     _add_progress_interval_arg(run)
+    _add_source_workers_arg(run)
     _add_retry_errors_arg(run)
     run.set_defaults(func=_run_predicting_command)
 
@@ -143,6 +146,18 @@ def _add_progress_interval_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_source_workers_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--source-workers",
+        type=_positive_int,
+        default=DEFAULT_SOURCE_WORKERS,
+        help=(
+            "Maximum source groups to process concurrently. "
+            f"Defaults to {DEFAULT_SOURCE_WORKERS}."
+        ),
+    )
+
+
 def _add_retry_errors_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--retry-errors",
@@ -164,6 +179,19 @@ def _gcs_uri(value: str) -> str:
     return value
 
 
+def _is_quota_error(error: str) -> bool:
+    normalized = error.lower()
+    return any(
+        marker in normalized
+        for marker in (
+            "429",
+            "quota",
+            "resourceexhausted",
+            "resource exhausted",
+        )
+    )
+
+
 class _ProgressHeartbeat:
     def __init__(
         self,
@@ -181,6 +209,8 @@ class _ProgressHeartbeat:
         self._processed_rows = 0
         self._cache_hits = 0
         self._new_predictions = 0
+        self._final_failures = 0
+        self._quota_failures = 0
         self._cache_rows = 0
         self._flushes = 0
         self._lock = threading.Lock()
@@ -202,16 +232,22 @@ class _ProgressHeartbeat:
             self._thread.join(timeout=1.0)
         self.emit_once(status)
 
-    def record_processed(self, *, cache_hit: bool) -> None:
+    def record_processed(
+        self,
+        *,
+        entry: ranking.PredictionCacheEntry,
+        cache_hit: bool,
+    ) -> None:
         with self._lock:
             self._processed_rows += 1
             if cache_hit:
                 self._cache_hits += 1
             else:
                 self._new_predictions += 1
-
-    def record_completed(self) -> None:
-        self.record_processed(cache_hit=False)
+            if entry.error:
+                self._final_failures += 1
+                if _is_quota_error(entry.error):
+                    self._quota_failures += 1
 
     def record_flush(self, row_count: int) -> None:
         with self._lock:
@@ -224,6 +260,8 @@ class _ProgressHeartbeat:
             processed_rows = self._processed_rows
             cache_hits = self._cache_hits
             new_predictions = self._new_predictions
+            final_failures = self._final_failures
+            quota_failures = self._quota_failures
             cache_rows = self._cache_rows
             flushes = self._flushes
         elapsed_seconds = max(0, int(self.clock() - self.started_at))
@@ -239,6 +277,8 @@ class _ProgressHeartbeat:
             f"percent={percent:.2f} "
             f"new_predictions={new_predictions} "
             f"cache_hits={cache_hits} "
+            f"final_failures={final_failures} "
+            f"quota_failures={quota_failures} "
             f"cache_rows={cache_rows} "
             f"flushes={flushes} "
             f"elapsed_seconds={elapsed_seconds}",
@@ -249,6 +289,31 @@ class _ProgressHeartbeat:
     def _run(self) -> None:
         while not self._stop_event.wait(self.interval_seconds):
             self.emit_once("heartbeat")
+
+
+class _PredictionCacheWriter:
+    def __init__(
+        self,
+        *,
+        path: str,
+        existing_entries: collections.abc.Iterable[
+            ranking.PredictionCacheEntry
+        ],
+    ) -> None:
+        self.path = path
+        self._rows = [dataclasses.asdict(entry) for entry in existing_entries]
+        self._lock = threading.Lock()
+
+    def append(
+        self,
+        entries: list[ranking.PredictionCacheEntry],
+    ) -> None:
+        if not entries:
+            return
+        with self._lock:
+            self._rows.extend(dataclasses.asdict(entry) for entry in entries)
+            snapshot = list(self._rows)
+            _write_jsonl(self.path, snapshot)
 
 
 def _run_rank_cache(args: argparse.Namespace) -> int:
@@ -273,12 +338,15 @@ def _run_predicting_command(args: argparse.Namespace) -> int:
         review_rows = review_rows[: args.sample_size]
     cache_entries = _load_cache_entries(args.prediction_cache_jsonl)
 
-    runner = adk_ranking.AdkRankingRunner(
-        project=args.project,
-        location=args.location,
-        model_id=args.model,
-        request_timeout_ms=args.request_timeout_ms,
-    )
+    def runner_factory() -> adk_ranking.AdkRankingRunner:
+        return adk_ranking.AdkRankingRunner(
+            project=args.project,
+            location=args.location,
+            model_id=args.model,
+            request_timeout_ms=args.request_timeout_ms,
+        )
+
+    runner = runner_factory() if args.source_workers == 1 else None
     prompt_fp = ranking.adk_prompt_fingerprint(
         prompts.GEMINI_TRANSCRIBE_SYSTEM_PROMPT,
         prompts.GEMINI_TRANSCRIBE_USER_PROMPT,
@@ -288,6 +356,10 @@ def _run_predicting_command(args: argparse.Namespace) -> int:
     )
     pending_cache_entries: list[ranking.PredictionCacheEntry] = []
     pending_cache_entries_lock = threading.Lock()
+    cache_writer = _PredictionCacheWriter(
+        path=args.prediction_cache_jsonl,
+        existing_entries=cache_entries,
+    )
     heartbeat = _ProgressHeartbeat(
         total_rows=len(review_rows),
         interval_seconds=args.progress_interval_seconds,
@@ -299,7 +371,7 @@ def _run_predicting_command(args: argparse.Namespace) -> int:
                 return
             entries = list(pending_cache_entries)
             pending_cache_entries.clear()
-        _append_cache_entries(args.prediction_cache_jsonl, entries)
+        cache_writer.append(entries)
         heartbeat.record_flush(len(entries))
 
     def on_new_entry(entry: ranking.PredictionCacheEntry) -> None:
@@ -312,10 +384,10 @@ def _run_predicting_command(args: argparse.Namespace) -> int:
             flush_cache_entries()
 
     def on_progress(
-        _entry: ranking.PredictionCacheEntry,
+        entry: ranking.PredictionCacheEntry,
         cache_hit: bool,
     ) -> None:
-        heartbeat.record_processed(cache_hit=cache_hit)
+        heartbeat.record_processed(entry=entry, cache_hit=cache_hit)
 
     completed_successfully = False
     heartbeat.start()
@@ -331,6 +403,8 @@ def _run_predicting_command(args: argparse.Namespace) -> int:
                         context_policy_fp=context_policy_fp,
                         num_recent_events=ranking.NUM_RECENT_EVENTS,
                         created_at=_utc_timestamp(),
+                        source_workers=args.source_workers,
+                        runner_factory=runner_factory,
                         on_new_entry=on_new_entry,
                         on_progress=on_progress,
                         retry_errors=args.retry_errors,

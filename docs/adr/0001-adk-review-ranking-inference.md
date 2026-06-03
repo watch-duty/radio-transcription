@@ -16,6 +16,11 @@ uses root `mode="chat"` in ADK 2.1. The job still behaves as one transcription
 turn per audio segment by using no tools or sub-agents and setting
 `RunConfig(max_llm_calls=1)`.
 
+Review-ranking inference may process multiple source groups concurrently to
+finish large review datasets on an operational deadline. Each source group is
+still processed serially by row order, and prior context remains limited to
+earlier successful predictions from that same source group.
+
 Preflight uses `gemini-3.1-flash-lite` to keep smoke validation cheap. The
 authoritative full run uses `gemini-3.5-flash`.
 

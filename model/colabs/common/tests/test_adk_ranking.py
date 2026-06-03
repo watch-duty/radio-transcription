@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import threading
 import unittest
 
 
@@ -110,6 +111,50 @@ class _FakeRunner:
         if isinstance(output, Exception):
             raise output
         return str(output)
+
+
+class _ParallelRunner:
+    def __init__(
+        self,
+        barrier: threading.Barrier,
+        created_runners: list["_ParallelRunner"],
+    ) -> None:
+        self.model_id = "gemini-3.5-flash"
+        self.barrier = barrier
+        self.closed = False
+        self.started: list[str] = []
+        self.appended: list[tuple[str, str]] = []
+        self.predicted: list[str] = []
+        created_runners.append(self)
+
+    def start_session(self, source_group: str) -> _FakeSession:
+        session = _FakeSession(source_group, f"{source_group}-session")
+        self.started.append(session.session_id)
+        return session
+
+    def append_success(
+        self,
+        _session: _FakeSession,
+        row: dict[str, object],
+        entry: object,
+    ) -> None:
+        self.appended.append(
+            (str(row["audio_segment_id"]), entry.prediction_text)
+        )
+
+    def predict_one(
+        self,
+        _session: _FakeSession,
+        row: dict[str, object],
+    ) -> str:
+        audio_id = str(row["audio_segment_id"])
+        self.predicted.append(audio_id)
+        if int(row["row_index"]) == 1:
+            self.barrier.wait(timeout=5)
+        return f"prediction-{audio_id}"
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class _SlowStream:
@@ -389,6 +434,66 @@ class TestSourceGroupPredictions(unittest.TestCase):
 
         self.assertEqual(retry_entries[0].prediction_text, "copy")
         self.assertEqual(retry_cache["audio-a"].prediction_text, "copy")
+
+    def test_parallel_workers_keep_source_context_isolated(self) -> None:
+        from common import adk_ranking, ranking
+
+        rows = [
+            _row("source-a-1", 1, source_group="source-a"),
+            _row("source-a-2", 2, source_group="source-a"),
+            _row("source-b-1", 1, source_group="source-b"),
+            _row("source-b-2", 2, source_group="source-b"),
+        ]
+        created_runners: list[_ParallelRunner] = []
+        barrier = threading.Barrier(2)
+
+        def runner_factory() -> _ParallelRunner:
+            return _ParallelRunner(barrier, created_runners)
+
+        new_entries, final_cache = adk_ranking.run_source_group_predictions_adk(
+            rows,
+            [],
+            None,
+            prompt_fp="prompt-fp",
+            context_policy_fp="context-policy-fp",
+            created_at="2026-06-03T00:00:00Z",
+            source_workers=2,
+            runner_factory=runner_factory,
+        )
+
+        self.assertGreaterEqual(len(created_runners), 2)
+        self.assertTrue(all(runner.closed for runner in created_runners))
+        self.assertEqual(
+            set(final_cache),
+            {str(row["audio_segment_id"]) for row in rows},
+        )
+        self.assertEqual(len(new_entries), 4)
+        self.assertEqual(
+            final_cache["source-a-2"].context_fingerprint,
+            ranking.context_fingerprint([final_cache["source-a-1"]]),
+        )
+        self.assertEqual(
+            final_cache["source-b-2"].context_fingerprint,
+            ranking.context_fingerprint([final_cache["source-b-1"]]),
+        )
+        self.assertNotEqual(
+            final_cache["source-a-2"].context_fingerprint,
+            ranking.context_fingerprint([final_cache["source-b-1"]]),
+        )
+
+    def test_parallel_workers_require_runner_factory(self) -> None:
+        from common import adk_ranking
+
+        with self.assertRaisesRegex(ValueError, "runner_factory"):
+            adk_ranking.run_source_group_predictions_adk(
+                [_row("audio-a", 1)],
+                [],
+                None,
+                prompt_fp="prompt-fp",
+                context_policy_fp="context-policy-fp",
+                created_at="2026-06-03T00:00:00Z",
+                source_workers=2,
+            )
 
 
 if __name__ == "__main__":
