@@ -446,6 +446,13 @@ class VoiceActivityDetector:
         if len(audio_array) == 0:
             return []
 
+        if np.issubdtype(audio_array.dtype, np.integer):
+            audio_array = audio_array.astype(np.float32) / 32768.0
+        if prior_audio is not None and np.issubdtype(
+            prior_audio.dtype, np.integer
+        ):
+            prior_audio = prior_audio.astype(np.float32) / 32768.0
+
         # Peak Normalization Heuristic
         audio_array = self._peak_normalize(audio_array)
 
