@@ -14,7 +14,9 @@ def process_notebook(path: Path, *, write: bool = False) -> tuple[bool, bool]:
         return False, False
 
     if not isinstance(data, dict):
-        sys.stderr.write(f"Error loading notebook from {path}: expected object\n")
+        sys.stderr.write(
+            f"Error loading notebook from {path}: expected object\n"
+        )
         return False, False
 
     modified = False

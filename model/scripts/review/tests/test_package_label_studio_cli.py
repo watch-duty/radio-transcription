@@ -203,7 +203,9 @@ class TestPackageLabelStudioCli(unittest.TestCase):
                 "gs://bucket/output/preview.csv",
             ],
         )
-        tasks = json.loads(uploaded_text_by_path["gs://bucket/output/tasks.json"])
+        tasks = json.loads(
+            uploaded_text_by_path["gs://bucket/output/tasks.json"]
+        )
         readme = uploaded_text_by_path["gs://bucket/output/README.md"]
         preview_text = uploaded_text_by_path["gs://bucket/output/preview.csv"]
         preview_rows = list(csv.DictReader(io.StringIO(preview_text)))

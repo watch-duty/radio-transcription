@@ -207,10 +207,7 @@ class TestPackageArtifacts(unittest.TestCase):
         self.assertEqual(package.packaged_count, 2)
         self.assertEqual(package.already_reviewed_skipped_count, 1)
         self.assertEqual(
-            [
-                task["data"]["audio_segment_id"]
-                for task in package.tasks
-            ],
+            [task["data"]["audio_segment_id"] for task in package.tasks],
             ["audio-b", "audio-c"],
         )
         self.assertEqual(len(package.preview_rows), 2)
