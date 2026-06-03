@@ -84,15 +84,13 @@ async def transcribe(
             download_blob(uri, tmp_path)
 
         logger.info(f"Transcribing file {tmp_path}")
-        segments, info = model.transcribe(tmp_path)
+        segments, info = model.transcribe(tmp_path, language="en")
 
         text = " ".join([segment.text for segment in segments])
         logger.info("Transcription completed.")
 
         return {
-            "text": text.strip(),
-            "language": info.language,
-            "language_probability": info.language_probability,
+            "text": text.strip()
         }
 
     except Exception as e:
