@@ -969,7 +969,11 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ListFeedsResponse"
+                anyOf:
+                  - $ref: "#/components/schemas/ListFeedsResponse"
+                  - items:
+                      $ref: "#/components/schemas/Feed"
+                    type: array
         "401":
           description: Unauthorized
           content:

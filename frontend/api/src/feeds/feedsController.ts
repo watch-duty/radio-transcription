@@ -180,7 +180,7 @@ export class FeedsController extends Controller {
   @Extension('x-google-backend', 'radio-transcription-api')
   public async listFeeds(
     @Queries() query?: ListFeedsQueryParams
-  ): Promise<ListFeedsResponse> {
+  ): Promise<ListFeedsResponse | Feed[]> {
     try {
       const queryParams = new URLSearchParams();
       if (query?.limit) queryParams.append('limit', query.limit.toString());
@@ -214,9 +214,7 @@ export class FeedsController extends Controller {
 
       const data = response.data;
       return Array.isArray(data)
-        ? {
-            feeds: data.map(convertFeedBackend),
-          }
+        ? data.map(convertFeedBackend)
         : {
             feeds: data.feeds.map(convertFeedBackend),
             nextToken: data.next_token,
