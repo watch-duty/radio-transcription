@@ -1,17 +1,17 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 
 import AppRegistrationIcon from '@mui/icons-material/AppRegistration';
 import Box from '@mui/material/Box';
 import Grid from '@mui/material/Grid';
 import Typography from '@mui/material/Typography';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { Feed, FeedCreate, FeedUpdate, Tag } from '@transcription/common';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { SourceType } from '@transcription/common';
+import type { Feed, FeedCreate, FeedUpdate } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { createFeed } from '../../service/createFeed';
 import { deleteFeed } from '../../service/deleteFeed';
-import { listFeeds } from '../../service/listFeeds';
 import { updateFeed } from '../../service/updateFeed';
 import { FeedConfigurationEdit } from './FeedConfigurationEdit';
 import { FeedTable } from './FeedTable';
@@ -33,29 +33,9 @@ export function FeedConfigurationView({
   const [name, setName] = useState('');
   const [sourceType, setSourceType] = useState(SourceType.BCFY_FEEDS);
   const [sourceFeedId, setSourceFeedId] = useState('');
-  const [tags, setTags] = useState<Tag[]>([]);
+  const [tags, setTags] = useState<{ key: string; value: string }[]>([]);
 
-  const feedsErrorHandled = useRef<Error | null>(null);
 
-  const {
-    data: feeds = [],
-    isLoading: feedsLoading,
-    error: feedsError,
-  } = useQuery({
-    queryKey: ['listFeeds', token],
-    queryFn: () => listFeeds(token!),
-    enabled: !!token,
-    refetchOnWindowFocus: false,
-  });
-
-  useEffect(() => {
-    if (feedsError && feedsErrorHandled.current !== feedsError) {
-      feedsErrorHandled.current = feedsError;
-      if (onError) {
-        onError(feedsError, 'Loading Configured Feeds');
-      }
-    }
-  }, [feedsError, onError]);
 
   const resetForm = () => {
     setId('');
@@ -101,12 +81,9 @@ export function FeedConfigurationView({
 
   const deleteMutation = useMutation({
     mutationFn: (feedId: string) => deleteFeed(feedId, token!),
-    onSuccess: (_, feedId) => {
+    onSuccess: () => {
       triggerSnackbar('Feed deleted successfully!');
       setIsEditing(false);
-      queryClient.setQueryData<Feed[]>(['listFeeds', token], (oldFeeds) => {
-        return oldFeeds ? oldFeeds.filter((feed) => feed.id !== feedId) : [];
-      });
       resetFormAndRefresh();
     },
     onError: (error: Error) => {
@@ -225,12 +202,11 @@ export function FeedConfigurationView({
           }}
         >
           <FeedTable
-            feeds={feeds}
-            isLoading={feedsLoading}
             allowEdit
             editingFeedId={isEditing ? id : undefined}
             onEditFeed={handleStartEdit}
             isSubmitting={isSubmitting}
+            onError={onError}
           />
         </Grid>
       </Grid>

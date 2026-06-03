@@ -17,7 +17,7 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
-import { type Transcript } from '@transcription/common';
+import type { Feed, Transcript } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { getFeed } from '../../service/getFeed';
@@ -187,7 +187,7 @@ export function TranscriptView({
   );
 
   const {
-    data: feeds,
+    data: listFeedsResponse,
     error: feedsError,
     isFetching: feedsFetching,
     isSuccess: isFeedsSuccess,
@@ -197,6 +197,8 @@ export function TranscriptView({
     enabled: !!token,
     refetchOnWindowFocus: false,
   });
+
+  const feeds = listFeedsResponse?.feeds;
 
   const { data: activeFeedData } = useQuery({
     queryKey: ['getFeed', token, searchedFeedId],
@@ -215,7 +217,7 @@ export function TranscriptView({
   // Memoizing the feed ID to feed map so we don't have to recreate it on every render.
   const feedIdToFeedMap = useMemo(() => {
     if (!feeds) {
-      return new Map<string, NonNullable<typeof feeds>[number]>();
+      return new Map<string, Feed>();
     }
     return new Map(feeds.map((f) => [f.id, f]));
   }, [feeds]);

@@ -1,8 +1,10 @@
-import { forwardRef, useMemo, useState } from 'react';
+import { forwardRef, useEffect, useMemo, useState } from 'react';
 import type { ComponentProps, HTMLAttributes } from 'react';
 import { Link as RouterLink } from 'react-router';
 import { TableVirtuoso } from 'react-virtuoso';
 
+import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
+import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import ClearIcon from '@mui/icons-material/Clear';
 import EditIcon from '@mui/icons-material/Edit';
 import SearchIcon from '@mui/icons-material/Search';
@@ -28,19 +30,23 @@ import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
-import type { Feed } from '@transcription/common';
+import { useQuery } from '@tanstack/react-query';
+import { SourceType } from '@transcription/common';
+import type { Feed, FeedStatus } from '@transcription/common';
 
+import { useAuth } from '../../context/AuthContext';
+import { listFeeds } from '../../service/listFeeds';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 import { MultiSelectFilter } from '../common/MultiSelectFilter';
 
 export interface FeedTableProps {
   title?: string;
-  feeds: Feed[];
-  isLoading: boolean;
   allowEdit?: boolean;
   editingFeedId?: string;
   onEditFeed?: (feed: Feed) => void;
   isSubmitting?: boolean;
+  onError: (error: Error, titleMessage?: string) => void;
+  refetchInterval?: number;
 }
 
 interface SortConfig {
@@ -149,13 +155,14 @@ const VIRTUOSO_COMPONENTS = {
 
 export function FeedTable({
   title = 'Feeds',
-  feeds,
-  isLoading,
   allowEdit = false,
   editingFeedId,
   onEditFeed,
   isSubmitting = false,
+  onError,
+  refetchInterval,
 }: FeedTableProps) {
+  const { token } = useAuth();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
@@ -165,18 +172,67 @@ export function FeedTable({
     direction: 'asc',
   });
 
+  const [limit] = useState(50);
+  const [currentPageToken, setCurrentPageToken] = useState<string | undefined>(undefined);
+  const [pageHistory, setPageHistory] = useState<(string | undefined)[]>([]);
+
   const [appliedTags, setAppliedTags] = useState<
     { key: string; value: string }[]
   >([]);
   const [appliedStatuses, setAppliedStatuses] = useState<string[]>([]);
   const [appliedSourceTypes, setAppliedSourceTypes] = useState<string[]>([]);
 
+  const mappedStatuses = useMemo(() => {
+    return appliedStatuses.map((s) => s.toLowerCase() as FeedStatus);
+  }, [appliedStatuses]);
+
+  // Query for paginated, filtered current page of feeds
+  const {
+    data,
+    isLoading,
+    error,
+  } = useQuery({
+    queryKey: [
+      'listFeeds',
+      token,
+      limit,
+      currentPageToken,
+      appliedSourceTypes,
+      mappedStatuses,
+      appliedTags,
+    ],
+    queryFn: () =>
+      listFeeds(token!, {
+        limit,
+        nextToken: currentPageToken,
+        sourceTypes: appliedSourceTypes as SourceType[],
+        statuses: mappedStatuses,
+        tags: appliedTags,
+      }),
+    enabled: !!token,
+    refetchOnWindowFocus: false,
+    refetchInterval,
+  });
+
+  const feeds = useMemo(() => data?.feeds ?? [], [data?.feeds]);
+  const nextToken = data?.nextToken;
+
+  // Background query to get all feeds for dynamic tag options extraction
+  const { data: allFeedsData } = useQuery({
+    queryKey: ['listAllFeedsForFilters', token],
+    queryFn: () => listFeeds(token!, { limit: 1000 }),
+    enabled: !!token,
+    refetchOnWindowFocus: false,
+  });
+
+  const allFeeds = useMemo(() => allFeedsData?.feeds ?? [], [allFeedsData?.feeds]);
+
   // Calculate unique tags across all feeds
   const tags = useMemo<{ key: string; value: string }[]>(() => {
     const seen = new Set<string>();
     const uniqueTags: { key: string; value: string }[] = [];
-    feeds.forEach((feed) => {
-      feed.tags?.forEach((tag) => {
+    allFeeds.forEach((feed: Feed) => {
+      feed.tags?.forEach((tag: { key: string; value: string }) => {
         const identifier = `${tag.key}:${tag.value}`;
         if (!seen.has(identifier)) {
           seen.add(identifier);
@@ -187,18 +243,49 @@ export function FeedTable({
     return uniqueTags.sort(
       (a, b) => a.key.localeCompare(b.key) || a.value.localeCompare(b.value)
     );
-  }, [feeds]);
+  }, [allFeeds]);
 
-  // Calculate unique source types across all feeds
-  const sourceTypes = useMemo<string[]>(() => {
-    const seen = new Set<string>();
-    feeds.forEach((feed) => {
-      if (feed.sourceType) {
-        seen.add(feed.sourceType);
-      }
-    });
-    return Array.from(seen).sort();
-  }, [feeds]);
+  // Static list of source types
+  const sourceTypes = useMemo(() => Object.values(SourceType), []);
+
+  useEffect(() => {
+    if (error) {
+      onError(error, 'Loading Feeds');
+    }
+  }, [error, onError]);
+
+  const handleSourceTypesChange = (val: string[]) => {
+    setAppliedSourceTypes(val);
+    setCurrentPageToken(undefined);
+    setPageHistory([]);
+  };
+
+  const handleStatusesChange = (val: string[]) => {
+    setAppliedStatuses(val);
+    setCurrentPageToken(undefined);
+    setPageHistory([]);
+  };
+
+  const handleTagsChange = (val: { key: string; value: string }[]) => {
+    setAppliedTags(val);
+    setCurrentPageToken(undefined);
+    setPageHistory([]);
+  };
+
+  const handleNextPage = () => {
+    if (nextToken) {
+      setPageHistory((prev) => [...prev, currentPageToken]);
+      setCurrentPageToken(nextToken);
+    }
+  };
+
+  const handlePrevPage = () => {
+    if (pageHistory.length > 0) {
+      const prevToken = pageHistory[pageHistory.length - 1];
+      setPageHistory((prev) => prev.slice(0, -1));
+      setCurrentPageToken(prevToken);
+    }
+  };
 
   const handleRequestSort = (property: 'name' | 'type' | 'status') => {
     setSortConfig((prev) => ({
@@ -210,7 +297,7 @@ export function FeedTable({
 
   const filteredAndSortedFeeds = useMemo(() => {
     const query = searchQuery.toLowerCase().trim();
-    let filtered = feeds;
+    let filtered = [...feeds];
 
     // 1. Text search filtering (matches name, tags key/value, source ID, external ID)
     if (query) {
@@ -218,7 +305,7 @@ export function FeedTable({
         const nameMatches = feed.name.toLowerCase().includes(query);
         const tagMatches =
           feed.tags?.some(
-            (tag) =>
+            (tag: { key: string; value: string }) =>
               tag.key.toLowerCase().includes(query) ||
               tag.value.toLowerCase().includes(query)
           ) ?? false;
@@ -232,35 +319,7 @@ export function FeedTable({
       });
     }
 
-    // 2. Tags filtering
-    if (appliedTags.length > 0) {
-      filtered = filtered.filter((feed) => {
-        return appliedTags.every((appliedTag) =>
-          feed.tags?.some(
-            (tag) =>
-              tag.key === appliedTag.key && tag.value === appliedTag.value
-          )
-        );
-      });
-    }
-
-    // 3. Status filtering
-    if (appliedStatuses.length > 0) {
-      filtered = filtered.filter((feed) => {
-        const capitalizedStatus =
-          feed.status.charAt(0).toUpperCase() + feed.status.slice(1);
-        return appliedStatuses.includes(capitalizedStatus);
-      });
-    }
-
-    // 4. Source Type filtering
-    if (appliedSourceTypes.length > 0) {
-      filtered = filtered.filter((feed) =>
-        appliedSourceTypes.includes(feed.sourceType)
-      );
-    }
-
-    // 5. Sorting using localeCompare
+    // 2. Sorting using localeCompare
     return filtered.sort((a, b) => {
       let comparison = 0;
       if (sortConfig.column === 'name') {
@@ -272,14 +331,7 @@ export function FeedTable({
       }
       return sortConfig.direction === 'asc' ? comparison : -comparison;
     });
-  }, [
-    feeds,
-    searchQuery,
-    appliedTags,
-    appliedStatuses,
-    appliedSourceTypes,
-    sortConfig,
-  ]);
+  }, [feeds, searchQuery, sortConfig]);
 
   const gridTemplateColumns = allowEdit
     ? '1.5fr 1fr 1fr 60px'
@@ -291,6 +343,7 @@ export function FeedTable({
     { key: 'type', display: 'Type' },
     { key: 'status', display: 'Status' },
   ];
+
   const tableHeader = (
     <TableRow
       component="div"
@@ -494,7 +547,7 @@ export function FeedTable({
               gap: 0.75,
             }}
           >
-            {feed.tags.map((tag, i) => (
+            {feed.tags.map((tag: { key: string; value: string }, i: number) => (
               <FeedTagChip key={`feed-${feed.id}-tag-${i}`} tag={tag} />
             ))}
           </TableCell>
@@ -552,7 +605,7 @@ export function FeedTable({
               color="text.secondary"
               sx={{ fontWeight: 500 }}
             >
-              {feeds.length} Feeds
+              {feeds.length} Feeds on Page
             </Typography>
           </Box>
         </Box>
@@ -611,7 +664,7 @@ export function FeedTable({
                 label="Source Type"
                 options={sourceTypes}
                 value={appliedSourceTypes}
-                onChange={setAppliedSourceTypes}
+                onChange={handleSourceTypesChange}
                 size="small"
               />
             </Box>
@@ -620,7 +673,7 @@ export function FeedTable({
                 label="Status"
                 options={['Active', 'Inactive', 'Error']}
                 value={appliedStatuses}
-                onChange={setAppliedStatuses}
+                onChange={handleStatusesChange}
                 size="small"
               />
             </Box>
@@ -629,7 +682,7 @@ export function FeedTable({
                 label="Tags"
                 options={tags}
                 value={appliedTags}
-                onChange={setAppliedTags}
+                onChange={handleTagsChange}
                 size="small"
                 groupBy={(tag) => tag.key}
                 getOptionLabel={(tag) => `${tag.key}: ${tag.value}`}
@@ -728,6 +781,46 @@ export function FeedTable({
           itemContent={(_index, feed) => renderRowContent(feed)}
         />
       )}
+
+      <Divider />
+      <Box
+        sx={{
+          p: 2,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          bgcolor: 'background.paper',
+        }}
+      >
+        <Typography variant="body2" color="text.secondary">
+          {feeds.length > 0 ? (
+            `Showing ${filteredAndSortedFeeds.length} feeds`
+          ) : (
+            'No feeds'
+          )}
+        </Typography>
+        <Box sx={{ display: 'flex', flexDirection: 'row', gap: 1, alignItems: 'center' }}>
+          <IconButton
+            size="small"
+            onClick={handlePrevPage}
+            disabled={pageHistory.length === 0 || isLoading}
+            aria-label="Previous Page"
+          >
+            <ChevronLeftIcon />
+          </IconButton>
+          <Typography variant="body2">
+            Page {pageHistory.length + 1}
+          </Typography>
+          <IconButton
+            size="small"
+            onClick={handleNextPage}
+            disabled={!nextToken || isLoading}
+            aria-label="Next Page"
+          >
+            <ChevronRightIcon />
+          </IconButton>
+        </Box>
+      </Box>
     </Card>
   );
 }
