@@ -144,15 +144,6 @@ export default function AppContainer({
             </ListItemButton>
           </ListItem>
           <ListItem disablePadding>
-            <ListItemButton onClick={() => handleItemClick('/transcripts')}>
-              <ListItemIcon>
-                <VoiceChatIcon />
-              </ListItemIcon>
-              <ListItemText primary={'Transcripts'} />
-            </ListItemButton>
-          </ListItem>
-          <Divider />
-          <ListItem disablePadding>
             <ListItemButton onClick={() => handleItemClick('/rules')} disabled>
               <ListItemIcon>
                 <RuleIcon />
