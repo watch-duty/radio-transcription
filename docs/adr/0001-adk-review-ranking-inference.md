@@ -46,6 +46,12 @@ Predicting commands emit a normal progress heartbeat every 900 seconds by
 default, plus cache-flush and terminal status lines, so long ADK runs remain
 observable even before completion artifacts exist.
 
+Prediction-cache writes assume one writer process per cache path. Source-group
+workers within a single `rank_gemini.py` process share one cache writer, but
+operators must not run multiple CLI processes against the same
+`--prediction-cache-jsonl` path because GCS cache flushing rewrites the full
+object snapshot rather than performing an atomic distributed append.
+
 Any command that writes ranked/excluded artifacts requires fresh output paths
 before inference or cache scoring starts. Existing prediction cache is allowed
 for resume/cache scoring, but existing `ranked.jsonl`, `ranked.csv`, or

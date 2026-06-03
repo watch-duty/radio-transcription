@@ -4,7 +4,7 @@
 
 **Goal:** Replace direct GenAI review-ranking inference with an ADK Gemini runner that uses up to 30 prior successful same-source audio segments and their model predictions as context.
 
-**Architecture:** Keep the existing review-pool, prediction-cache, scoring, and Label Studio packaging flow. Make the existing `rank_gemini.py run` and `rank_gemini.py preflight` commands use an ADK backend that processes source groups serially and each source group in row order with an in-memory ADK session, replaying compatible cached predictions as linked user/model event pairs and calling Gemini through ADK for misses.
+**Architecture:** Keep the existing review-pool, prediction-cache, scoring, and Label Studio packaging flow. Make the existing `rank_gemini.py run` and `rank_gemini.py preflight` commands use an ADK backend that may process multiple source groups concurrently while preserving row order within each source group, using in-memory ADK sessions to replay compatible cached predictions as linked user/model event pairs and call Gemini through ADK for misses.
 
 **Tech Stack:** Python, `google-adk`, ADK `Runner`, `InMemorySessionService`, Vertex-routed Gemini models, existing `common.ranking` cache/scoring utilities.
 
@@ -223,7 +223,9 @@
   malformed, write row-level validation errors to `--errors-jsonl` and do not
   produce a partial overlay artifact that could be mistaken for authoritative
   corrections.
-- Source-group concurrency is deferred to a follow-up. Remove `--source-workers` for this ADK implementation and process source groups serially.
+- Source-group concurrency is supported with `--source-workers`. Each source
+  group is still processed serially by row order, and workers share a
+  single-process prediction-cache flush path.
 - Prediction cache flushing remains global every N newly generated entries within a single process, plus a final flush. A prediction cache path must have only one writer process because GCS append is implemented as read-current plus rewrite-full. Do not add GCS object-generation preconditions or distributed locking in this PR.
 - Prediction cache is the resumable progress artifact. Ranked JSONL, ranked CSV,
   and excluded JSONL are completion artifacts and must be written only after the
@@ -911,8 +913,8 @@ before the current audio URI part.
 - process rows in source order per source group
 - ignore source split labels for ADK session grouping and prior-context
   eligibility when present in source manifests
-- process source groups serially; do not expose or accept `--source-workers`
-  in this implementation
+- process source groups concurrently up to `--source-workers`, while preserving
+  row order within each source group
 - use `InMemorySessionService`
 - create one session per source group, recreating it after errors
 - retain all successful source-group user/model pairs in the in-memory session during the run; do not physically prune the session after each row
@@ -1001,8 +1003,8 @@ Update `model/scripts/review/tests/test_rank_gemini_cli.py` to assert:
   option; it passes all review-pool rows to ADK inference and scoring.
 - `preflight --sample-size` passes at most that many review-pool rows to ADK
   inference for smoke validation only.
-- `run` and `preflight` do not expose `--source-workers`; source-group
-  concurrency is deferred to a follow-up.
+- `run` and `preflight` expose `--source-workers`, defaulting to 16, to process
+  independent source groups concurrently.
 - `preflight` keeps cheaper defaults: `gemini-3.1-flash-lite` and a small
   sample size.
 - both `run` and `preflight` expose `--retry-errors`.
@@ -1299,9 +1301,9 @@ Expected: no lint errors.
   `runner.run_async()` cleanly with `agen.aclose()` and enter the same retry
   path as other retryable per-segment exceptions.
 - Use a fresh GCS output prefix for the ADK run because prior `1000`-event cache rows are intentionally incompatible.
-- Do not expose `--source-workers` in this ADK implementation. Process source
-  groups serially; source-group concurrency can be added in a follow-up after
-  the serial ADK path is inspected and quota behavior is understood.
+- Expose `--source-workers` for ADK review ranking. Process source groups
+  concurrently up to the requested worker count, while keeping each source
+  group serial by row order.
 - Do not run multiple writer processes against the same `--prediction-cache-jsonl`
   path. Use distinct output prefixes for concurrent experiments.
 - Do not add GCS object-generation preconditions or lock files for prediction-cache
@@ -1310,5 +1312,5 @@ Expected: no lint errors.
 
 ## Follow-Ups
 
-- Reintroduce bounded source-group concurrency after the serial ADK path has
-  been smoke-tested and quota/rate-limit behavior is understood.
+- Consider automatic worker downshift if future runs show sustained
+  quota/resource-exhausted failures at high source-worker counts.
