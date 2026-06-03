@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import datetime
 import uuid
 from typing import TYPE_CHECKING
@@ -1677,6 +1678,7 @@ async def test_list_feeds_limit_and_pagination(
     feed_id_a = await _insert_feed(
         db_pool, "Feed A", source_feed_id="src_a", external_id="ext_a"
     )
+    await asyncio.sleep(0.01)  # Ensure distinct created_at timestamps
     feed_id_b = await _insert_feed(
         db_pool, "Feed B", source_feed_id="src_b", external_id="ext_b"
     )
