@@ -256,7 +256,10 @@ class TestFeedsAPI(unittest.TestCase):
             feeds=[mock_feed],
             next_token=None,
         )
-        url = "/v1/feeds?tags=region:West&tags=county:Fulton"
+        url = (
+            '/v1/feeds?tags=[{"key":"region","value":"West"},'
+            '{"key":"county","value":"Fulton"}]'
+        )
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data = response.json()
@@ -279,7 +282,7 @@ class TestFeedsAPI(unittest.TestCase):
         response = self.client.get("/v1/feeds?tags=invalidtag")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         detail = response.json()["detail"]
-        self.assertIn("Tags must be in 'key:value' format", detail)
+        self.assertIn("format for tags", detail)
 
 
     def test_deactivate_feed_success(self) -> None:

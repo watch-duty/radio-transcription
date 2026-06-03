@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Annotated
@@ -25,7 +26,7 @@ from backend.pipeline.storage.feed_store import (
 )
 from backend.pipeline.storage.pagination_utils import SortOrder
 
-from .models import Feed, FeedCreate, FeedUpdate, ListFeedsResponse
+from .models import Feed, FeedCreate, FeedUpdate, ListFeedsResponse, Tag
 from .service import FeedService
 
 logger = logging.getLogger(__name__)
@@ -141,23 +142,37 @@ async def list_feeds(
     order: SortOrder = SortOrder.DESC,
     source_types: Annotated[list[SourceType] | None, Query()] = None,
     statuses: Annotated[list[FeedStatus] | None, Query()] = None,
-    tags: Annotated[list[str] | None, Query()] = None,
+    tags: str | None = None,
 ) -> ListFeedsResponse:
     """List all feeds with pagination and optional filters."""
     tags_list = None
     if tags:
-        tags_list = []
-        for tag in tags:
-            if ":" not in tag:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=(
-                        f"Invalid tag format '{tag}'. "
-                        "Tags must be in 'key:value' format."
-                    ),
-                )
-            key, val = tag.split(":", 1)
-            tags_list.append({"key": key, "value": val})
+        try:
+            tags_data = json.loads(tags)
+        except json.JSONDecodeError as e:
+            err_msg = f"Invalid JSON format for tags: {e}"
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=err_msg,
+            ) from e
+
+        if not isinstance(tags_data, list):
+            err_msg = "Tags must be a JSON list of key-value pairs"
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=err_msg,
+            )
+
+        try:
+            tags_list = [
+                Tag.model_validate(t).model_dump() for t in tags_data
+            ]
+        except ValueError as e:
+            err_msg = f"Invalid format for tags: {e}"
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=err_msg,
+            ) from e
 
     service: FeedService = request.app.state.feed_service
     return await service.list_feeds(
