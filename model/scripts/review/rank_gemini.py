@@ -202,21 +202,26 @@ def _run_predicting_command(args: argparse.Namespace) -> int:
             flush_cache_entries()
 
     try:
-        _new_entries, final_cache = (
-            adk_ranking.run_source_group_predictions_adk(
-                review_rows,
-                cache_entries,
-                runner,
-                prompt_fp=prompt_fp,
-                context_policy_fp=context_policy_fp,
-                num_recent_events=ranking.NUM_RECENT_EVENTS,
-                created_at=_utc_timestamp(),
-                on_new_entry=on_new_entry,
-                retry_errors=args.retry_errors,
+        try:
+            _new_entries, final_cache = (
+                adk_ranking.run_source_group_predictions_adk(
+                    review_rows,
+                    cache_entries,
+                    runner,
+                    prompt_fp=prompt_fp,
+                    context_policy_fp=context_policy_fp,
+                    num_recent_events=ranking.NUM_RECENT_EVENTS,
+                    created_at=_utc_timestamp(),
+                    on_new_entry=on_new_entry,
+                    retry_errors=args.retry_errors,
+                )
             )
-        )
+        finally:
+            flush_cache_entries()
     finally:
-        flush_cache_entries()
+        close_runner = getattr(runner, "close", None)
+        if close_runner is not None:
+            close_runner()
     _score_and_write(args, review_rows, final_cache)
     return 0
 

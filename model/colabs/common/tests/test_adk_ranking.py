@@ -135,6 +135,30 @@ class _FakeAdkRunner:
         return self.stream
 
 
+class _LoopRecordingStream:
+    def __init__(self, loops: list[asyncio.AbstractEventLoop]) -> None:
+        self.loops = loops
+        self._yielded = False
+
+    def __aiter__(self) -> "_LoopRecordingStream":
+        return self
+
+    async def __anext__(self) -> object:
+        if self._yielded:
+            raise StopAsyncIteration
+        self._yielded = True
+        self.loops.append(asyncio.get_running_loop())
+        return _FakeEvent("copy")
+
+
+class _LoopRecordingAdkRunner:
+    def __init__(self) -> None:
+        self.loops: list[asyncio.AbstractEventLoop] = []
+
+    def run_async(self, **_kwargs: object) -> _LoopRecordingStream:
+        return _LoopRecordingStream(self.loops)
+
+
 class TestAdkPredictionExtraction(unittest.TestCase):
     def test_extract_final_response_text_uses_final_events_only(self) -> None:
         from common import adk_ranking
@@ -163,6 +187,27 @@ class TestAdkPredictionExtraction(unittest.TestCase):
             runner._run_events("session-a", object())
 
         self.assertTrue(stream.closed)
+
+    def test_run_events_reuses_runner_event_loop(self) -> None:
+        from common import adk_ranking
+
+        adk_runner = _LoopRecordingAdkRunner()
+        runner = object.__new__(adk_ranking.AdkRankingRunner)
+        runner._runner = adk_runner
+        runner._run_config = object()
+        runner.user_id = "review-ranking"
+        runner.request_timeout_ms = None
+
+        try:
+            runner._run_events("session-a", object())
+            runner._run_events("session-a", object())
+        finally:
+            close = getattr(runner, "close", None)
+            if close is not None:
+                close()
+
+        self.assertEqual(len(adk_runner.loops), 2)
+        self.assertIs(adk_runner.loops[0], adk_runner.loops[1])
 
 
 class TestSourceGroupPredictions(unittest.TestCase):

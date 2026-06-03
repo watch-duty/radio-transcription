@@ -71,6 +71,8 @@ class AdkRankingRunner:
         self.agent_name = AGENT_NAME
         self.app_name = APP_NAME
         self.user_id = USER_ID
+        self._loop = asyncio.new_event_loop()
+        self._closed = False
         self._session_service = InMemorySessionService()
         model = Gemini(
             model=_vertex_model_resource(project, location, model_id)
@@ -101,7 +103,7 @@ class AdkRankingRunner:
     def start_session(self, source_group: str) -> AdkSessionHandle:
         """Create a new in-memory ADK session for one source group."""
         session_id = f"{_safe_session_part(source_group)}-{uuid.uuid4().hex}"
-        session = _run_async(
+        session = self._run_async(
             self._session_service.create_session(
                 app_name=self.app_name,
                 user_id=self.user_id,
@@ -135,8 +137,18 @@ class AdkRankingRunner:
                 prefix=prompts.ADK_PRIOR_PREDICTION_WRAPPER,
             ),
         )
-        _append_event(self._session_service, session.session, user_event)
-        _append_event(self._session_service, session.session, model_event)
+        _append_event(
+            self._session_service,
+            session.session,
+            user_event,
+            run_async=self._run_async,
+        )
+        _append_event(
+            self._session_service,
+            session.session,
+            model_event,
+            run_async=self._run_async,
+        )
 
     def predict_one(
         self,
@@ -170,7 +182,27 @@ class AdkRankingRunner:
                 await _close_async_iterable(stream)
                 raise
 
-        return _run_async(collect())
+        return self._run_async(collect())
+
+    def close(self) -> None:
+        """Close the runner-owned event loop after ADK work is complete."""
+        self._closed = True
+        loop = getattr(self, "_loop", None)
+        if loop is None or loop.is_closed():
+            return
+        loop.run_until_complete(loop.shutdown_asyncgens())
+        loop.run_until_complete(loop.shutdown_default_executor())
+        loop.close()
+
+    def _run_async(self, awaitable: object) -> object:
+        if getattr(self, "_closed", False):
+            _close_unawaited(awaitable)
+            raise RuntimeError("ADK ranking runner is closed")
+        loop = getattr(self, "_loop", None)
+        if loop is None:
+            loop = asyncio.new_event_loop()
+            self._loop = loop
+        return _run_async_on_loop(loop, awaitable)
 
 
 def run_source_group_predictions_adk(
@@ -468,10 +500,13 @@ def _append_event(
     session_service: object,
     session: object,
     event: object,
+    *,
+    run_async: collections.abc.Callable[[object], object] | None = None,
 ) -> None:
     result = session_service.append_event(session=session, event=event)
     if inspect.isawaitable(result):
-        _run_async(result)
+        runner = run_async or _run_async
+        runner(result)
 
 
 def _generation_config() -> object:
@@ -508,13 +543,41 @@ def _entry_successful(entry: ranking.PredictionCacheEntry) -> bool:
 
 
 def _run_async(awaitable: object) -> object:
+    loop = asyncio.new_event_loop()
+    try:
+        return _run_async_on_loop(loop, awaitable, close=True)
+    except Exception:
+        if not loop.is_closed():
+            loop.close()
+        raise
+
+
+def _run_async_on_loop(
+    loop: asyncio.AbstractEventLoop,
+    awaitable: object,
+    *,
+    close: bool = False,
+) -> object:
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(awaitable)
+        try:
+            return loop.run_until_complete(awaitable)
+        finally:
+            if close:
+                loop.run_until_complete(loop.shutdown_asyncgens())
+                loop.run_until_complete(loop.shutdown_default_executor())
+                loop.close()
+    _close_unawaited(awaitable)
     raise RuntimeError(
         "ADK ranking runner cannot run inside an active event loop"
     )
+
+
+def _close_unawaited(awaitable: object) -> None:
+    close = getattr(awaitable, "close", None)
+    if close is not None:
+        close()
 
 
 def _require_adk() -> None:
