@@ -18,6 +18,7 @@ dependencies = [
     "rules-service",
     "transcripts-service",
     "normalization-pipeline",
+    "segmentation-pipeline",
     "transcription-function",
     "evaluation-function",
     "notification-function",
@@ -240,6 +241,7 @@ pythonVersion = "3.13"
 members = [
     "backend/pipeline/common",
     "backend/pipeline/normalization",
+    "backend/pipeline/segmentation",
     "backend/pipeline/transcription",
     "backend/pipeline/evaluation",
     "backend/pipeline/notification",
@@ -256,6 +258,7 @@ feeds-service = { workspace = true }
 rules-service = { workspace = true }
 transcripts-service = { workspace = true }
 normalization-pipeline = { workspace = true }
+segmentation-pipeline = { workspace = true }
 transcription-function = { workspace = true }
 evaluation-function = { workspace = true }
 notification-function = { workspace = true }
