@@ -200,7 +200,7 @@ run = "uv run pytest integration_tests/storage/"
 description = "Run all E2E tests in Docker Compose"
 run = """
 docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env down -v --remove-orphans
-docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env build
+docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env build integration-tests --with-dependencies
 docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run --rm integration-tests
 """
 

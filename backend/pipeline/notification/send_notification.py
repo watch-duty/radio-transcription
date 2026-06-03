@@ -9,7 +9,7 @@ import requests
 from cloudevents.http.event import CloudEvent
 
 from backend.pipeline.common import auth_client, env
-from backend.pipeline.common.logging import setup_logging
+from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.storage.redis_service import RedisService
 from backend.pipeline.common.tracing_utils import (
     setup_tracing,

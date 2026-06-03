@@ -17,8 +17,8 @@ COPY --from=ghcr.io/astral-sh/uv:0.11.13 /uv /uvx /bin/
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
-COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml ./
-RUN uv sync --frozen --no-dev
+COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml backend/services/*/pyproject.toml ./
+RUN uv sync --frozen --no-dev --package feeds-service
 
 # 4. Copy necessary application source code
 COPY backend/__init__.py ./backend/__init__.py
