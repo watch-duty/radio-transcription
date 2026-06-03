@@ -51,6 +51,9 @@ def setup_tracing(*, use_batch: bool = True) -> None:
             return
 
         project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or ""
+        if not project_id:
+            msg = "GOOGLE_CLOUD_PROJECT environment variable must be set in GCP environment."
+            raise ValueError(msg)
         provider = TracerProvider()
         exporter = CloudTraceSpanExporter(project_id=project_id)
 
