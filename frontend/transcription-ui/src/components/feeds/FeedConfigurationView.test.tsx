@@ -879,4 +879,39 @@ describe('FeedConfigurationView', () => {
       screen.queryByRole('menuitem', { name: /Reset feed/i })
     ).not.toBeInTheDocument();
   });
+
+  it('should not show Reset feed menu item if feed substatus is unclaimed', async () => {
+    const unclaimedFeed: Feed = {
+      id: 'feed-3',
+      name: 'Oakland Fire Dispatch',
+      sourceType: SourceType.BCFY_FEEDS,
+      sourceFeedId: '44556',
+      externalId: 'ca-oak-fire',
+      status: 'inactive',
+      substatus: 'unclaimed',
+      tags: [],
+    };
+    vi.mocked(listFeeds).mockResolvedValue([...mockFeeds, unclaimedFeed]);
+
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Oakland Fire Dispatch')).toBeInTheDocument();
+    });
+
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Oakland Fire Dispatch',
+    });
+    fireEvent.click(editBtn);
+
+    const editFormCard = screen.getByTestId('feed-config-card');
+    const kebabBtn = within(editFormCard).getByRole('button', {
+      name: /feed actions/i,
+    });
+    fireEvent.click(kebabBtn);
+
+    expect(
+      screen.queryByRole('menuitem', { name: /Reset feed/i })
+    ).not.toBeInTheDocument();
+  });
 });
