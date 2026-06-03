@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import MagicMock
 
 import grpc
+import requests
 from cloudevents.http.event import CloudEvent
 from google.api_core.exceptions import PermissionDenied, ServiceUnavailable
 from google.protobuf.duration_pb2 import Duration  # type: ignore
@@ -523,6 +524,238 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         )
 
         # PermissionDenied (GoogleAPICallError with code 403) must be caught and swallowed cleanly
+        processor.process_event(cloud_event)
+
+        mock_publisher.publish.assert_not_called()
+        mock_audio_segments_client.add_audio_segment_annotation.assert_called_once()
+        call_data = mock_audio_segments_client.add_audio_segment_annotation.call_args.kwargs[
+            "data"
+        ]
+        self.assertEqual(call_data["text"], "")
+        self.assertIn("Permanent Failure", call_data["errors"][0])
+
+    def test_process_event_requests_timeout_transient_error_propagates(self) -> None:
+        """Verifies that requests.exceptions.Timeout during transcription propagates to trigger a retry."""
+        mock_transcriber = MagicMock()
+        mock_transcriber.transcribe.side_effect = requests.exceptions.Timeout("Request timed out")
+
+        mock_publisher = MagicMock()
+        mock_audio_segments_client = MagicMock()
+
+        claim = NormalizedAudio(
+            transmission_id="tx-1111",
+            feed_id="feed-2222",
+            source_audio_uris=["gs://bucket/raw1.flac"],
+            canonical_audio_uri="gs://bucket/normalized.flac",
+            playback_audio_uri="gs://bucket/normalized.m4a",
+            feed_name="Test Feed",
+            external_id="ext-1234",
+        )
+        t_start = Timestamp(seconds=1000, nanos=0)
+        t_end = Timestamp(seconds=1005, nanos=0)
+        claim.start_timestamp.CopyFrom(t_start)
+        claim.end_timestamp.CopyFrom(t_end)
+
+        data_bytes = claim.SerializeToString()
+        envelope = {
+            "message": {
+                "data": base64.b64encode(data_bytes).decode("utf-8"),
+                "attributes": {},
+            }
+        }
+
+        cloud_event = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test-source",
+            },
+            data=envelope,
+        )
+
+        processor = TranscriptionEventProcessor(
+            project_id="test-proj",
+            output_topic="projects/test-proj/topics/egress",
+            transcriber=mock_transcriber,
+            publisher=mock_publisher,
+            audio_segments_client=mock_audio_segments_client,
+        )
+
+        with self.assertRaises(requests.exceptions.Timeout):
+            processor.process_event(cloud_event)
+
+        mock_publisher.publish.assert_not_called()
+        mock_audio_segments_client.add_audio_segment_annotation.assert_called_once()
+        call_data = mock_audio_segments_client.add_audio_segment_annotation.call_args.kwargs[
+            "data"
+        ]
+        self.assertIn("Transient Failure", call_data["errors"][0])
+
+    def test_process_event_requests_connection_error_transient_error_propagates(self) -> None:
+        """Verifies that requests.exceptions.ConnectionError during transcription propagates to trigger a retry."""
+        mock_transcriber = MagicMock()
+        mock_transcriber.transcribe.side_effect = requests.exceptions.ConnectionError("Connection refused")
+
+        mock_publisher = MagicMock()
+        mock_audio_segments_client = MagicMock()
+
+        claim = NormalizedAudio(
+            transmission_id="tx-1111",
+            feed_id="feed-2222",
+            source_audio_uris=["gs://bucket/raw1.flac"],
+            canonical_audio_uri="gs://bucket/normalized.flac",
+            playback_audio_uri="gs://bucket/normalized.m4a",
+            feed_name="Test Feed",
+            external_id="ext-1234",
+        )
+        t_start = Timestamp(seconds=1000, nanos=0)
+        t_end = Timestamp(seconds=1005, nanos=0)
+        claim.start_timestamp.CopyFrom(t_start)
+        claim.end_timestamp.CopyFrom(t_end)
+
+        data_bytes = claim.SerializeToString()
+        envelope = {
+            "message": {
+                "data": base64.b64encode(data_bytes).decode("utf-8"),
+                "attributes": {},
+            }
+        }
+
+        cloud_event = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test-source",
+            },
+            data=envelope,
+        )
+
+        processor = TranscriptionEventProcessor(
+            project_id="test-proj",
+            output_topic="projects/test-proj/topics/egress",
+            transcriber=mock_transcriber,
+            publisher=mock_publisher,
+            audio_segments_client=mock_audio_segments_client,
+        )
+
+        with self.assertRaises(requests.exceptions.ConnectionError):
+            processor.process_event(cloud_event)
+
+        mock_publisher.publish.assert_not_called()
+        mock_audio_segments_client.add_audio_segment_annotation.assert_called_once()
+        call_data = mock_audio_segments_client.add_audio_segment_annotation.call_args.kwargs[
+            "data"
+        ]
+        self.assertIn("Transient Failure", call_data["errors"][0])
+
+    def test_process_event_requests_http_500_transient_error_propagates(self) -> None:
+        """Verifies that requests.exceptions.HTTPError (500) during transcription propagates to trigger a retry."""
+        mock_transcriber = MagicMock()
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        http_err = requests.exceptions.HTTPError("500 Server Error", response=mock_resp)
+        mock_transcriber.transcribe.side_effect = http_err
+
+        mock_publisher = MagicMock()
+        mock_audio_segments_client = MagicMock()
+
+        claim = NormalizedAudio(
+            transmission_id="tx-1111",
+            feed_id="feed-2222",
+            source_audio_uris=["gs://bucket/raw1.flac"],
+            canonical_audio_uri="gs://bucket/normalized.flac",
+            playback_audio_uri="gs://bucket/normalized.m4a",
+            feed_name="Test Feed",
+            external_id="ext-1234",
+        )
+        t_start = Timestamp(seconds=1000, nanos=0)
+        t_end = Timestamp(seconds=1005, nanos=0)
+        claim.start_timestamp.CopyFrom(t_start)
+        claim.end_timestamp.CopyFrom(t_end)
+
+        data_bytes = claim.SerializeToString()
+        envelope = {
+            "message": {
+                "data": base64.b64encode(data_bytes).decode("utf-8"),
+                "attributes": {},
+            }
+        }
+
+        cloud_event = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test-source",
+            },
+            data=envelope,
+        )
+
+        processor = TranscriptionEventProcessor(
+            project_id="test-proj",
+            output_topic="projects/test-proj/topics/egress",
+            transcriber=mock_transcriber,
+            publisher=mock_publisher,
+            audio_segments_client=mock_audio_segments_client,
+        )
+
+        with self.assertRaises(requests.exceptions.HTTPError):
+            processor.process_event(cloud_event)
+
+        mock_publisher.publish.assert_not_called()
+        mock_audio_segments_client.add_audio_segment_annotation.assert_called_once()
+        call_data = mock_audio_segments_client.add_audio_segment_annotation.call_args.kwargs[
+            "data"
+        ]
+        self.assertIn("Transient Failure", call_data["errors"][0])
+
+    def test_process_event_requests_http_400_permanent_error_silent_drop(self) -> None:
+        """Verifies that requests.exceptions.HTTPError (400) during transcription is caught and silently dropped."""
+        mock_transcriber = MagicMock()
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 400
+        http_err = requests.exceptions.HTTPError("400 Bad Request", response=mock_resp)
+        mock_transcriber.transcribe.side_effect = http_err
+
+        mock_publisher = MagicMock()
+        mock_audio_segments_client = MagicMock()
+
+        claim = NormalizedAudio(
+            transmission_id="tx-1111",
+            feed_id="feed-2222",
+            source_audio_uris=["gs://bucket/raw1.flac"],
+            canonical_audio_uri="gs://bucket/normalized.flac",
+            playback_audio_uri="gs://bucket/normalized.m4a",
+            feed_name="Test Feed",
+            external_id="ext-1234",
+        )
+        t_start = Timestamp(seconds=1000, nanos=0)
+        t_end = Timestamp(seconds=1005, nanos=0)
+        claim.start_timestamp.CopyFrom(t_start)
+        claim.end_timestamp.CopyFrom(t_end)
+
+        data_bytes = claim.SerializeToString()
+        envelope = {
+            "message": {
+                "data": base64.b64encode(data_bytes).decode("utf-8"),
+                "attributes": {},
+            }
+        }
+
+        cloud_event = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test-source",
+            },
+            data=envelope,
+        )
+
+        processor = TranscriptionEventProcessor(
+            project_id="test-proj",
+            output_topic="projects/test-proj/topics/egress",
+            transcriber=mock_transcriber,
+            publisher=mock_publisher,
+            audio_segments_client=mock_audio_segments_client,
+        )
+
         processor.process_event(cloud_event)
 
         mock_publisher.publish.assert_not_called()

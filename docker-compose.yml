@@ -138,7 +138,6 @@ services:
     environment:
       - OUTPUT_TOPIC=projects/local-project/topics/transcription-text-topic
       - PROJECT_ID=local-project
-      - TRANSCRIBER_TYPE=local_whisper
     command: ["functions-framework", "--source=backend/pipeline/transcription/main.py", "--target=transcribe_claim_check", "--signature-type=cloudevent", "--port=8084"]
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8084))"]
@@ -148,7 +147,8 @@ services:
     networks:
       - pipeline-network
     depends_on:
-      - pubsub-emulator
+      pubsub-emulator:
+        condition: service_started
 
   rules-evaluation:
     build:
@@ -312,6 +312,11 @@ services:
       - "8095:8095"
     env_file:
       - ./local_dev/LOCAL.env
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8095))"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     networks:
       - pipeline-network
     depends_on:

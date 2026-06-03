@@ -39,6 +39,9 @@ Integration tests run an automated E2E test on startup.
 > [!NOTE]
 > `local_dev/test_data.sql` is used to seed the database with dummy feeds and rules for local development (`mise dev:start`). It is explicitly ignored in the integration tests (`mise test:e2e`) to ensure tests run in a clean, isolated database environment.
 
+> [!TIP]
+> **Transcription engine type:** By default, local development uses the `mock` transcriber to save resources. If you want to run with the local Whisper API service, set `TRANSCRIBER_TYPE=local_whisper` in `local_dev/LOCAL.env` before starting the services.
+
 Locally run the full pipeline from E2E:
 ```bash
 mise dev:start

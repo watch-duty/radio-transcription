@@ -11,26 +11,29 @@ class LocalApiTranscriber(Transcriber):
     """Transcriber that calls a local HTTP API for transcription."""
 
     def __init__(
-        self, api_url: str = "http://local-whisper:8095/transcribe"
+        self, api_url: str
     ) -> None:
         self.api_url = api_url
 
     def setup(self) -> None:
+        if not self.api_url:
+            msg = "LocalApiTranscriber api_url is not set."
+            raise ValueError(msg)
         logger.info(f"LocalApiTranscriber setup pointing to {self.api_url}")
         try:
             health_url = self.api_url.replace("/transcribe", "/health")
             resp = requests.get(health_url, timeout=2)
             if resp.status_code == 200:
                 logger.info(
-                    "Successfully connected to local whisper API health check."
+                    "Successfully connected to local asr API health check."
                 )
             else:
                 logger.warning(
-                    f"Local whisper API health check returned {resp.status_code}"
+                    f"Local asr API health check returned {resp.status_code}"
                 )
         except Exception as e:
             logger.warning(
-                f"Could not connect to local whisper API during setup: {e}"
+                f"Could not connect to local asr API during setup: {e}"
             )
 
     def transcribe(
@@ -40,29 +43,38 @@ class LocalApiTranscriber(Transcriber):
         uri: str | None = None,
         duration_ms: int,
     ) -> str | None:
-        try:
-            if uri:
-                # Prefer sending URI if available, let the API download it
-                logger.info(f"Calling local whisper API with URI: {uri}")
-                params = {"uri": uri}
-                resp = requests.post(self.api_url, params=params, timeout=60)
-            elif audio_data:
-                logger.info("Calling local whisper API with raw audio data")
-                files = {"file": ("audio.flac", audio_data, "audio/flac")}
-                resp = requests.post(self.api_url, files=files, timeout=60)
-            else:
-                logger.warning(
-                    "No audio_data or uri provided to LocalApiTranscriber."
-                )
-                return None
+        if uri:
+            # Prefer sending URI if available, let the API download it
+            logger.info(f"Calling local whisper API with URI: {uri}")
+            params = {"uri": uri}
+            resp = requests.post(self.api_url, params=params, timeout=60)
+        elif audio_data:
+            logger.info("Calling local whisper API with raw audio data")
+            files = {"file": ("audio.flac", audio_data, "audio/flac")}
+            resp = requests.post(self.api_url, files=files, timeout=60)
+        else:
+            logger.warning(
+                "No audio_data or uri provided to LocalApiTranscriber."
+            )
+            return None
 
-            if resp.status_code == 200:
-                result = resp.json()
-                return result.get("text")
-            logger.error(
+        try:
+            resp.raise_for_status()
+        except requests.HTTPError:
+            logger.exception(
                 f"Local whisper API returned error {resp.status_code}: {resp.text}"
             )
-            return None  # noqa: TRY300
+            raise
+
+        try:
+            result = resp.json()
         except Exception:
-            logger.exception("Error calling local whisper API")
-            return None
+            logger.exception("Failed to parse JSON response from local whisper API")
+            raise
+
+        text = result.get("text")
+        if text is not None:
+            text = text.strip()
+            if not text:
+                return None
+        return text
