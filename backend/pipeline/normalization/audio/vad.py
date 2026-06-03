@@ -332,6 +332,34 @@ class VoiceActivityDetector:
         # We use mode='full' and truncate to priming_samples to completely prevent edge wrap artifacts.
         return np.convolve(noise, np.ones(5) / 5, mode="full")[:priming_samples]
 
+    def _is_speech_segment(self, sig: np.ndarray, chunk_size: int) -> bool:
+        """Applies dynamic range/spikiness heuristics to reject transient static clicks and quiet noise."""
+        if len(sig) == 0:
+            return False
+
+        # Compute RMS in chunk-sized windows
+        seg_rms = []
+        for w_start in range(0, len(sig), chunk_size):
+            window = sig[w_start : w_start + chunk_size]
+            if len(window) < chunk_size:
+                window = np.pad(window, (0, chunk_size - len(window)))
+            seg_rms.append(np.sqrt(np.mean(window**2)))
+
+        seg_rms = np.array(seg_rms)
+        mean_rms = np.mean(seg_rms)
+        median_rms = np.median(seg_rms)
+        rms_ratio = mean_rms / median_rms if median_rms > 1e-5 else 999.0
+
+        # 1. Ratio check: reject if there are high spikes with very quiet median (clicks/transients)
+        if rms_ratio > 10.0:
+            return False
+
+        # 2. Floor check: reject if the segment is extremely quiet
+        if mean_rms < 0.001:
+            return False
+
+        return True
+
     def _extract_vad_frames(
         self,
         vad_input: np.ndarray,
@@ -517,6 +545,15 @@ class VoiceActivityDetector:
             raw_segments, vad_offset_sec
         )
 
+        # Filter out noise spikes/transients using spikiness & amplitude floor heuristics
+        filtered_segments = []
+        for start, end in shifted_segments:
+            start_idx = int((start + vad_offset_sec) * TARGET_SAMPLE_RATE)
+            end_idx = int((end + vad_offset_sec) * TARGET_SAMPLE_RATE)
+            seg_signal = vad_input[start_idx:end_idx]
+            if self._is_speech_segment(seg_signal, chunk_size):
+                filtered_segments.append((start, end))
+
         # Pad and merge overlapping segments using the clean native-rate duration calculation
         audio_len_sec = len(audio_array) / float(sample_rate)
-        return self._pad_and_merge_segments(shifted_segments, audio_len_sec)
+        return self._pad_and_merge_segments(filtered_segments, audio_len_sec)
