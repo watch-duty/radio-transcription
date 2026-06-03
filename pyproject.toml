@@ -242,7 +242,7 @@ convention = "google"
 
 
 [tool.ty.src]
-exclude = ["model/"]
+exclude = ["model/", "backend/services/"]
 
 [tool.pyright]
 pythonVersion = "3.13"
