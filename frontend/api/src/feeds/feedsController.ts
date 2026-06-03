@@ -63,6 +63,7 @@ export class ListFeedsQueryParams {
   order?: 'asc' | 'desc';
   sourceTypes?: SourceType[];
   statuses?: FeedStatus[];
+  // Tag strings must be in the format of {"key": "<val>", "value": "<val>"}
   tags?: string[];
 }
 
