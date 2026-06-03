@@ -241,8 +241,11 @@
   row is missing compatible cache coverage, fail nonzero and do not write
   ranked/excluded outputs.
 - All newly generated cache entries from one `run` or `preflight` invocation share a single `created_at` timestamp, matching the existing CLI behavior. Do not add a separate run ID field.
-- `--request-timeout-ms` is a per-segment ADK invocation timeout, not a GenAI HTTP client timeout. On timeout, cancel the ADK async generator, recreate/replay the source-group in-memory session, and retry under the normal `max_attempts=3` retry policy.
-- Retry ownership belongs to `run_source_group_predictions_adk()`, not ADK/Gemini configured retry options. Do not set ADK workflow `RetryConfig` or `Gemini(retry_options=...)` initially; use the explicit outer retry loop with session replay and bounded backoff.
+- `--request-timeout-ms` is a per-segment ADK invocation timeout, not a GenAI HTTP client timeout. On timeout, cancel the ADK async generator, recreate/replay the source-group in-memory session, and retry under the normal `max_attempts=5` retry policy.
+- Retry ownership belongs to `run_source_group_predictions_adk()` plus the
+  shared native GenAI HTTP retry options. Do not set ADK workflow
+  `RetryConfig` or Gemini constructor `retry_options`; use explicit outer
+  retry with session replay for segment-level failures.
 
 ## Files
 
@@ -775,16 +778,18 @@ them from `common.gemini_config`; compile `common.vertex` in final verification.
 
 Create `model/colabs/common/tests/test_adk_ranking.py` with tests for:
 
-- `build_prior_user_content()` includes label text before the audio URI part.
-- `build_prior_model_event()` uses `author=AGENT_NAME` and `content.role="model"`.
-- `build_model_uri()` returns `projects/{project}/locations/{location}/publishers/google/models/{model_id}`.
-- `build_agent()` uses `common.gemini_config` values for generation and safety
-  settings.
-- `build_agent()` uses root `mode="chat"` with no tools.
-- `build_agent()` leaves `include_contents` at ADK's default history-inclusion behavior.
-- `build_agent()` does not enable `Gemini(use_interactions_api=True)`.
-- `build_agent()` does not configure ADK workflow `RetryConfig` or
-  `Gemini(retry_options=...)`.
+- `AdkRankingRunner.append_success()` links prior same-source audio and its
+  model transcript as adjacent user/model events.
+- `_vertex_model_resource()` returns
+  `projects/{project}/locations/{location}/publishers/google/models/{model_id}`.
+- `_generation_config()` uses `common.gemini_config` values for generation,
+  safety, thinking level, and native GenAI HTTP retry settings.
+- `AdkRankingRunner` uses root `mode="chat"` with no tools.
+- `AdkRankingRunner` leaves `include_contents` at ADK's default
+  history-inclusion behavior.
+- `AdkRankingRunner` does not enable `Gemini(use_interactions_api=True)`.
+- `AdkRankingRunner` does not configure ADK workflow `RetryConfig` or Gemini
+  constructor `retry_options`.
 - `run_source_group_predictions_adk()` replays cache hits without calling the model.
 - `run_source_group_predictions_adk()` stores successful ADK final responses as compatible `PredictionCacheEntry` rows.
 - `run_source_group_predictions_adk()` extracts prediction text only from ADK final-response events, concatenating text parts with spaces and ignoring non-text parts.
@@ -811,21 +816,17 @@ so both the ADK runner and cache-only scoring can import them without requiring
 `model[adk]`:
 
 ```python
-GEMINI_ADK_PRIOR_AUDIO_LABEL_TEMPLATE = (
-    "Prior segment {ordinal} ({audio_segment_id}). Audio:"
+ADK_PRIOR_AUDIO_WRAPPER = (
+    "Prior same-source audio segment. The following model response belongs to "
+    "this exact prior audio segment."
 )
-GEMINI_ADK_PRIOR_TRANSCRIPT_LABEL_TEMPLATE = (
-    "Transcript for prior segment {ordinal} ({audio_segment_id}): {prediction_text}"
+ADK_PRIOR_PREDICTION_WRAPPER = (
+    "Model transcript for the immediately preceding prior audio segment."
 )
-GEMINI_ADK_CURRENT_SEGMENT_INSTRUCTION = (
-    "Current segment. Transcribe only this current audio. "
-    "Prior segments are context only."
+ADK_CURRENT_AUDIO_WRAPPER = (
+    "Current audio segment to transcribe. Use prior same-source audio/model "
+    "turns only as context."
 )
-GEMINI_ADK_REVIEW_PROMPT_PARTS = {
-    "prior_audio_label_template": GEMINI_ADK_PRIOR_AUDIO_LABEL_TEMPLATE,
-    "prior_transcript_label_template": GEMINI_ADK_PRIOR_TRANSCRIPT_LABEL_TEMPLATE,
-    "current_segment_instruction": GEMINI_ADK_CURRENT_SEGMENT_INSTRUCTION,
-}
 ```
 
 Then create `model/colabs/common/adk_ranking.py` with these public pieces:
@@ -833,77 +834,34 @@ Then create `model/colabs/common/adk_ranking.py` with these public pieces:
 ```python
 DEFAULT_FULL_MODEL = "gemini-3.5-flash"
 DEFAULT_PREFLIGHT_MODEL = "gemini-3.1-flash-lite"
-DEFAULT_AGENT_NAME = "radio_transcript_session_agent"
-DEFAULT_APP_NAME = "radio_transcript_review"
-DEFAULT_USER_ID = "radio_transcription_review_worker"
+APP_NAME = "radio_transcription_review_ranking"
+USER_ID = "review-ranking"
+AGENT_NAME = "review_ranking_agent"
 
-def build_model_uri(project: str, location: str, model_id: str) -> str: ...
-def build_agent(...): ...
-def build_prior_user_content(entry: ranking.PredictionCacheEntry, ordinal: int): ...
-def build_prior_model_event(entry: ranking.PredictionCacheEntry, ordinal: int, *, agent_name: str = DEFAULT_AGENT_NAME): ...
-def build_current_content(row: collections.abc.Mapping[str, object]): ...
-async def run_source_group_predictions_adk(...): ...
+class AdkRankingRunner: ...
+def extract_final_response_text(events: collections.abc.Iterable[object]) -> str: ...
+def run_source_group_predictions_adk(...): ...
 ```
 
-`build_agent()` must construct an ADK `LlmAgent` with:
+`AdkRankingRunner` must construct an ADK `LlmAgent` with:
 
-- `name=DEFAULT_AGENT_NAME`
-- Vertex-routed Gemini model URI from `build_model_uri()`
+- `name=AGENT_NAME`
+- Vertex-routed Gemini model URI from `_vertex_model_resource()`
 - `instruction=prompts.GEMINI_TRANSCRIBE_SYSTEM_PROMPT.strip()`
 - `generate_content_config` built from `common.gemini_config`
 - `mode="chat"` because ADK 2.1 rejects a root `LlmAgent` with
   `mode="single_turn"` when run through `Runner`
 - `tools=[]`
 - no ADK workflow `RetryConfig`
-- no `Gemini(retry_options=...)`
+- no Gemini constructor `retry_options`
+- native GenAI HTTP retry options inside `GenerateContentConfig.http_options`
 
-`build_prior_user_content()` must produce a user content object equivalent to:
-
-```python
-types.Content(
-    role="user",
-    parts=[
-        types.Part.from_text(
-            text=prompts.GEMINI_ADK_PRIOR_AUDIO_LABEL_TEMPLATE.format(
-                ordinal=ordinal,
-                audio_segment_id=entry.audio_segment_id,
-            )
-        ),
-        types.Part.from_uri(
-            file_uri=entry.model_ready_audio_uri,
-            mime_type="audio/flac",
-        ),
-    ],
-)
-```
-
-`build_prior_model_event()` must produce an ADK event equivalent to:
-
-```python
-Event(
-    author=agent_name,
-    content=types.Content(
-        role="model",
-        parts=[
-            types.Part.from_text(
-                text=prompts.GEMINI_ADK_PRIOR_TRANSCRIPT_LABEL_TEMPLATE.format(
-                    ordinal=ordinal,
-                    audio_segment_id=entry.audio_segment_id,
-                    prediction_text=entry.prediction_text,
-                )
-            )
-        ],
-    ),
-)
-```
-
-`build_current_content()` must include:
-
-```text
-Current segment. Transcribe only this current audio. Prior segments are context only.
-```
-
-before the current audio URI part.
+Prior user events must place `prompts.ADK_PRIOR_AUDIO_WRAPPER` before the prior
+audio URI part. Prior model events must use `author=AGENT_NAME`,
+`content.role="model"`, and `prompts.ADK_PRIOR_PREDICTION_WRAPPER` before that
+prior audio segment's prediction text. Current user messages must place
+`prompts.ADK_CURRENT_AUDIO_WRAPPER` and the active user prompt before the
+current audio URI part.
 
 - [ ] **Step 4: Implement source-group execution**
 
@@ -926,9 +884,11 @@ before the current audio URI part.
   through `GetSessionConfig(num_recent_events=60)`
 - do not enable `Gemini(use_interactions_api=True)`; ADK sessions and the
   prediction cache own state for this workflow
-- use full Vertex model resource names from `build_model_uri()`; do not set or
-  rely on process-global Google GenAI Vertex environment variables
-- use an active prompt fingerprint computed with `prompts.GEMINI_ADK_REVIEW_PROMPT_PARTS`
+- use full Vertex model resource names from the ADK runner's internal resource
+  builder; do not set or rely on process-global Google GenAI Vertex environment
+  variables
+- use an active prompt fingerprint computed from the transcription prompts plus
+  the ADK prior/current wrapper prompt parts
 - compute `context_fp` from the last 30 successful same-source compatible cache entries
 - on compatible cache hit selected from cache history for the current row's exact `audio_segment_id` and `model_ready_audio_uri`, append that cached current row's linked user/model events into the source-group ADK session and skip model execution
 - treat cache entries with non-empty `error` as non-context rows
@@ -941,7 +901,8 @@ before the current audio URI part.
   concatenate final-response text parts with spaces, strip the result, ignore
   non-text parts, and treat no final text as empty output
 - wrap each ADK `runner.run_async(...)` consumption in
-  `asyncio.timeout(request_timeout_ms / 1000)` when `request_timeout_ms` is set
+  `asyncio.wait_for(..., timeout=request_timeout_ms / 1000)` when
+  `request_timeout_ms` is set
 - on timeout, call `await agen.aclose()` on the ADK async generator, treat the
   timeout as retryable, and recreate/replay the in-memory source-group session
   before retrying
@@ -949,10 +910,10 @@ before the current audio URI part.
 - when recreating a session for retry, replay only previously accepted
   successful source-group pairs; never replay the failed current attempt's user
   message as prior context
-- use `max_attempts=3` for retryable exceptions and `max_empty_attempts=2` for empty final text
-- use explicit bounded backoff for retryable exceptions/timeouts, such as
-  `1s`, `2s`, `4s` with small jitter; do not back off between empty-response
-  retries unless they raise or time out
+- use `max_attempts=5` for retryable exceptions and `max_empty_attempts=2` for empty final text
+- rely on native GenAI HTTP retry options for request-level backoff; recreate
+  the source-group session between CLI-level retry attempts and do not add a
+  separate sleep between empty-response retries
 - when `max_empty_attempts` is exhausted, create a successful cache entry with
   `prediction_text=""` and `error=""`; do not store `[UNINTELLIGIBLE]` unless
   the model explicitly returns it
@@ -964,15 +925,16 @@ before the current audio URI part.
 - append successful empty predictions to the source-group ADK session as linked
   user/model pairs with empty model transcript text before advancing
 - before each retry, create a fresh in-memory ADK session for the source group
-  and replay all prior successful same-source pairs already accepted for that
-  group, excluding the failed current attempt
+  and replay the most recent accepted successful same-source pairs that can fit
+  the active context window, excluding the failed current attempt
 - create a single error cache entry only after all retry attempts for that row are exhausted
 - omit failed-after-retry entries from later context
 - call `on_new_entry` for every newly generated cache entry
 - use one `created_at` timestamp for all new cache entries produced by a single
   CLI invocation
 - do not add usage metadata to `PredictionCacheEntry`, do not create a usage sidecar, and do not add logs beyond normal progress/errors
-- log normal progress at start, per source group, and final summary only; do not log every audio row unless all retry attempts fail
+- log normal progress through start, cache-flush, heartbeat, and terminal status
+  lines; do not log every source group or audio row
 
 - [ ] **Step 5: Run ADK helper tests**
 
@@ -1027,9 +989,9 @@ Update `model/scripts/review/tests/test_rank_gemini_cli.py` to assert:
   while preserving the output schema used by Label Studio packaging except for
   the intentional removal of `split`.
 - prediction commands import ADK lazily so `rank-cache` still works without ADK installed.
-- prediction commands and `rank-cache` use the same ADK effective prompt fingerprint,
-  including `prompts.GEMINI_ADK_REVIEW_PROMPT_PARTS`, without requiring ADK
-  imports for `rank-cache`.
+- prediction commands and `rank-cache` use the same ADK effective prompt
+  fingerprint, including the prior/current wrapper prompt parts, without
+  requiring ADK imports for `rank-cache`.
 - `rank_gemini.py` no longer imports or references `common.gemini_ranking`.
 - cache loading preserves append-only history as `dict[str, list[PredictionCacheEntry]]`.
 - `rank-cache` can rank from a cache file containing multiple rows for the same
@@ -1094,7 +1056,7 @@ IDs, return nonzero, and write no ranked/excluded outputs.
 
 - [ ] **Step 3: Replace `_run_predicting_command()` internals**
 
-Use `asyncio.run()` inside `_run_predicting_command()` to call the ADK backend.
+Use `AdkRankingRunner` from `_run_predicting_command()` to call the ADK backend.
 Keep the existing cache load, cache flush, scoring, and output writing patterns.
 For `run`, pass the full `review_rows` list. For `preflight`, slice only by
 `args.sample_size`.
@@ -1104,18 +1066,19 @@ write partial ranked/excluded artifacts inside the inference loop. On backend
 exception, the `finally` block should flush pending cache entries, then the
 command should fail nonzero without writing ranked/excluded outputs.
 
-Change `_load_cache()` to preserve cache history:
+Load prediction cache rows as append-only `PredictionCacheEntry` history:
 
 ```python
-def _load_cache(path: str) -> dict[str, list[ranking.PredictionCacheEntry]]:
-    return ranking.build_cache_history(
+def _load_cache_entries(path: str) -> list[ranking.PredictionCacheEntry]:
+    return [
         ranking.PredictionCacheEntry(**row)
         for row in _load_jsonl_with_missing_policy(path, missing_ok=True)
-    )
+    ]
 ```
 
 Update `_run_predicting_command()`, `_score_and_write()`, and ADK runner call
-sites to pass cache history, not a single-entry mapping.
+sites to pass cache history where needed and select compatible entries with the
+same ADK prompt/context policy.
 
 Pass `args.request_timeout_ms` to the ADK backend as a per-segment invocation
 timeout. Do not pass it to a GenAI client or describe it as HTTP options in
@@ -1127,14 +1090,13 @@ Compute the active prompt fingerprint in both `_run_predicting_command()` and
 `_score_and_write()` as:
 
 ```python
-prompt_fp = ranking.prompt_fingerprint(
+prompt_fp = ranking.adk_prompt_fingerprint(
     prompts.GEMINI_TRANSCRIBE_SYSTEM_PROMPT,
     prompts.GEMINI_TRANSCRIBE_USER_PROMPT,
-    extra_parts=prompts.GEMINI_ADK_REVIEW_PROMPT_PARTS,
 )
 ```
 
-Set the prediction-command default cache flush interval to `50`. ADK replay makes frequent durable checkpoints more valuable than large in-memory batches.
+Set the prediction-command default cache flush interval to `500`.
 
 Remove `common.gemini_ranking` from the script-level import list and all CLI
 test patches/fakes. CLI tests should patch or fake `common.adk_ranking`
@@ -1176,7 +1138,7 @@ Use a fresh output prefix and a small sample size:
 ```bash
 safe-run -- env PYTHONPATH=model/colabs uv run --project model --extra scoring --extra adk python model/scripts/review/rank_gemini.py preflight \
   --project automatic-hawk-481415-m9 \
-  --location global \
+  --location us-central1 \
   --sample-size 5 \
   --review-pool-jsonl gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/reference_transcript_review/20260603T051822Z/review_pool.jsonl \
   --prediction-cache-jsonl gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/reference_transcript_review/ADK_SMOKE_PREFIX/prediction_cache.jsonl \
@@ -1292,11 +1254,12 @@ Expected: no lint errors.
 - Do not physically prune in-memory ADK sessions during normal source-group processing. `GetSessionConfig(num_recent_events=60)` limits the events read for each model call, so older retained events only affect local memory, not model-token cost.
 - Do not allow multi-call ADK agent loops for one audio segment. Use `max_llm_calls=1`.
 - Do not attach tools to the review-ranking ADK agent. Use root `mode="chat"` because ADK 2.1 rejects root `mode="single_turn"` under `Runner`.
-- Do not configure ADK workflow `RetryConfig` or `Gemini(retry_options=...)` for
-  the first ADK implementation. Revisit Gemini `retry_options` only if smoke or
-  full-run logs show repeated transient 429/5xx/network failures.
+- Do not configure ADK workflow `RetryConfig` or Gemini constructor
+  `retry_options`. Use the shared native GenAI HTTP retry options in
+  `GenerateContentConfig`, matching the merged production transcription path.
 - Do not assume cached-token savings. Do not add usage sidecars or detailed token logging in this implementation.
-- Keep progress logging compact: start summary, per-source-group summary, final ranked/excluded/cache-write summary, and exhausted per-audio errors only.
+- Keep progress logging compact: start, cache-flush, heartbeat, and terminal
+  status lines, with failure counts in progress output.
 - Treat `--request-timeout-ms` as an ADK invocation timeout. It must cancel
   `runner.run_async()` cleanly with `agen.aclose()` and enter the same retry
   path as other retryable per-segment exceptions.
