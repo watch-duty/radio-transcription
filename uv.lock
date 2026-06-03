@@ -12,6 +12,7 @@ members = [
     "radio-transcription",
     "radio-transcription-common",
     "rules-service",
+    "segmentation-pipeline",
     "transcription-function",
     "transcripts-service",
 ]
@@ -1980,18 +1981,15 @@ name = "normalization-pipeline"
 version = "0.1.0"
 source = { editable = "backend/pipeline/normalization" }
 dependencies = [
-    { name = "apache-beam", extra = ["gcp"] },
-    { name = "betterproto" },
-    { name = "crcmod" },
+    { name = "cloudevents" },
+    { name = "functions-framework" },
     { name = "google-cloud-logging" },
+    { name = "google-cloud-pubsub" },
     { name = "google-cloud-storage" },
-    { name = "numba" },
     { name = "numpy" },
-    { name = "onnxruntime" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-gcp-trace" },
     { name = "opentelemetry-sdk" },
-    { name = "pedalboard" },
     { name = "protobuf" },
     { name = "pydantic" },
     { name = "radio-transcription-common" },
@@ -2001,18 +1999,15 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "apache-beam", extras = ["gcp"], specifier = ">=2.73.0" },
-    { name = "betterproto", specifier = ">=2.0.0b6" },
-    { name = "crcmod", specifier = ">=1.7" },
+    { name = "cloudevents", specifier = ">=1.11.0" },
+    { name = "functions-framework", specifier = ">=3.8.1" },
     { name = "google-cloud-logging", specifier = ">=3.14.0" },
+    { name = "google-cloud-pubsub", specifier = ">=2.26.1" },
     { name = "google-cloud-storage", specifier = ">=2.18.2" },
-    { name = "numba", specifier = ">=0.61.0" },
     { name = "numpy", specifier = ">=2.2.6" },
-    { name = "onnxruntime", specifier = ">=1.20.0" },
     { name = "opentelemetry-api", specifier = ">=1.41.1" },
     { name = "opentelemetry-exporter-gcp-trace", specifier = ">=1.12.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.41.1" },
-    { name = "pedalboard", specifier = ">=0.9.18" },
     { name = "protobuf", specifier = ">=5.29.6" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "radio-transcription-common", editable = "backend/pipeline/common" },
@@ -2806,6 +2801,7 @@ dependencies = [
     { name = "radio-transcription-common" },
     { name = "redis" },
     { name = "rules-service" },
+    { name = "segmentation-pipeline" },
     { name = "tenacity" },
     { name = "transcription-function" },
     { name = "transcripts-service" },
@@ -2852,6 +2848,7 @@ requires-dist = [
     { name = "radio-transcription-common", editable = "backend/pipeline/common" },
     { name = "redis", specifier = ">=7.3.0" },
     { name = "rules-service", editable = "backend/services/rules" },
+    { name = "segmentation-pipeline", editable = "backend/pipeline/segmentation" },
     { name = "tenacity", specifier = ">=9.1.4" },
     { name = "transcription-function", editable = "backend/pipeline/transcription" },
     { name = "transcripts-service", editable = "backend/services/transcripts" },
@@ -3093,6 +3090,49 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/46/f5af3402b579fd5e11573ce652019a67074317e18c1935cc0b4ba9b35552/secretstorage-3.5.0-py3-none-any.whl", hash = "sha256:0ce65888c0725fcb2c5bc0fdb8e5438eece02c523557ea40ce0703c266248137", size = 15554, upload-time = "2025-11-23T19:02:51.545Z" },
+]
+
+[[package]]
+name = "segmentation-pipeline"
+version = "0.1.0"
+source = { editable = "backend/pipeline/segmentation" }
+dependencies = [
+    { name = "apache-beam", extra = ["gcp"] },
+    { name = "betterproto" },
+    { name = "crcmod" },
+    { name = "google-cloud-logging" },
+    { name = "google-cloud-storage" },
+    { name = "numba" },
+    { name = "numpy" },
+    { name = "onnxruntime" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-gcp-trace" },
+    { name = "opentelemetry-sdk" },
+    { name = "pedalboard" },
+    { name = "protobuf" },
+    { name = "pydantic" },
+    { name = "soundfile" },
+    { name = "tenacity" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "apache-beam", extras = ["gcp"], specifier = ">=2.73.0" },
+    { name = "betterproto", specifier = ">=2.0.0b6" },
+    { name = "crcmod", specifier = ">=1.7" },
+    { name = "google-cloud-logging", specifier = ">=3.14.0" },
+    { name = "google-cloud-storage", specifier = ">=2.18.2" },
+    { name = "numba", specifier = ">=0.61.0" },
+    { name = "numpy", specifier = ">=2.2.6" },
+    { name = "onnxruntime", specifier = ">=1.20.0" },
+    { name = "opentelemetry-api", specifier = ">=1.41.1" },
+    { name = "opentelemetry-exporter-gcp-trace", specifier = ">=1.12.0" },
+    { name = "opentelemetry-sdk", specifier = ">=1.41.1" },
+    { name = "pedalboard", specifier = ">=0.9.18" },
+    { name = "protobuf", specifier = ">=5.29.6" },
+    { name = "pydantic", specifier = ">=2.12.5" },
+    { name = "soundfile", specifier = ">=0.13.1" },
+    { name = "tenacity", specifier = ">=9.1.4" },
 ]
 
 [[package]]
