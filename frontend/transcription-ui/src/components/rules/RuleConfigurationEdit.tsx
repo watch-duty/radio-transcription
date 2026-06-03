@@ -389,7 +389,7 @@ export function RuleConfigurationEdit({
       >
         <Box component="form" onSubmit={handleSubmit} noValidate>
           <Stack
-            spacing={1}
+            spacing={2}
             sx={{ display: 'flex', alignItems: 'left', justifyContent: 'left' }}
           >
             <TextField
@@ -431,7 +431,6 @@ export function RuleConfigurationEdit({
 
             <Divider sx={{ my: 1 }} />
 
-            {/* Scope Section */}
             <Box>
               <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
                 Scope Configuration
@@ -501,7 +500,6 @@ export function RuleConfigurationEdit({
 
             <Divider sx={{ my: 1 }} />
 
-            {/* Conditions Section */}
             <Box>
               <Stack
                 direction="row"
@@ -514,11 +512,10 @@ export function RuleConfigurationEdit({
                 </Typography>
               </Stack>
 
-              {/* Evaluation Type */}
               <FormControl
                 fullWidth
                 size="small"
-                sx={{ mb: 2.5 }}
+                sx={{ mb: 2 }}
                 disabled={isSubmitting}
               >
                 <InputLabel id="evaluation-type-label">
@@ -540,7 +537,6 @@ export function RuleConfigurationEdit({
                 </Select>
               </FormControl>
 
-              {/* Keywords Form */}
               {ruleEvaluationType === 'KEYWORD_MATCH' ? (
                 <Stack spacing={2}>
                   <Grid container spacing={2}>
@@ -584,10 +580,9 @@ export function RuleConfigurationEdit({
                     </Grid>
                   </Grid>
 
-                  {/* Add Keywords */}
                   <Stack
                     direction="row"
-                    spacing={1.5}
+                    spacing={1}
                     sx={{ alignItems: 'flex-start' }}
                   >
                     <TextField
@@ -616,7 +611,6 @@ export function RuleConfigurationEdit({
                     </Button>
                   </Stack>
 
-                  {/* Chips Display */}
                   <Box
                     sx={{
                       p: 1.5,
@@ -652,14 +646,13 @@ export function RuleConfigurationEdit({
                 </Stack>
               ) : null}
 
-              {/* Regex Form */}
               {ruleEvaluationType === 'REGEX_MATCH' ? (
                 <Stack spacing={2}>
                   <TextField
                     fullWidth
                     size="small"
                     label="Regex Expression"
-                    placeholder="evac(uation)?"
+                    placeholder=""
                     value={ruleRegexExpression}
                     onChange={(e) => setRuleRegexExpression(e.target.value)}
                     error={!!validationErrors.regexExpression}
@@ -670,7 +663,7 @@ export function RuleConfigurationEdit({
                     fullWidth
                     size="small"
                     label="Flags"
-                    placeholder="i"
+                    placeholder=""
                     value={ruleRegexFlags}
                     onChange={(e) => setRuleRegexFlags(e.target.value)}
                     disabled={isSubmitting}
@@ -678,7 +671,6 @@ export function RuleConfigurationEdit({
                 </Stack>
               ) : null}
 
-              {/* Rule Group Form */}
               {ruleEvaluationType === 'RULE_GROUP' ? (
                 <Stack spacing={2}>
                   <FormControl fullWidth size="small" disabled={isSubmitting}>
