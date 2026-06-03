@@ -157,9 +157,35 @@ description = "Start the entire system (backend in Docker, frontend on host)"
 depends = ["dev:start"]
 run = "yarn --cwd frontend/transcription-ui run local"
 
+[tasks."dev:remote:init"]
+description = "Automatically fetch and configure remote dev environment variables from GCP"
+run = "python3 local_dev/setup_remote_dev.py"
+
+[tasks."dev:remote:ui"]
+description = "Run frontend UI on host and connect directly to remote GCP API Gateway"
+depends = ["dev:stop"]
+run = """
+if [ ! -f frontend/transcription-ui/.env.dev.local ]; then
+  echo "No configuration found. Initializing..."
+  mise run dev:remote:init
+fi
+
+yarn --cwd frontend/transcription-ui dev
+"""
+
 [tasks."dev:remote"]
-description = "Run frontend on host and connect to dev backend in GCP"
-run = "npx concurrently \"yarn --cwd frontend/api local\" \"yarn --cwd frontend/transcription-ui dev\""
+description = "Run frontend on host (BFF + UI) and connect to dev backend in GCP"
+depends = ["dev:stop"]
+env = { ALLOWED_ORIGIN = false, API_PUBLIC_URL = false, AUDIO_SEGMENTS_API_URL = false, FEEDS_STORE_API_URL = false, GOOGLE_AUTH_CLIENT_ID = false, GOOGLE_AUTH_CLIENT_SECRET = false, PROJECT_ID = false, RULES_API_URL = false, TRANSCRIPTS_API_URL = false, VITE_API_BASE_URL = "", VITE_PROXY_API_TARGET = "http://localhost:8080" }
+run = """
+if [ ! -f frontend/api/.env.local ] || [ ! -f frontend/transcription-ui/.env.dev.local ]; then
+  echo "No configuration found. Initializing..."
+  mise run dev:remote:init
+fi
+
+npx concurrently "yarn --cwd frontend/api local" "yarn --cwd frontend/transcription-ui dev"
+"""
+
 
 # ---------------------------------------------------------------------------- #
 #                              Testing Tasks                                   #
