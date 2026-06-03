@@ -1,0 +1,216 @@
+"""Domain objects and strongly-typed dataclasses for the transcription pipeline."""
+
+import logging
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
+import apache_beam as beam
+import numpy as np
+
+from backend.pipeline.common.constants import (
+    CHUNK_DURATION_SECONDS,
+    MS_PER_SECOND,
+)
+from backend.pipeline.schema_types import (
+    streaming_state as bp_state,
+)
+from backend.pipeline.segmentation.constants import (
+    DEFAULT_BACKFILL_LATENESS_THRESHOLD_MS,
+    DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS,
+    DEFAULT_VAD_POST_ROLL_MS,
+)
+
+logger = logging.getLogger(__name__)
+
+# Type alias for the segmentation Dead Letter Queue tagged output
+SegmentationDlqOutput = beam.pvalue.TaggedOutput[
+    Literal["normalization_dlq"],
+    dict[str, Any],
+]
+
+# Type alias for the raw DLQ payload tuple yielded by StitcherEngine
+SegmentationRawDlqOutput = tuple[Literal["normalization_dlq"], dict[str, Any]]
+
+
+TimeRange = bp_state.TimeRangeProto
+BufferedChunk = bp_state.BufferedChunkProto
+
+
+@dataclass(frozen=True)
+class AudioChunkData:
+    """A domain model representing a single decoded audio chunk and its VAD metadata."""
+
+    start_ms: int
+    audio: np.ndarray
+    speech_segments: list[TimeRange]
+    gcs_uri: str
+    duration_ms: int
+    sample_rate: int
+
+
+FeedMetadata = bp_state.FeedMetadataProto
+
+
+ChunkMetadata = bp_state.ChunkMetadataProto
+
+
+@dataclass(frozen=True)
+class DownloadedChunkPayload:
+    """Payload for a downloaded audio chunk with its metadata."""
+
+    gcs_uri: str
+    chunk_data: AudioChunkData
+    session_id: str
+
+
+@dataclass(frozen=True)
+
+class TranscriptionResult:
+    """Intermediate transcription result holding payload data before Protobuf serialization, bypassing Protobuf pickling issues during Dataflow shuffle."""
+
+    feed_id: str
+    session_id: str
+    contributing_audio_uris: list[str]
+    transcript: str
+    time_range: TimeRange
+    segment_id: str
+    start_audio_offset_ms: int
+    end_audio_offset_ms: int
+    canonical_audio_uri: str
+    playback_audio_uri: str
+    feed_metadata: FeedMetadata
+    missing_prior_context: bool = False
+    missing_post_context: bool = False
+    traceparent: str | None = None
+
+
+IdleFeedState = bp_state.IdleFeedStateProto
+ActiveStitchingState = bp_state.ActiveStitchingStateProto
+
+
+TransmissionContext = IdleFeedState | ActiveStitchingState
+
+
+@dataclass
+class StitcherContext:
+    """Groups context variables for processing a chunk to reduce function arguments."""
+
+    feed_id: str
+    # The fully qualified GCS URI of the raw audio file currently being parsed.
+    current_gcs_uri: str
+    session_id: str | None
+    # Ordered list of URIs that have been accumulated into the current transmission buffer thus far.
+    contributing_audio_uris: list[str]
+    file_start_ms: int
+    last_segment_end_time_ms: int | None
+    transmission_start_time_ms: int | None
+    buffer_start_time_ms: int | None
+    missing_prior_context: bool
+    expected_next_chunk_start_ms: int | None
+    start_audio_offset_ms: int | None
+    end_audio_offset_ms: int | None = None
+    buffer_duration_ms: int = 0
+    speech_segments: list[TimeRange] = field(default_factory=list)
+    traceparent: str | None = None
+    prior_audio_tail: bytes | None = None
+
+
+@dataclass(frozen=True)
+class OrderRestorerConfig:
+    """Configuration parameters for the sequence Jitter Buffer."""
+
+    out_of_order_timeout_ms: int = DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS
+    chunk_duration_ms: int = CHUNK_DURATION_SECONDS * MS_PER_SECOND
+
+
+@dataclass(frozen=True)
+class StitchAudioConfig:
+    """Groups pipeline-level configurations passed to the stateful DoFn."""
+
+    project_id: str
+    vad_config: str
+    significant_gap_ms: int
+    stale_timeout_ms: int
+    max_transmission_duration_ms: int
+    route_to_dlq: bool = True
+    backfill_lateness_threshold_ms: int = DEFAULT_BACKFILL_LATENESS_THRESHOLD_MS
+    isolate_segmented_chunks: bool = False
+    analyze_audio: bool = True
+
+    def __post_init__(self) -> None:
+        """Validates the dataclass variables."""
+        if self.significant_gap_ms <= 0:
+            msg = "significant_gap_ms must be > 0"
+            raise ValueError(msg)
+        if self.stale_timeout_ms <= 0:
+            msg = "stale_timeout_ms must be > 0"
+            raise ValueError(msg)
+        if self.max_transmission_duration_ms <= 0:
+            msg = "max_transmission_duration_ms must be > 0"
+            raise ValueError(msg)
+        if self.significant_gap_ms >= self.max_transmission_duration_ms:
+            msg = "significant_gap_ms must be strictly less than max_transmission_duration_ms"
+            raise ValueError(msg)
+        if self.max_transmission_duration_ms + DEFAULT_VAD_POST_ROLL_MS > 60000:
+            logger.warning(
+                "max_transmission_duration_ms (%dms) + DEFAULT_VAD_POST_ROLL_MS (%dms) "
+                "exceeds 60000ms (60 seconds). This is acceptable for models like Gemini "
+                "but will cause synchronous transcription failures if using the Google Chirp V3 API.",
+                self.max_transmission_duration_ms,
+                DEFAULT_VAD_POST_ROLL_MS,
+            )
+
+
+FlushRequest = bp_state.FlushRequestProto
+
+
+@dataclass(frozen=True)
+class StateMachineAction:
+    """Base class for all actions emitted by the AudioStitchingStateMachine."""
+
+
+@dataclass(frozen=True)
+class DropAction(StateMachineAction):
+    """Action emitted when a chunk violates chronological state and is permanently discarded."""
+
+    reason: str
+
+
+@dataclass(frozen=True)
+class AppendBufferAction(StateMachineAction):
+    """Signals that the provided audio segment should be appended to the active transmission buffer."""
+
+    audio_buffer: np.ndarray
+
+
+@dataclass(frozen=True)
+class FlushAction(StateMachineAction):
+    """Action emitted when a semantic transmission boundary is reached and the buffer must be processed."""
+
+    reason: str
+    feed_id: str
+    time_range: TimeRange
+    speech_time_range: TimeRange
+    contributing_audio_uris: list[str]
+    missing_prior_context: bool
+    missing_post_context: bool
+    start_audio_offset_ms: int
+    end_audio_offset_ms: int
+    clear_state: bool = True
+    isolated_audio_buffer: list[np.ndarray] = field(default_factory=list)
+    isolated_audio_buffer_uris: list[str] = field(default_factory=list)
+    speech_segments: list[TimeRange] = field(default_factory=list)
+    traceparent: str | None = None
+    audio_classification: int = 0
+
+
+@dataclass(frozen=True)
+class UpdateStateAction(StateMachineAction):
+    """Action emitted to explicitly persist localized Python state mutations up to Apache Beam."""
+
+
+@dataclass(frozen=True)
+class ScheduleStaleTimerAction(StateMachineAction):
+    """Action emitted to adjust Beam Watermark timers for dead-transmission recovery."""
+
+    deadline_ms: int
