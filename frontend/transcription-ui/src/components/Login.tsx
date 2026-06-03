@@ -80,6 +80,7 @@ export function Login() {
           } else {
             login();
           }
+          return {};
         }}
         slots={{ subtitle: errorMessage ? LoginAlert : undefined }}
       />
