@@ -46,7 +46,7 @@ default = true
 build = ["grpcio-tools>=1.65.5"]
 dev = [
   "ruff>=0.14.14",
-  "ty>=0.0.21",
+  "ty>=0.0.42",
   "grpcio-tools",
   "testcontainers[postgres]",
   "docker",
