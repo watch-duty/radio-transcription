@@ -76,6 +76,10 @@ interface RuleConfigurationEditProps {
  * Note: Following React best practices, this form manages its own local state.
  * Parent components only pass down initial/editing data (which resets this component's
  * state via key remounting) and callbacks to trigger the backend API updates.
+ *
+ * See React Documentation on:
+ * - Preserving and Resetting State: https://react.dev/learn/preserving-and-resetting-state#resetting-state-with-a-key
+ * - Sharing State Between Components: https://react.dev/learn/sharing-state-between-components
  */
 export function RuleConfigurationEdit({
   isEditing,
