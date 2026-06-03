@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import {
   Button,
@@ -61,15 +61,13 @@ export function ConfirmationDialog({
   onConfirm,
   isSubmitting = false,
 }: ConfirmationDialogProps) {
-  const [prevOpen, setPrevOpen] = useState(open);
   const [userInput, setUserInput] = useState('');
 
-  if (open !== prevOpen) {
-    setPrevOpen(open);
+  useEffect(() => {
     if (open) {
       setUserInput('');
     }
-  }
+  }, [open]);
 
   const handleConfirm = async () => {
     await onConfirm();
@@ -138,4 +136,3 @@ export function ConfirmationDialog({
   );
 }
 
-export default ConfirmationDialog;

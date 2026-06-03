@@ -33,8 +33,7 @@ import type {
 } from '@transcription/common';
 import { SourceType } from '@transcription/common';
 
-import ConfirmationDialog from '../common/ConfirmationDialog';
-import type { ConfirmationDialogProps } from '../common/ConfirmationDialog';
+import { ConfirmationDialog, type ConfirmationDialogProps } from '../common/ConfirmationDialog';
 
 const SOURCE_TYPE_OPTIONS: {
   value: SourceType;
@@ -83,7 +82,7 @@ const DIALOG_CONFIG: Record<
   [DialogType.Delete]: {
     title: 'Verify Feed Deletion',
     description:
-      'Are you sure you want to delete the feed? This will remove the feed and any associated metadata (e.g. transcripts, annotations, etc). This action is not reversible.',
+      'Are you sure you want to delete the feed? This will remove the feed and any associated metadata (e.g. transcripts, annotations, etc.). This action is not reversible.',
     confirmLabel: 'Delete',
     confirmColor: 'error',
     showConfirmInput: true,
