@@ -22,8 +22,8 @@ export default defineConfig(({ mode }) => {
           secure: apiTarget.startsWith('https'),
           configure: (proxy) => {
             proxy.on('proxyReq', (proxyReq) => {
-              if (apiTarget.startsWith('https')) {
-                proxyReq.setHeader('origin', 'https://probable-symbol-492218-i7.web.app');
+              if (apiTarget.startsWith('https') && env.VITE_PROXY_API_ORIGIN) {
+                proxyReq.setHeader('origin', env.VITE_PROXY_API_ORIGIN);
               }
             });
           },

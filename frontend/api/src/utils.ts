@@ -54,7 +54,8 @@ export function handleBackendError(
 }
 
 export async function getServiceClient(targetUrl: string) {
-  if (process.env.BYPASS_AUTH === 'true') {
+  const isProduction = process.env.NODE_ENV === 'production';
+  if (process.env.BYPASS_AUTH === 'true' && !isProduction) {
     return {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       request: async <T>(config: any) => {
