@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import collections.abc
 import dataclasses
 import datetime
 import json
@@ -10,6 +11,8 @@ import pathlib
 import sys
 import tempfile
 import threading
+import time
+import typing
 
 from common import adk_ranking, gcs_utils, prompts, ranking
 
@@ -18,6 +21,7 @@ DEFAULT_PREFLIGHT_MODEL = "gemini-3.1-flash-lite"
 DEFAULT_FULL_MODEL = "gemini-3.5-flash"
 DEFAULT_CACHE_FLUSH_INTERVAL = 500
 DEFAULT_REQUEST_TIMEOUT_MS = 180_000
+DEFAULT_PROGRESS_INTERVAL_SECONDS = 900
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -56,6 +60,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_cache_flush_arg(preflight)
     _add_request_timeout_arg(preflight)
+    _add_progress_interval_arg(preflight)
     _add_retry_errors_arg(preflight)
     preflight.set_defaults(func=_run_predicting_command)
 
@@ -69,6 +74,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_cache_flush_arg(run)
     _add_request_timeout_arg(run)
+    _add_progress_interval_arg(run)
     _add_retry_errors_arg(run)
     run.set_defaults(func=_run_predicting_command)
 
@@ -125,6 +131,18 @@ def _add_request_timeout_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_progress_interval_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--progress-interval-seconds",
+        type=_positive_int,
+        default=DEFAULT_PROGRESS_INTERVAL_SECONDS,
+        help=(
+            "Emit normal progress heartbeat every N seconds. "
+            f"Defaults to {DEFAULT_PROGRESS_INTERVAL_SECONDS}."
+        ),
+    )
+
+
 def _add_retry_errors_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--retry-errors",
@@ -144,6 +162,93 @@ def _gcs_uri(value: str) -> str:
     if not _is_gcs_uri(value):
         raise argparse.ArgumentTypeError("value must be a gs:// URI")
     return value
+
+
+class _ProgressHeartbeat:
+    def __init__(
+        self,
+        *,
+        total_rows: int,
+        interval_seconds: int,
+        stream: typing.TextIO | None = None,
+        clock: collections.abc.Callable[[], float] | None = None,
+    ) -> None:
+        self.total_rows = total_rows
+        self.interval_seconds = interval_seconds
+        self.stream = stream or sys.stderr
+        self.clock = clock or time.monotonic
+        self.started_at = self.clock()
+        self._processed_rows = 0
+        self._cache_hits = 0
+        self._new_predictions = 0
+        self._cache_rows = 0
+        self._flushes = 0
+        self._lock = threading.Lock()
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        self.emit_once("started")
+        self._thread = threading.Thread(
+            target=self._run,
+            name="rank-gemini-progress-heartbeat",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def finish(self, status: str) -> None:
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+        self.emit_once(status)
+
+    def record_processed(self, *, cache_hit: bool) -> None:
+        with self._lock:
+            self._processed_rows += 1
+            if cache_hit:
+                self._cache_hits += 1
+            else:
+                self._new_predictions += 1
+
+    def record_completed(self) -> None:
+        self.record_processed(cache_hit=False)
+
+    def record_flush(self, row_count: int) -> None:
+        with self._lock:
+            self._cache_rows += row_count
+            self._flushes += 1
+        self.emit_once("cache_flush")
+
+    def emit_once(self, status: str) -> None:
+        with self._lock:
+            processed_rows = self._processed_rows
+            cache_hits = self._cache_hits
+            new_predictions = self._new_predictions
+            cache_rows = self._cache_rows
+            flushes = self._flushes
+        elapsed_seconds = max(0, int(self.clock() - self.started_at))
+        percent = (
+            (processed_rows / self.total_rows) * 100
+            if self.total_rows
+            else 100.0
+        )
+        print(
+            "review-ranking progress "
+            f"status={status} "
+            f"processed={processed_rows}/{self.total_rows} "
+            f"percent={percent:.2f} "
+            f"new_predictions={new_predictions} "
+            f"cache_hits={cache_hits} "
+            f"cache_rows={cache_rows} "
+            f"flushes={flushes} "
+            f"elapsed_seconds={elapsed_seconds}",
+            file=self.stream,
+            flush=True,
+        )
+
+    def _run(self) -> None:
+        while not self._stop_event.wait(self.interval_seconds):
+            self.emit_once("heartbeat")
 
 
 def _run_rank_cache(args: argparse.Namespace) -> int:
@@ -183,6 +288,10 @@ def _run_predicting_command(args: argparse.Namespace) -> int:
     )
     pending_cache_entries: list[ranking.PredictionCacheEntry] = []
     pending_cache_entries_lock = threading.Lock()
+    heartbeat = _ProgressHeartbeat(
+        total_rows=len(review_rows),
+        interval_seconds=args.progress_interval_seconds,
+    )
 
     def flush_cache_entries() -> None:
         with pending_cache_entries_lock:
@@ -191,6 +300,7 @@ def _run_predicting_command(args: argparse.Namespace) -> int:
             entries = list(pending_cache_entries)
             pending_cache_entries.clear()
         _append_cache_entries(args.prediction_cache_jsonl, entries)
+        heartbeat.record_flush(len(entries))
 
     def on_new_entry(entry: ranking.PredictionCacheEntry) -> None:
         should_flush = False
@@ -201,29 +311,42 @@ def _run_predicting_command(args: argparse.Namespace) -> int:
         if should_flush:
             flush_cache_entries()
 
+    def on_progress(
+        _entry: ranking.PredictionCacheEntry,
+        cache_hit: bool,
+    ) -> None:
+        heartbeat.record_processed(cache_hit=cache_hit)
+
+    completed_successfully = False
+    heartbeat.start()
     try:
         try:
-            _new_entries, final_cache = (
-                adk_ranking.run_source_group_predictions_adk(
-                    review_rows,
-                    cache_entries,
-                    runner,
-                    prompt_fp=prompt_fp,
-                    context_policy_fp=context_policy_fp,
-                    num_recent_events=ranking.NUM_RECENT_EVENTS,
-                    created_at=_utc_timestamp(),
-                    on_new_entry=on_new_entry,
-                    retry_errors=args.retry_errors,
+            try:
+                _new_entries, final_cache = (
+                    adk_ranking.run_source_group_predictions_adk(
+                        review_rows,
+                        cache_entries,
+                        runner,
+                        prompt_fp=prompt_fp,
+                        context_policy_fp=context_policy_fp,
+                        num_recent_events=ranking.NUM_RECENT_EVENTS,
+                        created_at=_utc_timestamp(),
+                        on_new_entry=on_new_entry,
+                        on_progress=on_progress,
+                        retry_errors=args.retry_errors,
+                    )
                 )
-            )
+            finally:
+                flush_cache_entries()
         finally:
-            flush_cache_entries()
+            close_runner = getattr(runner, "close", None)
+            if close_runner is not None:
+                close_runner()
+        _score_and_write(args, review_rows, final_cache)
+        completed_successfully = True
+        return 0
     finally:
-        close_runner = getattr(runner, "close", None)
-        if close_runner is not None:
-            close_runner()
-    _score_and_write(args, review_rows, final_cache)
-    return 0
+        heartbeat.finish("completed" if completed_successfully else "stopped")
 
 
 def _score_and_write(

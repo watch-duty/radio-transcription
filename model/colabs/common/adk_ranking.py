@@ -217,6 +217,10 @@ def run_source_group_predictions_adk(
     on_new_entry: (
         collections.abc.Callable[[ranking.PredictionCacheEntry], None] | None
     ) = None,
+    on_progress: (
+        collections.abc.Callable[[ranking.PredictionCacheEntry, bool], None]
+        | None
+    ) = None,
     retry_errors: bool = False,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     max_empty_attempts: int = DEFAULT_MAX_EMPTY_ATTEMPTS,
@@ -264,6 +268,8 @@ def run_source_group_predictions_adk(
                     compatible_successes[audio_id] = entry
                     runner.append_success(session, row, entry)
                     accepted_entries.append((row, entry))
+                if on_progress is not None:
+                    on_progress(entry, True)
                 continue
 
             entry, session = _predict_with_retries(
@@ -285,6 +291,8 @@ def run_source_group_predictions_adk(
             new_entries.append(entry)
             if on_new_entry is not None:
                 on_new_entry(entry)
+            if on_progress is not None:
+                on_progress(entry, False)
             if _entry_successful(entry):
                 compatible_successes[audio_id] = entry
                 accepted_entries.append((row, entry))

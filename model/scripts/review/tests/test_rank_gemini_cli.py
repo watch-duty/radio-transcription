@@ -116,6 +116,28 @@ class _FakeRunner:
 
 
 class TestRankGeminiCli(unittest.TestCase):
+    def test_progress_heartbeat_emits_status_line(self) -> None:
+        import rank_gemini
+
+        stream = io.StringIO()
+        heartbeat = rank_gemini._ProgressHeartbeat(
+            total_rows=10,
+            interval_seconds=900,
+            stream=stream,
+            clock=lambda: 1_000.0,
+        )
+
+        heartbeat.record_completed()
+        heartbeat.record_flush(1)
+        heartbeat.emit_once("heartbeat")
+
+        line = stream.getvalue()
+        self.assertIn("review-ranking progress", line)
+        self.assertIn("status=heartbeat", line)
+        self.assertIn("processed=1/10", line)
+        self.assertIn("cache_rows=1", line)
+        self.assertIn("flushes=1", line)
+
     def test_help_lists_expected_subcommands(self) -> None:
         import rank_gemini
 

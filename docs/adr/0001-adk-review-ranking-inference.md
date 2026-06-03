@@ -37,6 +37,9 @@ Prediction cache is the resumable progress artifact; ranked JSONL, ranked CSV,
 and excluded JSONL are completion artifacts. If a full run fails partway
 through, the command flushes prediction-cache progress and fails without writing
 partial ranked/excluded outputs.
+Predicting commands emit a normal progress heartbeat every 900 seconds by
+default, plus cache-flush and terminal status lines, so long ADK runs remain
+observable even before completion artifacts exist.
 
 Any command that writes ranked/excluded artifacts requires fresh output paths
 before inference or cache scoring starts. Existing prediction cache is allowed
