@@ -83,16 +83,7 @@ depends = ["lint:frontend:eslint", "lint:frontend:prettier", "lint:frontend:tsc"
 [tasks."lint:notebooks"]
 description = "Lint notebooks for schema issues and formatting in model/colabs"
 run = """
-for f in $(find model/colabs -name "*.ipynb"); do
-  jq '.cells[] |= (if .cell_type == "markdown" then del(.execution_count) else . end | if .cell_type == "code" and (has("outputs") | not) then .outputs = [] else . end)' "$f" > "$f.tmp"
-  if ! cmp -s "$f" "$f.tmp"; then
-    echo "Notebook needs formatting or schema fixes: $f"
-    rm "$f.tmp"
-    exit 1
-  fi
-  rm "$f.tmp"
-done
-echo "All notebooks have valid schemas and formatting."
+uv run python scripts/notebook_formatter.py
 uv run ruff format --check model/colabs
 """
 
@@ -111,9 +102,7 @@ run = "uv run ruff format"
 [tasks."format:notebooks"]
 description = "Fix schema issues and format notebooks in model/colabs"
 run = """
-for f in $(find model/colabs -name "*.ipynb"); do
-  jq '.cells[] |= (if .cell_type == "markdown" then del(.execution_count) else . end | if .cell_type == "code" and (has("outputs") | not) then .outputs = [] else . end)' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
-done
+uv run python scripts/notebook_formatter.py --write
 uv run ruff format model/colabs
 """
 
@@ -200,7 +189,7 @@ run = "uv run pytest integration_tests/storage/"
 description = "Run all E2E tests in Docker Compose"
 run = """
 docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env down -v --remove-orphans
-docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env build
+docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env build integration-tests --with-dependencies
 docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run --rm integration-tests
 """
 

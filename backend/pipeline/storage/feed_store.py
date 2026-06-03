@@ -3,6 +3,7 @@ from __future__ import annotations
 import enum
 import json
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypedDict
 
 import asyncpg
@@ -18,7 +19,8 @@ from backend.pipeline.storage.feed_queries import (
     DEACTIVATE_FEED_SQL,
     DELETE_FEED_SQL,
     GET_FEED_SQL,
-    LIST_FEEDS_SQL,
+    LIST_FEEDS_ASC_SQL,
+    LIST_FEEDS_DESC_SQL,
     RELEASE_FEED_SQL,
     RELEASE_FEEDS_BATCH_SQL,
     RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
@@ -28,6 +30,11 @@ from backend.pipeline.storage.feed_queries import (
     UPDATE_PROGRESS_SQL,
     build_acquire_feeds_batch_sql,
     build_acquire_feeds_recovery_sql,
+)
+from backend.pipeline.storage.pagination_utils import (
+    SortOrder,
+    decode_cursor,
+    get_paginated_results,
 )
 
 if TYPE_CHECKING:
@@ -141,6 +148,12 @@ class Feed(TypedDict):
     source_feed_id: str | None
     external_id: str | None
     tags: list[dict[str, str]] | None
+
+
+@dataclass
+class PaginatedFeeds:
+    feeds: list[Feed]
+    next_token: str | None
 
 
 class FeedStore:
@@ -747,13 +760,48 @@ class FeedStore:
 
         return self._row_to_feed(row)
 
-    async def list_feeds(self) -> list[Feed]:
-        """List all feeds.
+    async def list_feeds(
+        self,
+        *,
+        limit: int = 100,
+        next_token: str | None = None,
+        order: SortOrder = SortOrder.DESC,
+        source_types: list[str] | None = None,
+        statuses: list[str] | None = None,
+        tags: list[dict[str, str]] | None = None,
+    ) -> PaginatedFeeds:
+        """List all feeds with keyset pagination and optional filters.
 
-        Retrieves all feeds ordered by creation time descending.
+        Retrieves feeds ordered by creation time, using timestamp+ID-based keyset pagination.
         """
-        rows = await self._pool.fetch(LIST_FEEDS_SQL)
-        return [self._row_to_feed(row) for row in rows]
+        cursor_ts = None
+        cursor_uid = None
+        if next_token:
+            cursor_ts, cursor_uid = decode_cursor(next_token)
+
+        is_asc = order == SortOrder.ASC or order == "asc"
+        query = LIST_FEEDS_ASC_SQL if is_asc else LIST_FEEDS_DESC_SQL
+
+        tags_json = None
+        if tags:
+            tags_json = json.dumps(tags)
+
+        rows = await self._pool.fetch(
+            query,
+            cursor_ts,
+            cursor_uid,
+            source_types,
+            statuses,
+            tags_json,
+            limit + 1,
+        )
+
+        rows, new_next_token = get_paginated_results(
+            rows, limit, "created_at", "id"
+        )
+
+        feeds = [self._row_to_feed(row) for row in rows]
+        return PaginatedFeeds(feeds, new_next_token)
 
     async def deactivate_feed(self, feed_id: uuid.UUID) -> bool:
         """Deactivate a feed by ID.

@@ -17,6 +17,7 @@ dependencies = [
     # Adding betterproto because it is required to load the generated betterproto schema types.
     "betterproto>=2.0.0b6",
     "radio-transcription-common",
+    "requests>=2.31.0",
 ]
 
 [tool.setuptools]
