@@ -11,7 +11,9 @@ import functions_framework
 from cloudevents.http.event import CloudEvent
 from google.cloud import pubsub_v1, storage
 
-from backend.pipeline.common.clients.audio_segments_client import AudioSegmentsClient
+from backend.pipeline.common.clients.audio_segments_client import (
+    AudioSegmentsClient,
+)
 from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.normalization.processor import NormalizationEventProcessor
@@ -91,7 +93,9 @@ class NormalizationServiceContainer:
             audio_segments_client_instance = None
             if api_url:
                 logger.info("Initializing AudioSegmentsClient at: %s", api_url)
-                audio_segments_client_instance = AudioSegmentsClient(api_url=api_url)
+                audio_segments_client_instance = AudioSegmentsClient(
+                    api_url=api_url
+                )
             else:
                 logger.error(
                     "Missing AUDIO_SEGMENTS_API_URL environment variable."
