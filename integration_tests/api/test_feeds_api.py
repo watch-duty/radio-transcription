@@ -3,12 +3,28 @@
 import base64
 import json
 import os
+import socket
 from collections.abc import AsyncIterator
 
 import httpx
 import pytest
 
 from integration_tests.feed_utils import create_test_bcfy_feed  # noqa: F401
+
+
+def _is_frontend_api_available() -> bool:
+    host_port = os.environ.get("FRONTEND_API_HOST", "localhost:8088")
+    if ":" in host_port:
+        host, port_str = host_port.split(":")
+        port = int(port_str)
+    else:
+        host = host_port
+        port = 80
+    try:
+        with socket.create_connection((host, port), timeout=1.0):
+            return True
+    except OSError:
+        return False
 
 
 def generate_dummy_jwt(payload: dict) -> str:
@@ -72,7 +88,13 @@ async def test_feeds_api_direct(
     assert feed_id in feed_ids
 
 
+# TODO(https://linear.app/watchduty/issue/GOO-533/frontend-integration-tests):
+# Move this test to a frontend-specific integration test workflow.
 @pytest.mark.asyncio
+@pytest.mark.skipif(
+    not _is_frontend_api_available(),
+    reason="Frontend API proxy (frontend-api) is not running or reachable",
+)
 async def test_feeds_api_proxy(
     proxy_client: httpx.AsyncClient, test_bcfy_feed: tuple[str, str]
 ) -> None:
