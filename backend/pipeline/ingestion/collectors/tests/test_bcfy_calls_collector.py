@@ -15,26 +15,11 @@ import aiohttp
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     bcfy_calls_collector,
 )
-from backend.pipeline.ingestion.collectors.failure_classification import (
-    ItemFailure,
-)
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
 )
-from backend.pipeline.ingestion.models import AudioMimeType, CollectorFailure
-from backend.pipeline.storage.feed_store import (
-    FeedStatusReason,
-    LeasedFeed,
-    SourceType,
-)
-
-
-def _require_item_failure(value: ItemFailure | bytes | None) -> ItemFailure:
-    """Return a typed item failure for tests that intentionally expect one."""
-    if not isinstance(value, ItemFailure):
-        msg = f"Expected ItemFailure, got {value!r}"
-        raise TypeError(msg)
-    return value
+from backend.pipeline.ingestion.models import AudioMimeType
+from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 
 
 class TestSleepOrShutdown(unittest.IsolatedAsyncioTestCase):
@@ -78,13 +63,8 @@ class TestGetJwtToken(unittest.TestCase):
 
     @patch.dict(os.environ, {}, clear=True)
     def test_missing_env(self) -> None:
-        with self.assertRaises(CollectorFailure) as ctx:
+        with self.assertRaisesRegex(RuntimeError, "must be set"):
             bcfy_calls_collector._get_jwt_token()
-        self.assertIs(
-            ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-        )
-        self.assertEqual(str(ctx.exception), "calls_jwt_config_missing")
 
     @patch.dict(
         os.environ,
@@ -98,13 +78,8 @@ class TestGetJwtToken(unittest.TestCase):
         mock_client = MagicMock()
         mock_smc.return_value = mock_client
         mock_client.access_secret_version.side_effect = Exception("API error")
-        with self.assertRaises(CollectorFailure) as ctx:
+        with self.assertRaisesRegex(RuntimeError, "Failed to access secret"):
             bcfy_calls_collector._get_jwt_token()
-        self.assertIs(
-            ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-        )
-        self.assertEqual(str(ctx.exception), "calls_jwt_secret_access_failed")
 
 
 class TestSharedJwtToken(unittest.IsolatedAsyncioTestCase):
@@ -273,33 +248,21 @@ class TestSharedJwtToken(unittest.IsolatedAsyncioTestCase):
 
 class TestRaiseForFatalStatus(unittest.TestCase):
     def test_fatal_statuses(self) -> None:
-        with self.assertRaises(CollectorFailure) as auth_401:
+        with self.assertRaisesRegex(RuntimeError, "Rate limited"):
+            bcfy_calls_collector._raise_for_fatal_status(429, "fid", "sid")
+        with self.assertRaisesRegex(
+            bcfy_calls_collector.AuthError, "Auth failure"
+        ):
             bcfy_calls_collector._raise_for_fatal_status(401, "fid", "sid")
-        self.assertIs(
-            auth_401.exception.status_reason,
-            FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-        )
-        self.assertEqual(str(auth_401.exception), "calls_api_http_401")
-
-        with self.assertRaises(CollectorFailure) as auth_403:
+        with self.assertRaisesRegex(
+            bcfy_calls_collector.AuthError, "Auth failure"
+        ):
             bcfy_calls_collector._raise_for_fatal_status(403, "fid", "sid")
-        self.assertIs(
-            auth_403.exception.status_reason,
-            FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-        )
-        self.assertEqual(str(auth_403.exception), "calls_api_http_403")
-
-        with self.assertRaises(CollectorFailure) as missing:
+        with self.assertRaisesRegex(RuntimeError, "Feed not found"):
             bcfy_calls_collector._raise_for_fatal_status(404, "fid", "sid")
-        self.assertIs(
-            missing.exception.status_reason,
-            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-        )
-        self.assertEqual(str(missing.exception), "calls_api_http_404")
 
     def test_non_fatal(self) -> None:
         bcfy_calls_collector._raise_for_fatal_status(200, "fid", "sid")
-        bcfy_calls_collector._raise_for_fatal_status(429, "fid", "sid")
         bcfy_calls_collector._raise_for_fatal_status(500, "fid", "sid")
 
 
@@ -313,8 +276,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         res = await bcfy_calls_collector._fetch_calls(
             self.session, "url", {}, {}, "fid", "sid", self.shutdown
         )
-        self.assertIsNone(res.payload)
-        self.assertIsNone(res.failure)
+        self.assertIsNone(res)
 
     async def test_success_list(self) -> None:
         resp = AsyncMock(status=200)
@@ -327,8 +289,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         res = await bcfy_calls_collector._fetch_calls(
             self.session, "url", {}, {}, "fid", "sid", self.shutdown
         )
-        self.assertEqual(res.payload, {"calls": [{"call": 1}]})
-        self.assertIsNone(res.failure)
+        self.assertEqual(res, {"calls": [{"call": 1}]})
 
     async def test_success_dict(self) -> None:
         resp = AsyncMock(status=200)
@@ -341,8 +302,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         res = await bcfy_calls_collector._fetch_calls(
             self.session, "url", {}, {}, "fid", "sid", self.shutdown
         )
-        self.assertEqual(res.payload, {"call": 1})
-        self.assertIsNone(res.failure)
+        self.assertEqual(res, {"call": 1})
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
@@ -368,8 +328,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         res = await bcfy_calls_collector._fetch_calls(
             self.session, "url", {}, {}, "fid", "sid", self.shutdown
         )
-        self.assertEqual(res.payload, {"calls": [{"call": 1}]})
-        self.assertIsNone(res.failure)
+        self.assertEqual(res, {"calls": [{"call": 1}]})
         self.assertEqual(self.session.get.call_count, 2)
         mock_sleep.assert_called_once()
 
@@ -388,13 +347,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         res = await bcfy_calls_collector._fetch_calls(
             self.session, "url", {}, {}, "fid", "sid", self.shutdown
         )
-        self.assertIsNone(res.payload)
-        failure = _require_item_failure(res.failure)
-        self.assertIs(
-            failure.status_reason,
-            FeedStatusReason.SOURCE_UNREACHABLE,
-        )
-        self.assertEqual(failure.reason, "calls_api_unreachable")
+        self.assertIsNone(res)
         self.assertEqual(
             self.session.get.call_count,
             bcfy_calls_collector._MAX_5XX_RETRIES + 1,
@@ -417,8 +370,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         res = await bcfy_calls_collector._fetch_calls(
             self.session, "url", {}, {}, "fid", "sid", self.shutdown
         )
-        self.assertIsNone(res.payload)
-        self.assertIsNone(res.failure)
+        self.assertIsNone(res)
         self.assertEqual(self.session.get.call_count, 1)
 
     async def test_other_non_200_status(self) -> None:
@@ -431,44 +383,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         res = await bcfy_calls_collector._fetch_calls(
             self.session, "url", {}, {}, "fid", "sid", self.shutdown
         )
-        self.assertIsNone(res.payload)
-        failure = _require_item_failure(res.failure)
-        self.assertIs(
-            failure.status_reason,
-            FeedStatusReason.SOURCE_UNREACHABLE,
-        )
-        self.assertEqual(failure.reason, "calls_api_unreachable")
-
-    @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
-        new_callable=AsyncMock,
-    )
-    async def test_429_max_retries_returns_rate_limited_failure(
-        self, mock_sleep: AsyncMock
-    ) -> None:
-        mock_sleep.return_value = False
-        resp429 = AsyncMock(status=429)
-        resp429.headers = {"Retry-After": "1"}
-        cm = MagicMock()
-        cm.__aenter__ = AsyncMock(return_value=resp429)
-        cm.__aexit__ = AsyncMock(return_value=False)
-        self.session.get.return_value = cm
-
-        res = await bcfy_calls_collector._fetch_calls(
-            self.session, "url", {}, {}, "fid", "sid", self.shutdown
-        )
-
-        self.assertIsNone(res.payload)
-        failure = _require_item_failure(res.failure)
-        self.assertIs(
-            failure.status_reason,
-            FeedStatusReason.SOURCE_RATE_LIMITED,
-        )
-        self.assertEqual(failure.reason, "calls_api_rate_limited")
-        self.assertEqual(
-            self.session.get.call_count,
-            bcfy_calls_collector._MAX_5XX_RETRIES + 1,
-        )
+        self.assertIsNone(res)
 
 
 class TestGetAudioFormat(unittest.TestCase):
@@ -546,11 +461,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         res = await bcfy_calls_collector._download_audio(
             self.session, "http://mp3", self.shutdown
         )
-        failure = _require_item_failure(res)
-        self.assertIs(
-            failure.status_reason, FeedStatusReason.SOURCE_UNREACHABLE
-        )
-        self.assertEqual(failure.reason, "audio_download_failed")
+        self.assertIsNone(res)
 
     async def test_http_exception(self) -> None:
         self.session.get.side_effect = aiohttp.ClientError()
@@ -558,34 +469,19 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         res = await bcfy_calls_collector._download_audio(
             self.session, "http://mp3", self.shutdown
         )
-        failure = _require_item_failure(res)
-        self.assertIs(
-            failure.status_reason, FeedStatusReason.SOURCE_UNREACHABLE
-        )
-        self.assertEqual(failure.reason, "audio_download_failed")
+        self.assertIsNone(res)
 
-    async def test_429_retries_then_returns_rate_limited_failure(self) -> None:
+    async def test_429_raises(self) -> None:
         resp = AsyncMock(status=429)
         cm = MagicMock()
         cm.__aenter__ = AsyncMock(return_value=resp)
         cm.__aexit__ = AsyncMock(return_value=False)
         self.session.get.return_value = cm
 
-        with patch(
-            "backend.pipeline.ingestion.collectors.bcfy_calls"
-            ".bcfy_calls_collector._sleep_or_shutdown",
-            new_callable=AsyncMock,
-        ) as mock_sleep:
-            mock_sleep.return_value = False
-            res = await bcfy_calls_collector._download_audio(
+        with self.assertRaisesRegex(RuntimeError, "rate limit"):
+            await bcfy_calls_collector._download_audio(
                 self.session, "http://mp3", self.shutdown
             )
-
-        failure = _require_item_failure(res)
-        self.assertIs(
-            failure.status_reason, FeedStatusReason.SOURCE_RATE_LIMITED
-        )
-        self.assertEqual(failure.reason, "audio_http_429")
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls"
@@ -635,11 +531,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         res = await bcfy_calls_collector._download_audio(
             self.session, "http://mp3", self.shutdown
         )
-        failure = _require_item_failure(res)
-        self.assertIs(
-            failure.status_reason, FeedStatusReason.SOURCE_UNREACHABLE
-        )
-        self.assertEqual(failure.reason, "audio_download_failed")
+        self.assertIsNone(res)
         self.assertEqual(
             self.session.get.call_count,
             bcfy_calls_collector._AUDIO_FILE_DOWNLOAD_MAX_RETRIES + 1,
@@ -717,7 +609,7 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
         mock_dl.return_value = b"flac"
         result = {"url": "http://1", "start_ts": 1000, "end_ts": 2000}
 
-        result = await bcfy_calls_collector._create_chunk_from_call(
+        chunk = await bcfy_calls_collector._create_chunk_from_call(
             self.session,
             result,
             "http://1",
@@ -726,10 +618,8 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
             datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
         )
 
-        chunk = result.chunk
         assert chunk is not None
         self.assertIsNotNone(chunk)
-        self.assertIsNone(result.failure)
         self.assertEqual(chunk.audio_bytes, b"flac")
         self.assertEqual(chunk.chunk_start_time.timestamp(), 1000)
         self.assertEqual(chunk.chunk_end_time.timestamp(), 2000)
@@ -752,7 +642,7 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
             wraps=datetime.datetime,
         ) as mock_datetime:
             mock_datetime.now.return_value = fixed_now
-            result = await bcfy_calls_collector._create_chunk_from_call(
+            chunk = await bcfy_calls_collector._create_chunk_from_call(
                 self.session,
                 result,
                 "http://1",
@@ -761,10 +651,8 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
                 datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
             )
 
-        chunk = result.chunk
         assert chunk is not None
         self.assertIsNotNone(chunk)
-        self.assertIsNone(result.failure)
         self.assertEqual(chunk.chunk_start_time, fixed_now)
         self.assertEqual(chunk.chunk_end_time, fixed_now)
 
@@ -779,7 +667,7 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
         mock_dl.return_value = None
         result = {"url": "http://1", "start_ts": 1000, "end_ts": 2000}
 
-        result = await bcfy_calls_collector._create_chunk_from_call(
+        chunk = await bcfy_calls_collector._create_chunk_from_call(
             self.session,
             result,
             "http://1",
@@ -788,36 +676,26 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
             datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
         )
 
-        self.assertIsNone(result.chunk)
-        self.assertIsNone(result.failure)
+        self.assertIsNone(chunk)
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls"
         ".bcfy_calls_collector._download_audio",
         new_callable=AsyncMock,
     )
-    async def test_runtime_error_returns_unreachable_failure(
-        self, mock_dl: AsyncMock
-    ) -> None:
+    async def test_runtime_error_reraised(self, mock_dl: AsyncMock) -> None:
         mock_dl.side_effect = RuntimeError("CDN rate limit")
         result = {"url": "http://1"}
 
-        result = await bcfy_calls_collector._create_chunk_from_call(
-            self.session,
-            result,
-            "http://1",
-            self.shutdown,
-            "test-session",
-            datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
-        )
-
-        self.assertIsNone(result.chunk)
-        failure = _require_item_failure(result.failure)
-        self.assertIs(
-            failure.status_reason,
-            FeedStatusReason.SOURCE_UNREACHABLE,
-        )
-        self.assertEqual(failure.reason, "audio_download_failed")
+        with self.assertRaisesRegex(RuntimeError, "CDN rate limit"):
+            await bcfy_calls_collector._create_chunk_from_call(
+                self.session,
+                result,
+                "http://1",
+                self.shutdown,
+                "test-session",
+                datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+            )
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls"
@@ -830,7 +708,7 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
         mock_dl.side_effect = ValueError("unexpected")
         result = {"url": "http://1"}
 
-        result = await bcfy_calls_collector._create_chunk_from_call(
+        chunk = await bcfy_calls_collector._create_chunk_from_call(
             self.session,
             result,
             "http://1",
@@ -839,12 +717,7 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
             datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
         )
 
-        self.assertIsNone(result.chunk)
-        failure = _require_item_failure(result.failure)
-        self.assertIs(
-            failure.status_reason,
-            FeedStatusReason.SOURCE_UNREACHABLE,
-        )
+        self.assertIsNone(chunk)
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls"
@@ -859,7 +732,7 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
         result = {"url": "http://1", "start_ts": 1000, "end_ts": 2000}
         rt = datetime.datetime(2026, 4, 22, 12, 0, 0, tzinfo=datetime.UTC)
 
-        result = await bcfy_calls_collector._create_chunk_from_call(
+        chunk = await bcfy_calls_collector._create_chunk_from_call(
             self.session,
             result,
             "http://1",
@@ -868,7 +741,6 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
             rt,
         )
 
-        chunk = result.chunk
         assert chunk is not None
         self.assertEqual(chunk.receipt_time, rt)
 
@@ -893,7 +765,7 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
         result = {"url": "http://1", "start_ts": 1000, "end_ts": 2000}
         rt = datetime.datetime(2026, 4, 22, 12, 0, 0, tzinfo=datetime.UTC)
 
-        result = await bcfy_calls_collector._create_chunk_from_call(
+        chunk = await bcfy_calls_collector._create_chunk_from_call(
             self.session,
             result,
             "http://1",
@@ -902,7 +774,6 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
             rt,
         )
 
-        chunk = result.chunk
         assert chunk is not None
         self.assertEqual(chunk.mime_type, AudioMimeType.MPEG)
 
@@ -910,10 +781,6 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
 class TestHandleLoopFailure(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.shutdown = asyncio.Event()
-        self.failure = ItemFailure(
-            FeedStatusReason.SOURCE_UNREACHABLE,
-            "calls_api_unreachable",
-        )
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls"
@@ -925,7 +792,7 @@ class TestHandleLoopFailure(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         mock_sleep.return_value = False
         result = await bcfy_calls_collector._handle_loop_failure(
-            "fid", 0, self.shutdown, self.failure
+            "fid", 0, self.shutdown
         )
         self.assertEqual(result, 1)
 
@@ -938,24 +805,18 @@ class TestHandleLoopFailure(unittest.IsolatedAsyncioTestCase):
         self, mock_sleep: AsyncMock
     ) -> None:
         mock_sleep.return_value = False
-        await bcfy_calls_collector._handle_loop_failure(
-            "fid", 0, self.shutdown, self.failure
-        )
+        await bcfy_calls_collector._handle_loop_failure("fid", 0, self.shutdown)
         mock_sleep.assert_called_once_with(
             self.shutdown, bcfy_calls_collector._POLL_INTERVAL_SEC
         )
 
     async def test_raises_on_max_consecutive_failures(self) -> None:
         threshold = bcfy_calls_collector._MAX_CONSECUTIVE_FAILURES
-        with self.assertRaises(CollectorFailure) as ctx:
+        with self.assertRaises(RuntimeError) as ctx:
             await bcfy_calls_collector._handle_loop_failure(
-                "fid", threshold - 1, self.shutdown, self.failure
+                "fid", threshold - 1, self.shutdown
             )
-        self.assertIs(
-            ctx.exception.status_reason,
-            FeedStatusReason.SOURCE_UNREACHABLE,
-        )
-        self.assertEqual(str(ctx.exception), "calls_api_unreachable")
+        self.assertEqual(str(ctx.exception), "source_unreachable")
 
     async def test_does_not_raise_below_max(self) -> None:
         threshold = bcfy_calls_collector._MAX_CONSECUTIVE_FAILURES
@@ -967,7 +828,7 @@ class TestHandleLoopFailure(unittest.IsolatedAsyncioTestCase):
         ) as mock_sleep:
             mock_sleep.return_value = False
             result = await bcfy_calls_collector._handle_loop_failure(
-                "fid", threshold - 2, self.shutdown, self.failure
+                "fid", threshold - 2, self.shutdown
             )
         self.assertEqual(result, threshold - 1)
 
@@ -993,7 +854,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
 
     async def test_missing_source_feed_id(self) -> None:
         self.feed["source_feed_id"] = None
-        with self.assertRaises(CollectorFailure) as ctx:
+        with self.assertRaises(ValueError) as ctx:
             async for _ in bcfy_calls_collector.capture_bcfy_calls(
                 self.leased_feed,
                 self.shutdown,
@@ -1002,10 +863,6 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             ):
                 pass
 
-        self.assertIs(
-            ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-        )
         self.assertEqual(str(ctx.exception), "missing_source_feed_id")
 
     @patch(
@@ -1210,14 +1067,13 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
         new_callable=AsyncMock,
     )
-    async def test_runtime_error_retries_as_source_unreachable(
+    async def test_runtime_error_bubbles_up(
         self, mock_sleep: AsyncMock, mock_fetch: AsyncMock, mock_jwt: MagicMock
     ) -> None:
         mock_jwt.return_value = "token"
         mock_fetch.side_effect = RuntimeError("Fatal API Error")
-        mock_sleep.return_value = False
 
-        with self.assertRaises(CollectorFailure) as ctx:
+        with self.assertRaisesRegex(RuntimeError, "Fatal API Error"):
             async for _ in bcfy_calls_collector.capture_bcfy_calls(
                 self.leased_feed,
                 self.shutdown,
@@ -1225,15 +1081,6 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
                 _default_resources(),
             ):
                 pass
-        self.assertIs(
-            ctx.exception.status_reason,
-            FeedStatusReason.SOURCE_UNREACHABLE,
-        )
-        self.assertEqual(str(ctx.exception), "source_unreachable")
-        self.assertEqual(
-            mock_fetch.call_count,
-            bcfy_calls_collector._MAX_CONSECUTIVE_FAILURES,
-        )
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
@@ -1480,7 +1327,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             False  # Simulate sleeping normally without shutdown
         )
 
-        with self.assertRaises(CollectorFailure) as ctx:
+        with self.assertRaises(RuntimeError) as ctx:
             async for _ in bcfy_calls_collector.capture_bcfy_calls(
                 self.leased_feed,
                 self.shutdown,
@@ -1488,10 +1335,6 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
                 _default_resources(),
             ):
                 pass
-        self.assertIs(
-            ctx.exception.status_reason,
-            FeedStatusReason.SOURCE_UNREACHABLE,
-        )
         self.assertEqual(str(ctx.exception), "source_unreachable")
         self.assertEqual(mock_fetch.call_count, 10)
 
@@ -1519,7 +1362,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         mock_fetch.side_effect = bcfy_calls_collector.AuthError("Auth failure")
         mock_sleep.return_value = False
 
-        with self.assertRaises(CollectorFailure) as ctx:
+        with self.assertRaises(RuntimeError) as ctx:
             async for _ in bcfy_calls_collector.capture_bcfy_calls(
                 self.leased_feed,
                 self.shutdown,
@@ -1527,249 +1370,9 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
                 _default_resources(),
             ):
                 pass
-        self.assertIs(
-            ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-        )
-        self.assertEqual(str(ctx.exception), "calls_jwt_secret_access_failed")
+        self.assertEqual(str(ctx.exception), "jwt_secret_unavailable")
         self.assertEqual(mock_fetch.call_count, 1)
         self.assertEqual(mock_jwt.call_count, 11)
-
-    @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
-    )
-    @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
-        new_callable=AsyncMock,
-    )
-    @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
-        new_callable=AsyncMock,
-    )
-    async def test_persistent_fetch_rate_limit_raises_typed_failure(
-        self, mock_sleep: AsyncMock, mock_fetch: AsyncMock, mock_jwt: MagicMock
-    ) -> None:
-        mock_jwt.return_value = "token"
-        mock_sleep.return_value = False
-        mock_fetch.return_value = bcfy_calls_collector._FetchCallsResult(
-            failure=ItemFailure(
-                FeedStatusReason.SOURCE_RATE_LIMITED,
-                "calls_api_rate_limited",
-            )
-        )
-
-        with self.assertRaises(CollectorFailure) as ctx:
-            async for _ in bcfy_calls_collector.capture_bcfy_calls(
-                self.leased_feed,
-                self.shutdown,
-                self.url_base,
-                _default_resources(),
-            ):
-                pass
-
-        self.assertIs(
-            ctx.exception.status_reason,
-            FeedStatusReason.SOURCE_RATE_LIMITED,
-        )
-        self.assertEqual(str(ctx.exception), "calls_api_rate_limited")
-        self.assertEqual(
-            mock_fetch.call_count,
-            bcfy_calls_collector._MAX_CONSECUTIVE_FAILURES,
-        )
-
-    @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
-    )
-    @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
-        new_callable=AsyncMock,
-    )
-    @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
-        new_callable=AsyncMock,
-    )
-    async def test_persistent_fetch_unreachable_raises_typed_failure(
-        self, mock_sleep: AsyncMock, mock_fetch: AsyncMock, mock_jwt: MagicMock
-    ) -> None:
-        mock_jwt.return_value = "token"
-        mock_sleep.return_value = False
-        mock_fetch.return_value = bcfy_calls_collector._FetchCallsResult(
-            failure=ItemFailure(
-                FeedStatusReason.SOURCE_UNREACHABLE,
-                "calls_api_unreachable",
-            )
-        )
-
-        with self.assertRaises(CollectorFailure) as ctx:
-            async for _ in bcfy_calls_collector.capture_bcfy_calls(
-                self.leased_feed,
-                self.shutdown,
-                self.url_base,
-                _default_resources(),
-            ):
-                pass
-
-        self.assertIs(
-            ctx.exception.status_reason,
-            FeedStatusReason.SOURCE_UNREACHABLE,
-        )
-        self.assertEqual(str(ctx.exception), "calls_api_unreachable")
-
-    @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
-    )
-    @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
-        new_callable=AsyncMock,
-    )
-    @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._create_chunk_from_call",
-        new_callable=AsyncMock,
-    )
-    async def test_all_page_items_same_failure_promotes_that_reason(
-        self,
-        mock_create: AsyncMock,
-        mock_fetch: AsyncMock,
-        mock_jwt: MagicMock,
-    ) -> None:
-        mock_jwt.return_value = "token"
-        mock_fetch.return_value = bcfy_calls_collector._FetchCallsResult(
-            payload={"calls": [{"url": "http://1"}, {"url": "http://2"}]}
-        )
-        mock_create.return_value = bcfy_calls_collector._CallChunkResult(
-            failure=ItemFailure(
-                FeedStatusReason.SOURCE_UNREACHABLE,
-                "audio_download_failed",
-            )
-        )
-
-        with self.assertRaises(CollectorFailure) as ctx:
-            async for _ in bcfy_calls_collector.capture_bcfy_calls(
-                self.leased_feed,
-                self.shutdown,
-                self.url_base,
-                _default_resources(),
-            ):
-                pass
-
-        self.assertIs(
-            ctx.exception.status_reason,
-            FeedStatusReason.SOURCE_UNREACHABLE,
-        )
-        self.assertEqual(str(ctx.exception), "audio_download_failed")
-
-    @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
-    )
-    @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
-        new_callable=AsyncMock,
-    )
-    @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._create_chunk_from_call",
-        new_callable=AsyncMock,
-    )
-    async def test_all_page_items_mixed_failures_promote_collector_error(
-        self,
-        mock_create: AsyncMock,
-        mock_fetch: AsyncMock,
-        mock_jwt: MagicMock,
-    ) -> None:
-        mock_jwt.return_value = "token"
-        mock_fetch.return_value = bcfy_calls_collector._FetchCallsResult(
-            payload={"calls": [{"url": "http://1"}, {"url": "http://2"}]}
-        )
-        mock_create.side_effect = [
-            bcfy_calls_collector._CallChunkResult(
-                failure=ItemFailure(
-                    FeedStatusReason.SOURCE_UNREACHABLE,
-                    "audio_download_failed",
-                )
-            ),
-            bcfy_calls_collector._CallChunkResult(
-                failure=ItemFailure(
-                    FeedStatusReason.SOURCE_RATE_LIMITED,
-                    "audio_http_429",
-                )
-            ),
-        ]
-
-        with self.assertRaises(CollectorFailure) as ctx:
-            async for _ in bcfy_calls_collector.capture_bcfy_calls(
-                self.leased_feed,
-                self.shutdown,
-                self.url_base,
-                _default_resources(),
-            ):
-                pass
-
-        self.assertIs(
-            ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-        )
-        self.assertEqual(str(ctx.exception), "mixed_item_failures")
-
-    @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
-    )
-    @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
-        new_callable=AsyncMock,
-    )
-    @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._create_chunk_from_call",
-        new_callable=AsyncMock,
-    )
-    @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
-        new_callable=AsyncMock,
-    )
-    async def test_one_page_item_success_prevents_feed_level_promotion(
-        self,
-        mock_sleep: AsyncMock,
-        mock_create: AsyncMock,
-        mock_fetch: AsyncMock,
-        mock_jwt: MagicMock,
-    ) -> None:
-        mock_jwt.return_value = "token"
-        now = datetime.datetime.now(datetime.UTC)
-        chunk_ok = bcfy_calls_collector.CapturedChunk(
-            audio_bytes=b"x",
-            chunk_start_time=now,
-            chunk_end_time=now,
-            session_id="sid",
-            receipt_time=now,
-        )
-        mock_fetch.return_value = bcfy_calls_collector._FetchCallsResult(
-            payload={"calls": [{"url": "http://1"}, {"url": "http://2"}]}
-        )
-        mock_create.side_effect = [
-            bcfy_calls_collector._CallChunkResult(
-                failure=ItemFailure(
-                    FeedStatusReason.SOURCE_UNREACHABLE,
-                    "audio_download_failed",
-                )
-            ),
-            bcfy_calls_collector._CallChunkResult(chunk=chunk_ok),
-        ]
-
-        async def _sleep_then_stop(*args, **kwargs) -> bool:
-            self.shutdown.set()
-            return True
-
-        mock_sleep.side_effect = _sleep_then_stop
-
-        chunks = [
-            c
-            async for c in bcfy_calls_collector.capture_bcfy_calls(
-                self.leased_feed,
-                self.shutdown,
-                self.url_base,
-                _default_resources(),
-            )
-        ]
-
-        self.assertEqual(chunks, [chunk_ok])
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
@@ -1782,14 +1385,14 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._download_audio",
         new_callable=AsyncMock,
     )
-    async def test_download_audio_runtime_error_promotes_item_failure(
+    async def test_download_audio_runtime_error_reraised(
         self, mock_dl: AsyncMock, mock_fetch: AsyncMock, mock_jwt: MagicMock
     ) -> None:
         mock_jwt.return_value = "token"
         mock_fetch.return_value = {"calls": [{"url": "http://1"}]}
         mock_dl.side_effect = RuntimeError("CDN rate limit")
 
-        with self.assertRaises(CollectorFailure) as ctx:
+        with self.assertRaisesRegex(RuntimeError, "CDN rate limit"):
             async for _ in bcfy_calls_collector.capture_bcfy_calls(
                 self.leased_feed,
                 self.shutdown,
@@ -1798,11 +1401,6 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             ):
                 pass
 
-        self.assertIs(
-            ctx.exception.status_reason,
-            FeedStatusReason.SOURCE_UNREACHABLE,
-        )
-        self.assertEqual(str(ctx.exception), "audio_download_failed")
         self.assertEqual(mock_dl.call_count, 1)
 
     @patch(
@@ -2311,7 +1909,7 @@ class TestCreateChunkFromCallResumePosition(unittest.IsolatedAsyncioTestCase):
             "ts": 2002,
         }
 
-        result = await bcfy_calls_collector._create_chunk_from_call(
+        chunk = await bcfy_calls_collector._create_chunk_from_call(
             self.session,
             result,
             "http://1",
@@ -2320,7 +1918,6 @@ class TestCreateChunkFromCallResumePosition(unittest.IsolatedAsyncioTestCase):
             datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
         )
 
-        chunk = result.chunk
         assert chunk is not None
         self.assertEqual(
             chunk.resume_position,
@@ -2355,7 +1952,7 @@ class TestCreateChunkFromCallResumePosition(unittest.IsolatedAsyncioTestCase):
             ".bcfy_calls_collector",
             level="WARNING",
         ) as cm:
-            result = await bcfy_calls_collector._create_chunk_from_call(
+            chunk = await bcfy_calls_collector._create_chunk_from_call(
                 self.session,
                 result,
                 "http://1",
@@ -2364,7 +1961,6 @@ class TestCreateChunkFromCallResumePosition(unittest.IsolatedAsyncioTestCase):
                 datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
             )
 
-        chunk = result.chunk
         assert chunk is not None
         self.assertIsNone(chunk.resume_position)
         missing = [

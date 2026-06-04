@@ -7,7 +7,7 @@ class Transcript(BaseModel):
     """Transcript type used by the Transcript API."""
 
     feed_id: str
-    transmission_id: str
+    segment_id: str
     transcript: str
     start_timestamp: datetime.datetime | None = None
     end_timestamp: datetime.datetime | None = None

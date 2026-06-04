@@ -76,8 +76,6 @@ jobs:
       - name: Build microservices using Buildx Bake (with caching)
         run: |
           docker buildx bake \
-            --set *.cache-from=type=gha,scope=integration-tests \
-            --set *.cache-to=type=gha,mode=max,scope=integration-tests \
             -f docker-compose.yml \
             --load
 
@@ -85,13 +83,13 @@ jobs:
         run: |
           docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run -e PYTHONPATH=/app/.venv/lib/python3.13/site-packages:/app --rm integration-tests python -m pytest integration_tests/ --ignore=integration_tests/storage/ -v -s --log-cli-level=INFO
 
+      - name: Print container logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env logs
+
       - name: Clean up containers
         if: always()
         run: docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env down --remove-orphans
-
-      - name: Print container logs on failure
-        if: failure()
-        run: docker compose --env-file local_dev/LOCAL.env logs
 
       - name: Open SSH session if workflow fails
         uses: mxschmitt/action-tmate@v3

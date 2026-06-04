@@ -802,18 +802,31 @@ class CollectorRuntime:
             * 1000
         )
         try:
-            message_id = await gcp_helper.publish_audio_chunk(
-                self._pubsub_client,
-                topic_path,
-                str(feed["id"]),
-                feed["name"],
-                feed["external_id"],
-                gcs_uri,
-                start_timestamp=captured_chunk.chunk_start_time,
-                session_id=captured_chunk.session_id,
-                source_type=feed["source_type"],
-                duration_ms=duration_ms,
-            )
+            if feed["source_type"].is_continuous:
+                message_id = await gcp_helper.publish_continuous_audio(
+                    self._pubsub_client,
+                    topic_path,
+                    str(feed["id"]),
+                    feed["name"],
+                    feed["external_id"],
+                    gcs_uri,
+                    start_timestamp=captured_chunk.chunk_start_time,
+                    session_id=captured_chunk.session_id,
+                    source_type=feed["source_type"],
+                    duration_ms=duration_ms,
+                )
+            else:
+                message_id = await gcp_helper.publish_segmented_audio(
+                    self._pubsub_client,
+                    topic_path,
+                    str(feed["id"]),
+                    feed["name"],
+                    feed["external_id"],
+                    gcs_uri,
+                    start_timestamp=captured_chunk.chunk_start_time,
+                    duration_ms=duration_ms,
+                    source_type=feed["source_type"],
+                )
         except (asyncio.CancelledError, LeaseExpiredError):
             raise
         except Exception as exc:

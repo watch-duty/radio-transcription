@@ -50,6 +50,15 @@ class TestAudioSegmentsClient(unittest.TestCase):
                 getattr(adapter.max_retries, "total", adapter.max_retries), 0
             )
 
+    def test_init_strips_v1_audio_segments(self) -> None:
+        # Execute
+        client1 = AudioSegmentsClient("http://test-api.com/v1/audio_segments")
+        client2 = AudioSegmentsClient("http://test-api.com/v1/audio_segments/")
+
+        # Verify
+        self.assertEqual(client1.api_url, "http://test-api.com")
+        self.assertEqual(client2.api_url, "http://test-api.com")
+
     def test_add_audio_segment_annotation_success(self) -> None:
         # Setup
         mock_response = MagicMock()

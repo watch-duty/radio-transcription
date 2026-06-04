@@ -20,9 +20,7 @@ from backend.pipeline.ingestion.collectors.icecast import icecast_collector
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
 )
-from backend.pipeline.ingestion.models import CollectorFailure
 from backend.pipeline.storage.feed_store import (
-    FeedStatusReason,
     FeedStore,
     LeasedFeed,
     SourceType,
@@ -441,33 +439,20 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         )
 
         shutdown = asyncio.Event()
-        with patch(
-            "backend.pipeline.ingestion.collectors.icecast.icecast_collector._probe_stream_once",
-            new_callable=AsyncMock,
-            return_value=None,
-        ):
-            with self.assertRaises(CollectorFailure) as ctx:
-                async for _chunk in icecast_collector.capture_icecast_stream(
-                    feed,
-                    shutdown,
-                    url_base="https://mock.example.com/",
-                    resources=_default_resources(),
-                ):
-                    pass  # Should not yield any chunks
+        with self.assertRaises(RuntimeError) as ctx:
+            async for _chunk in icecast_collector.capture_icecast_stream(
+                feed,
+                shutdown,
+                url_base="https://mock.example.com/",
+                resources=_default_resources(),
+            ):
+                pass  # Should not yield any chunks
 
-        self.assertIs(
-            ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-        )
         self.assertEqual(str(ctx.exception), "ffmpeg_exit_1")
 
         # Simulate what CollectorRuntime._process_feed does on exception
         await self.store.report_feed_failure(
-            feed["id"],
-            self.worker_id,
-            feed["fencing_token"],
-            reason=str(ctx.exception),
-            status_reason=ctx.exception.status_reason,
+            feed["id"], self.worker_id, feed["fencing_token"]
         )
 
         # Assert: feed transitioned to 'failing'
@@ -521,7 +506,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
     async def test_missing_source_feed_id_raises_without_side_effects(
         self,
     ) -> None:
-        """Feed without icecast properties -> typed failure, no GCS upload."""
+        """Feed without icecast properties -> ValueError, no GCS upload."""
         # Insert a valid feed
         feed_id = await self._insert_feed("no-url-feed")
         leased = await self.store.acquire_feeds_batch(self.worker_id, _CLAIM)
@@ -536,7 +521,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         feed["source_feed_id"] = None
 
         shutdown = asyncio.Event()
-        with self.assertRaises(CollectorFailure) as ctx:
+        with self.assertRaises(ValueError) as ctx:
             async for _chunk in icecast_collector.capture_icecast_stream(
                 feed,
                 shutdown,
@@ -545,10 +530,6 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             ):
                 pass
 
-        self.assertIs(
-            ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-        )
         self.assertEqual(str(ctx.exception), "missing_source_feed_id")
 
         # Assert: DB state unchanged (still active, no bookmark)

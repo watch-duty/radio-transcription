@@ -28,7 +28,7 @@ from testcontainers.core.wait_strategies import LogMessageWaitStrategy
 from testcontainers.postgres import PostgresContainer
 
 from backend.pipeline.ingestion.collectors.echo import main as echo_main
-from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
+from backend.pipeline.schema_types.segmented_audio_pb2 import SegmentedAudio
 from backend.pipeline.storage.settings import AlloyDBSettings
 from backend.pipeline.storage.sync_connection import connect_db
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
@@ -243,11 +243,11 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         downloaded_bytes = self._download_staged(mp3_path)
         self.assertEqual(downloaded_bytes, uploaded_bytes)
 
-        # Verify AudioChunk published with correct attributes
+        # Verify SegmentedAudio published with correct attributes
         self.mock_publisher.publish.assert_called_once()
         publish_args, call_kwargs = self.mock_publisher.publish.call_args
         self.assertEqual(call_kwargs["source_type"], "echo")
-        chunk = AudioChunk()
+        chunk = SegmentedAudio()
         chunk.ParseFromString(publish_args[1])
         self.assertEqual(chunk.feed_id, str(feed_id))
 

@@ -76,6 +76,10 @@ class SourceType(enum.StrEnum):
     OPENMHZ = "openmhz"
     FIRE_NOTIFICATIONS = "fire_notifications"
 
+    @property
+    def is_continuous(self) -> bool:
+        return self == SourceType.BCFY_FEEDS
+
 
 class FeedStatus(enum.StrEnum):
     """Lifecycle status of a feed, stored in the ``feeds.status`` column."""

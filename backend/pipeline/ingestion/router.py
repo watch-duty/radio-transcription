@@ -37,10 +37,7 @@ OPENMHZ_URL_BASE = "https://api.openmhz.com/"
 FIRE_NOTIFICATIONS_URL_BASE = os.environ.get("FIRE_NOTIFICATIONS_URL_BASE", "")
 
 # Typed registry: ty/mypy checks each value matches CollectorFn.
-# Adding a new VM collector is deliberately not just this dict: update
-# SourceType, source_type seed data, _DEFAULT_CAPS, topic routing, and tests.
-# main.py enforces _COLLECTORS == _DEFAULT_CAPS at startup so a new type does
-# not silently remain unclaimed or get claimed without a route.
+# Adding a new collector = 1 import + 1 dict entry.
 _COLLECTORS: dict[SourceType, tuple[CollectorFn, str]] = {
     SourceType.BCFY_FEEDS: (
         icecast_collector.capture_icecast_stream,

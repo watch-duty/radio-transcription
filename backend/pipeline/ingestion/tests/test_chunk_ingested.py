@@ -98,7 +98,7 @@ def _mock_pubsub_publish(
 ) -> mock._patch:
     return mock.patch(
         "backend.pipeline.ingestion.collector_runtime."
-        "gcp_helper.publish_audio_chunk",
+        "gcp_helper.publish_continuous_audio",
         new_callable=mock.AsyncMock,
         return_value=message_id,
     )

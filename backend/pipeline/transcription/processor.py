@@ -68,7 +68,7 @@ class TranscriptionEventProcessor:
         ):
             errors = []
             transcript = ""
-            transmission_id = ""
+            segment_id = ""
             raw_data = pubsub_message.get("data", "")
             if not raw_data:
                 logger.error("Bad Request: Missing Pub/Sub data payload")
@@ -78,11 +78,24 @@ class TranscriptionEventProcessor:
             claim = self._parse_claim(raw_data)
 
             feed_id = claim.feed_id
-            transmission_id = claim.transmission_id
+            segment_id = claim.segment_id
+            if (
+                claim.audio_classification
+                != NormalizedAudio.AUDIO_CLASSIFICATION_UNSPECIFIED
+                and claim.audio_classification
+                != NormalizedAudio.AUDIO_CLASSIFICATION_SPEECH
+            ):
+                logger.info(
+                    "Skipping transcription for non-speech segment %s (feed %s, classification: %s)",
+                    segment_id,
+                    feed_id,
+                    claim.audio_classification,
+                )
+                return
 
             logger.info(
-                "Received claim for transmission %s (feed %s, uri: %s)",
-                transmission_id,
+                "Received claim for segment %s (feed %s, uri: %s)",
+                segment_id,
                 feed_id,
                 claim.canonical_audio_uri,
             )
@@ -106,7 +119,7 @@ class TranscriptionEventProcessor:
 
                 # Build TranscribedAudio egress protobuf message
                 out_proto = TranscribedAudio(
-                    transmission_id=claim.transmission_id,
+                    segment_id=claim.segment_id,
                     feed_id=claim.feed_id,
                     transcript=transcript,
                     start_timestamp=claim.start_timestamp,
@@ -141,17 +154,17 @@ class TranscriptionEventProcessor:
                 )
                 message_id = future.result()
                 logger.info(
-                    "Successfully transcribed and published egress message %s for transmission %s (feed %s)",
+                    "Successfully transcribed and published egress message %s for segment %s (feed %s)",
                     message_id,
-                    transmission_id,
+                    segment_id,
                     feed_id,
                 )
             except Exception as e:
                 if _is_transient_exception(e):
                     logger.warning(
-                        "Transient failure processing transcription claim for transmission %s (feed %s): %s. "
+                        "Transient failure processing transcription claim for segment %s (feed %s): %s. "
                         "Retrying...",
-                        transmission_id,
+                        segment_id,
                         feed_id,
                         e,
                     )
@@ -159,17 +172,17 @@ class TranscriptionEventProcessor:
                     raise
 
                 logger.exception(
-                    "Permanent failure processing transcription claim for transmission %s (feed %s): %s. "
+                    "Permanent failure processing transcription claim for segment %s (feed %s): %s. "
                     "Acknowledging message without retry.",
-                    transmission_id,
+                    segment_id,
                     feed_id,
                     e,
                 )
                 errors.append(f"Permanent Failure: {e}")
             finally:
-                if transmission_id:
+                if segment_id:
                     self._write_transcript_annotation(
-                        transmission_id,
+                        segment_id,
                         transcript or "",
                         errors,
                     )
@@ -199,7 +212,7 @@ class TranscriptionEventProcessor:
             return claim
 
     def _write_transcript_annotation(
-        self, transmission_id: str, transcript: str, errors: list[str]
+        self, segment_id: str, transcript: str, errors: list[str]
     ) -> None:
         """Writes transcript annotation to audio segments API."""
         if self.audio_segments_client is None:
@@ -211,7 +224,7 @@ class TranscriptionEventProcessor:
                 "errors": errors,
             }
             self.audio_segments_client.add_audio_segment_annotation(
-                audio_segment_id=transmission_id,
+                audio_segment_id=segment_id,
                 annotation_type=(
                     audio_segments_models.AnnotationType.TRANSCRIPT
                 ),
@@ -219,12 +232,12 @@ class TranscriptionEventProcessor:
             )
             logger.info(
                 "Successfully added transcript annotation for segment %s",
-                transmission_id,
+                segment_id,
             )
         except Exception as write_err:
             logger.exception(
                 "Failed to add transcript annotation for segment %s: %s",
-                transmission_id,
+                segment_id,
                 write_err,
             )
 
