@@ -30,6 +30,18 @@ export function RuleConfigurationView({
 
   const [isEditing, setIsEditing] = useState(false);
   const [id, setId] = useState('');
+  const [editingRule, setEditingRule] = useState<RuleCreate>(() => ({
+    ruleName: '',
+    description: '',
+    isActive: true,
+    scope: { level: 'GLOBAL', targetFeeds: [] },
+    conditions: {
+      evaluationType: 'KEYWORD_MATCH',
+      operator: 'ANY',
+      keywords: [],
+      caseSensitive: false,
+    },
+  }));
 
   const rulesErrorHandled = useRef<Error | null>(null);
   const feedsErrorHandled = useRef<Error | null>(null);
@@ -60,10 +72,6 @@ export function RuleConfigurationView({
     return [...feeds].sort((a, b) => a.name.localeCompare(b.name));
   }, [feeds]);
 
-  const editingRule = useMemo(() => {
-    return rules.find((r) => r.ruleId === id);
-  }, [rules, id]);
-
   useEffect(() => {
     if (rulesError && rulesErrorHandled.current !== rulesError) {
       rulesErrorHandled.current = rulesError;
@@ -86,6 +94,18 @@ export function RuleConfigurationView({
     mutationFn: (newRule: RuleCreate) => createRule(newRule, token!),
     onSuccess: (data) => {
       triggerSnackbar(`Rule "${data.ruleName}" created successfully!`);
+      setEditingRule({
+        ruleName: '',
+        description: '',
+        isActive: true,
+        scope: { level: 'GLOBAL', targetFeeds: [] },
+        conditions: {
+          evaluationType: 'KEYWORD_MATCH',
+          operator: 'ANY',
+          keywords: [],
+          caseSensitive: false,
+        },
+      });
       queryClient.invalidateQueries({ queryKey: ['listRules', token] });
     },
     onError: (error: Error) => {
@@ -105,6 +125,18 @@ export function RuleConfigurationView({
       triggerSnackbar(`Rule "${data.ruleName}" updated successfully!`);
       setIsEditing(false);
       setId('');
+      setEditingRule({
+        ruleName: '',
+        description: '',
+        isActive: true,
+        scope: { level: 'GLOBAL', targetFeeds: [] },
+        conditions: {
+          evaluationType: 'KEYWORD_MATCH',
+          operator: 'ANY',
+          keywords: [],
+          caseSensitive: false,
+        },
+      });
       queryClient.invalidateQueries({ queryKey: ['listRules', token] });
     },
     onError: (error: Error) => {
@@ -141,12 +173,34 @@ export function RuleConfigurationView({
   const handleStartEdit = (rule: Rule) => {
     setIsEditing(true);
     setId(rule.ruleId);
+    setEditingRule({
+      ruleName: rule.ruleName,
+      description: rule.description || '',
+      isActive: rule.isActive,
+      scope: {
+        level: rule.scope.level,
+        targetFeeds: rule.scope.targetFeeds || [],
+      },
+      conditions: rule.conditions,
+    });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleCancelEdit = () => {
     setIsEditing(false);
     setId('');
+    setEditingRule({
+      ruleName: '',
+      description: '',
+      isActive: true,
+      scope: { level: 'GLOBAL', targetFeeds: [] },
+      conditions: {
+        evaluationType: 'KEYWORD_MATCH',
+        operator: 'ANY',
+        keywords: [],
+        caseSensitive: false,
+      },
+    });
   };
 
   const isSubmitting =
@@ -206,7 +260,9 @@ export function RuleConfigurationView({
           <RuleConfigurationEdit
             key={isEditing ? `edit-${id}` : 'register'}
             isEditing={isEditing}
-            editingRule={isEditing ? editingRule : undefined}
+            editingRule={editingRule}
+            setEditingRule={setEditingRule}
+            editingRuleId={isEditing ? id : undefined}
             feeds={sortedFeeds}
             rules={rules}
             onCreateRule={handleCreateRule}

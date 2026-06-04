@@ -60,7 +60,9 @@ const EVALUATION_TYPE_OPTIONS: {
 
 interface RuleConfigurationEditProps {
   isEditing: boolean;
-  editingRule?: Rule;
+  editingRule: RuleCreate;
+  setEditingRule: React.Dispatch<React.SetStateAction<RuleCreate>>;
+  editingRuleId?: string;
   feeds: Feed[];
   rules: Rule[];
   onCreateRule: (payload: RuleCreate) => Promise<void>;
@@ -84,6 +86,8 @@ interface RuleConfigurationEditProps {
 export function RuleConfigurationEdit({
   isEditing,
   editingRule,
+  setEditingRule,
+  editingRuleId,
   feeds,
   rules,
   onCreateRule,
@@ -92,86 +96,6 @@ export function RuleConfigurationEdit({
   onCancel,
   isSubmitting,
 }: RuleConfigurationEditProps) {
-  // Local state for the rule being created/edited
-  const [ruleName, setRuleName] = useState(
-    isEditing && editingRule ? editingRule.ruleName : ''
-  );
-  const [ruleDescription, setRuleDescription] = useState(
-    isEditing && editingRule ? editingRule.description || '' : ''
-  );
-  const [ruleIsActive, setRuleIsActive] = useState(
-    isEditing && editingRule ? editingRule.isActive : true
-  );
-
-  const [ruleScopeLevel, setRuleScopeLevel] = useState<ScopeLevel>(
-    isEditing && editingRule ? editingRule.scope.level : 'GLOBAL'
-  );
-  const [ruleTargetFeeds, setRuleTargetFeeds] = useState<string[]>(
-    isEditing && editingRule ? editingRule.scope.targetFeeds : []
-  );
-
-  const [ruleEvaluationType, setRuleEvaluationType] = useState<EvaluationType>(
-    isEditing && editingRule
-      ? editingRule.conditions.evaluationType
-      : 'KEYWORD_MATCH'
-  );
-
-  // Keyword states
-  const [ruleKeywordOperator, setRuleKeywordOperator] =
-    useState<LogicalOperator>(
-      isEditing &&
-        editingRule &&
-        editingRule.conditions.evaluationType === 'KEYWORD_MATCH'
-        ? editingRule.conditions.operator
-        : 'ANY'
-    );
-  const [ruleKeywords, setRuleKeywords] = useState<string[]>(
-    isEditing &&
-      editingRule &&
-      editingRule.conditions.evaluationType === 'KEYWORD_MATCH'
-      ? editingRule.conditions.keywords
-      : []
-  );
-  const [ruleKeywordCaseSensitive, setRuleKeywordCaseSensitive] = useState(
-    isEditing &&
-      editingRule &&
-      editingRule.conditions.evaluationType === 'KEYWORD_MATCH'
-      ? editingRule.conditions.caseSensitive
-      : false
-  );
-
-  // Regex states
-  const [ruleRegexExpression, setRuleRegexExpression] = useState(
-    isEditing &&
-      editingRule &&
-      editingRule.conditions.evaluationType === 'REGEX_MATCH'
-      ? editingRule.conditions.expression
-      : ''
-  );
-  const [ruleRegexFlags, setRuleRegexFlags] = useState(
-    isEditing &&
-      editingRule &&
-      editingRule.conditions.evaluationType === 'REGEX_MATCH'
-      ? editingRule.conditions.flags
-      : ''
-  );
-
-  // Group states
-  const [ruleGroupOperator, setRuleGroupOperator] = useState<LogicalOperator>(
-    isEditing &&
-      editingRule &&
-      editingRule.conditions.evaluationType === 'RULE_GROUP'
-      ? editingRule.conditions.operator
-      : 'ANY'
-  );
-  const [ruleGroupChildRuleIds, setRuleGroupChildRuleIds] = useState<string[]>(
-    isEditing &&
-      editingRule &&
-      editingRule.conditions.evaluationType === 'RULE_GROUP'
-      ? editingRule.conditions.childRuleIds
-      : []
-  );
-
   const [newKeyword, setNewKeyword] = useState('');
   const [validationErrors, setValidationErrors] = useState<
     Record<string, string>
@@ -205,36 +129,55 @@ export function RuleConfigurationEdit({
       .map((w) => w.trim())
       .filter((w) => w.length > 0);
 
-    const updatedKeywords = [...ruleKeywords];
-    let hasDuplicate = false;
+    setEditingRule((prev) => {
+      if (prev.conditions.evaluationType !== 'KEYWORD_MATCH') return prev;
+      const currentKeywords = prev.conditions.keywords;
+      const updatedKeywords = [...currentKeywords];
+      let hasDuplicate = false;
 
-    for (const w of wordsToAdd) {
-      if (!updatedKeywords.includes(w)) {
-        updatedKeywords.push(w);
-      } else {
-        hasDuplicate = true;
+      for (const w of wordsToAdd) {
+        if (!updatedKeywords.includes(w)) {
+          updatedKeywords.push(w);
+        } else {
+          hasDuplicate = true;
+        }
       }
-    }
 
-    if (hasDuplicate) {
-      setValidationErrors((prev) => ({
+      if (hasDuplicate) {
+        setValidationErrors((prevErrors) => ({
+          ...prevErrors,
+          keywords: 'Some keywords were already added.',
+        }));
+      } else {
+        setValidationErrors((prevErrors) => {
+          const copy = { ...prevErrors };
+          delete copy.keywords;
+          return copy;
+        });
+      }
+
+      return {
         ...prev,
-        keywords: 'Some keywords were already added.',
-      }));
-    } else {
-      setValidationErrors((prev) => {
-        const copy = { ...prev };
-        delete copy.keywords;
-        return copy;
-      });
-    }
-
-    setRuleKeywords(updatedKeywords);
+        conditions: {
+          ...prev.conditions,
+          keywords: updatedKeywords,
+        },
+      };
+    });
     setNewKeyword('');
   };
 
   const handleRemoveKeyword = (wordToRemove: string) => {
-    setRuleKeywords(ruleKeywords.filter((w) => w !== wordToRemove));
+    setEditingRule((prev) => {
+      if (prev.conditions.evaluationType !== 'KEYWORD_MATCH') return prev;
+      return {
+        ...prev,
+        conditions: {
+          ...prev.conditions,
+          keywords: prev.conditions.keywords.filter((w) => w !== wordToRemove),
+        },
+      };
+    });
   };
 
   const handleKeywordKeyPress = (e: React.KeyboardEvent) => {
@@ -247,17 +190,21 @@ export function RuleConfigurationEdit({
   const validateForm = (): Record<string, string> => {
     const errors: Record<string, string> = {};
 
-    if (!ruleName.trim()) {
+    if (!editingRule.ruleName.trim()) {
       errors.name = 'Rule name is required.';
     }
 
-    if (ruleScopeLevel === 'FEED_SPECIFIC' && ruleTargetFeeds.length === 0) {
+    if (
+      editingRule.scope.level === 'FEED_SPECIFIC' &&
+      (!editingRule.scope.targetFeeds ||
+        editingRule.scope.targetFeeds.length === 0)
+    ) {
       errors.feeds =
         'At least one target feed must be selected for FEED_SPECIFIC scope.';
     }
 
-    if (ruleEvaluationType === 'KEYWORD_MATCH') {
-      const activeKeywords = [...ruleKeywords];
+    if (editingRule.conditions.evaluationType === 'KEYWORD_MATCH') {
+      const activeKeywords = [...editingRule.conditions.keywords];
       if (newKeyword.trim()) {
         const tempWords = newKeyword
           .split(',')
@@ -272,17 +219,21 @@ export function RuleConfigurationEdit({
         errors.keywords =
           'At least one keyword is required for Keyword Match rules.';
       }
-    } else if (ruleEvaluationType === 'REGEX_MATCH') {
-      if (!ruleRegexExpression.trim()) {
+    } else if (editingRule.conditions.evaluationType === 'REGEX_MATCH') {
+      const expression = editingRule.conditions.expression;
+      if (!expression.trim()) {
         errors.regexExpression = 'Regex expression is required.';
       }
       try {
-        new RegExp(ruleRegexExpression.trim());
+        new RegExp(expression.trim());
       } catch (err) {
         errors.regexExpression = `Invalid regex expression: ${(err as Error).message}`;
       }
-    } else if (ruleEvaluationType === 'RULE_GROUP') {
-      if (ruleGroupChildRuleIds.length === 0) {
+    } else if (editingRule.conditions.evaluationType === 'RULE_GROUP') {
+      if (
+        !editingRule.conditions.childRuleIds ||
+        editingRule.conditions.childRuleIds.length === 0
+      ) {
         errors.childRules =
           'At least one child rule must be selected for Rule Group.';
       }
@@ -303,8 +254,14 @@ export function RuleConfigurationEdit({
     setValidationErrors({});
 
     // Include the in-progress keyword if exists
-    const finalKeywords = [...ruleKeywords];
-    if (ruleEvaluationType === 'KEYWORD_MATCH' && newKeyword.trim()) {
+    const finalKeywords =
+      editingRule.conditions.evaluationType === 'KEYWORD_MATCH'
+        ? [...editingRule.conditions.keywords]
+        : [];
+    if (
+      editingRule.conditions.evaluationType === 'KEYWORD_MATCH' &&
+      newKeyword.trim()
+    ) {
       const word = newKeyword.trim();
       const wordsToAdd = word
         .split(',')
@@ -315,71 +272,75 @@ export function RuleConfigurationEdit({
           finalKeywords.push(w);
         }
       }
-      setRuleKeywords(finalKeywords);
-      setNewKeyword('');
     }
 
     // Build Conditions
     let conditionsPayload: RuleConditions;
-    if (ruleEvaluationType === 'KEYWORD_MATCH') {
+    if (editingRule.conditions.evaluationType === 'KEYWORD_MATCH') {
       conditionsPayload = {
         evaluationType: 'KEYWORD_MATCH',
-        operator: ruleKeywordOperator,
+        operator: editingRule.conditions.operator,
         keywords: finalKeywords,
-        caseSensitive: ruleKeywordCaseSensitive,
+        caseSensitive: editingRule.conditions.caseSensitive,
       };
-    } else if (ruleEvaluationType === 'REGEX_MATCH') {
+    } else if (editingRule.conditions.evaluationType === 'REGEX_MATCH') {
       conditionsPayload = {
         evaluationType: 'REGEX_MATCH',
-        expression: ruleRegexExpression.trim(),
-        flags: ruleRegexFlags.trim(),
+        expression: editingRule.conditions.expression.trim(),
+        flags: editingRule.conditions.flags.trim(),
       };
     } else {
       conditionsPayload = {
         evaluationType: 'RULE_GROUP',
-        operator: ruleGroupOperator,
-        childRuleIds: ruleGroupChildRuleIds,
+        operator: editingRule.conditions.operator,
+        childRuleIds: editingRule.conditions.childRuleIds,
       };
     }
 
     const scopePayload = {
-      level: ruleScopeLevel,
-      targetFeeds: ruleScopeLevel === 'GLOBAL' ? [] : ruleTargetFeeds,
+      level: editingRule.scope.level,
+      targetFeeds:
+        editingRule.scope.level === 'GLOBAL'
+          ? []
+          : editingRule.scope.targetFeeds,
     };
 
     try {
-      if (isEditing && editingRule) {
+      if (isEditing) {
         const payload: RuleUpdate = {
-          ruleName: ruleName.trim(),
-          description: ruleDescription.trim() || undefined,
-          isActive: ruleIsActive,
+          ruleName: editingRule.ruleName.trim(),
+          description: editingRule.description?.trim() || undefined,
+          isActive: editingRule.isActive,
           scope: scopePayload,
           conditions: conditionsPayload,
         };
         await onUpdateRule(payload);
       } else {
         const payload: RuleCreate = {
-          ruleName: ruleName.trim(),
-          description: ruleDescription.trim() || undefined,
-          isActive: ruleIsActive,
+          ruleName: editingRule.ruleName.trim(),
+          description: editingRule.description?.trim() || undefined,
+          isActive: editingRule.isActive,
           scope: scopePayload,
           conditions: conditionsPayload,
         };
         await onCreateRule(payload);
         // Reset form fields
-        setRuleName('');
-        setRuleDescription('');
-        setRuleIsActive(true);
-        setRuleScopeLevel('GLOBAL');
-        setRuleTargetFeeds([]);
-        setRuleEvaluationType('KEYWORD_MATCH');
-        setRuleKeywordOperator('ANY');
-        setRuleKeywords([]);
-        setRuleKeywordCaseSensitive(false);
-        setRuleRegexExpression('');
-        setRuleRegexFlags('');
-        setRuleGroupOperator('ANY');
-        setRuleGroupChildRuleIds([]);
+        setEditingRule({
+          ruleName: '',
+          description: '',
+          isActive: true,
+          scope: {
+            level: 'GLOBAL',
+            targetFeeds: [],
+          },
+          conditions: {
+            evaluationType: 'KEYWORD_MATCH',
+            operator: 'ANY',
+            keywords: [],
+            caseSensitive: false,
+          },
+        });
+        setNewKeyword('');
       }
     } catch {
       // Errors propagated in mutate onError
@@ -396,8 +357,13 @@ export function RuleConfigurationEdit({
 
   // Filter out the rule itself if in edit mode to avoid self-reference in groups
   const eligibleChildRules = rules.filter(
-    (r) => !isEditing || r.ruleId !== editingRule?.ruleId
+    (r) => !isEditing || r.ruleId !== editingRuleId
   );
+
+  const isKeywordMatch =
+    editingRule.conditions.evaluationType === 'KEYWORD_MATCH';
+  const isRegexMatch = editingRule.conditions.evaluationType === 'REGEX_MATCH';
+  const isRuleGroup = editingRule.conditions.evaluationType === 'RULE_GROUP';
 
   return (
     <Card
@@ -420,7 +386,7 @@ export function RuleConfigurationEdit({
         }}
       >
         <Typography variant="h6" sx={{ fontWeight: 600 }}>
-          {isEditing ? `Edit Rule: ${ruleName}` : 'Create New Rule'}
+          {isEditing ? `Edit Rule: ${editingRule.ruleName}` : 'Create New Rule'}
         </Typography>
       </Box>
 
@@ -446,8 +412,13 @@ export function RuleConfigurationEdit({
               size="small"
               variant="outlined"
               placeholder="Critical Keyword Rule"
-              value={ruleName}
-              onChange={(e) => setRuleName(e.target.value)}
+              value={editingRule.ruleName}
+              onChange={(e) =>
+                setEditingRule((prev) => ({
+                  ...prev,
+                  ruleName: e.target.value,
+                }))
+              }
               error={!!validationErrors.name}
               helperText={
                 validationErrors.name || 'Descriptive name for the rule'
@@ -461,16 +432,26 @@ export function RuleConfigurationEdit({
               size="small"
               variant="outlined"
               placeholder="Matches emergency evacuation triggers"
-              value={ruleDescription}
-              onChange={(e) => setRuleDescription(e.target.value)}
+              value={editingRule.description}
+              onChange={(e) =>
+                setEditingRule((prev) => ({
+                  ...prev,
+                  description: e.target.value,
+                }))
+              }
               disabled={isSubmitting}
             />
 
             <FormControlLabel
               control={
                 <Switch
-                  checked={ruleIsActive}
-                  onChange={(e) => setRuleIsActive(e.target.checked)}
+                  checked={editingRule.isActive ?? true}
+                  onChange={(e) =>
+                    setEditingRule((prev) => ({
+                      ...prev,
+                      isActive: e.target.checked,
+                    }))
+                  }
                   disabled={isSubmitting}
                 />
               }
@@ -490,10 +471,16 @@ export function RuleConfigurationEdit({
                     <InputLabel id="scope-level-label">Scope Level</InputLabel>
                     <Select
                       labelId="scope-level-label"
-                      value={ruleScopeLevel}
+                      value={editingRule.scope.level}
                       label="Scope Level"
                       onChange={(e) =>
-                        setRuleScopeLevel(e.target.value as ScopeLevel)
+                        setEditingRule((prev) => ({
+                          ...prev,
+                          scope: {
+                            ...prev.scope,
+                            level: e.target.value as ScopeLevel,
+                          },
+                        }))
                       }
                     >
                       <MenuItem value="GLOBAL">Global</MenuItem>
@@ -502,17 +489,23 @@ export function RuleConfigurationEdit({
                   </FormControl>
                 </Grid>
 
-                {ruleScopeLevel === 'FEED_SPECIFIC' ? (
+                {editingRule.scope.level === 'FEED_SPECIFIC' ? (
                   <Grid size={{ xs: 12 }}>
                     <Autocomplete
                       multiple
                       options={feeds}
                       getOptionLabel={(option) => option.name}
                       value={feeds.filter((f) =>
-                        ruleTargetFeeds.includes(f.id)
+                        editingRule.scope.targetFeeds?.includes(f.id)
                       )}
                       onChange={(_, selectedOptions) => {
-                        setRuleTargetFeeds(selectedOptions.map((f) => f.id));
+                        setEditingRule((prev) => ({
+                          ...prev,
+                          scope: {
+                            ...prev.scope,
+                            targetFeeds: selectedOptions.map((f) => f.id),
+                          },
+                        }));
                       }}
                       renderInput={(params) => (
                         <TextField
@@ -572,11 +565,38 @@ export function RuleConfigurationEdit({
                 </InputLabel>
                 <Select
                   labelId="evaluation-type-label"
-                  value={ruleEvaluationType}
+                  value={editingRule.conditions.evaluationType}
                   label="Evaluation Type"
-                  onChange={(e) =>
-                    setRuleEvaluationType(e.target.value as EvaluationType)
-                  }
+                  onChange={(e) => {
+                    const newType = e.target.value as EvaluationType;
+                    setEditingRule((prev) => {
+                      let nextConditions: RuleConditions;
+                      if (newType === 'KEYWORD_MATCH') {
+                        nextConditions = {
+                          evaluationType: 'KEYWORD_MATCH',
+                          operator: 'ANY',
+                          keywords: [],
+                          caseSensitive: false,
+                        };
+                      } else if (newType === 'REGEX_MATCH') {
+                        nextConditions = {
+                          evaluationType: 'REGEX_MATCH',
+                          expression: '',
+                          flags: '',
+                        };
+                      } else {
+                        nextConditions = {
+                          evaluationType: 'RULE_GROUP',
+                          operator: 'ANY',
+                          childRuleIds: [],
+                        };
+                      }
+                      return {
+                        ...prev,
+                        conditions: nextConditions,
+                      };
+                    });
+                  }}
                 >
                   {EVALUATION_TYPE_OPTIONS.map((opt) => (
                     <MenuItem key={opt.value} value={opt.value}>
@@ -586,7 +606,7 @@ export function RuleConfigurationEdit({
                 </Select>
               </FormControl>
 
-              {ruleEvaluationType === 'KEYWORD_MATCH' ? (
+              {isKeywordMatch ? (
                 <Stack spacing={2}>
                   <Grid container spacing={2}>
                     <Grid size={{ xs: 12, sm: 6 }}>
@@ -600,12 +620,28 @@ export function RuleConfigurationEdit({
                         </InputLabel>
                         <Select
                           labelId="keyword-operator-label"
-                          value={ruleKeywordOperator}
+                          value={
+                            editingRule.conditions.evaluationType ===
+                            'KEYWORD_MATCH'
+                              ? editingRule.conditions.operator
+                              : 'ANY'
+                          }
                           label="Logical Operator"
                           onChange={(e) =>
-                            setRuleKeywordOperator(
-                              e.target.value as LogicalOperator
-                            )
+                            setEditingRule((prev) => {
+                              if (
+                                prev.conditions.evaluationType !==
+                                'KEYWORD_MATCH'
+                              )
+                                return prev;
+                              return {
+                                ...prev,
+                                conditions: {
+                                  ...prev.conditions,
+                                  operator: e.target.value as LogicalOperator,
+                                },
+                              };
+                            })
                           }
                         >
                           <MenuItem value="ANY">ANY (OR)</MenuItem>
@@ -617,9 +653,27 @@ export function RuleConfigurationEdit({
                       <FormControlLabel
                         control={
                           <Checkbox
-                            checked={ruleKeywordCaseSensitive}
+                            checked={
+                              editingRule.conditions.evaluationType ===
+                              'KEYWORD_MATCH'
+                                ? editingRule.conditions.caseSensitive
+                                : false
+                            }
                             onChange={(e) =>
-                              setRuleKeywordCaseSensitive(e.target.checked)
+                              setEditingRule((prev) => {
+                                if (
+                                  prev.conditions.evaluationType !==
+                                  'KEYWORD_MATCH'
+                                )
+                                  return prev;
+                                return {
+                                  ...prev,
+                                  conditions: {
+                                    ...prev.conditions,
+                                    caseSensitive: e.target.checked,
+                                  },
+                                };
+                              })
                             }
                             disabled={isSubmitting}
                           />
@@ -672,7 +726,9 @@ export function RuleConfigurationEdit({
                       gap: 1,
                     }}
                   >
-                    {ruleKeywords.length === 0 ? (
+                    {editingRule.conditions.evaluationType ===
+                      'KEYWORD_MATCH' &&
+                    editingRule.conditions.keywords.length === 0 ? (
                       <Typography
                         variant="body2"
                         color="text.secondary"
@@ -681,7 +737,9 @@ export function RuleConfigurationEdit({
                         No keywords added yet.
                       </Typography>
                     ) : (
-                      ruleKeywords.map((kw, idx) => (
+                      editingRule.conditions.evaluationType ===
+                        'KEYWORD_MATCH' &&
+                      editingRule.conditions.keywords.map((kw, idx) => (
                         <Chip
                           key={idx}
                           label={kw}
@@ -695,15 +753,31 @@ export function RuleConfigurationEdit({
                 </Stack>
               ) : null}
 
-              {ruleEvaluationType === 'REGEX_MATCH' ? (
+              {isRegexMatch ? (
                 <Stack spacing={2}>
                   <TextField
                     fullWidth
                     size="small"
                     label="Regex Expression"
                     placeholder=""
-                    value={ruleRegexExpression}
-                    onChange={(e) => setRuleRegexExpression(e.target.value)}
+                    value={
+                      editingRule.conditions.evaluationType === 'REGEX_MATCH'
+                        ? editingRule.conditions.expression
+                        : ''
+                    }
+                    onChange={(e) =>
+                      setEditingRule((prev) => {
+                        if (prev.conditions.evaluationType !== 'REGEX_MATCH')
+                          return prev;
+                        return {
+                          ...prev,
+                          conditions: {
+                            ...prev.conditions,
+                            expression: e.target.value,
+                          },
+                        };
+                      })
+                    }
                     error={!!validationErrors.regexExpression}
                     helperText={validationErrors.regexExpression}
                     disabled={isSubmitting}
@@ -713,14 +787,30 @@ export function RuleConfigurationEdit({
                     size="small"
                     label="Flags"
                     placeholder=""
-                    value={ruleRegexFlags}
-                    onChange={(e) => setRuleRegexFlags(e.target.value)}
+                    value={
+                      editingRule.conditions.evaluationType === 'REGEX_MATCH'
+                        ? editingRule.conditions.flags
+                        : ''
+                    }
+                    onChange={(e) =>
+                      setEditingRule((prev) => {
+                        if (prev.conditions.evaluationType !== 'REGEX_MATCH')
+                          return prev;
+                        return {
+                          ...prev,
+                          conditions: {
+                            ...prev.conditions,
+                            flags: e.target.value,
+                          },
+                        };
+                      })
+                    }
                     disabled={isSubmitting}
                   />
                 </Stack>
               ) : null}
 
-              {ruleEvaluationType === 'RULE_GROUP' ? (
+              {isRuleGroup ? (
                 <Stack spacing={2}>
                   <FormControl fullWidth size="small" disabled={isSubmitting}>
                     <InputLabel id="group-operator-label">
@@ -728,10 +818,24 @@ export function RuleConfigurationEdit({
                     </InputLabel>
                     <Select
                       labelId="group-operator-label"
-                      value={ruleGroupOperator}
+                      value={
+                        editingRule.conditions.evaluationType === 'RULE_GROUP'
+                          ? editingRule.conditions.operator
+                          : 'ANY'
+                      }
                       label="Logical Operator"
                       onChange={(e) =>
-                        setRuleGroupOperator(e.target.value as LogicalOperator)
+                        setEditingRule((prev) => {
+                          if (prev.conditions.evaluationType !== 'RULE_GROUP')
+                            return prev;
+                          return {
+                            ...prev,
+                            conditions: {
+                              ...prev.conditions,
+                              operator: e.target.value as LogicalOperator,
+                            },
+                          };
+                        })
                       }
                     >
                       <MenuItem value="ANY">ANY (OR)</MenuItem>
@@ -743,13 +847,24 @@ export function RuleConfigurationEdit({
                     multiple
                     options={eligibleChildRules}
                     getOptionLabel={(option) => option.ruleName}
-                    value={eligibleChildRules.filter((r) =>
-                      ruleGroupChildRuleIds.includes(r.ruleId)
+                    value={eligibleChildRules.filter(
+                      (r) =>
+                        editingRule.conditions.evaluationType ===
+                          'RULE_GROUP' &&
+                        editingRule.conditions.childRuleIds?.includes(r.ruleId)
                     )}
                     onChange={(_, selectedOptions) => {
-                      setRuleGroupChildRuleIds(
-                        selectedOptions.map((r) => r.ruleId)
-                      );
+                      setEditingRule((prev) => {
+                        if (prev.conditions.evaluationType !== 'RULE_GROUP')
+                          return prev;
+                        return {
+                          ...prev,
+                          conditions: {
+                            ...prev.conditions,
+                            childRuleIds: selectedOptions.map((r) => r.ruleId),
+                          },
+                        };
+                      });
                     }}
                     renderInput={(params) => (
                       <TextField
@@ -864,11 +979,11 @@ export function RuleConfigurationEdit({
         </DialogTitle>
         <DialogContent>
           <DialogContentText id="delete-rule-dialog-description" sx={{ mb: 2 }}>
-            Are you sure you want to delete the rule "{ruleName}"? This action
-            cannot be undone.
+            Are you sure you want to delete the rule "{editingRule.ruleName}"?
+            This action cannot be undone.
           </DialogContentText>
           <DialogContentText sx={{ mb: 1, fontWeight: 'bold' }}>
-            To confirm, type the Rule Name "{ruleName}" below:
+            To confirm, type the Rule Name "{editingRule.ruleName}" below:
           </DialogContentText>
           <TextField
             fullWidth
@@ -876,7 +991,7 @@ export function RuleConfigurationEdit({
             variant="outlined"
             value={confirmRuleName}
             onChange={(e) => setConfirmRuleName(e.target.value)}
-            placeholder={ruleName}
+            placeholder={editingRule.ruleName}
             disabled={isSubmitting}
           />
         </DialogContent>
@@ -896,7 +1011,7 @@ export function RuleConfigurationEdit({
             onClick={handleDeleteConfirm}
             color="error"
             variant="contained"
-            disabled={confirmRuleName !== ruleName || isSubmitting}
+            disabled={confirmRuleName !== editingRule.ruleName || isSubmitting}
             sx={{ textTransform: 'none' }}
           >
             Delete
