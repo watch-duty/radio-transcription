@@ -102,7 +102,7 @@ We categorize our non-unit tests into three levels to balance speed and coverage
 >    ```
 > 2. Run `mise run test:e2e`.
 > 
-> *Note: Running with Whisper locally requires downloading model weights and is CPU/RAM intensive.*
+> *Note: Running with Whisper locally requires downloading model weights and is CPU/RAM intensive. We do not have baked in GPU support at the moment*
 
 For more details on the architecture and local execution of the pipeline, see the **Pipeline E2E Local Development** section above.
 

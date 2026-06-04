@@ -1,7 +1,9 @@
 import { defineConfig, loadEnv, mergeConfig } from 'vite';
-import type { Plugin, UserConfig } from 'vite';
+import type { UserConfig } from 'vite';
 
 import react from '@vitejs/plugin-react-swc';
+
+import { mockAuthPlugin } from './mockAuthPlugin';
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -16,41 +18,6 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       headers: { 'Cross-Origin-Opener-Policy': 'same-origin-allow-popups' },
-    },
-  };
-
-  // Mock Authentication Plugin (enabled if VITE_AUTH_BACKEND === 'none')
-  const mockAuthPlugin: Plugin = {
-    name: 'mock-auth',
-    configureServer(server) {
-      server.middlewares.use((req, res, next) => {
-        if (
-          req.url === '/api/v1/auth/google' ||
-          req.url === '/api/v1/auth/session'
-        ) {
-          const header = Buffer.from(
-            JSON.stringify({ alg: 'none', typ: 'JWT' })
-          ).toString('base64');
-          const payload = Buffer.from(
-            JSON.stringify({
-              email: 'local-dev@example.com',
-              email_verified: true,
-              sub: 'local-dev',
-              aud: 'local-dev-aud',
-              iss: 'https://accounts.google.com',
-              exp: Math.floor(Date.now() / 1000) + 24 * 60 * 60,
-            })
-          ).toString('base64');
-          res.setHeader('Content-Type', 'application/json');
-          res.end(
-            JSON.stringify({
-              idToken: `${header}.${payload}.mocksignature`,
-            })
-          );
-        } else {
-          next();
-        }
-      });
     },
   };
 
