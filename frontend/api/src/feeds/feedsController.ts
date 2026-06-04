@@ -4,6 +4,7 @@ import type {
   FeedCreate,
   FeedStatus,
   FeedUpdate,
+  ListFeedsResponse,
   Tag,
 } from '@transcription/common';
 import { SourceType } from '@transcription/common';
@@ -60,8 +61,8 @@ export class ListFeedsQueryParams {
   limit?: number;
   nextToken?: string;
   order?: 'asc' | 'desc';
-  sourceTypes?: SourceType[];
-  statuses?: FeedStatus[];
+  sourceTypes?: string;
+  statuses?: string;
   // Tag strings must be in the format of {"key": "<val>", "value": "<val>"}
   tags?: string[];
 }
@@ -182,21 +183,17 @@ export class FeedsController extends Controller {
   @Extension('x-google-backend', 'radio-transcription-api')
   public async listFeeds(
     @Queries() query?: ListFeedsQueryParams
-  ): Promise<Feed[]> {
+  ): Promise<ListFeedsResponse | Feed[]> {
     try {
       const queryParams = new URLSearchParams();
       if (query?.limit) queryParams.append('limit', query.limit.toString());
       if (query?.nextToken) queryParams.append('next_token', query.nextToken);
       if (query?.order) queryParams.append('order', query.order);
       if (query?.sourceTypes) {
-        for (const st of query.sourceTypes) {
-          queryParams.append('source_types', st);
-        }
+        queryParams.append('source_types', query.sourceTypes);
       }
       if (query?.statuses) {
-        for (const status of query.statuses) {
-          queryParams.append('statuses', status);
-        }
+        queryParams.append('statuses', query.statuses);
       }
       if (query?.tags) {
         for (const tag of query.tags) {
@@ -214,9 +211,13 @@ export class FeedsController extends Controller {
         method: 'GET',
       });
 
-      return Array.isArray(response.data)
-        ? response.data.map(convertFeedBackend)
-        : response.data.feeds.map(convertFeedBackend);
+      const data = response.data;
+      return Array.isArray(data)
+        ? data.map(convertFeedBackend)
+        : {
+            feeds: data.feeds.map(convertFeedBackend),
+            nextToken: data.next_token,
+          };
     } catch (error: unknown) {
       const { status, message } = handleBackendError(error, 'fetching feeds');
       throw new HttpError(status, message);

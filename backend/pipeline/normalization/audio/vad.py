@@ -34,12 +34,14 @@ from backend.pipeline.normalization.common.constants import (
     VAD_DEFAULT_FALLBACK_PRIMING_SEC,
     VAD_DEFAULT_HIGHPASS_HZ,
     VAD_DEFAULT_LOWPASS_HZ,
+    VAD_DEFAULT_MIN_RMS_THRESHOLD,
     VAD_DEFAULT_MIN_SILENCE_DURATION_MS,
     VAD_DEFAULT_MIN_SPEECH_DURATION_MS,
     VAD_DEFAULT_PAD_SEC,
     VAD_DEFAULT_PEAK_FILTER_Q,
     VAD_DEFAULT_PRIMING_SEC,
     VAD_DEFAULT_SEED,
+    VAD_DEFAULT_SPIKINESS_RATIO_THRESHOLD,
     VAD_DEFAULT_THRESHOLD_OFFSET,
     VAD_DEFAULT_THRESHOLD_ONSET,
     VAD_NORMALIZATION_MIN_PEAK,
@@ -103,6 +105,8 @@ class VoiceActivityDetector:
         normalization_target_peak: float = VAD_NORMALIZATION_TARGET_PEAK,
         normalization_min_peak: float = VAD_NORMALIZATION_MIN_PEAK,
         seed: int = VAD_DEFAULT_SEED,
+        spikiness_ratio_threshold: float = VAD_DEFAULT_SPIKINESS_RATIO_THRESHOLD,
+        min_rms_threshold: float = VAD_DEFAULT_MIN_RMS_THRESHOLD,
         models_dir: str | Path = MODELS_DIR,
     ) -> None:
 
@@ -127,6 +131,8 @@ class VoiceActivityDetector:
         self.normalization_target_peak = normalization_target_peak
         self.normalization_min_peak = normalization_min_peak
         self.seed = seed
+        self.spikiness_ratio_threshold = spikiness_ratio_threshold
+        self.min_rms_threshold = min_rms_threshold
 
         self.silero_path = Path(models_dir) / "silero_vad.onnx"
         self.ulunas_path = Path(models_dir) / "ulunas_stream_simple.onnx"
@@ -147,11 +153,20 @@ class VoiceActivityDetector:
             msg = f"UL-UNAS ONNX model not found at: {self.ulunas_path}"
             raise FileNotFoundError(msg)
 
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = 1
+        opts.inter_op_num_threads = 1
+        opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+
         self.silero_session = ort.InferenceSession(
-            str(self.silero_path), providers=["CPUExecutionProvider"]
+            str(self.silero_path),
+            sess_options=opts,
+            providers=["CPUExecutionProvider"],
         )
         self.ulunas_session = ort.InferenceSession(
-            str(self.ulunas_path), providers=["CPUExecutionProvider"]
+            str(self.ulunas_path),
+            sess_options=opts,
+            providers=["CPUExecutionProvider"],
         )
         logger.info("Silero & UL-UNAS ONNX sessions successfully initialized.")
 
@@ -261,8 +276,9 @@ class VoiceActivityDetector:
         ulunas_denoised = self.denoise(comp_audio)
 
         mixed_audio = (
-            1.0 - self.blend_ratio
-        ) * comp_audio + self.blend_ratio * ulunas_denoised
+            np.float32(1.0 - self.blend_ratio) * comp_audio
+            + np.float32(self.blend_ratio) * ulunas_denoised
+        )
 
         eq_board = Pedalboard(
             [
@@ -331,6 +347,52 @@ class VoiceActivityDetector:
         # Apply 5-point moving average lowpass filter to shape it into soft colored comfort noise.
         # We use mode='full' and truncate to priming_samples to completely prevent edge wrap artifacts.
         return np.convolve(noise, np.ones(5) / 5, mode="full")[:priming_samples]
+
+    def _is_speech_segment(self, sig: np.ndarray, chunk_size: int) -> bool:
+        """Applies dynamic range/spikiness heuristics to reject transient static clicks and quiet noise."""
+        if len(sig) == 0:
+            # Handle empty slices due to potential rounding edge cases at boundaries
+            return False
+
+        # Compute RMS in chunk-sized windows
+        seg_rms = []
+        for w_start in range(0, len(sig), chunk_size):
+            window = sig[w_start : w_start + chunk_size]
+            if len(window) < chunk_size:
+                window = np.pad(window, (0, chunk_size - len(window)))
+            seg_rms.append(np.sqrt(np.mean(window**2)))
+
+        seg_rms = np.array(seg_rms)
+        mean_rms = np.mean(seg_rms)
+        median_rms = np.median(seg_rms)
+        rms_ratio = mean_rms / median_rms if median_rms > 1e-5 else 999.0
+
+        # 1. Ratio check: reject if there are high spikes with very quiet median (clicks/transients)
+        if rms_ratio > self.spikiness_ratio_threshold:
+            return False
+
+        # 2. Floor check: reject if the segment is extremely quiet
+        if mean_rms < self.min_rms_threshold:
+            return False
+
+        return True
+
+    def _filter_noise_segments(
+        self,
+        shifted_segments: list[tuple[float, float]],
+        vad_input: np.ndarray,
+        vad_offset_sec: float,
+        chunk_size: int,
+    ) -> list[tuple[float, float]]:
+        """Filters out transient clicks/noise segments from the list of VAD-detected segments."""
+        filtered_segments = []
+        for start, end in shifted_segments:
+            start_idx = int((start + vad_offset_sec) * TARGET_SAMPLE_RATE)
+            end_idx = int((end + vad_offset_sec) * TARGET_SAMPLE_RATE)
+            seg_signal = vad_input[start_idx:end_idx]
+            if self._is_speech_segment(seg_signal, chunk_size):
+                filtered_segments.append((start, end))
+        return filtered_segments
 
     def _extract_vad_frames(
         self,
@@ -457,11 +519,15 @@ class VoiceActivityDetector:
         audio_array = self._peak_normalize(audio_array)
 
         # Fallback Priming (Call Starts / Segment 0):
+        is_fallback_priming = False
         if prior_audio is None:
             prior_audio = self._generate_comfort_noise(sample_rate)
+            is_fallback_priming = True
 
         # 1. Perform physical audio concatenation at native sample_rate
         if prior_audio is not None and len(prior_audio) > 0:
+            if not is_fallback_priming:
+                prior_audio = self._peak_normalize(prior_audio)
             prior_len_sec = len(prior_audio) / float(sample_rate)
             extended_native = np.concatenate([prior_audio, audio_array])
         else:
@@ -479,14 +545,30 @@ class VoiceActivityDetector:
             extended_audio, prior_len_sec=prior_len_sec
         )
 
-        # 3. Slicing strategy:
+        # 3. Slicing strategy for VAD state warming (Lookback Priming):
+        # We run VAD starting from up to 1.5 seconds of the preamble to warm up the VAD RNN states,
+        # preventing cold-start vocal onset clipping.
+        # However, we only do this VAD state warming if we have a genuine prior audio tail.
+        # Warming up the VAD on synthetic comfort noise (is_fallback_priming=True) biases the VAD LSTM
+        # toward silence, which drastically reduces sensitivity at vocal onset.
         preamble_samples = int(prior_len_sec * TARGET_SAMPLE_RATE)
-        vad_input = (
-            preprocessed[preamble_samples:]
-            if preamble_samples > 0
-            else preprocessed
-        )
-        vad_offset_sec = 0.0
+        if is_fallback_priming:
+            vad_input = (
+                preprocessed[preamble_samples:]
+                if preamble_samples > 0
+                else preprocessed
+            )
+            vad_offset_sec = 0.0
+        else:
+            max_warmup_sec = 1.5
+            warmup_sec = min(prior_len_sec, max_warmup_sec)
+            warmup_samples = int(warmup_sec * TARGET_SAMPLE_RATE)
+            vad_input = (
+                preprocessed[preamble_samples - warmup_samples :]
+                if preamble_samples > 0
+                else preprocessed
+            )
+            vad_offset_sec = warmup_sec
 
         raw_segments = self._extract_vad_frames(
             vad_input, chunk_size, context_size
@@ -497,6 +579,10 @@ class VoiceActivityDetector:
             raw_segments, vad_offset_sec
         )
 
+        filtered_segments = self._filter_noise_segments(
+            shifted_segments, vad_input, vad_offset_sec, chunk_size
+        )
+
         # Pad and merge overlapping segments using the clean native-rate duration calculation
         audio_len_sec = len(audio_array) / float(sample_rate)
-        return self._pad_and_merge_segments(shifted_segments, audio_len_sec)
+        return self._pad_and_merge_segments(filtered_segments, audio_len_sec)

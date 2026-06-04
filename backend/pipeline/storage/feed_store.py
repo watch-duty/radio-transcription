@@ -766,13 +766,15 @@ class FeedStore:
         limit: int = 100,
         next_token: str | None = None,
         order: SortOrder = SortOrder.DESC,
-        source_types: list[str] | None = None,
-        statuses: list[str] | None = None,
+        source_types: list[SourceType] | None = None,
+        statuses: list[FeedStatus] | None = None,
         tags: list[dict[str, str]] | None = None,
+        name: str | None = None,
     ) -> PaginatedFeeds:
         """List all feeds with keyset pagination and optional filters.
 
-        Retrieves feeds ordered by creation time, using timestamp+ID-based keyset pagination.
+        Retrieves feeds ordered by creation time, using timestamp+ID-based
+        keyset pagination.
         """
         cursor_ts = None
         cursor_uid = None
@@ -793,6 +795,7 @@ class FeedStore:
             source_types,
             statuses,
             tags_json,
+            name,
             limit + 1,
         )
 

@@ -39,6 +39,31 @@ describe('listFeeds', () => {
     expect(feeds).toEqual(mockData);
   });
 
+  it('should fetch feeds successfully when response is paginated ListFeedsResponse object', async () => {
+    const mockFeeds = [
+      { id: '1', name: 'Feed 1' },
+      { id: '2', name: 'Feed 2' },
+    ];
+    const mockData = {
+      feeds: mockFeeds,
+      nextToken: 'token_abc',
+    };
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () => JSON.stringify(mockData),
+      headers: {
+        get: (key: string) =>
+          key === 'content-type' ? 'application/json' : null,
+      },
+    });
+
+    const feeds = await listFeeds('tokenXYZ');
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(feeds).toEqual(mockFeeds);
+  });
+
   it('should throw error if response not ok', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: false,
