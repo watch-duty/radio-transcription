@@ -67,9 +67,9 @@ interface RuleConfigurationEditProps {
   editingRuleId?: string;
   feeds: Feed[];
   rules: Rule[];
-  onCreateRule: (payload: RuleCreate) => Promise<void>;
-  onUpdateRule: (payload: RuleUpdate) => Promise<void>;
-  onDeleteRule?: () => Promise<void>;
+  onCreateRule: (payload: RuleCreate) => void;
+  onUpdateRule: (payload: RuleUpdate) => void;
+  onDeleteRule: () => void;
   onCancel: () => void;
   isSubmitting: boolean;
 }
@@ -178,7 +178,7 @@ export function RuleConfigurationEdit({
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const errors = validateRule(editingRule, newKeyword);
 
@@ -241,54 +241,32 @@ export function RuleConfigurationEdit({
           : editingRule.scope.targetFeeds,
     };
 
-    try {
-      if (isEditing) {
-        const payload: RuleUpdate = {
-          ruleName: editingRule.ruleName.trim(),
-          description: editingRule.description?.trim() || undefined,
-          isActive: editingRule.isActive,
-          scope: scopePayload,
-          conditions: conditionsPayload,
-        };
-        await onUpdateRule(payload);
-      } else {
-        const payload: RuleCreate = {
-          ruleName: editingRule.ruleName.trim(),
-          description: editingRule.description?.trim() || undefined,
-          isActive: editingRule.isActive,
-          scope: scopePayload,
-          conditions: conditionsPayload,
-        };
-        await onCreateRule(payload);
-        // Reset form fields
-        setEditingRule({
-          ruleName: '',
-          description: '',
-          isActive: true,
-          scope: {
-            level: 'GLOBAL',
-            targetFeeds: [],
-          },
-          conditions: {
-            evaluationType: 'KEYWORD_MATCH',
-            operator: 'ANY',
-            keywords: [],
-            caseSensitive: false,
-          },
-        });
-        setNewKeyword('');
-      }
-    } catch {
-      // Errors propagated in mutate onError
+    if (isEditing) {
+      const payload: RuleUpdate = {
+        ruleName: editingRule.ruleName.trim(),
+        description: editingRule.description?.trim() || undefined,
+        isActive: editingRule.isActive,
+        scope: scopePayload,
+        conditions: conditionsPayload,
+      };
+      onUpdateRule(payload);
+    } else {
+      const payload: RuleCreate = {
+        ruleName: editingRule.ruleName.trim(),
+        description: editingRule.description?.trim() || undefined,
+        isActive: editingRule.isActive,
+        scope: scopePayload,
+        conditions: conditionsPayload,
+      };
+      onCreateRule(payload);
+      setNewKeyword('');
     }
   };
 
-  const handleDeleteConfirm = async () => {
+  const handleDeleteConfirm = () => {
     setConfirmRuleName('');
     setIsDeleteDialogOpen(false);
-    if (onDeleteRule) {
-      await onDeleteRule();
-    }
+    onDeleteRule();
   };
 
   // Filter out the rule itself if in edit mode to avoid self-reference in groups

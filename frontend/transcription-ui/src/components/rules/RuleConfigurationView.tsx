@@ -162,12 +162,12 @@ export function RuleConfigurationView({
     },
   });
 
-  const handleCreateRule = async (payload: RuleCreate) => {
-    await createMutation.mutateAsync(payload);
+  const handleCreateRule = (payload: RuleCreate) => {
+    createMutation.mutate(payload);
   };
 
-  const handleUpdateRule = async (ruleId: string, payload: RuleUpdate) => {
-    await updateMutation.mutateAsync({ ruleId, updatePayload: payload });
+  const handleUpdateRule = (ruleId: string, payload: RuleUpdate) => {
+    updateMutation.mutate({ ruleId, updatePayload: payload });
   };
 
   const handleStartEdit = (rule: Rule) => {
@@ -269,8 +269,8 @@ export function RuleConfigurationView({
             onUpdateRule={(payload: RuleUpdate) =>
               handleUpdateRule(id, payload)
             }
-            onDeleteRule={async () => {
-              await deleteMutation.mutateAsync(id);
+            onDeleteRule={() => {
+              deleteMutation.mutate(id);
             }}
             onCancel={handleCancelEdit}
             isSubmitting={isSubmitting}
