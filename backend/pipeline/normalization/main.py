@@ -8,7 +8,7 @@ import sys
 
 from apache_beam.options.pipeline_options import PipelineOptions
 
-from backend.pipeline.normalization.common.logging import get_task_logger
+from backend.pipeline.common.log_helper import get_task_logger
 from backend.pipeline.normalization.options import TranscriptionOptions
 from backend.pipeline.normalization.orchestration import get_pipeline
 
