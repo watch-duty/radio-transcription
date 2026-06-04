@@ -251,7 +251,9 @@ class TestItemDownloadHttpFailure(unittest.TestCase):
         )
         self.assertEqual(failure.reason, "custom_http_404")
 
-    def test_raise_item_failure_preserves_status_and_reason(self) -> None:
+    def test_shared_item_failure_raiser_preserves_status_and_reason(
+        self,
+    ) -> None:
         failure = ItemFailure(
             FeedStatusReason.SOURCE_UNREACHABLE,
             "item_http_503",

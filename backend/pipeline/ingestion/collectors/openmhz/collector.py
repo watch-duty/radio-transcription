@@ -71,7 +71,7 @@ async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
         return True
 
 
-async def _download_m4a(
+async def _download_m4a(  # noqa: PLR0911
     session: AsyncSession,
     url: str,
     shutdown: asyncio.Event,
