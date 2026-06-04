@@ -19,7 +19,8 @@ _Avoid_: Item failure, raw error
 **Item Failure**:
 A failure for one eligible discrete audio item, such as one call recording or
 one file in a file-list poll. It is not feed-level unless all eligible items in
-the relevant promotion context fail.
+the relevant promotion context fail. HTTP failures for discrete item downloads
+use the `item_http_*` raw-reason prefix.
 _Avoid_: Feed failure, source outage
 
 **Item Download Result**:

@@ -66,6 +66,8 @@ Add shared primitives to
   results into the typed result wrapper.
 - `item_download_http_failure(status: int, *, reason_prefix: str =
   "item_http") -> ItemFailure`: maps terminal item-download HTTP responses.
+  The default `item_http` prefix is the standard prefix for discrete
+  item-download HTTP failures across item-based collectors.
 - `raise_item_failure(failure: ItemFailure) -> NoReturn`: raises a typed
   `CollectorFailure` from an item failure.
 
@@ -123,6 +125,10 @@ Feeds/Icecast should keep stream endpoint classification local. These source
 endpoint mappings encode source contracts and should not be folded into the
 item-download helper.
 
+Broadcastify Calls item-download raw reasons should move from `audio_http_*` to
+the shared `item_http_*` prefix. `audio_download_failed` should move to
+`item_download_failed` for item-download network errors or retry exhaustion.
+
 Broadcastify Calls should rename compatibility helpers from
 `_normalize_fetch_result` and `_normalize_call_chunk_result` to
 `_standardize_fetch_result` and `_standardize_call_chunk_result`. Those result
@@ -138,6 +144,8 @@ Add shared helper tests in `test_failure_classification.py` for:
 - Broadcastify Calls item-download tests preserve `Content-Type` as
   `ItemDownloadResult.content_type`.
 - item-download status mapping for 403, 429, 404, and 503.
+- Broadcastify Calls item-download raw reasons use `item_http_*` and
+  `item_download_failed` instead of `audio_http_*` and `audio_download_failed`.
 - `raise_item_failure` raises `CollectorFailure` with the same status reason
   and raw reason.
 
