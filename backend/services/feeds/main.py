@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 import logging
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 
 from backend.pipeline.common.auth import verify_oidc_token
 from backend.pipeline.common.exceptions import (
@@ -140,11 +140,37 @@ async def list_feeds(
     limit: int = 100,
     next_token: str | None = None,
     order: SortOrder = SortOrder.DESC,
-    source_types: Annotated[list[SourceType] | None, Query()] = None,
-    statuses: Annotated[list[FeedStatus] | None, Query()] = None,
+    source_types: str | None = None,
+    statuses: str | None = None,
     tags: str | None = None,
 ) -> ListFeedsResponse:
     """List all feeds with pagination and optional filters."""
+    source_types_list = None
+    if source_types:
+        try:
+            source_types_list = [
+                SourceType(s.strip())
+                for s in source_types.split(",")
+                if s.strip()
+            ]
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid source_type: {e}",
+            ) from e
+
+    statuses_list = None
+    if statuses:
+        try:
+            statuses_list = [
+                FeedStatus(s.strip()) for s in statuses.split(",") if s.strip()
+            ]
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid status: {e}",
+            ) from e
+
     tags_list = None
     if tags:
         try:
@@ -177,8 +203,8 @@ async def list_feeds(
         limit=limit,
         next_token=next_token,
         order=order,
-        source_types=source_types,
-        statuses=statuses,
+        source_types=source_types_list,
+        statuses=statuses_list,
         tags=tags_list,
     )
 
