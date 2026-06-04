@@ -102,7 +102,7 @@ def _build_app_url(
 ) -> str:
     query_params = {
         "feedId": evaluated_transcribed_audio.feed_id,
-        "transmissionId": evaluated_transcribed_audio.transmission_id,
+        "segmentId": evaluated_transcribed_audio.segment_id,
     }
     if evaluated_transcribed_audio.start_timestamp.seconds:
         timestamp = evaluated_transcribed_audio.start_timestamp
@@ -120,7 +120,7 @@ def convert_to_notification(
     app_url = _build_app_url(evaluated_transcribed_audio)
     notification = AlertNotification(
         feed_id=evaluated_transcribed_audio.feed_id,
-        transmission_id=evaluated_transcribed_audio.transmission_id,
+        segment_id=evaluated_transcribed_audio.segment_id,
         source_audio_uris=evaluated_transcribed_audio.source_audio_uris,
         transcript=evaluated_transcribed_audio.transcript,
         missing_prior_context=evaluated_transcribed_audio.missing_prior_context,
@@ -160,9 +160,9 @@ def send_notification(cloud_event: CloudEvent) -> None:
             logger.warning("Unable to parse incoming message")
             return
 
-        notification_id = evaluated_transcribed_audio.transmission_id
+        notification_id = evaluated_transcribed_audio.segment_id
         if not deduplication.process_notification(notification_id):
-            message = f"Duplicate transmission_id detected, skipping notification with ID: {notification_id}"
+            message = f"Duplicate segment_id detected, skipping notification with ID: {notification_id}"
             logger.warning(message)
             return
 

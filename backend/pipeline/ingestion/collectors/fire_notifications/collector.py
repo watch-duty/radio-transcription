@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 from curl_cffi.requests import AsyncSession
 
-from backend.pipeline.common.audio import get_audio_duration
+from backend.pipeline.common.audio_duration import get_audio_duration
 from backend.pipeline.ingestion.models import AudioMimeType, CapturedChunk
 from backend.pipeline.ingestion.settings import _require_env
 from backend.pipeline.ingestion.slo_contract import (

@@ -37,7 +37,7 @@ class TestEvaluationEventProcessor(unittest.TestCase):
 
         # Create a sample TranscribedAudio proto
         self.transcribed_audio = transcribed_pb2.TranscribedAudio()
-        self.transcribed_audio.transmission_id = "12345"
+        self.transcribed_audio.segment_id = "12345"
         self.transcribed_audio.feed_id = "1234"
         self.transcribed_audio.transcript = "Test transcript"
         self.transcribed_audio.source_audio_uris.append(
@@ -46,7 +46,7 @@ class TestEvaluationEventProcessor(unittest.TestCase):
 
         # Create a sample EvaluatedTranscribedAudio proto
         self.evaluated_payload = evaluated_pb2.EvaluatedTranscribedAudio()
-        self.evaluated_payload.transmission_id = "12345"
+        self.evaluated_payload.segment_id = "12345"
         self.evaluated_payload.feed_id = "1234"
         self.evaluated_payload.transcript = "Test transcript"
 
