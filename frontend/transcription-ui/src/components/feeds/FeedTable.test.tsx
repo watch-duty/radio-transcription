@@ -5,6 +5,7 @@ import { VirtuosoMockContext } from 'react-virtuoso';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   act,
   cleanup,
@@ -14,10 +15,8 @@ import {
   waitFor,
   within,
 } from '@testing-library/react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Feed, FeedStatus } from '@transcription/common';
 import { SourceType } from '@transcription/common';
-
 
 import { listFeeds } from '../../service/listFeeds';
 import { FeedTable } from './FeedTable';
@@ -72,8 +71,11 @@ describe('FeedTable', () => {
       }
       if (params?.statuses && params.statuses.length > 0) {
         filtered = filtered.filter((f) => {
-          const capitalized = f.status.charAt(0).toUpperCase() + f.status.slice(1);
-          return params.statuses!.includes(capitalized.toLowerCase() as FeedStatus);
+          const capitalized =
+            f.status.charAt(0).toUpperCase() + f.status.slice(1);
+          return params.statuses!.includes(
+            capitalized.toLowerCase() as FeedStatus
+          );
         });
       }
       if (params?.tags && params.tags.length > 0) {
@@ -110,7 +112,9 @@ describe('FeedTable', () => {
     }
   });
 
-  const renderFeedTable = (props: Partial<React.ComponentProps<typeof FeedTable>> = {}) => {
+  const renderFeedTable = (
+    props: Partial<React.ComponentProps<typeof FeedTable>> = {}
+  ) => {
     const testQueryClient = new QueryClient({
       defaultOptions: {
         queries: {
@@ -134,7 +138,9 @@ describe('FeedTable', () => {
     return {
       ...utils,
       queryClient: testQueryClient,
-      rerender: (newProps: Partial<React.ComponentProps<typeof FeedTable>> = {}) =>
+      rerender: (
+        newProps: Partial<React.ComponentProps<typeof FeedTable>> = {}
+      ) =>
         utils.rerender(
           <QueryClientProvider client={testQueryClient}>
             <MemoryRouter>

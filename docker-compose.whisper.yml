@@ -1,0 +1,25 @@
+services:
+  local-whisper:
+    profiles:
+      - local-whisper
+    build:
+      context: .
+      dockerfile: backend/services/local-whisper-api/Dockerfile
+    ports:
+      - "127.0.0.1:8095:8095"
+    env_file:
+      - path: ./local_dev/LOCAL.env
+      - path: .env
+        required: false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8095))"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pipeline-network
+    depends_on:
+      - gcs-emulator
+
+networks:
+  pipeline-network:

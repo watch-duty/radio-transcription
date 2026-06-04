@@ -26,6 +26,7 @@ vi.mock('google-auth-library', () => {
 });
 
 vi.mock('../config.js', () => ({
+  AUTH_BACKEND: 'google',
   get ALLOWED_ORIGIN() {
     return mockState.allowedOrigin;
   },

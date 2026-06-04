@@ -89,8 +89,11 @@ describe('FeedConfigurationView', () => {
       }
       if (params?.statuses && params.statuses.length > 0) {
         filtered = filtered.filter((f) => {
-          const capitalized = f.status.charAt(0).toUpperCase() + f.status.slice(1);
-          return params.statuses!.includes(capitalized.toLowerCase() as FeedStatus);
+          const capitalized =
+            f.status.charAt(0).toUpperCase() + f.status.slice(1);
+          return params.statuses!.includes(
+            capitalized.toLowerCase() as FeedStatus
+          );
         });
       }
       if (params?.tags && params.tags.length > 0) {

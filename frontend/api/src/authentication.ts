@@ -1,6 +1,6 @@
 import * as express from 'express';
 
-import * as jwt from 'jsonwebtoken';
+import * as jose from 'jose';
 
 export interface GoogleUser {
   email: string;
@@ -31,14 +31,14 @@ export function expressAuthentication(
       );
     }
     // API Gateway already verified the signature at this point
-    const decoded = jwt.decode(token);
+    const decoded = jose.decodeJwt<GoogleUser>(token);
 
     if (!decoded) {
       return Promise.reject(new Error('Invalid JWT token'));
     }
 
     // The resolved value is what gets injected into your controllers
-    return Promise.resolve(decoded as GoogleUser);
+    return Promise.resolve(decoded);
   }
 
   return Promise.reject(new Error(`Unknown security name: ${securityName}`));

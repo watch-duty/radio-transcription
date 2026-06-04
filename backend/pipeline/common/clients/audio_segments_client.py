@@ -8,6 +8,7 @@ from backend.pipeline.common.clients.session_helper import (
     create_resilient_session,
 )
 from backend.pipeline.common.env import is_gcp_env
+from backend.pipeline.common.tracing_utils import get_current_traceparent
 
 if TYPE_CHECKING:
     from backend.services.audio_segments.models import AnnotationType
@@ -52,6 +53,11 @@ class AudioSegmentsClient:
         Raises:
             requests.exceptions.HTTPError: If the request fails.
         """
+        headers = {}
+        traceparent = get_current_traceparent()
+        if traceparent:
+            headers["traceparent"] = traceparent
+
         if is_gcp_env():
             token = get_id_token(self.api_url)
             self.session.headers.update({"Authorization": f"Bearer {token}"})
@@ -64,6 +70,7 @@ class AudioSegmentsClient:
         response = self.session.post(
             f"{self.api_url}/v1/audio_segments/{audio_segment_id}/annotations",
             json=payload,
+            headers=headers,
             timeout=10,
         )
         response.raise_for_status()
@@ -78,6 +85,11 @@ class AudioSegmentsClient:
         Raises:
             requests.exceptions.HTTPError: If the request fails.
         """
+        headers = {}
+        traceparent = get_current_traceparent()
+        if traceparent:
+            headers["traceparent"] = traceparent
+
         if is_gcp_env():
             token = get_id_token(self.api_url)
             self.session.headers.update({"Authorization": f"Bearer {token}"})
@@ -85,6 +97,7 @@ class AudioSegmentsClient:
         response = self.session.post(
             f"{self.api_url}/v1/audio_segments",
             json=segment,
+            headers=headers,
             timeout=10,
         )
         response.raise_for_status()
