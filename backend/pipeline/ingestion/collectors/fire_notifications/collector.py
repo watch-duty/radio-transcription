@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import collections
-import dataclasses
 import datetime
 import logging
 import random
@@ -16,9 +15,13 @@ from curl_cffi.requests import AsyncSession
 from backend.pipeline.common.audio import get_audio_duration
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemBatchOutcome,
+    ItemDownloadResult,
     ItemFailure,
     collector_failure,
+    item_download_http_failure,
     missing_source_feed_id_failure,
+    raise_item_failure,
+    standardize_item_download_result,
 )
 from backend.pipeline.ingestion.models import (
     AudioMimeType,
@@ -54,13 +57,7 @@ def _build_auth_headers() -> dict[str, str]:
     return {"Authorization": f"Basic {encoded}"}
 
 
-@dataclasses.dataclass(frozen=True)
-class _DownloadResult:
-    audio_bytes: bytes | None = None
-    failure: ItemFailure | None = None
-
-
-def _poll_status_failure(status: int) -> ItemFailure:
+def _classify_poll_status_failure(status: int) -> ItemFailure:
     """Classify Fire Notifications poll endpoint failures."""
     reason = f"fn_api_http_{status}"
     if status in {401, 403}:
@@ -92,35 +89,31 @@ async def _download_audio(
     session: AsyncSession,
     url: str,
     shutdown: asyncio.Event,
-) -> _DownloadResult:
+) -> ItemDownloadResult:
     """Download audio file from S3 with retries."""
     # Note: We use a manual retry loop instead of 'tenacity' to easily
     # interrupt the backoff sleep when the shutdown event is set,
     # matching the pattern in bcfy_calls_collector.py.
+    last_status: int | None = None
     for attempt in range(_DOWNLOAD_MAX_RETRIES):
         try:
             resp = await session.get(url, timeout=30.0)
+            last_status = resp.status_code
             if resp.status_code == 200:
-                return _DownloadResult(audio_bytes=resp.content)
+                return ItemDownloadResult(audio_bytes=resp.content)
             if resp.status_code in {401, 403}:
                 logger.warning(
                     "Download auth failure %d: url=%s",
                     resp.status_code,
                     url,
                 )
-                return _DownloadResult(
-                    failure=ItemFailure(
-                        FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-                        f"item_http_{resp.status_code}",
-                    )
+                return ItemDownloadResult(
+                    failure=item_download_http_failure(resp.status_code)
                 )
             if resp.status_code == 429:
                 logger.warning("Download rate limited 429: url=%s", url)
-                return _DownloadResult(
-                    failure=ItemFailure(
-                        FeedStatusReason.SOURCE_RATE_LIMITED,
-                        "item_http_429",
-                    )
+                return ItemDownloadResult(
+                    failure=item_download_http_failure(resp.status_code)
                 )
             if 400 <= resp.status_code < 500:
                 logger.warning(
@@ -128,11 +121,8 @@ async def _download_audio(
                     resp.status_code,
                     url,
                 )
-                return _DownloadResult(
-                    failure=ItemFailure(
-                        FeedStatusReason.SOURCE_UNREACHABLE,
-                        "item_download_failed",
-                    )
+                return ItemDownloadResult(
+                    failure=item_download_http_failure(resp.status_code)
                 )
             logger.warning(
                 "Download %d (attempt %d/%d): url=%s",
@@ -149,36 +139,24 @@ async def _download_audio(
                 url,
                 exc_info=True,
             )
+            last_status = None
         if attempt < _DOWNLOAD_MAX_RETRIES - 1:
             if await _sleep_or_shutdown(
                 shutdown, _DOWNLOAD_BACKOFF_BASE_SEC * (2**attempt)
             ):
-                return _DownloadResult()
+                return ItemDownloadResult()
 
     logger.warning("Download failed after retries: url=%s", url)
-    return _DownloadResult(
+    if last_status is not None:
+        return ItemDownloadResult(
+            failure=item_download_http_failure(last_status)
+        )
+    return ItemDownloadResult(
         failure=ItemFailure(
             FeedStatusReason.SOURCE_UNREACHABLE,
             "item_download_failed",
         )
     )
-
-
-def _normalize_download_result(
-    result: _DownloadResult | bytes | None,
-) -> _DownloadResult:
-    """Normalize legacy test doubles into the typed download result."""
-    if isinstance(result, _DownloadResult):
-        return result
-    if isinstance(result, bytes):
-        return _DownloadResult(audio_bytes=result)
-    return _DownloadResult()
-
-
-def _raise_item_failure(failure: ItemFailure) -> None:
-    """Raise a typed collector failure from a file-list aggregation result."""
-    raise collector_failure(failure.status_reason, failure.reason)
-
 
 def _get_channel_timezone(channel_key: str) -> ZoneInfo:
     """Stub for resolving a channel's timezone.
@@ -267,7 +245,7 @@ async def _process_file_list(
         receipt_time = datetime.datetime.now(datetime.UTC)
 
         outcome.record_attempt()
-        download_result = _normalize_download_result(
+        download_result = standardize_item_download_result(
             await _download_audio(session, s3_url, shutdown_event)
         )
         if download_result.failure is not None:
@@ -342,7 +320,7 @@ async def _process_file_list(
 
     promoted = outcome.promoted_failure()
     if promoted is not None:
-        _raise_item_failure(promoted)
+        raise_item_failure(promoted)
 
 
 async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
@@ -420,7 +398,9 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
                         yield chunk
                     poll_ok = True
                 else:
-                    poll_failure = _poll_status_failure(resp.status_code)
+                    poll_failure = _classify_poll_status_failure(
+                        resp.status_code
+                    )
                     logger.warning(
                         "FN API returned %d: %s", resp.status_code, poll_url
                     )

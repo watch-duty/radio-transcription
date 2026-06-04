@@ -10,6 +10,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.pipeline.ingestion.collectors.failure_classification import (
+    ItemDownloadResult,
     ItemFailure,
 )
 from backend.pipeline.ingestion.collectors.fire_notifications import collector
@@ -78,7 +79,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
             failure.status_reason,
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
-        self.assertEqual(failure.reason, "item_download_failed")
+        self.assertEqual(failure.reason, "item_http_404")
 
     async def test_auth_status_returns_item_failure(self) -> None:
         resp = MagicMock(status_code=403)
@@ -148,10 +149,33 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
             failure.status_reason,
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
-        self.assertEqual(failure.reason, "item_download_failed")
+        self.assertEqual(failure.reason, "item_http_500")
         self.assertEqual(
             self.session.get.call_count, collector._DOWNLOAD_MAX_RETRIES
         )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_5xx_max_retries_preserves_http_status(
+        self, mock_sleep: MagicMock
+    ) -> None:
+        mock_sleep.return_value = False
+        resp503 = MagicMock(status_code=503)
+        self.session.get = AsyncMock(return_value=resp503)
+
+        result = await collector._download_audio(
+            self.session, "http://url", self.shutdown
+        )
+
+        self.assertIsNone(result.audio_bytes)
+        failure = _require_item_failure(result.failure)
+        self.assertIs(
+            failure.status_reason,
+            FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+        self.assertEqual(failure.reason, "item_http_503")
 
 
 class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
@@ -277,7 +301,7 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
     async def test_failed_download_promotes_and_does_not_mark_uuid_seen(
         self, mock_download: AsyncMock
     ) -> None:
-        mock_download.return_value = collector._DownloadResult(
+        mock_download.return_value = ItemDownloadResult(
             failure=ItemFailure(
                 FeedStatusReason.SOURCE_UNREACHABLE,
                 "item_download_failed",
@@ -321,13 +345,13 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         self, mock_download: AsyncMock
     ) -> None:
         mock_download.side_effect = [
-            collector._DownloadResult(
+            ItemDownloadResult(
                 failure=ItemFailure(
                     FeedStatusReason.SOURCE_UNREACHABLE,
                     "item_download_failed",
                 )
             ),
-            collector._DownloadResult(
+            ItemDownloadResult(
                 failure=ItemFailure(
                     FeedStatusReason.SOURCE_RATE_LIMITED,
                     "item_http_429",
@@ -375,13 +399,13 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         self, mock_download: AsyncMock
     ) -> None:
         mock_download.side_effect = [
-            collector._DownloadResult(
+            ItemDownloadResult(
                 failure=ItemFailure(
                     FeedStatusReason.SOURCE_UNREACHABLE,
                     "item_download_failed",
                 )
             ),
-            collector._DownloadResult(audio_bytes=b"mp3_bytes"),
+            ItemDownloadResult(audio_bytes=b"mp3_bytes"),
         ]
         files = [
             {
@@ -424,7 +448,7 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
     async def test_all_duration_probe_failures_promote_collector_error(
         self, mock_download: AsyncMock
     ) -> None:
-        mock_download.return_value = collector._DownloadResult(
+        mock_download.return_value = ItemDownloadResult(
             audio_bytes=b"mp3_bytes"
         )
         files = [
