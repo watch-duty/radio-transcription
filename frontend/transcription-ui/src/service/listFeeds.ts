@@ -14,6 +14,7 @@ export interface ListFeedsParams {
   sourceTypes?: SourceType[];
   statuses?: FeedStatus[];
   tags?: Tag[];
+  name?: string;
 }
 
 export async function listFeeds(
@@ -30,16 +31,19 @@ export async function listFeeds(
   if (params?.order) {
     queryParams.append('order', params.order);
   }
-  if (params?.sourceTypes) {
-    params.sourceTypes.forEach((st) => queryParams.append('sourceTypes', st));
+  if (params?.sourceTypes?.length) {
+    queryParams.append('sourceTypes', params.sourceTypes.join(','));
   }
-  if (params?.statuses) {
-    params.statuses.forEach((status) => queryParams.append('statuses', status));
+  if (params?.statuses?.length) {
+    queryParams.append('statuses', params.statuses.join(','));
   }
   if (params?.tags) {
     params.tags.forEach((tag) => {
       queryParams.append('tags', JSON.stringify(tag));
     });
+  }
+  if (params?.name) {
+    queryParams.append('name', params.name);
   }
 
   const url = queryParams.toString()

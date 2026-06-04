@@ -1794,6 +1794,49 @@ async def test_list_feeds_filter_by_tags(store: FeedStore) -> None:
     assert len(result_none.feeds) == 0
 
 
+async def test_list_feeds_filter_by_name(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """list_feeds filters results by name, source feed ID, external ID, or tags key/value."""
+    feed_a = await store.create_feed(
+        name="Marin Fire Dispatch",
+        source_type="bcfy_feeds",
+        source_feed_id="marin-fire-1",
+        external_id="ext-a",
+        tags=[{"key": "county", "value": "Marin"}],
+    )
+    feed_b = await store.create_feed(
+        name="Sonoma Sheriff dispatch",
+        source_type="bcfy_feeds",
+        source_feed_id="sonoma-sheriff-2",
+        external_id="ext-b",
+        tags=[{"key": "county", "value": "Sonoma"}],
+    )
+
+    # 1. Match by name substring (case-insensitive)
+    res1 = await store.list_feeds(name="marin")
+    assert len(res1.feeds) == 1
+    assert res1.feeds[0]["id"] == feed_a["id"]
+
+    res2 = await store.list_feeds(name="Sheriff")
+    assert len(res2.feeds) == 1
+    assert res2.feeds[0]["id"] == feed_b["id"]
+
+    # 2. Match by source_feed_id
+    res3 = await store.list_feeds(name="sonoma-sheriff")
+    assert len(res3.feeds) == 1
+    assert res3.feeds[0]["id"] == feed_b["id"]
+
+    # 3. Match by tag value
+    res4 = await store.list_feeds(name="Sonoma")
+    assert len(res4.feeds) == 1
+    assert res4.feeds[0]["id"] == feed_b["id"]
+
+    # 4. No match
+    res5 = await store.list_feeds(name="nonexistent")
+    assert len(res5.feeds) == 0
+
+
 # -- Tests: delete_feed ------------------------------------------------
 
 

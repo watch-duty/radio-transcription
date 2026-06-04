@@ -62,8 +62,8 @@ describe('listFeeds', () => {
       limit: 5,
       nextToken: 'token_abc',
       order: 'desc',
-      sourceTypes: [SourceType.OPENMHZ],
-      statuses: ['active'],
+      sourceTypes: [SourceType.OPENMHZ, SourceType.ECHO],
+      statuses: ['active', 'inactive'],
       tags: [{ key: 'county', value: 'Fulton' }],
     });
 
@@ -73,8 +73,8 @@ describe('listFeeds', () => {
     expect(calledUrl).toContain('limit=5');
     expect(calledUrl).toContain('nextToken=token_abc');
     expect(calledUrl).toContain('order=desc');
-    expect(calledUrl).toContain('sourceTypes=openmhz');
-    expect(calledUrl).toContain('statuses=active');
+    expect(calledUrl).toContain('sourceTypes=openmhz%2Cecho');
+    expect(calledUrl).toContain('statuses=active%2Cinactive');
     expect(calledUrl).toContain(
       'tags=%7B%22key%22%3A%22county%22%2C%22value%22%3A%22Fulton%22%7D'
     );

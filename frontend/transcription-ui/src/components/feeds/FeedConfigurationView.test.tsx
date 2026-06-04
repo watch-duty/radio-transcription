@@ -80,7 +80,44 @@ describe('FeedConfigurationView', () => {
     mockOnError.mockClear();
 
     // Default mock for listing feeds
-    vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
+    vi.mocked(listFeeds).mockImplementation(async (_token, params) => {
+      let filtered = [...mockFeeds];
+      if (params?.sourceTypes && params.sourceTypes.length > 0) {
+        filtered = filtered.filter((f) =>
+          params.sourceTypes!.includes(f.sourceType)
+        );
+      }
+      if (params?.statuses && params.statuses.length > 0) {
+        filtered = filtered.filter((f) => {
+          const capitalized = f.status.charAt(0).toUpperCase() + f.status.slice(1);
+          return params.statuses!.includes(capitalized.toLowerCase() as FeedStatus);
+        });
+      }
+      if (params?.tags && params.tags.length > 0) {
+        filtered = filtered.filter((f) => {
+          return params.tags!.every((appliedTag) =>
+            f.tags?.some(
+              (tag) =>
+                tag.key === appliedTag.key && tag.value === appliedTag.value
+            )
+          );
+        });
+      }
+      if (params?.name) {
+        const query = params.name.toLowerCase().trim();
+        filtered = filtered.filter((f) => {
+          const nameMatches = f.name.toLowerCase().includes(query);
+          const tagMatches =
+            f.tags?.some(
+              (tag) =>
+                tag.key.toLowerCase().includes(query) ||
+                tag.value.toLowerCase().includes(query)
+            ) ?? false;
+          return nameMatches || tagMatches;
+        });
+      }
+      return { feeds: filtered };
+    });
     vi.mocked(deleteFeed).mockResolvedValue(undefined);
 
     // Mock window.scrollTo since JSDOM does not implement it
@@ -420,8 +457,10 @@ describe('FeedConfigurationView', () => {
     fireEvent.change(filterInput, { target: { value: 'sonoma' } });
 
     // Sonoma Sheriff matches, Marin Fire is hidden
-    expect(screen.getByText('Sonoma Sheriff dispatch')).toBeInTheDocument();
-    expect(screen.queryByText('Marin Fire Dispatch')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Sonoma Sheriff dispatch')).toBeInTheDocument();
+      expect(screen.queryByText('Marin Fire Dispatch')).not.toBeInTheDocument();
+    });
   });
 
   it('automatically adds the tag if Tag Key and Tag Value are filled in and the form is submitted without clicking the Add button', async () => {

@@ -769,6 +769,7 @@ class FeedStore:
         source_types: list[SourceType] | None = None,
         statuses: list[FeedStatus] | None = None,
         tags: list[dict[str, str]] | None = None,
+        name: str | None = None,
     ) -> PaginatedFeeds:
         """List all feeds with keyset pagination and optional filters.
 
@@ -794,6 +795,7 @@ class FeedStore:
             statuses,
             tags_json,
             limit + 1,
+            name,
         )
 
         rows, new_next_token = get_paginated_results(

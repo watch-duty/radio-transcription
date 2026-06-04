@@ -3,33 +3,38 @@ import React from 'react';
 import { MemoryRouter } from 'react-router';
 import { VirtuosoMockContext } from 'react-virtuoso';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  act,
   cleanup,
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from '@testing-library/react';
-import type { Feed } from '@transcription/common';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { Feed, FeedStatus } from '@transcription/common';
 import { SourceType } from '@transcription/common';
 
+
+import { listFeeds } from '../../service/listFeeds';
 import { FeedTable } from './FeedTable';
 
-const renderFeedTable = (props: React.ComponentProps<typeof FeedTable>) => {
-  return render(
-    <MemoryRouter>
-      <VirtuosoMockContext.Provider
-        value={{ viewportHeight: 1000, itemHeight: 100 }}
-      >
-        <FeedTable {...props} />
-      </VirtuosoMockContext.Provider>
-    </MemoryRouter>
-  );
-};
+// Mock API services
+vi.mock('../../service/listFeeds', () => ({
+  listFeeds: vi.fn(),
+}));
+
+// Mock AuthContext
+vi.mock('../../context/AuthContext', () => ({
+  useAuth: () => ({ token: 'fake-jwt-token-xyz' }),
+}));
 
 describe('FeedTable', () => {
+  const mockOnError = vi.fn();
+
   const mockFeeds: Feed[] = [
     {
       id: 'feed-1',
@@ -53,14 +58,101 @@ describe('FeedTable', () => {
     },
   ];
 
-  afterEach(() => {
-    cleanup();
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockOnError.mockClear();
+
+    // Default mock implementation of listFeeds that mimics the filtering
+    vi.mocked(listFeeds).mockImplementation(async (_token, params) => {
+      let filtered = [...mockFeeds];
+      if (params?.sourceTypes && params.sourceTypes.length > 0) {
+        filtered = filtered.filter((f) =>
+          params.sourceTypes!.includes(f.sourceType)
+        );
+      }
+      if (params?.statuses && params.statuses.length > 0) {
+        filtered = filtered.filter((f) => {
+          const capitalized = f.status.charAt(0).toUpperCase() + f.status.slice(1);
+          return params.statuses!.includes(capitalized.toLowerCase() as FeedStatus);
+        });
+      }
+      if (params?.tags && params.tags.length > 0) {
+        filtered = filtered.filter((f) => {
+          return params.tags!.every((appliedTag) =>
+            f.tags?.some(
+              (tag) =>
+                tag.key === appliedTag.key && tag.value === appliedTag.value
+            )
+          );
+        });
+      }
+      if (params?.name) {
+        const query = params.name.toLowerCase().trim();
+        filtered = filtered.filter((f) => {
+          const nameMatches = f.name.toLowerCase().includes(query);
+          const tagMatches =
+            f.tags?.some(
+              (tag) =>
+                tag.key.toLowerCase().includes(query) ||
+                tag.value.toLowerCase().includes(query)
+            ) ?? false;
+          return nameMatches || tagMatches;
+        });
+      }
+      return { feeds: filtered };
+    });
   });
 
-  it('renders feeds and columns properly', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false });
+  afterEach(() => {
+    cleanup();
+    if (mockOnError.mock.calls.length > 0) {
+      console.log('mockOnError calls:', JSON.stringify(mockOnError.mock.calls));
+    }
+  });
 
-    expect(screen.getByText('Alpha Radio')).toBeTruthy();
+  const renderFeedTable = (props: Partial<React.ComponentProps<typeof FeedTable>> = {}) => {
+    const testQueryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
+      },
+    });
+
+    const utils = render(
+      <QueryClientProvider client={testQueryClient}>
+        <MemoryRouter>
+          <VirtuosoMockContext.Provider
+            value={{ viewportHeight: 1000, itemHeight: 100 }}
+          >
+            <FeedTable onError={mockOnError} {...props} />
+          </VirtuosoMockContext.Provider>
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    return {
+      ...utils,
+      queryClient: testQueryClient,
+      rerender: (newProps: Partial<React.ComponentProps<typeof FeedTable>> = {}) =>
+        utils.rerender(
+          <QueryClientProvider client={testQueryClient}>
+            <MemoryRouter>
+              <VirtuosoMockContext.Provider
+                value={{ viewportHeight: 1000, itemHeight: 100 }}
+              >
+                <FeedTable onError={mockOnError} {...newProps} />
+              </VirtuosoMockContext.Provider>
+            </MemoryRouter>
+          </QueryClientProvider>
+        ),
+    };
+  };
+
+  it('renders feeds and columns properly', async () => {
+    renderFeedTable();
+
+    expect(await screen.findByText('Alpha Radio')).toBeTruthy();
     expect(screen.getByText('Bravo Scanner')).toBeTruthy();
     expect(screen.getByText('bcfy_feeds')).toBeTruthy();
     expect(screen.getByText('openmhz')).toBeTruthy();
@@ -83,8 +175,10 @@ describe('FeedTable', () => {
     }
   });
 
-  it('aligns cell contents with the correct headers (Name, Type, Status)', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false });
+  it('aligns cell contents with the correct headers (Name, Type, Status)', async () => {
+    renderFeedTable();
+
+    expect(await screen.findByText('Alpha Radio')).toBeTruthy();
 
     const headers = screen
       .getAllByRole('columnheader')
@@ -109,33 +203,45 @@ describe('FeedTable', () => {
     expect(rowCells[2].textContent).toContain('Active'); // Status indicator
   });
 
-  it('shows loading indicator when isLoading is true', () => {
-    renderFeedTable({ feeds: [], isLoading: true });
-    expect(screen.getByRole('progressbar')).toBeTruthy();
+  it('shows loading indicator when isLoading is true', async () => {
+    // Return a promise that never resolves to simulate loading
+    vi.mocked(listFeeds).mockReturnValue(new Promise(() => {}));
+    renderFeedTable();
+    expect(await screen.findByRole('progressbar')).toBeTruthy();
   });
 
-  it('filters feeds by search bar input (name match)', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false });
+  it('filters feeds by search bar input (name match)', async () => {
+    renderFeedTable();
+
+    expect(await screen.findByText('Alpha Radio')).toBeTruthy();
 
     const searchInput = screen.getByPlaceholderText(/Search feeds\.\.\./i);
     fireEvent.change(searchInput, { target: { value: 'bravo' } });
 
-    expect(screen.getByText('Bravo Scanner')).toBeTruthy();
-    expect(screen.queryByText('Alpha Radio')).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByText('Bravo Scanner')).toBeTruthy();
+      expect(screen.queryByText('Alpha Radio')).toBeNull();
+    });
   });
 
-  it('filters feeds by search bar input (tag match)', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false });
+  it('filters feeds by search bar input (tag match)', async () => {
+    renderFeedTable();
+
+    expect(await screen.findByText('Alpha Radio')).toBeTruthy();
 
     const searchInput = screen.getByPlaceholderText(/Search feeds\.\.\./i);
     fireEvent.change(searchInput, { target: { value: 'marin' } });
 
-    expect(screen.getByText('Alpha Radio')).toBeTruthy();
-    expect(screen.queryByText('Bravo Scanner')).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByText('Alpha Radio')).toBeTruthy();
+      expect(screen.queryByText('Bravo Scanner')).toBeNull();
+    });
   });
 
-  it('sorts feeds by name clicking the header sort label', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false });
+  it('sorts feeds by name clicking the header sort label', async () => {
+    renderFeedTable();
+
+    expect(await screen.findByText('Alpha Radio')).toBeTruthy();
 
     const nameHeader = screen.getByRole('columnheader', { name: /name/i });
     const nameSortLabel = within(nameHeader).getByRole('button');
@@ -146,8 +252,10 @@ describe('FeedTable', () => {
     expect(cells[0].textContent).toContain('Bravo Scanner');
   });
 
-  it('sorts feeds by status clicking the header sort label', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false });
+  it('sorts feeds by status clicking the header sort label', async () => {
+    renderFeedTable();
+
+    expect(await screen.findByText('Alpha Radio')).toBeTruthy();
 
     const statusHeader = screen.getByRole('columnheader', { name: /status/i });
     const statusSortLabel = within(statusHeader).getByRole('button');
@@ -158,11 +266,11 @@ describe('FeedTable', () => {
     expect(cells[0].textContent).toContain('Alpha Radio');
   });
 
-  it('preserves virtualized scroller position on feed refresh rerender', () => {
-    const { container, rerender } = renderFeedTable({
-      feeds: mockFeeds,
-      isLoading: false,
-    });
+  it('preserves virtualized scroller position on feed refresh rerender', async () => {
+    const { container, rerender, queryClient } = renderFeedTable();
+
+    expect(await screen.findByText('Alpha Radio')).toBeTruthy();
+
     const scroller = container.querySelector(
       '[data-testid="virtuoso-scroller"]'
     );
@@ -177,15 +285,15 @@ describe('FeedTable', () => {
       name: `${feed.name} (updated)`,
     }));
 
-    rerender(
-      <MemoryRouter>
-        <VirtuosoMockContext.Provider
-          value={{ viewportHeight: 1000, itemHeight: 100 }}
-        >
-          <FeedTable feeds={refreshedFeeds} isLoading={false} />
-        </VirtuosoMockContext.Provider>
-      </MemoryRouter>
-    );
+    vi.mocked(listFeeds).mockResolvedValue({ feeds: refreshedFeeds });
+
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['listFeeds'] });
+    });
+
+    rerender();
+
+    await screen.findByText('Alpha Radio (updated)');
 
     const refreshedScroller = container.querySelector(
       '[data-testid="virtuoso-scroller"]'
@@ -194,8 +302,10 @@ describe('FeedTable', () => {
     expect(refreshedScroller?.scrollTop).toBe(200);
   });
 
-  it('renders source and archive links directly in the links column if they exist', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false });
+  it('renders source and archive links directly in the links column if they exist', async () => {
+    renderFeedTable();
+
+    expect(await screen.findByText('Alpha Radio')).toBeTruthy();
 
     // Alpha Radio has both URLs
     const sourceLink = screen.getByRole('link', {
@@ -216,8 +326,10 @@ describe('FeedTable', () => {
     expect(archiveLink.getAttribute('target')).toBe('_blank');
   });
 
-  it('does not render source and archive links if they are not present, and renders a fallback hyphen', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false });
+  it('does not render source and archive links if they are not present, and renders a fallback hyphen', async () => {
+    renderFeedTable();
+
+    expect(await screen.findByText('Alpha Radio')).toBeTruthy();
 
     // Verify Alpha Radio has its links rendered correctly
     const links = screen.queryAllByRole('link', {
@@ -239,8 +351,10 @@ describe('FeedTable', () => {
     }
   });
 
-  it('displays grouped tags and applies tag filtering', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false });
+  it('displays grouped tags and applies tag filtering', async () => {
+    renderFeedTable();
+
+    expect(await screen.findByText('Alpha Radio')).toBeTruthy();
 
     const tagsInput = screen.getByLabelText('Tags');
     fireEvent.focus(tagsInput);
@@ -258,33 +372,53 @@ describe('FeedTable', () => {
 
     fireEvent.click(countyOption);
 
-    expect(screen.getByText('Alpha Radio')).toBeTruthy();
-    expect(screen.queryByText('Bravo Scanner')).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByText('Alpha Radio')).toBeInTheDocument();
+      expect(screen.queryByText('Bravo Scanner')).toBeNull();
+    });
 
-    expect(screen.getByText('Showing 1 of 2 feeds')).toBeTruthy();
+    expect(screen.getByText('1 Feeds on Page')).toBeTruthy();
 
-    fireEvent.click(agencyOption);
+    // Now click the agencyOption (after opening menu again)
+    fireEvent.focus(tagsInput);
+    fireEvent.keyDown(tagsInput, { key: 'ArrowDown' });
+    const listbox2 = screen.getByRole('listbox');
+    const agencyOption2 = within(listbox2).getByText('Fire');
+    fireEvent.click(agencyOption2);
 
-    expect(screen.getByText('Alpha Radio')).toBeTruthy();
-    expect(screen.queryByText('Bravo Scanner')).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByText('Alpha Radio')).toBeInTheDocument();
+      expect(screen.queryByText('Bravo Scanner')).toBeNull();
+    });
 
-    fireEvent.click(countyOption);
+    // Click countyOption to remove it
+    fireEvent.focus(tagsInput);
+    fireEvent.keyDown(tagsInput, { key: 'ArrowDown' });
+    const listbox3 = screen.getByRole('listbox');
+    const countyOptionRemove = within(listbox3).getByText('Marin');
+    fireEvent.click(countyOptionRemove);
 
-    expect(screen.getByText('Alpha Radio')).toBeTruthy();
-    expect(screen.queryByText('Bravo Scanner')).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByText('Alpha Radio')).toBeInTheDocument();
+      expect(screen.queryByText('Bravo Scanner')).toBeNull();
+    });
 
     const clearButton = within(tagsInput.parentElement!).getByRole('button', {
       name: 'Clear',
     });
     fireEvent.click(clearButton);
 
+    await waitFor(() => {
+      expect(screen.getByText('Bravo Scanner')).toBeTruthy();
+    });
     expect(screen.getByText('Alpha Radio')).toBeTruthy();
-    expect(screen.getByText('Bravo Scanner')).toBeTruthy();
-    expect(screen.queryByText('Showing 1 of 2 feeds')).toBeNull();
+    expect(screen.getByText('2 Feeds on Page')).toBeTruthy();
   });
 
-  it('filters feeds by status', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false });
+  it('filters feeds by status', async () => {
+    renderFeedTable();
+
+    expect(await screen.findByText('Alpha Radio')).toBeTruthy();
 
     const statusInput = screen.getByLabelText('Status');
     fireEvent.focus(statusInput);
@@ -293,12 +427,16 @@ describe('FeedTable', () => {
     const activeOption = screen.getByRole('option', { name: 'Active' });
     fireEvent.click(activeOption);
 
-    expect(screen.getByText('Alpha Radio')).toBeTruthy();
-    expect(screen.queryByText('Bravo Scanner')).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByText('Alpha Radio')).toBeInTheDocument();
+      expect(screen.queryByText('Bravo Scanner')).toBeNull();
+    });
   });
 
-  it('filters feeds by source type', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false });
+  it('filters feeds by source type', async () => {
+    renderFeedTable();
+
+    expect(await screen.findByText('Alpha Radio')).toBeTruthy();
 
     const sourceTypesInput = screen.getByLabelText('Source Type');
     fireEvent.focus(sourceTypesInput);
@@ -307,11 +445,13 @@ describe('FeedTable', () => {
     const bcfyOption = screen.getByRole('option', { name: 'bcfy_feeds' });
     fireEvent.click(bcfyOption);
 
-    expect(screen.getByText('Alpha Radio')).toBeTruthy();
-    expect(screen.queryByText('Bravo Scanner')).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByText('Alpha Radio')).toBeInTheDocument();
+      expect(screen.queryByText('Bravo Scanner')).toBeNull();
+    });
   });
 
-  it('does not duplicate group headers for tags in the dropdown', () => {
+  it('does not duplicate group headers for tags in the dropdown', async () => {
     const feedsWithInterleavedTags: Feed[] = [
       {
         id: 'feed-1',
@@ -342,7 +482,11 @@ describe('FeedTable', () => {
       },
     ];
 
-    renderFeedTable({ feeds: feedsWithInterleavedTags, isLoading: false });
+    vi.mocked(listFeeds).mockResolvedValue({ feeds: feedsWithInterleavedTags });
+
+    renderFeedTable();
+
+    expect(await screen.findByText('Alpha Radio')).toBeTruthy();
 
     const tagsInput = screen.getByLabelText('Tags');
     fireEvent.focus(tagsInput);

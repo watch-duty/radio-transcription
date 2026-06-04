@@ -79,6 +79,7 @@ class FeedService:
         source_types: list[SourceType] | None = None,
         statuses: list[FeedStatus] | None = None,
         tags: list[dict[str, str]] | None = None,
+        name: str | None = None,
     ) -> ListFeedsResponse:
         """Lists all feeds."""
         store_feeds = await self._store.list_feeds(
@@ -88,6 +89,7 @@ class FeedService:
             source_types=source_types,
             statuses=statuses,
             tags=tags,
+            name=name,
         )
         return ListFeedsResponse(
             feeds=[Feed.model_validate(f) for f in store_feeds.feeds],

@@ -167,6 +167,8 @@ export function FeedTable({
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
+
   const [sortConfig, setSortConfig] = useState<SortConfig>({
     column: 'name',
     direction: 'asc',
@@ -177,6 +179,15 @@ export function FeedTable({
     undefined
   );
   const [pageHistory, setPageHistory] = useState<(string | undefined)[]>([]);
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+      setCurrentPageToken(undefined);
+      setPageHistory([]);
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [searchQuery]);
 
   const [appliedTags, setAppliedTags] = useState<
     { key: string; value: string }[]
@@ -198,6 +209,7 @@ export function FeedTable({
       appliedSourceTypes,
       mappedStatuses,
       appliedTags,
+      debouncedSearchQuery,
     ],
     queryFn: () =>
       listFeeds(token!, {
@@ -206,6 +218,7 @@ export function FeedTable({
         sourceTypes: appliedSourceTypes as SourceType[],
         statuses: mappedStatuses,
         tags: appliedTags,
+        name: debouncedSearchQuery.trim() || undefined,
       }),
     enabled: !!token,
     refetchOnWindowFocus: false,
@@ -297,31 +310,10 @@ export function FeedTable({
   };
 
   const filteredAndSortedFeeds = useMemo(() => {
-    const query = searchQuery.toLowerCase().trim();
-    let filtered = [...feeds];
+    const sorted = [...feeds];
 
-    // 1. Text search filtering (matches name, tags key/value, source ID, external ID)
-    if (query) {
-      filtered = filtered.filter((feed) => {
-        const nameMatches = feed.name.toLowerCase().includes(query);
-        const tagMatches =
-          feed.tags?.some(
-            (tag: { key: string; value: string }) =>
-              tag.key.toLowerCase().includes(query) ||
-              tag.value.toLowerCase().includes(query)
-          ) ?? false;
-        const sourceIdMatches =
-          feed.sourceFeedId?.toLowerCase().includes(query) ?? false;
-        const externalIdMatches =
-          feed.externalId?.toLowerCase().includes(query) ?? false;
-        return (
-          nameMatches || tagMatches || sourceIdMatches || externalIdMatches
-        );
-      });
-    }
-
-    // 2. Sorting using localeCompare
-    return filtered.sort((a, b) => {
+    // Sorting using localeCompare
+    return sorted.sort((a, b) => {
       let comparison = 0;
       if (sortConfig.column === 'name') {
         comparison = a.name.localeCompare(b.name);
@@ -332,7 +324,7 @@ export function FeedTable({
       }
       return sortConfig.direction === 'asc' ? comparison : -comparison;
     });
-  }, [feeds, searchQuery, sortConfig]);
+  }, [feeds, sortConfig]);
 
   const gridTemplateColumns = allowEdit
     ? '1.5fr 1fr 1fr 60px'
