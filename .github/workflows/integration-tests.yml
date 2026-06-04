@@ -76,9 +76,8 @@ jobs:
       - name: Build microservices using Buildx Bake (with caching)
         run: |
           docker buildx bake \
-            --set *.cache-from=type=gha,scope=integration-tests \
-            --set *.cache-to=type=gha,mode=max,scope=integration-tests \
             -f docker-compose.yml \
+            -f docker-bake.override.hcl \
             --load
 
       - name: Run E2E tests
