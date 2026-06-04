@@ -176,6 +176,16 @@ known-first-party = ["backend", "local_dev"]
 "model/colabs/**/*.py" = [
   "ALL",   # Ignore all linting rules for python files in colabs
 ]
+"local_dev/**/*.py" = [
+  "ANN001",
+  "ANN201",
+  "PTH110",
+  "PTH111",
+  "S110",
+  "S603",
+  "S607",
+  "T201",
+]
 "**/**/test*.py" = [
   "ANN001", # Missing type annotation for function argument
   "ANN002", # Missing type annotation for *args
@@ -242,7 +252,7 @@ convention = "google"
 
 
 [tool.ty.src]
-exclude = ["model/", "backend/services/"]
+exclude = ["model/", "backend/services/local-whisper-api/"]
 
 [tool.pyright]
 pythonVersion = "3.13"

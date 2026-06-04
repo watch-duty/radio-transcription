@@ -291,6 +291,46 @@ class TestVadEngine(unittest.TestCase):
             min_f1=0.60,
         )
 
+    def test_integration_static_middlebury_file(self) -> None:
+        """Integration test to verify VAD rejects all segments on static-only audio file."""
+        audio_path = (
+            Path(__file__).parent
+            / "test_data"
+            / "test_only_static_middlebury.mp3"
+        )
+        if not audio_path.exists():
+            self.skipTest(f"Audio file not found at: {audio_path}")
+
+        audio_data, sample_rate = load_audio(audio_path)
+
+        # Production chunked streaming simulation:
+        chunk_len_sec = 15.0
+        chunk_samples = int(chunk_len_sec * sample_rate)
+        priming_samples = int(self.vad.priming_sec * sample_rate)
+
+        detected_segments = []
+        prior_audio_tail = None
+
+        for i in range(0, len(audio_data), chunk_samples):
+            chunk = audio_data[i : i + chunk_samples]
+            raw_chunk_segments = self.vad.detect_speech_segments(
+                chunk, sample_rate=sample_rate, prior_audio=prior_audio_tail
+            )
+            chunk_offset_sec = i / float(sample_rate)
+            for start, end in raw_chunk_segments:
+                detected_segments.append(
+                    (start + chunk_offset_sec, end + chunk_offset_sec)
+                )
+            prior_audio_tail = (
+                chunk[-priming_samples:] if len(chunk) > 0 else None
+            )
+
+        audio_len = len(audio_data) / float(sample_rate)
+        padded_segments = self.vad._pad_and_merge_segments(
+            detected_segments, audio_len
+        )
+        self.assertEqual(padded_segments, [])
+
     def test_vad_priming_contiguous_chunk(self) -> None:
         """Verifies that passing a prior_audio tail primes VAD state and shifts time coordinates correctly."""
         # 1. Generate 1 second of voice-frequency-like sine wave

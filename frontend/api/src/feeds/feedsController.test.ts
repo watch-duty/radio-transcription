@@ -5,6 +5,7 @@ import { FeedsController } from './feedsController.js';
 
 // Mock the config module
 vi.mock('../config.js', () => ({
+  AUTH_BACKEND: 'google',
   FEEDS_STORE_API_URL: 'http://feeds-api.example.com',
 }));
 
@@ -479,12 +480,24 @@ describe('FeedsController', () => {
       expect(url).toBeUndefined();
     });
 
-    it('fire_notifications produces undefined', async () => {
+    it('fire_notifications produces the audioplay URL', async () => {
       const url = await listFeedsWithSourceType(
         'fire_notifications',
-        'some-id'
+        'RECORDINGS/WA-SPOKANE-DISP'
       );
-      expect(url).toBeUndefined();
+      expect(url).toBe(
+        'https://audioplay.textmefires.info/audioplay/folder_play?dir=/RECORDINGS/WA-SPOKANE-DISP'
+      );
+    });
+
+    it('fire_notifications with leading slash produces the audioplay URL', async () => {
+      const url = await listFeedsWithSourceType(
+        'fire_notifications',
+        '/RECORDINGS/WA-SPOKANE-DISP'
+      );
+      expect(url).toBe(
+        'https://audioplay.textmefires.info/audioplay/folder_play?dir=/RECORDINGS/WA-SPOKANE-DISP'
+      );
     });
 
     it('produces undefined when sourceFeedId is absent', async () => {
@@ -543,9 +556,24 @@ describe('FeedsController', () => {
       expect(url).toBeUndefined();
     });
 
-    it('fire_notifications produces undefined', async () => {
-      const url = await listFeedsArchiveUrl('fire_notifications', 'some-id');
-      expect(url).toBeUndefined();
+    it('fire_notifications produces the archive URL', async () => {
+      const url = await listFeedsArchiveUrl(
+        'fire_notifications',
+        'RECORDINGS/WA-SPOKANE-DISP'
+      );
+      expect(url).toBe(
+        'https://audioplay.textmefires.info/audioplay/folder_play?dir=RECORDINGS%2FWA-SPOKANE-DISP%2FArchive'
+      );
+    });
+
+    it('fire_notifications with leading slash produces the archive URL', async () => {
+      const url = await listFeedsArchiveUrl(
+        'fire_notifications',
+        '/RECORDINGS/WA-SPOKANE-DISP'
+      );
+      expect(url).toBe(
+        'https://audioplay.textmefires.info/audioplay/folder_play?dir=RECORDINGS%2FWA-SPOKANE-DISP%2FArchive'
+      );
     });
 
     it('produces undefined when sourceFeedId is absent', async () => {
