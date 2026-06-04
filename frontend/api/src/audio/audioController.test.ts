@@ -4,6 +4,7 @@ import { AudioController } from './audioController.js';
 
 // Mock the config module to inject the value without touching process.env
 vi.mock('../config.js', () => ({
+  AUTH_BACKEND: 'google',
   AUDIO_SEGMENTS_API_URL: 'http://audio-segments.example.com',
 }));
 

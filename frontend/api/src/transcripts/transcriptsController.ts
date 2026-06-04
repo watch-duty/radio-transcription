@@ -2,7 +2,6 @@ import type {
   ListTranscriptsResponse,
   Transcript,
 } from '@transcription/common';
-import { GoogleAuth } from 'google-auth-library';
 import {
   Controller,
   Extension,
@@ -16,7 +15,7 @@ import {
 } from 'tsoa';
 
 import { TRANSCRIPTS_API_URL } from '../config.js';
-import { HttpError, handleBackendError } from '../utils.js';
+import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
 
 export interface TranscriptResponse {
   feed_id: string;
@@ -92,8 +91,7 @@ export class TranscriptsController extends Controller {
         queryParams.append('is_alert', query.isAlert.toString());
       }
 
-      const auth = new GoogleAuth();
-      const client = await auth.getIdTokenClient(TRANSCRIPTS_API_URL!);
+      const client = await getServiceClient(TRANSCRIPTS_API_URL);
       const response = await client.request({
         url: `${TRANSCRIPTS_API_URL}?${queryParams.toString()}`,
         method: 'GET',

@@ -1,4 +1,4 @@
-import type { Feed } from '@transcription/common';
+import type { Feed, ListFeedsResponse } from '@transcription/common';
 
 import { apiFetch } from '../utils/apiUtils';
 
@@ -7,5 +7,11 @@ export async function listFeeds(token: string): Promise<Feed[]> {
     headers: {
       Authorization: `Bearer ${token}`,
     },
+  }).then((resp: Feed[] | ListFeedsResponse) => {
+    if (Array.isArray(resp)) {
+      return resp;
+    } else {
+      return resp.feeds;
+    }
   });
 }

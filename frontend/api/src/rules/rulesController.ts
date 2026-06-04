@@ -6,7 +6,6 @@ import type {
   RuleUpdate,
   ScopeLevel,
 } from '@transcription/common';
-import { GoogleAuth } from 'google-auth-library';
 import {
   Body,
   Controller,
@@ -25,7 +24,7 @@ import {
 } from 'tsoa';
 
 import { RULES_API_URL } from '../config.js';
-import { HttpError, handleBackendError } from '../utils.js';
+import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
 
 interface ScopeResponse {
   level: ScopeLevel;
@@ -218,8 +217,7 @@ export class ListRulesQueryParams {
 @Response(401, 'Unauthorized')
 export class RulesController extends Controller {
   private async getClient() {
-    const auth = new GoogleAuth();
-    return await auth.getIdTokenClient(RULES_API_URL!);
+    return await getServiceClient(RULES_API_URL);
   }
 
   @Get('')
@@ -287,7 +285,7 @@ export class RulesController extends Controller {
     try {
       const client = await this.getClient();
       const response = await client.request({
-        url: RULES_API_URL!,
+        url: RULES_API_URL,
         method: 'POST',
         data: convertRuleCreate(requestBody),
       });
