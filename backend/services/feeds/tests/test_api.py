@@ -194,6 +194,7 @@ class TestFeedsAPI(unittest.TestCase):
             source_types=None,
             statuses=None,
             tags=None,
+            name=None,
         )
 
     def test_list_feeds_with_filters(self) -> None:
@@ -228,6 +229,7 @@ class TestFeedsAPI(unittest.TestCase):
             source_types=[SourceType.BCFY_FEEDS],
             statuses=[FeedStatus.ACTIVE],
             tags=None,
+            name=None,
         )
 
     def test_list_feeds_with_tags(self) -> None:
@@ -264,6 +266,7 @@ class TestFeedsAPI(unittest.TestCase):
                 {"key": "region", "value": "West"},
                 {"key": "county", "value": "Fulton"},
             ],
+            name=None,
         )
 
     def test_list_feeds_with_invalid_tag_format(self) -> None:
@@ -301,6 +304,35 @@ class TestFeedsAPI(unittest.TestCase):
             source_types=[SourceType.BCFY_FEEDS, SourceType.OPENMHZ],
             statuses=[FeedStatus.ACTIVE, FeedStatus.FAILING],
             tags=None,
+            name=None,
+        )
+
+    def test_list_feeds_with_name_filter(self) -> None:
+        """Test listing feeds with name query parameter."""
+        feed_id = uuid.uuid4()
+        mock_feed = Feed(
+            id=feed_id,
+            name="Test Feed",
+            source_type=SourceType.BCFY_FEEDS,
+            source_feed_id="123",
+            external_id="ext_123",
+            status=FeedStatus.ACTIVE,
+            last_heartbeat=None,
+        )
+        self.mock_service.list_feeds.return_value = ListFeedsResponse(
+            feeds=[mock_feed],
+            next_token=None,
+        )
+        response = self.client.get("/v1/feeds?name=Test%20Feed")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.mock_service.list_feeds.assert_called_once_with(
+            limit=100,
+            next_token=None,
+            order=SortOrder.DESC,
+            source_types=None,
+            statuses=None,
+            tags=None,
+            name="Test Feed",
         )
 
     def test_list_feeds_with_invalid_source_type(self) -> None:

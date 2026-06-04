@@ -13,6 +13,7 @@ import asyncpg
 
 from backend.pipeline.storage import feed_queries
 from backend.pipeline.storage.feed_store import (
+    FeedStatus,
     FeedStatusReason,
     FeedStore,
     HeartbeatResult,
@@ -1460,20 +1461,77 @@ class TestListFeeds(unittest.IsolatedAsyncioTestCase):
 
     async def test_list_feeds_decodes_and_uses_cursor(self) -> None:
         """The next_token parameter is decoded and forwarded as SQL parameters."""
-        pool = make_mock_pool(fetch_result=[])
+        row = _full_feed_row(name="Feed Cursor")
+        pool = make_mock_pool(fetch_result=[row])
         store = FeedStore(pool)
 
         # Generate a token representing a cursor
         cursor_ts = datetime.datetime(2024, 1, 1, 12, 0, 0)
         token = encode_cursor(cursor_ts, _FEED_ID)
 
-        await store.list_feeds(limit=10, next_token=token)
+        result = await store.list_feeds(limit=10, next_token=token)
 
         args = pool.fetch.call_args[0]
-        # Parameters should be (query, cursor_ts, cursor_uid, source_types, statuses, tags_json, limit + 1)
+        # Parameters should be (query, cursor_ts, cursor_uid, source_types, statuses, tags_json, name, limit + 1)
         self.assertEqual(args[1], cursor_ts)
         self.assertEqual(args[2], _FEED_ID)
-        self.assertEqual(args[6], 11)
+        self.assertEqual(args[6], None)
+        self.assertEqual(args[7], 11)
+        self.assertEqual(len(result.feeds), 1)
+        self.assertEqual(result.feeds[0]["name"], "Feed Cursor")
+
+    async def test_list_feeds_with_name_filter(self) -> None:
+        """The name parameter is forwarded to the query, and the matching feed is returned."""
+        row = _full_feed_row(name="My Feed")
+        pool = make_mock_pool(fetch_result=[row])
+        store = FeedStore(pool)
+
+        result = await store.list_feeds(name="My Feed")
+
+        args = pool.fetch.call_args[0]
+        self.assertEqual(args[6], "My Feed")
+        self.assertEqual(len(result.feeds), 1)
+        self.assertEqual(result.feeds[0]["name"], "My Feed")
+
+    async def test_list_feeds_with_source_types_filter(self) -> None:
+        """The source_types parameter is forwarded to the query, and the matching feed is returned."""
+        row = _full_feed_row(name="Feed B", source_type="openmhz")
+        pool = make_mock_pool(fetch_result=[row])
+        store = FeedStore(pool)
+
+        result = await store.list_feeds(source_types=[SourceType.OPENMHZ])
+
+        args = pool.fetch.call_args[0]
+        self.assertEqual(args[3], [SourceType.OPENMHZ])
+        self.assertEqual(len(result.feeds), 1)
+        self.assertEqual(result.feeds[0]["source_type"], SourceType.OPENMHZ)
+
+    async def test_list_feeds_with_statuses_filter(self) -> None:
+        """The statuses parameter is forwarded to the query, and the matching feed is returned."""
+        row = _full_feed_row(name="Feed C", status="active")
+        pool = make_mock_pool(fetch_result=[row])
+        store = FeedStore(pool)
+
+        result = await store.list_feeds(statuses=[FeedStatus.ACTIVE])
+
+        args = pool.fetch.call_args[0]
+        self.assertEqual(args[4], [FeedStatus.ACTIVE])
+        self.assertEqual(len(result.feeds), 1)
+        self.assertEqual(result.feeds[0]["status"], FeedStatus.ACTIVE)
+
+    async def test_list_feeds_with_tags_filter(self) -> None:
+        """The tags parameter is JSON serialized, forwarded to the query, and returned."""
+        tags = [{"key": "region", "value": "West"}]
+        row = _full_feed_row(name="Feed D", tags=json.dumps(tags))
+        pool = make_mock_pool(fetch_result=[row])
+        store = FeedStore(pool)
+
+        result = await store.list_feeds(tags=tags)
+
+        args = pool.fetch.call_args[0]
+        self.assertEqual(args[5], json.dumps(tags))
+        self.assertEqual(len(result.feeds), 1)
+        self.assertEqual(result.feeds[0]["tags"], tags)
 
 
 class TestDeactivateFeed(unittest.IsolatedAsyncioTestCase):
