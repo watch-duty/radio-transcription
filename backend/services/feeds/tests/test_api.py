@@ -320,7 +320,7 @@ class TestFeedsAPI(unittest.TestCase):
         )
 
     def test_list_feeds_with_name_filter(self) -> None:
-        """Test listing feeds with name filter query param."""
+        """Test listing feeds with name query parameter."""
         feed_id = uuid.uuid4()
         mock_feed = Feed(
             id=feed_id,
@@ -335,7 +335,7 @@ class TestFeedsAPI(unittest.TestCase):
             feeds=[mock_feed],
             next_token=None,
         )
-        response = self.client.get("/v1/feeds?name=Test")
+        response = self.client.get("/v1/feeds?name=Test%20Feed")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.mock_service.list_feeds.assert_called_once_with(
             limit=100,
@@ -344,7 +344,7 @@ class TestFeedsAPI(unittest.TestCase):
             source_types=None,
             statuses=None,
             tags=None,
-            name="Test",
+            name="Test Feed",
         )
 
     def test_list_feeds_with_invalid_source_type(self) -> None:

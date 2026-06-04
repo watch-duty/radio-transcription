@@ -773,7 +773,8 @@ class FeedStore:
     ) -> PaginatedFeeds:
         """List all feeds with keyset pagination and optional filters.
 
-        Retrieves feeds ordered by creation time, using timestamp+ID-based keyset pagination.
+        Retrieves feeds ordered by creation time, using timestamp+ID-based
+        keyset pagination.
         """
         cursor_ts = None
         cursor_uid = None
@@ -794,6 +795,7 @@ class FeedStore:
             source_types,
             statuses,
             tags_json,
+            name,
             limit + 1,
             name,
         )
