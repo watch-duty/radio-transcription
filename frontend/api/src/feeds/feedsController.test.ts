@@ -102,7 +102,10 @@ describe('FeedsController', () => {
       const controller = new FeedsController();
       const result = await controller.listFeeds();
 
-      expect(result).toEqual([expectedFrontendFeed]);
+      expect(result).toEqual({
+        feeds: [expectedFrontendFeed],
+        nextToken: 'token_123',
+      });
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://feeds-api.example.com',
         method: 'GET',
@@ -446,7 +449,9 @@ describe('FeedsController', () => {
         ],
       });
       const controller = new FeedsController();
-      const [feed] = await controller.listFeeds();
+      const result = await controller.listFeeds();
+      const feeds = Array.isArray(result) ? result : result.feeds;
+      const [feed] = feeds;
       return feed.sourceUrl;
     }
 
@@ -525,7 +530,9 @@ describe('FeedsController', () => {
         ],
       });
       const controller = new FeedsController();
-      const [feed] = await controller.listFeeds();
+      const result = await controller.listFeeds();
+      const feeds = Array.isArray(result) ? result : result.feeds;
+      const [feed] = feeds;
       return feed.archiveUrl;
     }
 
@@ -596,7 +603,9 @@ describe('FeedsController', () => {
         });
 
         const controller = new FeedsController();
-        const [feed] = await controller.listFeeds();
+        const result = await controller.listFeeds();
+        const feeds = Array.isArray(result) ? result : result.feeds;
+        const [feed] = feeds;
 
         expect(feed.status).toBe(expected);
       });
