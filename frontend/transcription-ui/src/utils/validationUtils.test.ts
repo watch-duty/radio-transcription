@@ -25,7 +25,7 @@ describe('validationUtils', () => {
 
       it('returns error for invalid formats', () => {
         const expectedError =
-          'Must only contain numbers with a dash in the middle.';
+          'Must only contain numbers formatted as sid-talkgroup.';
         expect(validateFeedSourceId(SourceType.BCFY_CALLS, '123')).toBe(
           expectedError
         );

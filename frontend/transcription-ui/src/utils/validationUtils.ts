@@ -16,7 +16,7 @@ export function validateFeedSourceId(
   switch (sourceType) {
     case SourceType.BCFY_CALLS:
       if (!/^\d+-\d+$/.test(trimmedId)) {
-        return 'Must only contain numbers with a dash in the middle.';
+        return 'Must only contain numbers formatted as sid-talkgroup.';
       }
       break;
     case SourceType.BCFY_FEEDS:
