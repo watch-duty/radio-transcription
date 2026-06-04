@@ -55,6 +55,34 @@ export function handleBackendError(
   };
 }
 
+interface ServiceResponse<T> {
+  data: T;
+  status?: number;
+  statusText?: string;
+  headers?: unknown;
+  config?: unknown;
+}
+
+interface ServiceClient {
+  request<T = unknown>(config: AxiosRequestConfig): Promise<ServiceResponse<T>>;
+}
+
+const clientFactories: Record<
+  string,
+  (targetUrl: string) => Promise<ServiceClient>
+> = {
+  none: async () => ({
+    request: <T>(config: AxiosRequestConfig): Promise<AxiosResponse<T>> => {
+      return axios<T>(config);
+    },
+  }),
+  google: async (targetUrl: string) => {
+    const auth = new GoogleAuth();
+    const client = await auth.getIdTokenClient(targetUrl);
+    return client as unknown as ServiceClient;
+  },
+};
+
 /**
  * Returns an HTTP client to communicate with downstream services.
  *
@@ -68,17 +96,15 @@ export function handleBackendError(
  * @param targetUrl The base URL of the service we want to request.
  * @returns An authenticated client or an unauthenticated axios fallback wrapper.
  */
-export async function getServiceClient(targetUrl: string) {
+export async function getServiceClient(
+  targetUrl: string
+): Promise<ServiceClient> {
   const isProduction = process.env.NODE_ENV === 'production';
-  if (AUTH_BACKEND === 'none' && !isProduction) {
-    return {
-      request: <T>(config: AxiosRequestConfig): Promise<AxiosResponse<T>> => {
-        return axios<T>(config);
-      },
-    };
-  }
+  const backend = !isProduction && AUTH_BACKEND === 'none' ? 'none' : 'google';
 
-  // Production path: use Google Auth to get ID token client
-  const auth = new GoogleAuth();
-  return await auth.getIdTokenClient(targetUrl);
+  const factory = clientFactories[backend];
+  if (!factory) {
+    throw new Error(`Unsupported AUTH_BACKEND: ${backend}`);
+  }
+  return factory(targetUrl);
 }
