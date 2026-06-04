@@ -5,6 +5,7 @@ import { FeedsController } from './feedsController.js';
 
 // Mock the config module
 vi.mock('../config.js', () => ({
+  AUTH_BACKEND: 'google',
   FEEDS_STORE_API_URL: 'http://feeds-api.example.com',
 }));
 
