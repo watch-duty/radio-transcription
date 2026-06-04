@@ -72,7 +72,6 @@ class TestSendNotification(TestCase):
             transmission_id="1234",
             source_audio_uris=["gs://foo/bar.flac"],
             feed_name="asdf",
-            external_id="ext-id",
         )
         evaluated_payload.start_audio_offset.seconds = 10
         evaluated_payload.end_audio_offset.seconds = 20
@@ -97,7 +96,6 @@ class TestSendNotification(TestCase):
             transmission_id="1234",
             source_audio_uris=["gs://foo/bar.flac"],
             feed_name="asdf",
-            external_id="ext-id",
             app_url="https://app.example.com/transcripts?feedId=&transmissionId=1234&timestamp=1000000",
         )
         expected_notification.start_audio_offset.seconds = 10
@@ -136,7 +134,6 @@ class TestSendNotification(TestCase):
             transmission_id="5678",
             source_audio_uris=["gs://foo/bar.flac"],
             feed_name="asdf",
-            external_id="ext-id",
             errors=[EvaluationErrorType.ERROR_RULES_FETCH_FAILED],
         )
         evaluated_payload.start_audio_offset.seconds = 10
@@ -160,7 +157,6 @@ class TestSendNotification(TestCase):
             transmission_id="5678",
             source_audio_uris=["gs://foo/bar.flac"],
             feed_name="asdf",
-            external_id="ext-id",
             app_url="https://app.example.com/transcripts?feedId=&transmissionId=5678&timestamp=1000000",
             evaluation_errors=[EvaluationErrorType.ERROR_RULES_FETCH_FAILED],
         )

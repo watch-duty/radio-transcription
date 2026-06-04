@@ -17,7 +17,6 @@ describe('createFeed', () => {
       name: 'New Feed',
       sourceType: SourceType.BCFY_FEEDS,
       sourceFeedId: '12345',
-      externalId: 'ext-123',
       tags: [{ key: 'county', value: 'Marin' }],
     };
 
@@ -26,7 +25,6 @@ describe('createFeed', () => {
       name: 'New Feed',
       sourceType: SourceType.BCFY_FEEDS,
       sourceFeedId: '12345',
-      externalId: 'ext-123',
       status: 'active',
       tags: [{ key: 'county', value: 'Marin' }],
     };
@@ -74,7 +72,6 @@ describe('createFeed', () => {
           name: 'New Feed',
           sourceType: SourceType.BCFY_FEEDS,
           sourceFeedId: '12345',
-          externalId: 'ext-123',
         },
         'tokenXYZ'
       )

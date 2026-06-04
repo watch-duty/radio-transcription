@@ -39,7 +39,6 @@ class TestFeedsAPI(unittest.TestCase):
             "name": "Test Feed",
             "source_type": "bcfy_feeds",
             "source_feed_id": "123",
-            "external_id": "ext_123",
         }
         feed_id = uuid.uuid4()
         mock_feed = Feed(
@@ -47,7 +46,6 @@ class TestFeedsAPI(unittest.TestCase):
             name="Test Feed",
             source_type=SourceType.BCFY_FEEDS,
             source_feed_id="123",
-            external_id="ext_123",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
@@ -66,7 +64,6 @@ class TestFeedsAPI(unittest.TestCase):
             "name": "Test Feed",
             "source_type": "bcfy_feeds",
             "source_feed_id": "123",
-            "external_id": "ext_123",
         }
         self.mock_service.create_feed.side_effect = FeedAlreadyExistsError(
             "bcfy_feeds", "123"
@@ -87,7 +84,6 @@ class TestFeedsAPI(unittest.TestCase):
             "name": "Test Feed",
             # missing source_type
             "source_feed_id": "123",
-            "external_id": "ext_123",
         }
         response = self.client.post("/v1/feeds", json=payload)
         self.assertEqual(
@@ -100,7 +96,6 @@ class TestFeedsAPI(unittest.TestCase):
             "name": "Test Feed",
             "source_type": "bcfy_feeds",
             "source_feed_id": "123",
-            "external_id": "ext_123",
             "tags": [{"key": "county", "value": "Fulton"}],
         }
         feed_id = uuid.uuid4()
@@ -109,7 +104,6 @@ class TestFeedsAPI(unittest.TestCase):
             name="Test Feed",
             source_type=SourceType.BCFY_FEEDS,
             source_feed_id="123",
-            external_id="ext_123",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
             tags=[Tag(key="county", value="Fulton")],
@@ -132,7 +126,6 @@ class TestFeedsAPI(unittest.TestCase):
             name="Test Feed",
             source_type=SourceType.BCFY_FEEDS,
             source_feed_id="123",
-            external_id="ext_123",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
@@ -152,7 +145,6 @@ class TestFeedsAPI(unittest.TestCase):
             name="Test Feed",
             source_type=SourceType.BCFY_FEEDS,
             source_feed_id="123",
-            external_id="ext_123",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
             tags=[Tag(key="county", value="Fulton")],
@@ -222,7 +214,6 @@ class TestFeedsAPI(unittest.TestCase):
             name="Test Feed",
             source_type=SourceType.BCFY_FEEDS,
             source_feed_id="123",
-            external_id="ext_123",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
@@ -249,14 +240,12 @@ class TestFeedsAPI(unittest.TestCase):
         feed_id = uuid.uuid4()
         payload = {
             "name": "Updated Feed",
-            "external_id": "ext_456",
         }
         mock_feed = Feed(
             id=feed_id,
             name="Updated Feed",
             source_type=SourceType.BCFY_FEEDS,
             source_feed_id="123",
-            external_id="ext_456",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
@@ -275,7 +264,6 @@ class TestFeedsAPI(unittest.TestCase):
         feed_id = uuid.uuid4()
         payload = {
             "name": "Updated Feed",
-            "external_id": "ext_456",
         }
         self.mock_service.update_feed.return_value = None
 
@@ -288,7 +276,6 @@ class TestFeedsAPI(unittest.TestCase):
         feed_id = uuid.uuid4()
         payload = {
             "name": "Updated Feed",
-            "external_id": "ext_456",
         }
         self.mock_service.update_feed.side_effect = FeedNameAlreadyExistsError(
             "Updated Feed"

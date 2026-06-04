@@ -119,7 +119,6 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             feed_name="mock-feed-name",
             duration_ms=1000,
             feed_id="test-feed",
-            external_id="mock-external-id",
         )
         mock_msg = PubsubMessage(
             chunk.SerializeToString(),
@@ -150,7 +149,6 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
                                 duration_ms=1000,
                                 feed_metadata=FeedMetadata(
                                     feed_name="mock-feed-name",
-                                    external_id="mock-external-id",
                                 ),
                             ),
                         )
@@ -206,7 +204,6 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             gcs_uri="gs://test-bucket/path/to/test.flac",
             feed_name="mock-feed-name",
             duration_ms=1000,
-            external_id="mock-external-id",
         )
         mock_msg = PubsubMessage(
             chunk.SerializeToString(),
@@ -249,7 +246,6 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             feed_name="mock-feed-name",
             duration_ms=1000,
             feed_id="test-feed",
-            external_id="mock-external-id",
         )
         mock_msg = PubsubMessage(
             chunk.SerializeToString(),
@@ -290,7 +286,6 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             feed_name="mock-feed-name",
             duration_ms=1000,
             feed_id="test-feed",
-            external_id="mock-external-id",
         )
         mock_msg = PubsubMessage(
             chunk.SerializeToString(),
@@ -331,7 +326,6 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             feed_name="mock-feed-name",
             duration_ms=1000,
             feed_id="test-feed",
-            external_id="mock-external-id",
         )
         mock_msg = PubsubMessage(
             chunk.SerializeToString(),
@@ -423,7 +417,6 @@ class NormalizeAudioTest(unittest.TestCase):
                             end_audio_offset_ms=500,
                             feed_metadata=FeedMetadata(
                                 feed_name="fake-feed",
-                                external_id="fake-external",
                             ),
                             sample_rate=16000,
                         ),
@@ -466,7 +459,6 @@ class SerializeNormalizationClaimTest(unittest.TestCase):
         with BeamTestPipeline(options=options) as p:
             feed_metadata = FeedMetadata(
                 feed_name="Test Feed Name",
-                external_id="test-external-id",
             )
 
             res1 = NormalizationResult(
@@ -530,11 +522,9 @@ class SerializeNormalizationClaimTest(unittest.TestCase):
 
                 assert protos[0].canonical_audio_uri == "gs://bucket/1.flac"
                 assert protos[0].feed_name == "Test Feed Name"
-                assert protos[0].external_id == "test-external-id"
 
                 assert protos[1].canonical_audio_uri == "gs://bucket/2.flac"
                 assert protos[1].feed_name == "Test Feed Name"
-                assert protos[1].external_id == "test-external-id"
 
             assert_that(results, assert_results)
 
@@ -561,7 +551,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
         mock_state.read.return_value = ActiveStitchingState(
             session_id="mock-session-id",
             feed_metadata=FeedMetadata(
-                feed_name="mock-feed", external_id="mock-external-id"
+                feed_name="mock-feed"
             ),
         )
         mock_timer = MagicMock()
@@ -571,7 +561,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
             session_id="mock-session-id",
             duration_ms=1000,
             feed_metadata=FeedMetadata(
-                feed_name="mock-feed", external_id="mock-external-id"
+                feed_name="mock-feed"
             ),
             traceparent="mock-traceparent",
         )
@@ -625,7 +615,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 BufferedChunk(timestamp_ms=100000, gcs_uri="gs://test.flac")
             ],
             feed_metadata=FeedMetadata(
-                feed_name="mock-feed", external_id="mock-id"
+                feed_name="mock-feed"
             ),
         )
         mock_state.read.return_value = curr_context
@@ -715,7 +705,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
             last_end_time_ms=1000,
             contributing_audio_uris=["gs://main/chunk1.flac"],
             feed_metadata=FeedMetadata(
-                feed_name="mock-feed", external_id="mock-id"
+                feed_name="mock-feed"
             ),
         )
 
@@ -736,7 +726,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 session_id="mock-session",
                 duration_ms=1000,
                 feed_metadata=FeedMetadata(
-                    feed_name="mock-feed", external_id="mock-external-id"
+                    feed_name="mock-feed"
                 ),
             ),
         )
@@ -809,7 +799,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
             session_id="mock-session-id",
             duration_ms=1000,
             feed_metadata=FeedMetadata(
-                feed_name="mock-feed", external_id="mock-external-id"
+                feed_name="mock-feed"
             ),
             traceparent="mock-traceparent",
         )
@@ -902,13 +892,13 @@ class OrderedStitchAudioTest(unittest.TestCase):
             gcs_uri="gs://test-bucket/first_chunk.flac",
             session_id="session-A",
             duration_ms=1000,
-            feed_metadata=FeedMetadata(feed_name="f", external_id="id"),
+            feed_metadata=FeedMetadata(feed_name="f"),
         )
         metadata_chunk2 = ChunkMetadata(
             gcs_uri="gs://test-bucket/second_chunk.flac",
             session_id="session-B",
             duration_ms=1000,
-            feed_metadata=FeedMetadata(feed_name="f", external_id="id"),
+            feed_metadata=FeedMetadata(feed_name="f"),
         )
 
         with BeamTestPipeline(options=options) as p:
@@ -1018,7 +1008,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
             session_id="mock-session-id",
             duration_ms=1000,
             feed_metadata=FeedMetadata(
-                feed_name="mock-feed", external_id="mock-external-id"
+                feed_name="mock-feed"
             ),
         )
 
@@ -1027,7 +1017,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
             session_id="mock-session-id",
             duration_ms=1000,
             feed_metadata=FeedMetadata(
-                feed_name="mock-feed", external_id="mock-external-id"
+                feed_name="mock-feed"
             ),
         )
 
@@ -1036,7 +1026,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
             session_id="mock-session-id",
             duration_ms=1000,
             feed_metadata=FeedMetadata(
-                feed_name="mock-feed", external_id="mock-external-id"
+                feed_name="mock-feed"
             ),
         )
 
@@ -1154,7 +1144,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
             ActiveStitchingState(
                 session_id="session-1",
                 feed_metadata=FeedMetadata(
-                    feed_name="test-feed", external_id="ext-1"
+                    feed_name="test-feed"
                 ),
             )
         )
@@ -1166,7 +1156,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
             session_id="session-1",
             duration_ms=5000,
             feed_metadata=FeedMetadata(
-                feed_name="test-feed", external_id="ext-1"
+                feed_name="test-feed"
             ),
         )
 
@@ -1272,7 +1262,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
             ActiveStitchingState(
                 session_id="session-1",
                 feed_metadata=FeedMetadata(
-                    feed_name="test-feed", external_id="ext-1"
+                    feed_name="test-feed"
                 ),
             )
         )
@@ -1284,7 +1274,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
             session_id="session-1",
             duration_ms=5000,
             feed_metadata=FeedMetadata(
-                feed_name="test-feed", external_id="ext-1"
+                feed_name="test-feed"
             ),
         )
 
@@ -1382,7 +1372,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
             ActiveStitchingState(
                 session_id="session-long",
                 feed_metadata=FeedMetadata(
-                    feed_name="test-feed", external_id="ext-long"
+                    feed_name="test-feed"
                 ),
             )
         )
@@ -1394,7 +1384,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
             session_id="session-long",
             duration_ms=65000,
             feed_metadata=FeedMetadata(
-                feed_name="test-feed", external_id="ext-long"
+                feed_name="test-feed"
             ),
         )
 
@@ -1487,7 +1477,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
             ActiveStitchingState(
                 session_id="session-silence",
                 feed_metadata=FeedMetadata(
-                    feed_name="test-feed", external_id="ext-silence"
+                    feed_name="test-feed"
                 ),
             )
         )
@@ -1499,7 +1489,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
             session_id="session-silence",
             duration_ms=65000,
             feed_metadata=FeedMetadata(
-                feed_name="test-feed", external_id="ext-silence"
+                feed_name="test-feed"
             ),
         )
 
@@ -1596,7 +1586,7 @@ class OrderedSegmentedStitchAudioTest(unittest.TestCase):
             ActiveStitchingState(
                 session_id="same-session-id",
                 feed_metadata=FeedMetadata(
-                    feed_name="segmented-feed", external_id="external-id"
+                    feed_name="segmented-feed"
                 ),
             )
         )
@@ -1608,7 +1598,7 @@ class OrderedSegmentedStitchAudioTest(unittest.TestCase):
             session_id="same-session-id",
             duration_ms=15000,
             feed_metadata=FeedMetadata(
-                feed_name="segmented-feed", external_id="external-id"
+                feed_name="segmented-feed"
             ),
         )
 
@@ -1693,7 +1683,7 @@ class DlqTaggingTest(unittest.TestCase):
         ctx = ActiveStitchingState(
             session_id="test-session",
             feed_metadata=FeedMetadata(
-                feed_name="test-feed", external_id="ext-id"
+                feed_name="test-feed"
             ),
         )
         return fn, MockValueState(ctx), MockBagState(), MockValueState(None)
@@ -1811,7 +1801,7 @@ class DlqTaggingTest(unittest.TestCase):
         fn.setup()
 
         expected_feed_metadata = FeedMetadata(
-            feed_name="test-feed", external_id="ext-id"
+            feed_name="test-feed"
         )
 
         # Call process() first so the engine properly seeds contributing_audio_uris,
@@ -1887,7 +1877,7 @@ class DlqTaggingTest(unittest.TestCase):
             session_id="test-session",
             duration_ms=3000,
             feed_metadata=FeedMetadata(
-                feed_name="test-feed", external_id="ext-id"
+                feed_name="test-feed"
             ),
         )
         # 1. Process chunk (this should update context state with the 8 kHz sample rate)
@@ -1953,7 +1943,7 @@ class DlqTaggingTest(unittest.TestCase):
             session_id="test-session",
             duration_ms=3000,
             feed_metadata=FeedMetadata(
-                feed_name="test-feed", external_id="ext-id"
+                feed_name="test-feed"
             ),
         )
         # Process chunk (since it is segmented, it will trigger an immediate flush within the same process call)
@@ -2018,7 +2008,7 @@ class DlqTaggingTest(unittest.TestCase):
             session_id="session-1",
             duration_ms=3000,
             feed_metadata=FeedMetadata(
-                feed_name="test-feed", external_id="ext-id"
+                feed_name="test-feed"
             ),
             traceparent="traceparent-1",
         )
@@ -2061,7 +2051,7 @@ class DlqTaggingTest(unittest.TestCase):
             session_id="session-2",
             duration_ms=3000,
             feed_metadata=FeedMetadata(
-                feed_name="test-feed", external_id="ext-id"
+                feed_name="test-feed"
             ),
             traceparent="traceparent-2",
         )

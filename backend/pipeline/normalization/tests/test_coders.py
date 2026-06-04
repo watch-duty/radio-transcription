@@ -39,7 +39,7 @@ class CoderVerificationTest(unittest.TestCase):
         active = datatypes.ActiveStitchingState(
             session_id="mock-session-id",
             feed_metadata=datatypes.FeedMetadata(
-                feed_name="Mock Feed", external_id="ext-123"
+                feed_name="Mock Feed"
             ),
             last_end_time_ms=5000,
             stale_start_time_ms=1000,

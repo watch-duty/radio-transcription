@@ -23,7 +23,6 @@ class TimeRangeProto(betterproto.Message):
 @dataclass(eq=False, repr=False)
 class FeedMetadataProto(betterproto.Message):
     feed_name: str = betterproto.string_field(1)
-    external_id: str = betterproto.string_field(2)
 
 
 @dataclass(eq=False, repr=False)

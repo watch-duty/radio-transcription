@@ -40,7 +40,6 @@ def test_feed_with_tags() -> Generator[str]:
         "name": feed_name,
         "source_type": "bcfy_feeds",
         "source_feed_id": f"src-{uuid.uuid4()}",
-        "external_id": f"ext-{uuid.uuid4()}",
         "tags": [{"key": "env", "value": "prod"}],
     }
 

@@ -32,7 +32,6 @@ def _make_feed(name: str, source_feed_id: str | None) -> LeasedFeed:
     return LeasedFeed(
         id=TEST_FEED_ID,
         name=name,
-        external_id="ext-id",
         source_type=SourceType.BCFY_FEEDS,
         last_processed_filename=None,
         last_bookmark_time=None,
@@ -331,7 +330,6 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             {
                 "id": uuid.uuid4(),
                 "name": "incomplete-feed",
-                "external_id": "ext-id",
                 "source_type": "icecast",
                 "last_processed_filename": None,
                 "last_bookmark_time": None,
