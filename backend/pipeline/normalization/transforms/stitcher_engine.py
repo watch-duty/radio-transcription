@@ -444,6 +444,7 @@ class StitcherEngine:
                 - The next expected sequence timestamp.
         """
         from backend.pipeline.common.tracing_utils import (  # noqa: PLC0415
+            get_current_traceparent,
             with_tracer_context,
         )
 
@@ -507,7 +508,8 @@ class StitcherEngine:
                     end_audio_offset_ms=None,
                     buffer_duration_ms=curr_context.buffer_duration_ms,
                     speech_segments=curr_context.speech_segments.copy(),
-                    traceparent=curr_context.traceparent,
+                    traceparent=curr_context.traceparent
+                    or get_current_traceparent(),
                     prior_audio_tail=curr_context.prior_audio_tail,
                 )
 
