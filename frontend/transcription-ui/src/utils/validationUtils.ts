@@ -1,4 +1,5 @@
 import { SourceType } from '@transcription/common';
+import type { RuleConditions, RuleCreate } from '@transcription/common';
 
 /**
  * Validates a feed source ID based on its SourceType.
@@ -45,7 +46,6 @@ export function validateFeedSourceId(
 
   return null;
 }
-import type { RuleConditions, RuleCreate } from '@transcription/common';
 
 /**
  * Validates a rule to ensure all required fields are populated correctly.
@@ -146,25 +146,29 @@ export function buildRulePayload(
   }
 
   let conditionsPayload: RuleConditions;
-  if (editingRule.conditions.evaluationType === 'KEYWORD_MATCH') {
-    conditionsPayload = {
-      evaluationType: 'KEYWORD_MATCH',
-      operator: editingRule.conditions.operator,
-      keywords: finalKeywords,
-      caseSensitive: editingRule.conditions.caseSensitive,
-    };
-  } else if (editingRule.conditions.evaluationType === 'REGEX_MATCH') {
-    conditionsPayload = {
-      evaluationType: 'REGEX_MATCH',
-      expression: editingRule.conditions.expression.trim(),
-      flags: editingRule.conditions.flags.trim(),
-    };
-  } else {
-    conditionsPayload = {
-      evaluationType: 'RULE_GROUP',
-      operator: editingRule.conditions.operator,
-      childRuleIds: editingRule.conditions.childRuleIds,
-    };
+  switch (editingRule.conditions.evaluationType) {
+    case 'KEYWORD_MATCH':
+      conditionsPayload = {
+        evaluationType: 'KEYWORD_MATCH',
+        operator: editingRule.conditions.operator,
+        keywords: finalKeywords,
+        caseSensitive: editingRule.conditions.caseSensitive,
+      };
+      break;
+    case 'REGEX_MATCH':
+      conditionsPayload = {
+        evaluationType: 'REGEX_MATCH',
+        expression: editingRule.conditions.expression.trim(),
+        flags: editingRule.conditions.flags.trim(),
+      };
+      break;
+    case 'RULE_GROUP':
+      conditionsPayload = {
+        evaluationType: 'RULE_GROUP',
+        operator: editingRule.conditions.operator,
+        childRuleIds: editingRule.conditions.childRuleIds,
+      };
+      break;
   }
 
   const scopePayload = {

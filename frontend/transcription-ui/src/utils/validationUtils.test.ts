@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { SourceType, type RuleCreate } from '@transcription/common';
+import { type RuleCreate, SourceType } from '@transcription/common';
 
-import { validateFeedSourceId } from './validationUtils';
+import {
+  buildRulePayload,
+  validateFeedSourceId,
+  validateRule,
+} from './validationUtils';
 
 describe('validationUtils', () => {
   describe('validateFeedSourceId', () => {
