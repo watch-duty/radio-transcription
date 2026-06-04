@@ -508,7 +508,8 @@ class StitcherEngine:
                     end_audio_offset_ms=None,
                     buffer_duration_ms=curr_context.buffer_duration_ms,
                     speech_segments=curr_context.speech_segments.copy(),
-                    traceparent=curr_context.traceparent
+                    traceparent=chunk.traceparent
+                    or curr_context.traceparent
                     or get_current_traceparent(),
                     prior_audio_tail=curr_context.prior_audio_tail,
                 )
