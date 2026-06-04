@@ -154,7 +154,8 @@ def process_ordering(
             feed_metadata=metadata.feed_metadata,
             out_of_order_buffer=curr_context.out_of_order_buffer,
             order_timer_active=curr_context.order_timer_active,
-            traceparent=metadata.traceparent,
+            traceparent=metadata.traceparent
+            or tracing_utils.get_current_traceparent(),
         )
         session_changed = True
         out_of_order_timer.clear()
@@ -167,7 +168,8 @@ def process_ordering(
         curr_context = datatypes.ActiveStitchingState(
             session_id=metadata.session_id,
             feed_metadata=metadata.feed_metadata,
-            traceparent=metadata.traceparent,
+            traceparent=metadata.traceparent
+            or tracing_utils.get_current_traceparent(),
         )
 
     seq_buf = sequence_buffer.SequenceBuffer(order_config)
@@ -1160,7 +1162,8 @@ class NormalizeAudioFn(beam.DoFn):
             playback_audio_uri=playback_audio_uri
             or "gs://test-bucket/placeholder.m4a",
             feed_metadata=request.feed_metadata,
-            traceparent=request.traceparent,
+            traceparent=tracing_utils.get_current_traceparent()
+            or request.traceparent,
         )
 
     @override
