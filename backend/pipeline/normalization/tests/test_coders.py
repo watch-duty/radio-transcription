@@ -38,9 +38,7 @@ class CoderVerificationTest(unittest.TestCase):
         coder = coders.TransmissionContextCoder()
         active = datatypes.ActiveStitchingState(
             session_id="mock-session-id",
-            feed_metadata=datatypes.FeedMetadata(
-                feed_name="Mock Feed"
-            ),
+            feed_metadata=datatypes.FeedMetadata(feed_name="Mock Feed"),
             last_end_time_ms=5000,
             stale_start_time_ms=1000,
             buffer_start_time_ms=1000,
@@ -90,7 +88,7 @@ class CoderVerificationTest(unittest.TestCase):
             contributing_audio_uris=["gs://bucket/audio.flac"],
             time_range=datatypes.TimeRange(0, 1000),
             transmission_id="tx-uuid-123",
-            feed_metadata=datatypes.FeedMetadata("Feed", "Ext"),
+            feed_metadata=datatypes.FeedMetadata("Feed"),
             sample_rate=16000,
             missing_prior_context=False,
             missing_post_context=False,
@@ -117,7 +115,7 @@ class CoderVerificationTest(unittest.TestCase):
             gcs_uri="gs://bucket/chunk.flac",
             session_id="sess-01",
             duration_ms=1000,
-            feed_metadata=datatypes.FeedMetadata("Name", "Ext"),
+            feed_metadata=datatypes.FeedMetadata("Name"),
             traceparent="trace-01",
             is_continuous=True,
         )
