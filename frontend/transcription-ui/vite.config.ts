@@ -1,4 +1,5 @@
-import { Plugin, UserConfig, defineConfig, loadEnv, mergeConfig } from 'vite';
+import { defineConfig, loadEnv, mergeConfig } from 'vite';
+import type { Plugin, UserConfig } from 'vite';
 
 import react from '@vitejs/plugin-react-swc';
 
