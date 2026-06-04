@@ -132,7 +132,7 @@ export class AudioController extends Controller {
       }
 
       const auth = new GoogleAuth();
-      const client = await auth.getIdTokenClient(AUDIO_SEGMENTS_API_URL!);
+      const client = await auth.getIdTokenClient(AUDIO_SEGMENTS_API_URL);
       const response = await client.request({
         url: `${AUDIO_SEGMENTS_API_URL}?${queryParams.toString()}`,
         method: 'GET',
