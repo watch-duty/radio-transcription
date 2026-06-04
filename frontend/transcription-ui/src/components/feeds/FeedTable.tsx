@@ -224,9 +224,7 @@ export function FeedTable({
           ) ?? false;
         const sourceIdMatches =
           feed.sourceFeedId?.toLowerCase().includes(query) ?? false;
-        return (
-          nameMatches || tagMatches || sourceIdMatches
-        );
+        return nameMatches || tagMatches || sourceIdMatches;
       });
     }
 

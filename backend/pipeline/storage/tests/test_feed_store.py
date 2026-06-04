@@ -1301,9 +1301,7 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
         pool = make_mock_pool(fetchrow_result=row)
         store = FeedStore(pool)
 
-        result = await store.create_feed(
-            "New Feed", "bcfy_feeds", "123"
-        )
+        result = await store.create_feed("New Feed", "bcfy_feeds", "123")
 
         self.assertEqual(result["id"], _FEED_ID)
         self.assertEqual(result["name"], "New Feed")
@@ -1337,9 +1335,7 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
 
         tags = [{"invalid": "shape"}]
         with self.assertRaises(asyncpg.CheckViolationError):
-            await store.create_feed(
-                "New Feed", "bcfy_feeds", "123", tags=tags
-            )
+            await store.create_feed("New Feed", "bcfy_feeds", "123", tags=tags)
 
     async def test_raises_value_error_on_failure(self) -> None:
         """ValueError is raised if the DB returns no row."""

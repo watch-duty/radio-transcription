@@ -550,9 +550,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
         mock_state = MagicMock()
         mock_state.read.return_value = ActiveStitchingState(
             session_id="mock-session-id",
-            feed_metadata=FeedMetadata(
-                feed_name="mock-feed"
-            ),
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
         )
         mock_timer = MagicMock()
 
@@ -560,9 +558,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
             gcs_uri="gs://test-bucket/path/to/test.flac",
             session_id="mock-session-id",
             duration_ms=1000,
-            feed_metadata=FeedMetadata(
-                feed_name="mock-feed"
-            ),
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
             traceparent="mock-traceparent",
         )
 
@@ -614,9 +610,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
             out_of_order_buffer=[
                 BufferedChunk(timestamp_ms=100000, gcs_uri="gs://test.flac")
             ],
-            feed_metadata=FeedMetadata(
-                feed_name="mock-feed"
-            ),
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
         )
         mock_state.read.return_value = curr_context
 
@@ -704,9 +698,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
             buffer_start_time_ms=0,
             last_end_time_ms=1000,
             contributing_audio_uris=["gs://main/chunk1.flac"],
-            feed_metadata=FeedMetadata(
-                feed_name="mock-feed"
-            ),
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
         )
 
         transmission_context_state = MockValueState(curr_context)
@@ -725,9 +717,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 gcs_uri="gs://late/chunk2.flac",
                 session_id="mock-session",
                 duration_ms=1000,
-                feed_metadata=FeedMetadata(
-                    feed_name="mock-feed"
-                ),
+                feed_metadata=FeedMetadata(feed_name="mock-feed"),
             ),
         )
         timestamp = Timestamp(1.0)  # 1.0 seconds = 1000 ms
@@ -798,9 +788,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
             gcs_uri="gs://test-bucket/path/to/test.flac",
             session_id="mock-session-id",
             duration_ms=1000,
-            feed_metadata=FeedMetadata(
-                feed_name="mock-feed"
-            ),
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
             traceparent="mock-traceparent",
         )
 
@@ -1007,27 +995,21 @@ class OrderedStitchAudioTest(unittest.TestCase):
             gcs_uri="gs://test-bucket/path/to/chunk1.flac",
             session_id="mock-session-id",
             duration_ms=1000,
-            feed_metadata=FeedMetadata(
-                feed_name="mock-feed"
-            ),
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
         )
 
         metadata_chunk2 = ChunkMetadata(
             gcs_uri="gs://test-bucket/path/to/chunk2.flac",
             session_id="mock-session-id",
             duration_ms=1000,
-            feed_metadata=FeedMetadata(
-                feed_name="mock-feed"
-            ),
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
         )
 
         metadata_chunk3 = ChunkMetadata(
             gcs_uri="gs://test-bucket/path/to/chunk3.flac",
             session_id="mock-session-id",
             duration_ms=1000,
-            feed_metadata=FeedMetadata(
-                feed_name="mock-feed"
-            ),
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
         )
 
         with BeamTestPipeline(options=options) as p:
@@ -1143,9 +1125,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         mock_state_context = MockValueState(
             ActiveStitchingState(
                 session_id="session-1",
-                feed_metadata=FeedMetadata(
-                    feed_name="test-feed"
-                ),
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
             )
         )
         mock_state_buffer = MockBagState()
@@ -1155,9 +1135,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
             gcs_uri="gs://bucket/chunk1.flac",
             session_id="session-1",
             duration_ms=5000,
-            feed_metadata=FeedMetadata(
-                feed_name="test-feed"
-            ),
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
         )
 
         # 1. Process chunk and verify speech_segments are saved to persistent state
@@ -1261,9 +1239,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         mock_state_context = MockValueState(
             ActiveStitchingState(
                 session_id="session-1",
-                feed_metadata=FeedMetadata(
-                    feed_name="test-feed"
-                ),
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
             )
         )
         mock_state_buffer = MockBagState()
@@ -1273,9 +1249,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
             gcs_uri="gs://bucket/chunk1.flac",
             session_id="session-1",
             duration_ms=5000,
-            feed_metadata=FeedMetadata(
-                feed_name="test-feed"
-            ),
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
         )
 
         # 1. Process chunk 1 (VAD segment triggers speech in progress)
@@ -1371,9 +1345,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         mock_state_context = MockValueState(
             ActiveStitchingState(
                 session_id="session-long",
-                feed_metadata=FeedMetadata(
-                    feed_name="test-feed"
-                ),
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
             )
         )
         mock_state_buffer = MockBagState()
@@ -1383,9 +1355,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
             gcs_uri="gs://bucket/long_continuous.flac",
             session_id="session-long",
             duration_ms=65000,
-            feed_metadata=FeedMetadata(
-                feed_name="test-feed"
-            ),
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
         )
 
         outputs = list(
@@ -1476,9 +1446,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         mock_state_context = MockValueState(
             ActiveStitchingState(
                 session_id="session-silence",
-                feed_metadata=FeedMetadata(
-                    feed_name="test-feed"
-                ),
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
             )
         )
         mock_state_buffer = MockBagState()
@@ -1488,9 +1456,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
             gcs_uri="gs://bucket/long_silence.flac",
             session_id="session-silence",
             duration_ms=65000,
-            feed_metadata=FeedMetadata(
-                feed_name="test-feed"
-            ),
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
         )
 
         outputs = list(
@@ -1585,9 +1551,7 @@ class OrderedSegmentedStitchAudioTest(unittest.TestCase):
         mock_state_context = MockValueState(
             ActiveStitchingState(
                 session_id="same-session-id",
-                feed_metadata=FeedMetadata(
-                    feed_name="segmented-feed"
-                ),
+                feed_metadata=FeedMetadata(feed_name="segmented-feed"),
             )
         )
         mock_state_buffer = MockBagState()
@@ -1597,9 +1561,7 @@ class OrderedSegmentedStitchAudioTest(unittest.TestCase):
             gcs_uri="gs://bucket/segmented_15s.flac",
             session_id="same-session-id",
             duration_ms=15000,
-            feed_metadata=FeedMetadata(
-                feed_name="segmented-feed"
-            ),
+            feed_metadata=FeedMetadata(feed_name="segmented-feed"),
         )
 
         outputs = list(
@@ -1682,9 +1644,7 @@ class DlqTaggingTest(unittest.TestCase):
 
         ctx = ActiveStitchingState(
             session_id="test-session",
-            feed_metadata=FeedMetadata(
-                feed_name="test-feed"
-            ),
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
         )
         return fn, MockValueState(ctx), MockBagState(), MockValueState(None)
 
@@ -1800,9 +1760,7 @@ class DlqTaggingTest(unittest.TestCase):
         )
         fn.setup()
 
-        expected_feed_metadata = FeedMetadata(
-            feed_name="test-feed"
-        )
+        expected_feed_metadata = FeedMetadata(feed_name="test-feed")
 
         # Call process() first so the engine properly seeds contributing_audio_uris,
         # buffer_start_time_ms, and other fields required by _apply_flush_action.
@@ -1876,9 +1834,7 @@ class DlqTaggingTest(unittest.TestCase):
             gcs_uri="gs://bucket/echo_chunk.flac",
             session_id="test-session",
             duration_ms=3000,
-            feed_metadata=FeedMetadata(
-                feed_name="test-feed"
-            ),
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
         )
         # 1. Process chunk (this should update context state with the 8 kHz sample rate)
         list(
@@ -1942,9 +1898,7 @@ class DlqTaggingTest(unittest.TestCase):
             gcs_uri="gs://bucket/echo_chunk.flac",
             session_id="test-session",
             duration_ms=3000,
-            feed_metadata=FeedMetadata(
-                feed_name="test-feed"
-            ),
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
         )
         # Process chunk (since it is segmented, it will trigger an immediate flush within the same process call)
         outputs = list(
@@ -2007,9 +1961,7 @@ class DlqTaggingTest(unittest.TestCase):
             gcs_uri="gs://bucket/chunk1.flac",
             session_id="session-1",
             duration_ms=3000,
-            feed_metadata=FeedMetadata(
-                feed_name="test-feed"
-            ),
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
             traceparent="traceparent-1",
         )
         list(
@@ -2050,9 +2002,7 @@ class DlqTaggingTest(unittest.TestCase):
             gcs_uri="gs://bucket/chunk2.flac",
             session_id="session-2",
             duration_ms=3000,
-            feed_metadata=FeedMetadata(
-                feed_name="test-feed"
-            ),
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
             traceparent="traceparent-2",
         )
         list(

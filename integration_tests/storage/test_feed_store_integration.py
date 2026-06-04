@@ -1633,12 +1633,8 @@ async def test_list_feeds_returns_all_feeds_ordered_desc(
     db_pool: asyncpg.Pool, store: FeedStore
 ) -> None:
     """list_feeds retrieves all feeds ordered by created_at DESC."""
-    feed_id_a = await _insert_feed(
-        db_pool, "Feed A", source_feed_id="src_a"
-    )
-    feed_id_b = await _insert_feed(
-        db_pool, "Feed B", source_feed_id="src_b"
-    )
+    feed_id_a = await _insert_feed(db_pool, "Feed A", source_feed_id="src_a")
+    feed_id_b = await _insert_feed(db_pool, "Feed B", source_feed_id="src_b")
 
     result = await store.list_feeds()
 
@@ -1658,13 +1654,9 @@ async def test_list_feeds_limit_and_pagination(
     db_pool: asyncpg.Pool, store: FeedStore
 ) -> None:
     """list_feeds supports limit and next_token keyset pagination."""
-    feed_id_a = await _insert_feed(
-        db_pool, "Feed A", source_feed_id="src_a"
-    )
+    feed_id_a = await _insert_feed(db_pool, "Feed A", source_feed_id="src_a")
     await asyncio.sleep(0.01)  # Ensure distinct created_at timestamps
-    feed_id_b = await _insert_feed(
-        db_pool, "Feed B", source_feed_id="src_b"
-    )
+    feed_id_b = await _insert_feed(db_pool, "Feed B", source_feed_id="src_b")
 
     # Page 1
     page1 = await store.list_feeds(limit=1)
