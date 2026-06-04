@@ -1,5 +1,10 @@
 # Radio Transcription Pipeline Backend
 
+## Ingestion Collector Contract
+
+The collector/runtime boundary and feed failure-classification policy are
+documented in `backend/pipeline/ingestion/collectors/README.md`. Read that
+guide before adding a new audio source or changing `status_reason` behavior.
 
 ## Protobuf Generation
 
