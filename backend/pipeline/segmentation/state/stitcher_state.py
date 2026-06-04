@@ -138,7 +138,7 @@ class AudioStitchingStateMachine:
             audio_classification = (
                 SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH
                 if ctx.speech_segments
-                else SegmentedAudio.AUDIO_CLASSIFICATION_NO_SPEECH
+                else SegmentedAudio.AUDIO_CLASSIFICATION_OTHER
             )
 
         # When flushing due to dropped chunks, we might not have a last_segment_end_time_ms yet
@@ -445,7 +445,7 @@ class AudioStitchingStateMachine:
                     "Maximum non-speech transmission duration exceeded",
                     ctx,
                     missing_post_context=True,
-                    audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_NO_SPEECH,
+                    audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_OTHER,
                 )
             )
             ctx.missing_prior_context = True
@@ -590,7 +590,7 @@ class AudioStitchingStateMachine:
                 self._flush_current_transmission(
                     "Speech onset: ending active non-speech segment",
                     ctx,
-                    audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_NO_SPEECH,
+                    audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_OTHER,
                 )
             )
             self._reset_transmission_context(ctx)

@@ -220,7 +220,7 @@ class NormalizationEventProcessorTest(unittest.TestCase):
             end_audio_offset=Duration(seconds=1, nanos=0),
             feed_name="Test Feed",
             external_id="ext-1234",
-            audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_NO_SPEECH,
+            audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_OTHER,
             raw_audio_uri="gs://staging-bucket/raw_segments/tx-2222.flac",
         )
 
@@ -270,7 +270,7 @@ class NormalizationEventProcessorTest(unittest.TestCase):
         self.assertEqual(egress_claim.segment_id, "tx-2222")
         self.assertEqual(
             egress_claim.audio_classification,
-            NormalizedAudio.AUDIO_CLASSIFICATION_NO_SPEECH,
+            NormalizedAudio.AUDIO_CLASSIFICATION_OTHER,
         )
 
 
