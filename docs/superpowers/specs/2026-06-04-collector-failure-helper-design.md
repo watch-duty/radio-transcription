@@ -32,7 +32,9 @@ boundary instead of blindly reusing a poll helper for item downloads.
 ## Goals
 
 - Centralize repeated result and failure-classification primitives.
-- Make API/poll failures and item-download failures explicit contexts.
+- Share item-download failure handling where behavior is common.
+- Keep source API, poll, and stream endpoint status mapping local to each
+  collector.
 - Preserve collector-specific retry loops and lifecycle behavior.
 - Keep isolated per-item failures from becoming feed-level failures unless
   `ItemBatchOutcome` promotes them at an observation boundary or item failure
@@ -48,6 +50,7 @@ boundary instead of blindly reusing a poll helper for item downloads.
 - Do not change Fire Notifications file-list polling behavior.
 - Do not make Broadcastify result payloads use the audio-specific
   `DownloadResult`.
+- Do not add a shared API, poll, or stream endpoint status classifier.
 
 ## Design
 
@@ -62,13 +65,10 @@ Add shared primitives to
 - `item_download_http_failure(status: int, *, reason_prefix: str =
   "item_http", fallback_reason: str = "item_download_failed") -> ItemFailure`:
   maps item download HTTP responses.
-- `api_http_failure(status: int, *, reason_prefix: str,
-  classify_4xx_as_configuration: bool = True) -> ItemFailure`: maps source API,
-  poll, or fetch endpoint responses.
 - `raise_item_failure(failure: ItemFailure) -> NoReturn`: raises a typed
   `CollectorFailure` from an item failure.
 
-The HTTP helpers encode separate evidence contexts:
+The item-download helper encodes the shared discrete-audio-item context:
 
 - `item_download_http_failure(403)` returns
   `system_authentication_failed` with `item_http_403`.
@@ -76,10 +76,6 @@ The HTTP helpers encode separate evidence contexts:
   `item_http_429`.
 - `item_download_http_failure(404)` returns `source_unreachable` with the
   fallback item-download reason.
-- `api_http_failure(404, reason_prefix="fn_api_http")` returns
-  `system_configuration_invalid` with `fn_api_http_404`.
-- `api_http_failure(503, reason_prefix="fn_api_http")` returns
-  `source_unreachable` with `fn_api_http_503`.
 
 OpenMHz and Fire Notifications should import `DownloadResult`,
 `standardize_download_result`, `item_download_http_failure`, and
@@ -98,9 +94,14 @@ Broadcastify Feeds/Icecast should not use `DownloadResult` or
 `ItemBatchOutcome`; its failures are stream endpoint failures classified from
 ffmpeg stderr or same-URL probe evidence.
 
-Fire Notifications should delete `_poll_status_failure` and call
-`api_http_failure(status, reason_prefix="fn_api_http")` directly at the poll
-failure site.
+Fire Notifications should keep poll status classification local, but rename
+`_poll_status_failure` to `_classify_poll_status_failure` for consistency with
+the source-specific classifier naming used by other collectors.
+
+Broadcastify Calls should keep API fetch classification local. Broadcastify
+Feeds/Icecast should keep stream endpoint classification local. These source
+endpoint mappings encode source contracts and should not be folded into the
+item-download helper.
 
 Broadcastify Calls should rename compatibility helpers from
 `_normalize_fetch_result` and `_normalize_call_chunk_result` to
@@ -113,7 +114,6 @@ Add shared helper tests in `test_failure_classification.py` for:
 
 - `standardize_download_result` accepts `DownloadResult`, `bytes`, and `None`.
 - item-download status mapping for 403, 429, 404, and 503.
-- API/poll status mapping for 403, 429, 404, and 503.
 - `raise_item_failure` raises `CollectorFailure` with the same status reason
   and raw reason.
 
@@ -122,6 +122,7 @@ download results. Existing tests should continue to cover:
 
 - Fire Notifications poll `404` remains configuration-invalid.
 - Fire Notifications item-download `404` remains an item failure.
+- Broadcastify Calls API fetch classification remains source-specific.
 - OpenMHz item failures still promote only after the existing threshold.
 - Successful item processing still prevents or resets feed-level promotion.
 - Broadcastify Feeds/Icecast continues to classify stream endpoint failures
@@ -131,5 +132,6 @@ download results. Existing tests should continue to cover:
 
 This keeps the shared layer small. Future collectors can reuse the result and
 classification primitives without inheriting a lifecycle abstraction that does
-not fit their source. Classification policy becomes easier to audit because the
-context-sensitive mappings live in one module and are tested directly.
+not fit their source. Item-download classification becomes easier to audit
+because the common mapping is tested directly, while source endpoint contracts
+remain visible in each collector.
