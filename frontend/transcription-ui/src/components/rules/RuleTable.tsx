@@ -3,14 +3,11 @@ import type { ComponentProps, HTMLAttributes } from 'react';
 import { TableVirtuoso } from 'react-virtuoso';
 
 import ClearIcon from '@mui/icons-material/Clear';
-import EditIcon from '@mui/icons-material/Edit';
 import RuleIcon from '@mui/icons-material/Rule';
 import SearchIcon from '@mui/icons-material/Search';
 import TuneIcon from '@mui/icons-material/Tune';
-import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Card from '@mui/material/Card';
-import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
 import Divider from '@mui/material/Divider';
 import IconButton from '@mui/material/IconButton';
@@ -30,6 +27,7 @@ import useMediaQuery from '@mui/material/useMediaQuery';
 import type { Feed, Rule, RuleConditions } from '@transcription/common';
 
 import { MultiSelectFilter } from '../common/MultiSelectFilter';
+import { RuleRow } from './RuleRow';
 
 export interface RuleTableProps {
   title?: string;
@@ -305,167 +303,6 @@ export function RuleTable({
     </TableRow>
   );
 
-  const renderRowContent = (rule: Rule) => {
-    const isEditing = editingRuleId === rule.ruleId;
-    const targetFeedNames = rule.scope.targetFeeds
-      .map((id) => feedMap.get(id)?.name || id)
-      .join(', ');
-
-    return (
-      <>
-        <TableCell
-          component="div"
-          role="cell"
-          sx={{
-            py: 1,
-            display: 'flex',
-            flexDirection: 'column',
-            borderBottom: 'none',
-            minWidth: 0,
-            alignItems: 'flex-start',
-          }}
-        >
-          <Typography
-            variant="body2"
-            sx={{
-              fontWeight: 600,
-              color: 'text.primary',
-              textOverflow: 'ellipsis',
-              maxWidth: '100%',
-            }}
-            noWrap
-          >
-            {rule.ruleName}
-          </Typography>
-          {rule.description ? (
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              noWrap
-              sx={{ maxWidth: '100%' }}
-            >
-              {rule.description}
-            </Typography>
-          ) : null}
-        </TableCell>
-
-        <TableCell
-          component="div"
-          role="cell"
-          sx={{
-            py: 1,
-            display: 'flex',
-            flexDirection: 'column',
-            borderBottom: 'none',
-            minWidth: 0,
-            alignItems: 'flex-start',
-          }}
-        >
-          <Chip label={rule.scope.level} size="small" variant="outlined" />
-          {rule.scope.level === 'FEED_SPECIFIC' &&
-          rule.scope.targetFeeds.length > 0 ? (
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              noWrap
-              sx={{ maxWidth: '100%', mt: 0.5 }}
-              title={targetFeedNames}
-            >
-              Feeds: {targetFeedNames}
-            </Typography>
-          ) : null}
-        </TableCell>
-
-        <TableCell
-          component="div"
-          role="cell"
-          sx={{
-            py: 1,
-            borderBottom: 'none',
-            minWidth: 0,
-          }}
-        >
-          <Typography
-            variant="body2"
-            sx={{ fontFamily: 'monospace', wordBreak: 'break-all' }}
-          >
-            {formatConditionsSummary(rule.conditions)}
-          </Typography>
-        </TableCell>
-
-        <TableCell
-          component="div"
-          role="cell"
-          sx={{ borderBottom: 'none', minWidth: 0 }}
-        >
-          <Box
-            sx={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 1,
-            }}
-          >
-            <Badge
-              color={rule.isActive ? 'success' : 'default'}
-              variant="dot"
-              sx={{
-                py: 0,
-                px: 0.5,
-                display: 'flex',
-                alignItems: 'center',
-                flexShrink: 0,
-              }}
-            />
-            <Typography
-              variant="body2"
-              sx={{
-                color: rule.isActive ? 'success.main' : 'text.secondary',
-                fontWeight: 600,
-                textTransform: 'uppercase',
-              }}
-            >
-              {rule.isActive ? 'Active' : 'Inactive'}
-            </Typography>
-          </Box>
-        </TableCell>
-
-        {allowEdit ? (
-          <TableCell
-            align="right"
-            component="div"
-            role="cell"
-            sx={{
-              borderBottom: 'none',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'flex-end',
-              minWidth: 0,
-            }}
-          >
-            <IconButton
-              size="small"
-              onClick={() => onEditRule?.(rule)}
-              disabled={isSubmitting || isEditing}
-              sx={{
-                border: '1px solid',
-                borderRadius: 1.5,
-                p: 0.5,
-                '&:hover': {
-                  borderColor: 'primary.main',
-                  bgcolor: 'primary.soft',
-                  color: 'primary.main',
-                },
-              }}
-              aria-label={`Edit ${rule.ruleName}`}
-            >
-              <EditIcon fontSize="small" />
-            </IconButton>
-          </TableCell>
-        ) : null}
-      </>
-    );
-  };
-
   return (
     <Card
       variant="outlined"
@@ -654,7 +491,15 @@ export function RuleTable({
                   item={rule}
                   context={{ editingRuleId, allowEdit }}
                 >
-                  {renderRowContent(rule)}
+                  <RuleRow
+                    rule={rule}
+                    feedMap={feedMap}
+                    editingRuleId={editingRuleId}
+                    allowEdit={allowEdit}
+                    onEditRule={onEditRule}
+                    isSubmitting={isSubmitting}
+                    formatConditionsSummary={formatConditionsSummary}
+                  />
                 </VirtuosoTableRow>
               ))}
             </TableBody>
@@ -668,7 +513,17 @@ export function RuleTable({
           components={VIRTUOSO_COMPONENTS}
           style={{ flexGrow: 1, minHeight: 0 }}
           fixedHeaderContent={() => tableHeader}
-          itemContent={(_index, rule) => renderRowContent(rule)}
+          itemContent={(_index, rule) => (
+            <RuleRow
+              rule={rule}
+              feedMap={feedMap}
+              editingRuleId={editingRuleId}
+              allowEdit={allowEdit}
+              onEditRule={onEditRule}
+              isSubmitting={isSubmitting}
+              formatConditionsSummary={formatConditionsSummary}
+            />
+          )}
         />
       )}
     </Card>
