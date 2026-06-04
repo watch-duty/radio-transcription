@@ -5,6 +5,7 @@ from opentelemetry.trace import get_current_span
 
 from backend.pipeline.common.tracing_utils import (
     ContextPropagationValidator,
+    extract_trace_context,
     get_current_traceparent,
     with_tracer_context,
 )
@@ -79,3 +80,21 @@ class TestTracingUtils(unittest.TestCase):
         )
         ingestion_validator.on_start(mock_span)
         mock_logger.error.assert_not_called()
+
+    def test_extract_trace_context_empty_or_missing(self) -> None:
+        """Verifies that extract_trace_context handles empty or missing traceparent values gracefully by returning an empty Context."""
+        # 1. Missing attributes
+        ctx1 = extract_trace_context(None)
+        self.assertEqual(len(ctx1), 0)
+
+        # 2. Missing traceparent key
+        ctx2 = extract_trace_context({"foo": "bar"})
+        self.assertEqual(len(ctx2), 0)
+
+        # 3. Empty traceparent string
+        ctx3 = extract_trace_context({"traceparent": ""})
+        self.assertEqual(len(ctx3), 0)
+
+        # 4. None traceparent string (in case casted improperly)
+        ctx4 = extract_trace_context({"traceparent": None})  # type: ignore
+        self.assertEqual(len(ctx4), 0)
