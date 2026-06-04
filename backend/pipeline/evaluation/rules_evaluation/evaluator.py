@@ -12,6 +12,7 @@ from backend.pipeline.common.clients.session_helper import (
 )
 from backend.pipeline.common.env import is_gcp_env
 from backend.pipeline.common.rules import models
+from backend.pipeline.common.tracing_utils import get_current_traceparent
 from backend.pipeline.schema_types import EvaluationErrorType
 
 logger = logging.getLogger(__name__)
@@ -287,6 +288,11 @@ class RemoteTextEvaluator(BaseTextEvaluator):
         if self._cache_ttl_seconds > 0 and "rules" in self._cache:
             return self._cache["rules"]
 
+        headers = {}
+        traceparent = get_current_traceparent()
+        if traceparent:
+            headers["traceparent"] = traceparent
+
         # When running on Cloud Run, use the metadata server to get an ID token
         if is_gcp_env():
             token = get_id_token(self.api_url)
@@ -294,8 +300,10 @@ class RemoteTextEvaluator(BaseTextEvaluator):
 
         response = self.session.get(
             f"{self.api_url}/v1/rules",
+            headers=headers,
             timeout=10,
         )
+
         response.raise_for_status()
 
         rules_data = response.json()
