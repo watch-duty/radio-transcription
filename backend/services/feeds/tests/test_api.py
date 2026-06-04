@@ -284,6 +284,49 @@ class TestFeedsAPI(unittest.TestCase):
         detail = response.json()["detail"]
         self.assertIn("format for tags", detail)
 
+    def test_list_feeds_with_comma_separated_filters(self) -> None:
+        """Test listing feeds with comma-separated filter query params."""
+        feed_id = uuid.uuid4()
+        mock_feed = Feed(
+            id=feed_id,
+            name="Test Feed",
+            source_type=SourceType.BCFY_FEEDS,
+            source_feed_id="123",
+            external_id="ext_123",
+            status=FeedStatus.ACTIVE,
+            last_heartbeat=None,
+        )
+        self.mock_service.list_feeds.return_value = ListFeedsResponse(
+            feeds=[mock_feed],
+            next_token=None,
+        )
+        url = (
+            "/v1/feeds?source_types=bcfy_feeds , openmhz"
+            "&statuses=active , failing"
+        )
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.mock_service.list_feeds.assert_called_once_with(
+            limit=100,
+            next_token=None,
+            order=SortOrder.DESC,
+            source_types=[SourceType.BCFY_FEEDS, SourceType.OPENMHZ],
+            statuses=[FeedStatus.ACTIVE, FeedStatus.FAILING],
+            tags=None,
+        )
+
+    def test_list_feeds_with_invalid_source_type(self) -> None:
+        """Test that invalid source type returns 400 Bad Request."""
+        response = self.client.get("/v1/feeds?source_types=invalid_source")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Invalid source_type", response.json()["detail"])
+
+    def test_list_feeds_with_invalid_status(self) -> None:
+        """Test that invalid status returns 400 Bad Request."""
+        response = self.client.get("/v1/feeds?statuses=invalid_status")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Invalid status", response.json()["detail"])
+
     def test_deactivate_feed_success(self) -> None:
         """Test deactivating a feed successfully."""
         feed_id = uuid.uuid4()

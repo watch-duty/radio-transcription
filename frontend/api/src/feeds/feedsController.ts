@@ -61,8 +61,8 @@ export class ListFeedsQueryParams {
   limit?: number;
   nextToken?: string;
   order?: 'asc' | 'desc';
-  sourceTypes?: SourceType[];
-  statuses?: FeedStatus[];
+  sourceTypes?: string;
+  statuses?: string;
   // Tag strings must be in the format of {"key": "<val>", "value": "<val>"}
   tags?: string[];
 }
@@ -186,14 +186,10 @@ export class FeedsController extends Controller {
       if (query?.nextToken) queryParams.append('next_token', query.nextToken);
       if (query?.order) queryParams.append('order', query.order);
       if (query?.sourceTypes) {
-        for (const st of query.sourceTypes) {
-          queryParams.append('source_types', st);
-        }
+        queryParams.append('source_types', query.sourceTypes);
       }
       if (query?.statuses) {
-        for (const status of query.statuses) {
-          queryParams.append('statuses', status);
-        }
+        queryParams.append('statuses', query.statuses);
       }
       if (query?.tags) {
         for (const tag of query.tags) {
