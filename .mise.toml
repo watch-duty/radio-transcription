@@ -163,7 +163,7 @@ run = "yarn --cwd frontend/transcription-ui run local"
 description = "Start the dev pipeline with local Whisper STT service in Docker"
 depends = ["dev:stop"]
 run = """
-docker-compose --profile local-whisper up --build -d
+docker-compose -f docker-compose.yml -f docker-compose.whisper.yml --profile local-whisper up --build -d
 """
 
 [tasks."dev:whisper"]
