@@ -93,10 +93,13 @@ Broadcastify Calls, OpenMHz, and Fire Notifications should import
 `item_download_http_failure`, and `raise_item_failure` for discrete audio item
 downloads.
 
-`content_type` preserves Broadcastify Calls MIME detection without keeping the
-current `out_headers` side channel. Collectors that know their MIME type from
-source semantics, such as Fire Notifications MP3 files, may leave
-`content_type` unset and continue setting `CapturedChunk.mime_type` locally.
+`content_type` is the raw HTTP `Content-Type` header value. It preserves
+Broadcastify Calls MIME detection without keeping the current `out_headers` side
+channel. The shared helper should not parse it into `AudioMimeType`; chunk
+construction remains responsible for local MIME parsing. Collectors that know
+their MIME type from source semantics, such as Fire Notifications MP3 files, may
+leave `content_type` unset and continue setting `CapturedChunk.mime_type`
+locally.
 
 `ItemBatchOutcome` should continue to cover both supported per-item promotion
 contexts:
