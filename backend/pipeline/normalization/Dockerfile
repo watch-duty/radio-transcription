@@ -31,7 +31,8 @@ ENV UV_COMPILE_BYTECODE=1
 ENV UV_NO_CACHE=1
 
 # Install dependencies using uv sync directly into system python
-RUN uv sync --frozen --no-dev --no-install-workspace --package normalization-pipeline && \
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-workspace --package normalization-pipeline && \
     uv pip install grpcio-tools
 
 ENV FLEX_TEMPLATE_PYTHON_PY_FILE="/app/backend/pipeline/normalization/main.py"
