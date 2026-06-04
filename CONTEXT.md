@@ -22,6 +22,12 @@ one file in a file-list poll. It is not feed-level unless all eligible items in
 the relevant promotion context fail.
 _Avoid_: Feed failure, source outage
 
+**Item Download Result**:
+The outcome of attempting to download one discrete audio item. Broadcastify
+Calls, OpenMHz, and Fire Notifications use this concept; Broadcastify
+Feeds/Icecast does not because it captures a continuous stream.
+_Avoid_: Fetch result, chunk result
+
 **Observation Boundary**:
 A natural source batch where all eligible item failures can imply a feed-level
 problem. Broadcastify Calls uses one API page; Fire Notifications uses one

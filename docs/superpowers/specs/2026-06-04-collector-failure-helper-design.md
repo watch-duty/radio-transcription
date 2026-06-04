@@ -7,8 +7,8 @@ The review comments identify duplicated helper code and unclear naming:
 
 - Fire Notifications maps HTTP status codes separately for polling and audio
   downloads.
-- OpenMHz and Fire Notifications each define the same download result wrapper
-  and compatibility adapter.
+- Broadcastify Calls, OpenMHz, and Fire Notifications each download discrete
+  audio items and need the same item-download result shape.
 - The helper name `normalize_download_result` collides with pipeline audio
   normalization terminology.
 
@@ -48,8 +48,8 @@ boundary instead of blindly reusing a poll helper for item downloads.
 - Do not change feed lifecycle policy.
 - Do not change OpenMHz websocket reconnect behavior.
 - Do not change Fire Notifications file-list polling behavior.
-- Do not make Broadcastify result payloads use the audio-specific
-  `DownloadResult`.
+- Do not make Broadcastify API fetch payloads or constructed chunks use the
+  audio-specific `ItemDownloadResult`.
 - Do not add a shared API, poll, or stream endpoint status classifier.
 
 ## Design
@@ -57,11 +57,11 @@ boundary instead of blindly reusing a poll helper for item downloads.
 Add shared primitives to
 `backend/pipeline/ingestion/collectors/failure_classification.py`:
 
-- `DownloadResult`: frozen dataclass with `audio_bytes: bytes | None` and
+- `ItemDownloadResult`: frozen dataclass with `audio_bytes: bytes | None` and
   `failure: ItemFailure | None`.
-- `standardize_download_result(result: DownloadResult | bytes | None)
-  -> DownloadResult`: adapts legacy test doubles and optional download results
-  into the typed result wrapper.
+- `standardize_item_download_result(result: ItemDownloadResult | bytes | None)
+  -> ItemDownloadResult`: adapts legacy test doubles and optional download
+  results into the typed result wrapper.
 - `item_download_http_failure(status: int, *, reason_prefix: str =
   "item_http") -> ItemFailure`: maps terminal item-download HTTP responses.
 - `raise_item_failure(failure: ItemFailure) -> NoReturn`: raises a typed
@@ -82,9 +82,10 @@ Network errors, shutdown-interrupted downloads, and retry exhaustion should keep
 using collector-local `item_download_failed` results because there is no
 terminal HTTP status to preserve.
 
-OpenMHz and Fire Notifications should import `DownloadResult`,
-`standardize_download_result`, `item_download_http_failure`, and
-`raise_item_failure`.
+Broadcastify Calls, OpenMHz, and Fire Notifications should import
+`ItemDownloadResult`, `standardize_item_download_result`,
+`item_download_http_failure`, and `raise_item_failure` for discrete audio item
+downloads.
 
 `ItemBatchOutcome` should continue to cover both supported per-item promotion
 contexts:
@@ -95,7 +96,7 @@ contexts:
   streak when the source has no natural batch, such as OpenMHz call downloads
   since the last successful yielded chunk.
 
-Broadcastify Feeds/Icecast should not use `DownloadResult` or
+Broadcastify Feeds/Icecast should not use `ItemDownloadResult` or
 `ItemBatchOutcome`; its failures are stream endpoint failures classified from
 ffmpeg stderr or same-URL probe evidence.
 
@@ -111,19 +112,21 @@ item-download helper.
 Broadcastify Calls should rename compatibility helpers from
 `_normalize_fetch_result` and `_normalize_call_chunk_result` to
 `_standardize_fetch_result` and `_standardize_call_chunk_result`. Those result
-types carry API payloads and chunks, so they should remain collector-local.
+types carry API payloads and constructed chunks, so they should remain
+collector-local.
 
 ## Testing
 
 Add shared helper tests in `test_failure_classification.py` for:
 
-- `standardize_download_result` accepts `DownloadResult`, `bytes`, and `None`.
+- `standardize_item_download_result` accepts `ItemDownloadResult`, `bytes`, and
+  `None`.
 - item-download status mapping for 403, 429, 404, and 503.
 - `raise_item_failure` raises `CollectorFailure` with the same status reason
   and raw reason.
 
-Update collector tests to import the shared `DownloadResult` where they stub
-download results. Existing tests should continue to cover:
+Update collector tests to import the shared `ItemDownloadResult` where they
+stub item-download results. Existing tests should continue to cover:
 
 - Fire Notifications poll `404` remains configuration-invalid.
 - Fire Notifications item-download `404` remains an item failure.
@@ -137,6 +140,6 @@ download results. Existing tests should continue to cover:
 
 This keeps the shared layer small. Future collectors can reuse the result and
 classification primitives without inheriting a lifecycle abstraction that does
-not fit their source. Item-download classification becomes easier to audit
-because the common mapping is tested directly, while source endpoint contracts
-remain visible in each collector.
+not fit their source. Item-download result handling and classification become
+easier to audit because the common item-download shape and mapping are tested
+directly, while source endpoint contracts remain visible in each collector.
