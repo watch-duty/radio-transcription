@@ -91,7 +91,7 @@ export class TranscriptsController extends Controller {
         queryParams.append('is_alert', query.isAlert.toString());
       }
 
-      const client = await getServiceClient(TRANSCRIPTS_API_URL!);
+      const client = await getServiceClient(TRANSCRIPTS_API_URL);
       const response = await client.request({
         url: `${TRANSCRIPTS_API_URL}?${queryParams.toString()}`,
         method: 'GET',

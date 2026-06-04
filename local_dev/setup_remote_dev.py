@@ -51,7 +51,7 @@ def check_adc():
     )
     print("To resolve this, please run:")
     print(
-        f"  gcloud auth application-default login --impersonate-service-account=radio-transcription-api-dev@{project_id}.iam.gserviceaccount.com\n"
+        f"gcloud auth application-default login --impersonate-service-account=radio-transcription-api-dev@{project_id}.iam.gserviceaccount.com\n"
     )
     sys.exit(1)
 

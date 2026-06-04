@@ -217,7 +217,7 @@ export class ListRulesQueryParams {
 @Response(401, 'Unauthorized')
 export class RulesController extends Controller {
   private async getClient() {
-    return await getServiceClient(RULES_API_URL!);
+    return await getServiceClient(RULES_API_URL);
   }
 
   @Get('')
@@ -285,7 +285,7 @@ export class RulesController extends Controller {
     try {
       const client = await this.getClient();
       const response = await client.request({
-        url: RULES_API_URL!,
+        url: RULES_API_URL,
         method: 'POST',
         data: convertRuleCreate(requestBody),
       });

@@ -173,7 +173,11 @@ run = "yarn --cwd frontend/transcription-ui run local"
 
 [tasks."dev:remote:init"]
 description = "Automatically fetch and configure remote dev environment variables from GCP"
-run = "python3 local_dev/setup_remote_dev.py"
+run = """
+export PROJECT_ID=$(gcloud config get-value project)
+gcloud auth application-default login --impersonate-service-account=radio-transcription-api-dev@$PROJECT_ID.iam.gserviceaccount.com
+python3 local_dev/setup_remote_dev.py
+"""
 
 [tasks."dev:remote:ui"]
 description = "Run frontend UI on host and connect directly to remote GCP API Gateway"
@@ -188,7 +192,7 @@ yarn --cwd frontend/transcription-ui dev
 """
 
 [tasks."dev:remote"]
-description = "Run frontend on host (BFF + UI) and connect to dev backend in GCP"
+description = "Run frontend on host (Backend For Frontend (BFF) + UI) and connect to dev backend in GCP"
 depends = ["dev:stop"]
 env = { VITE_API_BASE_URL = "", VITE_PROXY_API_TARGET = "http://localhost:8080" }
 run = """

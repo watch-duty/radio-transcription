@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
 import { GaxiosError } from 'gaxios';
 import { GoogleAuth } from 'google-auth-library';
 
@@ -55,13 +55,25 @@ export function handleBackendError(
   };
 }
 
+/**
+ * Returns an HTTP client to communicate with downstream services.
+ *
+ * If running in a non-production environment with `AUTH_BACKEND` set to `'none'`
+ * (typically during local development or in test suites where authentication is bypassed),
+ * it returns a simplified client wrapper using unauthenticated `axios`.
+ *
+ * Otherwise, it uses `google-auth-library` to construct and return an authenticated
+ * `IdTokenClient` using Google application default credentials to call the target service.
+ *
+ * @param targetUrl The base URL of the service we want to request.
+ * @returns An authenticated client or an unauthenticated axios fallback wrapper.
+ */
 export async function getServiceClient(targetUrl: string) {
   const isProduction = process.env.NODE_ENV === 'production';
   if (AUTH_BACKEND === 'none' && !isProduction) {
     return {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      request: async <T>(config: any) => {
-        return (await axios(config)) as { data: T };
+      request: <T>(config: AxiosRequestConfig): Promise<AxiosResponse<T>> => {
+        return axios<T>(config);
       },
     };
   }

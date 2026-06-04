@@ -47,7 +47,7 @@ Integration tests run an automated E2E test on startup.
 Depending on whether you want to run the environment fully locally or connect to remote GCP dev services, choose one of the options below:
 
 #### Option A: 100% Local Development (No GCP required)
-This option runs the entire pipeline (ingestion, transcription, rules, database, and BFF API) inside local Docker containers, and boots the React UI on your host machine.
+This option runs the entire pipeline (ingestion, transcription, rules, database, and Backend For Frontend (BFF) API) inside local Docker containers, and boots the React UI on your host machine.
 
 1. Start the entire local environment:
    ```bash
@@ -69,7 +69,7 @@ This option runs the entire pipeline (ingestion, transcription, rules, database,
    ```
 
 #### Option B: Hybrid Remote Development
-To develop your local frontend code (BFF and/or UI) while connecting directly to GCP Cloud Run dev services, see the **Frontend Development with Remote GCP Services** section below.
+To develop your local frontend code (Backend For Frontend (BFF) and/or UI) while connecting directly to dev environment in gcp, see the **Frontend Development with Remote GCP Services** section below.
 
 Send a test payload to the Transcription PubSub (ingested by the Rules Evaluation service) to test the path from the Rules Evaluation service to the Notification service.
 ```bash
@@ -212,11 +212,11 @@ This script will:
 
 Depending on your dev workflow, run one of the following commands:
 
-* **To develop both BFF (API) and UI locally (Recommended):**
+* **To develop both Backend For Frontend (BFF) and UI locally (Recommended):**
   ```bash
   mise run dev:remote
   ```
-  This unsets any conflicting local container environment variables, boots the local BFF API at `http://localhost:8080`, boots the local UI at `http://localhost:5173`, and configures the UI to proxy `/api` calls through your local BFF API.
+  This unsets any conflicting local container environment variables, boots the local Backend For Frontend (BFF) API at `http://localhost:8080`, boots the local UI at `http://localhost:5173`, and configures the UI to proxy `/api` calls through your local Backend For Frontend (BFF) API.
 
 * **To develop the UI only (without running local API):**
   ```bash
