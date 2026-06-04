@@ -25,7 +25,9 @@ _Avoid_: Feed failure, source outage
 **Item Download Result**:
 The outcome of attempting to download one discrete audio item. Broadcastify
 Calls, OpenMHz, and Fire Notifications use this concept; Broadcastify
-Feeds/Icecast does not because it captures a continuous stream.
+Feeds/Icecast does not because it captures a continuous stream. It can include
+bounded download metadata such as content type when the collector needs that to
+construct a chunk.
 _Avoid_: Fetch result, chunk result
 
 **Observation Boundary**:

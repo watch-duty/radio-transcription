@@ -59,8 +59,8 @@ boundary instead of blindly reusing a poll helper for item downloads.
 Add shared primitives to
 `backend/pipeline/ingestion/collectors/failure_classification.py`:
 
-- `ItemDownloadResult`: frozen dataclass with `audio_bytes: bytes | None` and
-  `failure: ItemFailure | None`.
+- `ItemDownloadResult`: frozen dataclass with `audio_bytes: bytes | None`,
+  `failure: ItemFailure | None`, and `content_type: str | None`.
 - `standardize_item_download_result(result: ItemDownloadResult | bytes | None)
   -> ItemDownloadResult`: adapts legacy test doubles and optional download
   results into the typed result wrapper.
@@ -88,6 +88,11 @@ Broadcastify Calls, OpenMHz, and Fire Notifications should import
 `ItemDownloadResult`, `standardize_item_download_result`,
 `item_download_http_failure`, and `raise_item_failure` for discrete audio item
 downloads.
+
+`content_type` preserves Broadcastify Calls MIME detection without keeping the
+current `out_headers` side channel. Collectors that know their MIME type from
+source semantics, such as Fire Notifications MP3 files, may leave
+`content_type` unset and continue setting `CapturedChunk.mime_type` locally.
 
 `ItemBatchOutcome` should continue to cover both supported per-item promotion
 contexts:
@@ -130,6 +135,8 @@ Add shared helper tests in `test_failure_classification.py` for:
 
 - `standardize_item_download_result` accepts `ItemDownloadResult`, `bytes`, and
   `None`.
+- Broadcastify Calls item-download tests preserve `Content-Type` as
+  `ItemDownloadResult.content_type`.
 - item-download status mapping for 403, 429, 404, and 503.
 - `raise_item_failure` raises `CollectorFailure` with the same status reason
   and raw reason.
