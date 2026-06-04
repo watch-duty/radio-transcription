@@ -35,8 +35,6 @@ export function FeedConfigurationView({
   const [sourceFeedId, setSourceFeedId] = useState('');
   const [tags, setTags] = useState<{ key: string; value: string }[]>([]);
 
-
-
   const resetForm = () => {
     setId('');
     setName('');

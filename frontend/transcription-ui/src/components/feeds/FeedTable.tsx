@@ -173,7 +173,9 @@ export function FeedTable({
   });
 
   const [limit] = useState(50);
-  const [currentPageToken, setCurrentPageToken] = useState<string | undefined>(undefined);
+  const [currentPageToken, setCurrentPageToken] = useState<string | undefined>(
+    undefined
+  );
   const [pageHistory, setPageHistory] = useState<(string | undefined)[]>([]);
 
   const [appliedTags, setAppliedTags] = useState<
@@ -187,11 +189,7 @@ export function FeedTable({
   }, [appliedStatuses]);
 
   // Query for paginated, filtered current page of feeds
-  const {
-    data,
-    isLoading,
-    error,
-  } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: [
       'listFeeds',
       token,
@@ -225,7 +223,10 @@ export function FeedTable({
     refetchOnWindowFocus: false,
   });
 
-  const allFeeds = useMemo(() => allFeedsData?.feeds ?? [], [allFeedsData?.feeds]);
+  const allFeeds = useMemo(
+    () => allFeedsData?.feeds ?? [],
+    [allFeedsData?.feeds]
+  );
 
   // Calculate unique tags across all feeds
   const tags = useMemo<{ key: string; value: string }[]>(() => {
@@ -793,13 +794,18 @@ export function FeedTable({
         }}
       >
         <Typography variant="body2" color="text.secondary">
-          {feeds.length > 0 ? (
-            `Showing ${filteredAndSortedFeeds.length} feeds`
-          ) : (
-            'No feeds'
-          )}
+          {feeds.length > 0
+            ? `Showing ${filteredAndSortedFeeds.length} feeds`
+            : 'No feeds'}
         </Typography>
-        <Box sx={{ display: 'flex', flexDirection: 'row', gap: 1, alignItems: 'center' }}>
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: 'row',
+            gap: 1,
+            alignItems: 'center',
+          }}
+        >
           <IconButton
             size="small"
             onClick={handlePrevPage}
@@ -808,9 +814,7 @@ export function FeedTable({
           >
             <ChevronLeftIcon />
           </IconButton>
-          <Typography variant="body2">
-            Page {pageHistory.length + 1}
-          </Typography>
+          <Typography variant="body2">Page {pageHistory.length + 1}</Typography>
           <IconButton
             size="small"
             onClick={handleNextPage}

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
 import { SourceType } from '@transcription/common';
 
 import { listFeeds } from './listFeeds';
@@ -74,7 +75,34 @@ describe('listFeeds', () => {
     expect(calledUrl).toContain('order=desc');
     expect(calledUrl).toContain('sourceTypes=openmhz');
     expect(calledUrl).toContain('statuses=active');
-    expect(calledUrl).toContain('tags=%7B%22key%22%3A%22county%22%2C%22value%22%3A%22Fulton%22%7D');
+    expect(calledUrl).toContain(
+      'tags=%7B%22key%22%3A%22county%22%2C%22value%22%3A%22Fulton%22%7D'
+    );
+  });
+
+  it('should fetch feeds successfully when response is paginated ListFeedsResponse object', async () => {
+    const mockFeeds = [
+      { id: '1', name: 'Feed 1' },
+      { id: '2', name: 'Feed 2' },
+    ];
+    const mockData = {
+      feeds: mockFeeds,
+      nextToken: 'token_abc',
+    };
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () => JSON.stringify(mockData),
+      headers: {
+        get: (key: string) =>
+          key === 'content-type' ? 'application/json' : null,
+      },
+    });
+
+    const response = await listFeeds('tokenXYZ');
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(response).toEqual(mockData);
   });
 
   it('should throw error if response not ok', async () => {
