@@ -12,13 +12,13 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 from backend.pipeline.ingestion.collectors.failure_classification import (
+    ItemDownloadResult,
     ItemFailure,
 )
 from backend.pipeline.ingestion.collectors.openmhz._types import CallEvent
 from backend.pipeline.ingestion.collectors.openmhz.collector import (
     MAX_ITEM_DOWNLOAD_FAILURES,
     MAX_RECONNECT_FAILURES,
-    _DownloadResult,
     openmhz_collector,
 )
 from backend.pipeline.ingestion.collectors.tests.conftest import (
@@ -254,7 +254,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             for i in range(MAX_ITEM_DOWNLOAD_FAILURES)
         ]
         mock_transport.side_effect = lambda *a, **kw: _mock_transport(calls)
-        mock_download.return_value = _DownloadResult(
+        mock_download.return_value = ItemDownloadResult(
             failure=ItemFailure(
                 FeedStatusReason.SOURCE_UNREACHABLE,
                 "item_download_failed",
@@ -329,7 +329,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
                 for i in range(failure_count)
             ],
         ]
-        failure = _DownloadResult(
+        failure = ItemDownloadResult(
             failure=ItemFailure(
                 FeedStatusReason.SOURCE_UNREACHABLE,
                 "item_download_failed",
@@ -338,7 +338,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         mock_transport.side_effect = lambda *a, **kw: _mock_transport(calls)
         mock_download.side_effect = [
             *[failure for _ in range(failure_count)],
-            _DownloadResult(audio_bytes=b"m4a"),
+            ItemDownloadResult(audio_bytes=b"m4a"),
             *[failure for _ in range(failure_count)],
         ]
         mock_sleep.return_value = True
@@ -371,14 +371,14 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         ]
         mock_transport.side_effect = lambda *a, **kw: _mock_transport(calls)
         mock_download.side_effect = [
-            _DownloadResult(
+            ItemDownloadResult(
                 failure=ItemFailure(
                     FeedStatusReason.SOURCE_UNREACHABLE,
                     "item_download_failed",
                 )
             ),
             *[
-                _DownloadResult(
+                ItemDownloadResult(
                     failure=ItemFailure(
                         FeedStatusReason.SOURCE_RATE_LIMITED,
                         "item_http_429",

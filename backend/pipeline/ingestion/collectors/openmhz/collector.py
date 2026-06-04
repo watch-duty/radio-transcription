@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 import datetime
 import logging
 import os
@@ -13,9 +12,13 @@ from curl_cffi.requests import AsyncSession
 
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemBatchOutcome,
+    ItemDownloadResult,
     ItemFailure,
     collector_failure,
+    item_download_http_failure,
     missing_source_feed_id_failure,
+    raise_item_failure,
+    standardize_item_download_result,
 )
 from backend.pipeline.ingestion.collectors.openmhz._ws_transport import (
     websocket_transport,
@@ -48,12 +51,6 @@ _RECONNECT_BACKOFF_BASE_SEC = 1.0
 _RECONNECT_BACKOFF_CAP_SEC = 30.0
 
 
-@dataclasses.dataclass(frozen=True)
-class _DownloadResult:
-    audio_bytes: bytes | None = None
-    failure: ItemFailure | None = None
-
-
 def _get_transport(name: str) -> TransportFactory:
     """Resolve transport by name. Reads module attributes at call time."""
     if name == "websocket":
@@ -78,35 +75,31 @@ async def _download_m4a(
     session: AsyncSession,
     url: str,
     shutdown: asyncio.Event,
-) -> _DownloadResult:
+) -> ItemDownloadResult:
     """Download m4a from Wasabi S3 with retries.
 
     Returns classified download result for eligible call recordings.
     """
+    last_status: int | None = None
     for attempt in range(_DOWNLOAD_MAX_RETRIES):
         try:
             resp = await session.get(url, timeout=30.0)
+            last_status = resp.status_code
             if resp.status_code == 200:
-                return _DownloadResult(audio_bytes=resp.content)
+                return ItemDownloadResult(audio_bytes=resp.content)
             if resp.status_code in {401, 403}:
                 logger.warning(
                     "Download auth failure %d: url=%s",
                     resp.status_code,
                     url,
                 )
-                return _DownloadResult(
-                    failure=ItemFailure(
-                        FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-                        f"item_http_{resp.status_code}",
-                    )
+                return ItemDownloadResult(
+                    failure=item_download_http_failure(resp.status_code)
                 )
             if resp.status_code == 429:
                 logger.warning("Download rate limited 429: url=%s", url)
-                return _DownloadResult(
-                    failure=ItemFailure(
-                        FeedStatusReason.SOURCE_RATE_LIMITED,
-                        "item_http_429",
-                    )
+                return ItemDownloadResult(
+                    failure=item_download_http_failure(resp.status_code)
                 )
             if 400 <= resp.status_code < 500:
                 logger.warning(
@@ -114,11 +107,8 @@ async def _download_m4a(
                     resp.status_code,
                     url,
                 )
-                return _DownloadResult(
-                    failure=ItemFailure(
-                        FeedStatusReason.SOURCE_UNREACHABLE,
-                        "item_download_failed",
-                    )
+                return ItemDownloadResult(
+                    failure=item_download_http_failure(resp.status_code)
                 )
             logger.warning(
                 "Download %d (attempt %d/%d): url=%s",
@@ -135,35 +125,24 @@ async def _download_m4a(
                 url,
                 exc_info=True,
             )
+            last_status = None
         if attempt < _DOWNLOAD_MAX_RETRIES - 1:
             if await _sleep_or_shutdown(
                 shutdown, _DOWNLOAD_BACKOFF_BASE_SEC * (2**attempt)
             ):
-                return _DownloadResult()
+                return ItemDownloadResult()
 
     logger.warning("Download failed after retries: url=%s", url)
-    return _DownloadResult(
+    if last_status is not None:
+        return ItemDownloadResult(
+            failure=item_download_http_failure(last_status)
+        )
+    return ItemDownloadResult(
         failure=ItemFailure(
             FeedStatusReason.SOURCE_UNREACHABLE,
             "item_download_failed",
         )
     )
-
-
-def _normalize_download_result(
-    result: _DownloadResult | bytes | None,
-) -> _DownloadResult:
-    """Normalize legacy test doubles into the typed download result."""
-    if isinstance(result, _DownloadResult):
-        return result
-    if isinstance(result, bytes):
-        return _DownloadResult(audio_bytes=result)
-    return _DownloadResult()
-
-
-def _raise_item_failure(failure: ItemFailure) -> None:
-    """Raise a typed collector failure from an item streak result."""
-    raise collector_failure(failure.status_reason, failure.reason)
 
 
 async def openmhz_collector(  # noqa: PLR0912, PLR0915
@@ -222,7 +201,7 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                         if call.length_sec == 0:
                             continue
 
-                        download_result = _normalize_download_result(
+                        download_result = standardize_item_download_result(
                             await _download_m4a(
                                 download_session, call.url, shutdown_event
                             )
@@ -284,7 +263,7 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                         item_outcome = ItemBatchOutcome()
                         item_failure_count = 0
                 if pending_item_failure is not None:
-                    _raise_item_failure(pending_item_failure)
+                    raise_item_failure(pending_item_failure)
             except CollectorFailure:
                 raise
             except Exception:
