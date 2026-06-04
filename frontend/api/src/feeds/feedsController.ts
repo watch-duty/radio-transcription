@@ -85,8 +85,12 @@ function getSourceUrl(
       return `https://openmhz.com/system/${sourceFeedId}`;
     case SourceType.ECHO:
       return undefined;
-    case SourceType.FIRE_NOTIFICATIONS:
-      return undefined;
+    case SourceType.FIRE_NOTIFICATIONS: {
+      const dir = sourceFeedId.startsWith('/')
+        ? sourceFeedId
+        : `/${sourceFeedId}`;
+      return `https://audioplay.textmefires.info/audioplay/folder_play?dir=${dir}`;
+    }
     default:
       return undefined;
   }
@@ -107,8 +111,13 @@ function getArchiveUrl(
       return undefined;
     case SourceType.ECHO:
       return undefined;
-    case SourceType.FIRE_NOTIFICATIONS:
-      return undefined;
+    case SourceType.FIRE_NOTIFICATIONS: {
+      const cleanSourceId = sourceFeedId.startsWith('/')
+        ? sourceFeedId.slice(1)
+        : sourceFeedId;
+      const archivePath = `${cleanSourceId}/Archive`;
+      return `https://audioplay.textmefires.info/audioplay/folder_play?dir=${encodeURIComponent(archivePath)}`;
+    }
     default:
       return undefined;
   }
