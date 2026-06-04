@@ -192,7 +192,7 @@ yarn --cwd frontend/transcription-ui dev
 """
 
 [tasks."dev:remote"]
-description = "Run frontend on host (Backend For Frontend (BFF) + UI) and connect to dev backend in GCP"
+description = "Run frontend on host (FE Proxy API + UI) and connect to dev backend in GCP"
 depends = ["dev:stop"]
 env = { VITE_API_BASE_URL = "", VITE_PROXY_API_TARGET = "http://localhost:8080" }
 run = """
