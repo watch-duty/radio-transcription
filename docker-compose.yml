@@ -330,6 +330,8 @@ services:
 
 
   frontend-api:
+    profiles:
+      - frontend
     build:
       context: .
       dockerfile: frontend/api/Dockerfile
