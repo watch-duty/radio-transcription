@@ -161,13 +161,13 @@ fi
 description = "Start the dev pipeline and UI in local Docker containers"
 depends = ["dev:stop"]
 run = """
-docker-compose --env-file local_dev/LOCAL.env up --build -d
+COMPOSE_PROFILES=frontend docker-compose --env-file local_dev/LOCAL.env up --build -d
 """
 
 [tasks."dev:stop"]
 description = "Stop all dev containers and release host ports"
 run = """
-docker-compose --env-file local_dev/LOCAL.env down -v --remove-orphans
+COMPOSE_PROFILES=frontend docker-compose --env-file local_dev/LOCAL.env down -v --remove-orphans
 lsof -t -i :5173 | xargs kill -9 2>/dev/null || true
 lsof -t -i :8080 | xargs kill -9 2>/dev/null || true
 """
@@ -178,7 +178,7 @@ usage = """
 arg "[service]..." help="Services to log from. Default: all"
 """
 run = """
-docker-compose --env-file local_dev/LOCAL.env logs --tail 100 -t -f {{ arg(name="service") }}
+COMPOSE_PROFILES=frontend docker-compose --env-file local_dev/LOCAL.env logs --tail 100 -t -f {{ arg(name="service") }}
 """
 
 [tasks.dev]
@@ -190,7 +190,7 @@ run = "yarn --cwd frontend/transcription-ui run local"
 description = "Start the dev pipeline with local Whisper STT service in Docker"
 depends = ["dev:stop"]
 run = """
-docker-compose --env-file local_dev/LOCAL.env -f docker-compose.yml -f docker-compose.whisper.yml --profile local-whisper up --build -d
+COMPOSE_PROFILES=frontend docker-compose --env-file local_dev/LOCAL.env -f docker-compose.yml -f docker-compose.whisper.yml --profile local-whisper up --build -d
 """
 
 [tasks."dev:whisper"]
