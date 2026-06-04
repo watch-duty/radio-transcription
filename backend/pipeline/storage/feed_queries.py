@@ -377,8 +377,9 @@ WHERE ($1::timestamptz IS NULL OR f.created_at < $1 OR (f.created_at = $1 AND f.
   AND ($3::text[] IS NULL OR f.source_type = ANY($3))
   AND ($4::text[] IS NULL OR f.status::text = ANY($4))
   AND ($5::jsonb IS NULL OR fp.tags @> $5::jsonb)
+  AND ($6::text IS NULL OR f.name ILIKE '%' || $6 || '%')
 ORDER BY f.created_at DESC, f.id DESC
-LIMIT $6
+LIMIT $7
 """
 
 LIST_FEEDS_ASC_SQL = """\
@@ -393,8 +394,9 @@ WHERE ($1::timestamptz IS NULL OR f.created_at > $1 OR (f.created_at = $1 AND f.
   AND ($3::text[] IS NULL OR f.source_type = ANY($3))
   AND ($4::text[] IS NULL OR f.status::text = ANY($4))
   AND ($5::jsonb IS NULL OR fp.tags @> $5::jsonb)
+  AND ($6::text IS NULL OR f.name ILIKE '%' || $6 || '%')
 ORDER BY f.created_at ASC, f.id ASC
-LIMIT $6
+LIMIT $7
 """
 
 
