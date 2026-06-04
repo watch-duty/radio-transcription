@@ -344,13 +344,9 @@ components:
             - asc
             - desc
         sourceTypes:
-          items:
-            $ref: "#/components/schemas/SourceType"
-          type: array
+          type: string
         statuses:
-          items:
-            $ref: "#/components/schemas/FeedStatus"
-          type: array
+          type: string
         tags:
           items:
             type: string
@@ -1035,16 +1031,12 @@ paths:
           name: sourceTypes
           required: false
           schema:
-            type: array
-            items:
-              $ref: "#/components/schemas/SourceType"
+            type: string
         - in: query
           name: statuses
           required: false
           schema:
-            type: array
-            items:
-              $ref: "#/components/schemas/FeedStatus"
+            type: string
         - in: query
           name: tags
           required: false
