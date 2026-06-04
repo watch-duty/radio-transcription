@@ -28,7 +28,6 @@ COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml backend/
 ENV UV_PROJECT_ENVIRONMENT="/usr/local/"
 ENV UV_SYSTEM_PYTHON=1
 ENV UV_COMPILE_BYTECODE=1
-ENV UV_NO_CACHE=1
 
 # Install dependencies using uv sync directly into system python
 RUN --mount=type=cache,target=/root/.cache/uv \
