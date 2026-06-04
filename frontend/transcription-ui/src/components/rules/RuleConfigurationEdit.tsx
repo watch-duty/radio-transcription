@@ -40,6 +40,8 @@ import type {
   ScopeLevel,
 } from '@transcription/common';
 
+import { validateRule } from '../../utils/validationUtils';
+
 const EVALUATION_TYPE_OPTIONS: {
   value: EvaluationType;
   label: string;
@@ -176,64 +178,9 @@ export function RuleConfigurationEdit({
     }
   };
 
-  const validateForm = (): Record<string, string> => {
-    const errors: Record<string, string> = {};
-
-    if (!editingRule.ruleName.trim()) {
-      errors.name = 'Rule name is required.';
-    }
-
-    if (
-      editingRule.scope.level === 'FEED_SPECIFIC' &&
-      (!editingRule.scope.targetFeeds ||
-        editingRule.scope.targetFeeds.length === 0)
-    ) {
-      errors.feeds =
-        'At least one target feed must be selected for FEED_SPECIFIC scope.';
-    }
-
-    if (editingRule.conditions.evaluationType === 'KEYWORD_MATCH') {
-      const activeKeywords = [...editingRule.conditions.keywords];
-      if (newKeyword.trim()) {
-        const tempWords = newKeyword
-          .split(',')
-          .map((w) => w.trim())
-          .filter((w) => w.length > 0);
-        for (const tw of tempWords) {
-          if (!activeKeywords.includes(tw)) activeKeywords.push(tw);
-        }
-      }
-
-      if (activeKeywords.length === 0) {
-        errors.keywords =
-          'At least one keyword is required for Keyword Match rules.';
-      }
-    } else if (editingRule.conditions.evaluationType === 'REGEX_MATCH') {
-      const expression = editingRule.conditions.expression;
-      if (!expression.trim()) {
-        errors.regexExpression = 'Regex expression is required.';
-      }
-      try {
-        new RegExp(expression.trim());
-      } catch (err) {
-        errors.regexExpression = `Invalid regex expression: ${(err as Error).message}`;
-      }
-    } else if (editingRule.conditions.evaluationType === 'RULE_GROUP') {
-      if (
-        !editingRule.conditions.childRuleIds ||
-        editingRule.conditions.childRuleIds.length === 0
-      ) {
-        errors.childRules =
-          'At least one child rule must be selected for Rule Group.';
-      }
-    }
-
-    return errors;
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const errors = validateForm();
+    const errors = validateRule(editingRule, newKeyword);
 
     if (Object.keys(errors).length > 0) {
       setValidationErrors(errors);
