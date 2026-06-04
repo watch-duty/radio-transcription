@@ -60,7 +60,9 @@ Add shared primitives to
 `backend/pipeline/ingestion/collectors/failure_classification.py`:
 
 - `ItemDownloadResult`: frozen dataclass with `audio_bytes: bytes | None`,
-  `failure: ItemFailure | None`, and `content_type: str | None`.
+  `failure: ItemFailure | None`, and `content_type: str | None`. It should
+  fail fast if both `audio_bytes` and `failure` are set. Empty results remain
+  valid for shutdown/no-result compatibility.
 - `standardize_item_download_result(result: ItemDownloadResult | bytes | None)
   -> ItemDownloadResult`: adapts legacy test doubles and optional download
   results into the typed result wrapper.
@@ -141,6 +143,7 @@ Add shared helper tests in `test_failure_classification.py` for:
 
 - `standardize_item_download_result` accepts `ItemDownloadResult`, `bytes`, and
   `None`.
+- `ItemDownloadResult` rejects contradictory success-and-failure construction.
 - Broadcastify Calls item-download tests preserve `Content-Type` as
   `ItemDownloadResult.content_type`.
 - item-download status mapping for 403, 429, 404, and 503.
