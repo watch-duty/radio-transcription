@@ -62,11 +62,13 @@ async def test_feeds_api_direct(
     )
     backend_data = backend_resp.json()
 
-    # Assert format matches the response_model in backend/services/feeds/main.py (list[Feed])
-    assert isinstance(backend_data, list)
+    # Assert format matches ListFeedsResponse
+    assert isinstance(backend_data, dict)
+    assert "feeds" in backend_data
+    assert isinstance(backend_data["feeds"], list)
 
     # Assert that the created feed is returned in the list
-    feed_ids = [feed["id"] for feed in backend_data]
+    feed_ids = [feed["id"] for feed in backend_data["feeds"]]
     assert feed_id in feed_ids
 
 
@@ -81,9 +83,11 @@ async def test_feeds_api_proxy(
     assert proxy_resp.status_code == 200, f"Proxy failed: {proxy_resp.text}"
     proxy_data = proxy_resp.json()
 
-    # The proxy returns Feed[] (list) because the backend returns a list
-    assert isinstance(proxy_data, list)
+    # The proxy returns ListFeedsResponse (dict)
+    assert isinstance(proxy_data, dict)
+    assert "feeds" in proxy_data
+    assert isinstance(proxy_data["feeds"], list)
 
     # Assert that the created feed is returned in the list
-    feed_ids = [feed["id"] for feed in proxy_data]
+    feed_ids = [feed["id"] for feed in proxy_data["feeds"]]
     assert feed_id in feed_ids
