@@ -148,6 +148,16 @@ if [ ! -d frontend/transcription-ui/node_modules ]; then
 fi
 """
 
+[tasks."install:env"]
+description = "Initialize local env file from example"
+run = """
+if [ ! -f frontend/transcription-ui/.env.local-dev ]; then
+  echo "Initializing .env.local-dev..."
+  cp frontend/transcription-ui/.env.local-dev.example frontend/transcription-ui/.env.local-dev
+fi
+"""
+
+
 [tasks."install:api"]
 description = "Install API Proxy dependencies if missing"
 run = """
@@ -183,7 +193,7 @@ docker-compose --env-file local_dev/LOCAL.env logs --tail 100 -t -f {{ arg(name=
 
 [tasks.dev]
 description = "Start the entire system (backend in Docker, frontend on host)"
-depends = ["dev:start", "build:common", "install:ui"]
+depends = ["dev:start", "build:common", "install:ui", "install:env"]
 run = "yarn --cwd frontend/transcription-ui run local"
 
 [tasks."dev:whisper:start"]
@@ -195,7 +205,7 @@ docker-compose --env-file local_dev/LOCAL.env -f docker-compose.yml -f docker-co
 
 [tasks."dev:whisper"]
 description = "Start the entire system with local Whisper STT service (backend in Docker, frontend on host)"
-depends = ["dev:whisper:start", "build:common", "install:ui"]
+depends = ["dev:whisper:start", "build:common", "install:ui", "install:env"]
 run = "yarn --cwd frontend/transcription-ui run local"
 
 [tasks."dev:remote:init"]
