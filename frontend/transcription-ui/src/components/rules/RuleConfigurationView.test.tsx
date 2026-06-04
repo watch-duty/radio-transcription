@@ -350,4 +350,52 @@ describe('RuleConfigurationView', () => {
       );
     });
   });
+
+  it('supports toggle active status via dropdown menu', async () => {
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Evacuation Trigger')).toBeInTheDocument();
+    });
+
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Evacuation Trigger',
+    });
+    fireEvent.click(editBtn);
+
+    const editFormCard = screen.getByTestId('rule-config-card');
+    const kebabBtn = within(editFormCard).getByRole('button', {
+      name: /rule actions/i,
+    });
+    fireEvent.click(kebabBtn);
+
+    const disableMenuItem = screen.getByRole('menuitem', {
+      name: /Disable rule/i,
+    });
+    fireEvent.click(disableMenuItem);
+
+    expect(screen.getByText('Verify Disabling Rule')).toBeInTheDocument();
+    const confirmDisableBtn = screen.getByRole('button', { name: 'Disable' });
+    fireEvent.click(confirmDisableBtn);
+
+    await waitFor(() => {
+      expect(updateRule).toHaveBeenCalledTimes(1);
+      expect(updateRule).toHaveBeenCalledWith(
+        'rule-1',
+        {
+          ruleName: 'Evacuation Trigger',
+          description: 'Matches evacuation calls',
+          isActive: false,
+          scope: { level: 'GLOBAL', targetFeeds: [] },
+          conditions: {
+            evaluationType: 'KEYWORD_MATCH',
+            operator: 'ANY',
+            keywords: ['evacuate', 'evacuation'],
+            caseSensitive: false,
+          },
+        },
+        'fake-jwt-token-xyz'
+      );
+    });
+  });
 });

@@ -26,7 +26,6 @@ import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import Select from '@mui/material/Select';
 import Stack from '@mui/material/Stack';
-import Switch from '@mui/material/Switch';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import type {
@@ -92,6 +91,8 @@ export function RuleConfigurationEdit({
     Record<string, string>
   >({});
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isToggleActiveDialogOpen, setIsToggleActiveDialogOpen] =
+    useState(false);
   const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
   const menuOpen = Boolean(menuAnchorEl);
 
@@ -106,6 +107,23 @@ export function RuleConfigurationEdit({
   const handleDeleteClick = () => {
     handleMenuClose();
     setIsDeleteDialogOpen(true);
+  };
+
+  const handleToggleActiveClick = () => {
+    handleMenuClose();
+    setIsToggleActiveDialogOpen(true);
+  };
+
+  const handleToggleActiveConfirm = () => {
+    setIsToggleActiveDialogOpen(false);
+    const payload = buildRulePayload(
+      {
+        ...editingRule,
+        isActive: !editingRule.isActive,
+      },
+      newKeyword
+    );
+    onUpdateRule(payload);
   };
 
   const handleAddKeyword = () => {
@@ -345,6 +363,12 @@ export function RuleConfigurationEdit({
                       }}
                     >
                       <MenuItem
+                        onClick={handleToggleActiveClick}
+                        disabled={isSubmitting}
+                      >
+                        {editingRule.isActive ? 'Disable rule' : 'Enable rule'}
+                      </MenuItem>
+                      <MenuItem
                         onClick={handleDeleteClick}
                         disabled={isSubmitting}
                         sx={{ color: 'error.main' }}
@@ -360,11 +384,35 @@ export function RuleConfigurationEdit({
         </Box>
       </CardContent>
 
-      <RuleDeleteDialog
+      <RuleActionConfirmDialog
         isOpen={isDeleteDialogOpen}
         onClose={() => setIsDeleteDialogOpen(false)}
+        title="Verify Rule Deletion"
+        description={`Are you sure you want to delete the rule "${editingRule.ruleName}"? This action cannot be undone.`}
+        confirmLabel="Delete"
+        confirmColor="error"
         ruleName={editingRule.ruleName}
-        onDeleteConfirm={handleDeleteConfirm}
+        onConfirm={handleDeleteConfirm}
+        isSubmitting={isSubmitting}
+        requireNameConfirmation
+      />
+
+      <RuleActionConfirmDialog
+        isOpen={isToggleActiveDialogOpen}
+        onClose={() => setIsToggleActiveDialogOpen(false)}
+        title={
+          editingRule.isActive
+            ? 'Verify Disabling Rule'
+            : 'Verify Enabling Rule'
+        }
+        description={
+          editingRule.isActive
+            ? `Are you sure you want to disable the rule "${editingRule.ruleName}"?`
+            : `Are you sure you want to enable the rule "${editingRule.ruleName}"?`
+        }
+        confirmLabel={editingRule.isActive ? 'Disable' : 'Enable'}
+        ruleName={editingRule.ruleName}
+        onConfirm={handleToggleActiveConfirm}
         isSubmitting={isSubmitting}
       />
     </Card>
@@ -418,23 +466,6 @@ function RuleBasicInfoSection({
           }))
         }
         disabled={isSubmitting}
-      />
-
-      <FormControlLabel
-        control={
-          <Switch
-            checked={editingRule.isActive ?? true}
-            onChange={(e) =>
-              setEditingRule((prev) => ({
-                ...prev,
-                isActive: e.target.checked,
-              }))
-            }
-            disabled={isSubmitting}
-          />
-        }
-        label="Is Active"
-        sx={{ alignSelf: 'flex-start' }}
       />
     </>
   );
@@ -885,21 +916,37 @@ function RuleConditionsSection({
   );
 }
 
-interface RuleDeleteDialogProps {
+interface RuleActionConfirmDialogProps {
   isOpen: boolean;
   onClose: () => void;
+  title: string;
+  description: string;
+  confirmLabel: string;
+  confirmColor?:
+    | 'primary'
+    | 'secondary'
+    | 'error'
+    | 'info'
+    | 'success'
+    | 'warning';
   ruleName: string;
-  onDeleteConfirm: () => void;
+  onConfirm: () => void;
   isSubmitting: boolean;
+  requireNameConfirmation?: boolean;
 }
 
-function RuleDeleteDialog({
+function RuleActionConfirmDialog({
   isOpen,
   onClose,
+  title,
+  description,
+  confirmLabel,
+  confirmColor = 'primary',
   ruleName,
-  onDeleteConfirm,
+  onConfirm,
   isSubmitting,
-}: RuleDeleteDialogProps) {
+  requireNameConfirmation = false,
+}: RuleActionConfirmDialogProps) {
   const [confirmRuleName, setConfirmRuleName] = useState('');
 
   const handleClose = () => {
@@ -909,36 +956,40 @@ function RuleDeleteDialog({
 
   const handleConfirmSubmit = () => {
     setConfirmRuleName('');
-    onDeleteConfirm();
+    onConfirm();
   };
 
   return (
     <Dialog
       open={isOpen}
       onClose={handleClose}
-      aria-labelledby="delete-rule-dialog-title"
-      aria-describedby="delete-rule-dialog-description"
+      aria-labelledby="rule-action-dialog-title"
+      aria-describedby="rule-action-dialog-description"
     >
-      <DialogTitle id="delete-rule-dialog-title">
-        Verify Rule Deletion
-      </DialogTitle>
+      <DialogTitle id="rule-action-dialog-title">{title}</DialogTitle>
       <DialogContent>
-        <DialogContentText id="delete-rule-dialog-description" sx={{ mb: 2 }}>
-          Are you sure you want to delete the rule "{ruleName}"? This action
-          cannot be undone.
+        <DialogContentText
+          id="rule-action-dialog-description"
+          sx={{ mb: requireNameConfirmation ? 2 : 0 }}
+        >
+          {description}
         </DialogContentText>
-        <DialogContentText sx={{ mb: 1, fontWeight: 'bold' }}>
-          To confirm, type the Rule Name "{ruleName}" below:
-        </DialogContentText>
-        <TextField
-          fullWidth
-          size="small"
-          variant="outlined"
-          value={confirmRuleName}
-          onChange={(e) => setConfirmRuleName(e.target.value)}
-          placeholder={ruleName}
-          disabled={isSubmitting}
-        />
+        {requireNameConfirmation && (
+          <>
+            <DialogContentText sx={{ mb: 1, fontWeight: 'bold' }}>
+              To confirm, type the Rule Name "{ruleName}" below:
+            </DialogContentText>
+            <TextField
+              fullWidth
+              size="small"
+              variant="outlined"
+              value={confirmRuleName}
+              onChange={(e) => setConfirmRuleName(e.target.value)}
+              placeholder={ruleName}
+              disabled={isSubmitting}
+            />
+          </>
+        )}
       </DialogContent>
       <DialogActions>
         <Button
@@ -951,12 +1002,15 @@ function RuleDeleteDialog({
         </Button>
         <Button
           onClick={handleConfirmSubmit}
-          color="error"
+          color={confirmColor}
           variant="contained"
-          disabled={confirmRuleName !== ruleName || isSubmitting}
+          disabled={
+            (requireNameConfirmation && confirmRuleName !== ruleName) ||
+            isSubmitting
+          }
           sx={{ textTransform: 'none' }}
         >
-          Delete
+          {confirmLabel}
         </Button>
       </DialogActions>
     </Dialog>
