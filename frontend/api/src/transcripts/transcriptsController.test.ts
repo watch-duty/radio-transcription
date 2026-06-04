@@ -4,6 +4,7 @@ import { TranscriptsController } from './transcriptsController.js';
 
 // Mock the config module to inject the value without touching process.env
 vi.mock('../config.js', () => ({
+  AUTH_BACKEND: 'google',
   TRANSCRIPTS_API_URL: 'http://api.example.com',
 }));
 
