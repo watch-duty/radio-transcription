@@ -7,7 +7,9 @@ import urllib.parse
 import functions_framework
 from cloudevents.http.event import CloudEvent
 
+from backend.pipeline.common import env
 from backend.pipeline.common.clients.feeds_client import FeedsClient
+from backend.pipeline.common.exceptions import NonRetryableError
 from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.storage.redis_service import RedisService
 from backend.pipeline.common.tracing_utils import (
@@ -90,6 +92,11 @@ class NotificationServiceContainer:
             _ = self.feeds_api_url
             logger.info("Container services eagerly warmed up successfully.")
         except Exception as e:
+            if env.is_gcp_env() and isinstance(e, ValueError):
+                logger.exception(
+                    "Eager warm-up failed with ValueError in GCP environment, bubbling up error."
+                )
+                raise
             logger.warning(
                 "Eager warm-start skipped or failed (expected in some test/local envs): %s",
                 e,
@@ -201,5 +208,8 @@ def send_notification(cloud_event: CloudEvent) -> None:
         try:
             request_handler = container.get_request_handler()
             request_handler.send_notification(alert_notification)
-        except Exception:
-            logger.exception("Failed to send notification")
+        except NonRetryableError:
+            logger.exception(
+                "Failed to send notification for audio segment (transmission_id: %s) due to client (4xx) error. Message will not be retried.",
+                notification_id,
+            )

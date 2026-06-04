@@ -1,5 +1,7 @@
 import logging
 
+import requests
+
 from backend.pipeline.common import auth_client, env
 from backend.pipeline.common.clients.session_helper import (
     create_resilient_session,
@@ -43,7 +45,7 @@ class FeedsClient:
         try:
             response = self.session.get(url, headers=headers, timeout=5)
             response.raise_for_status()
-        except Exception:
+        except requests.exceptions.RequestException:
             logger.exception("Error fetching feed %s from feeds API", feed_id)
             return None
 
@@ -51,7 +53,7 @@ class FeedsClient:
             data = response.json()
             tags_data = data.get("tags") or []
             return [Tag(**t) for t in tags_data]
-        except Exception:
+        except (ValueError, TypeError):
             logger.exception(
                 "Error parsing response from feeds API for feed %s", feed_id
             )
