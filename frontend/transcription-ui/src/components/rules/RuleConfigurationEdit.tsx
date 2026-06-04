@@ -40,7 +40,7 @@ import type {
   ScopeLevel,
 } from '@transcription/common';
 
-import { validateRule } from '../../utils/validationUtils';
+import { buildRulePayload, validateRule } from '../../utils/validationUtils';
 
 const EVALUATION_TYPE_OPTIONS: {
   value: EvaluationType;
@@ -189,75 +189,11 @@ export function RuleConfigurationEdit({
 
     setValidationErrors({});
 
-    // Include the in-progress keyword if exists
-    const finalKeywords =
-      editingRule.conditions.evaluationType === 'KEYWORD_MATCH'
-        ? [...editingRule.conditions.keywords]
-        : [];
-    if (
-      editingRule.conditions.evaluationType === 'KEYWORD_MATCH' &&
-      newKeyword.trim()
-    ) {
-      const word = newKeyword.trim();
-      const wordsToAdd = word
-        .split(',')
-        .map((w) => w.trim())
-        .filter((w) => w.length > 0);
-      for (const w of wordsToAdd) {
-        if (!finalKeywords.includes(w)) {
-          finalKeywords.push(w);
-        }
-      }
-    }
-
-    // Build Conditions
-    let conditionsPayload: RuleConditions;
-    if (editingRule.conditions.evaluationType === 'KEYWORD_MATCH') {
-      conditionsPayload = {
-        evaluationType: 'KEYWORD_MATCH',
-        operator: editingRule.conditions.operator,
-        keywords: finalKeywords,
-        caseSensitive: editingRule.conditions.caseSensitive,
-      };
-    } else if (editingRule.conditions.evaluationType === 'REGEX_MATCH') {
-      conditionsPayload = {
-        evaluationType: 'REGEX_MATCH',
-        expression: editingRule.conditions.expression.trim(),
-        flags: editingRule.conditions.flags.trim(),
-      };
-    } else {
-      conditionsPayload = {
-        evaluationType: 'RULE_GROUP',
-        operator: editingRule.conditions.operator,
-        childRuleIds: editingRule.conditions.childRuleIds,
-      };
-    }
-
-    const scopePayload = {
-      level: editingRule.scope.level,
-      targetFeeds:
-        editingRule.scope.level === 'GLOBAL'
-          ? []
-          : editingRule.scope.targetFeeds,
-    };
+    const payload = buildRulePayload(editingRule, newKeyword);
 
     if (isEditing) {
-      const payload: RuleUpdate = {
-        ruleName: editingRule.ruleName.trim(),
-        description: editingRule.description?.trim() || undefined,
-        isActive: editingRule.isActive,
-        scope: scopePayload,
-        conditions: conditionsPayload,
-      };
       onUpdateRule(payload);
     } else {
-      const payload: RuleCreate = {
-        ruleName: editingRule.ruleName.trim(),
-        description: editingRule.description?.trim() || undefined,
-        isActive: editingRule.isActive,
-        scope: scopePayload,
-        conditions: conditionsPayload,
-      };
       onCreateRule(payload);
       setNewKeyword('');
     }

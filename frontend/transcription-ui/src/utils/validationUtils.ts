@@ -1,4 +1,4 @@
-import type { RuleCreate } from '@transcription/common';
+import type { RuleConditions, RuleCreate } from '@transcription/common';
 
 /**
  * Validates a rule to ensure all required fields are populated correctly.
@@ -63,4 +63,74 @@ export function validateRule(
   }
 
   return errors;
+}
+
+/**
+ * Constructs a rule creation payload from the current form editing rule state,
+ * integrating any in-progress typed keyword.
+ *
+ * @param editingRule The current rule state from the form fields
+ * @param inProgressKeyword Optional keyword currently in the input field
+ * @returns The constructed RuleCreate payload
+ */
+export function buildRulePayload(
+  editingRule: RuleCreate,
+  inProgressKeyword?: string
+): RuleCreate {
+  const finalKeywords =
+    editingRule.conditions.evaluationType === 'KEYWORD_MATCH'
+      ? [...editingRule.conditions.keywords]
+      : [];
+
+  const trimmedInProgress = inProgressKeyword?.trim();
+  if (
+    editingRule.conditions.evaluationType === 'KEYWORD_MATCH' &&
+    trimmedInProgress
+  ) {
+    const tempWords = trimmedInProgress
+      .split(',')
+      .map((w) => w.trim())
+      .filter((w) => w.length > 0);
+    for (const w of tempWords) {
+      if (!finalKeywords.includes(w)) {
+        finalKeywords.push(w);
+      }
+    }
+  }
+
+  let conditionsPayload: RuleConditions;
+  if (editingRule.conditions.evaluationType === 'KEYWORD_MATCH') {
+    conditionsPayload = {
+      evaluationType: 'KEYWORD_MATCH',
+      operator: editingRule.conditions.operator,
+      keywords: finalKeywords,
+      caseSensitive: editingRule.conditions.caseSensitive,
+    };
+  } else if (editingRule.conditions.evaluationType === 'REGEX_MATCH') {
+    conditionsPayload = {
+      evaluationType: 'REGEX_MATCH',
+      expression: editingRule.conditions.expression.trim(),
+      flags: editingRule.conditions.flags.trim(),
+    };
+  } else {
+    conditionsPayload = {
+      evaluationType: 'RULE_GROUP',
+      operator: editingRule.conditions.operator,
+      childRuleIds: editingRule.conditions.childRuleIds,
+    };
+  }
+
+  const scopePayload = {
+    level: editingRule.scope.level,
+    targetFeeds:
+      editingRule.scope.level === 'GLOBAL' ? [] : editingRule.scope.targetFeeds,
+  };
+
+  return {
+    ruleName: editingRule.ruleName.trim(),
+    description: editingRule.description?.trim() || undefined,
+    isActive: editingRule.isActive,
+    scope: scopePayload,
+    conditions: conditionsPayload,
+  };
 }

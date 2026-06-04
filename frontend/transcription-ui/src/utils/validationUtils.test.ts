@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { RuleCreate } from '@transcription/common';
 
-import { validateRule } from './validationUtils';
+import { buildRulePayload, validateRule } from './validationUtils';
 
 describe('validateRule', () => {
   it('validates rule name is required', () => {
@@ -157,5 +157,84 @@ describe('validateRule', () => {
 
     const errors = validateRule(rule);
     expect(Object.keys(errors).length).toBe(0);
+  });
+});
+
+describe('buildRulePayload', () => {
+  it('constructs a rule payload correctly trimming name and description', () => {
+    const input: RuleCreate = {
+      ruleName: '  Alert Rule  ',
+      description: '  Dispatch triggers  ',
+      isActive: true,
+      scope: { level: 'GLOBAL', targetFeeds: [] },
+      conditions: {
+        evaluationType: 'KEYWORD_MATCH',
+        operator: 'ANY',
+        keywords: ['fire'],
+        caseSensitive: false,
+      },
+    };
+
+    const result = buildRulePayload(input);
+    expect(result.ruleName).toBe('Alert Rule');
+    expect(result.description).toBe('Dispatch triggers');
+  });
+
+  it('incorporates in-progress keyword and filters duplicates', () => {
+    const input: RuleCreate = {
+      ruleName: 'Alert Rule',
+      isActive: true,
+      scope: { level: 'GLOBAL', targetFeeds: [] },
+      conditions: {
+        evaluationType: 'KEYWORD_MATCH',
+        operator: 'ANY',
+        keywords: ['fire'],
+        caseSensitive: false,
+      },
+    };
+
+    const result = buildRulePayload(input, ' evacuation, fire, alarm ');
+    expect(result.conditions.evaluationType).toBe('KEYWORD_MATCH');
+    if (result.conditions.evaluationType === 'KEYWORD_MATCH') {
+      expect(result.conditions.keywords).toEqual([
+        'fire',
+        'evacuation',
+        'alarm',
+      ]);
+    }
+  });
+
+  it('clears targetFeeds when scope level is GLOBAL', () => {
+    const input: RuleCreate = {
+      ruleName: 'Alert Rule',
+      isActive: true,
+      scope: { level: 'GLOBAL', targetFeeds: ['feed-1', 'feed-2'] },
+      conditions: {
+        evaluationType: 'REGEX_MATCH',
+        expression: '.*',
+        flags: 'i',
+      },
+    };
+
+    const result = buildRulePayload(input);
+    expect(result.scope.level).toBe('GLOBAL');
+    expect(result.scope.targetFeeds).toEqual([]);
+  });
+
+  it('keeps targetFeeds when scope level is FEED_SPECIFIC', () => {
+    const input: RuleCreate = {
+      ruleName: 'Alert Rule',
+      isActive: true,
+      scope: { level: 'FEED_SPECIFIC', targetFeeds: ['feed-1'] },
+      conditions: {
+        evaluationType: 'REGEX_MATCH',
+        expression: '.*',
+        flags: 'i',
+      },
+    };
+
+    const result = buildRulePayload(input);
+    expect(result.scope.level).toBe('FEED_SPECIFIC');
+    expect(result.scope.targetFeeds).toEqual(['feed-1']);
   });
 });
