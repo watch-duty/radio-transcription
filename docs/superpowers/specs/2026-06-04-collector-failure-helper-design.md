@@ -63,8 +63,7 @@ Add shared primitives to
   -> DownloadResult`: adapts legacy test doubles and optional download results
   into the typed result wrapper.
 - `item_download_http_failure(status: int, *, reason_prefix: str =
-  "item_http", fallback_reason: str = "item_download_failed") -> ItemFailure`:
-  maps item download HTTP responses.
+  "item_http") -> ItemFailure`: maps terminal item-download HTTP responses.
 - `raise_item_failure(failure: ItemFailure) -> NoReturn`: raises a typed
   `CollectorFailure` from an item failure.
 
@@ -75,7 +74,13 @@ The item-download helper encodes the shared discrete-audio-item context:
 - `item_download_http_failure(429)` returns `source_rate_limited` with
   `item_http_429`.
 - `item_download_http_failure(404)` returns `source_unreachable` with the
-  fallback item-download reason.
+  bounded raw reason `item_http_404`.
+- `item_download_http_failure(503)` returns `source_unreachable` with the
+  bounded raw reason `item_http_503`.
+
+Network errors, shutdown-interrupted downloads, and retry exhaustion should keep
+using collector-local `item_download_failed` results because there is no
+terminal HTTP status to preserve.
 
 OpenMHz and Fire Notifications should import `DownloadResult`,
 `standardize_download_result`, `item_download_http_failure`, and
