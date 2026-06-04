@@ -174,7 +174,6 @@ class TestFeedsAPI(unittest.TestCase):
             name="Test Feed",
             source_type=SourceType.BCFY_FEEDS,
             source_feed_id="123",
-            external_id="ext_123",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
@@ -205,7 +204,6 @@ class TestFeedsAPI(unittest.TestCase):
             name="Test Feed",
             source_type=SourceType.BCFY_FEEDS,
             source_feed_id="123",
-            external_id="ext_123",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
@@ -240,7 +238,6 @@ class TestFeedsAPI(unittest.TestCase):
             name="Test Feed",
             source_type=SourceType.BCFY_FEEDS,
             source_feed_id="123",
-            external_id="ext_123",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
@@ -284,7 +281,6 @@ class TestFeedsAPI(unittest.TestCase):
             name="Test Feed",
             source_type=SourceType.BCFY_FEEDS,
             source_feed_id="123",
-            external_id="ext_123",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
