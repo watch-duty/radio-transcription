@@ -84,9 +84,11 @@ The item-download helper encodes the shared discrete-audio-item context:
 - `item_download_http_failure(503)` returns `source_unreachable` with the
   bounded raw reason `item_http_503`.
 
-Network errors, shutdown-interrupted downloads, and retry exhaustion should keep
-using collector-local `item_download_failed` results because there is no
-terminal HTTP status to preserve.
+HTTP retry exhaustion with a final HTTP status should preserve that status as
+`item_http_<status>`. Network exception exhaustion without a terminal HTTP
+status should use collector-local `item_download_failed` because there is no
+HTTP status to preserve. Shutdown-interrupted downloads should return an
+empty/no-result `ItemDownloadResult`, not a classified failure.
 
 Broadcastify Calls, OpenMHz, and Fire Notifications should import
 `ItemDownloadResult`, `standardize_item_download_result`,
@@ -132,7 +134,8 @@ item-download helper.
 
 Broadcastify Calls item-download raw reasons should move from `audio_http_*` to
 the shared `item_http_*` prefix. `audio_download_failed` should move to
-`item_download_failed` for item-download network errors or retry exhaustion.
+`item_download_failed` for item-download network exception exhaustion without a
+terminal HTTP status.
 
 Broadcastify Calls should rename compatibility helpers from
 `_normalize_fetch_result` and `_normalize_call_chunk_result` to
