@@ -2903,7 +2903,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiohttp", specifier = ">=3.14.0" },
+    { name = "aiohttp", specifier = ">=3.13.3" },
     { name = "fastapi", specifier = ">=0.110.0" },
     { name = "gcloud-aio-storage", specifier = ">=9.6.4" },
     { name = "google-auth", specifier = ">=2.29.0" },
