@@ -143,6 +143,7 @@ async def list_feeds(
     source_types: str | None = None,
     statuses: str | None = None,
     tags: str | None = None,
+    name: str | None = None,
 ) -> ListFeedsResponse:
     """List all feeds with pagination and optional filters."""
     source_types_list = None
@@ -206,6 +207,7 @@ async def list_feeds(
         source_types=source_types_list,
         statuses=statuses_list,
         tags=tags_list,
+        name=name,
     )
 
 
