@@ -391,6 +391,8 @@ services:
         condition: service_started
       mock-audio-server:
         condition: service_started
+      frontend-api:
+        condition: service_started
 
     env_file:
       - path: ./local_dev/LOCAL.env
