@@ -14,11 +14,7 @@ from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemBatchOutcome,
     ItemDownloadResult,
     ItemFailure,
-    collector_failure,
     item_download_http_failure,
-    missing_source_feed_id_failure,
-    raise_item_failure,
-    standardize_item_download_result,
 )
 from backend.pipeline.ingestion.collectors.openmhz._ws_transport import (
     websocket_transport,
@@ -55,9 +51,9 @@ def _get_transport(name: str) -> TransportFactory:
     """Resolve transport by name. Reads module attributes at call time."""
     if name == "websocket":
         return websocket_transport
-    raise collector_failure(
-        FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-        "invalid_openmhz_transport",
+    raise CollectorFailure(
+        status_reason=FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        reason="invalid_openmhz_transport",
     )
 
 
@@ -174,7 +170,10 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
             feed["id"],
             feed["name"],
         )
-        raise missing_source_feed_id_failure()
+        raise CollectorFailure(
+            status_reason=FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            reason="missing_source_feed_id",
+        )
 
     short_name = source_feed_id.strip()
     transport_name = os.getenv("OPENMHZ_TRANSPORT", "websocket")
@@ -201,10 +200,8 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                         if call.length_sec == 0:
                             continue
 
-                        download_result = standardize_item_download_result(
-                            await _download_m4a(
-                                download_session, call.url, shutdown_event
-                            )
+                        download_result = await _download_m4a(
+                            download_session, call.url, shutdown_event
                         )
                         if download_result.failure is not None:
                             item_outcome.record_attempt()
@@ -263,7 +260,10 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                         item_outcome = ItemBatchOutcome()
                         item_failure_count = 0
                 if pending_item_failure is not None:
-                    raise_item_failure(pending_item_failure)
+                    raise CollectorFailure(  # noqa: TRY301 -- direct feed-level failure is clearer than a wrapper
+                        status_reason=pending_item_failure.status_reason,
+                        reason=pending_item_failure.reason,
+                    )
             except CollectorFailure:
                 raise
             except Exception:
@@ -284,9 +284,9 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                     short_name,
                     consecutive_ws_failures,
                 )
-                raise collector_failure(
-                    FeedStatusReason.SOURCE_UNREACHABLE,
-                    "source_unreachable",
+                raise CollectorFailure(
+                    status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+                    reason="source_unreachable",
                 )
 
             backoff = min(

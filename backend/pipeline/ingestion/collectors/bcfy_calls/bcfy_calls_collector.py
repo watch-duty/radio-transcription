@@ -19,11 +19,7 @@ from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemBatchOutcome,
     ItemDownloadResult,
     ItemFailure,
-    collector_failure,
     item_download_http_failure,
-    missing_source_feed_id_failure,
-    raise_item_failure,
-    standardize_item_download_result,
 )
 from backend.pipeline.ingestion.models import (
     AudioMimeType,
@@ -105,9 +101,9 @@ def _get_jwt_token() -> str:
     project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
     secret_id = os.getenv("BROADCASTIFY_JWT_SECRET_ID")
     if not project_id or not secret_id:
-        raise collector_failure(
-            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-            "calls_jwt_config_missing",
+        raise CollectorFailure(
+            status_reason=FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            reason="calls_jwt_config_missing",
         )
 
     client = secretmanager.SecretManagerServiceClient()
@@ -117,9 +113,9 @@ def _get_jwt_token() -> str:
         return response.payload.data.decode("UTF-8").strip()
     except Exception as e:
         logger.exception("Failed to access secret %s: %s", name, e)
-        raise collector_failure(
-            FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-            "calls_jwt_secret_access_failed",
+        raise CollectorFailure(
+            status_reason=FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+            reason="calls_jwt_secret_access_failed",
         ) from e
 
 
@@ -253,18 +249,18 @@ def _raise_for_fatal_status(
             status,
             feed_id,
         )
-        raise collector_failure(
-            FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-            f"calls_api_http_{status}",
+        raise CollectorFailure(
+            status_reason=FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+            reason=f"calls_api_http_{status}",
         )
     if status == 404:
         logger.error(
             "Feed not found from Broadcastify Calls API (feed %s)",
             feed_id,
         )
-        raise collector_failure(
-            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-            "calls_api_http_404",
+        raise CollectorFailure(
+            status_reason=FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            reason="calls_api_http_404",
         )
 
 
@@ -531,8 +527,8 @@ async def _create_chunk_from_call(
 ) -> _CallChunkResult:
     """Download audio for a single call and wrap it in a CapturedChunk."""
     try:
-        download_result = standardize_item_download_result(
-            await _download_audio(session, audio_url, shutdown_event)
+        download_result = await _download_audio(
+            session, audio_url, shutdown_event
         )
     except Exception as e:
         logger.exception("Failed to process audio for %s: %s", audio_url, e)
@@ -594,28 +590,6 @@ async def _create_chunk_from_call(
     )
 
 
-def _standardize_fetch_result(
-    fetch_result: _FetchCallsResult | dict[str, Any] | None,
-) -> _FetchCallsResult:
-    """Normalize legacy test doubles into the typed fetch result."""
-    if isinstance(fetch_result, _FetchCallsResult):
-        return fetch_result
-    if fetch_result is None:
-        return _FetchCallsResult()
-    return _FetchCallsResult(payload=fetch_result)
-
-
-def _standardize_call_chunk_result(
-    call_result: _CallChunkResult | CapturedChunk | None,
-) -> _CallChunkResult:
-    """Normalize legacy test doubles into the typed call result."""
-    if isinstance(call_result, _CallChunkResult):
-        return call_result
-    if isinstance(call_result, CapturedChunk):
-        return _CallChunkResult(chunk=call_result)
-    return _CallChunkResult()
-
-
 async def _handle_loop_failure(
     feed_id: object,
     consecutive_failures: int,
@@ -626,7 +600,10 @@ async def _handle_loop_failure(
     del feed_id
     consecutive_failures += 1
     if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
-        raise collector_failure(failure.status_reason, failure.reason)
+        raise CollectorFailure(
+            status_reason=failure.status_reason,
+            reason=failure.reason,
+        )
     await _sleep_or_shutdown(shutdown_event, _POLL_INTERVAL_SEC)
     return consecutive_failures
 
@@ -665,7 +642,10 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
             feed_id,
             feed_name,
         )
-        raise missing_source_feed_id_failure()
+        raise CollectorFailure(
+            status_reason=FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            reason="missing_source_feed_id",
+        )
 
     jwt_token = await _get_shared_jwt_token_with_retry(feed_id, shutdown_event)
     if jwt_token is None:
@@ -686,16 +666,14 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
             params["pos"] = last_bookmark_time_unix
 
         try:
-            fetch_result = _standardize_fetch_result(
-                await _fetch_calls(
-                    session,
-                    normalized_url_base,
-                    headers,
-                    params,
-                    feed_id,
-                    source_feed_id,
-                    shutdown_event,
-                )
+            fetch_result = await _fetch_calls(
+                session,
+                normalized_url_base,
+                headers,
+                params,
+                feed_id,
+                source_feed_id,
+                shutdown_event,
             )
             if fetch_result.failure is not None:
                 consecutive_failures = await _handle_loop_failure(
@@ -728,15 +706,13 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                         continue
 
                     outcome.record_attempt()
-                    call_result = _standardize_call_chunk_result(
-                        await _create_chunk_from_call(
-                            session,
-                            result,
-                            audio_url,
-                            shutdown_event,
-                            connection_session_id,
-                            receipt_time,
-                        )
+                    call_result = await _create_chunk_from_call(
+                        session,
+                        result,
+                        audio_url,
+                        shutdown_event,
+                        connection_session_id,
+                        receipt_time,
                     )
                     if call_result.failure is not None:
                         outcome.record_failure(call_result.failure)
@@ -767,7 +743,10 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                     consecutive_failures = 0
                 promoted = outcome.promoted_failure()
                 if promoted is not None:
-                    raise_item_failure(promoted)
+                    raise CollectorFailure(  # noqa: TRY301 -- direct feed-level failure is clearer than a wrapper
+                        status_reason=promoted.status_reason,
+                        reason=promoted.reason,
+                    )
             # Update last_bookmark_time_unix for pagination AFTER processing
             # all calls in the response — ensures we don't skip any calls if
             # an error occurs mid-page.

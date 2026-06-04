@@ -17,11 +17,7 @@ from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemBatchOutcome,
     ItemDownloadResult,
     ItemFailure,
-    collector_failure,
     item_download_http_failure,
-    missing_source_feed_id_failure,
-    raise_item_failure,
-    standardize_item_download_result,
 )
 from backend.pipeline.ingestion.models import (
     AudioMimeType,
@@ -245,8 +241,8 @@ async def _process_file_list(
         receipt_time = datetime.datetime.now(datetime.UTC)
 
         outcome.record_attempt()
-        download_result = standardize_item_download_result(
-            await _download_audio(session, s3_url, shutdown_event)
+        download_result = await _download_audio(
+            session, s3_url, shutdown_event
         )
         if download_result.failure is not None:
             outcome.record_failure(download_result.failure)
@@ -320,7 +316,10 @@ async def _process_file_list(
 
     promoted = outcome.promoted_failure()
     if promoted is not None:
-        raise_item_failure(promoted)
+        raise CollectorFailure(
+            status_reason=promoted.status_reason,
+            reason=promoted.reason,
+        )
 
 
 async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
@@ -336,16 +335,16 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
     try:
         s3_base_url = _require_env("FIRE_NOTIFICATIONS_S3_BASE")
     except ValueError as e:
-        raise collector_failure(
-            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-            "missing_fire_notifications_s3_base",
+        raise CollectorFailure(
+            status_reason=FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            reason="missing_fire_notifications_s3_base",
         ) from e
     try:
         headers = _build_auth_headers()
     except ValueError as e:
-        raise collector_failure(
-            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-            "missing_fire_notifications_auth_config",
+        raise CollectorFailure(
+            status_reason=FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            reason="missing_fire_notifications_auth_config",
         ) from e
 
     source_feed_id = feed.get("source_feed_id")
@@ -355,7 +354,10 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
             feed["id"],
             feed["name"],
         )
-        raise missing_source_feed_id_failure()
+        raise CollectorFailure(
+            status_reason=FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            reason="missing_source_feed_id",
+        )
 
     # source_feed_id is e.g. RECORDINGS/SAN-JOSE-DISP
     # Ensure no double slashes if url_base ends with /
@@ -426,9 +428,9 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
                         FeedStatusReason.SOURCE_UNREACHABLE,
                         "source_unreachable",
                     )
-                    raise collector_failure(
-                        failure.status_reason,
-                        failure.reason,
+                    raise CollectorFailure(
+                        status_reason=failure.status_reason,
+                        reason=failure.reason,
                     )
 
             # Sleep before next poll, with a small jitter

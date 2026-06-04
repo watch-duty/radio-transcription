@@ -9,13 +9,10 @@ See README.md in this directory for the operator-facing rationale.
 from __future__ import annotations
 
 import dataclasses
-from typing import NoReturn
 
-from backend.pipeline.ingestion.models import CollectorFailure
 from backend.pipeline.storage.feed_store import FeedStatusReason
 
 MIXED_ITEM_FAILURE_REASON = "mixed_item_failures"
-MISSING_SOURCE_FEED_ID_REASON = "missing_source_feed_id"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -99,25 +96,6 @@ class ItemBatchOutcome:
         )
 
 
-def collector_failure(
-    status_reason: FeedStatusReason,
-    reason: str,
-) -> CollectorFailure:
-    """Build a typed feed-level collector failure."""
-    return CollectorFailure(status_reason=status_reason, reason=reason)
-
-
-def standardize_item_download_result(
-    result: ItemDownloadResult | bytes | None,
-) -> ItemDownloadResult:
-    """Adapt legacy item-download test doubles into the typed result."""
-    if isinstance(result, ItemDownloadResult):
-        return result
-    if isinstance(result, bytes):
-        return ItemDownloadResult(audio_bytes=result)
-    return ItemDownloadResult()
-
-
 def item_download_http_failure(
     status: int,
     *,
@@ -133,16 +111,3 @@ def item_download_http_failure(
     if status == 429:
         return ItemFailure(FeedStatusReason.SOURCE_RATE_LIMITED, reason)
     return ItemFailure(FeedStatusReason.SOURCE_UNREACHABLE, reason)
-
-
-def raise_item_failure(failure: ItemFailure) -> NoReturn:
-    """Raise a typed collector failure from a promoted item failure."""
-    raise collector_failure(failure.status_reason, failure.reason)
-
-
-def missing_source_feed_id_failure() -> CollectorFailure:
-    """Build the typed failure for feeds missing source-specific ids."""
-    return collector_failure(
-        FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-        MISSING_SOURCE_FEED_ID_REASON,
-    )

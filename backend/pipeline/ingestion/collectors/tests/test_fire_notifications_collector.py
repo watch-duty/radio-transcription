@@ -193,7 +193,9 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     async def test_process_files(self, mock_download: AsyncMock) -> None:
-        mock_download.return_value = b"mp3_bytes"
+        mock_download.return_value = ItemDownloadResult(
+            audio_bytes=b"mp3_bytes"
+        )
         files = [
             {
                 "type": "file",
@@ -250,7 +252,9 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
     async def test_process_files_with_last_bookmark_time(
         self, mock_download: AsyncMock
     ) -> None:
-        mock_download.return_value = b"mp3_bytes"
+        mock_download.return_value = ItemDownloadResult(
+            audio_bytes=b"mp3_bytes"
+        )
         self.feed["last_bookmark_time"] = datetime.datetime(
             2026, 5, 20, 12, 0, 0, tzinfo=datetime.UTC
         )

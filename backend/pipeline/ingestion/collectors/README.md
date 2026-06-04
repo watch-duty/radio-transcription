@@ -101,8 +101,9 @@ The helper for this policy is `ItemBatchOutcome`.
 6. Retry and back off inside the collector for source-owned transport issues.
    Raise `CollectorFailure` only after the source-specific policy says the
    feed-level observation is persistent or systemic.
-7. Use `missing_source_feed_id_failure`, `collector_failure`, and
-   `ItemBatchOutcome` instead of open-coded exception strings and counters.
+7. Raise `CollectorFailure(status_reason=..., reason=...)` directly for
+   feed-level failures, and use `ItemBatchOutcome` instead of open-coded
+   item aggregation counters.
 8. Add focused tests beside the collector. Tests should cover chunk success,
    each feed-level `FeedStatusReason` mapping, skip/non-failure paths,
    shutdown behavior, and item-failure aggregation if the collector downloads

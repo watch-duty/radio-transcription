@@ -8,13 +8,8 @@ from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemBatchOutcome,
     ItemDownloadResult,
     ItemFailure,
-    collector_failure,
     item_download_http_failure,
-    missing_source_feed_id_failure,
-    raise_item_failure,
-    standardize_item_download_result,
 )
-from backend.pipeline.ingestion.models import CollectorFailure
 from backend.pipeline.storage.feed_store import FeedStatusReason
 
 
@@ -120,30 +115,6 @@ class TestItemBatchOutcome(unittest.TestCase):
         )
         self.assertEqual(result.reason, "mixed_item_failures")
 
-    def test_collector_failure_helper_returns_typed_exception(self) -> None:
-        result = collector_failure(
-            FeedStatusReason.SOURCE_UNREACHABLE,
-            "source_unreachable",
-        )
-
-        self.assertIsInstance(result, CollectorFailure)
-        self.assertIs(
-            result.status_reason,
-            FeedStatusReason.SOURCE_UNREACHABLE,
-        )
-        self.assertEqual(str(result), "source_unreachable")
-
-    def test_missing_source_feed_id_failure(self) -> None:
-        result = missing_source_feed_id_failure()
-
-        self.assertIsInstance(result, CollectorFailure)
-        self.assertIs(
-            result.status_reason,
-            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-        )
-        self.assertEqual(str(result), "missing_source_feed_id")
-
-
 class TestItemDownloadResult(unittest.TestCase):
     def test_accepts_success_result_with_content_type(self) -> None:
         result = ItemDownloadResult(
@@ -188,26 +159,6 @@ class TestItemDownloadResult(unittest.TestCase):
             "ItemDownloadResult cannot contain both audio_bytes and failure",
         )
 
-    def test_standardize_item_download_result_preserves_typed_result(
-        self,
-    ) -> None:
-        result = ItemDownloadResult(audio_bytes=b"audio")
-
-        self.assertIs(standardize_item_download_result(result), result)
-
-    def test_standardize_item_download_result_wraps_bytes(self) -> None:
-        result = standardize_item_download_result(b"audio")
-
-        self.assertEqual(result.audio_bytes, b"audio")
-        self.assertIsNone(result.failure)
-
-    def test_standardize_item_download_result_wraps_none(self) -> None:
-        result = standardize_item_download_result(None)
-
-        self.assertIsNone(result.audio_bytes)
-        self.assertIsNone(result.failure)
-
-
 class TestItemDownloadHttpFailure(unittest.TestCase):
     def test_auth_statuses_are_system_authentication_failed(self) -> None:
         for status in (401, 403):
@@ -250,24 +201,6 @@ class TestItemDownloadHttpFailure(unittest.TestCase):
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
         self.assertEqual(failure.reason, "custom_http_404")
-
-    def test_shared_item_failure_raiser_preserves_status_and_reason(
-        self,
-    ) -> None:
-        failure = ItemFailure(
-            FeedStatusReason.SOURCE_UNREACHABLE,
-            "item_http_503",
-        )
-
-        with self.assertRaises(CollectorFailure) as ctx:
-            raise_item_failure(failure)
-
-        self.assertIs(
-            ctx.exception.status_reason,
-            FeedStatusReason.SOURCE_UNREACHABLE,
-        )
-        self.assertEqual(str(ctx.exception), "item_http_503")
-
 
 if __name__ == "__main__":
     unittest.main()

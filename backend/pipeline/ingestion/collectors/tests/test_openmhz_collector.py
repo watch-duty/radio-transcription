@@ -87,7 +87,9 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         call = _make_call(call_id="c1", length_sec=5)
         mock_transport.side_effect = lambda *a, **kw: _mock_transport([call])
-        mock_download.return_value = b"fake-m4a-bytes"
+        mock_download.return_value = ItemDownloadResult(
+            audio_bytes=b"fake-m4a-bytes"
+        )
 
         shutdown = asyncio.Event()
         results = []
@@ -116,7 +118,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             _make_call(call_id="normal", length_sec=5),
         ]
         mock_transport.side_effect = lambda *a, **kw: _mock_transport(calls)
-        mock_download.return_value = b"m4a"
+        mock_download.return_value = ItemDownloadResult(audio_bytes=b"m4a")
 
         shutdown = asyncio.Event()
         results = []
@@ -144,7 +146,10 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             _make_call(call_id="good"),
         ]
         mock_transport.side_effect = lambda *a, **kw: _mock_transport(calls)
-        mock_download.side_effect = [None, b"m4a"]
+        mock_download.side_effect = [
+            ItemDownloadResult(),
+            ItemDownloadResult(audio_bytes=b"m4a"),
+        ]
 
         shutdown = asyncio.Event()
         results = []
@@ -414,7 +419,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         """All chunks within one connection share the same session_id."""
         calls = [_make_call(call_id="c1"), _make_call(call_id="c2")]
         mock_transport.side_effect = lambda *a, **kw: _mock_transport(calls)
-        mock_download.return_value = b"m4a"
+        mock_download.return_value = ItemDownloadResult(audio_bytes=b"m4a")
 
         shutdown = asyncio.Event()
         results = []
@@ -465,7 +470,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             return _mock_transport([call])
 
         mock_transport.side_effect = _transport_factory
-        mock_download.return_value = b"m4a"
+        mock_download.return_value = ItemDownloadResult(audio_bytes=b"m4a")
         mock_sleep.return_value = False
 
         shutdown = asyncio.Event()
@@ -506,7 +511,7 @@ class TestOpenmhzReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
 
         call = _make_call(call_id="c1", length_sec=5)
         mock_transport.side_effect = lambda *a, **kw: _mock_transport([call])
-        mock_download.return_value = b"m4a"
+        mock_download.return_value = ItemDownloadResult(audio_bytes=b"m4a")
 
         shutdown = asyncio.Event()
         results = []
@@ -537,7 +542,12 @@ class TestOpenmhzCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         call = _make_call(call_id="terminal-fail", length_sec=5)
         mock_transport.side_effect = lambda *a, **kw: _mock_transport([call])
-        mock_download.return_value = None  # terminal failure
+        mock_download.return_value = ItemDownloadResult(
+            failure=ItemFailure(
+                FeedStatusReason.SOURCE_UNREACHABLE,
+                "item_download_failed",
+            )
+        )
         # After transport events exhaust, collector reconnects (while loop);
         # returning True from _sleep_or_shutdown signals shutdown, ending the loop.
         mock_sleep.return_value = True
@@ -592,7 +602,9 @@ class TestOpenmhzCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         call = _make_call(call_id="ok", length_sec=5)
         mock_transport.side_effect = lambda *a, **kw: _mock_transport([call])
-        mock_download.return_value = b"fake-m4a-bytes"
+        mock_download.return_value = ItemDownloadResult(
+            audio_bytes=b"fake-m4a-bytes"
+        )
 
         shutdown = asyncio.Event()
         with self.assertLogs(
@@ -631,8 +643,9 @@ class TestOpenmhzCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
 
         async def _download_then_shut(*args, **kwargs):
-            # Simulate: shutdown gets set DURING the download, download returns None
+            # Simulate: shutdown gets set DURING the download, no audio returned
             shutdown.set()
+            return ItemDownloadResult()
 
         mock_download.side_effect = _download_then_shut
 
