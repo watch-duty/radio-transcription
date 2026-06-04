@@ -17,9 +17,13 @@ from google.cloud import secretmanager
 
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemBatchOutcome,
+    ItemDownloadResult,
     ItemFailure,
     collector_failure,
+    item_download_http_failure,
     missing_source_feed_id_failure,
+    raise_item_failure,
+    standardize_item_download_result,
 )
 from backend.pipeline.ingestion.models import (
     AudioMimeType,
@@ -390,8 +394,7 @@ async def _download_audio(  # noqa: PLR0911, PLR0912
     session: aiohttp.ClientSession,
     audio_url: str,
     shutdown_event: asyncio.Event,
-    out_headers: dict[str, str] | None = None,
-) -> bytes | ItemFailure | None:
+) -> ItemDownloadResult:
     """Download audio file."""
     timeout = aiohttp.ClientTimeout(total=_AUDIO_TIMEOUT_SEC)
     for attempt in range(_AUDIO_FILE_DOWNLOAD_MAX_RETRIES + 1):
@@ -403,9 +406,8 @@ async def _download_audio(  # noqa: PLR0911, PLR0912
                         audio_resp.status,
                         audio_url,
                     )
-                    return ItemFailure(
-                        FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-                        f"audio_http_{audio_resp.status}",
+                    return ItemDownloadResult(
+                        failure=item_download_http_failure(audio_resp.status)
                     )
 
                 if audio_resp.status == 429:
@@ -422,12 +424,11 @@ async def _download_audio(  # noqa: PLR0911, PLR0912
                             audio_url,
                         )
                         if await _sleep_or_shutdown(shutdown_event, delay):
-                            return None
+                            return ItemDownloadResult()
                         continue
 
-                    return ItemFailure(
-                        FeedStatusReason.SOURCE_RATE_LIMITED,
-                        "audio_http_429",
+                    return ItemDownloadResult(
+                        failure=item_download_http_failure(audio_resp.status)
                     )
 
                 if 500 <= audio_resp.status <= 599:
@@ -445,7 +446,7 @@ async def _download_audio(  # noqa: PLR0911, PLR0912
                             audio_url,
                         )
                         if await _sleep_or_shutdown(shutdown_event, delay):
-                            return None
+                            return ItemDownloadResult()
                         continue
 
                     logger.error(
@@ -455,9 +456,8 @@ async def _download_audio(  # noqa: PLR0911, PLR0912
                         _AUDIO_FILE_DOWNLOAD_MAX_RETRIES,
                         audio_url,
                     )
-                    return ItemFailure(
-                        FeedStatusReason.SOURCE_UNREACHABLE,
-                        "audio_download_failed",
+                    return ItemDownloadResult(
+                        failure=item_download_http_failure(audio_resp.status)
                     )
 
                 if audio_resp.status != 200:
@@ -466,15 +466,21 @@ async def _download_audio(  # noqa: PLR0911, PLR0912
                         audio_url,
                         audio_resp.status,
                     )
-                    return ItemFailure(
-                        FeedStatusReason.SOURCE_UNREACHABLE,
-                        "audio_download_failed",
+                    return ItemDownloadResult(
+                        failure=item_download_http_failure(audio_resp.status)
                     )
 
-                if out_headers is not None:
-                    out_headers.update(audio_resp.headers)
+                headers = getattr(audio_resp, "headers", None)
+                content_type = None
+                if isinstance(headers, collections.abc.Mapping):
+                    header_content_type = headers.get("Content-Type")
+                    if isinstance(header_content_type, str):
+                        content_type = header_content_type
 
-                return await audio_resp.read()
+                return ItemDownloadResult(
+                    audio_bytes=await audio_resp.read(),
+                    content_type=content_type,
+                )
         except Exception as e:
             if attempt < _AUDIO_FILE_DOWNLOAD_MAX_RETRIES:
                 delay = _AUDIO_FILE_DOWNLOAD_BACKOFF_BASE_SEC * (2**attempt)
@@ -488,7 +494,7 @@ async def _download_audio(  # noqa: PLR0911, PLR0912
                     exc_info=e,
                 )
                 if await _sleep_or_shutdown(shutdown_event, delay):
-                    return None
+                    return ItemDownloadResult()
                 continue
             logger.exception(
                 "Network error downloading audio after %d retries,"
@@ -496,11 +502,13 @@ async def _download_audio(  # noqa: PLR0911, PLR0912
                 _AUDIO_FILE_DOWNLOAD_MAX_RETRIES,
                 audio_url,
             )
-            return ItemFailure(
-                FeedStatusReason.SOURCE_UNREACHABLE,
-                "audio_download_failed",
+            return ItemDownloadResult(
+                failure=ItemFailure(
+                    FeedStatusReason.SOURCE_UNREACHABLE,
+                    "item_download_failed",
+                )
             )
-    return None
+    return ItemDownloadResult()
 
 
 def _extract_calls_from_response(
@@ -520,30 +528,27 @@ async def _create_chunk_from_call(
     shutdown_event: asyncio.Event,
     session_id: str,
     receipt_time: datetime.datetime,
-    out_headers: dict[str, str] | None = None,
 ) -> _CallChunkResult:
     """Download audio for a single call and wrap it in a CapturedChunk."""
-    out_h = out_headers if out_headers is not None else {}
     try:
-        audio_result = await _download_audio(
-            session, audio_url, shutdown_event, out_h
+        download_result = standardize_item_download_result(
+            await _download_audio(session, audio_url, shutdown_event)
         )
     except Exception as e:
         logger.exception("Failed to process audio for %s: %s", audio_url, e)
         return _CallChunkResult(
             failure=ItemFailure(
                 FeedStatusReason.SOURCE_UNREACHABLE,
-                "audio_download_failed",
+                "item_download_failed",
             )
         )
 
-    if isinstance(audio_result, ItemFailure):
-        return _CallChunkResult(failure=audio_result)
+    if download_result.failure is not None:
+        return _CallChunkResult(failure=download_result.failure)
 
-    if not audio_result:
+    audio_bytes = download_result.audio_bytes
+    if not audio_bytes:
         return _CallChunkResult()
-
-    audio_bytes = audio_result
 
     start_ts = result.get("start_ts")
     end_ts = result.get("end_ts")
@@ -574,8 +579,7 @@ async def _create_chunk_from_call(
             extra={"json_fields": {"event_type": "bcfy_calls_missing_ts"}},
         )
 
-    content_type = out_h.get("Content-Type")
-    mime_type = AudioMimeType.from_string(content_type)
+    mime_type = AudioMimeType.from_string(download_result.content_type)
 
     return _CallChunkResult(
         chunk=CapturedChunk(
@@ -590,7 +594,7 @@ async def _create_chunk_from_call(
     )
 
 
-def _normalize_fetch_result(
+def _standardize_fetch_result(
     fetch_result: _FetchCallsResult | dict[str, Any] | None,
 ) -> _FetchCallsResult:
     """Normalize legacy test doubles into the typed fetch result."""
@@ -601,7 +605,7 @@ def _normalize_fetch_result(
     return _FetchCallsResult(payload=fetch_result)
 
 
-def _normalize_call_chunk_result(
+def _standardize_call_chunk_result(
     call_result: _CallChunkResult | CapturedChunk | None,
 ) -> _CallChunkResult:
     """Normalize legacy test doubles into the typed call result."""
@@ -610,11 +614,6 @@ def _normalize_call_chunk_result(
     if isinstance(call_result, CapturedChunk):
         return _CallChunkResult(chunk=call_result)
     return _CallChunkResult()
-
-
-def _raise_item_failure(failure: ItemFailure) -> None:
-    """Raise a typed collector failure from an item aggregation result."""
-    raise collector_failure(failure.status_reason, failure.reason)
 
 
 async def _handle_loop_failure(
@@ -687,7 +686,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
             params["pos"] = last_bookmark_time_unix
 
         try:
-            fetch_result = _normalize_fetch_result(
+            fetch_result = _standardize_fetch_result(
                 await _fetch_calls(
                     session,
                     normalized_url_base,
@@ -729,7 +728,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                         continue
 
                     outcome.record_attempt()
-                    call_result = _normalize_call_chunk_result(
+                    call_result = _standardize_call_chunk_result(
                         await _create_chunk_from_call(
                             session,
                             result,
@@ -768,7 +767,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                     consecutive_failures = 0
                 promoted = outcome.promoted_failure()
                 if promoted is not None:
-                    _raise_item_failure(promoted)
+                    raise_item_failure(promoted)
             # Update last_bookmark_time_unix for pagination AFTER processing
             # all calls in the response — ensures we don't skip any calls if
             # an error occurs mid-page.

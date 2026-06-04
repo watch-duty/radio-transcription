@@ -16,6 +16,7 @@ from backend.pipeline.ingestion.collectors.bcfy_calls import (
     bcfy_calls_collector,
 )
 from backend.pipeline.ingestion.collectors.failure_classification import (
+    ItemDownloadResult,
     ItemFailure,
 )
 from backend.pipeline.ingestion.collectors.tests.conftest import (
@@ -29,7 +30,7 @@ from backend.pipeline.storage.feed_store import (
 )
 
 
-def _require_item_failure(value: ItemFailure | bytes | None) -> ItemFailure:
+def _require_item_failure(value: ItemFailure | None) -> ItemFailure:
     """Return a typed item failure for tests that intentionally expect one."""
     if not isinstance(value, ItemFailure):
         msg = f"Expected ItemFailure, got {value!r}"
@@ -521,7 +522,8 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         res = await bcfy_calls_collector._download_audio(
             self.session, "http://example.com/audio.mp3", self.shutdown
         )
-        self.assertEqual(res, b"mp3")
+        self.assertEqual(res.audio_bytes, b"mp3")
+        self.assertIsNone(res.failure)
 
     async def test_success_m4a(self) -> None:
         resp = AsyncMock(status=200)
@@ -534,7 +536,27 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         res = await bcfy_calls_collector._download_audio(
             self.session, "http://example.com/audio.m4a", self.shutdown
         )
-        self.assertEqual(res, b"m4a")
+        self.assertEqual(res.audio_bytes, b"m4a")
+        self.assertIsNone(res.failure)
+
+    async def test_download_audio_success_preserves_content_type(self) -> None:
+        resp = AsyncMock(status=200)
+        resp.read.return_value = b"mpeg_bytes"
+        resp.headers = {"Content-Type": "audio/mpeg"}
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=resp)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        self.session.get.return_value = cm
+
+        result = await bcfy_calls_collector._download_audio(
+            self.session,
+            "https://audio.example/test.mp3",
+            self.shutdown,
+        )
+
+        self.assertEqual(result.audio_bytes, b"mpeg_bytes")
+        self.assertEqual(result.content_type, "audio/mpeg")
+        self.assertIsNone(result.failure)
 
     async def test_non_200_status(self) -> None:
         resp = AsyncMock(status=404)
@@ -546,11 +568,12 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         res = await bcfy_calls_collector._download_audio(
             self.session, "http://mp3", self.shutdown
         )
-        failure = _require_item_failure(res)
+        self.assertIsNone(res.audio_bytes)
+        failure = _require_item_failure(res.failure)
         self.assertIs(
             failure.status_reason, FeedStatusReason.SOURCE_UNREACHABLE
         )
-        self.assertEqual(failure.reason, "audio_download_failed")
+        self.assertEqual(failure.reason, "item_http_404")
 
     async def test_http_exception(self) -> None:
         self.session.get.side_effect = aiohttp.ClientError()
@@ -558,11 +581,12 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         res = await bcfy_calls_collector._download_audio(
             self.session, "http://mp3", self.shutdown
         )
-        failure = _require_item_failure(res)
+        self.assertIsNone(res.audio_bytes)
+        failure = _require_item_failure(res.failure)
         self.assertIs(
             failure.status_reason, FeedStatusReason.SOURCE_UNREACHABLE
         )
-        self.assertEqual(failure.reason, "audio_download_failed")
+        self.assertEqual(failure.reason, "item_download_failed")
 
     async def test_429_retries_then_returns_rate_limited_failure(self) -> None:
         resp = AsyncMock(status=429)
@@ -581,11 +605,12 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
                 self.session, "http://mp3", self.shutdown
             )
 
-        failure = _require_item_failure(res)
+        self.assertIsNone(res.audio_bytes)
+        failure = _require_item_failure(res.failure)
         self.assertIs(
             failure.status_reason, FeedStatusReason.SOURCE_RATE_LIMITED
         )
-        self.assertEqual(failure.reason, "audio_http_429")
+        self.assertEqual(failure.reason, "item_http_429")
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls"
@@ -613,7 +638,8 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
             self.session, "http://mp3", self.shutdown
         )
 
-        self.assertEqual(res, b"mp3")
+        self.assertEqual(res.audio_bytes, b"mp3")
+        self.assertIsNone(res.failure)
         self.assertEqual(self.session.get.call_count, 2)
         mock_sleep.assert_called_once()
 
@@ -635,11 +661,12 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         res = await bcfy_calls_collector._download_audio(
             self.session, "http://mp3", self.shutdown
         )
-        failure = _require_item_failure(res)
+        self.assertIsNone(res.audio_bytes)
+        failure = _require_item_failure(res.failure)
         self.assertIs(
             failure.status_reason, FeedStatusReason.SOURCE_UNREACHABLE
         )
-        self.assertEqual(failure.reason, "audio_download_failed")
+        self.assertEqual(failure.reason, "item_http_503")
         self.assertEqual(
             self.session.get.call_count,
             bcfy_calls_collector._AUDIO_FILE_DOWNLOAD_MAX_RETRIES + 1,
@@ -663,7 +690,8 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         res = await bcfy_calls_collector._download_audio(
             self.session, "http://mp3", self.shutdown
         )
-        self.assertIsNone(res)
+        self.assertIsNone(res.audio_bytes)
+        self.assertIsNone(res.failure)
         self.assertEqual(self.session.get.call_count, 1)
         mock_sleep.assert_called_once()
 
@@ -817,7 +845,7 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
             failure.status_reason,
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
-        self.assertEqual(failure.reason, "audio_download_failed")
+        self.assertEqual(failure.reason, "item_download_failed")
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls"
@@ -880,16 +908,10 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
     async def test_create_chunk_captures_mime_type(
         self, mock_dl: AsyncMock
     ) -> None:
-        mock_dl.return_value = b"mpeg_bytes"
-
-        async def mock_dl_side_effect(
-            session, audio_url, shutdown_event, out_headers=None
-        ):
-            if out_headers is not None:
-                out_headers["Content-Type"] = "audio/mpeg"
-            return b"mpeg_bytes"
-
-        mock_dl.side_effect = mock_dl_side_effect
+        mock_dl.return_value = ItemDownloadResult(
+            audio_bytes=b"mpeg_bytes",
+            content_type="audio/mpeg",
+        )
         result = {"url": "http://1", "start_ts": 1000, "end_ts": 2000}
         rt = datetime.datetime(2026, 4, 22, 12, 0, 0, tzinfo=datetime.UTC)
 
@@ -1639,7 +1661,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         mock_create.return_value = bcfy_calls_collector._CallChunkResult(
             failure=ItemFailure(
                 FeedStatusReason.SOURCE_UNREACHABLE,
-                "audio_download_failed",
+                "item_download_failed",
             )
         )
 
@@ -1656,7 +1678,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             ctx.exception.status_reason,
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
-        self.assertEqual(str(ctx.exception), "audio_download_failed")
+        self.assertEqual(str(ctx.exception), "item_download_failed")
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
@@ -1683,13 +1705,13 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             bcfy_calls_collector._CallChunkResult(
                 failure=ItemFailure(
                     FeedStatusReason.SOURCE_UNREACHABLE,
-                    "audio_download_failed",
+                    "item_download_failed",
                 )
             ),
             bcfy_calls_collector._CallChunkResult(
                 failure=ItemFailure(
                     FeedStatusReason.SOURCE_RATE_LIMITED,
-                    "audio_http_429",
+                    "item_http_429",
                 )
             ),
         ]
@@ -1747,7 +1769,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             bcfy_calls_collector._CallChunkResult(
                 failure=ItemFailure(
                     FeedStatusReason.SOURCE_UNREACHABLE,
-                    "audio_download_failed",
+                    "item_download_failed",
                 )
             ),
             bcfy_calls_collector._CallChunkResult(chunk=chunk_ok),
@@ -1802,7 +1824,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             ctx.exception.status_reason,
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
-        self.assertEqual(str(ctx.exception), "audio_download_failed")
+        self.assertEqual(str(ctx.exception), "item_download_failed")
         self.assertEqual(mock_dl.call_count, 1)
 
     @patch(
