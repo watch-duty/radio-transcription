@@ -6,7 +6,7 @@ from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from backend.pipeline.storage.feed_store import (
+from backend.pipeline.storage.feed_store import (  # noqa: TC001
     FeedStatus,
     SourceType,
 )
