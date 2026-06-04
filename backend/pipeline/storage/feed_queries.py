@@ -187,7 +187,7 @@ def _build_claim_query(
         ")\n"
         "SELECT leased.id, leased.name, leased.source_type,\n"
         "       leased.last_processed_filename, leased.last_bookmark_time,\n"
-        "       leased.fencing_token, fpi.source_feed_id, fpi.external_id\n"
+        "       leased.fencing_token, fpi.source_feed_id\n"
         "FROM leased\n"
         "JOIN feed_properties fpi ON fpi.feed_id = leased.id\n"
     )
@@ -345,11 +345,11 @@ WITH new_feed AS (
               last_bookmark_time, created_at
 ),
 new_props AS (
-    INSERT INTO feed_properties (feed_id, source_feed_id, external_id, source_type, tags)
-    SELECT id, $3, $4, source_type, $5 FROM new_feed
-    RETURNING source_feed_id, external_id, tags
+    INSERT INTO feed_properties (feed_id, source_feed_id, source_type, tags)
+    SELECT id, $3, source_type, $4 FROM new_feed
+    RETURNING source_feed_id, tags
 )
-SELECT nf.*, np.source_feed_id, np.external_id, np.tags
+SELECT nf.*, np.source_feed_id, np.tags
 FROM new_feed nf
 JOIN new_props np ON TRUE;
 """
@@ -359,7 +359,7 @@ SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
        f.last_bookmark_time, f.created_at,
-       fp.source_feed_id, fp.external_id, fp.tags
+       fp.source_feed_id, fp.tags
 FROM feeds f
 JOIN feed_properties fp ON f.id = fp.feed_id
 WHERE f.id = $1
@@ -370,7 +370,7 @@ SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
        f.last_bookmark_time, f.created_at,
-       fp.source_feed_id, fp.external_id, fp.tags
+       fp.source_feed_id, fp.tags
 FROM feeds f
 JOIN feed_properties fp ON f.id = fp.feed_id
 WHERE ($1::timestamptz IS NULL OR f.created_at < $1 OR (f.created_at = $1 AND f.id < $2))
@@ -386,7 +386,7 @@ SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
        f.last_bookmark_time, f.created_at,
-       fp.source_feed_id, fp.external_id, fp.tags
+       fp.source_feed_id, fp.tags
 FROM feeds f
 JOIN feed_properties fp ON f.id = fp.feed_id
 WHERE ($1::timestamptz IS NULL OR f.created_at > $1 OR (f.created_at = $1 AND f.id > $2))
@@ -437,7 +437,7 @@ WITH updated AS (
               status_reason, status_reason_updated_at, last_heartbeat,
               last_processed_filename, last_bookmark_time, created_at
 )
-SELECT u.*, fp.source_feed_id, fp.external_id, fp.tags
+SELECT u.*, fp.source_feed_id, fp.tags
 FROM updated u
 JOIN feed_properties fp ON fp.feed_id = u.id
 """
@@ -454,12 +454,11 @@ WITH updated_feed AS (
 ),
 updated_props AS (
     UPDATE feed_properties
-    SET external_id = $3,
-        tags = $4
+    SET tags = $3
     WHERE feed_id = $1
-    RETURNING source_feed_id, external_id, tags
+    RETURNING source_feed_id, tags
 )
-SELECT uf.*, up.source_feed_id, up.external_id, up.tags
+SELECT uf.*, up.source_feed_id, up.tags
 FROM updated_feed uf
 JOIN updated_props up ON TRUE;
 """

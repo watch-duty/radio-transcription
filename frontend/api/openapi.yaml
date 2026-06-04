@@ -295,8 +295,6 @@ components:
           type: string
         sourceFeedId:
           type: string
-        externalId:
-          type: string
         sourceUrl:
           type: string
         archiveUrl:
@@ -365,8 +363,6 @@ components:
           $ref: "#/components/schemas/SourceType"
         sourceFeedId:
           type: string
-        externalId:
-          type: string
         tags:
           items:
             $ref: "#/components/schemas/Tag"
@@ -375,14 +371,11 @@ components:
         - name
         - sourceType
         - sourceFeedId
-        - externalId
       type: object
       additionalProperties: false
     FeedUpdate:
       properties:
         name:
-          type: string
-        externalId:
           type: string
         tags:
           items:
@@ -390,7 +383,6 @@ components:
           type: array
       required:
         - name
-        - externalId
       type: object
       additionalProperties: false
     OpenApiSpec:

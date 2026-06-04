@@ -113,7 +113,6 @@ class LeasedFeed(TypedDict):
 
     id: uuid.UUID
     name: str
-    external_id: str
     source_type: SourceType
     last_processed_filename: str | None
     last_bookmark_time: datetime.datetime | None
@@ -146,7 +145,6 @@ class Feed(TypedDict):
     last_bookmark_time: datetime.datetime | None
     created_at: datetime.datetime
     source_feed_id: str | None
-    external_id: str | None
     tags: list[dict[str, str]] | None
 
 
@@ -244,7 +242,6 @@ class FeedStore:
             last_bookmark_time=row["last_bookmark_time"],
             created_at=row["created_at"],
             source_feed_id=row["source_feed_id"],
-            external_id=row["external_id"],
             tags=tags,
         )
 
@@ -265,7 +262,6 @@ class FeedStore:
         return LeasedFeed(
             id=row["id"],
             name=row["name"],
-            external_id=row["external_id"],
             source_type=source_type,
             last_processed_filename=row["last_processed_filename"],
             last_bookmark_time=row["last_bookmark_time"],
@@ -644,7 +640,6 @@ class FeedStore:
         name: str,
         source_type: str | SourceType,
         source_feed_id: str,
-        external_id: str,
         tags: list[dict[str, str]] | None = None,
     ) -> Feed:
         """Create a new feed record.
@@ -654,9 +649,6 @@ class FeedStore:
         """
         if not source_feed_id:
             msg = "source_feed_id cannot be empty"
-            raise ValueError(msg)
-        if not external_id:
-            msg = "external_id cannot be empty"
             raise ValueError(msg)
 
         # Validate SourceType
@@ -676,7 +668,6 @@ class FeedStore:
                 name,
                 source_type_str,
                 source_feed_id,
-                external_id,
                 json.dumps(tags or []),
             )
         except asyncpg.exceptions.UniqueViolationError as e:
@@ -708,7 +699,6 @@ class FeedStore:
         self,
         feed_id: uuid.UUID,
         name: str,
-        external_id: str,
         tags: list[dict[str, str]] | None = None,
     ) -> Feed | None:
         """Update an existing feed record.
@@ -716,16 +706,11 @@ class FeedStore:
         Updates the feed in the `feeds` table and its corresponding
         properties in the `feed_properties` table.
         """
-        if not external_id:
-            msg = "external_id cannot be empty"
-            raise ValueError(msg)
-
         try:
             row = await self._pool.fetchrow(
                 UPDATE_FEED_SQL,
                 feed_id,
                 name,
-                external_id,
                 json.dumps(tags or []),
             )
         except asyncpg.exceptions.UniqueViolationError as e:

@@ -24,7 +24,6 @@ class FeedService:
             name=feed_in.name,
             source_type=feed_in.source_type,
             source_feed_id=feed_in.source_feed_id,
-            external_id=feed_in.external_id,
             tags=[t.model_dump() for t in feed_in.tags]
             if feed_in.tags
             else None,
@@ -43,7 +42,6 @@ class FeedService:
         store_feed = await self._store.update_feed(
             feed_id=uid,
             name=feed_in.name,
-            external_id=feed_in.external_id,
             tags=[t.model_dump() for t in feed_in.tags]
             if feed_in.tags
             else None,
