@@ -83,7 +83,7 @@ jobs:
 
       - name: Run E2E tests
         run: |
-          docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run -e PYTHONPATH=/app/.venv/lib/python3.13/site-packages:/app --rm integration-tests python -m pytest integration_tests/ --ignore=integration_tests/storage/ -v -s --log-cli-level=INFO
+          docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run -e PYTHONPATH=/app/.venv/lib/python3.13/site-packages:/app --rm integration-tests python -m pytest integration_tests/ --ignore=integration_tests/storage/ -v -s -n auto --log-cli-level=INFO
 
       - name: Clean up containers
         if: always()
