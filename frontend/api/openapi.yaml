@@ -319,6 +319,18 @@ components:
         - substatus
       type: object
       additionalProperties: false
+    ListFeedsResponse:
+      properties:
+        feeds:
+          items:
+            $ref: "#/components/schemas/Feed"
+          type: array
+        nextToken:
+          type: string
+      required:
+        - feeds
+      type: object
+      additionalProperties: false
     ListFeedsQueryParams:
       properties:
         limit:
@@ -955,9 +967,11 @@ paths:
           content:
             application/json:
               schema:
-                items:
-                  $ref: "#/components/schemas/Feed"
-                type: array
+                anyOf:
+                  - $ref: "#/components/schemas/ListFeedsResponse"
+                  - items:
+                      $ref: "#/components/schemas/Feed"
+                    type: array
         "401":
           description: Unauthorized
           content:

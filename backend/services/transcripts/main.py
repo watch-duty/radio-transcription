@@ -7,6 +7,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, status
 
 from backend.pipeline.common.auth import verify_oidc_token
 from backend.pipeline.common.exceptions import AlreadyExistsError
+from backend.pipeline.common.fastapi_tracing import setup_fastapi_tracing
 from backend.pipeline.storage.connection import (
     close_pool,
     create_pool_with_retry,
@@ -36,6 +37,7 @@ app = FastAPI(
     lifespan=lifespan,
     dependencies=[Depends(verify_oidc_token)],
 )
+setup_fastapi_tracing(app, service_name="transcripts-service")
 
 
 @app.post(
