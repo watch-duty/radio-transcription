@@ -118,8 +118,8 @@ describe('FeedsController', () => {
         limit: 10,
         nextToken: 'token_abc',
         order: 'asc' as const,
-        sourceTypes: [SourceType.OPENMHZ, SourceType.ECHO],
-        statuses: ['active' as const],
+        sourceTypes: `${SourceType.OPENMHZ},${SourceType.ECHO}`,
+        statuses: 'active',
         tags: [
           '{ "key": "region", "value": "West" }',
           '{ "key": "county", "value": "Fulton" }',
@@ -128,7 +128,7 @@ describe('FeedsController', () => {
       await controller.listFeeds(query);
 
       expect(mockRequest).toHaveBeenCalledWith({
-        url: 'http://feeds-api.example.com?limit=10&next_token=token_abc&order=asc&source_types=openmhz&source_types=echo&statuses=active&tags=%7B+%22key%22%3A+%22region%22%2C+%22value%22%3A+%22West%22+%7D&tags=%7B+%22key%22%3A+%22county%22%2C+%22value%22%3A+%22Fulton%22+%7D',
+        url: 'http://feeds-api.example.com?limit=10&next_token=token_abc&order=asc&source_types=openmhz%2Cecho&statuses=active&tags=%7B+%22key%22%3A+%22region%22%2C+%22value%22%3A+%22West%22+%7D&tags=%7B+%22key%22%3A+%22county%22%2C+%22value%22%3A+%22Fulton%22+%7D',
         method: 'GET',
       });
     });

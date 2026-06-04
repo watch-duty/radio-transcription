@@ -15,6 +15,7 @@ from backend.pipeline.common.exceptions import (
     FeedNameAlreadyExistsError,
 )
 from backend.pipeline.storage.feed_store import (
+    FeedStatus,
     FeedStatusReason,
     FeedStore,
     SourceType,
@@ -1690,17 +1691,23 @@ async def test_list_feeds_filter_by_source_type(
     )
 
     # Filter by bcfy_feeds
-    bcfy_result = await store.list_feeds(source_types=["bcfy_feeds"])
+    bcfy_result = await store.list_feeds(
+        source_types=[SourceType.BCFY_FEEDS],
+    )
     assert len(bcfy_result.feeds) == 1
     assert bcfy_result.feeds[0]["id"] == feed_id_a
 
     # Filter by openmhz
-    openmhz_result = await store.list_feeds(source_types=["openmhz"])
+    openmhz_result = await store.list_feeds(
+        source_types=[SourceType.OPENMHZ],
+    )
     assert len(openmhz_result.feeds) == 1
     assert openmhz_result.feeds[0]["id"] == feed_id_b
 
     # Filter by both
-    both_result = await store.list_feeds(source_types=["bcfy_feeds", "openmhz"])
+    both_result = await store.list_feeds(
+        source_types=[SourceType.BCFY_FEEDS, SourceType.OPENMHZ],
+    )
     assert len(both_result.feeds) == 2
 
 
@@ -1719,12 +1726,14 @@ async def test_list_feeds_filter_by_status(
     feed_id_b = await _insert_feed(db_pool, "Feed B", source_feed_id="src_b")
 
     # Filter by active status
-    active_result = await store.list_feeds(statuses=["active"])
+    active_result = await store.list_feeds(statuses=[FeedStatus.ACTIVE])
     assert len(active_result.feeds) == 1
     assert active_result.feeds[0]["id"] == feed_id_a
 
     # Filter by unclaimed status
-    unclaimed_result = await store.list_feeds(statuses=["unclaimed"])
+    unclaimed_result = await store.list_feeds(
+        statuses=[FeedStatus.UNCLAIMED],
+    )
     assert len(unclaimed_result.feeds) == 1
     assert unclaimed_result.feeds[0]["id"] == feed_id_b
 
