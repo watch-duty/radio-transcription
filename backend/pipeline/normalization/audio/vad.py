@@ -34,12 +34,14 @@ from backend.pipeline.normalization.common.constants import (
     VAD_DEFAULT_FALLBACK_PRIMING_SEC,
     VAD_DEFAULT_HIGHPASS_HZ,
     VAD_DEFAULT_LOWPASS_HZ,
+    VAD_DEFAULT_MIN_RMS_THRESHOLD,
     VAD_DEFAULT_MIN_SILENCE_DURATION_MS,
     VAD_DEFAULT_MIN_SPEECH_DURATION_MS,
     VAD_DEFAULT_PAD_SEC,
     VAD_DEFAULT_PEAK_FILTER_Q,
     VAD_DEFAULT_PRIMING_SEC,
     VAD_DEFAULT_SEED,
+    VAD_DEFAULT_SPIKINESS_RATIO_THRESHOLD,
     VAD_DEFAULT_THRESHOLD_OFFSET,
     VAD_DEFAULT_THRESHOLD_ONSET,
     VAD_NORMALIZATION_MIN_PEAK,
@@ -103,6 +105,8 @@ class VoiceActivityDetector:
         normalization_target_peak: float = VAD_NORMALIZATION_TARGET_PEAK,
         normalization_min_peak: float = VAD_NORMALIZATION_MIN_PEAK,
         seed: int = VAD_DEFAULT_SEED,
+        spikiness_ratio_threshold: float = VAD_DEFAULT_SPIKINESS_RATIO_THRESHOLD,
+        min_rms_threshold: float = VAD_DEFAULT_MIN_RMS_THRESHOLD,
         models_dir: str | Path = MODELS_DIR,
     ) -> None:
 
@@ -127,6 +131,8 @@ class VoiceActivityDetector:
         self.normalization_target_peak = normalization_target_peak
         self.normalization_min_peak = normalization_min_peak
         self.seed = seed
+        self.spikiness_ratio_threshold = spikiness_ratio_threshold
+        self.min_rms_threshold = min_rms_threshold
 
         self.silero_path = Path(models_dir) / "silero_vad.onnx"
         self.ulunas_path = Path(models_dir) / "ulunas_stream_simple.onnx"
@@ -261,8 +267,9 @@ class VoiceActivityDetector:
         ulunas_denoised = self.denoise(comp_audio)
 
         mixed_audio = (
-            1.0 - self.blend_ratio
-        ) * comp_audio + self.blend_ratio * ulunas_denoised
+            np.float32(1.0 - self.blend_ratio) * comp_audio
+            + np.float32(self.blend_ratio) * ulunas_denoised
+        )
 
         eq_board = Pedalboard(
             [
@@ -273,7 +280,7 @@ class VoiceActivityDetector:
                 )
             ]
         )
-        return eq_board(mixed_audio.astype(np.float32), TARGET_SAMPLE_RATE)
+        return eq_board(mixed_audio, TARGET_SAMPLE_RATE)
 
     def _trim_and_shift_segments(
         self,
@@ -335,6 +342,7 @@ class VoiceActivityDetector:
     def _is_speech_segment(self, sig: np.ndarray, chunk_size: int) -> bool:
         """Applies dynamic range/spikiness heuristics to reject transient static clicks and quiet noise."""
         if len(sig) == 0:
+            # Handle empty slices due to potential rounding edge cases at boundaries
             return False
 
         # Compute RMS in chunk-sized windows
@@ -351,11 +359,11 @@ class VoiceActivityDetector:
         rms_ratio = mean_rms / median_rms if median_rms > 1e-5 else 999.0
 
         # 1. Ratio check: reject if there are high spikes with very quiet median (clicks/transients)
-        if rms_ratio > 10.0:
+        if rms_ratio > self.spikiness_ratio_threshold:
             return False
 
         # 2. Floor check: reject if the segment is extremely quiet
-        if mean_rms < 0.001:
+        if mean_rms < self.min_rms_threshold:
             return False
 
         return True
