@@ -134,13 +134,13 @@ run = "mkdir -p .betterproto_out && uv run --with grpcio-tools python -m grpc_to
 description = "Start the dev pipeline and UI in local Docker containers"
 depends = ["dev:stop"]
 run = """
-docker-compose up --build -d
+docker-compose -f docker-compose.yml -f docker-compose.frontend.yml -f docker-compose.override.yml up --build -d
 """
 
 [tasks."dev:stop"]
 description = "Stop all dev containers and release host ports"
 run = """
-docker-compose down -v --remove-orphans
+docker-compose -f docker-compose.yml -f docker-compose.frontend.yml -f docker-compose.override.yml down -v --remove-orphans
 lsof -t -i :5173 | xargs kill -9 2>/dev/null || true
 lsof -t -i :8080 | xargs kill -9 2>/dev/null || true
 """
@@ -151,7 +151,7 @@ usage = """
 arg "[service]..." help="Services to log from. Default: all"
 """
 run = """
-docker-compose logs --tail 100 -t -f {{ arg(name="service") }}
+docker-compose -f docker-compose.yml -f docker-compose.frontend.yml -f docker-compose.override.yml logs --tail 100 -t -f {{ arg(name="service") }}
 """
 
 [tasks.dev]
@@ -163,7 +163,7 @@ run = "yarn --cwd frontend/transcription-ui run local"
 description = "Start the dev pipeline with local Whisper STT service in Docker"
 depends = ["dev:stop"]
 run = """
-docker-compose -f docker-compose.yml -f docker-compose.whisper.yml --profile local-whisper up --build -d
+docker-compose -f docker-compose.yml -f docker-compose.whisper.yml -f docker-compose.frontend.yml -f docker-compose.override.yml --profile local-whisper up --build -d
 """
 
 [tasks."dev:whisper"]
