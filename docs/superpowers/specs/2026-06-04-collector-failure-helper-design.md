@@ -13,7 +13,9 @@ The review comments identify duplicated helper code and unclear naming:
   normalization terminology.
 
 Broadcastify Calls already has related compatibility helpers from the preceding
-collector-classification work, so this design covers all affected collectors.
+collector-classification work, so this design covers all affected item-based
+collectors. Broadcastify Feeds is routed through the Icecast stream collector;
+it has stream endpoint failures, not per-item download failures.
 
 ## Problem
 
@@ -33,7 +35,8 @@ boundary instead of blindly reusing a poll helper for item downloads.
 - Make API/poll failures and item-download failures explicit contexts.
 - Preserve collector-specific retry loops and lifecycle behavior.
 - Keep isolated per-item failures from becoming feed-level failures unless
-  `ItemBatchOutcome` promotes them.
+  `ItemBatchOutcome` promotes them at an observation boundary or item failure
+  window.
 - Align helper naming away from `normalize` where the code is not audio
   normalization.
 
@@ -82,6 +85,19 @@ OpenMHz and Fire Notifications should import `DownloadResult`,
 `standardize_download_result`, `item_download_http_failure`, and
 `raise_item_failure`.
 
+`ItemBatchOutcome` should continue to cover both supported per-item promotion
+contexts:
+
+- **Observation boundary**: a natural source batch, such as one Broadcastify
+  Calls API page or one Fire Notifications file-list poll.
+- **Item failure window**: a collector-defined consecutive eligible item-failure
+  streak when the source has no natural batch, such as OpenMHz call downloads
+  since the last successful yielded chunk.
+
+Broadcastify Feeds/Icecast should not use `DownloadResult` or
+`ItemBatchOutcome`; its failures are stream endpoint failures classified from
+ffmpeg stderr or same-URL probe evidence.
+
 Fire Notifications should delete `_poll_status_failure` and call
 `api_http_failure(status, reason_prefix="fn_api_http")` directly at the poll
 failure site.
@@ -108,6 +124,8 @@ download results. Existing tests should continue to cover:
 - Fire Notifications item-download `404` remains an item failure.
 - OpenMHz item failures still promote only after the existing threshold.
 - Successful item processing still prevents or resets feed-level promotion.
+- Broadcastify Feeds/Icecast continues to classify stream endpoint failures
+  separately and does not emit `call_download_failed`.
 
 ## Maintenance Impact
 
