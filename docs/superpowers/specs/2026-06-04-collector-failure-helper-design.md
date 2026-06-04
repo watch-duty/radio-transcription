@@ -51,6 +51,8 @@ boundary instead of blindly reusing a poll helper for item downloads.
 - Do not make Broadcastify API fetch payloads or constructed chunks use the
   audio-specific `ItemDownloadResult`.
 - Do not add a shared API, poll, or stream endpoint status classifier.
+- Do not change `ItemBatchOutcome` promotion semantics or add new mixed raw
+  reasons.
 
 ## Design
 
@@ -95,6 +97,13 @@ contexts:
 - **Item failure window**: a collector-defined consecutive eligible item-failure
   streak when the source has no natural batch, such as OpenMHz call downloads
   since the last successful yielded chunk.
+
+This refactor should not change how `ItemBatchOutcome` chooses promoted
+failures. If all failed items share a canonical `status_reason`, keep promoting
+the first failure. If failed items have mixed canonical `status_reason` values,
+keep the existing `system_collector_error` promotion. This keeps the PR focused
+on shared item-download result handling and avoids adding new raw-reason
+aggregation behavior.
 
 Broadcastify Feeds/Icecast should not use `ItemDownloadResult` or
 `ItemBatchOutcome`; its failures are stream endpoint failures classified from
