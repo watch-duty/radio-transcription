@@ -150,7 +150,7 @@ def extract_trace_context(attributes: dict[str, str] | None) -> Context:
     Returns:
         An OpenTelemetry Context.
     """
-    if attributes and "traceparent" in attributes:
+    if attributes and attributes.get("traceparent"):
         return TraceContextTextMapPropagator().extract(carrier=attributes)
 
     return Context()

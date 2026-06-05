@@ -39,7 +39,7 @@ def test_feed_with_tags() -> Generator[str]:
     payload = {
         "name": feed_name,
         "source_type": "bcfy_feeds",
-        "source_feed_id": f"src-{uuid.uuid4()}",
+        "source_feed_id": str(uuid.uuid4().fields[0]),
         "tags": [{"key": "env", "value": "prod"}],
     }
 
