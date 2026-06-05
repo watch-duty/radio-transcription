@@ -62,6 +62,7 @@ export class ListFeedsQueryParams {
   statuses?: string;
   // Tag strings must be in the format of {"key": "<val>", "value": "<val>"}
   tags?: string[];
+  name?: string;
 }
 
 interface ListFeedsBackendResponse {
@@ -193,6 +194,9 @@ export class FeedsController extends Controller {
         for (const tag of query.tags) {
           queryParams.append('tags', tag);
         }
+      }
+      if (query?.name) {
+        queryParams.append('name', query.name);
       }
 
       const client = await getServiceClient(FEEDS_STORE_API_URL);

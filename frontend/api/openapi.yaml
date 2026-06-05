@@ -349,6 +349,8 @@ components:
           items:
             type: string
           type: array
+        name:
+          type: string
       type: object
       additionalProperties: false
     FeedCreate:
@@ -1036,6 +1038,11 @@ paths:
             type: array
             items:
               type: string
+        - in: query
+          name: name
+          required: false
+          schema:
+            type: string
       x-google-backend: radio-transcription-api
     post:
       operationId: CreateFeed
