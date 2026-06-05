@@ -33,11 +33,11 @@ import type {
 } from '@transcription/common';
 import { SourceType } from '@transcription/common';
 
+import { validateFeedSourceId } from '../../utils/validationUtils';
 import {
   ConfirmationDialog,
   type ConfirmationDialogProps,
 } from '../common/ConfirmationDialog';
-import { validateFeedSourceId } from '../../utils/validationUtils';
 
 const SOURCE_TYPE_OPTIONS: {
   value: SourceType;
