@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Mapping
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 
 from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.storage import feed_store
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 @dataclasses.dataclass(frozen=True)

@@ -11,15 +11,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+from backend.pipeline.ingestion.collectors.failure_classification import (
+    ItemFailure,
+)
 from backend.pipeline.ingestion.collectors.openmhz._types import CallEvent
 from backend.pipeline.ingestion.collectors.openmhz.collector import (
     MAX_ITEM_DOWNLOAD_FAILURES,
     MAX_RECONNECT_FAILURES,
     _download_m4a,
     openmhz_collector,
-)
-from backend.pipeline.ingestion.collectors.failure_classification import (
-    ItemFailure,
 )
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,

@@ -271,7 +271,7 @@ def _raise_for_fatal_status(
     raise collector_failure(classification.status_reason, classification.reason)
 
 
-async def _fetch_calls(  # noqa: PLR0911
+async def _fetch_calls(  # noqa: PLR0911, PLR0912
     session: aiohttp.ClientSession,
     url: str,
     headers: dict[str, str],

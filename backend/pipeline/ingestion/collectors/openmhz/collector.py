@@ -132,7 +132,7 @@ async def _download_m4a(
     return None
 
 
-async def openmhz_collector(
+async def openmhz_collector(  # noqa: PLR0912, PLR0915
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
     url_base: str,
@@ -247,7 +247,7 @@ async def openmhz_collector(
                         item_outcome = ItemBatchOutcome()
                         item_failure_count = 0
                 if pending_item_failure is not None:
-                    raise collector_failure(
+                    raise collector_failure(  # noqa: TRY301 -- promotion happens after leaving the transport loop.
                         pending_item_failure.status_reason,
                         pending_item_failure.reason,
                     )

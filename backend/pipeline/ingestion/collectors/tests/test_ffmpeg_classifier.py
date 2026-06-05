@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import unittest
 
-from backend.pipeline.ingestion.collectors.failure_classifiers import ffmpeg
 from backend.pipeline.ingestion.collectors.failure_classifiers import (
+    ffmpeg,
     http_status,
 )
 from backend.pipeline.storage import feed_store

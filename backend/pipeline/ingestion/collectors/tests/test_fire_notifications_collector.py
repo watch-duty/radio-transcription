@@ -9,10 +9,10 @@ import unittest
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from backend.pipeline.ingestion.collectors.fire_notifications import collector
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemFailure,
 )
+from backend.pipeline.ingestion.collectors.fire_notifications import collector
 from backend.pipeline.ingestion.models import AudioMimeType, FeedFailure
 from backend.pipeline.storage.feed_store import FeedStatusReason, SourceType
 

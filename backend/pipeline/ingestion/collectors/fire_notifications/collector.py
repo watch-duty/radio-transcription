@@ -314,7 +314,7 @@ async def _process_file_list(
         raise collector_failure(promoted.status_reason, promoted.reason)
 
 
-async def fire_notifications_collector(
+async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
     url_base: str,
