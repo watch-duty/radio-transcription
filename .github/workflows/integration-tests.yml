@@ -82,7 +82,6 @@ jobs:
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
           sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo docker image prune --all --force
 
       - name: Install mise, install tools
         uses: jdx/mise-action@v3
