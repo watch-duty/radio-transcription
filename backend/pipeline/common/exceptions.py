@@ -28,3 +28,7 @@ class FeedNameAlreadyExistsError(Exception):
     def __init__(self, name: str) -> None:
         self.name = name
         super().__init__(f"Feed with name '{name}' already exists")
+
+
+class NonRetryableError(Exception):
+    """Exception raised for non-retryable errors that should not trigger a message retry."""

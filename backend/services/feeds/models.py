@@ -83,3 +83,8 @@ class Feed(FeedBase):
     last_heartbeat: datetime.datetime | None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ListFeedsResponse(BaseModel):
+    feeds: list[Feed]
+    next_token: str | None = None

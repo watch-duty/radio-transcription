@@ -319,6 +319,18 @@ components:
         - substatus
       type: object
       additionalProperties: false
+    ListFeedsResponse:
+      properties:
+        feeds:
+          items:
+            $ref: "#/components/schemas/Feed"
+          type: array
+        nextToken:
+          type: string
+      required:
+        - feeds
+      type: object
+      additionalProperties: false
     ListFeedsQueryParams:
       properties:
         limit:
@@ -332,13 +344,9 @@ components:
             - asc
             - desc
         sourceTypes:
-          items:
-            $ref: "#/components/schemas/SourceType"
-          type: array
+          type: string
         statuses:
-          items:
-            $ref: "#/components/schemas/FeedStatus"
-          type: array
+          type: string
         tags:
           items:
             type: string
@@ -957,9 +965,11 @@ paths:
           content:
             application/json:
               schema:
-                items:
-                  $ref: "#/components/schemas/Feed"
-                type: array
+                anyOf:
+                  - $ref: "#/components/schemas/ListFeedsResponse"
+                  - items:
+                      $ref: "#/components/schemas/Feed"
+                    type: array
         "401":
           description: Unauthorized
           content:
@@ -1021,16 +1031,12 @@ paths:
           name: sourceTypes
           required: false
           schema:
-            type: array
-            items:
-              $ref: "#/components/schemas/SourceType"
+            type: string
         - in: query
           name: statuses
           required: false
           schema:
-            type: array
-            items:
-              $ref: "#/components/schemas/FeedStatus"
+            type: string
         - in: query
           name: tags
           required: false

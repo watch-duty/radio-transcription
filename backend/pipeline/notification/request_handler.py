@@ -3,8 +3,9 @@ from logging import Logger
 
 from google.protobuf.json_format import MessageToJson
 from urllib3 import PoolManager, Retry
-from urllib3.exceptions import MaxRetryError
+from urllib3.exceptions import HTTPError, MaxRetryError
 
+from backend.pipeline.common.exceptions import NonRetryableError
 from backend.pipeline.schema_types.alert_notification_pb2 import (
     AlertNotification,
 )
@@ -28,6 +29,7 @@ class RequestHandler:
             status_forcelist=[500, 502, 503, 504],
             allowed_methods=frozenset(["POST"]),
         )
+        self.http = PoolManager(retries=self.retry_strategy)
 
     def send_notification(self, notification: AlertNotification) -> None:
         """
@@ -40,10 +42,8 @@ class RequestHandler:
         )
         self.logger.info(f"Sending payload: {request_data}")
 
-        http = PoolManager(retries=self.retry_strategy)
-
         try:
-            response = http.request(
+            response = self.http.request(
                 "POST",
                 NOTIFICATION_ENDPOINT,
                 body=request_data,
@@ -52,15 +52,29 @@ class RequestHandler:
                     "X-Api-Key": NOTIFICATION_ENDPOINT_API_KEY,
                 },
             )
-            self.logger.info(f"Status code: ${response.status}")
-            self.logger.info(f"Response body: ${response.data.decode('utf-8')}")
         except MaxRetryError as e:
             self.logger.exception(
                 f"Maximum number of retries exceeded for request: {e}"
             )
             raise
-        except Exception as e:
+        except HTTPError as e:
             self.logger.exception(
                 f"Error occurred while sending POST request to endpoint: {e}"
             )
             raise
+
+        self.logger.info(f"Status code: {response.status}")
+
+        response_body = response.data.decode("utf-8")
+        self.logger.info(f"Response body: {response_body}")
+
+        if 400 <= response.status < 500:
+            err_msg = (
+                f"Client error from API: {response.status} - {response_body}"
+            )
+            raise NonRetryableError(err_msg)
+        if response.status >= 500:
+            err_msg = (
+                f"Server error from API: {response.status} - {response_body}"
+            )
+            raise HTTPError(err_msg)

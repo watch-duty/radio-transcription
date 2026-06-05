@@ -153,11 +153,20 @@ class VoiceActivityDetector:
             msg = f"UL-UNAS ONNX model not found at: {self.ulunas_path}"
             raise FileNotFoundError(msg)
 
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = 1
+        opts.inter_op_num_threads = 1
+        opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+
         self.silero_session = ort.InferenceSession(
-            str(self.silero_path), providers=["CPUExecutionProvider"]
+            str(self.silero_path),
+            sess_options=opts,
+            providers=["CPUExecutionProvider"],
         )
         self.ulunas_session = ort.InferenceSession(
-            str(self.ulunas_path), providers=["CPUExecutionProvider"]
+            str(self.ulunas_path),
+            sess_options=opts,
+            providers=["CPUExecutionProvider"],
         )
         logger.info("Silero & UL-UNAS ONNX sessions successfully initialized.")
 
