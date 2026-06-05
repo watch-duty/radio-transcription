@@ -9,7 +9,7 @@ from google.protobuf import json_format
 from backend.pipeline.common.auth_client import get_id_token
 from backend.pipeline.common.env import is_gcp_env
 from backend.pipeline.common.exceptions import AlreadyExistsError
-from backend.pipeline.common.tracing_utils import get_current_traceparent
+from backend.pipeline.tracing_utils import get_current_traceparent
 
 if TYPE_CHECKING:
     from backend.pipeline.schema_types import (
@@ -64,8 +64,6 @@ class TranscriptsClient:
             preserving_proto_field_name=True,
             always_print_fields_with_no_presence=True,
         )
-        if "segment_id" in data:
-            data["transmission_id"] = data.pop("segment_id")
 
         headers = {}
         traceparent = get_current_traceparent()

@@ -1,36 +1,31 @@
-from __future__ import annotations
+"""Storage provider logic for transcripts."""
 
 import base64
 import datetime
+import logging
 import uuid
-from dataclasses import dataclass
-from enum import StrEnum
+from typing import NamedTuple
 
 import asyncpg
-import asyncpg.exceptions
 
 from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
+from backend.pipeline.storage import transcript_queries
+from backend.pipeline.storage.pagination_utils import SortOrder
 
-from . import transcript_queries
-
-
-class SortOrder(StrEnum):
-    ASC = "asc"
-    DESC = "desc"
+logger = logging.getLogger(__name__)
 
 
-@dataclass
-class PaginatedTranscripts:
+class PaginatedTranscripts(NamedTuple):
     transcripts: list[EvaluatedTranscribedAudio]
     next_token: str | None
 
 
 class TranscriptStore:
     """
-    Storage layer for evaluated transmissions/transcripts against AlloyDB.
+    Storage layer for evaluated transcripts against AlloyDB.
 
     Provides atomic SQL operations for Creating, Reading, and Deleting transcripts.
     Uses the EvaluatedTranscribedAudio protobuf message as the data model.
@@ -42,12 +37,9 @@ class TranscriptStore:
     def _row_to_proto(self, row: asyncpg.Record) -> EvaluatedTranscribedAudio:
         """
         Convert a database row (asyncpg.Record) to EvaluatedTranscribedAudio.
-
-        In the future, we may consider storing the proto directly instead, but for now
-        we'll maintain them as separate types.
         """
         msg = EvaluatedTranscribedAudio()
-        msg.segment_id = str(row["transmission_id"])
+        msg.segment_id = str(row["segment_id"])
         msg.feed_id = str(row["feed_id"])
         msg.transcript = row["transcript"]
 
@@ -103,7 +95,7 @@ class TranscriptStore:
     ) -> EvaluatedTranscribedAudio:
         """Stores a new transcript record."""
         try:
-            transmission_id = uuid.UUID(transcript.segment_id)
+            segment_id = uuid.UUID(transcript.segment_id)
         except ValueError as e:
             msg = f"Invalid segment_id UUID: {transcript.segment_id}"
             raise ValueError(msg) from e
@@ -128,7 +120,7 @@ class TranscriptStore:
         try:
             row = await self._pool.fetchrow(
                 transcript_queries.CREATE_TRANSCRIPT_SQL,
-                transmission_id,
+                segment_id,
                 feed_id,
                 transcript.transcript,
                 start_ts,
@@ -144,20 +136,20 @@ class TranscriptStore:
                 list(transcript.errors),
             )
         except asyncpg.exceptions.UniqueViolationError as e:
-            raise AlreadyExistsError(str(transmission_id)) from e
+            raise AlreadyExistsError(str(segment_id)) from e
 
         if row is None:
-            msg = f"Unable to create transcript for transmission {transmission_id}."
+            msg = f"Unable to create transcript for segment {segment_id}."
             raise ValueError(msg)
 
         return self._row_to_proto(row)
 
     async def get_transcript(
-        self, transmission_id: str
+        self, segment_id: str
     ) -> EvaluatedTranscribedAudio | None:
-        """Fetch a specific transcript by transmission ID."""
+        """Fetch a specific transcript by segment ID."""
         try:
-            uid = uuid.UUID(transmission_id)
+            uid = uuid.UUID(segment_id)
         except ValueError:
             return None
 
@@ -214,7 +206,7 @@ class TranscriptStore:
             rows = rows[:limit]
             last_row = rows[-1]
             new_next_token = self._encode_cursor(
-                last_row["end_timestamp"], last_row["transmission_id"]
+                last_row["end_timestamp"], last_row["segment_id"]
             )
         else:
             new_next_token = None
@@ -261,7 +253,7 @@ class TranscriptStore:
             rows = rows[:limit]
             last_row = rows[-1]
             new_next_token = self._encode_cursor(
-                last_row["end_timestamp"], last_row["transmission_id"]
+                last_row["end_timestamp"], last_row["segment_id"]
             )
         else:
             new_next_token = None
@@ -270,10 +262,10 @@ class TranscriptStore:
             [self._row_to_proto(row) for row in rows], new_next_token
         )
 
-    async def delete_transcript(self, transmission_id: str) -> bool:
+    async def delete_transcript(self, segment_id: str) -> bool:
         """Deletes a transcript."""
         try:
-            uid = uuid.UUID(transmission_id)
+            uid = uuid.UUID(segment_id)
         except ValueError:
             return False
 

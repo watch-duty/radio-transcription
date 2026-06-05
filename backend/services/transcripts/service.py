@@ -30,8 +30,6 @@ class TranscriptService:
         try:
             # Use exclude_unset=True to avoid sending defaults for fields not provided
             data = transcript.model_dump(mode="json", exclude_unset=True)
-            if "transmission_id" in data:
-                data["segment_id"] = data.pop("transmission_id")
             json_format.ParseDict(data, msg, ignore_unknown_fields=True)
         except json_format.ParseError as e:
             logger.exception("Failed to parse transcript JSON")
@@ -41,9 +39,9 @@ class TranscriptService:
         created_msg = await self._store.create_transcript(msg)
         return _to_transcript_model(created_msg)
 
-    async def get_transcript(self, transmission_id: str) -> Transcript | None:
-        """Fetches a transcript by transmission ID."""
-        msg = await self._store.get_transcript(transmission_id)
+    async def get_transcript(self, segment_id: str) -> Transcript | None:
+        """Fetches a transcript by segment ID."""
+        msg = await self._store.get_transcript(segment_id)
         if not msg:
             return None
         return _to_transcript_model(msg)
@@ -98,13 +96,11 @@ class TranscriptService:
             next_token=result.next_token,
         )
 
-    async def delete_transcript(self, transmission_id: str) -> bool:
-        """Deletes a transcript by transmission ID."""
-        return await self._store.delete_transcript(transmission_id)
+    async def delete_transcript(self, segment_id: str) -> bool:
+        """Deletes a transcript by segment ID."""
+        return await self._store.delete_transcript(segment_id)
 
 
 def _to_transcript_model(msg: EvaluatedTranscribedAudio) -> Transcript:
     data = json_format.MessageToDict(msg, preserving_proto_field_name=True)
-    if "segment_id" in data:
-        data["transmission_id"] = data.pop("segment_id")
     return Transcript(**data)

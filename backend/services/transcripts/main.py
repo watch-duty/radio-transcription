@@ -66,20 +66,20 @@ async def create_transcript(
 
 
 @app.get(
-    "/v1/transcripts/{transmission_id}",
+    "/v1/transcripts/{segment_id}",
     tags=["transcripts"],
 )
 async def get_transcript(
     request: Request,
-    transmission_id: str,
+    segment_id: str,
 ) -> Transcript:
-    """Fetch a specific transcript by transmission ID."""
+    """Fetch a specific transcript by segment ID."""
     service: TranscriptService = request.app.state.transcript_service
-    transcript = await service.get_transcript(transmission_id)
+    transcript = await service.get_transcript(segment_id)
     if not transcript:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Transcript for transmission {transmission_id} not found",
+            detail=f"Transcript for segment {segment_id} not found",
         )
     return transcript
 
@@ -131,19 +131,19 @@ async def list_transcripts(
 
 
 @app.delete(
-    "/v1/transcripts/{transmission_id}",
+    "/v1/transcripts/{segment_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     tags=["transcripts"],
 )
 async def delete_transcript(
     request: Request,
-    transmission_id: str,
+    segment_id: str,
 ) -> None:
     """Delete a transcription record."""
     service: TranscriptService = request.app.state.transcript_service
-    success = await service.delete_transcript(transmission_id)
+    success = await service.delete_transcript(segment_id)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Transcript for transmission {transmission_id} not found",
+            detail=f"Transcript for segment {segment_id} not found",
         )

@@ -19,7 +19,7 @@ import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
 
 export interface TranscriptResponse {
   feed_id: string;
-  transmission_id: string;
+  segment_id: string;
   transcript: string;
   start_timestamp: string;
   end_timestamp: string;
@@ -36,7 +36,7 @@ export interface TranscriptResponse {
 function convertTranscriptResponse(response: TranscriptResponse): Transcript {
   return {
     feedId: response.feed_id,
-    transmissionId: response.transmission_id,
+    segmentId: response.segment_id,
     transcript: response.transcript,
     startTimestamp: response.start_timestamp,
     endTimestamp: response.end_timestamp,
