@@ -35,6 +35,18 @@ export function FeedConfigurationView({
   const [sourceFeedId, setSourceFeedId] = useState('');
   const [tags, setTags] = useState<Tag[]>([]);
 
+  const [filters, setFilters] = useState<{
+    searchQuery: string;
+    sourceTypes: string[];
+    statuses: string[];
+    tags: Tag[];
+  }>({
+    searchQuery: '',
+    sourceTypes: [],
+    statuses: [],
+    tags: [],
+  });
+
   const feedsErrorHandled = useRef<Error | null>(null);
 
   const {
@@ -42,8 +54,15 @@ export function FeedConfigurationView({
     isLoading: feedsLoading,
     error: feedsError,
   } = useQuery({
-    queryKey: ['listFeeds', token],
-    queryFn: () => listFeeds(token!),
+    queryKey: ['listFeeds', token, filters],
+    queryFn: () =>
+      listFeeds(token!, {
+        name: filters.searchQuery || undefined,
+        sourceTypes:
+          filters.sourceTypes.length > 0 ? filters.sourceTypes : undefined,
+        statuses: filters.statuses.length > 0 ? filters.statuses : undefined,
+        tags: filters.tags.length > 0 ? filters.tags : undefined,
+      }),
     enabled: !!token,
     refetchOnWindowFocus: false,
   });
@@ -101,12 +120,9 @@ export function FeedConfigurationView({
 
   const deleteMutation = useMutation({
     mutationFn: (feedId: string) => deleteFeed(feedId, token!),
-    onSuccess: (_, feedId) => {
+    onSuccess: () => {
       triggerSnackbar('Feed deleted successfully!');
       setIsEditing(false);
-      queryClient.setQueryData<Feed[]>(['listFeeds', token], (oldFeeds) => {
-        return oldFeeds ? oldFeeds.filter((feed) => feed.id !== feedId) : [];
-      });
       resetFormAndRefresh();
     },
     onError: (error: Error) => {
@@ -231,6 +247,7 @@ export function FeedConfigurationView({
             editingFeedId={isEditing ? id : undefined}
             onEditFeed={handleStartEdit}
             isSubmitting={isSubmitting}
+            onFiltersChange={setFilters}
           />
         </Grid>
       </Grid>

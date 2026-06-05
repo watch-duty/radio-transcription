@@ -1,4 +1,4 @@
-import { forwardRef, useMemo, useState } from 'react';
+import { forwardRef, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentProps, HTMLAttributes } from 'react';
 import { Link as RouterLink } from 'react-router';
 import { TableVirtuoso } from 'react-virtuoso';
@@ -28,7 +28,7 @@ import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
-import type { Feed } from '@transcription/common';
+import { type Feed, SourceType } from '@transcription/common';
 
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 import { MultiSelectFilter } from '../common/MultiSelectFilter';
@@ -41,6 +41,12 @@ export interface FeedTableProps {
   editingFeedId?: string;
   onEditFeed?: (feed: Feed) => void;
   isSubmitting?: boolean;
+  onFiltersChange: (filters: {
+    searchQuery: string;
+    sourceTypes: string[];
+    statuses: string[];
+    tags: { key: string; value: string }[];
+  }) => void;
 }
 
 interface SortConfig {
@@ -147,6 +153,10 @@ const VIRTUOSO_COMPONENTS = {
   FillerRow: VirtuosoFillerRow,
 };
 
+const ALL_SOURCE_TYPES = Object.values(SourceType);
+
+const FILTER_DEBOUNCE_MS = 300;
+
 export function FeedTable({
   title = 'Feeds',
   feeds,
@@ -155,6 +165,7 @@ export function FeedTable({
   editingFeedId,
   onEditFeed,
   isSubmitting = false,
+  onFiltersChange,
 }: FeedTableProps) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -170,6 +181,32 @@ export function FeedTable({
   >([]);
   const [appliedStatuses, setAppliedStatuses] = useState<string[]>([]);
   const [appliedSourceTypes, setAppliedSourceTypes] = useState<string[]>([]);
+
+  const isInitialMount = useRef(true);
+
+  // Debounce filter changes to notify parent
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+    const handler = setTimeout(() => {
+      onFiltersChange({
+        searchQuery,
+        sourceTypes: appliedSourceTypes,
+        statuses: appliedStatuses,
+        tags: appliedTags,
+      });
+    }, FILTER_DEBOUNCE_MS);
+
+    return () => clearTimeout(handler);
+  }, [
+    searchQuery,
+    appliedSourceTypes,
+    appliedStatuses,
+    appliedTags,
+    onFiltersChange,
+  ]);
 
   // Calculate unique tags across all feeds
   const tags = useMemo<{ key: string; value: string }[]>(() => {
@@ -187,17 +224,6 @@ export function FeedTable({
     return uniqueTags.sort(
       (a, b) => a.key.localeCompare(b.key) || a.value.localeCompare(b.value)
     );
-  }, [feeds]);
-
-  // Calculate unique source types across all feeds
-  const sourceTypes = useMemo<string[]>(() => {
-    const seen = new Set<string>();
-    feeds.forEach((feed) => {
-      if (feed.sourceType) {
-        seen.add(feed.sourceType);
-      }
-    });
-    return Array.from(seen).sort();
   }, [feeds]);
 
   const handleRequestSort = (property: 'name' | 'type' | 'status') => {
@@ -605,7 +631,7 @@ export function FeedTable({
             <Box sx={{ flexGrow: 1, minWidth: 120, maxWidth: { sm: 200 } }}>
               <MultiSelectFilter
                 label="Source Type"
-                options={sourceTypes}
+                options={ALL_SOURCE_TYPES}
                 value={appliedSourceTypes}
                 onChange={setAppliedSourceTypes}
                 size="small"

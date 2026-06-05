@@ -1,7 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 import { Box } from '@mui/material';
 import { useQuery } from '@tanstack/react-query';
+import type { Tag } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { listFeeds } from '../../service/listFeeds';
@@ -18,13 +19,32 @@ const FEED_REFETCH_INTERVAL_MS = 15000; // 15 seconds
 export function FeedSearchView({ title, onError }: FeedSearchViewProps) {
   const { token } = useAuth();
 
+  const [filters, setFilters] = useState<{
+    searchQuery: string;
+    sourceTypes: string[];
+    statuses: string[];
+    tags: Tag[];
+  }>({
+    searchQuery: '',
+    sourceTypes: [],
+    statuses: [],
+    tags: [],
+  });
+
   const {
     data: feeds,
     error: feedsError,
     isLoading: feedsLoading,
   } = useQuery({
-    queryKey: ['listFeeds', token],
-    queryFn: () => listFeeds(token!),
+    queryKey: ['listFeeds', token, filters],
+    queryFn: () =>
+      listFeeds(token!, {
+        name: filters.searchQuery || undefined,
+        sourceTypes:
+          filters.sourceTypes.length > 0 ? filters.sourceTypes : undefined,
+        statuses: filters.statuses.length > 0 ? filters.statuses : undefined,
+        tags: filters.tags.length > 0 ? filters.tags : undefined,
+      }),
     enabled: !!token,
     refetchOnWindowFocus: false,
     refetchInterval: FEED_REFETCH_INTERVAL_MS,
@@ -46,7 +66,12 @@ export function FeedSearchView({ title, onError }: FeedSearchViewProps) {
         height: 'calc(100vh - 100px)',
       }}
     >
-      <FeedTable title={title} feeds={feeds ?? []} isLoading={feedsLoading} />
+      <FeedTable
+        title={title}
+        feeds={feeds ?? []}
+        isLoading={feedsLoading}
+        onFiltersChange={setFilters}
+      />
     </Box>
   );
 }

@@ -3,7 +3,7 @@ import React from 'react';
 import { MemoryRouter } from 'react-router';
 import { VirtuosoMockContext } from 'react-virtuoso';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   cleanup,
@@ -17,13 +17,20 @@ import { SourceType } from '@transcription/common';
 
 import { FeedTable } from './FeedTable';
 
-const renderFeedTable = (props: React.ComponentProps<typeof FeedTable>) => {
+const renderFeedTable = (
+  props: Partial<React.ComponentProps<typeof FeedTable>> = {}
+) => {
   return render(
     <MemoryRouter>
       <VirtuosoMockContext.Provider
         value={{ viewportHeight: 1000, itemHeight: 100 }}
       >
-        <FeedTable {...props} />
+        <FeedTable
+          feeds={[]}
+          isLoading={false}
+          onFiltersChange={() => {}}
+          {...props}
+        />
       </VirtuosoMockContext.Provider>
     </MemoryRouter>
   );
@@ -182,7 +189,11 @@ describe('FeedTable', () => {
         <VirtuosoMockContext.Provider
           value={{ viewportHeight: 1000, itemHeight: 100 }}
         >
-          <FeedTable feeds={refreshedFeeds} isLoading={false} />
+          <FeedTable
+            feeds={refreshedFeeds}
+            isLoading={false}
+            onFiltersChange={vi.fn()}
+          />
         </VirtuosoMockContext.Provider>
       </MemoryRouter>
     );
@@ -353,5 +364,28 @@ describe('FeedTable', () => {
     // There should be exactly one 'County' group header
     const countyHeaders = within(listbox).getAllByText('County');
     expect(countyHeaders).toHaveLength(1);
+  });
+
+  it('calls onFiltersChange when filters are updated', () => {
+    vi.useFakeTimers();
+    const onFiltersChangeMock = vi.fn();
+    renderFeedTable({
+      feeds: mockFeeds,
+      isLoading: false,
+      onFiltersChange: onFiltersChangeMock,
+    });
+
+    const searchInput = screen.getByPlaceholderText(/Search feeds\.\.\./i);
+    fireEvent.change(searchInput, { target: { value: 'bravo' } });
+
+    vi.advanceTimersByTime(300);
+    expect(onFiltersChangeMock).toHaveBeenLastCalledWith({
+      searchQuery: 'bravo',
+      sourceTypes: [],
+      statuses: [],
+      tags: [],
+    });
+
+    vi.useRealTimers();
   });
 });
