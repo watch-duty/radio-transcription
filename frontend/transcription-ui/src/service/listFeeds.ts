@@ -28,6 +28,8 @@ export async function listFeedsPage(
   });
 }
 
+// TODO: Update this to allow tanstack query to handle the nextToken pagination.
+// This is okay, but temporary given that when we have 10k+ feeds this will be a lot of calls.
 export async function listFeeds(token: string): Promise<Feed[]> {
   let allFeeds: Feed[] = [];
   let nextToken: string | undefined = undefined;
