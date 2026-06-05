@@ -292,7 +292,6 @@ export function FeedConfigurationEdit({
       if (isEditing) {
         const payload: FeedUpdate = {
           name: feedName.trim(),
-          externalId: feedSourceId.trim(),
           tags: finalTags,
         };
         await onUpdateFeed(payload);
@@ -301,7 +300,6 @@ export function FeedConfigurationEdit({
           name: feedName.trim(),
           sourceType: feedSourceType,
           sourceFeedId: feedSourceId.trim(),
-          externalId: feedSourceId.trim(),
           tags: finalTags,
         };
         await onCreateFeed(payload);

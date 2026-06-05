@@ -119,7 +119,6 @@ class TranscriptionEventProcessor:
                     canonical_audio_uri=claim.canonical_audio_uri,
                     playback_audio_uri=claim.playback_audio_uri,
                     feed_name=claim.feed_name,
-                    external_id=claim.external_id,
                 )
 
                 # Egress to final output topic, strictly ordered by feed_id

@@ -60,8 +60,8 @@ message AlertNotification {
   // The human-readable name of the radio feed as stored in the database.
   string feed_name = 15;
 
-  // The ID used to map the feed ID within the application.
-  string external_id = 16;
+  reserved 16;
+  reserved "external_id";
 
   message Tag {
     string key = 1;

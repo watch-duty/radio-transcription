@@ -27,7 +27,6 @@ class Tag(BaseModel):
 class FeedBase(BaseModel):
     name: str
     source_type: SourceType
-    external_id: str
     tags: list[Tag] | None = None
 
 
@@ -75,7 +74,6 @@ FeedCreate = Annotated[
 
 class FeedUpdate(BaseModel):
     name: str
-    external_id: str
     tags: list[Tag] | None = None
 
     model_config = ConfigDict(extra="forbid")

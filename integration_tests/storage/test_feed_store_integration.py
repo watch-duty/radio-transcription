@@ -42,7 +42,6 @@ async def _insert_feed(
     worker_id: uuid.UUID | None = None,
     last_heartbeat_age_seconds: int | None = None,
     source_feed_id: str | None = None,
-    external_id: str = "ext_default",
 ) -> uuid.UUID:
     """Insert a feed row and its properties row."""
     heartbeat_expr = "NULL"
@@ -68,11 +67,10 @@ async def _insert_feed(
         source_feed_id = f"src_{uuid.uuid4().hex[:8]}"
 
     await pool.execute(
-        "INSERT INTO feed_properties (feed_id, source_feed_id, external_id, source_type) "
-        "VALUES ($1::uuid, $2, $3, $4)",
+        "INSERT INTO feed_properties (feed_id, source_feed_id, source_type) "
+        "VALUES ($1::uuid, $2, $3)",
         str(feed_id),
         source_feed_id,
-        external_id,
         source_type,
     )
 
@@ -1503,18 +1501,16 @@ async def test_create_feed_succeeds(
         name="New Integration Feed",
         source_type="bcfy_feeds",
         source_feed_id="src_123",
-        external_id="ext_123",
     )
 
     assert feed is not None
     assert feed["name"] == "New Integration Feed"
     assert feed["source_type"] == SourceType.BCFY_FEEDS
     assert feed["source_feed_id"] == "src_123"
-    assert feed["external_id"] == "ext_123"
 
     # Verify in DB
     row = await db_pool.fetchrow(
-        "SELECT f.name, fp.source_feed_id, fp.external_id "
+        "SELECT f.name, fp.source_feed_id "
         "FROM feeds f "
         "JOIN feed_properties fp ON f.id = fp.feed_id "
         "WHERE f.id = $1",
@@ -1523,7 +1519,6 @@ async def test_create_feed_succeeds(
     assert row is not None
     assert row["name"] == "New Integration Feed"
     assert row["source_feed_id"] == "src_123"
-    assert row["external_id"] == "ext_123"
 
 
 async def test_create_feed_already_exists(
@@ -1534,7 +1529,6 @@ async def test_create_feed_already_exists(
         name="New Integration Feed",
         source_type="bcfy_feeds",
         source_feed_id="src_123",
-        external_id="ext_123",
     )
 
     with pytest.raises(FeedAlreadyExistsError) as cm:
@@ -1542,7 +1536,6 @@ async def test_create_feed_already_exists(
             name="Another Feed Name",
             source_type="bcfy_feeds",
             source_feed_id="src_123",
-            external_id="ext_456",
         )
 
     assert (
@@ -1559,23 +1552,20 @@ async def test_update_feed_succeeds(
         name="Original Name",
         source_type="bcfy_feeds",
         source_feed_id="src_123",
-        external_id="ext_123",
     )
 
     updated_feed = await store.update_feed(
         feed_id=feed["id"],
         name="Updated Name",
-        external_id="ext_456",
     )
 
     assert updated_feed is not None
     assert updated_feed["name"] == "Updated Name"
     assert updated_feed["source_feed_id"] == "src_123"
-    assert updated_feed["external_id"] == "ext_456"
 
     # Verify in DB
     row = await db_pool.fetchrow(
-        "SELECT f.name, fp.source_feed_id, fp.external_id "
+        "SELECT f.name, fp.source_feed_id "
         "FROM feeds f "
         "JOIN feed_properties fp ON f.id = fp.feed_id "
         "WHERE f.id = $1",
@@ -1584,7 +1574,6 @@ async def test_update_feed_succeeds(
     assert row is not None
     assert row["name"] == "Updated Name"
     assert row["source_feed_id"] == "src_123"
-    assert row["external_id"] == "ext_456"
 
 
 async def test_update_feed_already_exists(
@@ -1595,21 +1584,18 @@ async def test_update_feed_already_exists(
         name="Existing Feed",
         source_type="bcfy_feeds",
         source_feed_id="src_456",
-        external_id="ext_456",
     )
 
     feed = await store.create_feed(
         name="Original Name",
         source_type="bcfy_feeds",
         source_feed_id="src_123",
-        external_id="ext_123",
     )
 
     with pytest.raises(FeedNameAlreadyExistsError):
         await store.update_feed(
             feed_id=feed["id"],
             name="Existing Feed",
-            external_id="ext_123",
         )
 
 
@@ -1624,7 +1610,6 @@ async def test_get_feed_returns_feed(
         db_pool,
         "Get Feed Test",
         source_feed_id="src_get",
-        external_id="ext_get",
     )
 
     feed = await store.get_feed(feed_id)
@@ -1633,7 +1618,6 @@ async def test_get_feed_returns_feed(
     assert feed["id"] == feed_id
     assert feed["name"] == "Get Feed Test"
     assert feed["source_feed_id"] == "src_get"
-    assert feed["external_id"] == "ext_get"
 
 
 async def test_get_feed_returns_none_if_not_found(store: FeedStore) -> None:
@@ -1649,12 +1633,8 @@ async def test_list_feeds_returns_all_feeds_ordered_desc(
     db_pool: asyncpg.Pool, store: FeedStore
 ) -> None:
     """list_feeds retrieves all feeds ordered by created_at DESC."""
-    feed_id_a = await _insert_feed(
-        db_pool, "Feed A", source_feed_id="src_a", external_id="ext_a"
-    )
-    feed_id_b = await _insert_feed(
-        db_pool, "Feed B", source_feed_id="src_b", external_id="ext_b"
-    )
+    feed_id_a = await _insert_feed(db_pool, "Feed A", source_feed_id="src_a")
+    feed_id_b = await _insert_feed(db_pool, "Feed B", source_feed_id="src_b")
 
     result = await store.list_feeds()
 
@@ -1663,11 +1643,9 @@ async def test_list_feeds_returns_all_feeds_ordered_desc(
     # The most recently created should be first
     assert feeds[0]["id"] == feed_id_b
     assert feeds[0]["source_feed_id"] == "src_b"
-    assert feeds[0]["external_id"] == "ext_b"
 
     assert feeds[1]["id"] == feed_id_a
     assert feeds[1]["source_feed_id"] == "src_a"
-    assert feeds[1]["external_id"] == "ext_a"
 
     assert result.next_token is None
 
@@ -1676,13 +1654,9 @@ async def test_list_feeds_limit_and_pagination(
     db_pool: asyncpg.Pool, store: FeedStore
 ) -> None:
     """list_feeds supports limit and next_token keyset pagination."""
-    feed_id_a = await _insert_feed(
-        db_pool, "Feed A", source_feed_id="src_a", external_id="ext_a"
-    )
+    feed_id_a = await _insert_feed(db_pool, "Feed A", source_feed_id="src_a")
     await asyncio.sleep(0.01)  # Ensure distinct created_at timestamps
-    feed_id_b = await _insert_feed(
-        db_pool, "Feed B", source_feed_id="src_b", external_id="ext_b"
-    )
+    feed_id_b = await _insert_feed(db_pool, "Feed B", source_feed_id="src_b")
 
     # Page 1
     page1 = await store.list_feeds(limit=1)
@@ -1762,14 +1736,12 @@ async def test_list_feeds_filter_by_tags(store: FeedStore) -> None:
         name="Feed A",
         source_type="bcfy_feeds",
         source_feed_id="src_a",
-        external_id="ext_a",
         tags=[{"key": "region", "value": "West"}],
     )
     feed_b = await store.create_feed(
         name="Feed B",
         source_type="bcfy_feeds",
         source_feed_id="src_b",
-        external_id="ext_b",
         tags=[{"key": "region", "value": "East"}],
     )
 

@@ -24,7 +24,6 @@ from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 _TEST_FEED = LeasedFeed(
     id=uuid.UUID("12345678-1234-5678-1234-567812345678"),
     name="test-openmhz-wmata",
-    external_id="ext-id",
     source_type=SourceType.OPENMHZ,
     last_processed_filename=None,
     last_bookmark_time=None,
@@ -156,7 +155,6 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         feed = LeasedFeed(
             id=uuid.uuid4(),
             name="no-id",
-            external_id="ext-id",
             source_type=SourceType.OPENMHZ,
             last_processed_filename=None,
             last_bookmark_time=None,
