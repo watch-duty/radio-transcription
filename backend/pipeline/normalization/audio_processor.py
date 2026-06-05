@@ -87,6 +87,8 @@ class AudioProcessor:
                     "aac",
                     "-b:a",
                     M4A_BITRATE,
+                    "-movflags",
+                    "+faststart",
                     temp_filename,
                 ],
                 input=input_bytes,
