@@ -14,6 +14,7 @@ interface FeedSearchViewProps {
 }
 
 const FEED_REFETCH_INTERVAL_MS = 15000; // 15 seconds
+const QUERY_DEBOUNCE_TIME_MS = 300;
 
 export function FeedSearchView({ title, onError }: FeedSearchViewProps) {
   const { token } = useAuth();
@@ -32,7 +33,7 @@ export function FeedSearchView({ title, onError }: FeedSearchViewProps) {
   useEffect(() => {
     const handler = setTimeout(() => {
       setDebouncedSearchQuery(filters.searchQuery);
-    }, 300);
+    }, QUERY_DEBOUNCE_TIME_MS);
     return () => clearTimeout(handler);
   }, [filters.searchQuery]);
 

@@ -21,6 +21,8 @@ interface FeedConfigurationViewProps {
   onError: (error: Error, titleMessage?: string) => void;
 }
 
+const QUERY_DEBOUNCE_TIME_MS = 300;
+
 export function FeedConfigurationView({
   triggerSnackbar,
   onError,
@@ -51,7 +53,7 @@ export function FeedConfigurationView({
   useEffect(() => {
     const handler = setTimeout(() => {
       setDebouncedSearchQuery(filters.searchQuery);
-    }, 300);
+    }, QUERY_DEBOUNCE_TIME_MS);
     return () => clearTimeout(handler);
   }, [filters.searchQuery]);
 
