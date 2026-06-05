@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@google-cloud/functions-framework": "^5.0.2",
-    "@transcription/common": "file:../common",
+    "@transcription/common": "link:../common",
     "axios": "^1.16.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
