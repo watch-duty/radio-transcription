@@ -10,8 +10,10 @@ import { SourceType } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { createFeed } from '../../service/createFeed';
+import { deactivateFeed } from '../../service/deactivateFeed';
 import { deleteFeed } from '../../service/deleteFeed';
 import { listFeeds } from '../../service/listFeeds';
+import { resetFeed } from '../../service/resetFeed';
 import { updateFeed } from '../../service/updateFeed';
 import { FeedConfigurationEdit } from './FeedConfigurationEdit';
 import { type FeedFilters, FeedTable } from './FeedTable';
@@ -167,6 +169,30 @@ export function FeedConfigurationView({
     },
   });
 
+  const deactivateMutation = useMutation({
+    mutationFn: (feedId: string) => deactivateFeed(feedId, token!),
+    onSuccess: () => {
+      triggerSnackbar('Feed deactivated successfully!');
+      setIsEditing(false);
+      resetFormAndRefresh();
+    },
+    onError: (error: Error) => {
+      onError(error, 'Deactivating Feed');
+    },
+  });
+
+  const resetMutation = useMutation({
+    mutationFn: (feedId: string) => resetFeed(feedId, token!),
+    onSuccess: (data) => {
+      triggerSnackbar(`Feed "${data.name}" reset successfully!`);
+      setIsEditing(false);
+      resetFormAndRefresh();
+    },
+    onError: (error: Error) => {
+      onError(error, 'Resetting Feed');
+    },
+  });
+
   const handleCreateFeed = async (payload: FeedCreate) => {
     await createMutation.mutateAsync(payload);
   };
@@ -194,7 +220,11 @@ export function FeedConfigurationView({
   const isSubmitting =
     createMutation.isPending ||
     updateMutation.isPending ||
-    deleteMutation.isPending;
+    deleteMutation.isPending ||
+    deactivateMutation.isPending ||
+    resetMutation.isPending;
+
+  const currentEditingFeed = feeds.find((f) => f.id === id);
 
   return (
     <Box
@@ -252,6 +282,8 @@ export function FeedConfigurationView({
             feedSourceType={sourceType}
             feedSourceId={sourceFeedId}
             feedTags={tags}
+            feedStatus={currentEditingFeed?.status}
+            feedSubstatus={currentEditingFeed?.substatus}
             setFeedName={setName}
             setFeedSourceType={setSourceType}
             setFeedSourceId={setSourceFeedId}
@@ -262,6 +294,12 @@ export function FeedConfigurationView({
             }
             onDeleteFeed={async () => {
               await deleteMutation.mutateAsync(id);
+            }}
+            onDeactivateFeed={async () => {
+              await deactivateMutation.mutateAsync(id);
+            }}
+            onResetFeed={async () => {
+              await resetMutation.mutateAsync(id);
             }}
             onCancel={handleCancelEdit}
             isSubmitting={isSubmitting}
