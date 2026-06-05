@@ -6,6 +6,7 @@ avoiding the overhead of multi-VAD abstractions.
 
 import math
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import onnxruntime as ort
@@ -137,26 +138,19 @@ class VoiceActivityDetector:
         self.silero_path = Path(models_dir) / "silero_vad.onnx"
         self.ulunas_path = Path(models_dir) / "ulunas_stream_simple.onnx"
 
-        self.silero_session = None
-        self.ulunas_session = None
+        # Eagerly initialize ONNX sessions
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = 1
+        opts.inter_op_num_threads = 1
+        opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
 
-    def setup(self) -> None:
-        """Initializes the ONNXRuntime inference sessions and warms up Numba."""
-        if self.silero_session is not None:
-            return
-
-        logger.info("Initializing VAD sessions. Models path: %s", MODELS_DIR)
+        logger.info("Initializing VAD sessions. Models path: %s", models_dir)
         if not self.silero_path.exists():
             msg = f"Silero ONNX model not found at: {self.silero_path}"
             raise FileNotFoundError(msg)
         if not self.ulunas_path.exists():
             msg = f"UL-UNAS ONNX model not found at: {self.ulunas_path}"
             raise FileNotFoundError(msg)
-
-        opts = ort.SessionOptions()
-        opts.intra_op_num_threads = 1
-        opts.inter_op_num_threads = 1
-        opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
 
         self.silero_session = ort.InferenceSession(
             str(self.silero_path),
@@ -189,6 +183,9 @@ class VoiceActivityDetector:
         except Exception as e:
             logger.warning("Failed to warm up Numba compiler: %s", e)
 
+    def setup(self) -> None:
+        """No-op. sessions are eagerly initialized in constructor."""
+
     def denoise(
         self,
         audio_array: np.ndarray,
@@ -218,13 +215,18 @@ class VoiceActivityDetector:
         num_frames = stft_features.shape[2]
         out_stft = np.zeros_like(stft_features)
 
+        # Pre-allocate and reuse the input dictionary to avoid heavy object allocation overhead in Python loop
+        ort_inputs: dict[str, Any] = dict(states)
+
         for i in range(num_frames):
-            frame = stft_features[:, :, i : i + 1, :]
-            ort_inputs = {audio_input_name: frame, **states}
+            ort_inputs[audio_input_name] = stft_features[:, :, i : i + 1, :]
             ort_outs = self.ulunas_session.run(None, ort_inputs)
             out_stft[:, :, i : i + 1, :] = ort_outs[0]
             for j in range(1, len(outputs)):
-                states[inputs[j].name] = ort_outs[j]
+                name = inputs[j].name
+                val = ort_outs[j]
+                states[name] = val
+                ort_inputs[name] = val
 
         return custom_numpy_istft(
             out_stft,
@@ -500,16 +502,18 @@ class VoiceActivityDetector:
         prior_audio: np.ndarray | None = None,
     ) -> list[tuple[float, float]]:
         """Analyzes a normalized float32 audio array, returning speech segments as (start_sec, end_sec)."""
-        self.setup()
-        if self.silero_session is None:
-            msg = "Silero VAD session not initialized."
-            raise RuntimeError(msg)
-
         if len(audio_array) == 0:
             return []
 
         if np.issubdtype(audio_array.dtype, np.integer):
             audio_array = audio_array.astype(np.float32) / 32768.0
+
+        # Check for silence early on the raw input audio to prevent redundant execution
+        if (
+            len(audio_array) == 0
+            or np.max(np.abs(audio_array)) < self.min_rms_threshold
+        ):
+            return []
         if prior_audio is not None and np.issubdtype(
             prior_audio.dtype, np.integer
         ):
