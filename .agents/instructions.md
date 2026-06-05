@@ -57,7 +57,8 @@ a larger resource-heavy run.
 
 3. **Git Commits**:
    - Use descriptive semantic commit prefixes (e.g., `feat(transcription):`, `fix(pipeline):`, `style(transcription):`, `docs:`).
-   - **Resource Limits & Sandboxes**: If committing inside a resource-restricted sandbox environment where local git hooks fail due to memory or process limits (exit codes `137` / `-9`), stage changes with `git add -u` and commit utilizing the `--no-verify` flag. The remote GitHub Action CI will perform final validation.
+   - **Local Quality Enforcement (Do Not Bypass Hooks)**: With local pre-commit hooks optimized, commits run fast and green. **Do not use `--no-verify`**.
+   - **Notebook Schema Gating**: If you modify any `.ipynb` notebook file, you MUST explicitly execute `uv run python scripts/notebook_formatter.py --write` and `uv run ruff format` prior to committing to guarantee schema compliance.
 
 4. **Pull Request Title Standards**:
    - When creating or submitting a Pull Request on GitHub, you MUST prefix the PR title in brackets to satisfy the remote Linear check.
