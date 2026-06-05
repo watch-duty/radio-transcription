@@ -33,26 +33,31 @@ class FeedBase(BaseModel):
 
 class BcfyFeedsCreate(FeedBase):
     source_type: Literal[SourceType.BCFY_FEEDS]
+    # Broadcastify feed ID (e.g., "12345")
     source_feed_id: str = Field(pattern=r"^\d+$")
 
 
 class BcfyCallsCreate(FeedBase):
     source_type: Literal[SourceType.BCFY_CALLS]
+    # Broadcastify Calls ID: sid-talkgroup (e.g., "123-456")
     source_feed_id: str = Field(pattern=r"^\d+-\d+$")
 
 
 class EchoCreate(FeedBase):
     source_type: Literal[SourceType.ECHO]
+    # Echo feed ID (e.g., "feed-123_abc")
     source_feed_id: str = Field(pattern=r"^[a-zA-Z0-9_-]+$")
 
 
 class FireNotificationsCreate(FeedBase):
     source_type: Literal[SourceType.FIRE_NOTIFICATIONS]
+    # Fire notification feed ID (e.g., "FIRE/DEPT-1(A)_B")
     source_feed_id: str = Field(pattern=r"^[A-Z0-9_\-/()]+$")
 
 
 class OpenMhzCreate(FeedBase):
     source_type: Literal[SourceType.OPENMHZ]
+    # OpenMHZ feed ID (e.g., "open_mhz_456")
     source_feed_id: str = Field(pattern=r"^\w+$")
 
 
