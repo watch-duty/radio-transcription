@@ -94,9 +94,47 @@ describe('listFeeds', () => {
       },
       text: async () => 'Internal Server Error',
     });
-
     await expect(listFeeds('tokenXYZ')).rejects.toThrow(
       /500.*Internal Server Error/
+    );
+  });
+
+  it('should serialize query parameters correctly including JSON-serialized tags array', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({ feeds: [] }),
+      headers: {
+        get: (key: string) =>
+          key === 'content-type' ? 'application/json' : null,
+      },
+    });
+
+    // Test Active status mapping
+    await listFeeds('tokenXYZ', {
+      name: 'Alpha',
+      sourceTypes: ['bcfy_feeds', 'echo'],
+      statuses: ['Active'],
+      tags: [{ key: 'County', value: 'Marin' }],
+    });
+
+    const urlParams1 = new URLSearchParams(
+      mockFetch.mock.calls[0][0].split('?')[1]
+    );
+    expect(urlParams1.get('name')).toBe('Alpha');
+    expect(urlParams1.get('sourceTypes')).toBe('bcfy_feeds,echo');
+    expect(urlParams1.get('statuses')).toBe('active');
+    expect(urlParams1.get('tags')).toBe('[{"key":"County","value":"Marin"}]');
+
+    // Test Inactive and Error status mapping
+    await listFeeds('tokenXYZ', {
+      statuses: ['Inactive', 'Error'],
+    });
+
+    const urlParams2 = new URLSearchParams(
+      mockFetch.mock.calls[1][0].split('?')[1]
+    );
+    expect(urlParams2.get('statuses')).toBe(
+      'unclaimed,deactivated,failing,quarantined'
     );
   });
 });

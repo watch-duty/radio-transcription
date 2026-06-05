@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useMemo, useRef, useState } from 'react';
+import { forwardRef, useMemo, useState } from 'react';
 import type { ComponentProps, HTMLAttributes } from 'react';
 import { Link as RouterLink } from 'react-router';
 import { TableVirtuoso } from 'react-virtuoso';
@@ -33,20 +33,24 @@ import { type Feed, SourceType } from '@transcription/common';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 import { MultiSelectFilter } from '../common/MultiSelectFilter';
 
+export interface FeedFilters {
+  searchQuery: string;
+  sourceTypes: string[];
+  statuses: string[];
+  tags: { key: string; value: string }[];
+}
+
 export interface FeedTableProps {
   title?: string;
   feeds: Feed[];
+  allFeeds?: Feed[];
   isLoading: boolean;
   allowEdit?: boolean;
   editingFeedId?: string;
   onEditFeed?: (feed: Feed) => void;
   isSubmitting?: boolean;
-  onFiltersChange: (filters: {
-    searchQuery: string;
-    sourceTypes: string[];
-    statuses: string[];
-    tags: { key: string; value: string }[];
-  }) => void;
+  filters: FeedFilters;
+  onFiltersChange: (filters: FeedFilters) => void;
 }
 
 interface SortConfig {
@@ -155,64 +159,32 @@ const VIRTUOSO_COMPONENTS = {
 
 const ALL_SOURCE_TYPES = Object.values(SourceType);
 
-const FILTER_DEBOUNCE_MS = 300;
-
 export function FeedTable({
   title = 'Feeds',
   feeds,
+  allFeeds,
   isLoading,
   allowEdit = false,
   editingFeedId,
   onEditFeed,
   isSubmitting = false,
+  filters,
   onFiltersChange,
 }: FeedTableProps) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
-  const [searchQuery, setSearchQuery] = useState('');
   const [sortConfig, setSortConfig] = useState<SortConfig>({
     column: 'name',
     direction: 'asc',
   });
 
-  const [appliedTags, setAppliedTags] = useState<
-    { key: string; value: string }[]
-  >([]);
-  const [appliedStatuses, setAppliedStatuses] = useState<string[]>([]);
-  const [appliedSourceTypes, setAppliedSourceTypes] = useState<string[]>([]);
-
-  const isInitialMount = useRef(true);
-
-  // Debounce filter changes to notify parent
-  useEffect(() => {
-    if (isInitialMount.current) {
-      isInitialMount.current = false;
-      return;
-    }
-    const handler = setTimeout(() => {
-      onFiltersChange({
-        searchQuery,
-        sourceTypes: appliedSourceTypes,
-        statuses: appliedStatuses,
-        tags: appliedTags,
-      });
-    }, FILTER_DEBOUNCE_MS);
-
-    return () => clearTimeout(handler);
-  }, [
-    searchQuery,
-    appliedSourceTypes,
-    appliedStatuses,
-    appliedTags,
-    onFiltersChange,
-  ]);
-
   // Calculate unique tags across all feeds
   const tags = useMemo<{ key: string; value: string }[]>(() => {
     const seen = new Set<string>();
     const uniqueTags: { key: string; value: string }[] = [];
-    feeds.forEach((feed) => {
+    const sourceFeeds = allFeeds || feeds;
+    sourceFeeds.forEach((feed) => {
       feed.tags?.forEach((tag) => {
         const identifier = `${tag.key}:${tag.value}`;
         if (!seen.has(identifier)) {
@@ -224,7 +196,7 @@ export function FeedTable({
     return uniqueTags.sort(
       (a, b) => a.key.localeCompare(b.key) || a.value.localeCompare(b.value)
     );
-  }, [feeds]);
+  }, [feeds, allFeeds]);
 
   const handleRequestSort = (property: 'name' | 'type' | 'status') => {
     setSortConfig((prev) => ({
@@ -234,56 +206,8 @@ export function FeedTable({
     }));
   };
 
-  const filteredAndSortedFeeds = useMemo(() => {
-    const query = searchQuery.toLowerCase().trim();
-    let filtered = feeds;
-
-    // 1. Text search filtering (matches name, tags key/value, source ID)
-    if (query) {
-      filtered = filtered.filter((feed) => {
-        const nameMatches = feed.name.toLowerCase().includes(query);
-        const tagMatches =
-          feed.tags?.some(
-            (tag) =>
-              tag.key.toLowerCase().includes(query) ||
-              tag.value.toLowerCase().includes(query)
-          ) ?? false;
-        const sourceIdMatches =
-          feed.sourceFeedId?.toLowerCase().includes(query) ?? false;
-        return nameMatches || tagMatches || sourceIdMatches;
-      });
-    }
-
-    // 2. Tags filtering
-    if (appliedTags.length > 0) {
-      filtered = filtered.filter((feed) => {
-        return appliedTags.every((appliedTag) =>
-          feed.tags?.some(
-            (tag) =>
-              tag.key === appliedTag.key && tag.value === appliedTag.value
-          )
-        );
-      });
-    }
-
-    // 3. Status filtering
-    if (appliedStatuses.length > 0) {
-      filtered = filtered.filter((feed) => {
-        const capitalizedStatus =
-          feed.status.charAt(0).toUpperCase() + feed.status.slice(1);
-        return appliedStatuses.includes(capitalizedStatus);
-      });
-    }
-
-    // 4. Source Type filtering
-    if (appliedSourceTypes.length > 0) {
-      filtered = filtered.filter((feed) =>
-        appliedSourceTypes.includes(feed.sourceType)
-      );
-    }
-
-    // 5. Sorting using localeCompare
-    return filtered.sort((a, b) => {
+  const sortFeeds = useMemo(() => {
+    return feeds.sort((a, b) => {
       let comparison = 0;
       if (sortConfig.column === 'name') {
         comparison = a.name.localeCompare(b.name);
@@ -294,14 +218,7 @@ export function FeedTable({
       }
       return sortConfig.direction === 'asc' ? comparison : -comparison;
     });
-  }, [
-    feeds,
-    searchQuery,
-    appliedTags,
-    appliedStatuses,
-    appliedSourceTypes,
-    sortConfig,
-  ]);
+  }, [feeds, sortConfig]);
 
   const gridTemplateColumns = allowEdit
     ? '1.5fr 1fr 1fr 60px'
@@ -564,9 +481,9 @@ export function FeedTable({
             </Typography>
           </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            {filteredAndSortedFeeds.length !== feeds.length && (
+            {sortFeeds.length !== feeds.length && (
               <Typography variant="body2" color="text.secondary">
-                Showing {filteredAndSortedFeeds.length} of {feeds.length} feeds
+                Showing {sortFeeds.length} of {feeds.length} feeds
               </Typography>
             )}
             <Typography
@@ -592,8 +509,10 @@ export function FeedTable({
             fullWidth
             size="small"
             placeholder="Search feeds..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            value={filters.searchQuery}
+            onChange={(e) =>
+              onFiltersChange({ ...filters, searchQuery: e.target.value })
+            }
             slotProps={{
               input: {
                 startAdornment: (
@@ -601,9 +520,14 @@ export function FeedTable({
                     <SearchIcon color="action" fontSize="small" />
                   </InputAdornment>
                 ),
-                endAdornment: searchQuery ? (
+                endAdornment: filters.searchQuery ? (
                   <InputAdornment position="end">
-                    <IconButton size="small" onClick={() => setSearchQuery('')}>
+                    <IconButton
+                      size="small"
+                      onClick={() =>
+                        onFiltersChange({ ...filters, searchQuery: '' })
+                      }
+                    >
                       <ClearIcon fontSize="small" />
                     </IconButton>
                   </InputAdornment>
@@ -632,8 +556,10 @@ export function FeedTable({
               <MultiSelectFilter
                 label="Source Type"
                 options={ALL_SOURCE_TYPES}
-                value={appliedSourceTypes}
-                onChange={setAppliedSourceTypes}
+                value={filters.sourceTypes}
+                onChange={(types) =>
+                  onFiltersChange({ ...filters, sourceTypes: types })
+                }
                 size="small"
               />
             </Box>
@@ -641,8 +567,10 @@ export function FeedTable({
               <MultiSelectFilter
                 label="Status"
                 options={['Active', 'Inactive', 'Error']}
-                value={appliedStatuses}
-                onChange={setAppliedStatuses}
+                value={filters.statuses}
+                onChange={(statuses) =>
+                  onFiltersChange({ ...filters, statuses })
+                }
                 size="small"
               />
             </Box>
@@ -650,8 +578,8 @@ export function FeedTable({
               <MultiSelectFilter
                 label="Tags"
                 options={tags}
-                value={appliedTags}
-                onChange={setAppliedTags}
+                value={filters.tags}
+                onChange={(tags) => onFiltersChange({ ...filters, tags })}
                 size="small"
                 groupBy={(tag) => tag.key}
                 getOptionLabel={(tag) => `${tag.key}: ${tag.value}`}
@@ -689,7 +617,7 @@ export function FeedTable({
             </Typography>
           </Stack>
         </Box>
-      ) : filteredAndSortedFeeds.length === 0 ? (
+      ) : sortFeeds.length === 0 ? (
         <Box
           sx={{
             display: 'flex',
@@ -707,12 +635,12 @@ export function FeedTable({
             color="text.secondary"
             sx={{ fontWeight: 500 }}
           >
-            {searchQuery
+            {filters.searchQuery
               ? 'No feeds matching filter query found.'
               : 'No feed found.'}
           </Typography>
           <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
-            {searchQuery
+            {filters.searchQuery
               ? 'Refine spelling or delete terms to widen search scope.'
               : 'Register feeds on the left to start listening.'}
           </Typography>
@@ -727,7 +655,7 @@ export function FeedTable({
               {tableHeader}
             </TableHead>
             <TableBody component="div" sx={{ display: 'block' }}>
-              {filteredAndSortedFeeds.map((feed) => (
+              {sortFeeds.map((feed) => (
                 <VirtuosoTableRow
                   key={feed.id}
                   item={feed}
@@ -741,7 +669,7 @@ export function FeedTable({
         </TableContainer>
       ) : (
         <TableVirtuoso
-          data={filteredAndSortedFeeds}
+          data={sortFeeds}
           context={{ editingFeedId, allowEdit }}
           computeItemKey={(_index, feed) => feed.id}
           components={VIRTUOSO_COMPONENTS}

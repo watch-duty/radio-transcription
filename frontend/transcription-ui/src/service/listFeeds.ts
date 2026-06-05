@@ -23,15 +23,23 @@ export async function listFeedsPage(
     queryParams.append('sourceTypes', params.sourceTypes.join(','));
   }
   if (params?.statuses && params.statuses.length > 0) {
-    queryParams.append(
-      'statuses',
-      params.statuses.map((s) => s.toLowerCase()).join(',')
-    );
+    const backendStatuses: string[] = [];
+    for (const status of params.statuses) {
+      const s = status.toLowerCase();
+      if (s === 'active') {
+        backendStatuses.push('active');
+      } else if (s === 'error') {
+        backendStatuses.push('failing', 'quarantined');
+      } else if (s === 'inactive') {
+        backendStatuses.push('unclaimed', 'deactivated');
+      }
+    }
+    if (backendStatuses.length > 0) {
+      queryParams.append('statuses', backendStatuses.join(','));
+    }
   }
   if (params?.tags && params.tags.length > 0) {
-    for (const tag of params.tags) {
-      queryParams.append('tags', JSON.stringify(tag));
-    }
+    queryParams.append('tags', JSON.stringify(params.tags));
   }
 
   const url = queryParams.toString()

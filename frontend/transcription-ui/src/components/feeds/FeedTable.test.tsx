@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { MemoryRouter } from 'react-router';
 import { VirtuosoMockContext } from 'react-virtuoso';
 
@@ -15,7 +15,78 @@ import {
 import type { Feed } from '@transcription/common';
 import { SourceType } from '@transcription/common';
 
-import { FeedTable } from './FeedTable';
+import { type FeedFilters, FeedTable } from './FeedTable';
+
+const TestWrapper = (
+  props: Partial<React.ComponentProps<typeof FeedTable>>
+) => {
+  const [filters, setFilters] = useState<FeedFilters>({
+    searchQuery: '',
+    sourceTypes: [],
+    statuses: [],
+    tags: [],
+  });
+
+  const filteredFeeds = useMemo(() => {
+    let list = props.feeds || [];
+    const query = filters.searchQuery.toLowerCase().trim();
+
+    if (query) {
+      list = list.filter((feed) => {
+        const nameMatches = feed.name.toLowerCase().includes(query);
+        const tagMatches =
+          feed.tags?.some(
+            (tag) =>
+              tag.key.toLowerCase().includes(query) ||
+              tag.value.toLowerCase().includes(query)
+          ) ?? false;
+        const sourceIdMatches =
+          feed.sourceFeedId?.toLowerCase().includes(query) ?? false;
+        return nameMatches || tagMatches || sourceIdMatches;
+      });
+    }
+
+    if (filters.tags.length > 0) {
+      list = list.filter((feed) =>
+        filters.tags.every((appliedTag) =>
+          feed.tags?.some(
+            (tag) =>
+              tag.key === appliedTag.key && tag.value === appliedTag.value
+          )
+        )
+      );
+    }
+
+    if (filters.statuses.length > 0) {
+      list = list.filter((feed) => {
+        const capitalizedStatus =
+          feed.status.charAt(0).toUpperCase() + feed.status.slice(1);
+        return filters.statuses.includes(capitalizedStatus);
+      });
+    }
+
+    if (filters.sourceTypes.length > 0) {
+      list = list.filter((feed) =>
+        filters.sourceTypes.includes(feed.sourceType)
+      );
+    }
+
+    return list;
+  }, [props.feeds, filters]);
+
+  return (
+    <FeedTable
+      {...props}
+      feeds={filteredFeeds}
+      isLoading={props.isLoading ?? false}
+      filters={filters}
+      onFiltersChange={(newFilters) => {
+        setFilters(newFilters);
+        props.onFiltersChange?.(newFilters);
+      }}
+    />
+  );
+};
 
 const renderFeedTable = (
   props: Partial<React.ComponentProps<typeof FeedTable>> = {}
@@ -25,12 +96,7 @@ const renderFeedTable = (
       <VirtuosoMockContext.Provider
         value={{ viewportHeight: 1000, itemHeight: 100 }}
       >
-        <FeedTable
-          feeds={[]}
-          isLoading={false}
-          onFiltersChange={() => {}}
-          {...props}
-        />
+        <TestWrapper {...props} />
       </VirtuosoMockContext.Provider>
     </MemoryRouter>
   );
@@ -189,11 +255,7 @@ describe('FeedTable', () => {
         <VirtuosoMockContext.Provider
           value={{ viewportHeight: 1000, itemHeight: 100 }}
         >
-          <FeedTable
-            feeds={refreshedFeeds}
-            isLoading={false}
-            onFiltersChange={vi.fn()}
-          />
+          <TestWrapper feeds={refreshedFeeds} isLoading={false} />
         </VirtuosoMockContext.Provider>
       </MemoryRouter>
     );
@@ -272,7 +334,7 @@ describe('FeedTable', () => {
     expect(screen.getByText('Alpha Radio')).toBeTruthy();
     expect(screen.queryByText('Bravo Scanner')).toBeNull();
 
-    expect(screen.getByText('Showing 1 of 2 feeds')).toBeTruthy();
+    expect(screen.getByText('1 Feeds')).toBeTruthy();
 
     fireEvent.click(agencyOption);
 
@@ -367,7 +429,6 @@ describe('FeedTable', () => {
   });
 
   it('calls onFiltersChange when filters are updated', () => {
-    vi.useFakeTimers();
     const onFiltersChangeMock = vi.fn();
     renderFeedTable({
       feeds: mockFeeds,
@@ -378,14 +439,11 @@ describe('FeedTable', () => {
     const searchInput = screen.getByPlaceholderText(/Search feeds\.\.\./i);
     fireEvent.change(searchInput, { target: { value: 'bravo' } });
 
-    vi.advanceTimersByTime(300);
     expect(onFiltersChangeMock).toHaveBeenLastCalledWith({
       searchQuery: 'bravo',
       sourceTypes: [],
       statuses: [],
       tags: [],
     });
-
-    vi.useRealTimers();
   });
 });

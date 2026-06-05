@@ -14,7 +14,7 @@ import { deleteFeed } from '../../service/deleteFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { updateFeed } from '../../service/updateFeed';
 import { FeedConfigurationEdit } from './FeedConfigurationEdit';
-import { FeedTable } from './FeedTable';
+import { type FeedFilters, FeedTable } from './FeedTable';
 
 interface FeedConfigurationViewProps {
   triggerSnackbar: (message: string) => void;
@@ -35,17 +35,23 @@ export function FeedConfigurationView({
   const [sourceFeedId, setSourceFeedId] = useState('');
   const [tags, setTags] = useState<Tag[]>([]);
 
-  const [filters, setFilters] = useState<{
-    searchQuery: string;
-    sourceTypes: string[];
-    statuses: string[];
-    tags: Tag[];
-  }>({
+  const [filters, setFilters] = useState<FeedFilters>({
     searchQuery: '',
     sourceTypes: [],
     statuses: [],
     tags: [],
   });
+
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState(
+    filters.searchQuery
+  );
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearchQuery(filters.searchQuery);
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [filters.searchQuery]);
 
   const feedsErrorHandled = useRef<Error | null>(null);
 
@@ -54,15 +60,32 @@ export function FeedConfigurationView({
     isLoading: feedsLoading,
     error: feedsError,
   } = useQuery({
-    queryKey: ['listFeeds', token, filters],
+    queryKey: [
+      'listFeeds',
+      token,
+      debouncedSearchQuery,
+      filters.sourceTypes,
+      filters.sourceTypes.length,
+      filters.statuses,
+      filters.statuses.length,
+      filters.tags,
+      filters.tags.length,
+    ],
     queryFn: () =>
       listFeeds(token!, {
-        name: filters.searchQuery || undefined,
+        name: debouncedSearchQuery || undefined,
         sourceTypes:
           filters.sourceTypes.length > 0 ? filters.sourceTypes : undefined,
         statuses: filters.statuses.length > 0 ? filters.statuses : undefined,
         tags: filters.tags.length > 0 ? filters.tags : undefined,
       }),
+    enabled: !!token,
+    refetchOnWindowFocus: false,
+  });
+
+  const { data: allFeeds = [] } = useQuery({
+    queryKey: ['listFeeds', token, '', [], 0, [], 0, [], 0],
+    queryFn: () => listFeeds(token!, {}),
     enabled: !!token,
     refetchOnWindowFocus: false,
   });
@@ -242,11 +265,13 @@ export function FeedConfigurationView({
         >
           <FeedTable
             feeds={feeds}
+            allFeeds={allFeeds}
             isLoading={feedsLoading}
             allowEdit
             editingFeedId={isEditing ? id : undefined}
             onEditFeed={handleStartEdit}
             isSubmitting={isSubmitting}
+            filters={filters}
             onFiltersChange={setFilters}
           />
         </Grid>
