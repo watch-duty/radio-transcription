@@ -30,7 +30,7 @@ from backend.services.feeds.models import Tag
 
 # Setup Logging and Tracing
 setup_logging()
-setup_tracing(use_batch=False)
+setup_tracing(service_name="notification-service", use_batch=False)
 logger = logging.getLogger(__name__)
 
 
