@@ -24,7 +24,7 @@ from backend.pipeline.evaluation.rules_evaluation import evaluator
 
 # 1. Setup Logging and Tracing
 setup_logging()
-setup_tracing(use_batch=False)
+setup_tracing(service_name="evaluation-service", use_batch=False)
 logger = logging.getLogger(__name__)
 DEFAULT_RULES_CACHE_TTL_SECONDS = 60.0
 

@@ -295,7 +295,7 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
 
     @override
     def setup(self) -> None:
-        tracing_utils.setup_tracing()
+        tracing_utils.setup_tracing(service_name="normalization-pipeline")
         # Acquire process-level singletons natively via Beam's Shared handle
         shared_vad = SHARED_RESOURCE_HANDLE.acquire(
             lambda: vad.VoiceActivityDetector(models_dir=vad.MODELS_DIR),
@@ -686,7 +686,7 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
 
     @override
     def setup(self) -> None:
-        tracing_utils.setup_tracing()
+        tracing_utils.setup_tracing(service_name="normalization-pipeline")
         # Acquire process-level singletons natively via Beam's Shared handle
         shared_vad = SHARED_RESOURCE_HANDLE.acquire(
             lambda: vad.VoiceActivityDetector(models_dir=vad.MODELS_DIR),
@@ -1041,7 +1041,7 @@ class NormalizeAudioFn(beam.DoFn):
 
     @override
     def setup(self) -> None:
-        tracing_utils.setup_tracing()
+        tracing_utils.setup_tracing(service_name="normalization-pipeline")
         shared_vad = SHARED_RESOURCE_HANDLE.acquire(
             lambda: vad.VoiceActivityDetector(models_dir=vad.MODELS_DIR),
             tag="vad",
