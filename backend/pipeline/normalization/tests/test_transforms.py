@@ -33,7 +33,6 @@ from backend.pipeline.normalization.common.datatypes import (
     ChunkMetadata,
     FeedMetadata,
     FlushRequest,
-    IdleFeedState,
     NormalizationResult,
     NormalizeAudioConfig,
     OrderRestorerConfig,
@@ -120,7 +119,6 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             feed_name="mock-feed-name",
             duration_ms=1000,
             feed_id="test-feed",
-            external_id="mock-external-id",
         )
         mock_msg = PubsubMessage(
             chunk.SerializeToString(),
@@ -151,7 +149,6 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
                                 duration_ms=1000,
                                 feed_metadata=FeedMetadata(
                                     feed_name="mock-feed-name",
-                                    external_id="mock-external-id",
                                 ),
                             ),
                         )
@@ -207,7 +204,6 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             gcs_uri="gs://test-bucket/path/to/test.flac",
             feed_name="mock-feed-name",
             duration_ms=1000,
-            external_id="mock-external-id",
         )
         mock_msg = PubsubMessage(
             chunk.SerializeToString(),
@@ -250,7 +246,6 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             feed_name="mock-feed-name",
             duration_ms=1000,
             feed_id="test-feed",
-            external_id="mock-external-id",
         )
         mock_msg = PubsubMessage(
             chunk.SerializeToString(),
@@ -291,7 +286,6 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             feed_name="mock-feed-name",
             duration_ms=1000,
             feed_id="test-feed",
-            external_id="mock-external-id",
         )
         mock_msg = PubsubMessage(
             chunk.SerializeToString(),
@@ -332,7 +326,6 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             feed_name="mock-feed-name",
             duration_ms=1000,
             feed_id="test-feed",
-            external_id="mock-external-id",
         )
         mock_msg = PubsubMessage(
             chunk.SerializeToString(),
@@ -424,7 +417,6 @@ class NormalizeAudioTest(unittest.TestCase):
                             end_audio_offset_ms=500,
                             feed_metadata=FeedMetadata(
                                 feed_name="fake-feed",
-                                external_id="fake-external",
                             ),
                             sample_rate=16000,
                         ),
@@ -467,7 +459,6 @@ class SerializeNormalizationClaimTest(unittest.TestCase):
         with BeamTestPipeline(options=options) as p:
             feed_metadata = FeedMetadata(
                 feed_name="Test Feed Name",
-                external_id="test-external-id",
             )
 
             res1 = NormalizationResult(
@@ -531,11 +522,9 @@ class SerializeNormalizationClaimTest(unittest.TestCase):
 
                 assert protos[0].canonical_audio_uri == "gs://bucket/1.flac"
                 assert protos[0].feed_name == "Test Feed Name"
-                assert protos[0].external_id == "test-external-id"
 
                 assert protos[1].canonical_audio_uri == "gs://bucket/2.flac"
                 assert protos[1].feed_name == "Test Feed Name"
-                assert protos[1].external_id == "test-external-id"
 
             assert_that(results, assert_results)
 
@@ -561,9 +550,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
         mock_state = MagicMock()
         mock_state.read.return_value = ActiveStitchingState(
             session_id="mock-session-id",
-            feed_metadata=FeedMetadata(
-                feed_name="mock-feed", external_id="mock-external-id"
-            ),
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
         )
         mock_timer = MagicMock()
 
@@ -571,9 +558,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
             gcs_uri="gs://test-bucket/path/to/test.flac",
             session_id="mock-session-id",
             duration_ms=1000,
-            feed_metadata=FeedMetadata(
-                feed_name="mock-feed", external_id="mock-external-id"
-            ),
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
             traceparent="mock-traceparent",
         )
 
@@ -625,9 +610,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
             out_of_order_buffer=[
                 BufferedChunk(timestamp_ms=100000, gcs_uri="gs://test.flac")
             ],
-            feed_metadata=FeedMetadata(
-                feed_name="mock-feed", external_id="mock-id"
-            ),
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
         )
         mock_state.read.return_value = curr_context
 
@@ -715,9 +698,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
             buffer_start_time_ms=0,
             last_end_time_ms=1000,
             contributing_audio_uris=["gs://main/chunk1.flac"],
-            feed_metadata=FeedMetadata(
-                feed_name="mock-feed", external_id="mock-id"
-            ),
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
         )
 
         transmission_context_state = MockValueState(curr_context)
@@ -736,9 +717,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 gcs_uri="gs://late/chunk2.flac",
                 session_id="mock-session",
                 duration_ms=1000,
-                feed_metadata=FeedMetadata(
-                    feed_name="mock-feed", external_id="mock-external-id"
-                ),
+                feed_metadata=FeedMetadata(feed_name="mock-feed"),
             ),
         )
         timestamp = Timestamp(1.0)  # 1.0 seconds = 1000 ms
@@ -809,9 +788,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
             gcs_uri="gs://test-bucket/path/to/test.flac",
             session_id="mock-session-id",
             duration_ms=1000,
-            feed_metadata=FeedMetadata(
-                feed_name="mock-feed", external_id="mock-external-id"
-            ),
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
             traceparent="mock-traceparent",
         )
 
@@ -903,13 +880,13 @@ class OrderedStitchAudioTest(unittest.TestCase):
             gcs_uri="gs://test-bucket/first_chunk.flac",
             session_id="session-A",
             duration_ms=1000,
-            feed_metadata=FeedMetadata(feed_name="f", external_id="id"),
+            feed_metadata=FeedMetadata(feed_name="f"),
         )
         metadata_chunk2 = ChunkMetadata(
             gcs_uri="gs://test-bucket/second_chunk.flac",
             session_id="session-B",
             duration_ms=1000,
-            feed_metadata=FeedMetadata(feed_name="f", external_id="id"),
+            feed_metadata=FeedMetadata(feed_name="f"),
         )
 
         with BeamTestPipeline(options=options) as p:
@@ -1018,27 +995,21 @@ class OrderedStitchAudioTest(unittest.TestCase):
             gcs_uri="gs://test-bucket/path/to/chunk1.flac",
             session_id="mock-session-id",
             duration_ms=1000,
-            feed_metadata=FeedMetadata(
-                feed_name="mock-feed", external_id="mock-external-id"
-            ),
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
         )
 
         metadata_chunk2 = ChunkMetadata(
             gcs_uri="gs://test-bucket/path/to/chunk2.flac",
             session_id="mock-session-id",
             duration_ms=1000,
-            feed_metadata=FeedMetadata(
-                feed_name="mock-feed", external_id="mock-external-id"
-            ),
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
         )
 
         metadata_chunk3 = ChunkMetadata(
             gcs_uri="gs://test-bucket/path/to/chunk3.flac",
             session_id="mock-session-id",
             duration_ms=1000,
-            feed_metadata=FeedMetadata(
-                feed_name="mock-feed", external_id="mock-external-id"
-            ),
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
         )
 
         with BeamTestPipeline(options=options) as p:
@@ -1154,9 +1125,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         mock_state_context = MockValueState(
             ActiveStitchingState(
                 session_id="session-1",
-                feed_metadata=FeedMetadata(
-                    feed_name="test-feed", external_id="ext-1"
-                ),
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
             )
         )
         mock_state_buffer = MockBagState()
@@ -1166,9 +1135,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
             gcs_uri="gs://bucket/chunk1.flac",
             session_id="session-1",
             duration_ms=5000,
-            feed_metadata=FeedMetadata(
-                feed_name="test-feed", external_id="ext-1"
-            ),
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
         )
 
         # 1. Process chunk and verify speech_segments are saved to persistent state
@@ -1211,7 +1178,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         self.assertEqual(
             get_duration_ms(flush_request.speech_segments[0]), 3000
         )
-        self.assertIsInstance(mock_state_context.read(), IdleFeedState)
+        self.assertIsNone(mock_state_context.read())
 
     @patch(
         "backend.pipeline.normalization.audio.audio_processor.AudioProcessor"
@@ -1272,9 +1239,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         mock_state_context = MockValueState(
             ActiveStitchingState(
                 session_id="session-1",
-                feed_metadata=FeedMetadata(
-                    feed_name="test-feed", external_id="ext-1"
-                ),
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
             )
         )
         mock_state_buffer = MockBagState()
@@ -1284,9 +1249,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
             gcs_uri="gs://bucket/chunk1.flac",
             session_id="session-1",
             duration_ms=5000,
-            feed_metadata=FeedMetadata(
-                feed_name="test-feed", external_id="ext-1"
-            ),
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
         )
 
         # 1. Process chunk 1 (VAD segment triggers speech in progress)
@@ -1320,9 +1283,8 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
             )
         )
 
-        # Assert that the state context has reset to IdleFeedState!
-        # IdleFeedState has no prior_audio_tail field, representing a completely clean restart
-        self.assertIsInstance(mock_state_context.read(), IdleFeedState)
+        # Assert that the state context has been completely cleared!
+        self.assertIsNone(mock_state_context.read())
 
     @patch(
         "backend.pipeline.normalization.audio.audio_processor.AudioProcessor"
@@ -1383,9 +1345,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         mock_state_context = MockValueState(
             ActiveStitchingState(
                 session_id="session-long",
-                feed_metadata=FeedMetadata(
-                    feed_name="test-feed", external_id="ext-long"
-                ),
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
             )
         )
         mock_state_buffer = MockBagState()
@@ -1395,9 +1355,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
             gcs_uri="gs://bucket/long_continuous.flac",
             session_id="session-long",
             duration_ms=65000,
-            feed_metadata=FeedMetadata(
-                feed_name="test-feed", external_id="ext-long"
-            ),
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
         )
 
         outputs = list(
@@ -1488,9 +1446,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         mock_state_context = MockValueState(
             ActiveStitchingState(
                 session_id="session-silence",
-                feed_metadata=FeedMetadata(
-                    feed_name="test-feed", external_id="ext-silence"
-                ),
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
             )
         )
         mock_state_buffer = MockBagState()
@@ -1500,9 +1456,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
             gcs_uri="gs://bucket/long_silence.flac",
             session_id="session-silence",
             duration_ms=65000,
-            feed_metadata=FeedMetadata(
-                feed_name="test-feed", external_id="ext-silence"
-            ),
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
         )
 
         outputs = list(
@@ -1597,9 +1551,7 @@ class OrderedSegmentedStitchAudioTest(unittest.TestCase):
         mock_state_context = MockValueState(
             ActiveStitchingState(
                 session_id="same-session-id",
-                feed_metadata=FeedMetadata(
-                    feed_name="segmented-feed", external_id="external-id"
-                ),
+                feed_metadata=FeedMetadata(feed_name="segmented-feed"),
             )
         )
         mock_state_buffer = MockBagState()
@@ -1609,9 +1561,7 @@ class OrderedSegmentedStitchAudioTest(unittest.TestCase):
             gcs_uri="gs://bucket/segmented_15s.flac",
             session_id="same-session-id",
             duration_ms=15000,
-            feed_metadata=FeedMetadata(
-                feed_name="segmented-feed", external_id="external-id"
-            ),
+            feed_metadata=FeedMetadata(feed_name="segmented-feed"),
         )
 
         outputs = list(
@@ -1694,9 +1644,7 @@ class DlqTaggingTest(unittest.TestCase):
 
         ctx = ActiveStitchingState(
             session_id="test-session",
-            feed_metadata=FeedMetadata(
-                feed_name="test-feed", external_id="ext-id"
-            ),
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
         )
         return fn, MockValueState(ctx), MockBagState(), MockValueState(None)
 
@@ -1812,9 +1760,7 @@ class DlqTaggingTest(unittest.TestCase):
         )
         fn.setup()
 
-        expected_feed_metadata = FeedMetadata(
-            feed_name="test-feed", external_id="ext-id"
-        )
+        expected_feed_metadata = FeedMetadata(feed_name="test-feed")
 
         # Call process() first so the engine properly seeds contributing_audio_uris,
         # buffer_start_time_ms, and other fields required by _apply_flush_action.
@@ -1855,8 +1801,8 @@ class DlqTaggingTest(unittest.TestCase):
         # feed_metadata must be preserved from the active context, not lost on state re-read
         self.assertIsNotNone(flush_request.feed_metadata)
         self.assertEqual(flush_request.feed_metadata, expected_feed_metadata)
-        # State should now be IdleFeedState (context reset after flush)
-        self.assertIsInstance(mock_state_context.read(), IdleFeedState)
+        # State should now be completely cleared after flush
+        self.assertIsNone(mock_state_context.read())
 
     @patch(
         "backend.pipeline.normalization.transforms.stitcher_engine.audio_processor.AudioProcessor"
@@ -1888,9 +1834,7 @@ class DlqTaggingTest(unittest.TestCase):
             gcs_uri="gs://bucket/echo_chunk.flac",
             session_id="test-session",
             duration_ms=3000,
-            feed_metadata=FeedMetadata(
-                feed_name="test-feed", external_id="ext-id"
-            ),
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
         )
         # 1. Process chunk (this should update context state with the 8 kHz sample rate)
         list(
@@ -1954,9 +1898,7 @@ class DlqTaggingTest(unittest.TestCase):
             gcs_uri="gs://bucket/echo_chunk.flac",
             session_id="test-session",
             duration_ms=3000,
-            feed_metadata=FeedMetadata(
-                feed_name="test-feed", external_id="ext-id"
-            ),
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
         )
         # Process chunk (since it is segmented, it will trigger an immediate flush within the same process call)
         outputs = list(
@@ -1977,3 +1919,107 @@ class DlqTaggingTest(unittest.TestCase):
         _feed_id, flush_request = outputs[0]
         # sample_rate must be 8000 (correctly resolved from chunk_data on immediate flush)
         self.assertEqual(flush_request.sample_rate, 8000)
+
+    @patch(
+        "backend.pipeline.normalization.transforms.stitcher_engine.audio_processor.AudioProcessor"
+    )
+    def test_no_trace_or_session_leak_after_stale_flush(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that clearing the state context completely on stale flush prevents any
+        traceparent or session_id from leaking to subsequent unrelated sessions.
+        """
+        mock_processor_inst = mock_audio_processor.return_value
+        chunk_data_1 = AudioChunkData(
+            start_ms=100000,
+            audio=np.zeros(16000 * 3, dtype=np.int16),
+            speech_segments=[TimeRange(0, 3000)],
+            gcs_uri="gs://bucket/chunk1.flac",
+            duration_ms=3000,
+            sample_rate=16000,
+        )
+        chunk_data_2 = AudioChunkData(
+            start_ms=200000,
+            audio=np.zeros(16000 * 3, dtype=np.int16),
+            speech_segments=[TimeRange(0, 3000)],
+            gcs_uri="gs://bucket/chunk2.flac",
+            duration_ms=3000,
+            sample_rate=16000,
+        )
+        mock_processor_inst.download_audio_and_detect.side_effect = [
+            chunk_data_1,
+            chunk_data_2,
+        ]
+
+        fn, mock_state_context, mock_state_buffer, mock_last_start_ms = (
+            self._make_fn_and_states(OrderedContinuousStitchAudioFn)
+        )
+        fn.setup()
+
+        # 1. Process first chunk (Session 1, Trace 1)
+        metadata_1 = ChunkMetadata(
+            gcs_uri="gs://bucket/chunk1.flac",
+            session_id="session-1",
+            duration_ms=3000,
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
+            traceparent="traceparent-1",
+        )
+        list(
+            fn.process(
+                element=("test-feed", metadata_1),
+                timestamp=Timestamp(100),
+                transmission_buffer_state=mock_state_buffer,
+                transmission_context_state=mock_state_context,
+                last_start_ms_state=mock_last_start_ms,
+                out_of_order_timer=MagicMock(),
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        # Active context must be set to Session 1, Trace 1
+        saved_context_1 = mock_state_context.read()
+        self.assertEqual(saved_context_1.session_id, "session-1")
+        self.assertEqual(saved_context_1.traceparent, "traceparent-1")
+
+        # 2. Trigger stale flush (clears everything cleanly via .clear())
+        list(
+            fn.handle_stale_transmission_event(
+                key="test-feed",
+                transmission_buffer=mock_state_buffer,
+                transmission_context=mock_state_context,
+                last_start_ms_state=mock_last_start_ms,
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        # Verify state is completely empty
+        self.assertIsNone(mock_state_context.read())
+
+        # 3. Process second chunk (Session 2, Trace 2) after the clean reset
+        metadata_2 = ChunkMetadata(
+            gcs_uri="gs://bucket/chunk2.flac",
+            session_id="session-2",
+            duration_ms=3000,
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
+            traceparent="traceparent-2",
+        )
+        list(
+            fn.process(
+                element=("test-feed", metadata_2),
+                timestamp=Timestamp(200),
+                transmission_buffer_state=mock_state_buffer,
+                transmission_context_state=mock_state_context,
+                last_start_ms_state=mock_last_start_ms,
+                out_of_order_timer=MagicMock(),
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        # Active context must now be set strictly to Session 2, Trace 2 with NO traces of Session 1!
+        saved_context_2 = mock_state_context.read()
+        self.assertIsNotNone(saved_context_2)
+        self.assertEqual(saved_context_2.session_id, "session-2")
+        self.assertEqual(saved_context_2.traceparent, "traceparent-2")

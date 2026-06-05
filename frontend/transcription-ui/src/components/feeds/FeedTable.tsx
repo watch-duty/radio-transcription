@@ -70,6 +70,11 @@ const VirtuosoTableBody = forwardRef<
 ));
 VirtuosoTableBody.displayName = 'VirtuosoTableBody';
 
+const VirtuosoFillerRow = ({ height }: { height: number }) => (
+  <div style={{ height }} />
+);
+VirtuosoFillerRow.displayName = 'VirtuosoFillerRow';
+
 const VirtuosoTable = forwardRef<HTMLDivElement, ComponentProps<typeof Table>>(
   (props, ref) => (
     <Table
@@ -139,6 +144,7 @@ const VIRTUOSO_COMPONENTS = {
   TableHead: VirtuosoTableHead,
   TableRow: VirtuosoTableRow,
   TableBody: VirtuosoTableBody,
+  FillerRow: VirtuosoFillerRow,
 };
 
 export function FeedTable({
@@ -178,7 +184,9 @@ export function FeedTable({
         }
       });
     });
-    return uniqueTags;
+    return uniqueTags.sort(
+      (a, b) => a.key.localeCompare(b.key) || a.value.localeCompare(b.value)
+    );
   }, [feeds]);
 
   // Calculate unique source types across all feeds
@@ -204,7 +212,7 @@ export function FeedTable({
     const query = searchQuery.toLowerCase().trim();
     let filtered = feeds;
 
-    // 1. Text search filtering (matches name, tags key/value, source ID, external ID)
+    // 1. Text search filtering (matches name, tags key/value, source ID)
     if (query) {
       filtered = filtered.filter((feed) => {
         const nameMatches = feed.name.toLowerCase().includes(query);
@@ -216,11 +224,7 @@ export function FeedTable({
           ) ?? false;
         const sourceIdMatches =
           feed.sourceFeedId?.toLowerCase().includes(query) ?? false;
-        const externalIdMatches =
-          feed.externalId?.toLowerCase().includes(query) ?? false;
-        return (
-          nameMatches || tagMatches || sourceIdMatches || externalIdMatches
-        );
+        return nameMatches || tagMatches || sourceIdMatches;
       });
     }
 
@@ -280,8 +284,8 @@ export function FeedTable({
   const sortConfigColumn = sortConfig.column;
   const columns = [
     { key: 'name', display: 'Name' },
-    { key: 'status', display: 'Status' },
     { key: 'type', display: 'Type' },
+    { key: 'status', display: 'Status' },
   ];
   const tableHeader = (
     <TableRow
@@ -294,6 +298,7 @@ export function FeedTable({
     >
       {columns.map(({ key, display }) => (
         <TableCell
+          key={key}
           component="div"
           role="columnheader"
           sx={{

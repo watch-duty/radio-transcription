@@ -33,7 +33,7 @@ yield valid chunks or report source-specific feed failure evidence through
 
 `feeds.status` remains lifecycle and scheduling state. `feeds.status_reason`
 is a nullable, current abnormal-condition label that helps operators answer:
-"is this caused by the upstream source, or by Watch Duty?" Successful async
+"is this caused by the upstream source, or by the ingestion system?" Successful async
 progress and manual reset clear stale status reasons.
 
 `quarantine_reason` is different. It preserves the short raw forensic reason
@@ -49,12 +49,12 @@ supply usable audio for this feed:
 | `source_unreachable` | The source/provider endpoint is persistently unavailable, failing, or unreachable after collector-owned retry policy. |
 | `source_rate_limited` | The source/provider is refusing requests due to rate limiting after collector-owned backoff/retry policy. |
 
-Use system-owned reasons when Watch Duty needs action or code/configuration is
+Use system-owned reasons when the ingestion system needs action or code/configuration is
 the likely owner:
 
 | Reason | Use when |
 |--------|----------|
-| `system_authentication_failed` | Watch Duty credentials, tokens, or partner auth are rejected. |
+| `system_authentication_failed` | Configured credentials, tokens, or partner auth are rejected. |
 | `system_configuration_invalid` | The feed row is missing or has an invalid source-specific identifier, URL, or required configuration. |
 | `system_collector_error` | The collector cannot turn apparently available source data into a chunk, or all item failures are mixed/ambiguous. |
 | `system_pipeline_error` | Runtime post-capture processing fails after source data was obtained, such as GCS upload, Pub/Sub publish, or progress bookmark writes. |
@@ -101,9 +101,8 @@ The helper for this policy is `ItemBatchOutcome`.
 6. Retry and back off inside the collector for source-owned transport issues.
    Raise `CollectorFailure` only after the source-specific policy says the
    feed-level observation is persistent or systemic.
-7. Raise `CollectorFailure(status_reason=..., reason=...)` directly for
-   feed-level failures, and use `ItemBatchOutcome` instead of open-coded
-   item aggregation counters.
+7. Use `missing_source_feed_id_failure`, `collector_failure`, and
+   `ItemBatchOutcome` instead of open-coded exception strings and counters.
 8. Add focused tests beside the collector. Tests should cover chunk success,
    each feed-level `FeedStatusReason` mapping, skip/non-failure paths,
    shutdown behavior, and item-failure aggregation if the collector downloads

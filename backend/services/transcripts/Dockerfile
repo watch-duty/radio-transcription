@@ -4,6 +4,8 @@ FROM python:3.13-slim
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV UV_COMPILE_BYTECODE=1
+ENV UV_LINK_MODE=copy
 ENV WORKDIR=/app
 ENV PYTHONPATH=/app
 ENV PORT=8080
@@ -15,8 +17,9 @@ COPY --from=ghcr.io/astral-sh/uv:0.11.13 /uv /uvx /bin/
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
-COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml ./
-RUN uv sync --frozen --no-dev && uv pip install grpcio-tools
+COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml backend/services/*/pyproject.toml ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --package transcripts-service && uv pip install grpcio-tools
 
 COPY protos/ ./protos
 

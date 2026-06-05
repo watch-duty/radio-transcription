@@ -64,8 +64,7 @@ def create_test_bcfy_feed() -> Generator[tuple[str, str]]:
     payload = {
         "name": feed_name,
         "source_type": "bcfy_feeds",
-        "source_feed_id": f"src-{uuid.uuid4()}",
-        "external_id": f"ext-{uuid.uuid4()}",
+        "source_feed_id": str(uuid.uuid4().fields[0]),
     }
     yield from _create_and_cleanup_feed(payload)
 
@@ -81,8 +80,7 @@ def create_test_polling_feed() -> Generator[tuple[str, str]]:
     payload = {
         "name": feed_name,
         "source_type": "bcfy_calls",
-        "source_feed_id": f"src-{uuid.uuid4()}",
-        "external_id": f"ext-{uuid.uuid4()}",
+        "source_feed_id": f"{uuid.uuid4().fields[0]}-{uuid.uuid4().fields[1]}",
     }
     yield from _create_and_cleanup_feed(payload)
 
@@ -99,7 +97,6 @@ def create_test_echo_feed() -> Generator[tuple[str, str]]:
         "name": feed_name,
         "source_type": "echo",
         "source_feed_id": f"src-{uuid.uuid4()}",
-        "external_id": f"ext-{uuid.uuid4()}",
     }
     gen = _create_and_cleanup_feed(payload)
     feed_id, _ = next(gen)

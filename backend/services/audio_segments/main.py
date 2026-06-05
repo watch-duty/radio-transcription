@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime  # noqa: TC003
 import logging
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Annotated
@@ -7,7 +8,11 @@ from typing import TYPE_CHECKING, Annotated
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 
 from backend.pipeline.common.auth import verify_oidc_token
-from backend.pipeline.storage.audio_segment_store import AudioSegmentStore
+from backend.pipeline.common.fastapi_tracing import setup_fastapi_tracing
+from backend.pipeline.storage.audio_segment_store import (
+    AudioSegmentStore,
+    SortOrder,
+)
 from backend.pipeline.storage.connection import (
     close_pool,
     create_pool_with_retry,
@@ -18,6 +23,7 @@ from .models import (
     AnnotationCreate,
     AudioSegment,
     AudioSegmentCreate,
+    ListAudioSegmentsResponse,
 )
 from .service import AudioSegmentService
 
@@ -44,21 +50,37 @@ app = FastAPI(
     lifespan=lifespan,
     dependencies=[Depends(verify_oidc_token)],
 )
+setup_fastapi_tracing(app, service_name="audio-segments-service")
 
 
 @app.get(
     "/v1/audio_segments",
-    response_model=list[AudioSegment],
+    response_model=ListAudioSegmentsResponse,
     tags=["audio_segments"],
 )
 async def list_audio_segments(
     request: Request,
     feed_ids: Annotated[list[str] | None, Query()] = None,
-) -> list[AudioSegment]:
-    """List audio segments with their annotations. Optionally filter by feed IDs."""
+    limit: int = 100,
+    next_token: str | None = None,
+    start_time: datetime.datetime | None = None,
+    end_time: datetime.datetime | None = None,
+    order: SortOrder = SortOrder.DESC,
+    *,
+    has_alert: bool | None = None,
+) -> ListAudioSegmentsResponse:
+    """List audio segments with their annotations and pagination."""
     service: AudioSegmentService = request.app.state.audio_segment_service
     try:
-        return await service.list_audio_segments(feed_ids)
+        return await service.list_audio_segments(
+            feed_ids=feed_ids,
+            limit=limit,
+            next_token=next_token,
+            start_time=start_time,
+            end_time=end_time,
+            order=order,
+            has_alert=has_alert,
+        )
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

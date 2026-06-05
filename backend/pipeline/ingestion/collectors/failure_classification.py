@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import dataclasses
 
+from backend.pipeline.ingestion.models import CollectorFailure
 from backend.pipeline.storage.feed_store import FeedStatusReason
 
 MIXED_ITEM_FAILURE_REASON = "mixed_item_failures"
+MISSING_SOURCE_FEED_ID_REASON = "missing_source_feed_id"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -27,20 +29,6 @@ class ItemFailure:
 
     status_reason: FeedStatusReason
     reason: str
-
-
-@dataclasses.dataclass(frozen=True)
-class ItemDownloadResult:
-    """Classified result of downloading one discrete audio item."""
-
-    audio_bytes: bytes | None = None
-    failure: ItemFailure | None = None
-    content_type: str | None = None
-
-    def __post_init__(self) -> None:
-        if self.audio_bytes is not None and self.failure is not None:
-            msg = "ItemDownloadResult cannot contain both audio_bytes and failure"
-            raise ValueError(msg)
 
 
 @dataclasses.dataclass
@@ -96,18 +84,17 @@ class ItemBatchOutcome:
         )
 
 
-def item_download_http_failure(
-    status: int,
-    *,
-    reason_prefix: str = "item_http",
-) -> ItemFailure:
-    """Classify terminal HTTP status for one discrete audio item download."""
-    reason = f"{reason_prefix}_{status}"
-    if status in {401, 403}:
-        return ItemFailure(
-            FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-            reason,
-        )
-    if status == 429:
-        return ItemFailure(FeedStatusReason.SOURCE_RATE_LIMITED, reason)
-    return ItemFailure(FeedStatusReason.SOURCE_UNREACHABLE, reason)
+def collector_failure(
+    status_reason: FeedStatusReason,
+    reason: str,
+) -> CollectorFailure:
+    """Build a typed feed-level collector failure."""
+    return CollectorFailure(status_reason=status_reason, reason=reason)
+
+
+def missing_source_feed_id_failure() -> CollectorFailure:
+    """Build the typed failure for feeds missing source-specific ids."""
+    return collector_failure(
+        FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        MISSING_SOURCE_FEED_ID_REASON,
+    )

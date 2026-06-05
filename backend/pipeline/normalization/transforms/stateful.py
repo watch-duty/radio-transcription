@@ -67,6 +67,26 @@ def _get_task_logger(
     )
 
 
+def _write_transmission_context(
+    state_cell: Any,
+    context: datatypes.TransmissionContext,
+) -> None:
+    """Writes the context to transmission state or clears it completely if it is an empty IdleFeedState.
+
+    Pruning completely empty IdleFeedStates from the database prevents session memory leaks and
+    ensures that subsequent independent audio chunks start with a clean slate (initiating a new
+    ActiveStitchingState and a fresh traceparent, effectively preventing Trace Context Hijacking).
+    """
+    if (
+        isinstance(context, datatypes.IdleFeedState)
+        and not context.out_of_order_buffer
+        and not context.order_timer_active
+    ):
+        state_cell.clear()
+    else:
+        state_cell.write(context)
+
+
 class StaleTimerManager:
     """Helper class to manage both event-time and processing-time stale timers."""
 
@@ -134,7 +154,8 @@ def process_ordering(
             feed_metadata=metadata.feed_metadata,
             out_of_order_buffer=curr_context.out_of_order_buffer,
             order_timer_active=curr_context.order_timer_active,
-            traceparent=metadata.traceparent,
+            traceparent=metadata.traceparent
+            or tracing_utils.get_current_traceparent(),
         )
         session_changed = True
         out_of_order_timer.clear()
@@ -147,7 +168,8 @@ def process_ordering(
         curr_context = datatypes.ActiveStitchingState(
             session_id=metadata.session_id,
             feed_metadata=metadata.feed_metadata,
-            traceparent=metadata.traceparent,
+            traceparent=metadata.traceparent
+            or tracing_utils.get_current_traceparent(),
         )
 
     seq_buf = sequence_buffer.SequenceBuffer(order_config)
@@ -362,7 +384,9 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
                 )
 
             # Commit initial sequence context updates
-            transmission_context_state.write(curr_context)
+            _write_transmission_context(
+                transmission_context_state, curr_context
+            )
 
             # Delegate chunk elements to the execution engine
             if elements_to_emit:
@@ -385,6 +409,14 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
                         transmission_context_state.read()
                         or datatypes.IdleFeedState()
                     )
+                    if isinstance(curr_context, datatypes.IdleFeedState):
+                        curr_context = datatypes.ActiveStitchingState(
+                            session_id=metadata.session_id,
+                            feed_metadata=metadata.feed_metadata,
+                            out_of_order_buffer=curr_context.out_of_order_buffer,
+                            order_timer_active=curr_context.order_timer_active,
+                            traceparent=metadata.traceparent,
+                        )
                     outputs, next_expected_ts = (
                         self.engine.process_ordering_chunk(
                             chunk=chunk,
@@ -422,13 +454,18 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
         if isinstance(curr_context, datatypes.IdleFeedState):
             return
         traceparent = curr_context.traceparent or ""
+        active_session_id = curr_context.session_id
+        active_feed_metadata = curr_context.feed_metadata
+        active_traceparent = curr_context.traceparent
 
         results = []
         with tracing_utils.with_tracer_context(
             traceparent, "handle_audio_gap", __name__
         ):
             curr_context = replace(curr_context, order_timer_active=False)
-            transmission_context_state.write(curr_context)
+            _write_transmission_context(
+                transmission_context_state, curr_context
+            )
 
             buffer_elements = curr_context.out_of_order_buffer
             if buffer_elements:
@@ -446,7 +483,9 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
                     expected_next_chunk_start_ms=new_expected,
                     missing_prior_context=True,
                 )
-                transmission_context_state.write(curr_context)
+                _write_transmission_context(
+                    transmission_context_state, curr_context
+                )
 
                 seq_buf = sequence_buffer.SequenceBuffer(self.order_config)
 
@@ -463,7 +502,9 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
                     expected_next_chunk_start_ms=new_expected_next_ts,
                     out_of_order_buffer=new_buffer_elements,
                 )
-                transmission_context_state.write(curr_context)
+                _write_transmission_context(
+                    transmission_context_state, curr_context
+                )
 
                 # Handle ready elements
                 if elements_to_emit:
@@ -480,6 +521,14 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
                             transmission_context_state.read()
                             or datatypes.IdleFeedState()
                         )
+                        if isinstance(curr_context, datatypes.IdleFeedState):
+                            curr_context = datatypes.ActiveStitchingState(
+                                session_id=active_session_id,
+                                feed_metadata=active_feed_metadata,
+                                out_of_order_buffer=curr_context.out_of_order_buffer,
+                                order_timer_active=curr_context.order_timer_active,
+                                traceparent=active_traceparent,
+                            )
                         outputs, next_expected_ts = (
                             self.engine.process_ordering_chunk(
                                 chunk=chunk,
@@ -730,7 +779,9 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
                 )
 
             # Commit initial sequence context updates
-            transmission_context_state.write(curr_context)
+            _write_transmission_context(
+                transmission_context_state, curr_context
+            )
 
             # Delegate chunk elements to the execution engine
             if elements_to_emit:
@@ -753,6 +804,14 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
                         transmission_context_state.read()
                         or datatypes.IdleFeedState()
                     )
+                    if isinstance(curr_context, datatypes.IdleFeedState):
+                        curr_context = datatypes.ActiveStitchingState(
+                            session_id=metadata.session_id,
+                            feed_metadata=metadata.feed_metadata,
+                            out_of_order_buffer=curr_context.out_of_order_buffer,
+                            order_timer_active=curr_context.order_timer_active,
+                            traceparent=metadata.traceparent,
+                        )
                     outputs, next_expected_ts = (
                         self.engine.process_ordering_chunk(
                             chunk=chunk,
@@ -790,13 +849,18 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
         if isinstance(curr_context, datatypes.IdleFeedState):
             return
         traceparent = curr_context.traceparent or ""
+        active_session_id = curr_context.session_id
+        active_feed_metadata = curr_context.feed_metadata
+        active_traceparent = curr_context.traceparent
 
         results = []
         with tracing_utils.with_tracer_context(
             traceparent, "handle_audio_gap", __name__
         ):
             curr_context = replace(curr_context, order_timer_active=False)
-            transmission_context_state.write(curr_context)
+            _write_transmission_context(
+                transmission_context_state, curr_context
+            )
 
             buffer_elements = curr_context.out_of_order_buffer
             if buffer_elements:
@@ -814,7 +878,9 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
                     expected_next_chunk_start_ms=new_expected,
                     missing_prior_context=True,
                 )
-                transmission_context_state.write(curr_context)
+                _write_transmission_context(
+                    transmission_context_state, curr_context
+                )
 
                 seq_buf = sequence_buffer.SequenceBuffer(self.order_config)
 
@@ -831,7 +897,9 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
                     expected_next_chunk_start_ms=new_expected_next_ts,
                     out_of_order_buffer=new_buffer_elements,
                 )
-                transmission_context_state.write(curr_context)
+                _write_transmission_context(
+                    transmission_context_state, curr_context
+                )
 
                 # Handle ready elements
                 if elements_to_emit:
@@ -848,6 +916,14 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
                             transmission_context_state.read()
                             or datatypes.IdleFeedState()
                         )
+                        if isinstance(curr_context, datatypes.IdleFeedState):
+                            curr_context = datatypes.ActiveStitchingState(
+                                session_id=active_session_id,
+                                feed_metadata=active_feed_metadata,
+                                out_of_order_buffer=curr_context.out_of_order_buffer,
+                                order_timer_active=curr_context.order_timer_active,
+                                traceparent=active_traceparent,
+                            )
                         outputs, next_expected_ts = (
                             self.engine.process_ordering_chunk(
                                 chunk=chunk,
@@ -1086,7 +1162,8 @@ class NormalizeAudioFn(beam.DoFn):
             playback_audio_uri=playback_audio_uri
             or "gs://test-bucket/placeholder.m4a",
             feed_metadata=request.feed_metadata,
-            traceparent=request.traceparent,
+            traceparent=tracing_utils.get_current_traceparent()
+            or request.traceparent,
         )
 
     @override

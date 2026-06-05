@@ -4,6 +4,7 @@ import { TranscriptsController } from './transcriptsController.js';
 
 // Mock the config module to inject the value without touching process.env
 vi.mock('../config.js', () => ({
+  AUTH_BACKEND: 'google',
   TRANSCRIPTS_API_URL: 'http://api.example.com',
 }));
 
@@ -11,12 +12,14 @@ vi.mock('../config.js', () => ({
 const mockRequest = vi.fn();
 
 vi.mock('google-auth-library', () => {
+  class MockGoogleAuth {
+    getIdTokenClient = vi.fn().mockResolvedValue({
+      request: mockRequest,
+    });
+  }
+
   return {
-    GoogleAuth: vi.fn().mockImplementation(() => ({
-      getIdTokenClient: vi.fn().mockResolvedValue({
-        request: mockRequest,
-      }),
-    })),
+    GoogleAuth: MockGoogleAuth,
   };
 });
 

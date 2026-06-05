@@ -4,18 +4,21 @@ import { RulesController } from './rulesController.js';
 
 // Mock the config module
 vi.mock('../config.js', () => ({
+  AUTH_BACKEND: 'google',
   RULES_API_URL: 'http://rules-api.example.com',
 }));
 
 const mockRequest = vi.fn();
 
 vi.mock('google-auth-library', () => {
+  class MockGoogleAuth {
+    getIdTokenClient = vi.fn().mockResolvedValue({
+      request: mockRequest,
+    });
+  }
+
   return {
-    GoogleAuth: vi.fn().mockImplementation(() => ({
-      getIdTokenClient: vi.fn().mockResolvedValue({
-        request: mockRequest,
-      }),
-    })),
+    GoogleAuth: MockGoogleAuth,
   };
 });
 

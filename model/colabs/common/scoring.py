@@ -105,6 +105,9 @@ def build_normalizer() -> "jiwer.Compose":
         """Hallucination placeholder + filler stripping, before digit handling."""
 
         def process_string(self, s: str) -> str:
+            # Handle model short-circuit tags: Strip out safety tokens entirely
+            # so they do not count as word insertions or substitutions against the WER.
+            s = re.sub(r"\[unintelligible\]", "", s, flags=re.IGNORECASE)
             # Hallucination placeholder for runaway digit strings (10+ digits)
             s = re.sub(r"\d{10,}", " [hallucination] ", s)
             # Strip fillers so models aren't penalized for readability

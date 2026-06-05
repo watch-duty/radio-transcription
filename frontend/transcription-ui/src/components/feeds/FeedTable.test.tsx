@@ -83,6 +83,32 @@ describe('FeedTable', () => {
     }
   });
 
+  it('aligns cell contents with the correct headers (Name, Type, Status)', () => {
+    renderFeedTable({ feeds: mockFeeds, isLoading: false });
+
+    const headers = screen
+      .getAllByRole('columnheader')
+      .map((h) => h.textContent);
+
+    // Header text check
+    expect(headers[0]).toContain('Name');
+    expect(headers[1]).toContain('Type');
+    expect(headers[2]).toContain('Status');
+
+    // Get the Alpha Radio row and cells
+    const alphaRow = screen
+      .getByText('Alpha Radio')
+      .closest('[role="row"]') as HTMLElement;
+    expect(alphaRow).toBeTruthy();
+
+    const rowCells = within(alphaRow).getAllByRole('cell');
+
+    // Cell index matching header index check
+    expect(rowCells[0].textContent).toContain('Alpha Radio');
+    expect(rowCells[1].textContent).toContain('bcfy_feeds'); // Type chip
+    expect(rowCells[2].textContent).toContain('Active'); // Status indicator
+  });
+
   it('shows loading indicator when isLoading is true', () => {
     renderFeedTable({ feeds: [], isLoading: true });
     expect(screen.getByRole('progressbar')).toBeTruthy();
@@ -283,5 +309,49 @@ describe('FeedTable', () => {
 
     expect(screen.getByText('Alpha Radio')).toBeTruthy();
     expect(screen.queryByText('Bravo Scanner')).toBeNull();
+  });
+
+  it('does not duplicate group headers for tags in the dropdown', () => {
+    const feedsWithInterleavedTags: Feed[] = [
+      {
+        id: 'feed-1',
+        name: 'Alpha Radio',
+        sourceType: SourceType.BCFY_FEEDS,
+        status: 'active',
+        substatus: 'active',
+        tags: [
+          { key: 'County', value: 'Marin' },
+          { key: 'Agency', value: 'Fire' },
+        ],
+      },
+      {
+        id: 'feed-2',
+        name: 'Bravo Scanner',
+        sourceType: SourceType.BCFY_FEEDS,
+        status: 'active',
+        substatus: 'active',
+        tags: [{ key: 'State', value: 'CA' }],
+      },
+      {
+        id: 'feed-3',
+        name: 'Charlie Scanner',
+        sourceType: SourceType.BCFY_FEEDS,
+        status: 'active',
+        substatus: 'active',
+        tags: [{ key: 'County', value: 'Sonoma' }],
+      },
+    ];
+
+    renderFeedTable({ feeds: feedsWithInterleavedTags, isLoading: false });
+
+    const tagsInput = screen.getByLabelText('Tags');
+    fireEvent.focus(tagsInput);
+    fireEvent.keyDown(tagsInput, { key: 'ArrowDown' });
+
+    const listbox = screen.getByRole('listbox');
+
+    // There should be exactly one 'County' group header
+    const countyHeaders = within(listbox).getAllByText('County');
+    expect(countyHeaders).toHaveLength(1);
   });
 });

@@ -34,7 +34,6 @@ from backend.pipeline.storage.feed_store import (
 _TEST_FEED = LeasedFeed(
     id=uuid.UUID("12345678-1234-5678-1234-567812345678"),
     name="test-openmhz-wmata",
-    external_id="ext-id",
     source_type=SourceType.OPENMHZ,
     last_processed_filename=None,
     last_bookmark_time=None,
@@ -171,7 +170,6 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         feed = LeasedFeed(
             id=uuid.uuid4(),
             name="no-id",
-            external_id="ext-id",
             source_type=SourceType.OPENMHZ,
             last_processed_filename=None,
             last_bookmark_time=None,
@@ -435,7 +433,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(results), 2)
         self.assertIsNotNone(results[0].session_id)
-        self.assertTrue(len(results[0].session_id) > 0)
+        self.assertTrue(results[0].session_id)
         self.assertEqual(results[0].session_id, results[1].session_id)
 
     @patch(f"{_COL_MOD}.websocket_transport")

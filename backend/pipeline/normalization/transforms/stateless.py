@@ -10,20 +10,20 @@ and are highly optimized for parallel worker execution:
    egress Pub/Sub topic publication.
 """
 
+import datetime
 from collections.abc import Iterator
 from typing import Any, override
 
 import apache_beam as beam
 from apache_beam.io.gcp.pubsub import PubsubMessage
-from google.protobuf.duration_pb2 import Duration  # type: ignore
 from opentelemetry import trace
 
 from backend.pipeline.common.constants import (
     MICROSECONDS_PER_MS,
-    NANOS_PER_MS,
 )
 from backend.pipeline.common.tracing_utils import (
     extract_trace_context,
+    get_current_traceparent,
     setup_tracing,
 )
 from backend.pipeline.normalization.common.constants import (
@@ -138,7 +138,6 @@ class ParseAndKeyFn(beam.DoFn):
                     duration_ms=chunk_proto.duration_ms,
                     feed_metadata=FeedMetadata(
                         feed_name=chunk_proto.feed_name,
-                        external_id=chunk_proto.external_id,
                     ),
                     is_continuous=self.is_continuous,
                     traceparent=traceparent,
@@ -185,19 +184,15 @@ class SerializeFn(beam.DoFn):
             if value.start_audio_offset_ms is None:
                 msg = f"Missing start_audio_offset_ms for feed_id: {value.feed_id} (session: {value.session_id})"
                 _raise(msg)
-            start_offset = Duration(
-                seconds=value.start_audio_offset_ms // MICROSECONDS_PER_MS,
-                nanos=(value.start_audio_offset_ms % MICROSECONDS_PER_MS)
-                * NANOS_PER_MS,
+            start_offset = datetime.timedelta(
+                milliseconds=value.start_audio_offset_ms
             )
 
             if value.end_audio_offset_ms is None:
                 msg = f"Missing end_audio_offset_ms for feed_id: {value.feed_id} (session: {value.session_id})"
                 _raise(msg)
-            end_offset = Duration(
-                seconds=value.end_audio_offset_ms // MICROSECONDS_PER_MS,
-                nanos=(value.end_audio_offset_ms % MICROSECONDS_PER_MS)
-                * NANOS_PER_MS,
+            end_offset = datetime.timedelta(
+                milliseconds=value.end_audio_offset_ms
             )
 
             if value.feed_metadata is None:
@@ -220,7 +215,6 @@ class SerializeFn(beam.DoFn):
                 canonical_audio_uri=value.canonical_audio_uri,
                 playback_audio_uri=value.playback_audio_uri,
                 feed_name=value.feed_metadata.feed_name,
-                external_id=value.feed_metadata.external_id,
             )
             proto.start_timestamp.FromMicroseconds(
                 value.time_range.start_ms * MICROSECONDS_PER_MS
@@ -229,8 +223,9 @@ class SerializeFn(beam.DoFn):
                 value.time_range.end_ms * MICROSECONDS_PER_MS
             )
             attrs: dict[str, str] = {}
-            if value.traceparent:
-                attrs["traceparent"] = value.traceparent
+            current_tp = get_current_traceparent() or value.traceparent
+            if current_tp:
+                attrs["traceparent"] = current_tp
 
             yield PubsubMessage(
                 data=proto.SerializeToString(),
@@ -269,19 +264,15 @@ class SerializeNormalizationClaimFn(beam.DoFn):
             if value.start_audio_offset_ms is None:
                 msg = f"Missing start_audio_offset_ms for feed_id: {value.feed_id} (session: {value.session_id})"
                 _raise(msg)
-            start_offset = Duration(
-                seconds=value.start_audio_offset_ms // MICROSECONDS_PER_MS,
-                nanos=(value.start_audio_offset_ms % MICROSECONDS_PER_MS)
-                * NANOS_PER_MS,
+            start_offset = datetime.timedelta(
+                milliseconds=value.start_audio_offset_ms
             )
 
             if value.end_audio_offset_ms is None:
                 msg = f"Missing end_audio_offset_ms for feed_id: {value.feed_id} (session: {value.session_id})"
                 _raise(msg)
-            end_offset = Duration(
-                seconds=value.end_audio_offset_ms // MICROSECONDS_PER_MS,
-                nanos=(value.end_audio_offset_ms % MICROSECONDS_PER_MS)
-                * NANOS_PER_MS,
+            end_offset = datetime.timedelta(
+                milliseconds=value.end_audio_offset_ms
             )
 
             if value.feed_metadata is None:
@@ -303,7 +294,6 @@ class SerializeNormalizationClaimFn(beam.DoFn):
                 canonical_audio_uri=value.canonical_audio_uri,
                 playback_audio_uri=value.playback_audio_uri,
                 feed_name=value.feed_metadata.feed_name,
-                external_id=value.feed_metadata.external_id,
             )
             proto.start_timestamp.FromMicroseconds(
                 value.time_range.start_ms * MICROSECONDS_PER_MS
@@ -312,8 +302,9 @@ class SerializeNormalizationClaimFn(beam.DoFn):
                 value.time_range.end_ms * MICROSECONDS_PER_MS
             )
             attrs: dict[str, str] = {}
-            if value.traceparent:
-                attrs["traceparent"] = value.traceparent
+            current_tp = get_current_traceparent() or value.traceparent
+            if current_tp:
+                attrs["traceparent"] = current_tp
 
             yield PubsubMessage(
                 data=proto.SerializeToString(),

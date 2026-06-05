@@ -16,6 +16,7 @@ dependencies = [
     "google-auth>=2.0.0",
     "google-cloud-logging>=3.14.0",
     "asyncpg>=0.29.0",
+    "radio-transcription-common",
 ]
 
 [tool.setuptools]

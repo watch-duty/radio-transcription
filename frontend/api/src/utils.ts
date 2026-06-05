@@ -1,4 +1,8 @@
+import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
 import { GaxiosError } from 'gaxios';
+import { GoogleAuth } from 'google-auth-library';
+
+import { AUTH_BACKEND } from './config.js';
 
 export class HttpError extends Error {
   constructor(
@@ -49,4 +53,58 @@ export function handleBackendError(
     status,
     message: message || defaultMessage,
   };
+}
+
+interface ServiceResponse<T> {
+  data: T;
+  status?: number;
+  statusText?: string;
+  headers?: unknown;
+  config?: unknown;
+}
+
+interface ServiceClient {
+  request<T = unknown>(config: AxiosRequestConfig): Promise<ServiceResponse<T>>;
+}
+
+const clientFactories: Record<
+  string,
+  (targetUrl: string) => Promise<ServiceClient>
+> = {
+  none: async () => ({
+    request: <T>(config: AxiosRequestConfig): Promise<AxiosResponse<T>> => {
+      return axios<T>(config);
+    },
+  }),
+  google: async (targetUrl: string) => {
+    const auth = new GoogleAuth();
+    const client = await auth.getIdTokenClient(targetUrl);
+    return client as unknown as ServiceClient;
+  },
+};
+
+/**
+ * Returns an HTTP client to communicate with downstream services.
+ *
+ * If running in a non-production environment with `AUTH_BACKEND` set to `'none'`
+ * (typically during local development or in test suites where authentication is bypassed),
+ * it returns a simplified client wrapper using unauthenticated `axios`.
+ *
+ * Otherwise, it uses `google-auth-library` to construct and return an authenticated
+ * `IdTokenClient` using Google application default credentials to call the target service.
+ *
+ * @param targetUrl The base URL of the service we want to request.
+ * @returns An authenticated client or an unauthenticated axios fallback wrapper.
+ */
+export async function getServiceClient(
+  targetUrl: string
+): Promise<ServiceClient> {
+  const isProduction = process.env.NODE_ENV === 'production';
+  const backend = !isProduction && AUTH_BACKEND === 'none' ? 'none' : 'google';
+
+  const factory = clientFactories[backend];
+  if (!factory) {
+    throw new Error(`Unsupported AUTH_BACKEND: ${backend}`);
+  }
+  return factory(targetUrl);
 }

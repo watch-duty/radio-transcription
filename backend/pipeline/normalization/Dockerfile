@@ -22,16 +22,16 @@ COPY --from=gcr.io/dataflow-templates-base/python313-template-launcher-base:late
 WORKDIR /app
 
 # Copy lockfiles and manifests
-COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml ./
+COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml backend/services/*/pyproject.toml ./
 
 # Set environment variables for uv to use system python
 ENV UV_PROJECT_ENVIRONMENT="/usr/local/"
 ENV UV_SYSTEM_PYTHON=1
 ENV UV_COMPILE_BYTECODE=1
-ENV UV_NO_CACHE=1
 
 # Install dependencies using uv sync directly into system python
-RUN uv sync --frozen --no-dev --no-install-workspace --package normalization-pipeline && \
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-workspace --package normalization-pipeline && \
     uv pip install grpcio-tools
 
 ENV FLEX_TEMPLATE_PYTHON_PY_FILE="/app/backend/pipeline/normalization/main.py"

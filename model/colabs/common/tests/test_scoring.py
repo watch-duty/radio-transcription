@@ -51,6 +51,10 @@ class TestBuildNormalizerGolden(unittest.TestCase):
         # "uh" must not appear as a standalone token after filler stripping
         self.assertNotIn("uh", result.split())
 
+    def test_strips_unintelligible_tokens(self) -> None:
+        result = self.normalizer("engine [unintelligible] forty one copy")
+        self.assertNotIn("unintelligible", result.split())
+
     def test_replaces_long_digit_strings_with_hallucination_placeholder(
         self,
     ) -> None:

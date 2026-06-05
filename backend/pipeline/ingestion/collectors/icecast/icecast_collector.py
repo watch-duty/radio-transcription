@@ -24,6 +24,10 @@ from backend.pipeline.common.constants import (
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
 )
+from backend.pipeline.ingestion.collectors.failure_classification import (
+    collector_failure,
+    missing_source_feed_id_failure,
+)
 from backend.pipeline.ingestion.models import (
     CapturedChunk,
     CaptureResources,
@@ -57,9 +61,9 @@ def _build_auth_header() -> str:
     user = os.getenv("BROADCASTIFY_USERNAME")
     password = os.getenv("BROADCASTIFY_PASSWORD")
     if not user or not password:
-        raise CollectorFailure(
-            status_reason=FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-            reason="missing_broadcastify_credentials",
+        raise collector_failure(
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            "missing_broadcastify_credentials",
         )
     credentials = f"{user}:{password}"
     encoded = base64.b64encode(credentials.encode()).decode()
@@ -74,25 +78,16 @@ def _classify_stream_http_status(status: int) -> CollectorFailure | None:
     """Classify stream endpoint HTTP status into a typed feed failure."""
     reason = f"stream_http_{status}"
     if status in {401, 403}:
-        return CollectorFailure(
-            status_reason=FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-            reason=reason,
+        return collector_failure(
+            FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+            reason,
         )
     if status == 404:
-        return CollectorFailure(
-            status_reason=FeedStatusReason.SOURCE_OFFLINE,
-            reason=reason,
-        )
+        return collector_failure(FeedStatusReason.SOURCE_OFFLINE, reason)
     if status == 429:
-        return CollectorFailure(
-            status_reason=FeedStatusReason.SOURCE_RATE_LIMITED,
-            reason=reason,
-        )
+        return collector_failure(FeedStatusReason.SOURCE_RATE_LIMITED, reason)
     if 500 <= status <= 599:
-        return CollectorFailure(
-            status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
-            reason=reason,
-        )
+        return collector_failure(FeedStatusReason.SOURCE_UNREACHABLE, reason)
     return None
 
 
@@ -139,19 +134,19 @@ async def _probe_stream_once(
             if classified is not None:
                 return classified
             if response.status == 200:
-                return CollectorFailure(
-                    status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-                    reason="stream_available",
+                return collector_failure(
+                    FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                    "stream_available",
                 )
-            return CollectorFailure(
-                status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-                reason="stream_probe_inconclusive",
+            return collector_failure(
+                FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                "stream_probe_inconclusive",
             )
     except Exception:
         logger.warning("stream probe failed", exc_info=True)
-        return CollectorFailure(
-            status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
-            reason="stream_probe_failed",
+        return collector_failure(
+            FeedStatusReason.SOURCE_UNREACHABLE,
+            "stream_probe_failed",
         )
 
 
@@ -233,10 +228,7 @@ async def capture_icecast_stream(  # noqa: PLR0912, PLR0915
             feed_id,
             feed_name,
         )
-        raise CollectorFailure(
-            status_reason=FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-            reason="missing_source_feed_id",
-        )
+        raise missing_source_feed_id_failure()
 
     auth_header = _build_auth_header()
     normalized_url_base = url_base if url_base.endswith("/") else f"{url_base}/"
@@ -378,9 +370,9 @@ async def capture_icecast_stream(  # noqa: PLR0912, PLR0915
                         if probe_failure is None or _probe_keeps_raw_reason(
                             probe_failure
                         ):
-                            raise CollectorFailure(
-                                status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-                                reason=raw_exit_reason,
+                            raise collector_failure(
+                                FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                                raw_exit_reason,
                             )
                         raise probe_failure
                     logger.info(
@@ -419,9 +411,9 @@ async def capture_icecast_stream(  # noqa: PLR0912, PLR0915
                     if probe_failure is None or _probe_keeps_raw_reason(
                         probe_failure
                     ):
-                        raise CollectorFailure(
-                            status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-                            reason="capture_timeout",
+                        raise collector_failure(
+                            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                            "capture_timeout",
                         )
                     raise probe_failure
 

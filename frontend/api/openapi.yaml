@@ -295,8 +295,6 @@ components:
           type: string
         sourceFeedId:
           type: string
-        externalId:
-          type: string
         sourceUrl:
           type: string
         archiveUrl:
@@ -319,6 +317,42 @@ components:
         - substatus
       type: object
       additionalProperties: false
+    ListFeedsResponse:
+      properties:
+        feeds:
+          items:
+            $ref: "#/components/schemas/Feed"
+          type: array
+        nextToken:
+          type: string
+      required:
+        - feeds
+      type: object
+      additionalProperties: false
+    ListFeedsQueryParams:
+      properties:
+        limit:
+          type: integer
+          format: int32
+        nextToken:
+          type: string
+        order:
+          type: string
+          enum:
+            - asc
+            - desc
+        sourceTypes:
+          type: string
+        statuses:
+          type: string
+        tags:
+          items:
+            type: string
+          type: array
+        name:
+          type: string
+      type: object
+      additionalProperties: false
     FeedCreate:
       properties:
         name:
@@ -326,8 +360,6 @@ components:
         sourceType:
           $ref: "#/components/schemas/SourceType"
         sourceFeedId:
-          type: string
-        externalId:
           type: string
         tags:
           items:
@@ -337,14 +369,11 @@ components:
         - name
         - sourceType
         - sourceFeedId
-        - externalId
       type: object
       additionalProperties: false
     FeedUpdate:
       properties:
         name:
-          type: string
-        externalId:
           type: string
         tags:
           items:
@@ -352,7 +381,6 @@ components:
           type: array
       required:
         - name
-        - externalId
       type: object
       additionalProperties: false
     OpenApiSpec:
@@ -931,9 +959,11 @@ paths:
           content:
             application/json:
               schema:
-                items:
-                  $ref: "#/components/schemas/Feed"
-                type: array
+                anyOf:
+                  - $ref: "#/components/schemas/ListFeedsResponse"
+                  - items:
+                      $ref: "#/components/schemas/Feed"
+                    type: array
         "401":
           description: Unauthorized
           content:
@@ -971,7 +1001,48 @@ paths:
         - Feeds
       security:
         - google_id_token: []
-      parameters: []
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          schema:
+            format: int32
+            type: integer
+        - in: query
+          name: nextToken
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: order
+          required: false
+          schema:
+            type: string
+            enum:
+              - asc
+              - desc
+        - in: query
+          name: sourceTypes
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: statuses
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: tags
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+        - in: query
+          name: name
+          required: false
+          schema:
+            type: string
       x-google-backend: radio-transcription-api
     post:
       operationId: CreateFeed
@@ -1500,12 +1571,12 @@ paths:
                 properties:
                   nextToken:
                     type: string
-                  audioSegments:
+                  segments:
                     items:
                       $ref: "#/components/schemas/AudioSegment"
                     type: array
                 required:
-                  - audioSegments
+                  - segments
                 type: object
         "401":
           description: Unauthorized

@@ -25,6 +25,7 @@ class TestRequestHandler(TestCase):
 
     @mock.patch("backend.pipeline.notification.request_handler.PoolManager")
     def test_success(self, mock_pool_manager: mock.Mock) -> None:
+        self.handler = RequestHandler(self.mock_logger)
         mock_http = mock_pool_manager.return_value
         mock_response = mock.MagicMock()
         mock_response.status = 200
@@ -45,7 +46,7 @@ class TestRequestHandler(TestCase):
                 '"missingPriorContext": false, "missingPostContext": false, '
                 '"sourceAudioUris": [], "canonicalAudioUri": "", '
                 '"evaluationDecisions": [], "playbackAudioUri": "", '
-                '"appUrl": "", "feedName": "", "externalId": "", "tags": [], '
+                '"appUrl": "", "feedName": "", "tags": [], '
                 '"evaluationErrors": []}'
             ),
             headers={
@@ -56,6 +57,7 @@ class TestRequestHandler(TestCase):
 
     @mock.patch("backend.pipeline.notification.request_handler.PoolManager")
     def test_max_retry_error(self, mock_pool_manager: mock.Mock) -> None:
+        self.handler = RequestHandler(self.mock_logger)
         mock_http = mock_pool_manager.return_value
         mock_http.request.side_effect = [
             MaxRetryError(
