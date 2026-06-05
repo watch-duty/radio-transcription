@@ -147,6 +147,7 @@ def main():
     api_updates = dict(gcp_env)
     api_updates["ALLOWED_ORIGIN"] = "http://localhost:5173"
     api_updates["API_PUBLIC_URL"] = "http://localhost:5173"
+    api_updates["AUTH_BACKEND"] = "google"
     merge_and_write_env(
         "frontend/api/.env.local",
         api_updates,
