@@ -465,14 +465,12 @@ class TestFeedsAPI(unittest.TestCase):
             "name": "Test Feed",
             "source_type": "bcfy_calls",
             "source_feed_id": "123-456",
-            "external_id": "ext_123",
         }
         self.mock_service.create_feed.return_value = Feed(
             id=uuid.uuid4(),
             name="Test Feed",
             source_type=SourceType.BCFY_CALLS,
             source_feed_id="123-456",
-            external_id="ext_123",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
@@ -492,14 +490,12 @@ class TestFeedsAPI(unittest.TestCase):
             "name": "Test Feed",
             "source_type": "bcfy_feeds",
             "source_feed_id": "12345",
-            "external_id": "ext_123",
         }
         self.mock_service.create_feed.return_value = Feed(
             id=uuid.uuid4(),
             name="Test Feed",
             source_type=SourceType.BCFY_FEEDS,
             source_feed_id="12345",
-            external_id="ext_123",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
@@ -519,14 +515,12 @@ class TestFeedsAPI(unittest.TestCase):
             "name": "Test Feed",
             "source_type": "echo",
             "source_feed_id": "feed-123_abc",
-            "external_id": "ext_123",
         }
         self.mock_service.create_feed.return_value = Feed(
             id=uuid.uuid4(),
             name="Test Feed",
             source_type=SourceType.ECHO,
             source_feed_id="feed-123_abc",
-            external_id="ext_123",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
@@ -546,14 +540,12 @@ class TestFeedsAPI(unittest.TestCase):
             "name": "Test Feed",
             "source_type": "fire_notifications",
             "source_feed_id": "RECORDINGS/SAN-JOSE-DISP",
-            "external_id": "ext_123",
         }
         self.mock_service.create_feed.return_value = Feed(
             id=uuid.uuid4(),
             name="Test Feed",
             source_type=SourceType.FIRE_NOTIFICATIONS,
             source_feed_id="RECORDINGS/SAN-JOSE-DISP",
-            external_id="ext_123",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
@@ -573,14 +565,12 @@ class TestFeedsAPI(unittest.TestCase):
             "name": "Test Feed",
             "source_type": "openmhz",
             "source_feed_id": "open_mhz_123",
-            "external_id": "ext_123",
         }
         self.mock_service.create_feed.return_value = Feed(
             id=uuid.uuid4(),
             name="Test Feed",
             source_type=SourceType.OPENMHZ,
             source_feed_id="open_mhz_123",
-            external_id="ext_123",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
