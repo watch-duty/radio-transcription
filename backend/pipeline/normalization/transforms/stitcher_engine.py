@@ -483,6 +483,7 @@ class StitcherEngine:
                     chunk.gcs_uri,
                     chunk.timestamp_ms,
                     prior_audio=curr_context.prior_audio_tail,
+                    analyze_audio=self.stitch_config.analyze_audio,
                 )
                 self._record_chunk_evaluation_metrics(chunk_data)
                 task_logger.debug(

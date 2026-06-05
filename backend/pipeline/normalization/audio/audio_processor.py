@@ -118,12 +118,14 @@ class AudioProcessor:
         start_ms: int,
         duration_ms: int | None = None,
         prior_audio: bytes | None = None,
+        *,
+        analyze_audio: bool = True,
     ) -> AudioChunkData:
         """Downloads audio bytes from GCS and runs the speech segment detection natively."""
         if not self.gcs_client:
             msg = "GCS client not initialized. Call setup() first."
             raise RuntimeError(msg)
-        if self.vad is None:
+        if analyze_audio and self.vad is None:
             msg = "VAD engine not initialized. Call setup() first."
             raise RuntimeError(msg)
 
@@ -179,7 +181,7 @@ class AudioProcessor:
 
         # Prevent processing excessively long audio chunks that can hang or starve worker resources
         duration_sec = len(samples) / sr if sr > 0 else 0.0
-        if duration_sec > MAX_AUDIO_CHUNK_DURATION_SEC:
+        if analyze_audio and duration_sec > MAX_AUDIO_CHUNK_DURATION_SEC:
             msg = (
                 f"Audio chunk duration {duration_sec:.1f}s exceeds "
                 f"maximum limit of {MAX_AUDIO_CHUNK_DURATION_SEC}s"
@@ -187,7 +189,7 @@ class AudioProcessor:
             raise ValueError(msg)
 
         speech_segments = []
-        if len(samples) > 0:
+        if analyze_audio and len(samples) > 0:
             samples_float = samples.astype(np.float32) / INT16_MAX_FLOAT
             # If prior audio tail is passed from context, normalize it to float32 to match vad signature
             if prior_audio is not None:
@@ -208,6 +210,7 @@ class AudioProcessor:
 
         if duration_ms is None:
             duration_ms = int(len(samples) / sr * MS_PER_SECOND)
+
 
         return AudioChunkData(
             start_ms=start_ms,

@@ -189,3 +189,44 @@ class AudioProcessorTest(unittest.TestCase):
                 100000,
             )
         self.assertIn("exceeds maximum limit", str(ctx.exception))
+
+    @patch(
+        "backend.pipeline.normalization.audio.audio_processor.get_gcs_client"
+    )
+    @patch(
+        "backend.pipeline.normalization.audio.audio_processor.get_vad_engine"
+    )
+    def test_download_audio_and_detect_bypass_vad_when_analyze_audio_false(
+        self, mock_get_vad: MagicMock, mock_get_gcs: MagicMock
+    ) -> None:
+        """Verifies that when analyze_audio=False, VAD detection is bypassed entirely."""
+        mock_vad_instance = MagicMock()
+        mock_get_vad.return_value = mock_vad_instance
+
+        self.processor.setup()
+        self.processor.gcs_client = MagicMock()
+        mock_bucket = MagicMock()
+        mock_blob = MagicMock()
+
+        audio = np.zeros(1600, dtype=np.int16)
+        buf = io.BytesIO()
+        sf.write(buf, audio, 16000, format="FLAC")
+        flac_bytes = buf.getvalue()
+
+        def download_to_file(f: io.BytesIO, **kwargs: object) -> None:
+            f.write(flac_bytes)
+
+        mock_blob.download_to_file = download_to_file
+        mock_bucket.get_blob.return_value = mock_blob
+        self.processor.gcs_client.bucket.return_value = mock_bucket
+
+        # Act
+        result = self.processor.download_audio_and_detect(
+            "gs://fake-bucket/100-11111111-1111-1111-1111-111111111111.flac",
+            100000,
+            analyze_audio=False,
+        )
+
+        # Assert
+        self.assertEqual(result.speech_segments, [])
+        mock_vad_instance.detect_speech_segments.assert_not_called()
