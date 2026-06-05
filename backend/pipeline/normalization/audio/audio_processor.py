@@ -28,6 +28,7 @@ from backend.pipeline.normalization.common.constants import (
     HIGHPASS_FILTER_FREQ,
     INT16_MAX_FLOAT,
     LOWPASS_FILTER_FREQ,
+    MAX_AUDIO_CHUNK_DURATION_SEC,
 )
 from backend.pipeline.normalization.common.datatypes import (
     AudioChunkData,
@@ -175,6 +176,15 @@ class AudioProcessor:
                 Path(temp_filename).unlink()
             except OSError:
                 pass
+
+        # Prevent processing excessively long audio chunks that can hang or starve worker resources
+        duration_sec = len(samples) / sr if sr > 0 else 0.0
+        if duration_sec > MAX_AUDIO_CHUNK_DURATION_SEC:
+            msg = (
+                f"Audio chunk duration {duration_sec:.1f}s exceeds "
+                f"maximum limit of {MAX_AUDIO_CHUNK_DURATION_SEC}s"
+            )
+            raise ValueError(msg)
 
         speech_segments = []
         if len(samples) > 0:

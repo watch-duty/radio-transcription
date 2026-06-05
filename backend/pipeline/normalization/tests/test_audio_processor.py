@@ -147,3 +147,45 @@ class AudioProcessorTest(unittest.TestCase):
             processor.download_audio_and_detect(
                 "gs://my-bucket/missing.flac", 0
             )
+
+    @patch(
+        "backend.pipeline.normalization.audio.audio_processor.get_gcs_client"
+    )
+    @patch(
+        "backend.pipeline.normalization.audio.audio_processor.get_vad_engine"
+    )
+    def test_download_audio_exceeds_max_duration(
+        self, mock_get_vad: MagicMock, mock_get_gcs: MagicMock
+    ) -> None:
+        """Verifies that download_audio_and_detect raises ValueError if the audio exceeds max allowed duration."""
+        mock_vad_instance = MagicMock()
+        mock_get_vad.return_value = mock_vad_instance
+
+        self.processor.setup()
+        self.processor.gcs_client = MagicMock()
+        mock_bucket = MagicMock()
+        mock_blob = MagicMock()
+
+        # Create a valid FLAC that is longer than MAX_AUDIO_CHUNK_DURATION_SEC (300 seconds)
+        # e.g., 301 seconds at 8000Hz -> 2,408,000 samples
+        sr = 8000
+        duration = 301
+        audio = np.zeros(sr * duration, dtype=np.int16)
+        buf = io.BytesIO()
+        sf.write(buf, audio, sr, format="FLAC")
+        flac_bytes = buf.getvalue()
+
+        def download_to_file(f: io.BytesIO, **kwargs: object) -> None:
+            f.write(flac_bytes)
+
+        mock_blob.download_to_file = download_to_file
+        mock_bucket.get_blob.return_value = mock_blob
+        self.processor.gcs_client.bucket.return_value = mock_bucket
+
+        # Act & Assert
+        with self.assertRaises(ValueError) as ctx:
+            self.processor.download_audio_and_detect(
+                "gs://fake-bucket/oversized.flac",
+                100000,
+            )
+        self.assertIn("exceeds maximum limit", str(ctx.exception))
