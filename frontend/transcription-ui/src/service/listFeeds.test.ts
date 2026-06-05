@@ -10,7 +10,7 @@ describe('listFeeds', () => {
     vi.stubGlobal('fetch', mockFetch);
   });
 
-  it('should fetch feeds successfully', async () => {
+  it('should fetch feeds successfully when response is a raw array', async () => {
     const mockData = [
       { id: '1', name: 'Feed 1' },
       { id: '2', name: 'Feed 2' },
@@ -39,19 +39,29 @@ describe('listFeeds', () => {
     expect(feeds).toEqual(mockData);
   });
 
-  it('should fetch feeds successfully when response is paginated ListFeedsResponse object', async () => {
-    const mockFeeds = [
-      { id: '1', name: 'Feed 1' },
-      { id: '2', name: 'Feed 2' },
-    ];
-    const mockData = {
-      feeds: mockFeeds,
-      nextToken: 'token_abc',
-    };
+  it('should loop and fetch all pages when response is paginated ListFeedsResponse object', async () => {
+    const page1Feeds = [{ id: '1', name: 'Feed 1' }];
+    const page2Feeds = [{ id: '2', name: 'Feed 2' }];
 
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      text: async () => JSON.stringify(mockData),
+      text: async () =>
+        JSON.stringify({
+          feeds: page1Feeds,
+          nextToken: 'token_abc',
+        }),
+      headers: {
+        get: (key: string) =>
+          key === 'content-type' ? 'application/json' : null,
+      },
+    });
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          feeds: page2Feeds,
+        }),
       headers: {
         get: (key: string) =>
           key === 'content-type' ? 'application/json' : null,
@@ -60,8 +70,18 @@ describe('listFeeds', () => {
 
     const feeds = await listFeeds('tokenXYZ');
 
-    expect(mockFetch).toHaveBeenCalledTimes(1);
-    expect(feeds).toEqual(mockFeeds);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      1,
+      expect.stringContaining('/api/v1/feeds'),
+      expect.any(Object)
+    );
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      expect.stringContaining('/api/v1/feeds?limit=100&nextToken=token_abc'),
+      expect.any(Object)
+    );
+    expect(feeds).toEqual([...page1Feeds, ...page2Feeds]);
   });
 
   it('should throw error if response not ok', async () => {
