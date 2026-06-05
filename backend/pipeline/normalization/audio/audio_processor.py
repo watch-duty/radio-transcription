@@ -190,6 +190,7 @@ class AudioProcessor:
 
         speech_segments = []
         if analyze_audio and len(samples) > 0:
+            assert self.vad is not None  # noqa: S101
             samples_float = samples.astype(np.float32) / INT16_MAX_FLOAT
             # If prior audio tail is passed from context, normalize it to float32 to match vad signature
             if prior_audio is not None:
@@ -200,6 +201,7 @@ class AudioProcessor:
             raw_segments = self.vad.detect_speech_segments(
                 samples_float, sample_rate=sr, prior_audio=prior_float
             )
+
             for start_sec, end_sec in raw_segments:
                 speech_segments.append(
                     TimeRange(
