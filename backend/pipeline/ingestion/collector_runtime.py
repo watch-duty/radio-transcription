@@ -18,6 +18,7 @@ from opentelemetry import trace
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
+from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.ingestion import (
     health_server,
     quarantine_telemetry,
@@ -185,6 +186,7 @@ class CollectorRuntime:
             self._collector_settings.worker_id,
             self._collector_settings.max_feeds_per_worker,
         )
+        setup_tracing(service_name="ingestion-service", is_ingestion=True)
         asyncio.run(self._main(), loop_factory=uvloop.new_event_loop)
 
     # -- Async core -------------------------------------------------------
