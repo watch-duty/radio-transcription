@@ -4,10 +4,10 @@ import type {
   FeedCreate,
   FeedStatus,
   FeedUpdate,
+  ListFeedsResponse,
   Tag,
 } from '@transcription/common';
 import { SourceType } from '@transcription/common';
-import { GoogleAuth } from 'google-auth-library';
 import {
   Body,
   Controller,
@@ -17,6 +17,7 @@ import {
   Path,
   Post,
   Put,
+  Queries,
   Response,
   Route,
   Security,
@@ -25,7 +26,7 @@ import {
 } from 'tsoa';
 
 import { FEEDS_STORE_API_URL } from '../config.js';
-import { HttpError, handleBackendError } from '../utils.js';
+import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
 
 interface BaseFeedBackend {
   name: string;
@@ -35,7 +36,6 @@ interface BaseFeedBackend {
 interface FeedBackend extends BaseFeedBackend {
   id: string;
   source_feed_id: string;
-  external_id: string;
   status: BackendFeedStatus;
   last_heartbeat: string | null;
   tags?: Tag[];
@@ -43,14 +43,31 @@ interface FeedBackend extends BaseFeedBackend {
 
 interface FeedCreateBackend extends BaseFeedBackend {
   source_feed_id: string;
-  external_id: string;
   tags?: Tag[];
 }
 
 interface FeedUpdateBackend {
   name: string;
-  external_id: string;
   tags?: Tag[];
+}
+
+export class ListFeedsQueryParams {
+  /**
+   * @isInt
+   */
+  limit?: number;
+  nextToken?: string;
+  order?: 'asc' | 'desc';
+  sourceTypes?: string;
+  statuses?: string;
+  // Tag strings must be in the format of {"key": "<val>", "value": "<val>"}
+  tags?: string[];
+  name?: string;
+}
+
+interface ListFeedsBackendResponse {
+  feeds: FeedBackend[];
+  next_token?: string;
 }
 
 function getSourceUrl(
@@ -67,8 +84,12 @@ function getSourceUrl(
       return `https://openmhz.com/system/${sourceFeedId}`;
     case SourceType.ECHO:
       return undefined;
-    case SourceType.FIRE_NOTIFICATIONS:
-      return undefined;
+    case SourceType.FIRE_NOTIFICATIONS: {
+      const dir = sourceFeedId.startsWith('/')
+        ? sourceFeedId
+        : `/${sourceFeedId}`;
+      return `https://audioplay.textmefires.info/audioplay/folder_play?dir=${dir}`;
+    }
     default:
       return undefined;
   }
@@ -89,8 +110,13 @@ function getArchiveUrl(
       return undefined;
     case SourceType.ECHO:
       return undefined;
-    case SourceType.FIRE_NOTIFICATIONS:
-      return undefined;
+    case SourceType.FIRE_NOTIFICATIONS: {
+      const cleanSourceId = sourceFeedId.startsWith('/')
+        ? sourceFeedId.slice(1)
+        : sourceFeedId;
+      const archivePath = `${cleanSourceId}/Archive`;
+      return `https://audioplay.textmefires.info/audioplay/folder_play?dir=${encodeURIComponent(archivePath)}`;
+    }
     default:
       return undefined;
   }
@@ -115,7 +141,6 @@ function convertFeedBackend(response: FeedBackend): Feed {
     name: response.name,
     sourceType: response.source_type,
     sourceFeedId: response.source_feed_id,
-    externalId: response.external_id,
     sourceUrl: getSourceUrl(response.source_type, response.source_feed_id),
     archiveUrl: getArchiveUrl(response.source_type, response.source_feed_id),
     status: convertFeedStatusBackend(response.status),
@@ -130,7 +155,6 @@ function convertFeedCreate(create: FeedCreate): FeedCreateBackend {
     name: create.name,
     source_type: create.sourceType,
     source_feed_id: create.sourceFeedId,
-    external_id: create.externalId,
     tags: create.tags,
   };
 }
@@ -138,7 +162,6 @@ function convertFeedCreate(create: FeedCreate): FeedCreateBackend {
 function convertFeedUpdate(update: FeedUpdate): FeedUpdateBackend {
   return {
     name: update.name,
-    external_id: update.externalId,
     tags: update.tags,
   };
 }
@@ -147,25 +170,52 @@ function convertFeedUpdate(update: FeedUpdate): FeedUpdateBackend {
 @Tags('Feeds')
 @Response(401, 'Unauthorized')
 export class FeedsController extends Controller {
-  private async getClient() {
-    const auth = new GoogleAuth();
-    return await auth.getIdTokenClient(FEEDS_STORE_API_URL);
-  }
-
   @Get('')
   @Security('google_id_token')
   @Response<{ message: string }>(401, 'Unauthorized')
   @Response<{ message: string }>(403, 'Forbidden')
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
-  public async listFeeds(): Promise<Feed[]> {
+  public async listFeeds(
+    @Queries() query?: ListFeedsQueryParams
+  ): Promise<ListFeedsResponse | Feed[]> {
     try {
-      const client = await this.getClient();
-      const response = await client.request<FeedBackend[]>({
-        url: FEEDS_STORE_API_URL,
+      const queryParams = new URLSearchParams();
+      if (query?.limit) queryParams.append('limit', query.limit.toString());
+      if (query?.nextToken) queryParams.append('next_token', query.nextToken);
+      if (query?.order) queryParams.append('order', query.order);
+      if (query?.sourceTypes) {
+        queryParams.append('source_types', query.sourceTypes);
+      }
+      if (query?.statuses) {
+        queryParams.append('statuses', query.statuses);
+      }
+      if (query?.tags) {
+        for (const tag of query.tags) {
+          queryParams.append('tags', tag);
+        }
+      }
+      if (query?.name) {
+        queryParams.append('name', query.name);
+      }
+
+      const client = await getServiceClient(FEEDS_STORE_API_URL);
+      const response = await client.request<
+        FeedBackend[] | ListFeedsBackendResponse
+      >({
+        url: queryParams.toString()
+          ? `${FEEDS_STORE_API_URL}?${queryParams.toString()}`
+          : FEEDS_STORE_API_URL,
         method: 'GET',
       });
-      return response.data.map(convertFeedBackend);
+
+      const data = response.data;
+      return Array.isArray(data)
+        ? data.map(convertFeedBackend)
+        : {
+            feeds: data.feeds.map(convertFeedBackend),
+            nextToken: data.next_token,
+          };
     } catch (error: unknown) {
       const { status, message } = handleBackendError(error, 'fetching feeds');
       throw new HttpError(status, message);
@@ -181,7 +231,7 @@ export class FeedsController extends Controller {
   @Extension('x-google-backend', 'radio-transcription-api')
   public async getFeed(@Path() feedId: string): Promise<Feed> {
     try {
-      const client = await this.getClient();
+      const client = await getServiceClient(FEEDS_STORE_API_URL);
       const response = await client.request<FeedBackend>({
         url: `${FEEDS_STORE_API_URL}/${feedId}`,
         method: 'GET',
@@ -205,7 +255,7 @@ export class FeedsController extends Controller {
   @Extension('x-google-backend', 'radio-transcription-api')
   public async createFeed(@Body() requestBody: FeedCreate): Promise<Feed> {
     try {
-      const client = await this.getClient();
+      const client = await getServiceClient(FEEDS_STORE_API_URL);
       const response = await client.request<FeedBackend>({
         url: FEEDS_STORE_API_URL,
         method: 'POST',
@@ -234,7 +284,7 @@ export class FeedsController extends Controller {
     @Body() requestBody: FeedUpdate
   ): Promise<Feed> {
     try {
-      const client = await this.getClient();
+      const client = await getServiceClient(FEEDS_STORE_API_URL);
       const response = await client.request<FeedBackend>({
         url: `${FEEDS_STORE_API_URL}/${feedId}`,
         method: 'PUT',
@@ -258,7 +308,7 @@ export class FeedsController extends Controller {
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async resetFeed(@Path() feedId: string): Promise<Feed> {
-    const client = await this.getClient();
+    const client = await getServiceClient(FEEDS_STORE_API_URL);
     try {
       const response = await client.request<FeedBackend>({
         url: `${FEEDS_STORE_API_URL}/${feedId}/reset`,
@@ -287,7 +337,7 @@ export class FeedsController extends Controller {
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async deactivateFeed(@Path() feedId: string): Promise<void> {
-    const client = await this.getClient();
+    const client = await getServiceClient(FEEDS_STORE_API_URL);
     try {
       await client.request({
         url: `${FEEDS_STORE_API_URL}/${feedId}/deactivate`,
@@ -315,7 +365,7 @@ export class FeedsController extends Controller {
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async deleteFeed(@Path() feedId: string): Promise<void> {
-    const client = await this.getClient();
+    const client = await getServiceClient(FEEDS_STORE_API_URL);
     try {
       await client.request({
         url: `${FEEDS_STORE_API_URL}/${feedId}`,

@@ -18,7 +18,10 @@ from backend.pipeline.common.constants import (
     MS_PER_SECOND,
     NANOS_PER_MS,
 )
-from backend.pipeline.common.tracing_utils import with_tracer_context
+from backend.pipeline.common.tracing_utils import (
+    get_current_traceparent,
+    with_tracer_context,
+)
 from backend.pipeline.schema_types.normalized_audio_pb2 import (
     NormalizedAudio,
 )
@@ -116,7 +119,6 @@ class TranscriptionEventProcessor:
                     canonical_audio_uri=claim.canonical_audio_uri,
                     playback_audio_uri=claim.playback_audio_uri,
                     feed_name=claim.feed_name,
-                    external_id=claim.external_id,
                 )
 
                 # Egress to final output topic, strictly ordered by feed_id
@@ -126,8 +128,9 @@ class TranscriptionEventProcessor:
                 )
 
                 attrs: dict[str, str] = {}
-                if traceparent:
-                    attrs["traceparent"] = traceparent
+                current_tp = get_current_traceparent() or traceparent
+                if current_tp:
+                    attrs["traceparent"] = current_tp
 
                 future = self.publisher.publish(
                     topic=topic_path,

@@ -87,6 +87,26 @@ class GCSAudioUploader:
         Returns:
             A tuple of (canonical_audio_uri, playback_audio_uri).
         """
+        # Check if lossless FLAC already exists in GCS to skip work
+        bucket = self.gcs_client.bucket(bucket_name)
+        flac_blob = bucket.blob(flac_path)
+        try:
+            if flac_blob.exists():
+                canonical_uri = f"gs://{bucket_name}/{flac_path}"
+                playback_uri = f"gs://{bucket_name}/{m4a_path}"
+                logger.info(
+                    "GCS derivatives already exist for gs://%s/%s -- skipping upload and export",
+                    bucket_name,
+                    flac_path,
+                )
+                return canonical_uri, playback_uri
+        except Exception:
+            logger.warning(
+                "Failed to check existence for gs://%s/%s, proceeding with upload",
+                bucket_name,
+                flac_path,
+            )
+
         # Upload Lossless FLAC
         canonical_uri = self.upload_bytes(
             data=flac_bytes,

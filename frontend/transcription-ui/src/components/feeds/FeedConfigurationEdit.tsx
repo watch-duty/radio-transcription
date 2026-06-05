@@ -37,30 +37,31 @@ import {
   ConfirmationDialog,
   type ConfirmationDialogProps,
 } from '../common/ConfirmationDialog';
+import { validateFeedSourceId } from '../../utils/validationUtils';
 
 const SOURCE_TYPE_OPTIONS: {
   value: SourceType;
   label: string;
 }[] = [
   {
-    value: SourceType.BCFY_FEEDS,
-    label: 'Broadcastify Feeds',
-  },
-  {
     value: SourceType.BCFY_CALLS,
     label: 'Broadcastify Calls',
   },
   {
-    value: SourceType.OPENMHZ,
-    label: 'OpenMHZ',
+    value: SourceType.BCFY_FEEDS,
+    label: 'Broadcastify Feeds',
+  },
+  {
+    value: SourceType.FIRE_NOTIFICATIONS,
+    label: 'Fire Notifications',
   },
   {
     value: SourceType.ECHO,
     label: 'Echo',
   },
   {
-    value: SourceType.FIRE_NOTIFICATIONS,
-    label: 'Fire Notifications',
+    value: SourceType.OPENMHZ,
+    label: 'OpenMHZ',
   },
 ];
 
@@ -304,8 +305,9 @@ export function FeedConfigurationEdit({
       errors.name = 'Display name is required.';
     }
 
-    if (!feedSourceId.trim()) {
-      errors.sourceFeedId = 'Source feed ID is required.';
+    const sourceIdError = validateFeedSourceId(feedSourceType, feedSourceId);
+    if (sourceIdError) {
+      errors.sourceFeedId = sourceIdError;
     }
 
     // First check the in-progress tag inputs
@@ -375,7 +377,6 @@ export function FeedConfigurationEdit({
       if (isEditing) {
         const payload: FeedUpdate = {
           name: feedName.trim(),
-          externalId: feedSourceId.trim(),
           tags: finalTags,
         };
         await onUpdateFeed(payload);
@@ -384,7 +385,6 @@ export function FeedConfigurationEdit({
           name: feedName.trim(),
           sourceType: feedSourceType,
           sourceFeedId: feedSourceId.trim(),
-          externalId: feedSourceId.trim(),
           tags: finalTags,
         };
         await onCreateFeed(payload);

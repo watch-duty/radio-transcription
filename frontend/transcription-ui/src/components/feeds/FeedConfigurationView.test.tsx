@@ -67,7 +67,6 @@ describe('FeedConfigurationView', () => {
       name: 'Marin Fire Dispatch',
       sourceType: SourceType.BCFY_FEEDS,
       sourceFeedId: '33156',
-      externalId: 'ca-mrn-fire',
       status: 'active',
       substatus: 'active',
       tags: [{ key: 'county', value: 'Marin' }],
@@ -77,7 +76,6 @@ describe('FeedConfigurationView', () => {
       name: 'Sonoma Sheriff dispatch',
       sourceType: SourceType.OPENMHZ,
       sourceFeedId: 'sonoma-county',
-      externalId: 'ca-snm-sheriff',
       status: 'inactive',
       substatus: 'deactivated',
       tags: [{ key: 'county', value: 'Sonoma' }],
@@ -220,7 +218,6 @@ describe('FeedConfigurationView', () => {
       name: 'Napa Ambulance Dispatch',
       sourceType: SourceType.BCFY_CALLS,
       sourceFeedId: '9988-77',
-      externalId: 'ca-nap-amb',
       status: 'active' as FeedStatus,
       substatus: 'active' as BackendFeedStatus,
     };
@@ -267,7 +264,6 @@ describe('FeedConfigurationView', () => {
           name: 'Napa Ambulance Dispatch',
           sourceType: SourceType.BCFY_CALLS,
           sourceFeedId: '9988-77',
-          externalId: '9988-77',
           tags: [],
         },
         'fake-jwt-token-xyz'
@@ -288,7 +284,6 @@ describe('FeedConfigurationView', () => {
     const mockUpdatedFeed = {
       ...mockFeeds[0],
       name: 'Marin Unified Fire Dispatch',
-      externalId: 'ca-mrn-fire-v2',
       tags: [
         { key: 'county', value: 'Marin' },
         { key: 'region', value: 'West' },
@@ -398,7 +393,6 @@ describe('FeedConfigurationView', () => {
         'feed-1',
         {
           name: 'Marin Unified Fire Dispatch',
-          externalId: '33156',
           tags: [{ key: 'county', value: 'Marin' }],
         },
         'fake-jwt-token-xyz'
@@ -442,7 +436,6 @@ describe('FeedConfigurationView', () => {
       name: 'Napa Ambulance Dispatch',
       sourceType: SourceType.BCFY_CALLS,
       sourceFeedId: '9988-77',
-      externalId: 'ca-nap-amb',
       status: 'active' as FeedStatus,
       substatus: 'active' as BackendFeedStatus,
     };
@@ -493,7 +486,6 @@ describe('FeedConfigurationView', () => {
           name: 'Napa Ambulance Dispatch',
           sourceType: SourceType.BCFY_CALLS,
           sourceFeedId: '9988-77',
-          externalId: '9988-77',
           tags: [{ key: 'county', value: 'Napa' }],
         },
         'fake-jwt-token-xyz'

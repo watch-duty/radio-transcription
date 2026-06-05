@@ -20,7 +20,7 @@ import Login from './components/Login';
 import LoginModal from './components/common/LoginModal';
 import FeedConfigurationView from './components/feeds/FeedConfigurationView';
 import FeedSearchView from './components/feeds/FeedSearchView';
-import RulesView from './components/rules/RulesView';
+import RuleConfigurationView from './components/rules/RuleConfigurationView';
 import TranscriptView from './components/transcripts/TranscriptView';
 import { useAuth } from './context/AuthContext';
 
@@ -235,7 +235,10 @@ function App() {
               element={
                 <>
                   <title>Rules - Radio Transcription</title>
-                  <RulesView />
+                  <RuleConfigurationView
+                    triggerSnackbar={triggerSnackbar}
+                    onError={handleError}
+                  />
                 </>
               }
             />

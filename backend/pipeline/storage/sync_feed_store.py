@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 _RESOLVE_ECHO_FEED_SQL = """\
-SELECT f.id, f.name, fp.external_id, f.status, f.failure_count
+SELECT f.id, f.name, f.status, f.failure_count
 FROM feeds f
 JOIN feed_properties fp ON fp.feed_id = f.id
 WHERE fp.source_feed_id = %s
@@ -92,7 +92,7 @@ class SyncFeedStore:
     def resolve_echo_feed(self, channel_name: str) -> dict[str, Any] | None:
         """Look up a feed by its Echo channel name.
 
-        Returns the feed row ``{id, name, external_id, status, failure_count}`` or
+        Returns the feed row ``{id, name, status, failure_count}`` or
         ``None`` if no feed is registered for *channel_name*.
         """
         with self._connect_db() as conn:

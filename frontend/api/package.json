@@ -6,7 +6,7 @@
   "scripts": {
     "build": "yarn run generate-routes && tsc",
     "start": "functions-framework --target=api",
-    "local": "yarn build && dotenv -e .env.local -- yarn start",
+    "local": "yarn build && dotenv -o -e .env.local -- yarn start",
     "lint:check": "eslint .",
     "lint:fix": "eslint . --fix",
     "format:check": "prettier --ignore-path ../../.prettierignore --check .",
@@ -19,14 +19,14 @@
   },
   "dependencies": {
     "@google-cloud/functions-framework": "^5.0.2",
-    "@transcription/common": "file:../common",
+    "@transcription/common": "link:../common",
     "axios": "^1.16.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "google-auth-library": "^10.6.2",
+    "jose": "^6.2.3",
     "js-yaml": "^4.1.1",
-    "jsonwebtoken": "^9.0.3",
     "tsoa": "^7.0.0-alpha.0"
   },
   "devDependencies": {
@@ -37,7 +37,6 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/js-yaml": "^4.0.9",
-    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^25.5.0",
     "@types/swagger-ui-express": "^4.1.8",
     "dotenv-cli": "^11.0.0",

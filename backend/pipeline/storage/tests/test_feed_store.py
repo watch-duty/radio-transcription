@@ -13,6 +13,7 @@ import asyncpg
 
 from backend.pipeline.storage import feed_queries
 from backend.pipeline.storage.feed_store import (
+    FeedStatus,
     FeedStatusReason,
     FeedStore,
     HeartbeatResult,
@@ -31,7 +32,6 @@ _STATUS_REASON_UPDATED_AT = datetime.datetime(
 _LEASE_ROW = {
     "id": _FEED_ID,
     "name": "My Feed",
-    "external_id": "ext-id",
     "source_type": "bcfy_feeds",
     "last_processed_filename": None,
     "last_bookmark_time": None,
@@ -55,7 +55,6 @@ def _full_feed_row(**overrides: object) -> dict[str, object]:
         "last_bookmark_time": None,
         "created_at": datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
         "source_feed_id": "123",
-        "external_id": "ext_123",
         "tags": None,
     }
     row.update(overrides)
@@ -647,7 +646,6 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
             {
                 "id": _FEED_ID,
                 "name": "Feed A",
-                "external_id": "ext-id",
                 "source_type": "bcfy_feeds",
                 "last_processed_filename": None,
                 "last_bookmark_time": None,
@@ -657,7 +655,6 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
             {
                 "id": _FEED_ID_B,
                 "name": "Feed B",
-                "external_id": "ext-id",
                 "source_type": "bcfy_feeds",
                 "last_processed_filename": "gs://bucket/path",
                 "last_bookmark_time": None,
@@ -917,7 +914,7 @@ class TestBuildAcquireFeedsBatchSql(unittest.TestCase):
             ")\n"
             "SELECT leased.id, leased.name, leased.source_type,\n"
             "       leased.last_processed_filename, leased.last_bookmark_time,\n"
-            "       leased.fencing_token, fpi.source_feed_id, fpi.external_id\n"
+            "       leased.fencing_token, fpi.source_feed_id\n"
             "FROM leased\n"
             "JOIN feed_properties fpi ON fpi.feed_id = leased.id\n"
         )
@@ -1305,9 +1302,7 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
         pool = make_mock_pool(fetchrow_result=row)
         store = FeedStore(pool)
 
-        result = await store.create_feed(
-            "New Feed", "bcfy_feeds", "123", "ext_123"
-        )
+        result = await store.create_feed("New Feed", "bcfy_feeds", "123")
 
         self.assertEqual(result["id"], _FEED_ID)
         self.assertEqual(result["name"], "New Feed")
@@ -1324,12 +1319,12 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
 
         tags = [{"key": "env", "value": "prod"}]
         result = await store.create_feed(
-            "New Feed", "bcfy_feeds", "123", "ext_123", tags=tags
+            "New Feed", "bcfy_feeds", "123", tags=tags
         )
 
         self.assertEqual(result["tags"], tags)
         args = pool.fetchrow.call_args[0]
-        self.assertEqual(args[5], json.dumps(tags))
+        self.assertEqual(args[4], json.dumps(tags))
 
     async def test_create_feed_invalid_tags(self) -> None:
         """CheckViolationError is raised when DB constraint fails for invalid tags."""
@@ -1341,9 +1336,7 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
 
         tags = [{"invalid": "shape"}]
         with self.assertRaises(asyncpg.CheckViolationError):
-            await store.create_feed(
-                "New Feed", "bcfy_feeds", "123", "ext_123", tags=tags
-            )
+            await store.create_feed("New Feed", "bcfy_feeds", "123", tags=tags)
 
     async def test_raises_value_error_on_failure(self) -> None:
         """ValueError is raised if the DB returns no row."""
@@ -1351,7 +1344,7 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         with self.assertRaises(ValueError):
-            await store.create_feed("New Feed", "bcfy_feeds", "123", "ext_123")
+            await store.create_feed("New Feed", "bcfy_feeds", "123")
 
     async def test_create_feed_invalid_source_type(self) -> None:
         """ValueError is raised when an invalid source type is passed."""
@@ -1363,7 +1356,6 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
                 name="Test Feed",
                 source_type="invalid_type",
                 source_feed_id="src_123",
-                external_id="ext_123",
             )
         self.assertIn("Invalid source type", str(cm.exception))
 
@@ -1421,7 +1413,6 @@ class TestListFeeds(unittest.IsolatedAsyncioTestCase):
                 ),
                 created_at=datetime.datetime(2026, 4, 9, tzinfo=datetime.UTC),
                 source_feed_id="456",
-                external_id="ext_456",
             ),
         ]
         pool = make_mock_pool(fetch_result=rows)
@@ -1470,20 +1461,77 @@ class TestListFeeds(unittest.IsolatedAsyncioTestCase):
 
     async def test_list_feeds_decodes_and_uses_cursor(self) -> None:
         """The next_token parameter is decoded and forwarded as SQL parameters."""
-        pool = make_mock_pool(fetch_result=[])
+        row = _full_feed_row(name="Feed Cursor")
+        pool = make_mock_pool(fetch_result=[row])
         store = FeedStore(pool)
 
         # Generate a token representing a cursor
         cursor_ts = datetime.datetime(2024, 1, 1, 12, 0, 0)
         token = encode_cursor(cursor_ts, _FEED_ID)
 
-        await store.list_feeds(limit=10, next_token=token)
+        result = await store.list_feeds(limit=10, next_token=token)
 
         args = pool.fetch.call_args[0]
-        # Parameters should be (query, cursor_ts, cursor_uid, source_types, statuses, tags_json, limit + 1)
+        # Parameters should be (query, cursor_ts, cursor_uid, source_types, statuses, tags_json, name, limit + 1)
         self.assertEqual(args[1], cursor_ts)
         self.assertEqual(args[2], _FEED_ID)
-        self.assertEqual(args[6], 11)
+        self.assertEqual(args[6], None)
+        self.assertEqual(args[7], 11)
+        self.assertEqual(len(result.feeds), 1)
+        self.assertEqual(result.feeds[0]["name"], "Feed Cursor")
+
+    async def test_list_feeds_with_name_filter(self) -> None:
+        """The name parameter is forwarded to the query, and the matching feed is returned."""
+        row = _full_feed_row(name="My Feed")
+        pool = make_mock_pool(fetch_result=[row])
+        store = FeedStore(pool)
+
+        result = await store.list_feeds(name="My Feed")
+
+        args = pool.fetch.call_args[0]
+        self.assertEqual(args[6], "My Feed")
+        self.assertEqual(len(result.feeds), 1)
+        self.assertEqual(result.feeds[0]["name"], "My Feed")
+
+    async def test_list_feeds_with_source_types_filter(self) -> None:
+        """The source_types parameter is forwarded to the query, and the matching feed is returned."""
+        row = _full_feed_row(name="Feed B", source_type="openmhz")
+        pool = make_mock_pool(fetch_result=[row])
+        store = FeedStore(pool)
+
+        result = await store.list_feeds(source_types=[SourceType.OPENMHZ])
+
+        args = pool.fetch.call_args[0]
+        self.assertEqual(args[3], [SourceType.OPENMHZ])
+        self.assertEqual(len(result.feeds), 1)
+        self.assertEqual(result.feeds[0]["source_type"], SourceType.OPENMHZ)
+
+    async def test_list_feeds_with_statuses_filter(self) -> None:
+        """The statuses parameter is forwarded to the query, and the matching feed is returned."""
+        row = _full_feed_row(name="Feed C", status="active")
+        pool = make_mock_pool(fetch_result=[row])
+        store = FeedStore(pool)
+
+        result = await store.list_feeds(statuses=[FeedStatus.ACTIVE])
+
+        args = pool.fetch.call_args[0]
+        self.assertEqual(args[4], [FeedStatus.ACTIVE])
+        self.assertEqual(len(result.feeds), 1)
+        self.assertEqual(result.feeds[0]["status"], FeedStatus.ACTIVE)
+
+    async def test_list_feeds_with_tags_filter(self) -> None:
+        """The tags parameter is JSON serialized, forwarded to the query, and returned."""
+        tags = [{"key": "region", "value": "West"}]
+        row = _full_feed_row(name="Feed D", tags=json.dumps(tags))
+        pool = make_mock_pool(fetch_result=[row])
+        store = FeedStore(pool)
+
+        result = await store.list_feeds(tags=tags)
+
+        args = pool.fetch.call_args[0]
+        self.assertEqual(args[5], json.dumps(tags))
+        self.assertEqual(len(result.feeds), 1)
+        self.assertEqual(result.feeds[0]["tags"], tags)
 
 
 class TestDeactivateFeed(unittest.IsolatedAsyncioTestCase):

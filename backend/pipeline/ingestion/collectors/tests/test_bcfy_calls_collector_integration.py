@@ -27,7 +27,9 @@ from backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector impor
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
 )
+from backend.pipeline.ingestion.models import CollectorFailure
 from backend.pipeline.storage.feed_store import (
+    FeedStatusReason,
     FeedStore,
     LeasedFeed,
     SourceType,
@@ -169,11 +171,10 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         if source_feed_id is not None:
             await self.pool.execute(
                 "INSERT INTO feed_properties"
-                " (feed_id, source_feed_id, external_id, source_type)"
-                " VALUES ($1::uuid, $2, $3, $4)",
+                " (feed_id, source_feed_id, source_type)"
+                " VALUES ($1::uuid, $2, $3)",
                 str(feed_id),
                 source_feed_id,
-                f"ext-{source_feed_id}",
                 "bcfy_calls",
             )
         return feed_id
@@ -434,7 +435,7 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
     async def test_missing_source_feed_id_raises_without_side_effects(
         self,
     ) -> None:
-        """Feed without source_feed_id -> ValueError, no GCS/DB writes."""
+        """Feed without source_feed_id -> typed failure, no GCS/DB writes."""
         # Insert a valid feed
         feed_id = await self._insert_feed("no-id-feed")
         leased = await self.store.acquire_feeds_batch(self.worker_id, _CLAIM)
@@ -449,7 +450,7 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         feed["source_feed_id"] = None
 
         shutdown = asyncio.Event()
-        with self.assertRaises(ValueError) as ctx:
+        with self.assertRaises(CollectorFailure) as ctx:
             async for _ in capture_bcfy_calls(
                 feed,
                 shutdown,
@@ -458,6 +459,10 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             ):
                 pass
 
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        )
         self.assertEqual(str(ctx.exception), "missing_source_feed_id")
 
         row = await self._get_feed_row(feed_id)
