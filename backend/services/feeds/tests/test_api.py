@@ -40,7 +40,6 @@ class TestFeedsAPI(unittest.TestCase):
             "name": "Test Feed",
             "source_type": "bcfy_feeds",
             "source_feed_id": "123",
-            "external_id": "ext_123",
         }
         feed_id = uuid.uuid4()
         mock_feed = Feed(
@@ -48,7 +47,6 @@ class TestFeedsAPI(unittest.TestCase):
             name="Test Feed",
             source_type=SourceType.BCFY_FEEDS,
             source_feed_id="123",
-            external_id="ext_123",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
@@ -67,7 +65,6 @@ class TestFeedsAPI(unittest.TestCase):
             "name": "Test Feed",
             "source_type": "bcfy_feeds",
             "source_feed_id": "123",
-            "external_id": "ext_123",
         }
         self.mock_service.create_feed.side_effect = FeedAlreadyExistsError(
             "bcfy_feeds", "123"
@@ -88,7 +85,6 @@ class TestFeedsAPI(unittest.TestCase):
             "name": "Test Feed",
             # missing source_type
             "source_feed_id": "123",
-            "external_id": "ext_123",
         }
         response = self.client.post("/v1/feeds", json=payload)
         self.assertEqual(
@@ -101,7 +97,6 @@ class TestFeedsAPI(unittest.TestCase):
             "name": "Test Feed",
             "source_type": "bcfy_feeds",
             "source_feed_id": "123",
-            "external_id": "ext_123",
             "tags": [{"key": "county", "value": "Fulton"}],
         }
         feed_id = uuid.uuid4()
@@ -110,7 +105,6 @@ class TestFeedsAPI(unittest.TestCase):
             name="Test Feed",
             source_type=SourceType.BCFY_FEEDS,
             source_feed_id="123",
-            external_id="ext_123",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
             tags=[Tag(key="county", value="Fulton")],
@@ -133,7 +127,6 @@ class TestFeedsAPI(unittest.TestCase):
             name="Test Feed",
             source_type=SourceType.BCFY_FEEDS,
             source_feed_id="123",
-            external_id="ext_123",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
@@ -153,7 +146,6 @@ class TestFeedsAPI(unittest.TestCase):
             name="Test Feed",
             source_type=SourceType.BCFY_FEEDS,
             source_feed_id="123",
-            external_id="ext_123",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
             tags=[Tag(key="county", value="Fulton")],
@@ -182,7 +174,6 @@ class TestFeedsAPI(unittest.TestCase):
             name="Test Feed",
             source_type=SourceType.BCFY_FEEDS,
             source_feed_id="123",
-            external_id="ext_123",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
@@ -214,7 +205,6 @@ class TestFeedsAPI(unittest.TestCase):
             name="Test Feed",
             source_type=SourceType.BCFY_FEEDS,
             source_feed_id="123",
-            external_id="ext_123",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
@@ -250,7 +240,6 @@ class TestFeedsAPI(unittest.TestCase):
             name="Test Feed",
             source_type=SourceType.BCFY_FEEDS,
             source_feed_id="123",
-            external_id="ext_123",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
@@ -295,7 +284,6 @@ class TestFeedsAPI(unittest.TestCase):
             name="Test Feed",
             source_type=SourceType.BCFY_FEEDS,
             source_feed_id="123",
-            external_id="ext_123",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
@@ -327,7 +315,6 @@ class TestFeedsAPI(unittest.TestCase):
             name="Test Feed",
             source_type=SourceType.BCFY_FEEDS,
             source_feed_id="123",
-            external_id="ext_123",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
@@ -401,7 +388,6 @@ class TestFeedsAPI(unittest.TestCase):
             name="Test Feed",
             source_type=SourceType.BCFY_FEEDS,
             source_feed_id="123",
-            external_id="ext_123",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
@@ -428,14 +414,12 @@ class TestFeedsAPI(unittest.TestCase):
         feed_id = uuid.uuid4()
         payload = {
             "name": "Updated Feed",
-            "external_id": "ext_456",
         }
         mock_feed = Feed(
             id=feed_id,
             name="Updated Feed",
             source_type=SourceType.BCFY_FEEDS,
             source_feed_id="123",
-            external_id="ext_456",
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
@@ -454,7 +438,6 @@ class TestFeedsAPI(unittest.TestCase):
         feed_id = uuid.uuid4()
         payload = {
             "name": "Updated Feed",
-            "external_id": "ext_456",
         }
         self.mock_service.update_feed.return_value = None
 
@@ -467,7 +450,6 @@ class TestFeedsAPI(unittest.TestCase):
         feed_id = uuid.uuid4()
         payload = {
             "name": "Updated Feed",
-            "external_id": "ext_456",
         }
         self.mock_service.update_feed.side_effect = FeedNameAlreadyExistsError(
             "Updated Feed"
@@ -476,6 +458,131 @@ class TestFeedsAPI(unittest.TestCase):
         response = self.client.put(f"/v1/feeds/{feed_id}", json=payload)
 
         self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+
+    def test_create_feed_bcfy_calls_validation(self) -> None:
+        # Valid format
+        payload = {
+            "name": "Test Feed",
+            "source_type": "bcfy_calls",
+            "source_feed_id": "123-456",
+        }
+        self.mock_service.create_feed.return_value = Feed(
+            id=uuid.uuid4(),
+            name="Test Feed",
+            source_type=SourceType.BCFY_CALLS,
+            source_feed_id="123-456",
+            status=FeedStatus.ACTIVE,
+            last_heartbeat=None,
+        )
+        response = self.client.post("/v1/feeds", json=payload)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        # Invalid format
+        payload["source_feed_id"] = "123"
+        response = self.client.post("/v1/feeds", json=payload)
+        self.assertEqual(
+            response.status_code, status.HTTP_422_UNPROCESSABLE_CONTENT
+        )
+
+    def test_create_feed_bcfy_feeds_validation(self) -> None:
+        # Valid format
+        payload = {
+            "name": "Test Feed",
+            "source_type": "bcfy_feeds",
+            "source_feed_id": "12345",
+        }
+        self.mock_service.create_feed.return_value = Feed(
+            id=uuid.uuid4(),
+            name="Test Feed",
+            source_type=SourceType.BCFY_FEEDS,
+            source_feed_id="12345",
+            status=FeedStatus.ACTIVE,
+            last_heartbeat=None,
+        )
+        response = self.client.post("/v1/feeds", json=payload)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        # Invalid format
+        payload["source_feed_id"] = "123-456"
+        response = self.client.post("/v1/feeds", json=payload)
+        self.assertEqual(
+            response.status_code, status.HTTP_422_UNPROCESSABLE_CONTENT
+        )
+
+    def test_create_feed_echo_validation(self) -> None:
+        # Valid format
+        payload = {
+            "name": "Test Feed",
+            "source_type": "echo",
+            "source_feed_id": "feed-123_abc",
+        }
+        self.mock_service.create_feed.return_value = Feed(
+            id=uuid.uuid4(),
+            name="Test Feed",
+            source_type=SourceType.ECHO,
+            source_feed_id="feed-123_abc",
+            status=FeedStatus.ACTIVE,
+            last_heartbeat=None,
+        )
+        response = self.client.post("/v1/feeds", json=payload)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        # Invalid format
+        payload["source_feed_id"] = "feed.123"
+        response = self.client.post("/v1/feeds", json=payload)
+        self.assertEqual(
+            response.status_code, status.HTTP_422_UNPROCESSABLE_CONTENT
+        )
+
+    def test_create_feed_fire_notifications_validation(self) -> None:
+        # Valid format
+        payload = {
+            "name": "Test Feed",
+            "source_type": "fire_notifications",
+            "source_feed_id": "RECORDINGS/SAN-JOSE-DISP",
+        }
+        self.mock_service.create_feed.return_value = Feed(
+            id=uuid.uuid4(),
+            name="Test Feed",
+            source_type=SourceType.FIRE_NOTIFICATIONS,
+            source_feed_id="RECORDINGS/SAN-JOSE-DISP",
+            status=FeedStatus.ACTIVE,
+            last_heartbeat=None,
+        )
+        response = self.client.post("/v1/feeds", json=payload)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        # Invalid format (lowercase)
+        payload["source_feed_id"] = "recordings/san-jose"
+        response = self.client.post("/v1/feeds", json=payload)
+        self.assertEqual(
+            response.status_code, status.HTTP_422_UNPROCESSABLE_CONTENT
+        )
+
+    def test_create_feed_openmhz_validation(self) -> None:
+        # Valid format
+        payload = {
+            "name": "Test Feed",
+            "source_type": "openmhz",
+            "source_feed_id": "open_mhz_123",
+        }
+        self.mock_service.create_feed.return_value = Feed(
+            id=uuid.uuid4(),
+            name="Test Feed",
+            source_type=SourceType.OPENMHZ,
+            source_feed_id="open_mhz_123",
+            status=FeedStatus.ACTIVE,
+            last_heartbeat=None,
+        )
+        response = self.client.post("/v1/feeds", json=payload)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        # Invalid format (dash)
+        payload["source_feed_id"] = "open-mhz"
+        response = self.client.post("/v1/feeds", json=payload)
+        self.assertEqual(
+            response.status_code, status.HTTP_422_UNPROCESSABLE_CONTENT
+        )
 
 
 if __name__ == "__main__":

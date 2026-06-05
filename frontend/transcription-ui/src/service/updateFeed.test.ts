@@ -13,7 +13,6 @@ describe('updateFeed', () => {
   it('should update feed successfully', async () => {
     const feedUpdate = {
       name: 'Updated Feed Name',
-      externalId: 'ext-abc',
       tags: [{ key: 'county', value: 'Marin' }],
     };
 
@@ -22,7 +21,6 @@ describe('updateFeed', () => {
       name: 'Updated Feed Name',
       sourceType: 'bcfy_feeds',
       sourceFeedId: '12345',
-      externalId: 'ext-abc',
       status: 'active',
       tags: [{ key: 'county', value: 'Marin' }],
     };
@@ -69,7 +67,6 @@ describe('updateFeed', () => {
         '12',
         {
           name: 'Updated Feed Name',
-          externalId: 'ext-abc',
         },
         'tokenXYZ'
       )

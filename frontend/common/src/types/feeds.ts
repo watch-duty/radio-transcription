@@ -28,7 +28,6 @@ export interface BaseFeed {
 export interface Feed extends BaseFeed {
   id: string;
   sourceFeedId?: string;
-  externalId?: string;
   sourceUrl?: string;
   archiveUrl?: string;
   status: FeedStatus;
@@ -39,13 +38,11 @@ export interface Feed extends BaseFeed {
 
 export interface FeedCreate extends BaseFeed {
   sourceFeedId: string;
-  externalId: string;
   tags?: Tag[];
 }
 
 export interface FeedUpdate {
   name: string;
-  externalId: string;
   tags?: Tag[];
 }
 

@@ -33,7 +33,6 @@ describe('FeedsController', () => {
     name: 'Test Feed',
     source_type: 'openmhz',
     source_feed_id: 'src_123',
-    external_id: 'ext_123',
     status: 'active',
     substatus: 'active',
     last_heartbeat: '2024-01-01T00:00:00Z',
@@ -44,7 +43,6 @@ describe('FeedsController', () => {
     name: 'Test Feed',
     sourceType: 'openmhz',
     sourceFeedId: 'src_123',
-    externalId: 'ext_123',
     sourceUrl: 'https://openmhz.com/system/src_123',
     archiveUrl: undefined,
     status: 'active',
@@ -187,7 +185,6 @@ describe('FeedsController', () => {
         name: 'Test Feed',
         sourceType: SourceType.OPENMHZ,
         sourceFeedId: 'src_123',
-        externalId: 'ext_123',
       };
       const result = await controller.createFeed(payload);
 
@@ -199,7 +196,6 @@ describe('FeedsController', () => {
           name: 'Test Feed',
           source_type: 'openmhz',
           source_feed_id: 'src_123',
-          external_id: 'ext_123',
         },
       });
     });
@@ -216,7 +212,6 @@ describe('FeedsController', () => {
         name: 'Test Feed',
         sourceType: SourceType.OPENMHZ,
         sourceFeedId: 'src_123',
-        externalId: 'ext_123',
         tags: [{ key: 'county', value: 'Fulton' }],
       };
       const result = await controller.createFeed(payload);
@@ -232,7 +227,6 @@ describe('FeedsController', () => {
           name: 'Test Feed',
           source_type: 'openmhz',
           source_feed_id: 'src_123',
-          external_id: 'ext_123',
           tags: [{ key: 'county', value: 'Fulton' }],
         },
       });
@@ -246,7 +240,6 @@ describe('FeedsController', () => {
       const controller = new FeedsController();
       const payload = {
         name: 'Updated Feed',
-        externalId: 'ext_123',
       };
       const result = await controller.updateFeed('feed_123', payload);
 
@@ -256,7 +249,6 @@ describe('FeedsController', () => {
         method: 'PUT',
         data: {
           name: 'Updated Feed',
-          external_id: 'ext_123',
           tags: undefined,
         },
       });
@@ -273,7 +265,6 @@ describe('FeedsController', () => {
       const controller = new FeedsController();
       const payload = {
         name: 'Updated Feed',
-        externalId: 'ext_123',
         tags: [{ key: 'county', value: 'Fulton' }],
       };
       const result = await controller.updateFeed('feed_123', payload);
@@ -288,7 +279,6 @@ describe('FeedsController', () => {
         method: 'PUT',
         data: {
           name: 'Updated Feed',
-          external_id: 'ext_123',
           tags: [{ key: 'county', value: 'Fulton' }],
         },
       });
@@ -304,7 +294,6 @@ describe('FeedsController', () => {
       const controller = new FeedsController();
       const payload = {
         name: 'Updated Feed',
-        externalId: 'ext_123',
       };
       await expect(controller.updateFeed('feed_123', payload)).rejects.toThrow(
         /Not Found/
@@ -321,7 +310,6 @@ describe('FeedsController', () => {
       const controller = new FeedsController();
       const payload = {
         name: 'Updated Feed',
-        externalId: 'ext_123',
       };
       await expect(controller.updateFeed('feed_123', payload)).rejects.toThrow(
         /Server Error/

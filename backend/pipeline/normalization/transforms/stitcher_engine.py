@@ -101,6 +101,9 @@ class StitcherEngine:
 
         # Pipeline health & flushes
         self.stale_flushes = Metrics.counter(self.__class__, "stale_flushes")
+        self.oversized_audio_chunks = Metrics.counter(
+            self.__class__, "oversized_audio_chunks"
+        )
 
         # Instantiate the stateless AudioProcessor
         self.processor = audio_processor.AudioProcessor(
@@ -480,6 +483,7 @@ class StitcherEngine:
                     chunk.gcs_uri,
                     chunk.timestamp_ms,
                     prior_audio=curr_context.prior_audio_tail,
+                    analyze_audio=self.stitch_config.analyze_audio,
                 )
                 self._record_chunk_evaluation_metrics(chunk_data)
                 task_logger.debug(
@@ -537,6 +541,9 @@ class StitcherEngine:
                 )
 
         except Exception as e:
+            if "exceeds maximum limit" in str(e):
+                self.oversized_audio_chunks.inc()
+
             if not self.stitch_config.route_to_dlq:
                 raise
             task_logger.exception(

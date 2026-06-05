@@ -28,6 +28,7 @@ from backend.pipeline.normalization.common.constants import (
     HIGHPASS_FILTER_FREQ,
     INT16_MAX_FLOAT,
     LOWPASS_FILTER_FREQ,
+    MAX_AUDIO_CHUNK_DURATION_SEC,
 )
 from backend.pipeline.normalization.common.datatypes import (
     AudioChunkData,
@@ -117,12 +118,14 @@ class AudioProcessor:
         start_ms: int,
         duration_ms: int | None = None,
         prior_audio: bytes | None = None,
+        *,
+        analyze_audio: bool = True,
     ) -> AudioChunkData:
         """Downloads audio bytes from GCS and runs the speech segment detection natively."""
         if not self.gcs_client:
             msg = "GCS client not initialized. Call setup() first."
             raise RuntimeError(msg)
-        if self.vad is None:
+        if analyze_audio and self.vad is None:
             msg = "VAD engine not initialized. Call setup() first."
             raise RuntimeError(msg)
 
@@ -176,8 +179,18 @@ class AudioProcessor:
             except OSError:
                 pass
 
+        # Prevent processing excessively long audio chunks that can hang or starve worker resources
+        duration_sec = len(samples) / sr if sr > 0 else 0.0
+        if analyze_audio and duration_sec > MAX_AUDIO_CHUNK_DURATION_SEC:
+            msg = (
+                f"Audio chunk duration {duration_sec:.1f}s exceeds "
+                f"maximum limit of {MAX_AUDIO_CHUNK_DURATION_SEC}s"
+            )
+            raise ValueError(msg)
+
         speech_segments = []
-        if len(samples) > 0:
+        if analyze_audio and len(samples) > 0:
+            assert self.vad is not None  # noqa: S101
             samples_float = samples.astype(np.float32) / INT16_MAX_FLOAT
             # If prior audio tail is passed from context, normalize it to float32 to match vad signature
             if prior_audio is not None:
@@ -188,6 +201,7 @@ class AudioProcessor:
             raw_segments = self.vad.detect_speech_segments(
                 samples_float, sample_rate=sr, prior_audio=prior_float
             )
+
             for start_sec, end_sec in raw_segments:
                 speech_segments.append(
                     TimeRange(

@@ -979,7 +979,6 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         self.feed = {
             "id": uuid.uuid4(),
             "name": "test-feed",
-            "external_id": "ext-id",
             "source_type": SourceType.BCFY_CALLS,
             "last_processed_filename": None,
             "last_bookmark_time": datetime.datetime(
@@ -1912,7 +1911,6 @@ class TestCaptureBcfyCallsReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
         feed = LeasedFeed(
             id=uuid.UUID("12345678-1234-5678-1234-567812345678"),
             name="test-bcfy-calls",
-            external_id="ext-id",
             source_type=SourceType.BCFY_CALLS,
             last_processed_filename=None,
             last_bookmark_time=None,
@@ -1944,7 +1942,6 @@ class TestBcfyCallsCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
         self.feed: dict[str, object] = {
             "id": self.feed_uuid,
             "name": "test-bcfy",
-            "external_id": "ext-id",
             "source_type": SourceType.BCFY_CALLS,
             "last_processed_filename": None,
             "last_bookmark_time": None,
@@ -2192,7 +2189,6 @@ class TestBcfyCallsHttp01(unittest.IsolatedAsyncioTestCase):
         self.feed: dict[str, object] = {
             "id": self.feed_uuid,
             "name": "test-bcfy-http01",
-            "external_id": "ext-id",
             "source_type": SourceType.BCFY_CALLS,
             "last_processed_filename": None,
             "last_bookmark_time": None,
@@ -2385,7 +2381,6 @@ class TestCaptureBcfyCallsResumePosition(unittest.IsolatedAsyncioTestCase):
         self.feed: dict[str, Any] = {
             "id": uuid.uuid4(),
             "name": "test-feed",
-            "external_id": "ext-id",
             "source_type": SourceType.BCFY_CALLS,
             "last_processed_filename": None,
             "last_bookmark_time": None,

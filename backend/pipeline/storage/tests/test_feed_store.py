@@ -32,7 +32,6 @@ _STATUS_REASON_UPDATED_AT = datetime.datetime(
 _LEASE_ROW = {
     "id": _FEED_ID,
     "name": "My Feed",
-    "external_id": "ext-id",
     "source_type": "bcfy_feeds",
     "last_processed_filename": None,
     "last_bookmark_time": None,
@@ -56,7 +55,6 @@ def _full_feed_row(**overrides: object) -> dict[str, object]:
         "last_bookmark_time": None,
         "created_at": datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
         "source_feed_id": "123",
-        "external_id": "ext_123",
         "tags": None,
     }
     row.update(overrides)
@@ -648,7 +646,6 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
             {
                 "id": _FEED_ID,
                 "name": "Feed A",
-                "external_id": "ext-id",
                 "source_type": "bcfy_feeds",
                 "last_processed_filename": None,
                 "last_bookmark_time": None,
@@ -658,7 +655,6 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
             {
                 "id": _FEED_ID_B,
                 "name": "Feed B",
-                "external_id": "ext-id",
                 "source_type": "bcfy_feeds",
                 "last_processed_filename": "gs://bucket/path",
                 "last_bookmark_time": None,
@@ -918,7 +914,7 @@ class TestBuildAcquireFeedsBatchSql(unittest.TestCase):
             ")\n"
             "SELECT leased.id, leased.name, leased.source_type,\n"
             "       leased.last_processed_filename, leased.last_bookmark_time,\n"
-            "       leased.fencing_token, fpi.source_feed_id, fpi.external_id\n"
+            "       leased.fencing_token, fpi.source_feed_id\n"
             "FROM leased\n"
             "JOIN feed_properties fpi ON fpi.feed_id = leased.id\n"
         )
@@ -1306,9 +1302,7 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
         pool = make_mock_pool(fetchrow_result=row)
         store = FeedStore(pool)
 
-        result = await store.create_feed(
-            "New Feed", "bcfy_feeds", "123", "ext_123"
-        )
+        result = await store.create_feed("New Feed", "bcfy_feeds", "123")
 
         self.assertEqual(result["id"], _FEED_ID)
         self.assertEqual(result["name"], "New Feed")
@@ -1325,12 +1319,12 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
 
         tags = [{"key": "env", "value": "prod"}]
         result = await store.create_feed(
-            "New Feed", "bcfy_feeds", "123", "ext_123", tags=tags
+            "New Feed", "bcfy_feeds", "123", tags=tags
         )
 
         self.assertEqual(result["tags"], tags)
         args = pool.fetchrow.call_args[0]
-        self.assertEqual(args[5], json.dumps(tags))
+        self.assertEqual(args[4], json.dumps(tags))
 
     async def test_create_feed_invalid_tags(self) -> None:
         """CheckViolationError is raised when DB constraint fails for invalid tags."""
@@ -1342,9 +1336,7 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
 
         tags = [{"invalid": "shape"}]
         with self.assertRaises(asyncpg.CheckViolationError):
-            await store.create_feed(
-                "New Feed", "bcfy_feeds", "123", "ext_123", tags=tags
-            )
+            await store.create_feed("New Feed", "bcfy_feeds", "123", tags=tags)
 
     async def test_raises_value_error_on_failure(self) -> None:
         """ValueError is raised if the DB returns no row."""
@@ -1352,7 +1344,7 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         with self.assertRaises(ValueError):
-            await store.create_feed("New Feed", "bcfy_feeds", "123", "ext_123")
+            await store.create_feed("New Feed", "bcfy_feeds", "123")
 
     async def test_create_feed_invalid_source_type(self) -> None:
         """ValueError is raised when an invalid source type is passed."""
@@ -1364,7 +1356,6 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
                 name="Test Feed",
                 source_type="invalid_type",
                 source_feed_id="src_123",
-                external_id="ext_123",
             )
         self.assertIn("Invalid source type", str(cm.exception))
 
@@ -1422,7 +1413,6 @@ class TestListFeeds(unittest.IsolatedAsyncioTestCase):
                 ),
                 created_at=datetime.datetime(2026, 4, 9, tzinfo=datetime.UTC),
                 source_feed_id="456",
-                external_id="ext_456",
             ),
         ]
         pool = make_mock_pool(fetch_result=rows)

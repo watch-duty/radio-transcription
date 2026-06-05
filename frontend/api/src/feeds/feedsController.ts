@@ -36,7 +36,6 @@ interface BaseFeedBackend {
 interface FeedBackend extends BaseFeedBackend {
   id: string;
   source_feed_id: string;
-  external_id: string;
   status: BackendFeedStatus;
   last_heartbeat: string | null;
   tags?: Tag[];
@@ -44,13 +43,11 @@ interface FeedBackend extends BaseFeedBackend {
 
 interface FeedCreateBackend extends BaseFeedBackend {
   source_feed_id: string;
-  external_id: string;
   tags?: Tag[];
 }
 
 interface FeedUpdateBackend {
   name: string;
-  external_id: string;
   tags?: Tag[];
 }
 
@@ -65,6 +62,7 @@ export class ListFeedsQueryParams {
   statuses?: string;
   // Tag strings must be in the format of {"key": "<val>", "value": "<val>"}
   tags?: string[];
+  name?: string;
 }
 
 interface ListFeedsBackendResponse {
@@ -143,7 +141,6 @@ function convertFeedBackend(response: FeedBackend): Feed {
     name: response.name,
     sourceType: response.source_type,
     sourceFeedId: response.source_feed_id,
-    externalId: response.external_id,
     sourceUrl: getSourceUrl(response.source_type, response.source_feed_id),
     archiveUrl: getArchiveUrl(response.source_type, response.source_feed_id),
     status: convertFeedStatusBackend(response.status),
@@ -158,7 +155,6 @@ function convertFeedCreate(create: FeedCreate): FeedCreateBackend {
     name: create.name,
     source_type: create.sourceType,
     source_feed_id: create.sourceFeedId,
-    external_id: create.externalId,
     tags: create.tags,
   };
 }
@@ -166,7 +162,6 @@ function convertFeedCreate(create: FeedCreate): FeedCreateBackend {
 function convertFeedUpdate(update: FeedUpdate): FeedUpdateBackend {
   return {
     name: update.name,
-    external_id: update.externalId,
     tags: update.tags,
   };
 }
@@ -199,6 +194,9 @@ export class FeedsController extends Controller {
         for (const tag of query.tags) {
           queryParams.append('tags', tag);
         }
+      }
+      if (query?.name) {
+        queryParams.append('name', query.name);
       }
 
       const client = await getServiceClient(FEEDS_STORE_API_URL);

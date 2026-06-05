@@ -48,7 +48,6 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             canonical_audio_uri="gs://bucket/normalized.flac",
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
-            external_id="ext-1234",
             start_timestamp={"seconds": 1000, "nanos": 1000000},
             end_timestamp={"seconds": 1005, "nanos": 2000000},
             start_audio_offset={"seconds": 0, "nanos": 0},
@@ -150,7 +149,6 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             canonical_audio_uri="gs://bucket/normalized.flac",
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
-            external_id="ext-1234",
             start_timestamp={"seconds": 1000, "nanos": 1000000},
             end_timestamp={"seconds": 1005, "nanos": 2000000},
         )
@@ -216,7 +214,6 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             canonical_audio_uri="gs://bucket/normalized.flac",
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
-            external_id="ext-1234",
             start_timestamp={"seconds": 1000, "nanos": 0},
             end_timestamp={"seconds": 1005, "nanos": 0},
         )
@@ -285,7 +282,6 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             canonical_audio_uri="gs://bucket/normalized.flac",
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
-            external_id="ext-1234",
             start_timestamp={"seconds": 1000, "nanos": 0},
             end_timestamp={"seconds": 1005, "nanos": 0},
         )
@@ -346,7 +342,6 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             canonical_audio_uri="gs://bucket/normalized.flac",
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
-            external_id="ext-1234",
             start_timestamp={"seconds": 1000, "nanos": 0},
             end_timestamp={"seconds": 1065, "nanos": 0},
         )
@@ -411,7 +406,6 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             canonical_audio_uri="gs://bucket/normalized.flac",
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
-            external_id="ext-1234",
             start_timestamp={"seconds": 1000, "nanos": 0},
             end_timestamp={"seconds": 1005, "nanos": 0},
         )
@@ -471,7 +465,6 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             canonical_audio_uri="gs://bucket/normalized.flac",
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
-            external_id="ext-1234",
             start_timestamp={"seconds": 1000, "nanos": 0},
             end_timestamp={"seconds": 1005, "nanos": 0},
         )
@@ -530,7 +523,6 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             canonical_audio_uri="gs://bucket/normalized.flac",
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
-            external_id="ext-1234",
             start_timestamp={"seconds": 1000, "nanos": 0},
             end_timestamp={"seconds": 1005, "nanos": 0},
         )
@@ -588,7 +580,6 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             canonical_audio_uri="gs://bucket/normalized.flac",
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
-            external_id="ext-1234",
             start_timestamp={"seconds": 1000, "nanos": 0},
             end_timestamp={"seconds": 1005, "nanos": 0},
         )
@@ -650,7 +641,6 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             canonical_audio_uri="gs://bucket/normalized.flac",
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
-            external_id="ext-1234",
             start_timestamp={"seconds": 1000, "nanos": 0},
             end_timestamp={"seconds": 1005, "nanos": 0},
         )
@@ -712,7 +702,6 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             canonical_audio_uri="gs://bucket/normalized.flac",
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
-            external_id="ext-1234",
             start_timestamp={"seconds": 1000, "nanos": 0},
             end_timestamp={"seconds": 1005, "nanos": 0},
         )

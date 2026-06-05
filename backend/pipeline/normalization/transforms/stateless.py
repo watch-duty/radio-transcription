@@ -138,7 +138,6 @@ class ParseAndKeyFn(beam.DoFn):
                     duration_ms=chunk_proto.duration_ms,
                     feed_metadata=FeedMetadata(
                         feed_name=chunk_proto.feed_name,
-                        external_id=chunk_proto.external_id,
                     ),
                     is_continuous=self.is_continuous,
                     traceparent=traceparent,
@@ -216,7 +215,6 @@ class SerializeFn(beam.DoFn):
                 canonical_audio_uri=value.canonical_audio_uri,
                 playback_audio_uri=value.playback_audio_uri,
                 feed_name=value.feed_metadata.feed_name,
-                external_id=value.feed_metadata.external_id,
             )
             proto.start_timestamp.FromMicroseconds(
                 value.time_range.start_ms * MICROSECONDS_PER_MS
@@ -296,7 +294,6 @@ class SerializeNormalizationClaimFn(beam.DoFn):
                 canonical_audio_uri=value.canonical_audio_uri,
                 playback_audio_uri=value.playback_audio_uri,
                 feed_name=value.feed_metadata.feed_name,
-                external_id=value.feed_metadata.external_id,
             )
             proto.start_timestamp.FromMicroseconds(
                 value.time_range.start_ms * MICROSECONDS_PER_MS

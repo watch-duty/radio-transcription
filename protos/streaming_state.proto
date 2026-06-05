@@ -10,7 +10,8 @@ message TimeRangeProto {
 
 message FeedMetadataProto {
   string feed_name = 1;
-  string external_id = 2;
+  reserved 2;
+  reserved "external_id";
 }
 
 message BufferedChunkProto {

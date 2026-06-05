@@ -135,7 +135,6 @@ class TestHandle:
             {
                 "id": uuid.uuid4(),
                 "name": "Central Fire",
-                "external_id": "ext-id",
                 "status": "quarantined",
                 "failure_count": 5,
             },
@@ -151,7 +150,6 @@ class TestHandle:
             {
                 "id": uuid.uuid4(),
                 "name": "Central Fire",
-                "external_id": "ext-id",
                 "status": "deactivated",
                 "failure_count": 0,
             },
@@ -166,7 +164,6 @@ class TestHandle:
             {
                 "id": feed_id,
                 "name": "Central Fire",
-                "external_id": "ext-id",
                 "status": "active",
                 "failure_count": 0,
             },
@@ -207,7 +204,6 @@ class TestHandle:
             {
                 "id": feed_id,
                 "name": "Central Fire",
-                "external_id": "ext-id",
                 "status": "active",
                 "failure_count": 0,
             },
@@ -240,7 +236,6 @@ class TestHandle:
             {
                 "id": feed_id,
                 "name": "Central Fire",
-                "external_id": "ext-id",
                 "status": "active",
                 "failure_count": 0,
             },
@@ -270,7 +265,6 @@ class TestHandle:
             {
                 "id": feed_id,
                 "name": "Central Fire",
-                "external_id": "ext-id",
                 "status": "active",
                 "failure_count": 0,
             },
@@ -295,7 +289,6 @@ class TestHandle:
             {
                 "id": feed_id,
                 "name": "Central Fire",
-                "external_id": "ext-id",
                 "status": "active",
                 "failure_count": 0,
             },
@@ -321,7 +314,6 @@ class TestHandle:
             {
                 "id": feed_id,
                 "name": "Central Fire",
-                "external_id": "ext-id",
                 "status": "active",
                 "failure_count": 0,
             },
@@ -344,7 +336,6 @@ class TestHandle:
             {
                 "id": uuid.uuid4(),
                 "name": "Central Fire",
-                "external_id": "ext-id",
                 "status": "active",
                 "failure_count": 0,
             },
@@ -366,7 +357,6 @@ class TestHandle:
             {
                 "id": uuid.uuid4(),
                 "name": "Central Fire",
-                "external_id": "ext-id",
                 "status": "active",
                 "failure_count": 0,
             },
@@ -390,7 +380,6 @@ class TestHandle:
             {
                 "id": feed_id,
                 "name": "Central Fire",
-                "external_id": "ext-id",
                 "status": "active",
                 "failure_count": 0,
             },
@@ -411,7 +400,6 @@ class TestHandle:
         return {
             "id": uuid.uuid4(),
             "name": "Central Fire",
-            "external_id": "ext-id",
             "status": "active",
             "failure_count": 0,
         }
