@@ -5,6 +5,7 @@ avoiding the overhead of multi-VAD abstractions.
 """
 
 import math
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -57,6 +58,8 @@ logger = get_task_logger(
 MODELS_DIR = Path(__file__).parent / "models"
 TARGET_SAMPLE_RATE = 16000
 DEFAULT_SILERO_WINDOW_SIZE = 512
+
+_denoise_lock = threading.Lock()
 
 
 class VoiceActivityDetector:
@@ -218,15 +221,16 @@ class VoiceActivityDetector:
         # Pre-allocate and reuse the input dictionary to avoid heavy object allocation overhead in Python loop
         ort_inputs: dict[str, Any] = dict(states)
 
-        for i in range(num_frames):
-            ort_inputs[audio_input_name] = stft_features[:, :, i : i + 1, :]
-            ort_outs = self.ulunas_session.run(None, ort_inputs)
-            out_stft[:, :, i : i + 1, :] = ort_outs[0]
-            for j in range(1, len(outputs)):
-                name = inputs[j].name
-                val = ort_outs[j]
-                states[name] = val
-                ort_inputs[name] = val
+        with _denoise_lock:
+            for i in range(num_frames):
+                ort_inputs[audio_input_name] = stft_features[:, :, i : i + 1, :]
+                ort_outs = self.ulunas_session.run(None, ort_inputs)
+                out_stft[:, :, i : i + 1, :] = ort_outs[0]
+                for j in range(1, len(outputs)):
+                    name = inputs[j].name
+                    val = ort_outs[j]
+                    states[name] = val
+                    ort_inputs[name] = val
 
         return custom_numpy_istft(
             out_stft,
