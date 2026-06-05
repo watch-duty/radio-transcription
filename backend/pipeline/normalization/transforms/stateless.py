@@ -77,7 +77,7 @@ class ParseAndKeyFn(beam.DoFn):
     @override
     def setup(self) -> None:
         """Initializes tracing for the worker."""
-        setup_tracing()
+        setup_tracing(service_name="normalization-pipeline")
 
     @override
     def process(

@@ -33,8 +33,8 @@ class AudioStitchingStateMachine:
         self.late_arriving_chunks = Metrics.counter(
             self.__class__, "late_arriving_chunks"
         )
-        self.dropped_audio_gaps = Metrics.counter(
-            self.__class__, "dropped_audio_gaps"
+        self.upstream_audio_gaps = Metrics.counter(
+            self.__class__, "upstream_audio_gaps"
         )
 
     def process_chunk(
@@ -82,19 +82,19 @@ class AudioStitchingStateMachine:
 
         actions: list[StateMachineAction] = []
 
-        # 1. Detect if we skipped over a chunk (dropped audio)
-        is_dropped_chunk = (
+        # 1. Detect if we skipped over a chunk (upstream gap)
+        is_upstream_gap = (
             ctx.expected_next_chunk_start_ms is not None
             and chunk_data.start_ms > ctx.expected_next_chunk_start_ms
         )
 
-        if is_dropped_chunk:
-            self.dropped_audio_gaps.inc()
+        if is_upstream_gap:
+            self.upstream_audio_gaps.inc()
             # If we had an active transmission, we must flush it because the auditory context was abruptly disconnected.
             if ctx.transmission_start_time_ms is not None:
                 actions.append(
                     self._flush_current_transmission(
-                        reason="Forced flush due to dropped audio chunk gap",
+                        reason="Forced flush due to upstream audio chunk gap",
                         ctx=ctx,
                         missing_post_context=True,
                     )
