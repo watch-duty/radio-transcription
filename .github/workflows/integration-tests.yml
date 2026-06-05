@@ -62,7 +62,7 @@ jobs:
 
       - name: Run E2E test shard (${{ matrix.test_lane }})
         run: |
-          docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run -e PYTHONPATH=/app/.venv/lib/python3.13/site-packages:/app --rm integration-tests python -m pytest ${{ matrix.test_lane }} -n auto -v -s --log-cli-level=INFO
+          docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run --rm integration-tests sh -c "pip install -q uv && uv sync && uv run pytest ${{ matrix.test_lane }} -n auto -v -s --log-cli-level=INFO"
 
       - name: Clean up containers
         if: always()
