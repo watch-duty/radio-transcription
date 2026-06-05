@@ -185,7 +185,6 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         name: str,
         *,
         source_feed_id: str | None = "wmata",
-        external_id: str | None = "ext-wmata",
     ) -> uuid.UUID:
         """Insert an unclaimed openmhz feed, optionally with properties."""
         feed_id = await self.pool.fetchval(
@@ -197,11 +196,10 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         if source_feed_id is not None:
             await self.pool.execute(
                 "INSERT INTO feed_properties"
-                " (feed_id, source_feed_id, external_id, source_type)"
-                " VALUES ($1::uuid, $2, $3, $4)",
+                " (feed_id, source_feed_id, source_type)"
+                " VALUES ($1::uuid, $2, $3)",
                 str(feed_id),
                 source_feed_id,
-                external_id or f"ext-{source_feed_id}",
                 "openmhz",
             )
         return feed_id

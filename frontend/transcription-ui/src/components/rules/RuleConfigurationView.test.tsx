@@ -57,7 +57,6 @@ describe('RuleConfigurationView', () => {
       name: 'Marin Fire Dispatch',
       sourceType: SourceType.BCFY_FEEDS,
       sourceFeedId: '33156',
-      externalId: 'ca-mrn-fire',
       status: 'active',
       substatus: 'active',
       tags: [{ key: 'county', value: 'Marin' }],

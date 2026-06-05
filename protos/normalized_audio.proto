@@ -4,7 +4,7 @@ import "google/protobuf/duration.proto";
 
 // Represents a normalized audio transmission that is ready to be transcribed by the Speech API.
 // TODO(watch-duty): Once the pipeline fully migrates to tracking transmissions via database
-// segment IDs, many fields below (such as source_audio_uris, feed_name, and external_id)
+// segment IDs, many fields below (such as source_audio_uris and feed_name)
 // can be deprecated and removed from this schema since they can be resolved directly from
 // the database via the segment ID!
 message NormalizedAudio {
@@ -53,6 +53,6 @@ message NormalizedAudio {
   // The human-readable name of the radio feed as stored in the database.
   string feed_name = 12;
 
-  // The ID used for mapping the feed ID within the application.
-  string external_id = 13;
+  reserved 13;
+  reserved "external_id";
 }

@@ -174,9 +174,9 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         assert row is not None
         feed_id = row["id"]
         self.conn.execute(
-            "INSERT INTO feed_properties (feed_id, source_type, source_feed_id, external_id)"
-            " VALUES (%s, 'echo', %s, %s)",
-            (feed_id, channel_name, channel_name),
+            "INSERT INTO feed_properties (feed_id, source_type, source_feed_id)"
+            " VALUES (%s, 'echo', %s)",
+            (feed_id, channel_name),
         )
         return feed_id
 

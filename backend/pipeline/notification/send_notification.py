@@ -157,7 +157,6 @@ def convert_to_notification(
         playback_audio_uri=evaluated_transcribed_audio.playback_audio_uri,
         feed_name=evaluated_transcribed_audio.feed_name,
         app_url=url,
-        external_id=evaluated_transcribed_audio.external_id,
         start_timestamp=evaluated_transcribed_audio.start_timestamp,
         end_timestamp=evaluated_transcribed_audio.end_timestamp,
         start_audio_offset=evaluated_transcribed_audio.start_audio_offset,

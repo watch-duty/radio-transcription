@@ -171,11 +171,10 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         if source_feed_id is not None:
             await self.pool.execute(
                 "INSERT INTO feed_properties"
-                " (feed_id, source_feed_id, external_id, source_type)"
-                " VALUES ($1::uuid, $2, $3, $4)",
+                " (feed_id, source_feed_id, source_type)"
+                " VALUES ($1::uuid, $2, $3)",
                 str(feed_id),
                 source_feed_id,
-                f"ext-{source_feed_id}",
                 "bcfy_calls",
             )
         return feed_id
