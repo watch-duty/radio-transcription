@@ -55,6 +55,12 @@ export function FeedConfigurationView({
 
   const feedsErrorHandled = useRef<Error | null>(null);
 
+  // We flatten the filter object and include array lengths in the query key.
+  // In JavaScript, empty arrays ([]) are compared by object reference rather than value.
+  // Flattening the keys and including primitive lengths (e.g. 0) ensures that we can define
+  // a stable, static query key for `allFeeds` (['listFeeds', token, '', [], 0, [], 0, [], 0])
+  // that matches the structure of the main query, allowing `queryClient.setQueriesData`
+  // and `invalidateQueries` prefix matching to successfully update both query caches at once.
   const {
     data: feeds = [],
     isLoading: feedsLoading,
