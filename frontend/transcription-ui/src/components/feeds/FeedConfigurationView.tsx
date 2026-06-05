@@ -42,6 +42,8 @@ export function FeedConfigurationView({
     tags: [],
   });
 
+  // We are only debouncing the query because the keystrokes can be fast and we want to avoid querying every keypress.
+  // However for the filter selections, selecting options is a bit slower and we want to show immediate feedback from checkboxes.
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState(
     filters.searchQuery
   );
