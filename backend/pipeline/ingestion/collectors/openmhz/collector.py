@@ -12,9 +12,12 @@ from curl_cffi.requests import AsyncSession
 
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemBatchOutcome,
-    ItemDownloadResult,
     ItemFailure,
-    item_download_http_failure,
+    collector_failure,
+    missing_source_feed_id_failure,
+)
+from backend.pipeline.ingestion.collectors.failure_classifiers import (
+    http_status,
 )
 from backend.pipeline.ingestion.collectors.openmhz._ws_transport import (
     websocket_transport,
@@ -22,7 +25,7 @@ from backend.pipeline.ingestion.collectors.openmhz._ws_transport import (
 from backend.pipeline.ingestion.models import (
     CapturedChunk,
     CaptureResources,
-    CollectorFailure,
+    FeedFailure,
 )
 from backend.pipeline.ingestion.slo_contract import (
     EVENT_TYPE_CALL_DOWNLOAD_FAILED,
@@ -51,9 +54,9 @@ def _get_transport(name: str) -> TransportFactory:
     """Resolve transport by name. Reads module attributes at call time."""
     if name == "websocket":
         return websocket_transport
-    raise CollectorFailure(
-        status_reason=FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-        reason="invalid_openmhz_transport",
+    raise collector_failure(
+        FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        "invalid_openmhz_transport",
     )
 
 
@@ -67,14 +70,15 @@ async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
         return True
 
 
-async def _download_m4a(  # noqa: PLR0911
+async def _download_m4a(
     session: AsyncSession,
     url: str,
     shutdown: asyncio.Event,
-) -> ItemDownloadResult:
+) -> bytes | ItemFailure | None:
     """Download m4a from Wasabi S3 with retries.
 
-    Returns classified download result for eligible call recordings.
+    Returns audio bytes on success, a classified item failure for terminal
+    HTTP evidence, or ``None`` for unclassified/shutdown failures.
     """
     last_status: int | None = None
     for attempt in range(_DOWNLOAD_MAX_RETRIES):
@@ -82,30 +86,20 @@ async def _download_m4a(  # noqa: PLR0911
             resp = await session.get(url, timeout=30.0)
             last_status = resp.status_code
             if resp.status_code == 200:
-                return ItemDownloadResult(audio_bytes=resp.content)
-            if resp.status_code in {401, 403}:
-                logger.warning(
-                    "Download auth failure %d: url=%s",
-                    resp.status_code,
-                    url,
-                )
-                return ItemDownloadResult(
-                    failure=item_download_http_failure(resp.status_code)
-                )
-            if resp.status_code == 429:
-                logger.warning("Download rate limited 429: url=%s", url)
-                return ItemDownloadResult(
-                    failure=item_download_http_failure(resp.status_code)
-                )
+                return resp.content
             if 400 <= resp.status_code < 500:
                 logger.warning(
                     "Download non-retryable %d: url=%s",
                     resp.status_code,
                     url,
                 )
-                return ItemDownloadResult(
-                    failure=item_download_http_failure(resp.status_code)
+                classification = http_status.classify_http_status(
+                    resp.status_code,
+                    reason_prefix="item_http",
                 )
+                if classification is None:
+                    return None
+                return ItemFailure.from_classification(classification)
             logger.warning(
                 "Download %d (attempt %d/%d): url=%s",
                 resp.status_code,
@@ -121,27 +115,24 @@ async def _download_m4a(  # noqa: PLR0911
                 url,
                 exc_info=True,
             )
-            last_status = None
         if attempt < _DOWNLOAD_MAX_RETRIES - 1:
             if await _sleep_or_shutdown(
                 shutdown, _DOWNLOAD_BACKOFF_BASE_SEC * (2**attempt)
             ):
-                return ItemDownloadResult()
+                return None
 
     logger.warning("Download failed after retries: url=%s", url)
     if last_status is not None:
-        return ItemDownloadResult(
-            failure=item_download_http_failure(last_status)
+        classification = http_status.classify_http_status(
+            last_status,
+            reason_prefix="item_http",
         )
-    return ItemDownloadResult(
-        failure=ItemFailure(
-            FeedStatusReason.SOURCE_UNREACHABLE,
-            "item_download_failed",
-        )
-    )
+        if classification is not None:
+            return ItemFailure.from_classification(classification)
+    return None
 
 
-async def openmhz_collector(  # noqa: PLR0912, PLR0915
+async def openmhz_collector(
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
     url_base: str,
@@ -160,8 +151,8 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
             session).
 
     Raises:
-        CollectorFailure: If source configuration is invalid or persistent
-            OpenMHz source failures prevent capture.
+        FeedFailure: If source configuration is invalid or persistent OpenMHz
+            source failures prevent capture.
     """
     source_feed_id = feed.get("source_feed_id")
     if not source_feed_id:
@@ -170,10 +161,7 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
             feed["id"],
             feed["name"],
         )
-        raise CollectorFailure(
-            status_reason=FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-            reason="missing_source_feed_id",
-        )
+        raise missing_source_feed_id_failure()
 
     short_name = source_feed_id.strip()
     transport_name = os.getenv("OPENMHZ_TRANSPORT", "websocket")
@@ -203,9 +191,9 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                         download_result = await _download_m4a(
                             download_session, call.url, shutdown_event
                         )
-                        if download_result.failure is not None:
+                        if isinstance(download_result, ItemFailure):
                             item_outcome.record_attempt()
-                            item_outcome.record_failure(download_result.failure)
+                            item_outcome.record_failure(download_result)
                             item_failure_count += 1
                             if not shutdown_event.is_set():
                                 # SLO: call_download_failed emit — OpenMHZ _download_m4a returned a classified failure
@@ -225,9 +213,7 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                                     pending_item_failure = promoted
                                     break
                             continue
-
-                        m4a_bytes = download_result.audio_bytes
-                        if m4a_bytes is None:
+                        if download_result is None:
                             if not shutdown_event.is_set():
                                 # SLO: call_download_failed emit — OpenMHZ _download_m4a returned None
                                 logger.warning(
@@ -241,6 +227,7 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                                     },
                                 )
                             continue
+                        m4a_bytes = download_result
 
                         logger.debug(
                             "Audio ready: short_name=%s call_id=%s "
@@ -260,11 +247,11 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                         item_outcome = ItemBatchOutcome()
                         item_failure_count = 0
                 if pending_item_failure is not None:
-                    raise CollectorFailure(  # noqa: TRY301 -- direct feed-level failure is clearer than a wrapper
-                        status_reason=pending_item_failure.status_reason,
-                        reason=pending_item_failure.reason,
+                    raise collector_failure(
+                        pending_item_failure.status_reason,
+                        pending_item_failure.reason,
                     )
-            except CollectorFailure:
+            except FeedFailure:
                 raise
             except Exception:
                 logger.warning(
@@ -284,9 +271,9 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                     short_name,
                     consecutive_ws_failures,
                 )
-                raise CollectorFailure(
-                    status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
-                    reason="source_unreachable",
+                raise collector_failure(
+                    FeedStatusReason.SOURCE_UNREACHABLE,
+                    "source_unreachable",
                 )
 
             backoff = min(

@@ -27,7 +27,7 @@ from backend.pipeline.ingestion.models import (
     AudioMimeType,
     CapturedChunk,
     CaptureResources,
-    CollectorFailure,
+    FeedFailure,
 )
 from backend.pipeline.ingestion.retry import (
     LeaseExpiredError,
@@ -1054,7 +1054,7 @@ class CollectorRuntime:
             )
             return
 
-        except CollectorFailure as e:
+        except FeedFailure as e:
             await self._record_feed_failure(
                 feed,
                 worker_id,
@@ -1077,7 +1077,7 @@ class CollectorRuntime:
         except Exception as e:
             # Transitional catch-all for bugs or untyped collector failures.
             # Source-specific attribution belongs in collectors that raise
-            # CollectorFailure; the runtime only records the explicit fallback.
+            # FeedFailure; the runtime only records the explicit fallback.
             reason = str(e)[:200] if str(e) else type(e).__name__
             await self._record_feed_failure(
                 feed,

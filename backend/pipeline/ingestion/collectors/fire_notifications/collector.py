@@ -13,22 +13,26 @@ from zoneinfo import ZoneInfo
 from curl_cffi.requests import AsyncSession
 
 from backend.pipeline.common.audio import get_audio_duration
+from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemBatchOutcome,
-    ItemDownloadResult,
     ItemFailure,
-    item_download_http_failure,
+    collector_failure,
+    missing_source_feed_id_failure,
+)
+from backend.pipeline.ingestion.collectors.failure_classifiers import (
+    http_status,
 )
 from backend.pipeline.ingestion.models import (
     AudioMimeType,
     CapturedChunk,
-    CollectorFailure,
+    FeedFailure,
 )
 from backend.pipeline.ingestion.settings import _require_env
 from backend.pipeline.ingestion.slo_contract import (
     EVENT_TYPE_CALL_DOWNLOAD_FAILED,
 )
-from backend.pipeline.storage.feed_store import FeedStatusReason
+from backend.pipeline.storage import feed_store
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -42,6 +46,29 @@ _DOWNLOAD_MAX_RETRIES = 3
 _DOWNLOAD_BACKOFF_BASE_SEC = 1.0
 _POLL_INTERVAL_SEC = 30.0
 _MAX_CONSECUTIVE_FAILURES = 10
+_FN_POLL_HTTP_POLICY = http_status.HTTPStatusPolicy(
+    exact=http_status.DEFAULT_HTTP_STATUS_POLICY.exact,
+    default_4xx=(feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID),
+    default_5xx=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+    default_other_failure=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+)
+
+
+def _classify_poll_status(
+    status: int,
+) -> failure_classification.FailureClassification:
+    """Classify a terminal Fire Notifications poll status."""
+    classification = http_status.classify_http_status(
+        status,
+        reason_prefix="fn_api_http",
+        policy=_FN_POLL_HTTP_POLICY,
+    )
+    if classification is not None:
+        return classification
+    return failure_classification.FailureClassification(
+        feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+        "source_unreachable",
+    )
 
 
 def _build_auth_headers() -> dict[str, str]:
@@ -51,24 +78,6 @@ def _build_auth_headers() -> dict[str, str]:
     credentials = f"{user}:{password}"
     encoded = base64.b64encode(credentials.encode()).decode()
     return {"Authorization": f"Basic {encoded}"}
-
-
-def _classify_poll_status_failure(status: int) -> ItemFailure:
-    """Classify Fire Notifications poll endpoint failures."""
-    reason = f"fn_api_http_{status}"
-    if status in {401, 403}:
-        return ItemFailure(
-            FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-            reason,
-        )
-    if status == 429:
-        return ItemFailure(FeedStatusReason.SOURCE_RATE_LIMITED, reason)
-    if 400 <= status < 500:
-        return ItemFailure(
-            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-            reason,
-        )
-    return ItemFailure(FeedStatusReason.SOURCE_UNREACHABLE, reason)
 
 
 async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
@@ -81,11 +90,11 @@ async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
         return True
 
 
-async def _download_audio(  # noqa: PLR0911
+async def _download_audio(
     session: AsyncSession,
     url: str,
     shutdown: asyncio.Event,
-) -> ItemDownloadResult:
+) -> bytes | ItemFailure | None:
     """Download audio file from S3 with retries."""
     # Note: We use a manual retry loop instead of 'tenacity' to easily
     # interrupt the backoff sleep when the shutdown event is set,
@@ -96,30 +105,20 @@ async def _download_audio(  # noqa: PLR0911
             resp = await session.get(url, timeout=30.0)
             last_status = resp.status_code
             if resp.status_code == 200:
-                return ItemDownloadResult(audio_bytes=resp.content)
-            if resp.status_code in {401, 403}:
-                logger.warning(
-                    "Download auth failure %d: url=%s",
-                    resp.status_code,
-                    url,
-                )
-                return ItemDownloadResult(
-                    failure=item_download_http_failure(resp.status_code)
-                )
-            if resp.status_code == 429:
-                logger.warning("Download rate limited 429: url=%s", url)
-                return ItemDownloadResult(
-                    failure=item_download_http_failure(resp.status_code)
-                )
+                return resp.content
             if 400 <= resp.status_code < 500:
                 logger.warning(
                     "Download non-retryable %d: url=%s",
                     resp.status_code,
                     url,
                 )
-                return ItemDownloadResult(
-                    failure=item_download_http_failure(resp.status_code)
+                classification = http_status.classify_http_status(
+                    resp.status_code,
+                    reason_prefix="item_http",
                 )
+                if classification is None:
+                    return None
+                return ItemFailure.from_classification(classification)
             logger.warning(
                 "Download %d (attempt %d/%d): url=%s",
                 resp.status_code,
@@ -135,24 +134,22 @@ async def _download_audio(  # noqa: PLR0911
                 url,
                 exc_info=True,
             )
-            last_status = None
         if attempt < _DOWNLOAD_MAX_RETRIES - 1:
             if await _sleep_or_shutdown(
                 shutdown, _DOWNLOAD_BACKOFF_BASE_SEC * (2**attempt)
             ):
-                return ItemDownloadResult()
+                return None
 
     logger.warning("Download failed after retries: url=%s", url)
     if last_status is not None:
-        return ItemDownloadResult(
-            failure=item_download_http_failure(last_status)
+        classification = http_status.classify_http_status(
+            last_status,
+            reason_prefix="item_http",
         )
-    return ItemDownloadResult(
-        failure=ItemFailure(
-            FeedStatusReason.SOURCE_UNREACHABLE,
-            "item_download_failed",
-        )
-    )
+        if classification is not None:
+            return ItemFailure.from_classification(classification)
+    return None
+
 
 def _get_channel_timezone(channel_key: str) -> ZoneInfo:
     """Stub for resolving a channel's timezone.
@@ -241,11 +238,23 @@ async def _process_file_list(
         receipt_time = datetime.datetime.now(datetime.UTC)
 
         outcome.record_attempt()
-        download_result = await _download_audio(
-            session, s3_url, shutdown_event
-        )
-        if download_result.failure is not None:
-            outcome.record_failure(download_result.failure)
+        audio_result = await _download_audio(session, s3_url, shutdown_event)
+        if isinstance(audio_result, ItemFailure):
+            outcome.record_failure(audio_result)
+            if not shutdown_event.is_set():
+                logger.warning(
+                    "FN Audio download classified failure: %s",
+                    audio_result.reason,
+                    extra={
+                        "json_fields": {
+                            "event_type": EVENT_TYPE_CALL_DOWNLOAD_FAILED,
+                            "feed_id": str(feed["id"]),
+                            "source_type": feed["source_type"],
+                        },
+                    },
+                )
+            continue
+        if audio_result is None:
             if not shutdown_event.is_set():
                 logger.warning(
                     "FN Audio download failed",
@@ -258,21 +267,7 @@ async def _process_file_list(
                     },
                 )
             continue
-
-        mp3_bytes = download_result.audio_bytes
-        if mp3_bytes is None:
-            if not shutdown_event.is_set():
-                logger.warning(
-                    "FN Audio download failed",
-                    extra={
-                        "json_fields": {
-                            "event_type": EVENT_TYPE_CALL_DOWNLOAD_FAILED,
-                            "feed_id": str(feed["id"]),
-                            "source_type": feed["source_type"],
-                        },
-                    },
-                )
-            continue
+        mp3_bytes = audio_result
 
         try:
             # to_thread: get_audio_duration shells out to ffprobe — keep it off the event loop.
@@ -285,7 +280,7 @@ async def _process_file_list(
             )
             outcome.record_failure(
                 ItemFailure(
-                    FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                    feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
                     "duration_probe_failed",
                 )
             )
@@ -316,13 +311,10 @@ async def _process_file_list(
 
     promoted = outcome.promoted_failure()
     if promoted is not None:
-        raise CollectorFailure(
-            status_reason=promoted.status_reason,
-            reason=promoted.reason,
-        )
+        raise collector_failure(promoted.status_reason, promoted.reason)
 
 
-async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
+async def fire_notifications_collector(
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
     url_base: str,
@@ -335,16 +327,16 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
     try:
         s3_base_url = _require_env("FIRE_NOTIFICATIONS_S3_BASE")
     except ValueError as e:
-        raise CollectorFailure(
-            status_reason=FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-            reason="missing_fire_notifications_s3_base",
+        raise collector_failure(
+            feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            "missing_fire_notifications_s3_base",
         ) from e
     try:
         headers = _build_auth_headers()
     except ValueError as e:
-        raise CollectorFailure(
-            status_reason=FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-            reason="missing_fire_notifications_auth_config",
+        raise collector_failure(
+            feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            "missing_fire_notifications_auth_config",
         ) from e
 
     source_feed_id = feed.get("source_feed_id")
@@ -354,10 +346,7 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
             feed["id"],
             feed["name"],
         )
-        raise CollectorFailure(
-            status_reason=FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-            reason="missing_source_feed_id",
-        )
+        raise missing_source_feed_id_failure()
 
     # source_feed_id is e.g. RECORDINGS/SAN-JOSE-DISP
     # Ensure no double slashes if url_base ends with /
@@ -369,6 +358,10 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
     # We use a deque with maxlen to prevent unbounded memory growth.
     processed_uuids: collections.deque[str] = collections.deque(maxlen=1000)
     consecutive_failures = 0
+    last_poll_failure = failure_classification.FailureClassification(
+        feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+        "source_unreachable",
+    )
     connection_session_id = str(uuid.uuid4())
 
     session = AsyncSession()
@@ -376,7 +369,6 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
     try:
         while not shutdown_event.is_set():
             poll_ok = False
-            poll_failure: ItemFailure | None = None
 
             try:
                 # Poll the API
@@ -400,18 +392,18 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
                         yield chunk
                     poll_ok = True
                 else:
-                    poll_failure = _classify_poll_status_failure(
-                        resp.status_code
-                    )
+                    last_poll_failure = _classify_poll_status(resp.status_code)
                     logger.warning(
                         "FN API returned %d: %s", resp.status_code, poll_url
                     )
-            except CollectorFailure:
+            except FeedFailure:
                 raise
             except Exception:
-                poll_failure = ItemFailure(
-                    FeedStatusReason.SOURCE_UNREACHABLE,
-                    "source_unreachable",
+                last_poll_failure = (
+                    failure_classification.FailureClassification(
+                        feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+                        "source_unreachable",
+                    )
                 )
                 logger.warning(
                     "FN API poll error: %s",
@@ -424,13 +416,9 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
             else:
                 consecutive_failures += 1
                 if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
-                    failure = poll_failure or ItemFailure(
-                        FeedStatusReason.SOURCE_UNREACHABLE,
-                        "source_unreachable",
-                    )
-                    raise CollectorFailure(
-                        status_reason=failure.status_reason,
-                        reason=failure.reason,
+                    raise collector_failure(
+                        last_poll_failure.status_reason,
+                        last_poll_failure.reason,
                     )
 
             # Sleep before next poll, with a small jitter

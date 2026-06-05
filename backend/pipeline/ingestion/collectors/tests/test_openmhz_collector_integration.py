@@ -19,9 +19,6 @@ from testcontainers.postgres import PostgresContainer
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client
-from backend.pipeline.ingestion.collectors.failure_classification import (
-    ItemDownloadResult,
-)
 from backend.pipeline.ingestion.collectors.openmhz._types import CallEvent
 from backend.pipeline.ingestion.collectors.openmhz.collector import (
     openmhz_collector,
@@ -29,7 +26,7 @@ from backend.pipeline.ingestion.collectors.openmhz.collector import (
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
 )
-from backend.pipeline.ingestion.models import CollectorFailure
+from backend.pipeline.ingestion.models import FeedFailure
 from backend.pipeline.storage.feed_store import (
     FeedStatusReason,
     FeedStore,
@@ -260,9 +257,7 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
         call = _make_call(call_id="c1", length_sec=5)
         mock_transport.side_effect = lambda *a, **kw: _mock_transport([call])
-        mock_download.return_value = ItemDownloadResult(
-            audio_bytes=_make_m4a_bytes()
-        )
+        mock_download.return_value = _make_m4a_bytes()
 
         shutdown = asyncio.Event()
         chunks_uploaded = []
@@ -320,9 +315,7 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             _make_call(call_id="c3"),
         ]
         mock_transport.side_effect = lambda *a, **kw: _mock_transport(calls)
-        mock_download.return_value = ItemDownloadResult(
-            audio_bytes=_make_m4a_bytes()
-        )
+        mock_download.return_value = _make_m4a_bytes()
 
         shutdown = asyncio.Event()
         gcs_paths = []
@@ -385,9 +378,7 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             )
 
         mock_transport.side_effect = _transport_factory
-        mock_download.return_value = ItemDownloadResult(
-            audio_bytes=_make_m4a_bytes()
-        )
+        mock_download.return_value = _make_m4a_bytes()
 
         shutdown = asyncio.Event()
         gcs_paths = []
@@ -432,9 +423,7 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             _make_call(call_id="normal", length_sec=5),
         ]
         mock_transport.side_effect = lambda *a, **kw: _mock_transport(calls)
-        mock_download.return_value = ItemDownloadResult(
-            audio_bytes=_make_m4a_bytes()
-        )
+        mock_download.return_value = _make_m4a_bytes()
 
         shutdown = asyncio.Event()
         gcs_paths = []
@@ -471,7 +460,7 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         feed["source_feed_id"] = None
 
         shutdown = asyncio.Event()
-        with self.assertRaises(CollectorFailure) as ctx:
+        with self.assertRaises(FeedFailure) as ctx:
             async for _ in openmhz_collector(
                 feed,
                 shutdown,

@@ -24,13 +24,10 @@ from backend.pipeline.ingestion.collectors.bcfy_calls import (
 from backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector import (
     capture_bcfy_calls,
 )
-from backend.pipeline.ingestion.collectors.failure_classification import (
-    ItemDownloadResult,
-)
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
 )
-from backend.pipeline.ingestion.models import CollectorFailure
+from backend.pipeline.ingestion.models import FeedFailure
 from backend.pipeline.storage.feed_store import (
     FeedStatusReason,
     FeedStore,
@@ -235,9 +232,7 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         """Happy path: lease -> capture 1 call -> upload to GCS -> bookmark."""
         feed = await self._lease_feed("integration-feed")
         mock_jwt.return_value = "token"
-        mock_dl.return_value = ItemDownloadResult(
-            audio_bytes=_make_flac_bytes()
-        )
+        mock_dl.return_value = _make_flac_bytes()
 
         fetch_calls = 0
 
@@ -245,19 +240,17 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             nonlocal fetch_calls
             fetch_calls += 1
             if fetch_calls == 1:
-                return bcfy_calls_collector._FetchCallsResult(
-                    payload={
-                        "calls": [
-                            {
-                                "url": "http://audio/1.mp3",
-                                "start_ts": 1000,
-                                "end_ts": 1005,
-                            },
-                        ],
-                        "lastPos": 1005,
-                    }
-                )
-            return bcfy_calls_collector._FetchCallsResult()
+                return {
+                    "calls": [
+                        {
+                            "url": "http://audio/1.mp3",
+                            "start_ts": 1000,
+                            "end_ts": 1005,
+                        },
+                    ],
+                    "lastPos": 1005,
+                }
+            return None
 
         mock_fetch.side_effect = _fetch_side_effect
         mock_sleep.return_value = False
@@ -314,9 +307,7 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         """3 calls captured and uploaded to GCS."""
         feed = await self._lease_feed("multi-call-feed")
         mock_jwt.return_value = "token"
-        mock_dl.return_value = ItemDownloadResult(
-            audio_bytes=_make_flac_bytes()
-        )
+        mock_dl.return_value = _make_flac_bytes()
 
         fetch_calls = 0
 
@@ -324,29 +315,27 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             nonlocal fetch_calls
             fetch_calls += 1
             if fetch_calls == 1:
-                return bcfy_calls_collector._FetchCallsResult(
-                    payload={
-                        "calls": [
-                            {
-                                "url": "http://audio/1.mp3",
-                                "start_ts": 1000,
-                                "end_ts": 1005,
-                            },
-                            {
-                                "url": "http://audio/2.mp3",
-                                "start_ts": 1005,
-                                "end_ts": 1010,
-                            },
-                            {
-                                "url": "http://audio/3.mp3",
-                                "start_ts": 1010,
-                                "end_ts": 1015,
-                            },
-                        ],
-                        "lastPos": 1015,
-                    }
-                )
-            return bcfy_calls_collector._FetchCallsResult()
+                return {
+                    "calls": [
+                        {
+                            "url": "http://audio/1.mp3",
+                            "start_ts": 1000,
+                            "end_ts": 1005,
+                        },
+                        {
+                            "url": "http://audio/2.mp3",
+                            "start_ts": 1005,
+                            "end_ts": 1010,
+                        },
+                        {
+                            "url": "http://audio/3.mp3",
+                            "start_ts": 1010,
+                            "end_ts": 1015,
+                        },
+                    ],
+                    "lastPos": 1015,
+                }
+            return None
 
         mock_fetch.side_effect = _fetch_side_effect
         mock_sleep.return_value = False
@@ -398,9 +387,7 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         """All chunks have session_id set and consistent."""
         feed = await self._lease_feed("session-feed")
         mock_jwt.return_value = "token"
-        mock_dl.return_value = ItemDownloadResult(
-            audio_bytes=_make_flac_bytes()
-        )
+        mock_dl.return_value = _make_flac_bytes()
 
         fetch_calls = 0
 
@@ -408,24 +395,22 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             nonlocal fetch_calls
             fetch_calls += 1
             if fetch_calls == 1:
-                return bcfy_calls_collector._FetchCallsResult(
-                    payload={
-                        "calls": [
-                            {
-                                "url": "http://audio/1.mp3",
-                                "start_ts": 1000,
-                                "end_ts": 1005,
-                            },
-                            {
-                                "url": "http://audio/2.mp3",
-                                "start_ts": 1005,
-                                "end_ts": 1010,
-                            },
-                        ],
-                        "lastPos": 1010,
-                    }
-                )
-            return bcfy_calls_collector._FetchCallsResult()
+                return {
+                    "calls": [
+                        {
+                            "url": "http://audio/1.mp3",
+                            "start_ts": 1000,
+                            "end_ts": 1005,
+                        },
+                        {
+                            "url": "http://audio/2.mp3",
+                            "start_ts": 1005,
+                            "end_ts": 1010,
+                        },
+                    ],
+                    "lastPos": 1010,
+                }
+            return None
 
         mock_fetch.side_effect = _fetch_side_effect
         mock_sleep.return_value = False
@@ -465,7 +450,7 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         feed["source_feed_id"] = None
 
         shutdown = asyncio.Event()
-        with self.assertRaises(CollectorFailure) as ctx:
+        with self.assertRaises(FeedFailure) as ctx:
             async for _ in capture_bcfy_calls(
                 feed,
                 shutdown,
