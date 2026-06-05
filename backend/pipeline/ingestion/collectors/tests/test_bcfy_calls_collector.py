@@ -29,7 +29,7 @@ from backend.pipeline.storage.feed_store import (
 )
 
 
-def _require_item_failure(value: ItemFailure | bytes | None) -> ItemFailure:
+def _require_item_failure(value: object) -> ItemFailure:
     """Return a typed item failure for tests that intentionally expect one."""
     if not isinstance(value, ItemFailure):
         msg = f"Expected ItemFailure, got {value!r}"
