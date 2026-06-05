@@ -143,9 +143,13 @@ export function FeedConfigurationView({
 
   const deleteMutation = useMutation({
     mutationFn: (feedId: string) => deleteFeed(feedId, token!),
-    onSuccess: () => {
+    onSuccess: (_, feedId) => {
       triggerSnackbar('Feed deleted successfully!');
       setIsEditing(false);
+      queryClient.setQueriesData<Feed[]>(
+        { queryKey: ['listFeeds', token] },
+        (oldFeeds) => (oldFeeds ? oldFeeds.filter((f) => f.id !== feedId) : [])
+      );
       resetFormAndRefresh();
     },
     onError: (error: Error) => {
