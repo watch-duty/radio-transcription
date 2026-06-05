@@ -717,9 +717,9 @@ export function FeedConfigurationEdit({
                       }}
                     >
                       {onResetFeed &&
-                        feedStatus != null &&
+                        feedStatus &&
                         feedStatus !== 'active' &&
-                        feedSubstatus != null &&
+                        feedSubstatus &&
                         feedSubstatus !== 'unclaimed' && (
                           <MenuItem
                             onClick={handleResetClick}
@@ -729,7 +729,7 @@ export function FeedConfigurationEdit({
                           </MenuItem>
                         )}
                       {onDeactivateFeed &&
-                        feedSubstatus != null &&
+                        feedSubstatus &&
                         feedSubstatus !== 'deactivated' && (
                           <MenuItem
                             onClick={handleDeactivateClick}

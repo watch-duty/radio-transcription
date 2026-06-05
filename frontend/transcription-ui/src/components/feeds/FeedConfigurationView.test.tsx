@@ -639,7 +639,9 @@ describe('FeedConfigurationView', () => {
     });
     expect(confirmDeleteBtn).toBeDisabled();
 
-    const confirmInput = screen.getByTestId('delete-confirm-input');
+    const confirmInput = screen.getByLabelText(
+      'To confirm, type the Source Feed ID "33156" below:'
+    );
 
     // Type incorrect ID
     fireEvent.change(confirmInput, { target: { value: 'wrong-id-xyz' } });

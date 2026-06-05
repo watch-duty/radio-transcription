@@ -107,12 +107,10 @@ describe('ConfirmationDialog', () => {
       />
     );
 
-    expect(screen.getByText('Type MATCH-123 below:')).toBeInTheDocument();
-
     const confirmBtn = screen.getByRole('button', { name: 'Submit Deletion' });
     expect(confirmBtn).toBeDisabled();
 
-    const confirmInput = screen.getByTestId('delete-confirm-input');
+    const confirmInput = screen.getByLabelText('Type MATCH-123 below:');
 
     // Type incorrect value
     fireEvent.change(confirmInput, { target: { value: 'WRONG' } });
@@ -135,6 +133,7 @@ describe('ConfirmationDialog', () => {
         confirmLabel="Proceed"
         showConfirmInput={true}
         confirmInputValue="RESET"
+        confirmInputLabel="Type RESET below:"
         onClose={mockClose}
         onConfirm={mockConfirm}
         isSubmitting={true}
@@ -143,15 +142,17 @@ describe('ConfirmationDialog', () => {
 
     const cancelBtn = screen.getByRole('button', { name: 'Cancel' });
     const confirmBtn = screen.getByRole('button', { name: 'Proceed' });
-    const confirmInput = screen.getByTestId('delete-confirm-input');
+    const confirmInput = screen.getByLabelText('Type RESET below:');
 
     expect(cancelBtn).toBeDisabled();
     expect(confirmBtn).toBeDisabled();
     expect(confirmInput).toBeDisabled();
   });
 
-  it('resets the typed challenge input whenever open changes to true', async () => {
-    const { rerender } = render(
+  it('resets the typed challenge input when Cancel is clicked', async () => {
+    mockClose.mockClear();
+
+    render(
       <ConfirmationDialog
         open={true}
         title="Challenge Mode"
@@ -159,44 +160,20 @@ describe('ConfirmationDialog', () => {
         confirmLabel="Confirm"
         showConfirmInput={true}
         confirmInputValue="RESET"
+        confirmInputLabel="Type RESET below:"
         onClose={mockClose}
         onConfirm={mockConfirm}
       />
     );
 
-    const confirmInput = screen.getByTestId('delete-confirm-input');
+    const confirmInput = screen.getByLabelText('Type RESET below:');
     fireEvent.change(confirmInput, { target: { value: 'SOME-TYPED-DATA' } });
     expect(confirmInput).toHaveValue('SOME-TYPED-DATA');
 
-    // Close
-    rerender(
-      <ConfirmationDialog
-        open={false}
-        title="Challenge Mode"
-        description="Type matching ID"
-        confirmLabel="Confirm"
-        showConfirmInput={true}
-        confirmInputValue="RESET"
-        onClose={mockClose}
-        onConfirm={mockConfirm}
-      />
-    );
+    const cancelBtn = screen.getByRole('button', { name: 'Cancel' });
+    fireEvent.click(cancelBtn);
 
-    // Open again
-    rerender(
-      <ConfirmationDialog
-        open={true}
-        title="Challenge Mode"
-        description="Type matching ID"
-        confirmLabel="Confirm"
-        showConfirmInput={true}
-        confirmInputValue="RESET"
-        onClose={mockClose}
-        onConfirm={mockConfirm}
-      />
-    );
-
-    const reopenedInput = screen.getByTestId('delete-confirm-input');
-    expect(reopenedInput).toHaveValue(''); // should be reset to empty
+    expect(mockClose).toHaveBeenCalledTimes(1);
+    expect(confirmInput).toHaveValue('');
   });
 });

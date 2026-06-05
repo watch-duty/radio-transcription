@@ -1,7 +1,9 @@
 import { useState } from 'react';
 
 import {
+  Box,
   Button,
+  type ButtonProps,
   Dialog,
   DialogActions,
   DialogContent,
@@ -20,24 +22,15 @@ export interface ConfirmationDialogProps {
   /** Text label for the confirmation action button */
   confirmLabel: string;
   /** Color theme styling of the confirm button */
-  confirmColor?:
-    | 'inherit'
-    | 'primary'
-    | 'secondary'
-    | 'success'
-    | 'error'
-    | 'info'
-    | 'warning';
+  confirmColor?: ButtonProps['color'];
   /** Variant type styling of the confirm button */
-  confirmVariant?: 'text' | 'outlined' | 'contained';
+  confirmVariant?: ButtonProps['variant'];
   /** If true, requires the user to type confirmation text before enabling the action button */
   showConfirmInput?: boolean;
   /** The specific value the user needs to match (e.g., the item ID or NAME) */
   confirmInputValue?: string;
   /** Instructional text above the confirmation match text input field */
   confirmInputLabel?: string;
-  /** Optional custom data-testid for the challenge input field */
-  confirmInputTestId?: string;
   /** Triggers when the cancel button is clicked or the dialog is closed */
   onClose: () => void;
   /** Triggers when the primary confirm button is clicked */
@@ -56,20 +49,16 @@ export function ConfirmationDialog({
   showConfirmInput = false,
   confirmInputValue = '',
   confirmInputLabel = '',
-  confirmInputTestId = 'delete-confirm-input',
   onClose,
   onConfirm,
   isSubmitting = false,
 }: ConfirmationDialogProps) {
   const [userInput, setUserInput] = useState('');
 
-  const [prevOpen, setPrevOpen] = useState(open);
-  if (open !== prevOpen) {
-    setPrevOpen(open);
-    if (open) {
-      setUserInput('');
-    }
-  }
+  const handleClose = () => {
+    setUserInput('');
+    onClose();
+  };
 
   const handleConfirm = async () => {
     await onConfirm();
@@ -81,43 +70,33 @@ export function ConfirmationDialog({
   return (
     <Dialog
       open={open}
-      onClose={onClose}
+      onClose={handleClose}
       aria-labelledby="confirm-dialog-title"
       aria-describedby="confirm-dialog-description"
     >
       <DialogTitle id="confirm-dialog-title">{title}</DialogTitle>
       <DialogContent>
-        <DialogContentText
-          id="confirm-dialog-description"
-          sx={{ mb: showConfirmInput ? 2 : 0 }}
-        >
+        <DialogContentText id="confirm-dialog-description">
           {description}
         </DialogContentText>
         {showConfirmInput && (
-          <>
-            {confirmInputLabel && (
-              <DialogContentText sx={{ mb: 1, fontWeight: 'bold' }}>
-                {confirmInputLabel}
-              </DialogContentText>
-            )}
+          <Box sx={{ mt: 2 }}>
             <TextField
               fullWidth
               size="small"
               variant="outlined"
+              label={confirmInputLabel}
               value={userInput}
               onChange={(e) => setUserInput(e.target.value)}
               placeholder={confirmInputValue}
               disabled={isSubmitting}
-              slotProps={{
-                htmlInput: { 'data-testid': confirmInputTestId },
-              }}
             />
-          </>
+          </Box>
         )}
       </DialogContent>
       <DialogActions>
         <Button
-          onClick={onClose}
+          onClick={handleClose}
           color="primary"
           disabled={isSubmitting}
           sx={{ textTransform: 'none' }}
