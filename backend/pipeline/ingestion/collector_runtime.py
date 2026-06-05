@@ -807,7 +807,6 @@ class CollectorRuntime:
                 topic_path,
                 str(feed["id"]),
                 feed["name"],
-                feed["external_id"],
                 gcs_uri,
                 start_timestamp=captured_chunk.chunk_start_time,
                 session_id=captured_chunk.session_id,

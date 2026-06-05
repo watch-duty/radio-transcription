@@ -30,7 +30,6 @@ def _make_feed(
     return LeasedFeed(
         id=uuid.UUID(int=feed_id),
         name=f"test-{source_type}-{feed_id}",
-        external_id="ext-id",
         source_type=source_type,
         last_processed_filename=None,
         last_bookmark_time=None,
@@ -410,7 +409,6 @@ class TestPublishAudioChunkSync(unittest.TestCase):
             topic_path="projects/test/topics/audio",
             feed_id="feed-42",
             feed_name="Central Fire",
-            external_id="ext-id",
             gcs_uri="gs://bucket/audio.flac",
             session_id="test-session-1",
             start_timestamp=mock_now,
@@ -435,7 +433,6 @@ class TestPublishAudioChunkSync(unittest.TestCase):
             chunk.start_timestamp.seconds, int(mock_now.timestamp())
         )
         self.assertEqual(chunk.feed_name, "Central Fire")
-        self.assertEqual(chunk.external_id, "ext-id")
 
     def test_omits_source_type_when_none(self) -> None:
         mock_future = MagicMock()
@@ -448,7 +445,6 @@ class TestPublishAudioChunkSync(unittest.TestCase):
             topic_path="projects/test/topics/audio",
             feed_id="feed-1",
             feed_name="Central Fire",
-            external_id="ext-id",
             gcs_uri="gs://bucket/audio.flac",
             session_id="sess-1",
             start_timestamp=datetime.datetime(
@@ -481,7 +477,6 @@ class TestPublishAudioChunkSync(unittest.TestCase):
                 topic_path="projects/test/topics/audio",
                 feed_id="feed-1",
                 feed_name="Central Fire",
-                external_id="ext-id",
                 gcs_uri="gs://bucket/audio.flac",
                 session_id="sess-1",
                 start_timestamp=datetime.datetime(
@@ -523,7 +518,6 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
                 topic_path="projects/test/topics/audio",
                 feed_id="feed-42",
                 feed_name="Central Fire",
-                external_id="ext-id",
                 gcs_uri="gs://bucket/audio.flac",
                 session_id="test-session-1",
                 start_timestamp=mock_now,
@@ -550,7 +544,6 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
             topic_path="projects/test/topics/audio",
             feed_id="feed-42",
             feed_name="Central Fire",
-            external_id="ext-id",
             gcs_uri="gs://bucket/audio.flac",
             session_id="test-session-1",
             start_timestamp=mock_now,
@@ -563,7 +556,6 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
         chunk = AudioChunk()
         chunk.ParseFromString(publish_args[1])
         self.assertEqual(chunk.feed_name, "Central Fire")
-        self.assertEqual(chunk.external_id, "ext-id")
         self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
 
     async def test_paused_ordering_key_calls_resume_publish(self) -> None:
@@ -581,7 +573,6 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
                 topic_path="projects/test/topics/audio",
                 feed_id="feed-42",
                 feed_name="Central Fire",
-                external_id="ext-id",
                 gcs_uri="gs://bucket/audio.flac",
                 session_id="test-session-1",
                 start_timestamp=mock_now,
@@ -616,7 +607,6 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
                         topic_path="projects/test/topics/audio",
                         feed_id="feed-42",
                         feed_name="Central Fire",
-                        external_id="ext-id",
                         gcs_uri="gs://bucket/audio.flac",
                         session_id="test-session-1",
                         start_timestamp=mock_now,

@@ -212,7 +212,7 @@ export function FeedTable({
     const query = searchQuery.toLowerCase().trim();
     let filtered = feeds;
 
-    // 1. Text search filtering (matches name, tags key/value, source ID, external ID)
+    // 1. Text search filtering (matches name, tags key/value, source ID)
     if (query) {
       filtered = filtered.filter((feed) => {
         const nameMatches = feed.name.toLowerCase().includes(query);
@@ -224,11 +224,7 @@ export function FeedTable({
           ) ?? false;
         const sourceIdMatches =
           feed.sourceFeedId?.toLowerCase().includes(query) ?? false;
-        const externalIdMatches =
-          feed.externalId?.toLowerCase().includes(query) ?? false;
-        return (
-          nameMatches || tagMatches || sourceIdMatches || externalIdMatches
-        );
+        return nameMatches || tagMatches || sourceIdMatches;
       });
     }
 

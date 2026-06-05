@@ -216,7 +216,6 @@ def publish_audio_chunk_sync(
     topic_path: str,
     feed_id: str,
     feed_name: str,
-    external_id: str,
     gcs_uri: str,
     session_id: str | None,
     start_timestamp: datetime.datetime,
@@ -234,7 +233,6 @@ def publish_audio_chunk_sync(
             feed_id=feed_id,
             feed_name=feed_name,
             duration_ms=duration_ms,
-            external_id=external_id,
         )
         if session_id is not None:
             audio_chunk_msg.session_id = session_id
@@ -269,7 +267,6 @@ async def publish_audio_chunk(
     topic_path: str,
     feed_id: str,
     feed_name: str,
-    external_id: str,
     gcs_uri: str,
     session_id: str | None,
     start_timestamp: datetime.datetime,
@@ -288,7 +285,6 @@ async def publish_audio_chunk(
             feed_id=feed_id,
             feed_name=feed_name,
             duration_ms=duration_ms,
-            external_id=external_id,
         )
         if session_id is not None:
             audio_chunk_msg.session_id = session_id
