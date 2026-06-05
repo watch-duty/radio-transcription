@@ -88,7 +88,14 @@ describe('FeedConfigurationView', () => {
     mockOnError.mockClear();
 
     // Default mock for listing feeds
-    vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
+    vi.mocked(listFeeds).mockImplementation((_, params) => {
+      let filtered = mockFeeds;
+      if (params?.name) {
+        const q = params.name.toLowerCase();
+        filtered = filtered.filter((f) => f.name.toLowerCase().includes(q));
+      }
+      return Promise.resolve(filtered);
+    });
     vi.mocked(deleteFeed).mockResolvedValue(undefined);
     vi.mocked(deactivateFeed).mockResolvedValue(undefined);
     vi.mocked(resetFeed).mockResolvedValue({} as Feed);
@@ -426,8 +433,10 @@ describe('FeedConfigurationView', () => {
     fireEvent.change(filterInput, { target: { value: 'sonoma' } });
 
     // Sonoma Sheriff matches, Marin Fire is hidden
-    expect(screen.getByText('Sonoma Sheriff dispatch')).toBeInTheDocument();
-    expect(screen.queryByText('Marin Fire Dispatch')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Sonoma Sheriff dispatch')).toBeInTheDocument();
+      expect(screen.queryByText('Marin Fire Dispatch')).not.toBeInTheDocument();
+    });
   });
 
   it('automatically adds the tag if Tag Key and Tag Value are filled in and the form is submitted without clicking the Add button', async () => {

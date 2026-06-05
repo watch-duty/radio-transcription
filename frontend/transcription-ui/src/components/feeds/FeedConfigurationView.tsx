@@ -16,12 +16,14 @@ import { listFeeds } from '../../service/listFeeds';
 import { resetFeed } from '../../service/resetFeed';
 import { updateFeed } from '../../service/updateFeed';
 import { FeedConfigurationEdit } from './FeedConfigurationEdit';
-import { FeedTable } from './FeedTable';
+import { type FeedFilters, FeedTable } from './FeedTable';
 
 interface FeedConfigurationViewProps {
   triggerSnackbar: (message: string) => void;
   onError: (error: Error, titleMessage?: string) => void;
 }
+
+const QUERY_DEBOUNCE_TIME_MS = 300;
 
 export function FeedConfigurationView({
   triggerSnackbar,
@@ -37,15 +39,65 @@ export function FeedConfigurationView({
   const [sourceFeedId, setSourceFeedId] = useState('');
   const [tags, setTags] = useState<Tag[]>([]);
 
+  const [filters, setFilters] = useState<FeedFilters>({
+    searchQuery: '',
+    sourceTypes: [],
+    statuses: [],
+    tags: [],
+  });
+
+  // We are only debouncing the query because the keystrokes can be fast and we want to avoid querying every keypress.
+  // However for the filter selections, selecting options is a bit slower and we want to show immediate feedback from checkboxes.
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState(
+    filters.searchQuery
+  );
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearchQuery(filters.searchQuery);
+    }, QUERY_DEBOUNCE_TIME_MS);
+    return () => clearTimeout(handler);
+  }, [filters.searchQuery]);
+
   const feedsErrorHandled = useRef<Error | null>(null);
 
+  // We flatten the filter object and include array lengths in the query key.
+  // In JavaScript, empty arrays ([]) are compared by object reference rather than value.
+  // Flattening the keys and including primitive lengths (e.g. 0) ensures that we can define
+  // a stable, static query key for `allFeeds` (['listFeeds', token, '', [], 0, [], 0, [], 0])
+  // that matches the structure of the main query, allowing `queryClient.setQueriesData`
+  // and `invalidateQueries` prefix matching to successfully update both query caches at once.
   const {
     data: feeds = [],
     isLoading: feedsLoading,
     error: feedsError,
   } = useQuery({
-    queryKey: ['listFeeds', token],
-    queryFn: () => listFeeds(token!),
+    queryKey: [
+      'listFeeds',
+      token,
+      debouncedSearchQuery,
+      filters.sourceTypes,
+      filters.sourceTypes.length,
+      filters.statuses,
+      filters.statuses.length,
+      filters.tags,
+      filters.tags.length,
+    ],
+    queryFn: () =>
+      listFeeds(token!, {
+        name: debouncedSearchQuery || undefined,
+        sourceTypes:
+          filters.sourceTypes.length > 0 ? filters.sourceTypes : undefined,
+        statuses: filters.statuses.length > 0 ? filters.statuses : undefined,
+        tags: filters.tags.length > 0 ? filters.tags : undefined,
+      }),
+    enabled: !!token,
+    refetchOnWindowFocus: false,
+  });
+
+  const { data: allFeeds = [] } = useQuery({
+    queryKey: ['listFeeds', token, '', [], 0, [], 0, [], 0],
+    queryFn: () => listFeeds(token!, {}),
     enabled: !!token,
     refetchOnWindowFocus: false,
   });
@@ -106,9 +158,10 @@ export function FeedConfigurationView({
     onSuccess: (_, feedId) => {
       triggerSnackbar('Feed deleted successfully!');
       setIsEditing(false);
-      queryClient.setQueryData<Feed[]>(['listFeeds', token], (oldFeeds) => {
-        return oldFeeds ? oldFeeds.filter((feed) => feed.id !== feedId) : [];
-      });
+      queryClient.setQueriesData<Feed[]>(
+        { queryKey: ['listFeeds', token] },
+        (oldFeeds) => (oldFeeds ? oldFeeds.filter((f) => f.id !== feedId) : [])
+      );
       resetFormAndRefresh();
     },
     onError: (error: Error) => {
@@ -264,11 +317,14 @@ export function FeedConfigurationView({
         >
           <FeedTable
             feeds={feeds}
+            allFeeds={allFeeds}
             isLoading={feedsLoading}
             allowEdit
             editingFeedId={isEditing ? id : undefined}
             onEditFeed={handleStartEdit}
             isSubmitting={isSubmitting}
+            filters={filters}
+            onFiltersChange={setFilters}
           />
         </Grid>
       </Grid>
