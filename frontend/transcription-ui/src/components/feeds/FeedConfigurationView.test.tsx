@@ -79,8 +79,37 @@ describe('FeedConfigurationView', () => {
     mockTriggerSnackbar.mockClear();
     mockOnError.mockClear();
 
-    // Default mock for listing feeds
-    vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
+    // Default mock for listing feeds supporting server-side filtering
+    vi.mocked(listFeeds).mockImplementation(async (token, params) => {
+      if (params?.name) {
+        const query = params.name.toLowerCase();
+        return {
+          feeds: mockFeeds.filter(
+            (f) =>
+              f.name.toLowerCase().includes(query) ||
+              f.sourceFeedId?.toLowerCase().includes(query) ||
+              f.externalId?.toLowerCase().includes(query)
+          ),
+        };
+      }
+      if (params?.sourceTypes) {
+        return {
+          feeds: mockFeeds.filter((f) =>
+            params.sourceTypes?.includes(f.sourceType)
+          ),
+        };
+      }
+      if (params?.statuses) {
+        return {
+          feeds: mockFeeds.filter((f) => {
+            const capitalizedStatus =
+              f.status.charAt(0).toUpperCase() + f.status.slice(1);
+            return params.statuses?.includes(capitalizedStatus);
+          }),
+        };
+      }
+      return { feeds: mockFeeds };
+    });
     vi.mocked(deleteFeed).mockResolvedValue(undefined);
 
     // Mock window.scrollTo since JSDOM does not implement it
@@ -420,8 +449,10 @@ describe('FeedConfigurationView', () => {
     fireEvent.change(filterInput, { target: { value: 'sonoma' } });
 
     // Sonoma Sheriff matches, Marin Fire is hidden
-    expect(screen.getByText('Sonoma Sheriff dispatch')).toBeInTheDocument();
-    expect(screen.queryByText('Marin Fire Dispatch')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Sonoma Sheriff dispatch')).toBeInTheDocument();
+      expect(screen.queryByText('Marin Fire Dispatch')).not.toBeInTheDocument();
+    });
   });
 
   it('automatically adds the tag if Tag Key and Tag Value are filled in and the form is submitted without clicking the Add button', async () => {

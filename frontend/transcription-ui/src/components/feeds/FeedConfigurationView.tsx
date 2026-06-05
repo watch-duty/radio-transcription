@@ -1,11 +1,22 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import AppRegistrationIcon from '@mui/icons-material/AppRegistration';
 import Box from '@mui/material/Box';
 import Grid from '@mui/material/Grid';
 import Typography from '@mui/material/Typography';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { Feed, FeedCreate, FeedUpdate, Tag } from '@transcription/common';
+import {
+  type InfiniteData,
+  useInfiniteQuery,
+  useMutation,
+  useQueryClient,
+} from '@tanstack/react-query';
+import type {
+  Feed,
+  FeedCreate,
+  FeedUpdate,
+  ListFeedsResponse,
+  Tag,
+} from '@transcription/common';
 import { SourceType } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
@@ -35,18 +46,48 @@ export function FeedConfigurationView({
   const [sourceFeedId, setSourceFeedId] = useState('');
   const [tags, setTags] = useState<Tag[]>([]);
 
+  const [filters, setFilters] = useState<{
+    searchQuery: string;
+    sourceTypes: string[];
+    statuses: string[];
+    tags: Tag[];
+  }>({
+    searchQuery: '',
+    sourceTypes: [],
+    statuses: [],
+    tags: [],
+  });
+
   const feedsErrorHandled = useRef<Error | null>(null);
 
   const {
-    data: feeds = [],
+    data,
     isLoading: feedsLoading,
     error: feedsError,
-  } = useQuery({
-    queryKey: ['listFeeds', token],
-    queryFn: () => listFeeds(token!),
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery<ListFeedsResponse, Error>({
+    queryKey: ['listFeeds', token, filters],
+    queryFn: ({ pageParam }) =>
+      listFeeds(token!, {
+        limit: 100,
+        nextToken: pageParam as string | undefined,
+        name: filters.searchQuery || undefined,
+        sourceTypes:
+          filters.sourceTypes.length > 0 ? filters.sourceTypes : undefined,
+        statuses: filters.statuses.length > 0 ? filters.statuses : undefined,
+        tags: filters.tags.length > 0 ? filters.tags : undefined,
+      }),
+    initialPageParam: undefined,
+    getNextPageParam: (lastPage) => lastPage.nextToken,
     enabled: !!token,
     refetchOnWindowFocus: false,
   });
+
+  const feeds = useMemo(() => {
+    return data?.pages.flatMap((page) => page.feeds) ?? [];
+  }, [data]);
 
   useEffect(() => {
     if (feedsError && feedsErrorHandled.current !== feedsError) {
@@ -104,9 +145,19 @@ export function FeedConfigurationView({
     onSuccess: (_, feedId) => {
       triggerSnackbar('Feed deleted successfully!');
       setIsEditing(false);
-      queryClient.setQueryData<Feed[]>(['listFeeds', token], (oldFeeds) => {
-        return oldFeeds ? oldFeeds.filter((feed) => feed.id !== feedId) : [];
-      });
+      queryClient.setQueryData<InfiniteData<ListFeedsResponse>>(
+        ['listFeeds', token, filters],
+        (oldData) => {
+          if (!oldData) return oldData;
+          return {
+            ...oldData,
+            pages: oldData.pages.map((page) => ({
+              ...page,
+              feeds: page.feeds.filter((feed) => feed.id !== feedId),
+            })),
+          };
+        }
+      );
       resetFormAndRefresh();
     },
     onError: (error: Error) => {
@@ -231,6 +282,10 @@ export function FeedConfigurationView({
             editingFeedId={isEditing ? id : undefined}
             onEditFeed={handleStartEdit}
             isSubmitting={isSubmitting}
+            hasNextPage={hasNextPage}
+            isFetchingNextPage={isFetchingNextPage}
+            onLoadMore={fetchNextPage}
+            onFiltersChange={setFilters}
           />
         </Grid>
       </Grid>

@@ -21,8 +21,12 @@ export function FeedSearch({
   isFetching,
 }: FeedSearchProps) {
   const sortedFeeds = useMemo(() => {
-    return [...(feeds ?? [])].sort((a, b) => a.name.localeCompare(b.name));
-  }, [feeds]);
+    const list = [...(feeds ?? [])];
+    if (selectedFeed && !list.some((f) => f.id === selectedFeed.id)) {
+      list.push(selectedFeed);
+    }
+    return list.sort((a, b) => a.name.localeCompare(b.name));
+  }, [feeds, selectedFeed]);
 
   return (
     <Autocomplete

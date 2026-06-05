@@ -87,15 +87,17 @@ describe('TranscriptView', () => {
     vi.resetAllMocks();
     mockHandleError.mockClear();
     // Default mock for listFeeds to prevent errors on mount
-    vi.mocked(listFeeds).mockResolvedValue([
-      {
-        id: 'feed123',
-        name: 'Feed 123',
-        sourceType: SourceType.BCFY_FEEDS,
-        status: 'active' as FeedStatus,
-        substatus: 'active' as BackendFeedStatus,
-      },
-    ]);
+    vi.mocked(listFeeds).mockResolvedValue({
+      feeds: [
+        {
+          id: 'feed123',
+          name: 'Feed 123',
+          sourceType: SourceType.BCFY_FEEDS,
+          status: 'active' as FeedStatus,
+          substatus: 'active' as BackendFeedStatus,
+        },
+      ],
+    });
     // Default mock for getFeed
     vi.mocked(getFeed).mockResolvedValue({
       id: 'feed123',
@@ -273,7 +275,7 @@ describe('TranscriptView', () => {
         substatus: 'active' as BackendFeedStatus,
       },
     ];
-    vi.mocked(listFeeds).mockResolvedValueOnce(mockFeeds);
+    vi.mocked(listFeeds).mockResolvedValueOnce({ feeds: mockFeeds });
 
     renderTranscriptView(
       <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
@@ -329,7 +331,7 @@ describe('TranscriptView', () => {
         archiveUrl: 'https://www.broadcastify.com/archives/feed/12345',
       },
     ];
-    vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
+    vi.mocked(listFeeds).mockResolvedValue({ feeds: mockFeeds });
     vi.mocked(listTranscripts).mockResolvedValueOnce({
       transcripts: mockTranscripts,
       nextToken: undefined,

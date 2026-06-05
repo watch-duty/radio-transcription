@@ -93,7 +93,7 @@ describe('RuleConfigurationView', () => {
     mockOnError.mockClear();
 
     vi.mocked(listRules).mockResolvedValue(mockRules);
-    vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
+    vi.mocked(listFeeds).mockResolvedValue({ feeds: mockFeeds });
     vi.mocked(deleteRule).mockResolvedValue(undefined);
 
     window.scrollTo = vi.fn();

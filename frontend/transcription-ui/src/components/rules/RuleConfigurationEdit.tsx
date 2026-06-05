@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import AddIcon from '@mui/icons-material/Add';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
@@ -38,6 +38,7 @@ import type {
   RuleUpdate,
   ScopeLevel,
 } from '@transcription/common';
+import { SourceType } from '@transcription/common';
 
 import { buildRulePayload, validateRule } from '../../utils/validationUtils';
 
@@ -486,6 +487,22 @@ function RuleScopeSection({
   validationErrors,
   isSubmitting,
 }: RuleScopeSectionProps) {
+  const options = useMemo(() => {
+    const list = [...feeds];
+    editingRule.scope.targetFeeds?.forEach((targetId) => {
+      if (!list.some((f) => f.id === targetId)) {
+        list.push({
+          id: targetId,
+          name: `Feed (${targetId.substring(0, 8)})`,
+          sourceType: SourceType.BCFY_FEEDS,
+          status: 'inactive',
+          substatus: 'unclaimed',
+        });
+      }
+    });
+    return list;
+  }, [feeds, editingRule.scope.targetFeeds]);
+
   return (
     <Box>
       <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
@@ -519,9 +536,9 @@ function RuleScopeSection({
           <Grid size={{ xs: 12 }}>
             <Autocomplete
               multiple
-              options={feeds}
+              options={options}
               getOptionLabel={(option) => option.name}
-              value={feeds.filter((f) =>
+              value={options.filter((f) =>
                 editingRule.scope.targetFeeds?.includes(f.id)
               )}
               onChange={(_, selectedOptions) => {
@@ -552,7 +569,7 @@ function RuleScopeSection({
                         variant="caption"
                         sx={{ color: 'text.secondary' }}
                       >
-                        Source ID: {option.sourceFeedId}
+                        Source ID: {option.sourceFeedId || 'N/A'}
                       </Typography>
                     </Stack>
                   </Box>

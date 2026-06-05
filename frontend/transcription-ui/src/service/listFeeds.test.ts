@@ -25,7 +25,7 @@ describe('listFeeds', () => {
       },
     });
 
-    const feeds = await listFeeds('tokenXYZ');
+    const resp = await listFeeds('tokenXYZ');
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch).toHaveBeenCalledWith(
@@ -36,7 +36,7 @@ describe('listFeeds', () => {
         },
       })
     );
-    expect(feeds).toEqual(mockData);
+    expect(resp).toEqual({ feeds: mockData });
   });
 
   it('should fetch feeds successfully when response is paginated ListFeedsResponse object', async () => {
@@ -58,10 +58,55 @@ describe('listFeeds', () => {
       },
     });
 
-    const feeds = await listFeeds('tokenXYZ');
+    const resp = await listFeeds('tokenXYZ', {
+      nextToken: 'token_abc',
+      limit: 10,
+    });
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
-    expect(feeds).toEqual(mockFeeds);
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/feeds?limit=10&nextToken=token_abc'),
+      expect.objectContaining({
+        headers: {
+          Authorization: 'Bearer tokenXYZ',
+        },
+      })
+    );
+    expect(resp).toEqual(mockData);
+  });
+
+  it('should support other filter query parameters', async () => {
+    const mockFeeds = [{ id: '1', name: 'Feed 1' }];
+    const mockData = { feeds: mockFeeds };
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () => JSON.stringify(mockData),
+      headers: {
+        get: (key: string) =>
+          key === 'content-type' ? 'application/json' : null,
+      },
+    });
+
+    const resp = await listFeeds('tokenXYZ', {
+      name: 'Feed 1',
+      statuses: ['Active'],
+      sourceTypes: ['echo'],
+      tags: [{ key: 'tagKey', value: 'tagVal' }],
+    });
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining(
+        '/api/v1/feeds?name=Feed+1&sourceTypes=echo&statuses=active&tags=%7B%22key%22%3A%22tagKey%22%2C%22value%22%3A%22tagVal%22%7D'
+      ),
+      expect.objectContaining({
+        headers: {
+          Authorization: 'Bearer tokenXYZ',
+        },
+      })
+    );
+    expect(resp).toEqual(mockData);
   });
 
   it('should throw error if response not ok', async () => {

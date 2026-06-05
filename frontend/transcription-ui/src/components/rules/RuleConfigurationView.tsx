@@ -58,15 +58,17 @@ export function RuleConfigurationView({
   });
 
   const {
-    data: feeds = [],
+    data: feedsData,
     isLoading: feedsLoading,
     error: feedsError,
   } = useQuery({
     queryKey: ['listFeeds', token],
-    queryFn: () => listFeeds(token!),
+    queryFn: () => listFeeds(token!, { limit: 100 }),
     enabled: !!token,
     refetchOnWindowFocus: false,
   });
+
+  const feeds = useMemo(() => feedsData?.feeds || [], [feedsData]);
 
   const sortedFeeds = useMemo(() => {
     return [...feeds].sort((a, b) => a.name.localeCompare(b.name));

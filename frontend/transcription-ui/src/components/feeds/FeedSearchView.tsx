@@ -1,7 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { Box } from '@mui/material';
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery } from '@tanstack/react-query';
+import type { ListFeedsResponse } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { listFeeds } from '../../service/listFeeds';
@@ -18,17 +19,47 @@ const FEED_REFETCH_INTERVAL_MS = 15000; // 15 seconds
 export function FeedSearchView({ title, onError }: FeedSearchViewProps) {
   const { token } = useAuth();
 
+  const [filters, setFilters] = useState<{
+    searchQuery: string;
+    sourceTypes: string[];
+    statuses: string[];
+    tags: { key: string; value: string }[];
+  }>({
+    searchQuery: '',
+    sourceTypes: [],
+    statuses: [],
+    tags: [],
+  });
+
   const {
-    data: feeds,
+    data,
     error: feedsError,
     isLoading: feedsLoading,
-  } = useQuery({
-    queryKey: ['listFeeds', token],
-    queryFn: () => listFeeds(token!),
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery<ListFeedsResponse, Error>({
+    queryKey: ['listFeeds', token, filters],
+    queryFn: ({ pageParam }) =>
+      listFeeds(token!, {
+        limit: 100,
+        nextToken: pageParam as string | undefined,
+        name: filters.searchQuery || undefined,
+        sourceTypes:
+          filters.sourceTypes.length > 0 ? filters.sourceTypes : undefined,
+        statuses: filters.statuses.length > 0 ? filters.statuses : undefined,
+        tags: filters.tags.length > 0 ? filters.tags : undefined,
+      }),
     enabled: !!token,
     refetchOnWindowFocus: false,
     refetchInterval: FEED_REFETCH_INTERVAL_MS,
+    initialPageParam: undefined,
+    getNextPageParam: (lastPage) => lastPage.nextToken,
   });
+
+  const feeds = useMemo(() => {
+    return data?.pages.flatMap((page) => page.feeds) ?? [];
+  }, [data]);
 
   useEffect(() => {
     if (feedsError) {
@@ -46,7 +77,15 @@ export function FeedSearchView({ title, onError }: FeedSearchViewProps) {
         height: 'calc(100vh - 100px)',
       }}
     >
-      <FeedTable title={title} feeds={feeds ?? []} isLoading={feedsLoading} />
+      <FeedTable
+        title={title}
+        feeds={feeds}
+        isLoading={feedsLoading}
+        hasNextPage={hasNextPage}
+        isFetchingNextPage={isFetchingNextPage}
+        onLoadMore={fetchNextPage}
+        onFiltersChange={setFilters}
+      />
     </Box>
   );
 }

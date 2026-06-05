@@ -1,4 +1,4 @@
-import { forwardRef, useMemo, useState } from 'react';
+import { forwardRef, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentProps, HTMLAttributes } from 'react';
 import { Link as RouterLink } from 'react-router';
 import { TableVirtuoso } from 'react-virtuoso';
@@ -9,6 +9,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import TroubleshootIcon from '@mui/icons-material/Troubleshoot';
 import TuneIcon from '@mui/icons-material/Tune';
 import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
 import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -41,6 +42,15 @@ export interface FeedTableProps {
   editingFeedId?: string;
   onEditFeed?: (feed: Feed) => void;
   isSubmitting?: boolean;
+  hasNextPage?: boolean;
+  isFetchingNextPage?: boolean;
+  onLoadMore?: () => void;
+  onFiltersChange?: (filters: {
+    searchQuery: string;
+    sourceTypes: string[];
+    statuses: string[];
+    tags: { key: string; value: string }[];
+  }) => void;
 }
 
 interface SortConfig {
@@ -138,6 +148,26 @@ function FeedTagChip({ tag }: { tag: { key: string; value: string } }) {
   );
 }
 
+const VirtuosoFooter = (props: {
+  context?: { isFetchingNextPage?: boolean };
+}) => {
+  if (!props.context?.isFetchingNextPage) return null;
+  return (
+    <Box
+      sx={{
+        display: 'flex',
+        justifyContent: 'center',
+        p: 2,
+        width: '100%',
+        boxSizing: 'border-box',
+      }}
+    >
+      <CircularProgress size={24} />
+    </Box>
+  );
+};
+VirtuosoFooter.displayName = 'VirtuosoFooter';
+
 const VIRTUOSO_COMPONENTS = {
   Scroller: VirtuosoScroller,
   Table: VirtuosoTable,
@@ -145,7 +175,16 @@ const VIRTUOSO_COMPONENTS = {
   TableRow: VirtuosoTableRow,
   TableBody: VirtuosoTableBody,
   FillerRow: VirtuosoFillerRow,
+  Footer: VirtuosoFooter,
 };
+
+const ALL_SOURCE_TYPES = [
+  'bcfy_feeds',
+  'bcfy_calls',
+  'echo',
+  'openmhz',
+  'fire_notifications',
+];
 
 export function FeedTable({
   title = 'Feeds',
@@ -155,6 +194,10 @@ export function FeedTable({
   editingFeedId,
   onEditFeed,
   isSubmitting = false,
+  hasNextPage = false,
+  isFetchingNextPage = false,
+  onLoadMore,
+  onFiltersChange,
 }: FeedTableProps) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -170,6 +213,32 @@ export function FeedTable({
   >([]);
   const [appliedStatuses, setAppliedStatuses] = useState<string[]>([]);
   const [appliedSourceTypes, setAppliedSourceTypes] = useState<string[]>([]);
+
+  const isInitialMount = useRef(true);
+
+  // Debounce filter changes to notify parent
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+    const handler = setTimeout(() => {
+      onFiltersChange?.({
+        searchQuery,
+        sourceTypes: appliedSourceTypes,
+        statuses: appliedStatuses,
+        tags: appliedTags,
+      });
+    }, 300);
+
+    return () => clearTimeout(handler);
+  }, [
+    searchQuery,
+    appliedSourceTypes,
+    appliedStatuses,
+    appliedTags,
+    onFiltersChange,
+  ]);
 
   // Calculate unique tags across all feeds
   const tags = useMemo<{ key: string; value: string }[]>(() => {
@@ -189,16 +258,7 @@ export function FeedTable({
     );
   }, [feeds]);
 
-  // Calculate unique source types across all feeds
-  const sourceTypes = useMemo<string[]>(() => {
-    const seen = new Set<string>();
-    feeds.forEach((feed) => {
-      if (feed.sourceType) {
-        seen.add(feed.sourceType);
-      }
-    });
-    return Array.from(seen).sort();
-  }, [feeds]);
+  const sourceTypes = ALL_SOURCE_TYPES;
 
   const handleRequestSort = (property: 'name' | 'type' | 'status') => {
     setSortConfig((prev) => ({
@@ -209,59 +269,8 @@ export function FeedTable({
   };
 
   const filteredAndSortedFeeds = useMemo(() => {
-    const query = searchQuery.toLowerCase().trim();
-    let filtered = feeds;
-
-    // 1. Text search filtering (matches name, tags key/value, source ID, external ID)
-    if (query) {
-      filtered = filtered.filter((feed) => {
-        const nameMatches = feed.name.toLowerCase().includes(query);
-        const tagMatches =
-          feed.tags?.some(
-            (tag) =>
-              tag.key.toLowerCase().includes(query) ||
-              tag.value.toLowerCase().includes(query)
-          ) ?? false;
-        const sourceIdMatches =
-          feed.sourceFeedId?.toLowerCase().includes(query) ?? false;
-        const externalIdMatches =
-          feed.externalId?.toLowerCase().includes(query) ?? false;
-        return (
-          nameMatches || tagMatches || sourceIdMatches || externalIdMatches
-        );
-      });
-    }
-
-    // 2. Tags filtering
-    if (appliedTags.length > 0) {
-      filtered = filtered.filter((feed) => {
-        return appliedTags.every((appliedTag) =>
-          feed.tags?.some(
-            (tag) =>
-              tag.key === appliedTag.key && tag.value === appliedTag.value
-          )
-        );
-      });
-    }
-
-    // 3. Status filtering
-    if (appliedStatuses.length > 0) {
-      filtered = filtered.filter((feed) => {
-        const capitalizedStatus =
-          feed.status.charAt(0).toUpperCase() + feed.status.slice(1);
-        return appliedStatuses.includes(capitalizedStatus);
-      });
-    }
-
-    // 4. Source Type filtering
-    if (appliedSourceTypes.length > 0) {
-      filtered = filtered.filter((feed) =>
-        appliedSourceTypes.includes(feed.sourceType)
-      );
-    }
-
-    // 5. Sorting using localeCompare
-    return filtered.sort((a, b) => {
+    // Only sort client-side, filtering is handled server-side now.
+    return [...feeds].sort((a, b) => {
       let comparison = 0;
       if (sortConfig.column === 'name') {
         comparison = a.name.localeCompare(b.name);
@@ -272,14 +281,7 @@ export function FeedTable({
       }
       return sortConfig.direction === 'asc' ? comparison : -comparison;
     });
-  }, [
-    feeds,
-    searchQuery,
-    appliedTags,
-    appliedStatuses,
-    appliedSourceTypes,
-    sortConfig,
-  ]);
+  }, [feeds, sortConfig]);
 
   const gridTemplateColumns = allowEdit
     ? '1.5fr 1fr 1fr 60px'
@@ -541,20 +543,6 @@ export function FeedTable({
               {title}
             </Typography>
           </Box>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            {filteredAndSortedFeeds.length !== feeds.length && (
-              <Typography variant="body2" color="text.secondary">
-                Showing {filteredAndSortedFeeds.length} of {feeds.length} feeds
-              </Typography>
-            )}
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ fontWeight: 500 }}
-            >
-              {feeds.length} Feeds
-            </Typography>
-          </Box>
         </Box>
 
         <Box
@@ -716,16 +704,33 @@ export function FeedTable({
               ))}
             </TableBody>
           </Table>
+          {hasNextPage && (
+            <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={onLoadMore}
+                disabled={isFetchingNextPage}
+              >
+                {isFetchingNextPage ? 'Loading...' : 'Load More'}
+              </Button>
+            </Box>
+          )}
         </TableContainer>
       ) : (
         <TableVirtuoso
           data={filteredAndSortedFeeds}
-          context={{ editingFeedId, allowEdit }}
+          context={{ editingFeedId, allowEdit, isFetchingNextPage }}
           computeItemKey={(_index, feed) => feed.id}
           components={VIRTUOSO_COMPONENTS}
           style={{ flexGrow: 1, minHeight: 0 }}
           fixedHeaderContent={() => tableHeader}
           itemContent={(_index, feed) => renderRowContent(feed)}
+          endReached={() => {
+            if (hasNextPage && !isFetchingNextPage) {
+              onLoadMore?.();
+            }
+          }}
         />
       )}
     </Card>

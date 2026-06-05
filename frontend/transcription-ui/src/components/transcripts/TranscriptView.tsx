@@ -187,16 +187,18 @@ export function TranscriptView({
   );
 
   const {
-    data: feeds,
+    data: feedsData,
     error: feedsError,
     isFetching: feedsFetching,
     isSuccess: isFeedsSuccess,
   } = useQuery({
     queryKey: ['listFeeds', token],
-    queryFn: () => listFeeds(token!),
+    queryFn: () => listFeeds(token!, { limit: 100 }),
     enabled: !!token,
     refetchOnWindowFocus: false,
   });
+
+  const feeds = useMemo(() => feedsData?.feeds || [], [feedsData]);
 
   const { data: activeFeedData } = useQuery({
     queryKey: ['getFeed', token, searchedFeedId],
@@ -220,7 +222,8 @@ export function TranscriptView({
     return new Map(feeds.map((f) => [f.id, f]));
   }, [feeds]);
 
-  const searchedFeed = feedIdToFeedMap.get(searchedFeedId) || null;
+  const searchedFeed =
+    feedIdToFeedMap.get(searchedFeedId) || activeFeedData || null;
 
   useEffect(() => {
     if (!searchedFeed) return;

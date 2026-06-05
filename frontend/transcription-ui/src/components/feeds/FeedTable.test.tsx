@@ -3,7 +3,7 @@ import React from 'react';
 import { MemoryRouter } from 'react-router';
 import { VirtuosoMockContext } from 'react-virtuoso';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   cleanup,
@@ -114,24 +114,44 @@ describe('FeedTable', () => {
     expect(screen.getByRole('progressbar')).toBeTruthy();
   });
 
-  it('filters feeds by search bar input (name match)', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false });
+  it('calls onFiltersChange when search bar input is updated (name match)', () => {
+    vi.useFakeTimers();
+    const onFiltersChangeMock = vi.fn();
+    renderFeedTable({
+      feeds: mockFeeds,
+      isLoading: false,
+      onFiltersChange: onFiltersChangeMock,
+    });
 
     const searchInput = screen.getByPlaceholderText(/Search feeds\.\.\./i);
     fireEvent.change(searchInput, { target: { value: 'bravo' } });
 
-    expect(screen.getByText('Bravo Scanner')).toBeTruthy();
-    expect(screen.queryByText('Alpha Radio')).toBeNull();
+    vi.advanceTimersByTime(300);
+
+    expect(onFiltersChangeMock).toHaveBeenCalledWith(
+      expect.objectContaining({ searchQuery: 'bravo' })
+    );
+    vi.useRealTimers();
   });
 
-  it('filters feeds by search bar input (tag match)', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false });
+  it('calls onFiltersChange when search bar input is updated (tag match)', () => {
+    vi.useFakeTimers();
+    const onFiltersChangeMock = vi.fn();
+    renderFeedTable({
+      feeds: mockFeeds,
+      isLoading: false,
+      onFiltersChange: onFiltersChangeMock,
+    });
 
     const searchInput = screen.getByPlaceholderText(/Search feeds\.\.\./i);
     fireEvent.change(searchInput, { target: { value: 'marin' } });
 
-    expect(screen.getByText('Alpha Radio')).toBeTruthy();
-    expect(screen.queryByText('Bravo Scanner')).toBeNull();
+    vi.advanceTimersByTime(300);
+
+    expect(onFiltersChangeMock).toHaveBeenCalledWith(
+      expect.objectContaining({ searchQuery: 'marin' })
+    );
+    vi.useRealTimers();
   });
 
   it('sorts feeds by name clicking the header sort label', () => {
@@ -239,8 +259,14 @@ describe('FeedTable', () => {
     }
   });
 
-  it('displays grouped tags and applies tag filtering', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false });
+  it('displays grouped tags and calls onFiltersChange on selection', () => {
+    vi.useFakeTimers();
+    const onFiltersChangeMock = vi.fn();
+    renderFeedTable({
+      feeds: mockFeeds,
+      isLoading: false,
+      onFiltersChange: onFiltersChangeMock,
+    });
 
     const tagsInput = screen.getByLabelText('Tags');
     fireEvent.focus(tagsInput);
@@ -252,39 +278,26 @@ describe('FeedTable', () => {
     expect(within(listbox).getByText('Agency')).toBeTruthy();
 
     const countyOption = within(listbox).getByText('Marin');
-    const agencyOption = within(listbox).getByText('Fire');
-    expect(countyOption).toBeTruthy();
-    expect(agencyOption).toBeTruthy();
-
     fireEvent.click(countyOption);
 
-    expect(screen.getByText('Alpha Radio')).toBeTruthy();
-    expect(screen.queryByText('Bravo Scanner')).toBeNull();
+    vi.advanceTimersByTime(300);
 
-    expect(screen.getByText('Showing 1 of 2 feeds')).toBeTruthy();
-
-    fireEvent.click(agencyOption);
-
-    expect(screen.getByText('Alpha Radio')).toBeTruthy();
-    expect(screen.queryByText('Bravo Scanner')).toBeNull();
-
-    fireEvent.click(countyOption);
-
-    expect(screen.getByText('Alpha Radio')).toBeTruthy();
-    expect(screen.queryByText('Bravo Scanner')).toBeNull();
-
-    const clearButton = within(tagsInput.parentElement!).getByRole('button', {
-      name: 'Clear',
-    });
-    fireEvent.click(clearButton);
-
-    expect(screen.getByText('Alpha Radio')).toBeTruthy();
-    expect(screen.getByText('Bravo Scanner')).toBeTruthy();
-    expect(screen.queryByText('Showing 1 of 2 feeds')).toBeNull();
+    expect(onFiltersChangeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tags: [{ key: 'County', value: 'Marin' }],
+      })
+    );
+    vi.useRealTimers();
   });
 
-  it('filters feeds by status', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false });
+  it('calls onFiltersChange when status filter is selected', () => {
+    vi.useFakeTimers();
+    const onFiltersChangeMock = vi.fn();
+    renderFeedTable({
+      feeds: mockFeeds,
+      isLoading: false,
+      onFiltersChange: onFiltersChangeMock,
+    });
 
     const statusInput = screen.getByLabelText('Status');
     fireEvent.focus(statusInput);
@@ -293,12 +306,24 @@ describe('FeedTable', () => {
     const activeOption = screen.getByRole('option', { name: 'Active' });
     fireEvent.click(activeOption);
 
-    expect(screen.getByText('Alpha Radio')).toBeTruthy();
-    expect(screen.queryByText('Bravo Scanner')).toBeNull();
+    vi.advanceTimersByTime(300);
+
+    expect(onFiltersChangeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statuses: ['Active'],
+      })
+    );
+    vi.useRealTimers();
   });
 
-  it('filters feeds by source type', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false });
+  it('calls onFiltersChange when source type filter is selected', () => {
+    vi.useFakeTimers();
+    const onFiltersChangeMock = vi.fn();
+    renderFeedTable({
+      feeds: mockFeeds,
+      isLoading: false,
+      onFiltersChange: onFiltersChangeMock,
+    });
 
     const sourceTypesInput = screen.getByLabelText('Source Type');
     fireEvent.focus(sourceTypesInput);
@@ -307,8 +332,14 @@ describe('FeedTable', () => {
     const bcfyOption = screen.getByRole('option', { name: 'bcfy_feeds' });
     fireEvent.click(bcfyOption);
 
-    expect(screen.getByText('Alpha Radio')).toBeTruthy();
-    expect(screen.queryByText('Bravo Scanner')).toBeNull();
+    vi.advanceTimersByTime(300);
+
+    expect(onFiltersChangeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceTypes: ['bcfy_feeds'],
+      })
+    );
+    vi.useRealTimers();
   });
 
   it('does not duplicate group headers for tags in the dropdown', () => {
