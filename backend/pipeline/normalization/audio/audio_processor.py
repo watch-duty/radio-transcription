@@ -211,7 +211,6 @@ class AudioProcessor:
         if duration_ms is None:
             duration_ms = int(len(samples) / sr * MS_PER_SECOND)
 
-
         return AudioChunkData(
             start_ms=start_ms,
             audio=samples,
