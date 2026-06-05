@@ -56,7 +56,7 @@ export function RuleRow({
       );
     }
     if (conditions.evaluationType === 'REGEX_MATCH') {
-      const flagsStr = conditions.flags ? `/${conditions.flags}` : '/';
+      const label = `/${conditions.expression}/${conditions.flags || ''}`;
       return (
         <Box
           sx={{
@@ -66,25 +66,10 @@ export function RuleRow({
             gap: 0.5,
           }}
         >
-          <Typography variant="caption" color="text.secondary" sx={{ mr: 0.5 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ mr: 0.5 }}>
             Regex:
           </Typography>
-          <Typography
-            variant="body2"
-            sx={{
-              fontFamily: 'monospace',
-              wordBreak: 'break-all',
-              bgcolor: 'action.hover',
-              px: 1,
-              py: 0.25,
-              borderRadius: 1,
-              display: 'inline-block',
-              width: 'fit-content',
-            }}
-          >
-            /{conditions.expression}
-            {flagsStr}
-          </Typography>
+          <Chip label={label} size="small" sx={{ fontFamily: 'monospace' }} />
         </Box>
       );
     }
@@ -98,7 +83,7 @@ export function RuleRow({
             gap: 0.5,
           }}
         >
-          <Typography variant="caption" color="text.secondary" sx={{ mr: 0.5 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ mr: 0.5 }}>
             Rule Group ({conditions.operator}):
           </Typography>
           {conditions.childRuleIds.map((id) => {
