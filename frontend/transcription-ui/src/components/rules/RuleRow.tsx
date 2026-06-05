@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+
 import EditIcon from '@mui/icons-material/Edit';
 import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
@@ -5,31 +7,94 @@ import Chip from '@mui/material/Chip';
 import IconButton from '@mui/material/IconButton';
 import TableCell from '@mui/material/TableCell';
 import Typography from '@mui/material/Typography';
-import type { Feed, Rule, RuleConditions } from '@transcription/common';
+import type { Feed, Rule } from '@transcription/common';
 
 export interface RuleRowProps {
   rule: Rule;
   feedMap: Map<string, Feed>;
+  ruleMap: Map<string, Rule>;
   editingRuleId?: string;
   allowEdit: boolean;
   onEditRule?: (rule: Rule) => void;
   isSubmitting?: boolean;
-  formatConditionsSummary: (conditions: RuleConditions) => string;
 }
 
 export function RuleRow({
   rule,
   feedMap,
+  ruleMap,
   editingRuleId,
   allowEdit,
   onEditRule,
   isSubmitting = false,
-  formatConditionsSummary,
 }: RuleRowProps) {
   const isEditing = editingRuleId === rule.ruleId;
   const targetFeedNames = rule.scope.targetFeeds
     .map((id) => feedMap.get(id)?.name || id)
     .join(', ');
+
+  const renderConditions = (): ReactNode => {
+    const { conditions } = rule;
+    if (conditions.evaluationType === 'KEYWORD_MATCH') {
+      const caseStr = conditions.caseSensitive ? ' (case-sensitive)' : '';
+      return (
+        <Box
+          sx={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            gap: 0.5,
+          }}
+        >
+          <Typography variant="body2" color="text.secondary" sx={{ mr: 0.5 }}>
+            Keywords ({conditions.operator}){caseStr}:
+          </Typography>
+          {conditions.keywords.map((kw, idx) => (
+            <Chip key={idx} label={kw} size="small" />
+          ))}
+        </Box>
+      );
+    }
+    if (conditions.evaluationType === 'REGEX_MATCH') {
+      const label = `/${conditions.expression}/${conditions.flags || ''}`;
+      return (
+        <Box
+          sx={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            gap: 0.5,
+          }}
+        >
+          <Typography variant="body2" color="text.secondary" sx={{ mr: 0.5 }}>
+            Regex:
+          </Typography>
+          <Chip label={label} size="small" sx={{ fontFamily: 'monospace' }} />
+        </Box>
+      );
+    }
+    if (conditions.evaluationType === 'RULE_GROUP') {
+      return (
+        <Box
+          sx={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            gap: 0.5,
+          }}
+        >
+          <Typography variant="body2" color="text.secondary" sx={{ mr: 0.5 }}>
+            Rule Group ({conditions.operator}):
+          </Typography>
+          {conditions.childRuleIds.map((id) => {
+            const childName = ruleMap.get(id)?.ruleName || id;
+            return <Chip key={id} label={childName} size="small" />;
+          })}
+        </Box>
+      );
+    }
+    return null;
+  };
 
   return (
     <>
@@ -105,12 +170,7 @@ export function RuleRow({
           minWidth: 0,
         }}
       >
-        <Typography
-          variant="body2"
-          sx={{ fontFamily: 'monospace', wordBreak: 'break-all' }}
-        >
-          {formatConditionsSummary(rule.conditions)}
-        </Typography>
+        {renderConditions()}
       </TableCell>
 
       <TableCell
