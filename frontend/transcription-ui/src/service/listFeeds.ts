@@ -1,3 +1,4 @@
+import { mapFeedStatusToBackendStatuses } from '@transcription/common';
 import type { Feed, ListFeedsResponse } from '@transcription/common';
 
 import { apiFetch } from '../utils/apiUtils';
@@ -23,17 +24,9 @@ export async function listFeedsPage(
     queryParams.append('sourceTypes', params.sourceTypes.join(','));
   }
   if (params?.statuses && params.statuses.length > 0) {
-    const backendStatuses: string[] = [];
-    for (const status of params.statuses) {
-      const s = status.toLowerCase();
-      if (s === 'active') {
-        backendStatuses.push('active');
-      } else if (s === 'error') {
-        backendStatuses.push('failing', 'quarantined');
-      } else if (s === 'inactive') {
-        backendStatuses.push('unclaimed', 'deactivated');
-      }
-    }
+    const backendStatuses = params.statuses.flatMap((status) =>
+      mapFeedStatusToBackendStatuses(status)
+    );
     if (backendStatuses.length > 0) {
       queryParams.append('statuses', backendStatuses.join(','));
     }

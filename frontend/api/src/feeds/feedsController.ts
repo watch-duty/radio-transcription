@@ -2,12 +2,11 @@ import type {
   BackendFeedStatus,
   Feed,
   FeedCreate,
-  FeedStatus,
   FeedUpdate,
   ListFeedsResponse,
   Tag,
 } from '@transcription/common';
-import { SourceType } from '@transcription/common';
+import { SourceType, convertFeedStatusBackend } from '@transcription/common';
 import {
   Body,
   Controller,
@@ -119,19 +118,6 @@ function getArchiveUrl(
     }
     default:
       return undefined;
-  }
-}
-
-function convertFeedStatusBackend(status: BackendFeedStatus): FeedStatus {
-  switch (status) {
-    case 'active':
-      return 'active';
-    case 'quarantined':
-    case 'failing':
-      return 'error';
-    case 'deactivated':
-    default:
-      return 'inactive';
   }
 }
 
