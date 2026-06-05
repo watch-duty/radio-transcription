@@ -115,6 +115,7 @@ evidence came from without carrying high-cardinality data:
 | Reason pattern | Use when |
 |----------------|----------|
 | `item_http_<status>` | A discrete downloaded item, media file, call recording, or object fails with a terminal HTTP status. |
+| `item_download_failed` | A discrete item download exhausts retries without terminal HTTP status evidence, such as repeated connection drops or timeouts. |
 | `calls_api_http_<status>` | Broadcastify Calls API or metadata endpoint status is terminal after its retry policy. |
 | `fn_api_http_<status>` | Fire Notifications poll/list endpoint status is terminal after its retry policy. |
 | `stream_http_<status>` | A direct stream endpoint or same-endpoint probe returns a terminal HTTP status. |

@@ -134,6 +134,28 @@ class TestDownloadM4a(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(failure.reason, "item_http_503")
         self.assertEqual(self.session.get.call_count, 3)
 
+    @patch(f"{_COL_MOD}._sleep_or_shutdown", new_callable=AsyncMock)
+    async def test_network_errors_exhausted_return_item_failure(
+        self,
+        mock_sleep: AsyncMock,
+    ) -> None:
+        mock_sleep.return_value = False
+        self.session.get = AsyncMock(side_effect=TimeoutError)
+
+        result = await _download_m4a(
+            self.session,
+            "https://media2.openmhz.com/test.m4a",
+            self.shutdown,
+        )
+
+        failure = _require_item_failure(result)
+        self.assertIs(
+            failure.status_reason,
+            FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+        self.assertEqual(failure.reason, "item_download_failed")
+        self.assertEqual(self.session.get.call_count, 3)
+
 
 class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
     @patch(f"{_COL_MOD}.websocket_transport")

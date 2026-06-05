@@ -152,7 +152,10 @@ async def _download_audio(
         )
         if classification is not None:
             return ItemFailure.from_classification(classification)
-    return None
+    return ItemFailure(
+        feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+        "item_download_failed",
+    )
 
 
 def _get_channel_timezone(channel_key: str) -> ZoneInfo:
@@ -249,6 +252,7 @@ async def _process_file_list(
         if isinstance(audio_result, ItemFailure):
             outcome.record_failure(audio_result)
             if not shutdown_event.is_set():
+                # SLO: call_download_failed emit — Fire Notifications _download_audio returned a classified failure
                 logger.warning(
                     "FN Audio download classified failure: %s",
                     audio_result.reason,
@@ -263,6 +267,7 @@ async def _process_file_list(
             continue
         if audio_result is None:
             if not shutdown_event.is_set():
+                # SLO: call_download_failed emit — Fire Notifications _download_audio returned None
                 logger.warning(
                     "FN Audio download failed",
                     extra={

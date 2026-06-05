@@ -117,6 +117,30 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
             self.session.get.call_count, collector._DOWNLOAD_MAX_RETRIES
         )
 
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_network_errors_exhausted_return_item_failure(
+        self, mock_sleep: MagicMock
+    ) -> None:
+        mock_sleep.return_value = False
+        self.session.get = AsyncMock(side_effect=TimeoutError)
+
+        result = await collector._download_audio(
+            self.session, "http://url", self.shutdown
+        )
+
+        failure = _require_item_failure(result)
+        self.assertIs(
+            failure.status_reason,
+            FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+        self.assertEqual(failure.reason, "item_download_failed")
+        self.assertEqual(
+            self.session.get.call_count, collector._DOWNLOAD_MAX_RETRIES
+        )
+
 
 class TestPollStatusClassification(unittest.TestCase):
     def test_poll_4xx_maps_to_configuration_invalid(self) -> None:

@@ -129,7 +129,10 @@ async def _download_m4a(
         )
         if classification is not None:
             return ItemFailure.from_classification(classification)
-    return None
+    return ItemFailure(
+        FeedStatusReason.SOURCE_UNREACHABLE,
+        "item_download_failed",
+    )
 
 
 async def openmhz_collector(  # noqa: PLR0912, PLR0915
