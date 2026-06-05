@@ -954,6 +954,15 @@ class CollectorRuntime:
         Iterates the capture generator, uploads each chunk to GCS, and
         bookmarks progress with fence violation detection.
         """
+        if (
+            not feed.get("id")
+            or not str(feed["id"]).strip()
+            or str(feed["id"]).strip() == "None"
+        ):
+            msg = f"Leased feed '{feed.get('name')}' missing required id"
+            logger.error(msg)
+            raise ValueError(msg)
+
         chunk_seq = 0
         worker_id = self._collector_settings.worker_id
         fencing_token = feed["fencing_token"]
