@@ -6,6 +6,7 @@
 2. Install tools: `mise install`
 3. Optionally activate mise venv: `eval "$(mise activate zsh)"` (see docs above for other options)
 4. Install Docker: `brew install --cask docker`
+5. (Optional) Install Google Cloud SDK (required for hybrid remote development): `brew install --cask google-cloud-sdk`
 
 ## Backend tools
 
@@ -131,9 +132,13 @@ All commands below assume you're running from the top level of the repo.
 
 #### 1a. Install gcloud and sign in
 
-Install the gcloud CLI (https://docs.cloud.google.com/sdk/docs/install-sdk), then:
+Install the gcloud CLI (either via Homebrew on macOS or from the [official installer](https://docs.cloud.google.com/sdk/docs/install-sdk)), then:
 
 ```bash
+# On macOS (optional):
+brew install --cask google-cloud-sdk
+
+# Initialize and log into your Google Account:
 gcloud init                                  # follow prompts; pick the GCP project
 gcloud config set account <your work email>
 gcloud config set project <your project ID>
@@ -189,7 +194,9 @@ gcloud auth application-default login
 
 #### 1e. Install shared frontend dependencies
 
-The `frontend/common` package is consumed by both the API and the UI — build it once before installing either:
+The `frontend/common` package is consumed by both the API and the UI. **Note: This is automatically built and linked under the hood by `mise` tasks when you start the dev server.**
+
+However, if you want to install and build it manually (e.g., to enable IDE type-checking immediately before starting the dev server), run:
 
 ```bash
 yarn --cwd frontend/common install && yarn --cwd frontend/common build

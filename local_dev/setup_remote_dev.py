@@ -32,6 +32,12 @@ def check_adc():
     adc_path = os.path.expanduser(
         "~/.config/gcloud/application_default_credentials.json"
     )
+
+    project_id = get_gcloud_project()
+    service_account = (
+        f"radio-transcription-api-dev@{project_id}.iam.gserviceaccount.com"
+    )
+
     if os.path.exists(adc_path):
         try:
             with open(adc_path) as f:
@@ -41,17 +47,38 @@ def check_adc():
                     and "radio-transcription-api-dev"
                     in data.get("service_account_impersonation_url", "")
                 ):
-                    return
+                    print("Verifying IAM impersonation permissions...")
+                    try:
+                        subprocess.run(
+                            [
+                                "gcloud",
+                                "auth",
+                                "print-access-token",
+                                f"--impersonate-service-account={service_account}",
+                            ],
+                            capture_output=True,
+                            check=True,
+                        )
+                    except subprocess.CalledProcessError:
+                        print(
+                            f"\n[ERROR] You do not have permission to impersonate the service account: {service_account}"
+                        )
+                        print(
+                            "Please ask a GCP Admin to grant your Google account the 'Service Account Token Creator' role (roles/iam.serviceAccountTokenCreator).\n"
+                        )
+                        sys.exit(1)
+                    else:
+                        print("IAM impersonation verified successfully!")
+                        return
         except Exception:
             pass
 
-    project_id = get_gcloud_project()
     print(
         "\n[ERROR] Application Default Credentials (ADC) are missing or not impersonating the dev service account."
     )
     print("To resolve this, please run:")
     print(
-        f"gcloud auth application-default login --impersonate-service-account=radio-transcription-api-dev@{project_id}.iam.gserviceaccount.com\n"
+        f"gcloud auth application-default login --impersonate-service-account={service_account}\n"
     )
     sys.exit(1)
 
@@ -120,6 +147,7 @@ def main():
     api_updates = dict(gcp_env)
     api_updates["ALLOWED_ORIGIN"] = "http://localhost:5173"
     api_updates["API_PUBLIC_URL"] = "http://localhost:5173"
+    api_updates["AUTH_BACKEND"] = "google"
     merge_and_write_env(
         "frontend/api/.env.local",
         api_updates,
