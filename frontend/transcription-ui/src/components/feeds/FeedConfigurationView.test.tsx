@@ -78,7 +78,7 @@ describe('FeedConfigurationView', () => {
     mockOnError.mockClear();
 
     // Default mock for listing feeds
-    vi.mocked(listFeeds).mockImplementation((token, params) => {
+    vi.mocked(listFeeds).mockImplementation((_, params) => {
       let filtered = mockFeeds;
       if (params?.name) {
         const q = params.name.toLowerCase();
