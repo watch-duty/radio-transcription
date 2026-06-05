@@ -40,7 +40,11 @@ jobs:
         run: mise run test:component
 
   e2e-tests:
-    runs-on: ubuntu-latest-8-cores
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        test_lane: ['integration_tests/api/', 'integration_tests/e2e/']
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -81,9 +85,9 @@ jobs:
             -f docker-compose.yml \
             --load
 
-      - name: Run E2E tests
+      - name: Run E2E test shard (${{ matrix.test_lane }})
         run: |
-          docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run -e PYTHONPATH=/app/.venv/lib/python3.13/site-packages:/app --rm integration-tests python -m pytest integration_tests/ --ignore=integration_tests/storage/ -n auto -v -s --log-cli-level=INFO
+          docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run -e PYTHONPATH=/app/.venv/lib/python3.13/site-packages:/app --rm integration-tests python -m pytest ${{ matrix.test_lane }} -n auto -v -s --log-cli-level=INFO
 
       - name: Clean up containers
         if: always()
