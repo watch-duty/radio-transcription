@@ -56,6 +56,10 @@ POLL_INTERVAL_SEC = 0.25  # Polling interval for segment file checks
 STDERR_TAIL_LINES = 30  # Ring buffer size for ffmpeg stderr diagnostics
 
 _STREAM_PROBE_TIMEOUT_SEC = 10
+
+# Stream endpoint semantics differ from item/API endpoints: a stream 404 means
+# the configured mount/feed is currently unavailable, while other 4xx statuses
+# are too ambiguous to classify without preserving the raw ffmpeg/probe reason.
 _ICECAST_STREAM_HTTP_POLICY = http_status.HTTPStatusPolicy(
     exact={
         **http_status.DEFAULT_HTTP_STATUS_POLICY.exact,

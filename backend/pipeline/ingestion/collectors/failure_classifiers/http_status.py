@@ -15,7 +15,14 @@ if TYPE_CHECKING:
 
 @dataclasses.dataclass(frozen=True)
 class HTTPStatusPolicy:
-    """Policy for mapping HTTP status families to feed status reasons."""
+    """Policy for mapping HTTP status families to feed status reasons.
+
+    The policy object is the source of truth for status mappings. Keep
+    source-specific overrides near the collector endpoint they describe so the
+    code explains whether a status came from an API, item download, or stream.
+    Set a family default to ``None`` when that endpoint cannot classify the
+    whole status family safely.
+    """
 
     exact: Mapping[int, feed_store.FeedStatusReason | None] = dataclasses.field(
         default_factory=dict
@@ -40,6 +47,11 @@ DEFAULT_HTTP_STATUS_POLICY = HTTPStatusPolicy(
         }
     ),
 )
+
+# Default terminal HTTP policy for source-owned endpoints. Auth and rate-limit
+# statuses have stable cross-source meaning. Other terminal 4xx/5xx statuses
+# default to source_unreachable through HTTPStatusPolicy family defaults unless
+# a collector narrows the endpoint semantics locally.
 
 
 def classify_http_status(

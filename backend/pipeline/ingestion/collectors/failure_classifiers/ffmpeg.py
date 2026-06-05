@@ -43,7 +43,12 @@ def classify_ffmpeg_failure(
         http_status.DEFAULT_HTTP_STATUS_POLICY
     ),
 ) -> failure_classification.FailureClassification | None:
-    """Classify terminal ffmpeg evidence without running subprocesses."""
+    """Classify terminal ffmpeg evidence without running subprocesses.
+
+    Callers own ffmpeg execution, timeout handling, and same-endpoint probing.
+    This helper only interprets bounded evidence that is safe to expose as a
+    feed reason tag; full stderr stays in logs and must not become a reason.
+    """
     if not timed_out and exit_code in (None, 0):
         return None
 

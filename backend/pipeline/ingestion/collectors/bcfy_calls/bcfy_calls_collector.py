@@ -51,6 +51,10 @@ _AUDIO_FILE_DOWNLOAD_MAX_RETRIES = 3
 _AUDIO_FILE_DOWNLOAD_BACKOFF_BASE_SEC = 1.0
 _MAX_CONSECUTIVE_FAILURES = 10
 _KNOWN_AUDIO_FORMATS = frozenset({"mp3", "m4a", "wav", "ogg", "aac", "flac"})
+
+# This policy is only for the Calls API/metadata endpoint. A 404 here means
+# the configured source group/feed id is not valid for the API, unlike an item
+# media URL 404 that may be a stale object and should stay item-scoped.
 _CALLS_API_HTTP_POLICY = http_status.HTTPStatusPolicy(
     exact={
         **http_status.DEFAULT_HTTP_STATUS_POLICY.exact,
@@ -719,6 +723,9 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
             calls = _extract_calls_from_response(bcfy_calls)
 
             if calls:
+                # One Broadcastify Calls API response page is the observation
+                # boundary: isolated media failures are skipped, but an entire
+                # page of failed attempted call items is promoted.
                 outcome = ItemBatchOutcome()
                 # Sort the page by the API index time `ts` so the per-call
                 # resume cursor advances monotonically; data-loss is then

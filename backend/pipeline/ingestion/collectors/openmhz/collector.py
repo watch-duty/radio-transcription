@@ -168,6 +168,9 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
     transport_factory = _get_transport(transport_name)
 
     consecutive_ws_failures = 0
+    # OpenMHz streams item events continuously, so there is no natural API page
+    # or poll batch. Use a bounded failure window and reset it after any
+    # successful chunk crosses the runtime boundary.
     item_outcome = ItemBatchOutcome()
     item_failure_count = 0
     download_session = AsyncSession()

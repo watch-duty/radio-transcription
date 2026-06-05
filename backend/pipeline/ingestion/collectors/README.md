@@ -129,6 +129,10 @@ collector code. For example, Icecast stream `404` is `source_offline`, while a
 poll endpoint `404` may be invalid configuration and an item URL `404` may be
 only one stale object.
 
+Do not duplicate exact HTTP policy tables in this guide. The `HTTPStatusPolicy`
+instances in code and their tests are the source of truth; this document should
+explain why policies are scoped by endpoint/stage, not restate every mapping.
+
 Reason strings must stay short, bounded, and safe for operator surfaces. Do not
 include URLs, ffmpeg stderr blobs, stack traces, tokens, object IDs, timestamps,
 request bodies, signed URLs, feed IDs, call IDs, or secrets in `reason`.

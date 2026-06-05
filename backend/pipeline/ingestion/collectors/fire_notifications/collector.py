@@ -46,6 +46,10 @@ _DOWNLOAD_MAX_RETRIES = 3
 _DOWNLOAD_BACKOFF_BASE_SEC = 1.0
 _POLL_INTERVAL_SEC = 30.0
 _MAX_CONSECUTIVE_FAILURES = 10
+
+# The poll/list endpoint is configuration-owned: terminal 4xx responses usually
+# mean our channel/path/auth setup is wrong. Per-MP3 download URLs use the
+# default item policy instead because one stale object should not blame the feed.
 _FN_POLL_HTTP_POLICY = http_status.HTTPStatusPolicy(
     exact=http_status.DEFAULT_HTTP_STATUS_POLICY.exact,
     default_4xx=(feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID),
@@ -208,6 +212,9 @@ async def _process_file_list(
     ]
     audio_files.sort(key=lambda x: x.get("name", ""))
 
+    # A Fire Notifications file-list response is the observation boundary:
+    # all eligible attempted MP3s failing is meaningful, but isolated stale or
+    # corrupt files should not mark the feed unhealthy.
     outcome = ItemBatchOutcome()
 
     for f in audio_files:
