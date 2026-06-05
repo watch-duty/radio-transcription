@@ -27,7 +27,7 @@ from backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector impor
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
 )
-from backend.pipeline.ingestion.models import CollectorFailure
+from backend.pipeline.ingestion.models import FeedFailure
 from backend.pipeline.storage.feed_store import (
     FeedStatusReason,
     FeedStore,
@@ -250,7 +250,7 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                     ],
                     "lastPos": 1005,
                 }
-            return None  # triggers shutdown via empty response
+            return None
 
         mock_fetch.side_effect = _fetch_side_effect
         mock_sleep.return_value = False
@@ -450,7 +450,7 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         feed["source_feed_id"] = None
 
         shutdown = asyncio.Event()
-        with self.assertRaises(CollectorFailure) as ctx:
+        with self.assertRaises(FeedFailure) as ctx:
             async for _ in capture_bcfy_calls(
                 feed,
                 shutdown,
