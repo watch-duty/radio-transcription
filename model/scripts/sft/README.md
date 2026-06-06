@@ -54,6 +54,9 @@ python pipeline.py build --datasets echo --round-id 2026-06-01-echo
 python pipeline.py tune --round-id 2026-06-01-echo \
   --base-model gemini-3.1-flash-lite --confirm
 
+# Submit one config-driven Vertex AI Gemini SFT tuning job
+python pipeline.py tune --config /path/to/run.toml --confirm
+
 # Run evaluation on the tuned Gemini model
 python pipeline.py eval --round-id 2026-06-01-echo
 
@@ -61,6 +64,43 @@ python pipeline.py eval --round-id 2026-06-01-echo
 python pipeline.py all --datasets echo --round-id 2026-06-01-echo \
   --base-model gemini-3.1-flash-lite --confirm
 ```
+
+`all --config` is intentionally unsupported in this milestone; use
+`tune --config /path/to/run.toml` for config-driven runs.
+
+## Config-Driven Tune
+
+`tune --config` starts or resumes one supervised fine-tuning job from an
+external TOML file. It does not read or require `datasets.toml`; upstream data
+preparation must provide canonical train, validation, and eval manifests in GCS.
+Real run configs are external run inputs and should not be committed. Commit
+only placeholder examples such as `run_config.example.toml`.
+
+```toml
+round_id = "YYYY-MM-DD-short-description"
+dataset = "dataset-version-name"
+train_manifest_uri = "gs://your-bucket/path/manifests/canonical/train.jsonl"
+validation_manifest_uri = "gs://your-bucket/path/manifests/canonical/validation.jsonl"
+eval_manifest_uri = "gs://your-bucket/path/manifests/canonical/eval.jsonl"
+
+[gcp]
+project = "your-gcp-project"
+bucket = "your-gcs-bucket"
+location = "us-central1"
+
+[sft]
+base_model = "gemini-3.1-flash-lite"
+epoch_count = 6
+adapter_size = "SIXTEEN"
+learning_rate_multiplier = 1.0
+
+[prompts]
+# Optional inline overrides only.
+# system = "..."
+# user = "..."
+```
+
+Supported adapter sizes are: `ONE, TWO, FOUR, EIGHT, SIXTEEN`.
 
 ## Datasets
 
@@ -93,11 +133,29 @@ populated after the cluster-split script runs.
 
 ## Records
 
-Per-run records are written to `results/<round-id>/`:
+Legacy `build`, `tune`, and `eval` write per-run records to `results/<round-id>/`:
 
 - `config.json` — parameters, dataset URIs, job name, tuned model endpoint
 - `wer_summary.{md,json}` — evaluation metrics (base WER, tuned WER, delta, bootstrap CI)
 - `results/ledger.md` — one-row-per-run summary table
+
+For config-driven tune, authoritative records are written to
+`gs://<bucket>/sft/runs/<round-id>/`; local results/<round-id>/ is a mirror/cache only.
+
+```text
+gs://<bucket>/sft/runs/<round-id>/
+  run_config.toml
+  config.json
+  status.json
+  manifests/canonical/train.jsonl
+  manifests/canonical/validation.jsonl
+  manifests/canonical/eval.jsonl
+  model_inputs/gemini/train.jsonl
+  model_inputs/gemini/validation.jsonl
+  preflight/report.json
+  tuning/status.json
+  evals/README.txt
+```
 
 Built training JSONL files are NOT git-committed because they contain proprietary Watch
 Duty Echo transcripts.

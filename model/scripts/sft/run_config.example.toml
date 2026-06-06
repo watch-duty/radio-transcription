@@ -1,0 +1,21 @@
+round_id = "YYYY-MM-DD-short-description"
+dataset = "dataset-version-name"
+train_manifest_uri = "gs://your-bucket/path/manifests/canonical/train.jsonl"
+validation_manifest_uri = "gs://your-bucket/path/manifests/canonical/validation.jsonl"
+eval_manifest_uri = "gs://your-bucket/path/manifests/canonical/eval.jsonl"
+
+[gcp]
+project = "your-gcp-project"
+bucket = "your-gcs-bucket"
+location = "us-central1"
+
+[sft]
+base_model = "gemini-3.1-flash-lite"
+epoch_count = 6
+adapter_size = "SIXTEEN"
+learning_rate_multiplier = 1.0
+
+[prompts]
+# Optional inline overrides only.
+# system = "..."
+# user = "..."

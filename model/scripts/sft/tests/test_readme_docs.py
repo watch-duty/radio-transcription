@@ -46,6 +46,18 @@ class TestGeminiSftReadme(unittest.TestCase):
         self.assertIn("Default local runtime", readme)
         self.assertLess(readme.index("## Runtime"), readme.index("## Local"))
 
+    def test_config_driven_tune_contract_is_documented(self) -> None:
+        readme = _README.read_text()
+
+        self.assertIn(
+            "python pipeline.py tune --config /path/to/run.toml --confirm",
+            readme,
+        )
+        self.assertIn("gs://<bucket>/sft/runs/<round-id>/", readme)
+        self.assertIn("local results/<round-id>/ is a mirror/cache", readme)
+        self.assertIn("all --config", readme)
+        self.assertIn("ONE, TWO, FOUR, EIGHT, SIXTEEN", readme)
+
 
 if __name__ == "__main__":
     unittest.main()
