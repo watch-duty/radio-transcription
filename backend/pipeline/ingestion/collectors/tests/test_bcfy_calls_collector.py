@@ -447,7 +447,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         failure = _require_item_failure(res)
         self.assertIs(
             failure.status_reason,
-            FeedStatusReason.SOURCE_UNREACHABLE,
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
         )
         self.assertEqual(failure.reason, "calls_api_http_400")
 
@@ -559,7 +559,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         )
         failure = _require_item_failure(res)
         self.assertIs(
-            failure.status_reason, FeedStatusReason.SOURCE_UNREACHABLE
+            failure.status_reason, FeedStatusReason.SYSTEM_COLLECTOR_ERROR
         )
         self.assertEqual(failure.reason, "item_http_404")
 

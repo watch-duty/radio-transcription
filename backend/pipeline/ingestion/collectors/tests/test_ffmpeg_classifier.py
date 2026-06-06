@@ -53,7 +53,7 @@ class TestFfmpegClassifier(unittest.TestCase):
 
         self.assertIs(
             classification.status_reason,
-            feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+            feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
         )
         self.assertEqual(classification.reason, "stream_http_404")
 

@@ -79,7 +79,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         failure = _require_item_failure(result)
         self.assertIs(
             failure.status_reason,
-            FeedStatusReason.SOURCE_UNREACHABLE,
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
         )
         self.assertEqual(failure.reason, "item_http_404")
 
