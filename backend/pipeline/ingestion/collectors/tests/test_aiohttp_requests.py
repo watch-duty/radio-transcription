@@ -230,6 +230,26 @@ class TestDownloadItemMedia(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(failure.reason, "item_http_404")
 
+    async def test_empty_success_body_returns_item_failure(self) -> None:
+        self.session.get.return_value = _Response(200, content=b"")
+
+        result = await aiohttp_requests.download_item_media(
+            self.session,
+            "https://media.example.invalid/audio.mp3",
+            self.shutdown,
+            timeout_sec=1.0,
+            max_attempts=3,
+            log_label="test item",
+        )
+
+        self.assertIsInstance(result, ItemFailure)
+        failure = typing.cast("ItemFailure", result)
+        self.assertIs(
+            failure.status_reason,
+            feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        )
+        self.assertEqual(failure.reason, "item_download_failed")
+
     async def test_retryable_status_then_success(self) -> None:
         sleep = mock.AsyncMock(return_value=False)
         self.session.get.side_effect = [

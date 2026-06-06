@@ -290,8 +290,14 @@ async def download_item_media(  # noqa: PLR0911
             async with session.get(url, timeout=timeout) as response:
                 last_status = response.status
                 if response.status == 200:
+                    content = await response.read()
+                    if not content:
+                        return ItemFailure(
+                            fallback_status_reason,
+                            fallback_reason,
+                        )
                     return DownloadedItem(
-                        content=await response.read(),
+                        content=content,
                         headers=_headers_dict(
                             getattr(response, "headers", None)
                         ),
