@@ -7,7 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
-from prompts import PIPELINE_SYSTEM_PROMPT, PIPELINE_USER_PROMPT
+from common.gemini.prompts import (
+    GEMINI_TRANSCRIBE_SYSTEM_PROMPT,
+    GEMINI_TRANSCRIBE_USER_PROMPT,
+)
 
 ADAPTER_SIZES: Final = frozenset({"ONE", "TWO", "FOUR", "EIGHT", "SIXTEEN"})
 
@@ -85,7 +88,9 @@ def load_run_config(path: str | Path) -> RunConfig:
     try:
         raw_toml = source_path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise RunConfigError(f"could not read run config {source_path}: {exc}") from exc
+        raise RunConfigError(
+            f"could not read run config {source_path}: {exc}"
+        ) from exc
 
     try:
         data = tomllib.loads(raw_toml)
@@ -95,9 +100,7 @@ def load_run_config(path: str | Path) -> RunConfig:
     round_id = _required_str(data, "round_id")
     dataset = _required_str(data, "dataset")
     train_manifest_uri = _required_gcs_uri(data, "train_manifest_uri")
-    validation_manifest_uri = _required_gcs_uri(
-        data, "validation_manifest_uri"
-    )
+    validation_manifest_uri = _required_gcs_uri(data, "validation_manifest_uri")
     eval_manifest_uri = _required_gcs_uri(data, "eval_manifest_uri")
 
     gcp = _required_table(data, "gcp")
@@ -119,10 +122,16 @@ def load_run_config(path: str | Path) -> RunConfig:
     if not isinstance(prompts, dict):
         raise RunConfigError("prompts must be a TOML table")
     system_prompt = _resolve_prompt(
-        prompts, key="system", file_key="system_file", default=PIPELINE_SYSTEM_PROMPT
+        prompts,
+        key="system",
+        file_key="system_file",
+        default=GEMINI_TRANSCRIBE_SYSTEM_PROMPT,
     )
     user_prompt = _resolve_prompt(
-        prompts, key="user", file_key="user_file", default=PIPELINE_USER_PROMPT
+        prompts,
+        key="user",
+        file_key="user_file",
+        default=GEMINI_TRANSCRIBE_USER_PROMPT,
     )
 
     paths = _build_paths(gcs_bucket, round_id)
@@ -171,7 +180,9 @@ def _required_gcs_uri(data: dict[str, Any], key: str) -> str:
 def _required_bucket(data: dict[str, Any], key: str) -> str:
     value = _required_str(data, key)
     if value.startswith("gs://") or "/" in value:
-        raise RunConfigError(f"{key} must be a bucket name, not a gs:// URI or path")
+        raise RunConfigError(
+            f"{key} must be a bucket name, not a gs:// URI or path"
+        )
     return value
 
 

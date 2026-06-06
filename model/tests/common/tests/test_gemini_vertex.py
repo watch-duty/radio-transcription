@@ -1,4 +1,4 @@
-"""Tests for common.vertex — no real GCP calls (all genai.Client mocked)."""
+"""Tests for common.gemini.vertex — no real GCP calls (all genai.Client mocked)."""
 
 import builtins
 import importlib.util
@@ -27,14 +27,14 @@ def _make_mock_client(
 
 
 class TestSubmitTuningJob(unittest.TestCase):
-    """Tests for common.vertex.submit_tuning_job."""
+    """Tests for common.gemini.vertex.submit_tuning_job."""
 
-    @unittest.mock.patch("common.vertex.genai")
+    @unittest.mock.patch("common.gemini.vertex.genai")
     def test_defaults_to_gemini_31_flash_lite(self, mock_genai):
         """submit_tuning_job defaults to the current supervised-tuning model."""
         mock_client = _make_mock_client()
         mock_genai.Client.return_value = mock_client
-        from common.vertex import submit_tuning_job
+        from common.gemini.vertex import submit_tuning_job
 
         submit_tuning_job(
             train_uri="gs://b/train.jsonl",
@@ -46,11 +46,11 @@ class TestSubmitTuningJob(unittest.TestCase):
         call_kwargs = mock_client.tunings.tune.call_args.kwargs
         self.assertEqual(call_kwargs["base_model"], "gemini-3.1-flash-lite")
 
-    @unittest.mock.patch("common.vertex.genai")
+    @unittest.mock.patch("common.gemini.vertex.genai")
     def test_returns_job_name_not_endpoint(self, mock_genai):
         """submit_tuning_job returns job.name (str), not endpoint."""
         mock_genai.Client.return_value = _make_mock_client()
-        from common.vertex import submit_tuning_job
+        from common.gemini.vertex import submit_tuning_job
 
         result = submit_tuning_job(
             train_uri="gs://b/train.jsonl",
@@ -62,10 +62,10 @@ class TestSubmitTuningJob(unittest.TestCase):
         self.assertIn("tuningJobs", result)
         self.assertNotIn("endpoints", result)
 
-    @unittest.mock.patch("common.vertex.genai")
+    @unittest.mock.patch("common.gemini.vertex.genai")
     def test_submit_returns_string(self, mock_genai):
         mock_genai.Client.return_value = _make_mock_client()
-        from common.vertex import submit_tuning_job
+        from common.gemini.vertex import submit_tuning_job
 
         result = submit_tuning_job(
             train_uri="gs://bucket/train.jsonl",
@@ -75,11 +75,11 @@ class TestSubmitTuningJob(unittest.TestCase):
         )
         self.assertIsInstance(result, str)
 
-    @unittest.mock.patch("common.vertex.genai")
+    @unittest.mock.patch("common.gemini.vertex.genai")
     def test_submit_does_not_poll(self, mock_genai):
         """submit_tuning_job must NOT call tunings.get (no polling)."""
         mock_genai.Client.return_value = _make_mock_client()
-        from common.vertex import submit_tuning_job
+        from common.gemini.vertex import submit_tuning_job
 
         submit_tuning_job(
             train_uri="gs://b/train.jsonl",
@@ -89,8 +89,8 @@ class TestSubmitTuningJob(unittest.TestCase):
         )
         mock_genai.Client.return_value.tunings.get.assert_not_called()
 
-    @unittest.mock.patch("common.vertex.types")
-    @unittest.mock.patch("common.vertex.genai")
+    @unittest.mock.patch("common.gemini.vertex.types")
+    @unittest.mock.patch("common.gemini.vertex.genai")
     def test_wires_validation_dataset_when_val_uri_provided(
         self, mock_genai, mock_types
     ):
@@ -99,7 +99,7 @@ class TestSubmitTuningJob(unittest.TestCase):
         mock_types.TuningDataset.return_value = "train-dataset"
         mock_types.TuningValidationDataset.return_value = "val-dataset"
         mock_types.CreateTuningJobConfig.side_effect = lambda **kwargs: kwargs
-        from common.vertex import submit_tuning_job
+        from common.gemini.vertex import submit_tuning_job
 
         submit_tuning_job(
             train_uri="gs://b/train.jsonl",
@@ -120,15 +120,15 @@ class TestSubmitTuningJob(unittest.TestCase):
             gcs_uri="gs://b/val.jsonl"
         )
 
-    @unittest.mock.patch("common.vertex.types")
-    @unittest.mock.patch("common.vertex.genai")
+    @unittest.mock.patch("common.gemini.vertex.types")
+    @unittest.mock.patch("common.gemini.vertex.genai")
     def test_wires_adapter_size_two(self, mock_genai, mock_types):
         """Adapter size TWO maps to the google-genai enum string."""
         mock_client = _make_mock_client()
         mock_genai.Client.return_value = mock_client
         mock_types.TuningDataset.return_value = "train-dataset"
         mock_types.CreateTuningJobConfig.side_effect = lambda **kwargs: kwargs
-        from common.vertex import submit_tuning_job
+        from common.gemini.vertex import submit_tuning_job
 
         submit_tuning_job(
             train_uri="gs://b/train.jsonl",
@@ -145,13 +145,13 @@ class TestSubmitTuningJob(unittest.TestCase):
 
 
 class TestPollTuningJob(unittest.TestCase):
-    """Tests for common.vertex.poll_tuning_job."""
+    """Tests for common.gemini.vertex.poll_tuning_job."""
 
-    @unittest.mock.patch("common.vertex.genai")
+    @unittest.mock.patch("common.gemini.vertex.genai")
     def test_poll_returns_endpoint(self, mock_genai):
         """poll_tuning_job polls and returns endpoint."""
         mock_genai.Client.return_value = _make_mock_client()
-        from common.vertex import poll_tuning_job
+        from common.gemini.vertex import poll_tuning_job
 
         result = poll_tuning_job(
             name="projects/p/locations/l/tuningJobs/123",
@@ -160,12 +160,12 @@ class TestPollTuningJob(unittest.TestCase):
         )
         self.assertIn("endpoints", result)
 
-    @unittest.mock.patch("common.vertex.genai")
+    @unittest.mock.patch("common.gemini.vertex.genai")
     def test_poll_raises_on_failed_state(self, mock_genai):
         mock_genai.Client.return_value = _make_mock_client(
             state="JOB_STATE_FAILED"
         )
-        from common.vertex import poll_tuning_job
+        from common.gemini.vertex import poll_tuning_job
 
         with self.assertRaises(RuntimeError):
             poll_tuning_job(
@@ -174,12 +174,12 @@ class TestPollTuningJob(unittest.TestCase):
                 location="us-central1",
             )
 
-    @unittest.mock.patch("common.vertex.genai")
+    @unittest.mock.patch("common.gemini.vertex.genai")
     def test_poll_raises_on_cancelled_state(self, mock_genai):
         mock_genai.Client.return_value = _make_mock_client(
             state="JOB_STATE_CANCELLED"
         )
-        from common.vertex import poll_tuning_job
+        from common.gemini.vertex import poll_tuning_job
 
         with self.assertRaises(RuntimeError):
             poll_tuning_job(
@@ -188,12 +188,12 @@ class TestPollTuningJob(unittest.TestCase):
                 location="us-central1",
             )
 
-    @unittest.mock.patch("common.vertex.genai")
+    @unittest.mock.patch("common.gemini.vertex.genai")
     def test_poll_calls_tunings_get(self, mock_genai):
         """poll_tuning_job must call tunings.get to re-fetch by name."""
         mock_client = _make_mock_client()
         mock_genai.Client.return_value = mock_client
-        from common.vertex import poll_tuning_job
+        from common.gemini.vertex import poll_tuning_job
 
         poll_tuning_job(
             name="projects/p/locations/l/tuningJobs/123",
@@ -204,13 +204,13 @@ class TestPollTuningJob(unittest.TestCase):
             name="projects/p/locations/l/tuningJobs/123"
         )
 
-    @unittest.mock.patch("common.vertex.genai")
+    @unittest.mock.patch("common.gemini.vertex.genai")
     def test_poll_raises_timeout_when_never_terminal(self, mock_genai):
         """poll_tuning_job raises TimeoutError if no terminal state within timeout_hours."""
         mock_genai.Client.return_value = _make_mock_client(
             state="JOB_STATE_RUNNING"
         )
-        from common.vertex import poll_tuning_job
+        from common.gemini.vertex import poll_tuning_job
 
         with self.assertRaises(TimeoutError):
             poll_tuning_job(
@@ -221,8 +221,8 @@ class TestPollTuningJob(unittest.TestCase):
                 timeout_hours=0,
             )
 
-    @unittest.mock.patch("common.vertex.time.sleep")
-    @unittest.mock.patch("common.vertex.genai")
+    @unittest.mock.patch("common.gemini.vertex.time.sleep")
+    @unittest.mock.patch("common.gemini.vertex.genai")
     def test_poll_retries_transient_get_error(self, mock_genai, mock_sleep):
         """poll_tuning_job retries a transient tunings.get failure."""
         mock_client = _make_mock_client()
@@ -232,7 +232,7 @@ class TestPollTuningJob(unittest.TestCase):
             success,
         ]
         mock_genai.Client.return_value = mock_client
-        from common.vertex import poll_tuning_job
+        from common.gemini.vertex import poll_tuning_job
 
         result = poll_tuning_job(
             name="projects/p/locations/l/tuningJobs/123",
@@ -244,13 +244,13 @@ class TestPollTuningJob(unittest.TestCase):
         self.assertEqual(mock_client.tunings.get.call_count, 2)
         mock_sleep.assert_called_once()
 
-    @unittest.mock.patch("common.vertex.genai")
+    @unittest.mock.patch("common.gemini.vertex.genai")
     def test_poll_raises_clear_error_when_endpoint_missing(self, mock_genai):
         """Succeeded tuning jobs should expose a tuned_model endpoint."""
         mock_client = _make_mock_client()
         mock_client.tunings.get.return_value.tuned_model = None
         mock_genai.Client.return_value = mock_client
-        from common.vertex import poll_tuning_job
+        from common.gemini.vertex import poll_tuning_job
 
         with self.assertRaisesRegex(
             RuntimeError, "succeeded but returned no tuned_model.endpoint"
@@ -266,18 +266,18 @@ class TestAdapterEnum(unittest.TestCase):
     """Guard against silent miskeys in _ADAPTER_ENUM."""
 
     def test_enum_contains_required_sizes(self):
-        from common.vertex import _ADAPTER_ENUM
+        from common.gemini.vertex import _ADAPTER_ENUM
 
         for key in ("ONE", "TWO", "FOUR", "EIGHT", "SIXTEEN"):
             self.assertIn(key, _ADAPTER_ENUM, f"Missing adapter size: {key}")
 
     def test_enum_maps_two(self):
-        from common.vertex import _ADAPTER_ENUM
+        from common.gemini.vertex import _ADAPTER_ENUM
 
         self.assertEqual(_ADAPTER_ENUM["TWO"], "ADAPTER_SIZE_TWO")
 
     def test_enum_values_have_adapter_size_prefix(self):
-        from common.vertex import _ADAPTER_ENUM
+        from common.gemini.vertex import _ADAPTER_ENUM
 
         for val in _ADAPTER_ENUM.values():
             self.assertTrue(val.startswith("ADAPTER_SIZE_"), val)
@@ -287,7 +287,13 @@ class TestImportGuard(unittest.TestCase):
     """Test that ImportError is raised when [vertex] extra is absent."""
 
     def test_patch_targets_exist_when_vertex_extra_missing(self):
-        vertex_path = Path(__file__).resolve().parents[1] / "vertex.py"
+        vertex_path = (
+            Path(__file__).resolve().parents[3]
+            / "src"
+            / "common"
+            / "gemini"
+            / "vertex.py"
+        )
         spec = importlib.util.spec_from_file_location(
             "common_vertex_without_genai_for_test", vertex_path
         )
@@ -315,7 +321,7 @@ class TestImportGuard(unittest.TestCase):
         self.assertIsNone(module.types)
 
     def test_require_vertex_raises_when_missing(self):
-        import common.vertex as vmod
+        import common.gemini.vertex as vmod
 
         orig = vmod._VERTEX_MISSING
         try:
@@ -327,10 +333,10 @@ class TestImportGuard(unittest.TestCase):
 
 
 class TestBuildRequest(unittest.TestCase):
-    """Tests for common.vertex.build_request — no GCP calls, pure dict construction."""
+    """Tests for common.gemini.vertex.build_request — no GCP calls, pure dict construction."""
 
     def setUp(self):
-        from common.vertex import (
+        from common.gemini.vertex import (
             GEMINI_GENERATION_CONFIG,
             GEMINI_SAFETY_SETTINGS,
             build_request,
@@ -427,10 +433,81 @@ class TestBuildRequest(unittest.TestCase):
         )
 
 
+class TestParseBatchOutput(unittest.TestCase):
+    def test_parses_camel_case_request_echo(self):
+        from common.gemini.vertex import parse_batch_output
+
+        output = {
+            "request": {
+                "contents": [
+                    {
+                        "parts": [
+                            {
+                                "fileData": {
+                                    "fileUri": "gs://bucket/a.flac",
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            "response": {
+                "candidates": [{"content": {"parts": [{"text": "engine 41"}]}}]
+            },
+        }
+
+        self.assertEqual(
+            parse_batch_output(__import__("json").dumps(output)),
+            {"gs://bucket/a.flac": "engine 41"},
+        )
+
+    def test_parses_snake_case_request_echo(self):
+        import json
+
+        from common.gemini.vertex import parse_batch_output
+
+        output = {
+            "request": {
+                "contents": [
+                    {
+                        "parts": [
+                            {
+                                "file_data": {
+                                    "file_uri": "gs://bucket/a.flac",
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            "response": {
+                "candidates": [{"content": {"parts": [{"text": "engine 41"}]}}]
+            },
+        }
+
+        self.assertEqual(
+            parse_batch_output(json.dumps(output)),
+            {"gs://bucket/a.flac": "engine 41"},
+        )
+
+    def test_skips_status_and_malformed_rows(self):
+        import json
+
+        from common.gemini.vertex import parse_batch_output
+
+        lines = [
+            "{bad json",
+            json.dumps({"status": {"code": 13}, "request": {}}),
+            json.dumps({"request": {}, "response": {}}),
+        ]
+
+        self.assertEqual(parse_batch_output("\n".join(lines)), {})
+
+
 class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
     """Batch inference returns the destination GCS URI."""
 
-    @unittest.mock.patch("common.vertex.genai")
+    @unittest.mock.patch("common.gemini.vertex.genai")
     def test_returns_dest_gcs_uri(self, mock_genai):
         """submit_batch_inference returns cur.dest.gcs_uri, not BatchJobDestination object."""
         mock_dest = unittest.mock.MagicMock()
@@ -445,7 +522,7 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
         mock_client.batches.get.return_value = mock_cur
         mock_genai.Client.return_value = mock_client
 
-        from common.vertex import submit_batch_inference
+        from common.gemini.vertex import submit_batch_inference
 
         result = submit_batch_inference(
             input_uri="gs://bucket/input.jsonl",
@@ -457,7 +534,7 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
         # Must be the string gcs_uri, not the mock object
         self.assertEqual(result, "gs://bucket/output/")
 
-    @unittest.mock.patch("common.vertex.genai")
+    @unittest.mock.patch("common.gemini.vertex.genai")
     def test_falls_back_to_output_uri_when_dest_is_none(self, mock_genai):
         """submit_batch_inference uses output_uri fallback when cur.dest is None."""
         mock_batch_job = unittest.mock.MagicMock()
@@ -470,9 +547,9 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
         mock_client.batches.get.return_value = mock_cur
         mock_genai.Client.return_value = mock_client
 
-        from common.vertex import submit_batch_inference
+        from common.gemini.vertex import submit_batch_inference
 
-        with self.assertLogs("common.vertex", level="WARNING") as logs:
+        with self.assertLogs("common.gemini.vertex", level="WARNING") as logs:
             result = submit_batch_inference(
                 input_uri="gs://bucket/input.jsonl",
                 output_uri="gs://bucket/fallback/",
@@ -486,8 +563,8 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
             "Batch job returned no destination", "\n".join(logs.output)
         )
 
-    @unittest.mock.patch("common.vertex.time.sleep")
-    @unittest.mock.patch("common.vertex.genai")
+    @unittest.mock.patch("common.gemini.vertex.time.sleep")
+    @unittest.mock.patch("common.gemini.vertex.genai")
     def test_batch_poll_retries_transient_get_error(
         self, mock_genai, mock_sleep
     ):
@@ -507,7 +584,7 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
         ]
         mock_genai.Client.return_value = mock_client
 
-        from common.vertex import submit_batch_inference
+        from common.gemini.vertex import submit_batch_inference
 
         result = submit_batch_inference(
             input_uri="gs://bucket/input.jsonl",

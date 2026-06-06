@@ -266,14 +266,16 @@ class TestBootstrapPaired(unittest.TestCase):
 
     def test_non_int_n_resamples_raises_valueerror(self) -> None:
         """The docstring promises ValueError; without the isinstance guard
-        a float would crash with a cryptic TypeError from range() instead."""
+        a float would crash with a cryptic TypeError from range() instead.
+        """
         with self.assertRaises(ValueError):
             bootstrap_paired(["a"], ["a"], ["a"], n_resamples=1.5)
 
     def test_bool_n_resamples_raises_valueerror(self) -> None:
         """`bool` is a subclass of `int`, so True / False would pass a plain
         `isinstance(..., int)` check. Reject them explicitly so
-        `n_resamples=True` can't silently mean "one resample"."""
+        `n_resamples=True` can't silently mean "one resample".
+        """
         with self.assertRaises(ValueError):
             bootstrap_paired(["a"], ["a"], ["a"], n_resamples=True)
 

@@ -1,8 +1,8 @@
-"""Vertex AI audio-SFT JSONL builder and schema validator.
+"""Gemini/Vertex AI audio-SFT JSONL builder and schema validator.
 
-Provides ``build_example`` for the current Vertex AI audio-SFT JSONL schema
-with ``systemInstruction`` sibling of ``contents`` — and ``validate_example`` for local
-schema-shape validation before submitting a paid tuning job.
+Provides ``build_audio_tuning_example`` for the current Gemini audio-SFT JSONL
+schema and ``validate_audio_tuning_example`` for local schema-shape validation
+before submitting a paid tuning job.
 
 No GCP project or bucket constants are defined in this module. All GCP identifiers are
 caller-supplied parameters.
@@ -14,13 +14,13 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def build_example(
+def build_audio_tuning_example(
     audio_uri: str,
     gt_text: str,
     system_prompt: str,
     user_prompt: str,
 ) -> dict[str, Any]:
-    """Build a single Vertex AI audio-SFT JSONL example.
+    """Build a single Gemini/Vertex AI audio-SFT JSONL example.
 
     The caller supplies ``system_prompt`` and ``user_prompt`` so prompt text stays
     centralized instead of being hardcoded here.
@@ -29,9 +29,9 @@ def build_example(
         audio_uri: GCS URI (gs://...) to the audio segment; must be audio/flac.
         gt_text: Ground-truth transcript text.
         system_prompt: Caller-supplied system instruction (e.g. from
-            ``scripts/sft/prompts.py``).
+            ``common.gemini.prompts``).
         user_prompt: Per-turn user instruction (e.g. from
-            ``scripts/sft/prompts.py``).
+            ``common.gemini.prompts``).
 
     Returns:
         A dict matching the current Vertex AI audio-SFT JSONL schema:
@@ -61,14 +61,15 @@ def build_example(
     }
 
 
-def validate_example(example: dict[str, Any]) -> bool:
+def validate_audio_tuning_example(example: dict[str, Any]) -> bool:
     """Return True if the example matches the Vertex AI audio-SFT JSONL schema.
 
-    Validates the shape locally before submitting a paid tuning job.
-    Rejects legacy ``{input_text, output_text}`` and flat ``{prompt, response}`` shapes.
+    Validates the shape locally before submitting a paid tuning job. Rejects
+    legacy ``{input_text, output_text}`` and flat ``{prompt, response}`` shapes.
 
     Args:
-        example: A dict produced by ``build_example`` or parsed from a JSONL line.
+        example: A dict produced by ``build_audio_tuning_example`` or parsed
+            from a JSONL line.
 
     Returns:
         True if the example is correctly shaped, False otherwise.

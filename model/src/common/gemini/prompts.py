@@ -1,23 +1,9 @@
-"""
-Common prompt constants for ASR Speech-LLM evaluations.
-Keeps all baseline prompts synchronized across model evaluation notebooks.
-"""
+"""Canonical Gemini transcription prompts and keyword set."""
 
-COMMON_SYSTEM_PROMPT = (
-    "You are a speech-to-text transcriber for emergency radio traffic. "
-    "Evaluate audio as noisy fire dispatch traffic. "
-    "Transcribe digits grouped together (e.g., 6333) and unit identifiers "
-    "exactly as spoken (e.g., Engine 41). Output strictly the verbatim transcript."
-)
-
-COMMON_USER_INSTRUCTION = (
-    "Transcribe this emergency radio audio verbatim per the rules above."
-)
-
-# Gemini production transcription — canonical source shared by the SFT pipeline
-# (scripts/sft) and the gemini_transcribe_audio eval notebook. SEEDED BYTE-FOR-BYTE
+# Gemini production transcription — canonical source shared by the Gemini SFT
+# workflow and the gemini_transcribe_audio eval notebook. SEEDED BYTE-FOR-BYTE
 # from the notebook Cell 5 SYSTEM_PROMPT (stripped); zero-import, parenthesized
-# concatenation (no triple-quotes) so the drift guard and TEST-03 isolation hold.
+# concatenation (no triple-quotes) so drift guards and import isolation hold.
 GEMINI_TRANSCRIBE_SYSTEM_PROMPT = (
     "Evaluate all audio specifically as VHF/UHF fire-related dispatch radio traffic."
     " The audio likely contains mic clicks, RF static, radio hum, and possibly some"

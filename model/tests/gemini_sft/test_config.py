@@ -5,16 +5,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-_SFT_DIR = str(Path(__file__).resolve().parent.parent)
-_COLABS_DIR = str(
-    Path(__file__).resolve().parent.parent.parent.parent / "colabs"
-)
-if _SFT_DIR not in sys.path:
-    sys.path.insert(0, _SFT_DIR)
-if _COLABS_DIR not in sys.path:
-    sys.path.insert(0, _COLABS_DIR)
+_SRC_DIR = str(Path(__file__).resolve().parents[2] / "src")
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
 
-from run_config import RunConfigError, load_run_config  # noqa: E402
+from gemini_sft.config import RunConfigError, load_run_config  # noqa: E402
 
 
 class TestRunConfig(unittest.TestCase):
@@ -62,7 +57,9 @@ learning_rate_multiplier = {values["learning_rate_multiplier"]}
 {values["prompts"]}
 """
 
-    def test_valid_minimal_toml_resolves_required_fields_and_paths(self) -> None:
+    def test_valid_minimal_toml_resolves_required_fields_and_paths(
+        self,
+    ) -> None:
         cfg = load_run_config(self._write_config(self._valid_toml()))
 
         self.assertEqual(cfg.round_id, "round")
@@ -74,8 +71,12 @@ learning_rate_multiplier = {values["learning_rate_multiplier"]}
         )
         record = cfg.to_record_dict()
         self.assertEqual(record["datasets"], ["wd-internal"])
-        self.assertEqual(record["combined_train_uri"], cfg.paths.gemini_train_uri)
-        self.assertEqual(record["combined_val_uri"], cfg.paths.gemini_validation_uri)
+        self.assertEqual(
+            record["combined_train_uri"], cfg.paths.gemini_train_uri
+        )
+        self.assertEqual(
+            record["combined_val_uri"], cfg.paths.gemini_validation_uri
+        )
 
     def test_missing_validation_manifest_uri_raises(self) -> None:
         body = self._valid_toml(validation_manifest_uri='""')

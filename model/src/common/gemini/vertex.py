@@ -20,10 +20,11 @@ Important behavior:
 - Raises ``RuntimeError`` on non-success terminal state (library code, not CLI — no sys.exit)
 - No GCP project or bucket constants are defined at module level.
 
-``google-genai`` is deferred behind the ``[vertex]`` extra so ``import common.vertex``
-succeeds with only the light core installed.
+``google-genai`` is deferred behind the ``[vertex]`` extra so
+``import common.gemini.vertex`` succeeds with only the light core installed.
 """
 
+import json
 import logging
 import time
 from typing import Any
@@ -93,6 +94,77 @@ def build_request(
     }
 
 
+def parse_batch_output(text: str) -> dict[str, str]:
+    """Parse Vertex Gemini batch output JSONL into ``{audio_uri: prediction}``.
+
+    Vertex echoes the original request in batch output. Current outputs use
+    camelCase for echoed request fields even when callers submit snake_case, so
+    this parser accepts both shapes. Error/status rows, malformed JSONL rows,
+    and output rows without an identifiable audio URI are skipped.
+    """
+    result: dict[str, str] = {}
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            logger.warning("Skipping malformed batch output JSONL row")
+            continue
+        if not isinstance(obj, dict):
+            continue
+        if obj.get("status") or not isinstance(obj.get("request"), dict):
+            continue
+        uri = _extract_request_audio_uri(obj["request"])
+        if not uri:
+            continue
+        result[uri] = _extract_prediction_text(obj.get("response"))
+    return result
+
+
+def _extract_request_audio_uri(request: dict[str, Any]) -> str | None:
+    contents = request.get("contents", [])
+    if not isinstance(contents, list) or not contents:
+        return None
+    first_content = contents[0]
+    if not isinstance(first_content, dict):
+        return None
+    parts = first_content.get("parts", [])
+    if not isinstance(parts, list):
+        return None
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        file_data = part.get("file_data") or part.get("fileData")
+        if not isinstance(file_data, dict):
+            continue
+        candidate = file_data.get("file_uri") or file_data.get("fileUri")
+        if isinstance(candidate, str) and candidate:
+            return candidate
+    return None
+
+
+def _extract_prediction_text(response: Any) -> str:
+    if not isinstance(response, dict):
+        return ""
+    candidates = response.get("candidates", [])
+    if not isinstance(candidates, list) or not candidates:
+        return ""
+    first_candidate = candidates[0]
+    if not isinstance(first_candidate, dict):
+        return ""
+    content = first_candidate.get("content", {})
+    if not isinstance(content, dict):
+        return ""
+    parts = content.get("parts", [])
+    if not isinstance(parts, list):
+        return ""
+    for part in parts:
+        if isinstance(part, dict) and isinstance(part.get("text"), str):
+            return part["text"]
+    return ""
+
+
 try:
     from google import genai
     from google.genai import types
@@ -147,7 +219,8 @@ def _require_vertex() -> None:
     """Raise a clear error if the [vertex] extra is not installed."""
     if _VERTEX_MISSING:
         raise ImportError(
-            "vertex requires the [vertex] extra: pip install 'common[vertex]'"
+            "vertex requires the [vertex] extra: "
+            "pip install 'radio-transcription-model[vertex]'"
         ) from _VERTEX_MISSING
 
 

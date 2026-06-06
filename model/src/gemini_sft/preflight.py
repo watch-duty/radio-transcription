@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from common.gcs_utils import blob_exists
-from common.sft import validate_example
+from common.gemini.tuning_data import validate_audio_tuning_example
 from google.cloud import storage
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ def _safe_blob_exists(storage_client: storage.Client, uri: str) -> bool:
     this guard a single malformed fileUri would crash ``run_preflight`` before the report
     is written. The hard gate should always write a preflight report.
     A malformed URI is reported downstream as "not reachable" (and also fails
-    validate_example), so the operator still gets a clear, actionable failure.
+    validate_audio_tuning_example), so the operator still gets a clear, actionable failure.
     """
     try:
         return blob_exists(
@@ -141,9 +141,9 @@ def _check_examples(
 ) -> None:
     for i, ex in enumerate(examples):
         ex_id = f"{split}[{i}]"
-        if not validate_example(ex):
+        if not validate_audio_tuning_example(ex):
             report.failures.append(
-                f"{ex_id}: failed validate_example (empty target or malformed schema)"
+                f"{ex_id}: failed validate_audio_tuning_example (empty target or malformed schema)"
             )
             if ex_id not in report.offending_ids:
                 report.offending_ids.append(ex_id)
@@ -182,7 +182,7 @@ def run_preflight(
     Checks:
     1. Non-empty train split (at least 1 example)
     2. If val provided: non-empty val split; disjoint train/val fileUris
-    3. Per-example: validate_example (empty target), estimated token cap, fileUri reachability
+    3. Per-example: validate_audio_tuning_example (empty target), estimated token cap, fileUri reachability
     4. Duplicate fileUri detection in train set
     """
     report = PreflightReport()
@@ -191,7 +191,7 @@ def run_preflight(
     # Load train examples
     train_examples: list[dict[str, Any]] = []
     try:
-        with train_jsonl_path.open() as tf:
+        with train_jsonl_path.open(encoding="utf-8") as tf:
             train_examples = [json.loads(line) for line in tf if line.strip()]
     except Exception as exc:
         report.failures.append(f"Failed to load train JSONL: {exc}")
@@ -224,7 +224,7 @@ def run_preflight(
     val_uris: list[str] = []
     if val_jsonl_path is not None:
         try:
-            with val_jsonl_path.open() as vf:
+            with val_jsonl_path.open(encoding="utf-8") as vf:
                 val_examples = [json.loads(line) for line in vf if line.strip()]
         except Exception as exc:
             report.failures.append(f"Failed to load val JSONL: {exc}")
@@ -255,7 +255,7 @@ def run_preflight(
             batch_pause_seconds=gcs_batch_pause_seconds,
         )
 
-    # Check 3: per-example validate_example + token cap + reachability
+    # Check 3: per-example validate_audio_tuning_example + token cap + reachability
     _check_examples(
         report=report,
         split="train",
@@ -285,7 +285,7 @@ def _write_report(report: PreflightReport, report_path: Path) -> None:
         "failures": report.failures,
         "offending_ids": report.offending_ids,
     }
-    report_path.write_text(json.dumps(report_dict, indent=2))
+    report_path.write_text(json.dumps(report_dict, indent=2), encoding="utf-8")
     if report.passed:
         logger.info(f"Preflight passed. Report: {report_path}")
     else:
