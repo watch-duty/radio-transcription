@@ -60,11 +60,12 @@ class SourceType(enum.StrEnum):
         2. **DB seed** — add a row in
            ``terraform/modules/alloydb/sql/ingestion/002_source_types.sql``
            and ``006_seed_source_types.sql``.
-        3. **Per-type cap registry** — add an entry to
-           ``backend.pipeline.ingestion.settings._DEFAULT_CAPS``. This
-           dict drives ``CollectorSettings.caps``, ``FeedStore``'s
-           generated acquire-batch SQL, and the ``claim_types`` filter on
-           the recovery path. **Skipping this step means VM workers
+        3. **Runtime source spec** — add an entry to
+           ``backend.pipeline.ingestion.source_runtime_specs``. This
+           registry drives ``CollectorSettings.caps``, ``FeedStore``'s
+           generated acquire-batch SQL, topic routing metadata, URL base
+           metadata, and the ``claim_types`` filter on the recovery path.
+           **Skipping this step means VM workers
            will silently never claim feeds of the new type** — neither
            the primary CTE nor the recovery sweep will pick them up.
 
