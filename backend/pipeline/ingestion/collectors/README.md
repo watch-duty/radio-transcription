@@ -7,9 +7,12 @@ policy. The code is still the source of truth:
   `CaptureResources`, `CollectorFn`, and `FeedFailure`.
 - `backend/pipeline/storage/feed_store.py` defines `SourceType` and
   `FeedStatusReason`.
+- `backend/pipeline/ingestion/source_runtime_specs.py` defines data-only
+  source metadata: VM claimability, default caps, URL-base env/default, and
+  topic kind.
 - `backend/pipeline/ingestion/router.py` defines the VM collector registry.
-- `backend/pipeline/ingestion/settings.py` defines which source types the VM
-  fleet claims through `_DEFAULT_CAPS`.
+- `backend/pipeline/ingestion/settings.py` derives VM claim caps from
+  `SourceRuntimeSpec`.
 - `backend/pipeline/ingestion/main.py` enforces the registry/caps invariant at
   startup.
 
@@ -90,6 +93,43 @@ every eligible attempted item in that boundary fails:
 
 The helper for this policy is `ItemBatchOutcome`.
 
+## Request Attempts and Collector Boundaries
+
+Name retry-budget constants as `*_MAX_ATTEMPTS`. The value means total
+attempts, including the first request, not "retries after the first request".
+For the current aiohttp collectors, Broadcastify Calls list/API requests, Fire
+Notifications poll/list requests, and discrete item media downloads use three
+total attempts unless the code documents a source-specific exception. Shared
+aiohttp helpers own retry mechanics for those paths; source-specific
+collectors still supply endpoint policy, payload validation, and item/feed
+escalation.
+
+List/poll endpoints are feed-scoped after their request retry budget is
+exhausted. They should raise typed `FeedFailure` directly, not return
+`ItemFailure`, and not keep local consecutive-failure wrappers. Broadcastify
+Calls and Fire Notifications follow this model for their API/list endpoints.
+Broadcastify Calls refreshes the shared JWT once on a terminal auth response
+and then retries the Calls API request once with the refreshed token; a second
+auth failure is terminal.
+
+Item media downloads are item-scoped. Broadcastify Calls call media, Fire
+Notifications MP3 objects, and OpenMHz M4A objects all return `ItemFailure`
+for classified terminal item failures and use `ItemBatchOutcome` (or OpenMHz's
+continuous item-failure window) to decide whether the feed should be blamed.
+Repeated item transport exceptions without terminal HTTP status evidence use
+the bounded reason `item_download_failed`. Empty `200 OK` item bodies are
+non-failure skips unless the collector code explicitly validates otherwise.
+
+Async aiohttp collectors should reuse `CaptureResources.http_session`; the
+runtime owns session lifecycle and shutdown. OpenMHz is the current
+source-specific exception because its websocket/source transport and Wasabi
+access use `curl_cffi`; it owns and closes that session locally and does not
+use the aiohttp helper layer.
+
+`EVENT_TYPE_CALL_DOWNLOAD_FAILED` is item-download-only. Do not emit it for
+list/poll API failures, JWT failures, websocket reconnect failures, or
+post-capture runtime failures.
+
 ## Failure Classification Model
 
 `FailureClassification` is neutral terminal evidence: a canonical
@@ -129,8 +169,10 @@ evidence came from without carrying high-cardinality data:
 | `capture_timeout` | Stream capture exceeds the collector-owned read timeout. |
 | `mixed_item_failures` | Every attempted item failed, but item failures have mixed canonical reasons. |
 
-The shared HTTP and ffmpeg classifiers are deliberately conservative. When an
-endpoint has source-specific semantics, define a local policy near the
+The shared HTTP and ffmpeg classifiers are deliberately conservative. The
+default HTTP policy treats unmapped 4xx statuses as `system_collector_error`
+because item URLs, API endpoints, and streams use different 4xx semantics.
+When an endpoint has source-specific semantics, define a local policy near the
 collector code. For example, Icecast stream `404` is `source_offline`, while a
 poll endpoint `404` may be invalid configuration and an item URL `404` may be
 only one stale object.
@@ -148,9 +190,9 @@ request bodies, signed URLs, feed IDs, call IDs, or secrets in `reason`.
 1. Add the source type if it is new:
    - add a `SourceType` enum member;
    - add seed data in `terraform/modules/alloydb/sql/ingestion/006_seed_source_types.sql`;
-   - add a `_DEFAULT_CAPS` entry if VM workers should claim it;
-   - add a `_COLLECTORS` entry in `router.py`;
-   - update topic routing if the source is continuous instead of segmented.
+   - add a `SourceRuntimeSpec` entry with claimability, cap, URL metadata, and
+     topic kind;
+   - add a `_COLLECTORS` entry in `router.py` if VM workers should claim it.
 2. Implement the `CollectorFn` signature from `models.py`.
 3. Use `CaptureResources.http_session` for async HTTP. Do not create hidden
    long-lived sessions per feed unless the source-specific transport requires
@@ -164,13 +206,14 @@ request bodies, signed URLs, feed IDs, call IDs, or secrets in `reason`.
    Raise `FeedFailure` only after the source-specific policy says the
    feed-level observation is persistent or systemic.
 7. Use `missing_source_feed_id_failure`, `collector_failure`, and
-   `ItemBatchOutcome` instead of open-coded exception strings and counters.
+   `ItemBatchOutcome` instead of open-coded exception strings and item-batch
+   counters.
 8. Add focused tests beside the collector. Tests should cover chunk success,
    each feed-level `FeedStatusReason` mapping, skip/non-failure paths,
    shutdown behavior, and item-failure aggregation if the collector downloads
    per-item files.
-9. Update router/settings tests if a new source type changes the registry,
-   caps, or topic-routing behavior.
+9. Update source-runtime, router, and settings tests if a new source type
+   changes VM claimability, caps, URL metadata, or topic-routing behavior.
 
 For Echo-like synchronous ingestion, do not register a VM collector. Keep its
 classification in the Cloud Function path and write reasons through

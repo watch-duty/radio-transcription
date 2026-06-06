@@ -64,10 +64,10 @@ class TestHTTPStatusClassifier(unittest.TestCase):
         )
         self.assertEqual(classification.reason, "item_http_429")
 
-    def test_default_terminal_statuses_map_to_source_unreachable(
+    def test_default_transient_statuses_map_to_source_unreachable(
         self,
     ) -> None:
-        for status in (404, 408, 500, 503, 799):
+        for status in (408, 500, 503):
             with self.subTest(status=status):
                 classification = _require_classification(
                     http_status.classify_http_status(
@@ -79,6 +79,27 @@ class TestHTTPStatusClassifier(unittest.TestCase):
                 self.assertIs(
                     classification.status_reason,
                     feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+                )
+                self.assertEqual(
+                    classification.reason,
+                    f"item_http_{status}",
+                )
+
+    def test_default_ambiguous_statuses_map_to_collector_error(
+        self,
+    ) -> None:
+        for status in (400, 404, 409, 410, 799):
+            with self.subTest(status=status):
+                classification = _require_classification(
+                    http_status.classify_http_status(
+                        status,
+                        reason_prefix="item_http",
+                    )
+                )
+
+                self.assertIs(
+                    classification.status_reason,
+                    feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
                 )
                 self.assertEqual(
                     classification.reason,

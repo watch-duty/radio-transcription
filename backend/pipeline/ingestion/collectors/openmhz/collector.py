@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 MAX_RECONNECT_FAILURES = 10
 MAX_ITEM_DOWNLOAD_FAILURES = 10
-_DOWNLOAD_MAX_RETRIES = 3
+_DOWNLOAD_MAX_ATTEMPTS = 3
 _DOWNLOAD_BACKOFF_BASE_SEC = 1.0
 _RECONNECT_BACKOFF_BASE_SEC = 1.0
 _RECONNECT_BACKOFF_CAP_SEC = 30.0
@@ -78,10 +78,10 @@ async def _download_m4a(
     """Download m4a from Wasabi S3 with retries.
 
     Returns audio bytes on success, a classified item failure for terminal
-    HTTP evidence, or ``None`` for unclassified/shutdown failures.
+    HTTP evidence or exhausted network attempts, or ``None`` for shutdown.
     """
     last_status: int | None = None
-    for attempt in range(_DOWNLOAD_MAX_RETRIES):
+    for attempt in range(_DOWNLOAD_MAX_ATTEMPTS):
         try:
             resp = await session.get(url, timeout=30.0)
             last_status = resp.status_code
@@ -104,18 +104,18 @@ async def _download_m4a(
                 "Download %d (attempt %d/%d): url=%s",
                 resp.status_code,
                 attempt + 1,
-                _DOWNLOAD_MAX_RETRIES,
+                _DOWNLOAD_MAX_ATTEMPTS,
                 url,
             )
         except Exception:
             logger.warning(
                 "Download error (attempt %d/%d): url=%s",
                 attempt + 1,
-                _DOWNLOAD_MAX_RETRIES,
+                _DOWNLOAD_MAX_ATTEMPTS,
                 url,
                 exc_info=True,
             )
-        if attempt < _DOWNLOAD_MAX_RETRIES - 1:
+        if attempt < _DOWNLOAD_MAX_ATTEMPTS - 1:
             if await _sleep_or_shutdown(
                 shutdown, _DOWNLOAD_BACKOFF_BASE_SEC * (2**attempt)
             ):

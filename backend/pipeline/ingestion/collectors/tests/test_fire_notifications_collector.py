@@ -7,7 +7,9 @@ import datetime
 import os
 import unittest
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
+
+import aiohttp
 
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemFailure,
@@ -23,6 +25,24 @@ def _require_item_failure(value: ItemFailure | bytes | None) -> ItemFailure:
         msg = f"Expected ItemFailure, got {value!r}"
         raise TypeError(msg)
     return value
+
+
+def _aiohttp_response(
+    status: int,
+    *,
+    content: bytes = b"",
+    payload: object | None = None,
+) -> MagicMock:
+    """Build an aiohttp-style async response context manager for tests."""
+    resp = MagicMock()
+    resp.status = status
+    resp.headers = {}
+    resp.read = AsyncMock(return_value=content)
+    resp.json = AsyncMock(return_value=payload if payload is not None else {})
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=resp)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    return cm
 
 
 class TestParseFilenameTimestamp(unittest.TestCase):
@@ -56,8 +76,9 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         self.shutdown = asyncio.Event()
 
     async def test_success(self) -> None:
-        resp = MagicMock(status_code=200, content=b"audio_data")
-        self.session.get = AsyncMock(return_value=resp)
+        self.session.get.return_value = _aiohttp_response(
+            200, content=b"audio_data"
+        )
 
         data = await collector._download_audio(
             self.session, "http://url", self.shutdown
@@ -65,8 +86,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(data, b"audio_data")
 
     async def test_non_retryable_4xx(self) -> None:
-        resp = MagicMock(status_code=404)
-        self.session.get = AsyncMock(return_value=resp)
+        self.session.get.return_value = _aiohttp_response(404)
 
         result = await collector._download_audio(
             self.session, "http://url", self.shutdown
@@ -74,7 +94,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         failure = _require_item_failure(result)
         self.assertIs(
             failure.status_reason,
-            FeedStatusReason.SOURCE_UNREACHABLE,
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
         )
         self.assertEqual(failure.reason, "item_http_404")
 
@@ -84,10 +104,10 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
     )
     async def test_5xx_retry_success(self, mock_sleep: AsyncMock) -> None:
         mock_sleep.return_value = False
-        resp500 = MagicMock(status_code=500)
-        resp200 = MagicMock(status_code=200, content=b"data")
+        resp500 = _aiohttp_response(500)
+        resp200 = _aiohttp_response(200, content=b"data")
 
-        self.session.get = AsyncMock(side_effect=[resp500, resp200])
+        self.session.get.side_effect = [resp500, resp200]
 
         data = await collector._download_audio(
             self.session, "http://url", self.shutdown
@@ -101,8 +121,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
     )
     async def test_5xx_max_retries_fail(self, mock_sleep: MagicMock) -> None:
         mock_sleep.return_value = False
-        resp500 = MagicMock(status_code=500)
-        self.session.get = AsyncMock(return_value=resp500)
+        self.session.get.return_value = _aiohttp_response(500)
 
         result = await collector._download_audio(
             self.session, "http://url", self.shutdown
@@ -114,7 +133,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(failure.reason, "item_http_500")
         self.assertEqual(
-            self.session.get.call_count, collector._DOWNLOAD_MAX_RETRIES
+            self.session.get.call_count, collector._DOWNLOAD_MAX_ATTEMPTS
         )
 
     @patch(
@@ -125,7 +144,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         self, mock_sleep: MagicMock
     ) -> None:
         mock_sleep.return_value = False
-        self.session.get = AsyncMock(side_effect=TimeoutError)
+        self.session.get.side_effect = TimeoutError
 
         result = await collector._download_audio(
             self.session, "http://url", self.shutdown
@@ -138,7 +157,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(failure.reason, "item_download_failed")
         self.assertEqual(
-            self.session.get.call_count, collector._DOWNLOAD_MAX_RETRIES
+            self.session.get.call_count, collector._DOWNLOAD_MAX_ATTEMPTS
         )
 
 
@@ -434,41 +453,60 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
             "name": "CHAN-feed",
         }
         self.resources = MagicMock()
+        self.resources.http_session = MagicMock()
 
     @patch(
         "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
         new_callable=AsyncMock,
     )
-    @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector.AsyncSession",
-    )
-    async def test_max_consecutive_failures_raises_source_unreachable(
-        self, mock_session_cls: MagicMock, mock_sleep: AsyncMock
+    async def test_poll_transport_failures_raise_after_attempts(
+        self, mock_sleep: AsyncMock
     ) -> None:
-        mock_sleep.return_value = False  # Sleep normally
-        mock_session = mock_session_cls.return_value
-        mock_session.close = AsyncMock()
-        mock_session.get = AsyncMock(
-            side_effect=Exception("Connection failure")
-        )
-
-        collector_generator = collector.fire_notifications_collector(
-            self.feed,  # type: ignore
-            self.shutdown,
-            "http://base",
-            self.resources,
-        )
+        mock_sleep.return_value = False
+        session = self.resources.http_session
+        session.get.side_effect = aiohttp.ClientError("Connection failure")
 
         with self.assertRaises(FeedFailure) as ctx:
-            async for _ in collector_generator:
+            async for _ in collector.fire_notifications_collector(
+                self.feed,  # type: ignore
+                self.shutdown,
+                "http://base",
+                self.resources,
+            ):
                 pass
 
         self.assertIs(
             ctx.exception.status_reason,
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
-        self.assertEqual(str(ctx.exception), "source_unreachable")
-        self.assertEqual(mock_session.get.call_count, 10)
+        self.assertEqual(str(ctx.exception), "fn_api_http_transport_failed")
+        self.assertEqual(session.get.call_count, collector._POLL_MAX_ATTEMPTS)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_poll_transport_retry_success(
+        self, mock_sleep: AsyncMock
+    ) -> None:
+        mock_sleep.side_effect = [False, True]
+        session = self.resources.http_session
+        session.get.side_effect = [
+            aiohttp.ClientError("Connection failure"),
+            _aiohttp_response(200, payload={"files": []}),
+        ]
+
+        chunks = []
+        async for chunk in collector.fire_notifications_collector(
+            self.feed,  # type: ignore
+            self.shutdown,
+            "http://base",
+            self.resources,
+        ):
+            chunks.append(chunk)
+
+        self.assertEqual(len(chunks), 0)
+        self.assertEqual(session.get.call_count, 2)
 
     async def test_missing_source_feed_id_raises_typed_failure(self) -> None:
         self.feed["source_feed_id"] = None
@@ -510,16 +548,14 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector._MAX_CONSECUTIVE_FAILURES",
-        1,
-    )
-    @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector.AsyncSession",
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
     )
     async def test_poll_http_statuses_raise_typed_failures(
         self,
-        mock_session_cls: MagicMock,
+        mock_sleep: AsyncMock,
     ) -> None:
+        mock_sleep.return_value = False
         cases = [
             (
                 403,
@@ -537,10 +573,9 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
 
         for status, expected_status_reason, expected_reason in cases:
             with self.subTest(status=status):
-                mock_session = mock_session_cls.return_value
-                mock_session.close = AsyncMock()
-                mock_session.get = AsyncMock(
-                    return_value=MagicMock(status_code=status)
+                self.resources.http_session = MagicMock()
+                self.resources.http_session.get.return_value = (
+                    _aiohttp_response(status)
                 )
 
                 with self.assertRaises(FeedFailure) as ctx:
@@ -561,62 +596,12 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
         new_callable=AsyncMock,
     )
-    @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector.AsyncSession",
-    )
-    async def test_successful_poll_resets_consecutive_failures(
-        self, mock_session_cls: MagicMock, mock_sleep: AsyncMock
-    ) -> None:
-        mock_sleep.return_value = False
-
-        mock_session = mock_session_cls.return_value
-        mock_session.close = AsyncMock()
-        resp_fail = Exception("Connection failure")
-        resp_ok = MagicMock(status_code=200)
-        resp_ok.json.return_value = {"files": []}
-
-        # 9 failures, 1 success, 2 failures, then we trigger shutdown to exit gracefully.
-        side_effect = [resp_fail] * 9 + [resp_ok] + [resp_fail] * 2
-
-        async def sleep_side_effect(event, duration):
-            if mock_sleep.call_count >= 11:
-                self.shutdown.set()
-            return False
-
-        mock_sleep.side_effect = sleep_side_effect
-        mock_session.get = AsyncMock(side_effect=side_effect)
-
-        collector_generator = collector.fire_notifications_collector(
-            self.feed,  # type: ignore
-            self.shutdown,
-            "http://base",
-            self.resources,
-        )
-
-        chunks = []
-        async for chunk in collector_generator:
-            chunks.append(chunk)
-
-        self.assertEqual(len(chunks), 0)
-        self.assertEqual(mock_session.get.call_count, 11)
-
-    @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
-        new_callable=AsyncMock,
-    )
-    @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector.AsyncSession",
-    )
     async def test_polling_passes_authorization_header(
-        self, mock_session_cls: MagicMock, mock_sleep: AsyncMock
+        self, mock_sleep: AsyncMock
     ) -> None:
         mock_sleep.return_value = True  # Trigger immediate exit from loop
-        mock_session = mock_session_cls.return_value
-        mock_session.close = AsyncMock()
-
-        resp_ok = MagicMock(status_code=200)
-        resp_ok.json.return_value = {"files": []}
-        mock_session.get = AsyncMock(return_value=resp_ok)
+        session = self.resources.http_session
+        session.get.return_value = _aiohttp_response(200, payload={"files": []})
 
         collector_generator = collector.fire_notifications_collector(
             self.feed,  # type: ignore
@@ -629,10 +614,10 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
             pass
 
         expected_auth = base64.b64encode(b"test-user:test-password").decode()
-        mock_session.get.assert_called_once_with(
+        session.get.assert_called_once_with(
             "http://base/CHAN",
             headers={"Authorization": f"Basic {expected_auth}"},
-            timeout=10.0,
+            timeout=ANY,
         )
 
 
