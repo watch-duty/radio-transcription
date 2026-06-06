@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from common.gemini.vertex import poll_tuning_job, submit_tuning_job
 from google.cloud import storage
@@ -32,6 +30,10 @@ from gemini_sft.cost import (
 )
 from gemini_sft.prepare import prepare_run
 
+if TYPE_CHECKING:
+    import argparse
+    from pathlib import Path
+
 logger = logging.getLogger(__name__)
 RESULTS_DIR = DEFAULT_RESULTS_DIR
 
@@ -55,8 +57,12 @@ def tune(args: argparse.Namespace) -> int:
         RuntimeError,
         TimeoutError,
     ) as exc:
-        logger.error(str(exc))
-        return 1
+        return _log_cli_error(exc)
+
+
+def _log_cli_error(exc: Exception) -> int:
+    logger.error(str(exc))
+    return 1
 
 
 def tune_run(
@@ -107,7 +113,7 @@ def tune_run(
         base_model=run_cfg.base_model,
         basis=basis,
     )
-    if rc := confirm_tune_cost(getattr(args, "confirm", False)):
+    if rc := confirm_tune_cost(confirm=getattr(args, "confirm", False)):
         return rc
     return submit_prepared_tune(run_cfg, storage_client, results_dir, config)
 

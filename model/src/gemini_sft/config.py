@@ -88,14 +88,14 @@ def load_run_config(path: str | Path) -> RunConfig:
     try:
         raw_toml = source_path.read_text(encoding="utf-8")
     except OSError as exc:
-        raise RunConfigError(
-            f"could not read run config {source_path}: {exc}"
-        ) from exc
+        msg = f"could not read run config {source_path}: {exc}"
+        raise RunConfigError(msg) from exc
 
     try:
         data = tomllib.loads(raw_toml)
     except tomllib.TOMLDecodeError as exc:
-        raise RunConfigError(f"could not parse TOML run config: {exc}") from exc
+        msg = f"could not parse TOML run config: {exc}"
+        raise RunConfigError(msg) from exc
 
     round_id = _required_str(data, "round_id")
     dataset = _required_str(data, "dataset")
@@ -120,7 +120,8 @@ def load_run_config(path: str | Path) -> RunConfig:
     if prompts is None:
         prompts = {}
     if not isinstance(prompts, dict):
-        raise RunConfigError("prompts must be a TOML table")
+        msg = "prompts must be a TOML table"
+        raise RunConfigError(msg)
     system_prompt = _resolve_prompt(
         prompts,
         key="system",
@@ -159,56 +160,60 @@ def load_run_config(path: str | Path) -> RunConfig:
 def _required_table(data: dict[str, Any], key: str) -> dict[str, Any]:
     value = data.get(key)
     if not isinstance(value, dict):
-        raise RunConfigError(f"missing required [{key}] table")
+        msg = f"missing required [{key}] table"
+        raise RunConfigError(msg)
     return value
 
 
 def _required_str(data: dict[str, Any], key: str) -> str:
     value = _lookup(data, key)
     if not isinstance(value, str) or not value.strip():
-        raise RunConfigError(f"missing required string field: {key}")
+        msg = f"missing required string field: {key}"
+        raise RunConfigError(msg)
     return value.strip()
 
 
 def _required_gcs_uri(data: dict[str, Any], key: str) -> str:
     value = _required_str(data, key)
     if not value.startswith("gs://"):
-        raise RunConfigError(f"{key} must be a gs:// URI")
+        msg = f"{key} must be a gs:// URI"
+        raise RunConfigError(msg)
     return value
 
 
 def _required_bucket(data: dict[str, Any], key: str) -> str:
     value = _required_str(data, key)
     if value.startswith("gs://") or "/" in value:
-        raise RunConfigError(
-            f"{key} must be a bucket name, not a gs:// URI or path"
-        )
+        msg = f"{key} must be a bucket name, not a gs:// URI or path"
+        raise RunConfigError(msg)
     return value
 
 
 def _required_positive_int(data: dict[str, Any], key: str) -> int:
     value = _lookup(data, key)
     if not isinstance(value, int) or value <= 0:
-        raise RunConfigError(f"{key} must be a positive integer")
+        msg = f"{key} must be a positive integer"
+        raise RunConfigError(msg)
     return value
 
 
 def _required_adapter_size(data: dict[str, Any], key: str) -> str:
     value = _required_str(data, key).upper()
     if value not in ADAPTER_SIZES:
-        raise RunConfigError(
-            f"{key} must be one of {', '.join(sorted(ADAPTER_SIZES))}"
-        )
+        msg = f"{key} must be one of {', '.join(sorted(ADAPTER_SIZES))}"
+        raise RunConfigError(msg)
     return value
 
 
 def _required_lr_multiplier(data: dict[str, Any], key: str) -> float:
     value = _lookup(data, key)
     if not isinstance(value, (float, int)) or isinstance(value, bool):
-        raise RunConfigError(f"{key} must be a number")
+        msg = f"{key} must be a number"
+        raise RunConfigError(msg)
     lr_multiplier = float(value)
     if not 0.001 <= lr_multiplier <= 10.0:
-        raise RunConfigError(f"{key} must be between 0.001 and 10.0")
+        msg = f"{key} must be between 0.001 and 10.0"
+        raise RunConfigError(msg)
     return lr_multiplier
 
 
@@ -216,12 +221,15 @@ def _resolve_prompt(
     prompts: dict[str, Any], *, key: str, file_key: str, default: str
 ) -> str:
     if file_key in prompts:
-        raise RunConfigError(f"prompts.{file_key} is not supported yet")
+        msg = f"prompts.{file_key} is not supported yet"
+        raise RunConfigError(msg)
     value = prompts.get(key, default)
     if not isinstance(value, str) or not value.strip():
-        raise RunConfigError(f"prompts.{key} must be a non-empty string")
+        msg = f"prompts.{key} must be a non-empty string"
+        raise RunConfigError(msg)
     if value.startswith("@"):
-        raise RunConfigError(f"prompts.{key} supports inline text only")
+        msg = f"prompts.{key} supports inline text only"
+        raise RunConfigError(msg)
     return value
 
 

@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 try:
     import torch
     import torchaudio
-    import torchaudio.transforms as T
+    from torchaudio import transforms
 except ImportError as _e:
     _AUDIO_MISSING = _e
 else:
@@ -25,9 +25,8 @@ else:
 def _require_audio() -> None:
     """Raise a clear error if the [audio] extra is not installed."""
     if _AUDIO_MISSING:
-        raise ImportError(
-            "audio_utils requires the [audio] extra: pip install 'common[audio]'"
-        ) from _AUDIO_MISSING
+        msg = "audio_utils requires the [audio] extra: pip install 'common[audio]'"
+        raise ImportError(msg) from _AUDIO_MISSING
 
 
 def preprocess_audio_for_model(
@@ -60,12 +59,13 @@ def preprocess_audio_for_model(
 
         # Resample if necessary
         if sr != target_sr:
-            resampler = T.Resample(orig_freq=sr, new_freq=target_sr)
+            resampler = transforms.Resample(orig_freq=sr, new_freq=target_sr)
             waveform = resampler(waveform)
 
         torchaudio.save(output_path, waveform, target_sr)
         logger.info(f"Preprocessed audio saved to {output_path}")
-        return True
     except Exception as e:
-        logger.error(f"Failed to preprocess audio {input_path}: {e}")
+        logger.exception(f"Failed to preprocess audio {input_path}: {e}")
         return False
+    else:
+        return True

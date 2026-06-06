@@ -1,6 +1,6 @@
 """Compatibility shim — re-exports from the split inference modules.
 
-Inference functions are split across three modules on a (model framework ×
+Inference functions are split across three modules on a (model framework x
 data source) axis:
 
 =========================  =========================  ==============================
@@ -18,22 +18,28 @@ Do NOT add eager imports of heavy modules here — that defeats the [hf] extra
 gating. All imports are deferred via ``__getattr__``.
 """
 
+from importlib import import_module
+from typing import Any
 
-def __getattr__(name: str):
-    if name == "run_inference_pipeline":
-        from common.inference_nemo import run_inference_pipeline
+_EXPORTS = {
+    "run_inference_pipeline": (
+        "common.inference_nemo",
+        "run_inference_pipeline",
+    ),
+    "run_huggingface_inference_pipeline": (
+        "common.inference_hf",
+        "run_huggingface_inference_pipeline",
+    ),
+    "run_test_baseline_inference_evaluation": (
+        "common.public_dataset_evaluation",
+        "run_test_baseline_inference_evaluation",
+    ),
+}
 
-        return run_inference_pipeline
-    if name == "run_huggingface_inference_pipeline":
-        from common.inference_hf import run_huggingface_inference_pipeline
 
-        return run_huggingface_inference_pipeline
-    if name == "run_test_baseline_inference_evaluation":
-        from common.public_dataset_evaluation import (
-            run_test_baseline_inference_evaluation,
-        )
-
-        return run_test_baseline_inference_evaluation
-    raise AttributeError(
-        f"module 'common.inference_pipeline_runner' has no attribute {name!r}"
-    )
+def __getattr__(name: str) -> Any:
+    if name in _EXPORTS:
+        module_name, attr_name = _EXPORTS[name]
+        return getattr(import_module(module_name), attr_name)
+    msg = f"module 'common.inference_pipeline_runner' has no attribute {name!r}"
+    raise AttributeError(msg)

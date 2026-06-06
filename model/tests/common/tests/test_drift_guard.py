@@ -8,6 +8,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from common.gemini.prompts import (
+    GEMINI_TRANSCRIBE_SYSTEM_PROMPT,
+    GEMINI_TRANSCRIBE_USER_PROMPT,
+)
+from gemini_sft.config import load_run_config
+
 _MODEL_DIR = Path(__file__).resolve().parents[3]
 _NOTEBOOK = _MODEL_DIR / "colabs" / "gemini_transcribe_audio.ipynb"
 
@@ -40,12 +46,6 @@ def _notebook_imports() -> set[tuple[str | None, str]]:
 class TestDriftGuard(unittest.TestCase):
     def test_gemini_sft_config_defaults_to_runtime_common_prompts(self) -> None:
         """SFT config defaults must source prompts from common.gemini.prompts."""
-        from common.gemini.prompts import (
-            GEMINI_TRANSCRIBE_SYSTEM_PROMPT,
-            GEMINI_TRANSCRIBE_USER_PROMPT,
-        )
-        from gemini_sft.config import load_run_config
-
         with tempfile.TemporaryDirectory() as tmp:
             cfg_path = Path(tmp) / "run.toml"
             cfg_path.write_text(

@@ -1,15 +1,18 @@
-"""NeMo SALM × GCS-manifest ASR inference.
+"""NeMo SALM x GCS-manifest ASR inference.
 
 Iterates a JSONL manifest of GCS-hosted audio segments and runs a NeMo SALM
 model batch by batch. The caller passes the loaded SALM model in (it ships in
 the NeMo container). Requires torch (declared via the [hf] extra).
 """
 
-import os
 import logging
 import tempfile
-from typing import Callable, Any, Optional
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
 from google.cloud import storage
+
 from common.gcs_utils import download_to_scratch
 
 logger = logging.getLogger(__name__)
@@ -25,9 +28,8 @@ else:
 def _require_torch() -> None:
     """Raise a clear error if torch is not installed."""
     if _TORCH_MISSING:
-        raise ImportError(
-            "inference_nemo requires torch: pip install 'common[hf]'"
-        ) from _TORCH_MISSING
+        msg = "inference_nemo requires torch: pip install 'common[hf]'"
+        raise ImportError(msg) from _TORCH_MISSING
 
 
 def run_inference_pipeline(
@@ -40,8 +42,8 @@ def run_inference_pipeline(
     project_name: str,
     selected_model: str,
     batch_size: int = 4,
-    limit: Optional[int] = None,
-    preprocess_fn: Optional[Callable[[str, str], bool]] = None,
+    limit: int | None = None,
+    preprocess_fn: Callable[[str, str], bool] | None = None,
 ) -> list[dict[str, Any]]:
     """Run a batch inference pipeline for a NeMo-compatible model.
 
@@ -93,8 +95,9 @@ def run_inference_pipeline(
 
                     current_path = local_path
                     if preprocess_fn:
-                        preprocessed_path = (
-                            os.path.splitext(local_path)[0] + "_prep.wav"
+                        path = Path(local_path)
+                        preprocessed_path = str(
+                            path.with_name(f"{path.stem}_prep.wav")
                         )
                         if preprocess_fn(local_path, preprocessed_path):
                             current_path = preprocessed_path
@@ -107,7 +110,7 @@ def run_inference_pipeline(
                     batch_entries.append(entry)
                     prompts.append(prompt_fn(entry, current_path))
                 except Exception as e:
-                    logger.error(f"Failed to process {audio_gcs_uri}: {e}")
+                    logger.exception(f"Failed to process {audio_gcs_uri}: {e}")
                     continue
 
             if not prompts:

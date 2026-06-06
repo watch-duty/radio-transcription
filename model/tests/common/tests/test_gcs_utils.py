@@ -1,7 +1,9 @@
-import os
 import tempfile
 import unittest
 import unittest.mock
+from pathlib import Path
+
+from common.gcs_utils import download_to_scratch
 
 
 class TestDownloadToScratch(unittest.TestCase):
@@ -18,8 +20,6 @@ class TestDownloadToScratch(unittest.TestCase):
 
     def test_returns_path_within_scratch_dir(self) -> None:
         """Result path's parent directory equals the scratch_dir passed in."""
-        from common.gcs_utils import download_to_scratch
-
         fake_download = self._make_fake_download()
         mock_client = unittest.mock.MagicMock()
 
@@ -31,12 +31,10 @@ class TestDownloadToScratch(unittest.TestCase):
                 result = download_to_scratch(
                     mock_client, "gs://bucket/path/audio.flac", scratch_dir
                 )
-            self.assertEqual(os.path.dirname(result), scratch_dir)
+            self.assertEqual(Path(result).parent, Path(scratch_dir))
 
     def test_file_is_created(self) -> None:
         """The returned path exists on disk after the call."""
-        from common.gcs_utils import download_to_scratch
-
         fake_download = self._make_fake_download()
         mock_client = unittest.mock.MagicMock()
 
@@ -48,12 +46,10 @@ class TestDownloadToScratch(unittest.TestCase):
                 result = download_to_scratch(
                     mock_client, "gs://bucket/path/audio.flac", scratch_dir
                 )
-            self.assertTrue(os.path.exists(result))
+            self.assertTrue(Path(result).exists())
 
     def test_two_calls_yield_distinct_paths(self) -> None:
         """Two calls with the same URI return different local paths (mkstemp uniqueness)."""
-        from common.gcs_utils import download_to_scratch
-
         fake_download = self._make_fake_download()
         mock_client = unittest.mock.MagicMock()
 
@@ -74,8 +70,6 @@ class TestDownloadToScratch(unittest.TestCase):
         self,
     ) -> None:
         """GCS objects sharing a basename in different folders get different local paths."""
-        from common.gcs_utils import download_to_scratch
-
         fake_download = self._make_fake_download()
         mock_client = unittest.mock.MagicMock()
 
@@ -94,8 +88,6 @@ class TestDownloadToScratch(unittest.TestCase):
 
     def test_extension_preserved(self) -> None:
         """The returned local path ends with the source object's extension."""
-        from common.gcs_utils import download_to_scratch
-
         fake_download = self._make_fake_download()
         mock_client = unittest.mock.MagicMock()
 
@@ -111,8 +103,6 @@ class TestDownloadToScratch(unittest.TestCase):
 
     def test_non_gs_uri_raises_value_error(self) -> None:
         """A bare (non-gs://) URI raises ValueError (propagated from parse_gcs_uri)."""
-        from common.gcs_utils import download_to_scratch
-
         mock_client = unittest.mock.MagicMock()
 
         with tempfile.TemporaryDirectory() as scratch_dir:

@@ -22,7 +22,6 @@ from common.scoring import (
     keyword_metrics,
 )
 
-
 try:
     # build_normalizer() needs BOTH packages; probe both so a partial
     # install yields a clean skip rather than a build_normalizer() error.

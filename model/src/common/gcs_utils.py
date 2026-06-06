@@ -1,9 +1,12 @@
-import os
 import json
 import logging
+import os
 import tempfile
+from pathlib import Path
 from typing import Any
+
 from google.cloud import storage
+from google.cloud.storage.retry import DEFAULT_RETRY
 
 logger = logging.getLogger(__name__)
 
@@ -11,14 +14,12 @@ logger = logging.getLogger(__name__)
 def parse_gcs_uri(gcs_uri: str) -> tuple[str, str]:
     """Parses a GCS URI into bucket name and blob path."""
     if not gcs_uri.startswith("gs://"):
-        raise ValueError("GCS URI must start with 'gs://'")
+        msg = "GCS URI must start with 'gs://'"
+        raise ValueError(msg)
     parts = gcs_uri[len("gs://") :].split("/", 1)
     bucket_name = parts[0]
     blob_path = parts[1] if len(parts) > 1 else ""
     return bucket_name, blob_path
-
-
-from google.cloud.storage.retry import DEFAULT_RETRY
 
 
 def blob_exists(
@@ -146,7 +147,7 @@ def download_to_scratch(
         ValueError: If ``gcs_uri`` does not start with ``gs://``.
     """
     bucket_name, blob_path = parse_gcs_uri(gcs_uri)
-    suffix = os.path.splitext(blob_path)[1] or ".audio"
+    suffix = Path(blob_path).suffix or ".audio"
     fd, local_path = tempfile.mkstemp(dir=scratch_dir, suffix=suffix)
     os.close(fd)
     download_blob_to_file(storage_client, bucket_name, blob_path, local_path)

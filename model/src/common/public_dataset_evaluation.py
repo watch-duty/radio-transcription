@@ -1,4 +1,4 @@
-"""HuggingFace model × streaming public ASR dataset evaluation.
+"""HuggingFace model x streaming public ASR dataset evaluation.
 
 Streams a public ASR dataset (LibriSpeech etc.) via HuggingFace ``datasets``,
 runs the loaded HF model in batches, and computes WER directly against the
@@ -8,11 +8,29 @@ Requires the [hf] extra.
 """
 
 import logging
-import os
 import re
-from typing import Any, Callable
+import tempfile
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
+
+try:
+    import soundfile as sf
+    import torch
+    from datasets import load_dataset
+    from evaluate import load
+except ImportError as _e:
+    _PUBLIC_DATASET_EVAL_MISSING = _e
+else:
+    _PUBLIC_DATASET_EVAL_MISSING = None
+
+
+def _require_public_dataset_eval() -> None:
+    if _PUBLIC_DATASET_EVAL_MISSING:
+        msg = "public dataset evaluation requires the [hf] extra: pip install 'common[hf]'"
+        raise ImportError(msg) from _PUBLIC_DATASET_EVAL_MISSING
 
 
 def run_test_baseline_inference_evaluation(
@@ -51,12 +69,7 @@ def run_test_baseline_inference_evaluation(
         Tuple of (wer_score, predictions, references) where wer_score is a float
         or None if no predictions were produced.
     """
-    from datasets import load_dataset
-    from evaluate import load
-    import tempfile
-    import soundfile as sf
-    import torch
-
+    _require_public_dataset_eval()
     logger.info(f"Loading dataset {dataset_name} in streaming mode...")
     dataset = load_dataset(
         dataset_name, dataset_config, split=split, streaming=True
@@ -78,53 +91,7 @@ def run_test_baseline_inference_evaluation(
     )
 
     # Use default normalizer if none provided
-    if normalize_fn is None:
-
-        def default_normalize(text):
-            text = text.upper()
-            text = re.sub(r"[^A-Z\s]", "", text)
-            return re.sub(r"\s+", " ", text).strip()
-
-        normalize_fn = default_normalize
-
-    def process_current_batch():
-        nonlocal \
-            batch_prompts, \
-            batch_refs, \
-            batch_temp_paths, \
-            predictions, \
-            references
-        if not batch_prompts:
-            return
-        try:
-            with torch.no_grad():
-                outputs = inference_fn(model, batch_prompts)
-
-            for j, out in enumerate(outputs):
-                if out != "[ERROR]":
-                    pred = decode_fn(out, model)
-
-                    # Apply normalization
-                    pred_norm = normalize_fn(pred)
-                    ref_norm = normalize_fn(batch_refs[j])
-
-                    predictions.append(pred_norm)
-                    references.append(ref_norm)
-                else:
-                    logger.error("Error processing example in batch")
-
-        except Exception as e:
-            logger.error(f"Failed processing batch: {e}")
-        finally:
-            # Cleanup temp files for this batch
-            for tp in batch_temp_paths:
-                if os.path.exists(tp):
-                    os.remove(tp)
-
-            # Reset batch accumulators
-            batch_prompts = []
-            batch_refs = []
-            batch_temp_paths = []
+    normalizer = normalize_fn or _default_normalize
 
     for i, example in enumerate(dataset):
         audio_array = example["audio"]["array"]
@@ -142,12 +109,35 @@ def run_test_baseline_inference_evaluation(
         batch_refs.append(reference_text)
 
         if len(batch_prompts) == batch_size:
-            process_current_batch()
+            batch_predictions, batch_references = _process_public_dataset_batch(
+                model=model,
+                inference_fn=inference_fn,
+                decode_fn=decode_fn,
+                normalize_fn=normalizer,
+                batch_prompts=batch_prompts,
+                batch_refs=batch_refs,
+                batch_temp_paths=batch_temp_paths,
+            )
+            predictions.extend(batch_predictions)
+            references.extend(batch_references)
+            batch_prompts = []
+            batch_refs = []
+            batch_temp_paths = []
             if i % (batch_size * 2) == 0:
                 logger.info(f"Processed {i + 1} examples...")
 
     # Process any remaining items in the last batch
-    process_current_batch()
+    batch_predictions, batch_references = _process_public_dataset_batch(
+        model=model,
+        inference_fn=inference_fn,
+        decode_fn=decode_fn,
+        normalize_fn=normalizer,
+        batch_prompts=batch_prompts,
+        batch_refs=batch_refs,
+        batch_temp_paths=batch_temp_paths,
+    )
+    predictions.extend(batch_predictions)
+    references.extend(batch_references)
 
     wer_score = None
     if predictions:
@@ -155,3 +145,41 @@ def run_test_baseline_inference_evaluation(
         logger.info(f"WER on {len(predictions)} examples: {wer_score}")
 
     return wer_score, predictions, references
+
+
+def _default_normalize(text: str) -> str:
+    text = text.upper()
+    text = re.sub(r"[^A-Z\s]", "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _process_public_dataset_batch(
+    *,
+    model: Any,
+    inference_fn: Callable[[Any, list[Any]], list[Any]],
+    decode_fn: Callable[[Any, Any], str],
+    normalize_fn: Callable[[str], str],
+    batch_prompts: list[Any],
+    batch_refs: list[str],
+    batch_temp_paths: list[str],
+) -> tuple[list[str], list[str]]:
+    predictions: list[str] = []
+    references: list[str] = []
+    if not batch_prompts:
+        return predictions, references
+    try:
+        with torch.no_grad():
+            outputs = inference_fn(model, batch_prompts)
+        for j, out in enumerate(outputs):
+            if out == "[ERROR]":
+                logger.error("Error processing example in batch")
+                continue
+            pred = decode_fn(out, model)
+            predictions.append(normalize_fn(pred))
+            references.append(normalize_fn(batch_refs[j]))
+    except Exception as e:
+        logger.exception(f"Failed processing batch: {e}")
+    finally:
+        for temp_path in batch_temp_paths:
+            Path(temp_path).unlink(missing_ok=True)
+    return predictions, references

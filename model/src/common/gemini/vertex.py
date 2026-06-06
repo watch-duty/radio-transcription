@@ -147,13 +147,8 @@ def _extract_request_audio_uri(request: dict[str, Any]) -> str | None:
 def _extract_prediction_text(response: Any) -> str:
     if not isinstance(response, dict):
         return ""
-    candidates = response.get("candidates", [])
-    if not isinstance(candidates, list) or not candidates:
-        return ""
-    first_candidate = candidates[0]
-    if not isinstance(first_candidate, dict):
-        return ""
-    content = first_candidate.get("content", {})
+    first_candidate = _first_dict(response.get("candidates"))
+    content = first_candidate.get("content", {}) if first_candidate else {}
     if not isinstance(content, dict):
         return ""
     parts = content.get("parts", [])
@@ -163,6 +158,12 @@ def _extract_prediction_text(response: Any) -> str:
         if isinstance(part, dict) and isinstance(part.get("text"), str):
             return part["text"]
     return ""
+
+
+def _first_dict(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, list) and value and isinstance(value[0], dict):
+        return value[0]
+    return None
 
 
 try:
@@ -218,10 +219,11 @@ _POLL_GET_RETRY_SLEEP_SECONDS = 5.0
 def _require_vertex() -> None:
     """Raise a clear error if the [vertex] extra is not installed."""
     if _VERTEX_MISSING:
-        raise ImportError(
+        msg = (
             "vertex requires the [vertex] extra: "
             "pip install 'radio-transcription-model[vertex]'"
-        ) from _VERTEX_MISSING
+        )
+        raise ImportError(msg) from _VERTEX_MISSING
 
 
 def get_tuning_job_status(
@@ -276,9 +278,8 @@ def submit_tuning_job(
     """
     _require_vertex()
     if adapter_size not in _ADAPTER_ENUM:
-        raise ValueError(
-            f"adapter_size must be one of {sorted(_ADAPTER_ENUM)}; got {adapter_size!r}"
-        )
+        msg = f"adapter_size must be one of {sorted(_ADAPTER_ENUM)}; got {adapter_size!r}"
+        raise ValueError(msg)
     client = genai.Client(vertexai=True, project=project, location=location)
 
     cfg_kwargs: dict[str, Any] = {
@@ -331,7 +332,7 @@ def poll_tuning_job(
     """
     _require_vertex()
     client = genai.Client(vertexai=True, project=project, location=location)
-    last_state: "str | None" = None
+    last_state: str | None = None
     state: str = ""
     deadline = time.monotonic() + timeout_hours * 3600
     consecutive_get_errors = 0
@@ -341,16 +342,18 @@ def poll_tuning_job(
         except Exception as e:
             consecutive_get_errors += 1
             if time.monotonic() >= deadline:
-                raise TimeoutError(
+                msg = (
                     f"Tuning job {name} could not be fetched before the "
                     f"{timeout_hours}h timeout elapsed (last state: {state or 'unknown'}). "
                     "It may still be running on Vertex; re-run tune to resume polling by job name."
-                ) from e
+                )
+                raise TimeoutError(msg) from e
             if consecutive_get_errors > _POLL_GET_RETRY_LIMIT:
-                raise RuntimeError(
+                msg = (
                     f"Could not fetch tuning job {name} after "
                     f"{_POLL_GET_RETRY_LIMIT} retries; re-run tune to resume polling."
-                ) from e
+                )
+                raise RuntimeError(msg) from e
             logger.warning(
                 f"Transient error fetching tuning job {name}; retrying "
                 f"({consecutive_get_errors}/{_POLL_GET_RETRY_LIMIT}): {e}"
@@ -365,22 +368,25 @@ def poll_tuning_job(
         if state in _TERMINAL_STATES:
             break
         if time.monotonic() >= deadline:
-            raise TimeoutError(
+            msg = (
                 f"Tuning job {name} did not reach a terminal state within "
                 f"{timeout_hours}h (last state: {state}). It may still be running "
                 "on Vertex; re-run tune to resume polling by job name."
             )
+            raise TimeoutError(msg)
         time.sleep(poll_interval)
 
     if state not in _TUNING_SUCCESS_STATES:
-        raise RuntimeError(f"Tuning job ended in non-success state: {state}")
+        msg = f"Tuning job ended in non-success state: {state}"
+        raise RuntimeError(msg)
 
     tuned = getattr(cur, "tuned_model", None)
     endpoint = getattr(tuned, "endpoint", None) if tuned else None
     if not endpoint:
-        raise RuntimeError(
+        msg = (
             f"Tuning job {name} succeeded but returned no tuned_model.endpoint"
         )
+        raise RuntimeError(msg)
     logger.info(f"Tuned model endpoint: {endpoint}")
     return endpoint
 
@@ -426,7 +432,7 @@ def submit_batch_inference(
     )
     logger.info(f"Submitted batch inference job: {batch_job.name}")
 
-    last_state: "str | None" = None
+    last_state: str | None = None
     state: str = ""
     deadline = time.monotonic() + timeout_hours * 3600
     consecutive_get_errors = 0
@@ -436,15 +442,17 @@ def submit_batch_inference(
         except Exception as e:
             consecutive_get_errors += 1
             if time.monotonic() >= deadline:
-                raise TimeoutError(
+                msg = (
                     f"Batch job {batch_job.name} could not be fetched before "
                     f"the {timeout_hours}h timeout elapsed (last state: {state or 'unknown'})."
-                ) from e
+                )
+                raise TimeoutError(msg) from e
             if consecutive_get_errors > _POLL_GET_RETRY_LIMIT:
-                raise RuntimeError(
+                msg = (
                     f"Could not fetch batch job {batch_job.name} after "
                     f"{_POLL_GET_RETRY_LIMIT} retries."
-                ) from e
+                )
+                raise RuntimeError(msg) from e
             logger.warning(
                 f"Transient error fetching batch job {batch_job.name}; retrying "
                 f"({consecutive_get_errors}/{_POLL_GET_RETRY_LIMIT}): {e}"
@@ -459,16 +467,16 @@ def submit_batch_inference(
         if state in _BATCH_TERMINAL_STATES:
             break
         if time.monotonic() >= deadline:
-            raise TimeoutError(
+            msg = (
                 f"Batch job {batch_job.name} did not reach a terminal state "
                 f"within {timeout_hours}h (last state: {state})."
             )
+            raise TimeoutError(msg)
         time.sleep(poll_interval)
 
     if state not in _BATCH_SUCCESS_STATES:
-        raise RuntimeError(
-            f"Batch inference job ended in non-success state: {state}"
-        )
+        msg = f"Batch inference job ended in non-success state: {state}"
+        raise RuntimeError(msg)
 
     dest_uri = getattr(cur.dest, "gcs_uri", None) if cur.dest else None
     if dest_uri:

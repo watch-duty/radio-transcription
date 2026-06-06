@@ -25,6 +25,7 @@ def _git_sha() -> str:
             capture_output=True,
             text=True,
             timeout=5,
+            check=False,
             cwd=str(
                 Path(__file__).resolve().parent.parent.parent
             ),  # resolves to model/ (inside the repo; git finds the root from here)
@@ -247,7 +248,7 @@ def append_ledger(results_dir: Path, row: dict[str, Any]) -> None:
             "# SFT Pipeline Run Ledger\n\n" + header, encoding="utf-8"
         )
 
-    def _f(v: float | None, pct: bool = True) -> str:
+    def _f(v: float | None, *, pct: bool = True) -> str:
         if v is None:
             return "—"
         return f"{v:.2f}%" if pct else str(v)

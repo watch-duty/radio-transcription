@@ -14,7 +14,10 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator, Optional, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +60,8 @@ def rows_from_manifest(manifest: list[dict[str, Any]]) -> list[CanonicalRow]:
     """
     rows: list[CanonicalRow] = []
     for i, entry in enumerate(manifest):
-        audio_filepath: Optional[str] = entry.get("audio_filepath")
-        text: Optional[str] = entry.get("text")
+        audio_filepath: str | None = entry.get("audio_filepath")
+        text: str | None = entry.get("text")
         if not audio_filepath:
             logger.warning(f"Skipping manifest row {i}: missing audio_filepath")
             continue
@@ -109,13 +112,13 @@ def load_manifest(path: str) -> list[dict[str, Any]]:
         # directory denies search/execute permission — and open() can raise
         # on an unreadable file. Either way, soft-fail to [] rather than
         # crashing the caller.
-        logger.error(f"Could not read manifest {path}: {e}")
+        logger.exception(f"Could not read manifest {path}: {e}")
         return []
     if content.startswith("["):
         try:
             data = json.loads(content)
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON array: {e}")
+            logger.exception(f"Failed to parse JSON array: {e}")
             return []
         if not isinstance(data, list) or not all(
             isinstance(row, dict) for row in data
@@ -183,86 +186,78 @@ def merge_predictions_to_manifest(
             unexpected error here is a bug — silently returning [] would cause
             downstream WER scoring to read 0 segments and report false success.
     """
-    try:
-        # Build lookup: audio_filepath -> list of (offset, text) from predictions
-        pred_index: dict[str, list[tuple[float, str]]] = {}
-        for pred in predictions:
-            # Fail loud on a malformed prediction missing the keys that drive
-            # the merge — silently defaulting audio_filepath to "" or offset
-            # to 0.0 would attach a stray prediction to whichever ground-truth
-            # row happens to share that empty bucket / sit at offset 0.0.
-            if "audio_filepath" not in pred:
-                raise ValueError(
-                    f"prediction missing required 'audio_filepath': {pred!r}"
-                )
-            if "offset" not in pred:
-                raise ValueError(
-                    f"prediction missing required 'offset': {pred!r}"
-                )
-            audio_fp = str(pred["audio_filepath"])
-            p_offset = float(pred["offset"])
-            # Mirror load_manifest's coercion: a null prediction text becomes
-            # "" (absent), NOT the literal four-letter word "None" — which
-            # would otherwise inflate WER as a real-looking prediction token.
-            raw_text = pred.get("text")
-            p_text = "" if raw_text is None else str(raw_text)
-            pred_index.setdefault(audio_fp, []).append((p_offset, p_text))
+    pred_index = _prediction_index(predictions)
+    gt_by_file = _ground_truth_index(ground_truth)
 
-        # Group ground-truth row indices by audio_filepath so the offset
-        # match below is resolved within each source file. Validate the same
-        # required keys as on the predictions side — silently defaulting
-        # audio_filepath to "" or offset to 0.0 would mask a malformed GT
-        # manifest by binding every row to whichever group / segment happens
-        # to sit at the default.
-        gt_by_file: dict[str, list[int]] = {}
-        for i, gt_row in enumerate(ground_truth):
-            if "audio_filepath" not in gt_row:
-                raise ValueError(
-                    f"ground truth row missing required 'audio_filepath': {gt_row!r}"
-                )
-            if "offset" not in gt_row:
-                raise ValueError(
-                    f"ground truth row missing required 'offset': {gt_row!r}"
-                )
-            audio_fp = str(gt_row["audio_filepath"])
-            gt_by_file.setdefault(audio_fp, []).append(i)
-
-        field_name = f"pred_text_{model_key}"
-        # Clear any stale pred_text_{model_key} from a prior merge — a row
-        # should only carry this field if THIS merge produced a match for
-        # it. Otherwise a re-run with a missing prediction for some row
-        # would leave the old prediction in place, masking the missing-
-        # output failure as a successful prediction in downstream WER.
-        for row in ground_truth:
-            row.pop(field_name, None)
-        for audio_fp, gt_indices in gt_by_file.items():
-            candidates = pred_index.get(audio_fp, [])
-            # One-to-one match: collect every (row, prediction) pair within
-            # tolerance, then assign closest-first, consuming each row and
-            # each prediction at most once. A prediction is therefore NEVER
-            # bound to two rows — so a genuinely missing prediction leaves
-            # its row blank and still scores as an error in WER, rather than
-            # borrowing a neighbor's.
-            pairs: list[tuple[float, int, int]] = []
-            for gi in gt_indices:
-                gt_offset = float(ground_truth[gi]["offset"])
-                for pi, (p_offset, _) in enumerate(candidates):
-                    diff = abs(gt_offset - p_offset)
-                    if diff < offset_tolerance:
-                        pairs.append((diff, gi, pi))
-            pairs.sort(key=lambda pair: pair[0])
-            used_gt: set[int] = set()
-            used_pred: set[int] = set()
-            for _, gi, pi in pairs:
-                if gi in used_gt or pi in used_pred:
-                    continue
-                ground_truth[gi][field_name] = candidates[pi][1]
-                used_gt.add(gi)
-                used_pred.add(pi)
-
-        return ground_truth
-    except Exception as e:
-        logger.error(
-            f"Failed to merge manifest predictions for model '{model_key}': {e}"
+    field_name = f"pred_text_{model_key}"
+    for row in ground_truth:
+        row.pop(field_name, None)
+    for audio_fp, gt_indices in gt_by_file.items():
+        _merge_file_predictions(
+            ground_truth=ground_truth,
+            candidates=pred_index.get(audio_fp, []),
+            gt_indices=gt_indices,
+            field_name=field_name,
+            offset_tolerance=offset_tolerance,
         )
-        raise
+
+    return ground_truth
+
+
+def _prediction_index(
+    predictions: list[dict[str, Any]],
+) -> dict[str, list[tuple[float, str]]]:
+    pred_index: dict[str, list[tuple[float, str]]] = {}
+    for pred in predictions:
+        audio_fp = str(_required_key(pred, "audio_filepath", "prediction"))
+        p_offset = float(_required_key(pred, "offset", "prediction"))
+        raw_text = pred.get("text")
+        p_text = "" if raw_text is None else str(raw_text)
+        pred_index.setdefault(audio_fp, []).append((p_offset, p_text))
+    return pred_index
+
+
+def _ground_truth_index(
+    ground_truth: list[dict[str, Any]],
+) -> dict[str, list[int]]:
+    gt_by_file: dict[str, list[int]] = {}
+    for i, gt_row in enumerate(ground_truth):
+        audio_fp = str(
+            _required_key(gt_row, "audio_filepath", "ground truth row")
+        )
+        _required_key(gt_row, "offset", "ground truth row")
+        gt_by_file.setdefault(audio_fp, []).append(i)
+    return gt_by_file
+
+
+def _required_key(row: dict[str, Any], key: str, row_kind: str) -> Any:
+    if key in row:
+        return row[key]
+    msg = f"{row_kind} missing required '{key}': {row!r}"
+    raise ValueError(msg)
+
+
+def _merge_file_predictions(
+    *,
+    ground_truth: list[dict[str, Any]],
+    candidates: list[tuple[float, str]],
+    gt_indices: list[int],
+    field_name: str,
+    offset_tolerance: float,
+) -> None:
+    pairs: list[tuple[float, int, int]] = []
+    for gi in gt_indices:
+        gt_offset = float(ground_truth[gi]["offset"])
+        for pi, (p_offset, _) in enumerate(candidates):
+            diff = abs(gt_offset - p_offset)
+            if diff < offset_tolerance:
+                pairs.append((diff, gi, pi))
+    pairs.sort(key=lambda pair: pair[0])
+    used_gt: set[int] = set()
+    used_pred: set[int] = set()
+    for _, gi, pi in pairs:
+        if gi in used_gt or pi in used_pred:
+            continue
+        ground_truth[gi][field_name] = candidates[pi][1]
+        used_gt.add(gi)
+        used_pred.add(pi)

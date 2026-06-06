@@ -10,8 +10,10 @@ from pathlib import Path
 from typing import Any
 
 from gemini_sft import cli
-from gemini_sft.prepare import prepare_run
+from gemini_sft import evaluate as evaluate_module
+from gemini_sft import tune as tune_module
 from gemini_sft.config import load_run_config
+from gemini_sft.prepare import prepare_run
 
 
 def _split_gcs(uri: str) -> tuple[str, str]:
@@ -242,8 +244,6 @@ class TestPrepareRun(unittest.TestCase):
 
 class TestTuneRun(unittest.TestCase):
     def test_existing_job_resumes_without_submit(self) -> None:
-        from gemini_sft import tune as tune_module
-
         with tempfile.TemporaryDirectory() as tmp_s:
             tmp = Path(tmp_s)
             storage = FakeStorageClient()
@@ -280,8 +280,6 @@ class TestTuneRun(unittest.TestCase):
         submit.assert_not_called()
 
     def test_confirmation_decline_does_not_submit(self) -> None:
-        from gemini_sft import tune as tune_module
-
         with tempfile.TemporaryDirectory() as tmp_s:
             tmp = Path(tmp_s)
             storage = FakeStorageClient()
@@ -312,8 +310,6 @@ class TestTuneRun(unittest.TestCase):
 
 class TestEvaluateRun(unittest.TestCase):
     def test_eval_uses_shared_batch_parser_and_records_output_uri(self) -> None:
-        from gemini_sft import evaluate as evaluate_module
-
         with tempfile.TemporaryDirectory() as tmp_s:
             tmp = Path(tmp_s)
             storage = FakeStorageClient()

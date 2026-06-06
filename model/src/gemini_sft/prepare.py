@@ -2,17 +2,14 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from common.gemini.tuning_data import (
     build_audio_tuning_example,
     validate_audio_tuning_example,
 )
-from common.manifest import CanonicalRow
 from google.cloud import storage
 
 from gemini_sft.artifacts import (
@@ -34,6 +31,12 @@ from gemini_sft.artifacts import (
 )
 from gemini_sft.config import RunConfig, RunConfigError, load_run_config
 from gemini_sft.preflight import run_preflight
+
+if TYPE_CHECKING:
+    import argparse
+    from pathlib import Path
+
+    from common.manifest import CanonicalRow
 
 logger = logging.getLogger(__name__)
 RESULTS_DIR = DEFAULT_RESULTS_DIR
@@ -62,8 +65,7 @@ def prepare(args: argparse.Namespace) -> int:
             results_dir=RESULTS_DIR,
         )
     except (OSError, RunConfigError, ValueError) as exc:
-        logger.error(str(exc))
-        return 1
+        return _log_cli_error(exc)
     logger.info(
         "Prepared %s train rows, %s validation rows, and %s eval rows.",
         artifacts.canonical_train_rows,
@@ -71,6 +73,11 @@ def prepare(args: argparse.Namespace) -> int:
         artifacts.canonical_eval_rows,
     )
     return 0 if config.get("status") == "preflight_passed" else 1
+
+
+def _log_cli_error(exc: Exception) -> int:
+    logger.error(str(exc))
+    return 1
 
 
 def prepare_run(
@@ -222,9 +229,8 @@ def write_gemini_jsonl(
                 user_prompt=user_prompt,
             )
             if not validate_audio_tuning_example(example):
-                raise ValueError(
-                    f"invalid Gemini SFT example for {row.audio_filepath}"
-                )
+                msg = f"invalid Gemini SFT example for {row.audio_filepath}"
+                raise ValueError(msg)
             fh.write(json.dumps(example) + "\n")
 
 

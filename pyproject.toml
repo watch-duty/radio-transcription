@@ -187,11 +187,9 @@ known-first-party = ["backend", "local_dev"]
   "T201",
 ]
 "**/**/test*.py" = [
-  "ANN201", # Missing return type annotation
   "ANN001", # Missing type annotation for function argument
   "ANN002", # Missing type annotation for *args
   "ANN003", # Missing type annotation for **kwargs
-  "A002",   # Function argument shadows builtin
   "ANN202", # Missing return type annotation for public method
   "ANN206", # Missing return type annotation for classmethod
   "B017",   # Do not assert blind exception: `Exception`
@@ -201,39 +199,15 @@ known-first-party = ["backend", "local_dev"]
   "N802",   # Function name should be lowercase
   "N806",   # Variable in function should be lowercase
   "N815",   # Variable in class scope should not be mixedCase
-  "I001",   # Import block sorting
-  "EM101",  # Exception must not use string literal
-  "PLC0415", # Import should be at top-level
-  "PLW1510", # subprocess.run without check
   "PT018",  # Break assertions into separate statements
   "PT019",  # Fixture without value is injected as parameter
   "PT028",  # Test function parameter has default argument
-  "PTH110", # os.path.exists()
-  "PTH108", # os.unlink() should use Path.unlink()
-  "PTH120", # os.path.dirname()
   "RET503", # Missing explicit `return` at the end of function
   "S101",   # Use of assert detected
   "S105",   # Possible hardcoded password assigned
   "S113",   # requests.* require timeout=
   "S608",   # Possible SQL injection via string-based query construction
   "SLF001", # Private member accessed
-  "TRY003", # Long exception messages in test fakes
-]
-"model/tests/**/*.py" = [
-  "INP001", # Tests are not packaged.
-]
-"model/src/common/*.py" = [
-  "ALL", # Legacy helpers moved from fully lint-exempt model/colabs/common.
-]
-"model/src/common/gemini/tuning_data.py" = [
-  "PLR0911", # Schema validator has explicit failure exits for readability.
-]
-"model/src/common/gemini/vertex.py" = [
-  "EM101",
-  "EM102",
-  "PLR0911",
-  "TRY003",
-  "UP037",
 ]
 "model/data_sources/**.py" = [
   "ANN001", # Missing type annotation for function argument
@@ -250,20 +224,6 @@ known-first-party = ["backend", "local_dev"]
   "S110",   # Allow swallowing exceptions
   "S113",   # requests.* require timeout=
   "T201",   # `print()` found
-]
-"model/src/gemini_sft/**.py" = [
-  "EM101",   # Exception style kept readable for CLI error messages.
-  "EM102",   # Exception style kept readable for CLI error messages.
-  "FBT001",  # CLI confirmation helper takes a boolean flag.
-  "FBT002",  # Records markdown helper keeps a small boolean formatting default.
-  "PLR0912", # Preflight hard gate has several explicit checks.
-  "PLW1510", # _git_sha checks returncode manually.
-  "T201",    # Cost estimate intentionally prints to stdout.
-  "TC001",   # Runtime imports are clearer than TYPE_CHECKING aliases here.
-  "TC002",
-  "TC003",
-  "TRY003",
-  "TRY400",  # CLI handlers log clean one-line errors instead of tracebacks.
 ]
 
 [tool.ruff.lint.pydocstyle]

@@ -14,12 +14,15 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from functools import partial
-from pathlib import Path
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from common.gcs_utils import blob_exists
 from common.gemini.tuning_data import validate_audio_tuning_example
-from google.cloud import storage
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from google.cloud import storage
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +88,8 @@ def _estimate_text_tokens(
 
 def _iter_batches(items: list[str], batch_size: int) -> list[list[str]]:
     if batch_size <= 0:
-        raise ValueError("gcs_batch_size must be > 0")
+        msg = "gcs_batch_size must be > 0"
+        raise ValueError(msg)
     return [items[i : i + batch_size] for i in range(0, len(items), batch_size)]
 
 
@@ -98,9 +102,11 @@ def _find_unreachable_gcs_uris(
     batch_pause_seconds: float,
 ) -> set[str]:
     if max_workers <= 0:
-        raise ValueError("gcs_max_workers must be > 0")
+        msg = "gcs_max_workers must be > 0"
+        raise ValueError(msg)
     if batch_pause_seconds < 0:
-        raise ValueError("gcs_batch_pause_seconds must be >= 0")
+        msg = "gcs_batch_pause_seconds must be >= 0"
+        raise ValueError(msg)
     if not uris:
         return set()
 
@@ -188,17 +194,11 @@ def run_preflight(
     report = PreflightReport()
     report_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Load train examples
-    train_examples: list[dict[str, Any]] = []
-    try:
-        with train_jsonl_path.open(encoding="utf-8") as tf:
-            train_examples = [json.loads(line) for line in tf if line.strip()]
-    except Exception as exc:
-        report.failures.append(f"Failed to load train JSONL: {exc}")
+    train_examples = _load_split_examples(train_jsonl_path, "train", report)
+    if train_examples is None:
         _write_report(report, report_path)
         return report
 
-    # Check 1: non-empty train
     if not train_examples:
         report.failures.append(
             "Train JSONL is empty -- no examples to tune on."
@@ -206,41 +206,10 @@ def run_preflight(
         _write_report(report, report_path)
         return report
 
-    # Check 4: duplicate fileUris in train
-    train_uris: list[str] = []
-    for ex in train_examples:
-        train_uris.extend(_extract_file_uris(ex))
-    seen: set[str] = set()
-    for uri in train_uris:
-        if uri and uri in seen:
-            report.failures.append(f"Duplicate fileUri in train: {uri}")
-            if uri not in report.offending_ids:
-                report.offending_ids.append(uri)
-        if uri:
-            seen.add(uri)
-
-    # Load val examples if provided
-    val_examples: list[dict[str, Any]] = []
-    val_uris: list[str] = []
-    if val_jsonl_path is not None:
-        try:
-            with val_jsonl_path.open(encoding="utf-8") as vf:
-                val_examples = [json.loads(line) for line in vf if line.strip()]
-        except Exception as exc:
-            report.failures.append(f"Failed to load val JSONL: {exc}")
-        else:
-            if not val_examples:
-                report.failures.append("Val JSONL is empty.")
-        for ex in val_examples:
-            val_uris.extend(_extract_file_uris(ex))
-        # Check 2: disjoint
-        overlap = {u for u in train_uris if u} & {u for u in val_uris if u}
-        for uri in sorted(overlap):
-            report.failures.append(
-                f"fileUri in both train and val (not disjoint): {uri}"
-            )
-            if uri not in report.offending_ids:
-                report.offending_ids.append(uri)
+    train_uris = _check_duplicate_train_uris(train_examples, report)
+    val_examples, val_uris = _load_and_check_val_split(
+        val_jsonl_path, train_uris, report
+    )
 
     # Pre-compute unreachable fileUris in parallel (network-bound; dedup + thread pool)
     # so the per-example reachability check below is a fast set-membership test.
@@ -277,6 +246,60 @@ def run_preflight(
 
     _write_report(report, report_path)
     return report
+
+
+def _load_split_examples(
+    path: Path, split: str, report: PreflightReport
+) -> list[dict[str, Any]] | None:
+    try:
+        with path.open(encoding="utf-8") as fh:
+            return [json.loads(line) for line in fh if line.strip()]
+    except Exception as exc:
+        report.failures.append(f"Failed to load {split} JSONL: {exc}")
+        return None
+
+
+def _check_duplicate_train_uris(
+    train_examples: list[dict[str, Any]], report: PreflightReport
+) -> list[str]:
+    train_uris: list[str] = []
+    for ex in train_examples:
+        train_uris.extend(_extract_file_uris(ex))
+    seen: set[str] = set()
+    for uri in train_uris:
+        if uri and uri in seen:
+            report.failures.append(f"Duplicate fileUri in train: {uri}")
+            if uri not in report.offending_ids:
+                report.offending_ids.append(uri)
+        if uri:
+            seen.add(uri)
+    return train_uris
+
+
+def _load_and_check_val_split(
+    val_jsonl_path: Path | None,
+    train_uris: list[str],
+    report: PreflightReport,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    if val_jsonl_path is None:
+        return [], []
+    loaded = _load_split_examples(val_jsonl_path, "val", report)
+    if loaded is None:
+        return [], []
+    val_examples = loaded
+    if not val_examples:
+        report.failures.append("Val JSONL is empty.")
+    val_uris: list[str] = []
+    for ex in val_examples:
+        val_uris.extend(_extract_file_uris(ex))
+    overlap = {u for u in train_uris if u} & {u for u in val_uris if u}
+    for uri in sorted(overlap):
+        report.failures.append(
+            f"fileUri in both train and val (not disjoint): {uri}"
+        )
+        if uri not in report.offending_ids:
+            report.offending_ids.append(uri)
+    return val_examples, val_uris
 
 
 def _write_report(report: PreflightReport, report_path: Path) -> None:

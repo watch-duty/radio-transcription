@@ -74,9 +74,9 @@ def validate_audio_tuning_example(example: dict[str, Any]) -> bool:
     Returns:
         True if the example is correctly shaped, False otherwise.
     """
-    if "contents" not in example or "systemInstruction" not in example:
+    if "systemInstruction" not in example:
         return False
-    contents = example["contents"]
+    contents = example.get("contents")
     if not isinstance(contents, list) or len(contents) != 2:
         return False
     user_turn, model_turn = contents
@@ -84,25 +84,44 @@ def validate_audio_tuning_example(example: dict[str, Any]) -> bool:
         return False
     if user_turn.get("role") != "user" or model_turn.get("role") != "model":
         return False
+
+    file_data = _extract_user_file_data(user_turn)
+    if not _is_valid_audio_file_data(file_data):
+        return False
+
+    model_text = _extract_model_text(model_turn)
+    return bool(model_text.strip())
+
+
+def _extract_user_file_data(user_turn: dict[str, Any]) -> dict[str, Any] | None:
     user_parts = user_turn.get("parts", [])
     file_parts = [
         p for p in user_parts if isinstance(p, dict) and "fileData" in p
     ]
     if not file_parts:
-        return False
+        return None
     fd = file_parts[0]["fileData"]
     if not isinstance(fd, dict):
+        return None
+    return fd
+
+
+def _is_valid_audio_file_data(file_data: dict[str, Any] | None) -> bool:
+    if file_data is None:
         return False
-    file_uri = fd.get("fileUri", "")
-    if not isinstance(file_uri, str) or not file_uri.startswith("gs://"):
-        return False
-    if fd.get("mimeType") != "audio/flac":
-        return False
-    model_parts = model_turn.get("parts", [{}])
-    if not model_parts:
-        return False
+    file_uri = file_data.get("fileUri", "")
+    return (
+        isinstance(file_uri, str)
+        and file_uri.startswith("gs://")
+        and file_data.get("mimeType") == "audio/flac"
+    )
+
+
+def _extract_model_text(model_turn: dict[str, Any]) -> str:
+    model_parts = model_turn.get("parts", [])
+    if not isinstance(model_parts, list) or not model_parts:
+        return ""
     first_model_part = model_parts[0]
     if not isinstance(first_model_part, dict):
-        return False
-    model_text = first_model_part.get("text") or ""
-    return bool(model_text.strip())
+        return ""
+    return first_model_part.get("text") or ""

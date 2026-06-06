@@ -3,6 +3,12 @@ from __future__ import annotations
 import importlib.metadata
 import unittest
 
+import common
+import common.gemini.prompts
+import common.gemini.tuning_data
+import common.gemini.vertex
+import gemini_sft.cli
+
 
 class TestModelPackageContract(unittest.TestCase):
     def test_distribution_exposes_expected_packages(self) -> None:
@@ -10,12 +16,6 @@ class TestModelPackageContract(unittest.TestCase):
             importlib.metadata.metadata("radio-transcription-model")["Name"],
             "radio-transcription-model",
         )
-
-        import common
-        import common.gemini.prompts
-        import common.gemini.tuning_data
-        import common.gemini.vertex
-        import gemini_sft.cli
 
         self.assertTrue(common.__doc__)
         self.assertIn("/model/src/common/", str(common.__file__))

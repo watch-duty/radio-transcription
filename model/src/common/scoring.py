@@ -20,6 +20,7 @@ extra is always safe — the heavy deps are loaded lazily so
 import logging
 import random
 import re
+from functools import cache
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -36,33 +37,27 @@ except ImportError as _e:
 else:
     _SCORING_MISSING = None
 
-# Module-level NeMo inverse normalizer (lazy-initialized on first use, 30-60s).
-_nemo_inverse_normalizer: "NemoInverseNormalizer | None" = None
-
 
 def _require_scoring() -> None:
     """Raise a clear error if the [scoring] extra is not installed."""
     if _SCORING_MISSING:
-        raise ImportError(
-            "scoring requires the [scoring] extra: pip install 'common[scoring]'"
-        ) from _SCORING_MISSING
+        msg = "scoring requires the [scoring] extra: pip install 'common[scoring]'"
+        raise ImportError(msg) from _SCORING_MISSING
 
 
+@cache
 def _get_nemo_inverse_normalizer() -> "NemoInverseNormalizer":
     """Lazy-initialize the NeMo inverse normalizer (30-60s first call; cached).
 
     Returns:
         Cached NemoInverseNormalizer (English) instance.
     """
-    global _nemo_inverse_normalizer
-    if _nemo_inverse_normalizer is None:
-        logger.warning(
-            "Loading NeMo text normalizer (first use only; takes 30-60 "
-            "seconds — this is not a hung kernel; cached for subsequent "
-            "calls)."
-        )
-        _nemo_inverse_normalizer = NemoInverseNormalizer(lang="en")
-    return _nemo_inverse_normalizer
+    logger.warning(
+        "Loading NeMo text normalizer (first use only; takes 30-60 "
+        "seconds — this is not a hung kernel; cached for subsequent "
+        "calls)."
+    )
+    return NemoInverseNormalizer(lang="en")
 
 
 def build_normalizer() -> "jiwer.Compose":
@@ -277,9 +272,8 @@ def duration_bucket_wer(
     """
     _require_scoring()
     if not (len(references) == len(hypotheses) == len(durations)):
-        raise ValueError(
-            "references, hypotheses, and durations must have the same length"
-        )
+        msg = "references, hypotheses, and durations must have the same length"
+        raise ValueError(msg)
 
     if normalizer is not None:
         references = [normalizer(r) for r in references]
@@ -309,7 +303,7 @@ def duration_bucket_wer(
         non_zero = sum(
             1
             for ref_words, hyp_words in zip(
-                output.references, output.hypotheses
+                output.references, output.hypotheses, strict=False
             )
             if ref_words != hyp_words
         )
@@ -325,7 +319,7 @@ def duration_bucket_wer(
 
 
 def count_keyword_occurrences(keyword: str, text: str) -> int:
-    """Count whole-word occurrences of ``keyword`` in ``text`` (case handled by caller).
+    r"""Count whole-word occurrences of ``keyword`` in ``text`` (case handled by caller).
 
     Verbatim port of evaluate_transcriptions.ipynb's count_keyword_occurrences:
     a hit is a whole-word regex match (``\\b<escaped-keyword>\\b``).
@@ -371,14 +365,15 @@ def keyword_metrics(
         ValueError: If references and hypotheses differ in length.
     """
     if len(references) != len(hypotheses):
-        raise ValueError("references and hypotheses must have the same length")
+        msg = "references and hypotheses must have the same length"
+        raise ValueError(msg)
 
     results: list[dict[str, Any]] = []
     for kw in keywords:
         kw_lower = kw.lower()
         occurrences = 0
         matches = 0
-        for ref, hyp in zip(references, hypotheses):
+        for ref, hyp in zip(references, hypotheses, strict=False):
             count_in_ref = count_keyword_occurrences(kw_lower, ref.lower())
             if count_in_ref > 0:
                 occurrences += count_in_ref
@@ -440,11 +435,11 @@ def bootstrap_paired(
     _require_scoring()
     n = len(references)
     if not (n == len(hypotheses_a) == len(hypotheses_b)):
-        raise ValueError(
-            "references, hypotheses_a, and hypotheses_b must have the same length"
-        )
+        msg = "references, hypotheses_a, and hypotheses_b must have the same length"
+        raise ValueError(msg)
     if n == 0:
-        raise ValueError("cannot bootstrap an empty eval set")
+        msg = "cannot bootstrap an empty eval set"
+        raise ValueError(msg)
     # `bool` is a subclass of `int` in Python, so isinstance(True, int) is True
     # — exclude it explicitly so `n_resamples=True` doesn't silently run a
     # single resample.
@@ -453,9 +448,11 @@ def bootstrap_paired(
         or not isinstance(n_resamples, int)
         or n_resamples <= 0
     ):
-        raise ValueError("n_resamples must be a positive integer")
+        msg = "n_resamples must be a positive integer"
+        raise ValueError(msg)
     if not 0.0 < confidence < 1.0:
-        raise ValueError("confidence must lie in the open interval (0, 1)")
+        msg = "confidence must lie in the open interval (0, 1)"
+        raise ValueError(msg)
 
     if normalizer is not None:
         references = [normalizer(r) for r in references]
@@ -466,7 +463,7 @@ def bootstrap_paired(
     wer_b = compute_wer(references, hypotheses_b, normalizer=None)["wer"]
     delta_obs = round(wer_a - wer_b, 4)
 
-    rng = random.Random(seed)
+    rng = random.Random(seed)  # noqa: S311 - deterministic bootstrap, not security.
     deltas: list[float] = []
     for _ in range(n_resamples):
         idx = [rng.randrange(n) for _ in range(n)]

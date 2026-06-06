@@ -6,7 +6,11 @@ Covers:
   - load_manifest: [] on missing input; non-string text fields coerced
 """
 
+import json
+import os
+import tempfile
 import unittest
+from pathlib import Path
 
 from common.manifest import (
     load_manifest,
@@ -62,16 +66,12 @@ class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
         Silently defaulting to 0.0 would let a malformed manifest bind every
         row missing an offset to whichever prediction sits at 0.0.
         """
-        from common.manifest import merge_predictions_to_manifest
-
         gt = [{"audio_filepath": "gs://b/a.flac"}]  # no 'offset' key
         with self.assertRaises(ValueError):
             merge_predictions_to_manifest(gt, [], "gemini")
 
     def test_raises_on_missing_ground_truth_audio_filepath(self) -> None:
         """A GT row missing 'audio_filepath' raises — symmetric to predictions."""
-        from common.manifest import merge_predictions_to_manifest
-
         gt = [{"offset": 1.0}]  # no 'audio_filepath' key
         with self.assertRaises(ValueError):
             merge_predictions_to_manifest(gt, [], "gemini")
@@ -258,10 +258,6 @@ class TestLoadManifestMalformedRows(unittest.TestCase):
 
     def test_non_string_text_is_coerced(self) -> None:
         """A row with a non-string `text` is str()-cast, not crashed."""
-        import json
-        import os
-        import tempfile
-
         fd, path = tempfile.mkstemp(suffix=".jsonl")
         try:
             with os.fdopen(fd, "w") as f:
@@ -270,16 +266,12 @@ class TestLoadManifestMalformedRows(unittest.TestCase):
                 )
             rows = load_manifest(path)
         finally:
-            os.unlink(path)
+            Path(path).unlink()
 
         self.assertEqual(rows[0]["text"], "123")
 
     def test_falsy_non_string_text_is_coerced(self) -> None:
         """Falsy non-string text (0, False, None) is coerced to a string."""
-        import json
-        import os
-        import tempfile
-
         rows_in = [
             {"audio_filepath": "gs://b/a.flac", "text": 0},
             {"audio_filepath": "gs://b/b.flac", "text": False},
@@ -291,7 +283,7 @@ class TestLoadManifestMalformedRows(unittest.TestCase):
                 f.write("\n".join(json.dumps(row) for row in rows_in))
             rows = load_manifest(path)
         finally:
-            os.unlink(path)
+            Path(path).unlink()
 
         # 0 / False are str()-cast; a null text becomes "" (absent transcript).
         self.assertEqual([r["text"] for r in rows], ["0", "False", ""])

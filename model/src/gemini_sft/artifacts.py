@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from common.gcs_utils import (
     download_blob_to_file,
@@ -14,10 +14,13 @@ from common.gcs_utils import (
     upload_file_to_blob,
 )
 from common.manifest import CanonicalRow, load_manifest, rows_from_manifest
-from google.cloud import storage
 
-from gemini_sft.config import RunConfig
 from gemini_sft.records import write_config
+
+if TYPE_CHECKING:
+    from google.cloud import storage
+
+    from gemini_sft.config import RunConfig
 
 DEFAULT_RESULTS_DIR = Path("results")
 EVALS_README_TEXT = "Reserved for Gemini SFT eval artifacts."
@@ -115,7 +118,8 @@ def download_json_text(
         storage_client.bucket(bucket_name).blob(blob_path).download_as_text()
     )
     if not isinstance(obj, dict):
-        raise TypeError(f"Expected JSON object at {gcs_uri}")
+        msg = f"Expected JSON object at {gcs_uri}"
+        raise TypeError(msg)
     return obj
 
 
@@ -181,12 +185,14 @@ def load_canonical_rows(
     entries = load_manifest(str(path))
     rows = rows_from_manifest(entries)
     if not rows:
-        raise ValueError(f"{split} manifest has zero parsed rows: {path}")
+        msg = f"{split} manifest has zero parsed rows: {path}"
+        raise ValueError(msg)
     if len(rows) != len(entries):
-        raise ValueError(
+        msg = (
             f"{split} manifest parsed {len(rows)}/{len(entries)} rows; "
             "fix malformed rows before tuning"
         )
+        raise ValueError(msg)
     return entries, rows
 
 
@@ -203,7 +209,8 @@ def reject_split_overlap(
     if not overlap:
         return
     sample = ", ".join(overlap[:5])
-    raise ValueError(
+    msg = (
         f"{left_name} and {right_name} manifests overlap on "
         f"{len(overlap)} audio URI(s): {sample}"
     )
+    raise ValueError(msg)

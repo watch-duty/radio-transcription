@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from typing import Final
 
 logger = logging.getLogger(__name__)
@@ -34,11 +35,12 @@ SFT_TRAINING_COST_PER_MILLION: Final = {
 def validate_supported_model(base_model: str) -> None:
     """Raise ``ValueError`` when a base model is unsupported."""
     if base_model not in SUPPORTED_SFT_BASE_MODELS:
-        raise ValueError(
+        msg = (
             f"Base model {base_model!r} is not supported for this Gemini SFT "
             "workflow. Use one of: "
             f"{', '.join(sorted(SUPPORTED_SFT_BASE_MODELS))}."
         )
+        raise ValueError(msg)
 
 
 def print_tune_cost_estimate(
@@ -55,22 +57,19 @@ def print_tune_cost_estimate(
     model_display_name = SFT_MODEL_DISPLAY_NAMES[base_model]
     estimated_tokens = total_secs * audio_tokens_per_sec * epochs
     estimated_cost = (estimated_tokens / 1_000_000) * cost_per_million_tokens
-
-    print("\n--- Tune Cost Estimate ---")
-    print(f"  Examples:          {n_examples}")
-    print(f"  Epochs:            {epochs}")
-    print(f"  Est. audio tokens: {estimated_tokens:,.0f} ({basis} x 32 tok/s)")
-    print(f"  Est. cost:        ~${estimated_cost:.2f} USD")
-    print(
+    sys.stdout.write(
+        "\n--- Tune Cost Estimate ---\n"
+        f"  Examples:          {n_examples}\n"
+        f"  Epochs:            {epochs}\n"
+        f"  Est. audio tokens: {estimated_tokens:,.0f} ({basis} x 32 tok/s)\n"
+        f"  Est. cost:        ~${estimated_cost:.2f} USD\n"
         f"  NOTE: Using {model_display_name} SFT rate "
-        f"(${cost_per_million_tokens:.2f}/M training tokens)."
-    )
-    print(
-        "        Actual billing may differ. You accept responsibility for GCP charges.\n"
+        f"(${cost_per_million_tokens:.2f}/M training tokens).\n"
+        "        Actual billing may differ. You accept responsibility for GCP charges.\n\n"
     )
 
 
-def confirm_tune_cost(confirm: bool) -> int:
+def confirm_tune_cost(*, confirm: bool) -> int:
     """Return 0 when the operator confirms the paid tune run."""
     if confirm:
         return 0

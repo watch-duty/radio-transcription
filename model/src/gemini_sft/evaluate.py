@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from common.gcs_utils import (
     download_blob_to_file,
@@ -44,6 +43,9 @@ from gemini_sft.config import RunConfigError, load_run_config
 from gemini_sft.cost import DEFAULT_BASE_MODEL
 from gemini_sft.records import append_ledger, write_wer_summary
 
+if TYPE_CHECKING:
+    import argparse
+
 logger = logging.getLogger(__name__)
 RESULTS_DIR = DEFAULT_RESULTS_DIR
 
@@ -67,8 +69,7 @@ def evaluate(args: argparse.Namespace) -> int:
         RuntimeError,
         TimeoutError,
     ) as exc:
-        logger.error(str(exc))
-        return 1
+        return _log_cli_error(exc)
 
 
 def evaluate_run(
@@ -214,7 +215,7 @@ def batch_infer(
                 location=run_cfg.location,
             )
         except (RuntimeError, TimeoutError) as exc:
-            logger.error("[%s] Batch inference failed: %s", label, exc)
+            _log_batch_error(label, exc)
             return None
 
         out_bucket, out_prefix = parse_gcs_uri(output_loc.rstrip("/") + "/")
@@ -255,6 +256,15 @@ def batch_infer(
             )
         preds.output_uri = output_loc
         return preds
+
+
+def _log_cli_error(exc: Exception) -> int:
+    logger.error(str(exc))
+    return 1
+
+
+def _log_batch_error(label: str, exc: Exception) -> None:
+    logger.error("[%s] Batch inference failed: %s", label, exc)
 
 
 def build_batch_jsonl(

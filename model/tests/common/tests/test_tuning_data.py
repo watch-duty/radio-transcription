@@ -4,14 +4,17 @@ import sys
 import unittest
 from pathlib import Path
 
+from common.gemini.tuning_data import (
+    build_audio_tuning_example,
+    validate_audio_tuning_example,
+)
+
 # model/src must be on PYTHONPATH in subprocess calls so `import common` resolves.
 _SRC_DIR = str(Path(__file__).resolve().parents[3] / "src")
 
 
 class TestBuildExample(unittest.TestCase):
     def test_round_trips_audio_uri(self) -> None:
-        from common.gemini.tuning_data import build_audio_tuning_example
-
         example = build_audio_tuning_example(
             audio_uri="gs://bucket/seg001.flac",
             gt_text="Engine 41 copy",
@@ -27,8 +30,6 @@ class TestBuildExample(unittest.TestCase):
         self.assertEqual(file_parts[0]["fileData"]["mimeType"], "audio/flac")
 
     def test_system_instruction_is_sibling_of_contents(self) -> None:
-        from common.gemini.tuning_data import build_audio_tuning_example
-
         example = build_audio_tuning_example(
             "gs://b/s.flac", "copy", "sys", "user"
         )
@@ -39,8 +40,6 @@ class TestBuildExample(unittest.TestCase):
             self.assertNotIn("systemInstruction", turn)
 
     def test_contents_has_user_then_model_turns(self) -> None:
-        from common.gemini.tuning_data import build_audio_tuning_example
-
         example = build_audio_tuning_example(
             "gs://b/s.flac", "copy", "sys", "user"
         )
@@ -49,8 +48,6 @@ class TestBuildExample(unittest.TestCase):
         self.assertEqual(example["contents"][1]["role"], "model")
 
     def test_model_turn_carries_ground_truth_text(self) -> None:
-        from common.gemini.tuning_data import build_audio_tuning_example
-
         example = build_audio_tuning_example(
             audio_uri="gs://bucket/seg001.flac",
             gt_text="Engine 41 copy",
@@ -62,8 +59,6 @@ class TestBuildExample(unittest.TestCase):
         )
 
     def test_user_turn_carries_user_prompt_text(self) -> None:
-        from common.gemini.tuning_data import build_audio_tuning_example
-
         example = build_audio_tuning_example(
             audio_uri="gs://b/s.flac",
             gt_text="copy",
@@ -79,17 +74,10 @@ class TestBuildExample(unittest.TestCase):
 
 class TestValidateExample(unittest.TestCase):
     def test_accepts_well_formed_example(self) -> None:
-        from common.gemini.tuning_data import (
-            build_audio_tuning_example,
-            validate_audio_tuning_example,
-        )
-
         ex = build_audio_tuning_example("gs://b/s.flac", "copy", "sys", "user")
         self.assertTrue(validate_audio_tuning_example(ex))
 
     def test_rejects_legacy_input_output_shape(self) -> None:
-        from common.gemini.tuning_data import validate_audio_tuning_example
-
         self.assertFalse(
             validate_audio_tuning_example(
                 {"input_text": "x", "output_text": "y"}
@@ -97,18 +85,11 @@ class TestValidateExample(unittest.TestCase):
         )
 
     def test_rejects_flat_prompt_response_shape(self) -> None:
-        from common.gemini.tuning_data import validate_audio_tuning_example
-
         self.assertFalse(
             validate_audio_tuning_example({"prompt": "x", "response": "y"})
         )
 
     def test_rejects_non_gs_uri(self) -> None:
-        from common.gemini.tuning_data import (
-            build_audio_tuning_example,
-            validate_audio_tuning_example,
-        )
-
         ex = build_audio_tuning_example("gs://b/s.flac", "copy", "sys", "user")
         ex["contents"][0]["parts"][0]["fileData"]["fileUri"] = (
             "s3://bucket/file.flac"
@@ -116,41 +97,21 @@ class TestValidateExample(unittest.TestCase):
         self.assertFalse(validate_audio_tuning_example(ex))
 
     def test_rejects_null_file_uri(self) -> None:
-        from common.gemini.tuning_data import (
-            build_audio_tuning_example,
-            validate_audio_tuning_example,
-        )
-
         ex = build_audio_tuning_example("gs://b/s.flac", "copy", "sys", "user")
         ex["contents"][0]["parts"][0]["fileData"]["fileUri"] = None
         # Must return False, not raise AttributeError on None.startswith(...)
         self.assertFalse(validate_audio_tuning_example(ex))
 
     def test_rejects_wrong_mime_type(self) -> None:
-        from common.gemini.tuning_data import (
-            build_audio_tuning_example,
-            validate_audio_tuning_example,
-        )
-
         ex = build_audio_tuning_example("gs://b/s.flac", "copy", "sys", "user")
         ex["contents"][0]["parts"][0]["fileData"]["mimeType"] = "audio/wav"
         self.assertFalse(validate_audio_tuning_example(ex))
 
     def test_rejects_empty_model_text(self) -> None:
-        from common.gemini.tuning_data import (
-            build_audio_tuning_example,
-            validate_audio_tuning_example,
-        )
-
         ex = build_audio_tuning_example("gs://b/s.flac", "   ", "sys", "user")
         self.assertFalse(validate_audio_tuning_example(ex))
 
     def test_rejects_contents_with_wrong_turn_count(self) -> None:
-        from common.gemini.tuning_data import (
-            build_audio_tuning_example,
-            validate_audio_tuning_example,
-        )
-
         ex = build_audio_tuning_example("gs://b/s.flac", "copy", "sys", "user")
         # Remove the model turn so only one turn remains
         ex["contents"] = ex["contents"][:1]
@@ -168,6 +129,7 @@ class TestImportIsolation(unittest.TestCase):
             capture_output=True,
             text=True,
             env=env,
+            check=False,
         )
 
     def test_import_common_prompts_loads_no_heavy_deps(self) -> None:
