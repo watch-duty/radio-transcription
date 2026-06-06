@@ -96,7 +96,7 @@ class TestDownloadM4a(unittest.IsolatedAsyncioTestCase):
         cases = {
             401: FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
             403: FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-            404: FeedStatusReason.SOURCE_UNREACHABLE,
+            404: FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
             429: FeedStatusReason.SOURCE_RATE_LIMITED,
         }
         for status, reason in cases.items():
