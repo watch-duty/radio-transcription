@@ -1,7 +1,8 @@
+import json
 import os
 from logging import Logger
 
-from google.protobuf.json_format import MessageToJson
+from google.protobuf.json_format import MessageToDict
 from urllib3 import PoolManager, Retry
 from urllib3.exceptions import HTTPError, MaxRetryError
 
@@ -35,11 +36,12 @@ class RequestHandler:
         """
         Makes a POST request to an endpoint with the provided `notification`.
         """
-        request_data = MessageToJson(
+        request_dict = MessageToDict(
             notification,
             always_print_fields_with_no_presence=True,
-            indent=None,
         )
+        request_dict.pop("externalId", None)
+        request_data = json.dumps(request_dict, separators=(",", ":"))
         self.logger.info(f"Sending payload: {request_data}")
 
         try:

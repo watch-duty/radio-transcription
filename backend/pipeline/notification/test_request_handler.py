@@ -41,14 +41,34 @@ class TestRequestHandler(TestCase):
         mock_http.request.assert_called_once_with(
             "POST",
             "https://api.example.com/mock",
-            body=(
-                '{"transmissionId": "123", "feedId": "", "transcript": "", '
-                '"missingPriorContext": false, "missingPostContext": false, '
-                '"sourceAudioUris": [], "canonicalAudioUri": "", '
-                '"evaluationDecisions": [], "playbackAudioUri": "", '
-                '"appUrl": "", "feedName": "", "externalId": "", "tags": [], '
-                '"evaluationErrors": []}'
-            ),
+            body='{"transmissionId":"123","feedId":"","transcript":"","missingPriorContext":false,"missingPostContext":false,"sourceAudioUris":[],"canonicalAudioUri":"","evaluationDecisions":[],"playbackAudioUri":"","appUrl":"","feedName":"","tags":[],"evaluationErrors":[]}',
+            headers={
+                "Content-Type": "application/json",
+                "X-Api-Key": "test-key-123",
+            },
+        )
+
+    @mock.patch("backend.pipeline.notification.request_handler.PoolManager")
+    def test_external_id_stripped(self, mock_pool_manager: mock.Mock) -> None:
+        self.handler = RequestHandler(self.mock_logger)
+        mock_http = mock_pool_manager.return_value
+        mock_response = mock.MagicMock()
+        mock_response.status = 200
+        mock_response.data = b'{"success": true}'
+        mock_http.request.return_value = mock_response
+
+        notification = AlertNotification(
+            transmission_id="123", external_id="ext-123"
+        )
+        self.handler.send_notification(notification)
+
+        mock_pool_manager.assert_called_once_with(
+            retries=self.handler.retry_strategy
+        )
+        mock_http.request.assert_called_once_with(
+            "POST",
+            "https://api.example.com/mock",
+            body='{"transmissionId":"123","feedId":"","transcript":"","missingPriorContext":false,"missingPostContext":false,"sourceAudioUris":[],"canonicalAudioUri":"","evaluationDecisions":[],"playbackAudioUri":"","appUrl":"","feedName":"","tags":[],"evaluationErrors":[]}',
             headers={
                 "Content-Type": "application/json",
                 "X-Api-Key": "test-key-123",
