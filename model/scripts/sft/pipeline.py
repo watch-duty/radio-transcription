@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from common.manifest import CanonicalRow
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -62,6 +63,29 @@ SFT_TRAINING_COST_PER_MILLION: Final = {
 _SCRIPT_DIR: Final = Path(__file__).resolve().parent
 _DATASETS_TOML: Final = _SCRIPT_DIR / "datasets.toml"
 RESULTS_DIR: Final = _SCRIPT_DIR / "results"
+CONFIG_TUNE_CONFLICT_FLAGS: Final = frozenset(
+    {
+        "--round-id",
+        "--base-model",
+        "--epochs",
+        "--adapter-size",
+        "--lr-multiplier",
+        "--location",
+        "--gcp-project",
+        "--gcs-bucket",
+    }
+)
+EVALS_README_TEXT: Final = "Reserved for future config-driven eval artifacts."
+CONFIG_TUNE_ARTIFACT_PATHS: Final = (
+    "manifests/canonical/train.jsonl",
+    "manifests/canonical/validation.jsonl",
+    "manifests/canonical/eval.jsonl",
+    "model_inputs/gemini/train.jsonl",
+    "model_inputs/gemini/validation.jsonl",
+    "preflight/report.json",
+    "tuning/status.json",
+    "evals/README.txt",
+)
 
 
 class PromptOverrideError(ValueError):
@@ -130,6 +154,259 @@ def _save_round_config(round_id: str, config: dict) -> None:
     cfg_path.write_text(
         json.dumps(config, indent=2, default=str), encoding="utf-8"
     )
+
+
+def _utc_now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _provided_option_flags(argv: list[str]) -> set[str]:
+    """Return option flags explicitly present in argv.
+
+    Detects both ``--flag value`` and ``--flag=value`` forms. Short options are
+    not used by this CLI and are intentionally ignored.
+    """
+    flags: set[str] = set()
+    for item in argv:
+        if not item.startswith("--"):
+            continue
+        flags.add(item.split("=", maxsplit=1)[0])
+    return flags
+
+
+def _reject_config_tune_conflicts(args: argparse.Namespace) -> str | None:
+    flags = getattr(args, "_provided_flags", set())
+    conflicts = sorted(flags & CONFIG_TUNE_CONFLICT_FLAGS)
+    if not conflicts:
+        return None
+    return (
+        "tune --config reads experiment settings from TOML; do not also pass "
+        + ", ".join(conflicts)
+    )
+
+
+def _gcs_uri_exists(storage_client: object, uri: str) -> bool:
+    from common.gcs_utils import parse_gcs_uri
+
+    bucket_name, blob_path = parse_gcs_uri(uri)
+    blob = storage_client.bucket(bucket_name).blob(blob_path)
+    return bool(blob.exists())
+
+
+def _gcs_prefix_has_any_blob(storage_client: object, prefix_uri: str) -> bool:
+    from common.gcs_utils import parse_gcs_uri
+
+    bucket_name, blob_prefix = parse_gcs_uri(prefix_uri)
+    bucket = storage_client.bucket(bucket_name)
+    for _ in bucket.list_blobs(prefix=blob_prefix, max_results=1):
+        return True
+    return False
+
+
+def _download_gcs_uri(
+    storage_client: object, uri: str, local_path: Path
+) -> None:
+    from common.gcs_utils import download_blob_to_file, parse_gcs_uri
+
+    bucket_name, blob_path = parse_gcs_uri(uri)
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    download_blob_to_file(
+        storage_client, bucket_name, blob_path, str(local_path)
+    )
+
+
+def _upload_local_file(
+    storage_client: object, local_path: Path, gcs_uri: str
+) -> None:
+    from common.gcs_utils import parse_gcs_uri, upload_file_to_blob
+
+    bucket_name, blob_path = parse_gcs_uri(gcs_uri)
+    upload_file_to_blob(storage_client, bucket_name, blob_path, str(local_path))
+
+
+def _upload_text(
+    storage_client: object,
+    text: str,
+    gcs_uri: str,
+    *,
+    content_type: str = "text/plain",
+) -> None:
+    from common.gcs_utils import parse_gcs_uri
+
+    bucket_name, blob_path = parse_gcs_uri(gcs_uri)
+    blob = storage_client.bucket(bucket_name).blob(blob_path)
+    blob.upload_from_string(text, content_type=content_type)
+
+
+def _upload_json_text(
+    storage_client: object, obj: dict, gcs_uri: str
+) -> None:
+    _upload_text(
+        storage_client,
+        json.dumps(obj, indent=2, default=str),
+        gcs_uri,
+        content_type="application/json",
+    )
+
+
+def _download_json_text(storage_client: object, gcs_uri: str) -> dict:
+    from common.gcs_utils import parse_gcs_uri
+
+    bucket_name, blob_path = parse_gcs_uri(gcs_uri)
+    blob = storage_client.bucket(bucket_name).blob(blob_path)
+    text = blob.download_as_text()
+    obj = json.loads(text)
+    if not isinstance(obj, dict):
+        raise ValueError(f"Expected JSON object at {gcs_uri}")
+    return obj
+
+
+def _write_status(
+    local_run_dir: Path,
+    storage_client: object,
+    status_uri: str,
+    status: dict,
+) -> None:
+    local_path = local_run_dir / "status.json"
+    _write_json_artifact(local_path, storage_client, status_uri, status)
+
+
+def _write_json_artifact(
+    local_path: Path, storage_client: object, gcs_uri: str, obj: dict
+) -> None:
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    local_path.write_text(
+        json.dumps(obj, indent=2, default=str), encoding="utf-8"
+    )
+    _upload_local_file(storage_client, local_path, gcs_uri)
+
+
+def _write_text_artifact(
+    local_path: Path, storage_client: object, gcs_uri: str, text: str
+) -> None:
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    local_path.write_text(text, encoding="utf-8")
+    _upload_local_file(storage_client, local_path, gcs_uri)
+
+
+def _local_config_path(round_id: str) -> Path:
+    return RESULTS_DIR / round_id / "config.json"
+
+
+def _write_and_upload_config(
+    config: dict, run_cfg: object, storage_client: object
+) -> dict:
+    from records import write_config
+
+    written = write_config(RESULTS_DIR, run_cfg.round_id, config)
+    _upload_local_file(
+        storage_client, _local_config_path(run_cfg.round_id), run_cfg.paths.config_uri
+    )
+    return written
+
+
+def _load_canonical_rows(
+    path: Path, split: str
+) -> tuple[list[dict], list["CanonicalRow"]]:
+    from common.manifest import load_manifest, rows_from_manifest
+
+    entries = load_manifest(str(path))
+    rows = rows_from_manifest(entries)
+    if not rows:
+        raise ValueError(f"{split} manifest has zero parsed rows: {path}")
+    if len(rows) != len(entries):
+        raise ValueError(
+            f"{split} manifest parsed {len(rows)}/{len(entries)} rows; "
+            "fix malformed rows before tuning"
+        )
+    return entries, rows
+
+
+def _reject_split_overlap(
+    left_name: str,
+    left_rows: list["CanonicalRow"],
+    right_name: str,
+    right_rows: list["CanonicalRow"],
+) -> None:
+    left_uris = {row.audio_filepath for row in left_rows}
+    right_uris = {row.audio_filepath for row in right_rows}
+    overlap = sorted(left_uris & right_uris)
+    if not overlap:
+        return
+    sample = ", ".join(overlap[:5])
+    raise ValueError(
+        f"{left_name} and {right_name} manifests overlap on "
+        f"{len(overlap)} audio URI(s): {sample}"
+    )
+
+
+def _write_gemini_jsonl(
+    rows: list["CanonicalRow"],
+    path: Path,
+    *,
+    system_prompt: str,
+    user_prompt: str,
+) -> None:
+    from common.sft import build_example, validate_example
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as fh:
+        for row in rows:
+            ex = build_example(
+                audio_uri=row.audio_filepath,
+                gt_text=row.text,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+            )
+            if not validate_example(ex):
+                raise ValueError(
+                    f"invalid Gemini SFT example for {row.audio_filepath}"
+                )
+            fh.write(json.dumps(ex) + "\n")
+
+
+def _print_tune_cost_estimate(
+    *,
+    n_examples: int,
+    epochs: int,
+    total_secs: float,
+    base_model: str,
+    basis: str,
+) -> None:
+    audio_tokens_per_sec: Final = 32
+    cost_per_million_tokens = SFT_TRAINING_COST_PER_MILLION[base_model]
+    model_display_name = SFT_MODEL_DISPLAY_NAMES[base_model]
+    estimated_tokens = total_secs * audio_tokens_per_sec * epochs
+    estimated_cost = (estimated_tokens / 1_000_000) * cost_per_million_tokens
+
+    print("\n--- Tune Cost Estimate ---")
+    print(f"  Examples:          {n_examples}")
+    print(f"  Epochs:            {epochs}")
+    print(
+        f"  Est. audio tokens: {estimated_tokens:,.0f} "
+        f"({basis} x 32 tok/s)"
+    )
+    print(f"  Est. cost:        ~${estimated_cost:.2f} USD")
+    print(
+        f"  NOTE: Using {model_display_name} SFT rate "
+        f"(${cost_per_million_tokens:.2f}/M training tokens)."
+    )
+    print(
+        "        Actual billing may differ. You accept responsibility for GCP charges.\n"
+    )
+
+
+def _confirm_tune_cost(confirm: bool) -> int:
+    if confirm:
+        return 0
+    try:
+        answer = input("Type 'yes' to proceed with tune: ").strip().lower()
+    except EOFError:
+        answer = ""
+    if answer != "yes":
+        logger.info("Tune aborted by operator.")
+        return 130
+    return 0
 
 
 def _load_prompt_override(value: str, label: str) -> str:
@@ -435,6 +712,372 @@ def _build(args: argparse.Namespace) -> int:
 
 
 def _tune(args: argparse.Namespace) -> int:
+    if getattr(args, "config", ""):
+        if message := _reject_config_tune_conflicts(args):
+            logger.error(message)  # noqa: TRY400
+            return 1
+        return _tune_from_config(args)
+    if not getattr(args, "round_id", ""):
+        logger.error("--round-id is required unless --config is provided")  # noqa: TRY400
+        return 1
+    return _tune_legacy(args)
+
+
+def _tune_from_config(args: argparse.Namespace) -> int:
+    """Config-driven tune branch backed by GCS-authoritative run records."""
+    from google.cloud import storage
+    from run_config import RunConfigError, load_run_config
+
+    try:
+        run_cfg = load_run_config(args.config)
+    except RunConfigError as e:
+        logger.error(str(e))  # noqa: TRY400
+        return 1
+
+    if run_cfg.base_model not in SUPPORTED_SFT_BASE_MODELS:
+        logger.error(
+            f"Base model '{run_cfg.base_model}' is not supported for this Gemini SFT pipeline. "
+            f"Use one of: {', '.join(sorted(SUPPORTED_SFT_BASE_MODELS))}."
+        )
+        return 1
+
+    storage_client = storage.Client(project=run_cfg.gcp_project)
+    local_run_dir = RESULTS_DIR / run_cfg.round_id
+
+    try:
+        if _gcs_uri_exists(storage_client, run_cfg.paths.config_uri):
+            config = _download_json_text(
+                storage_client, run_cfg.paths.config_uri
+            )
+            if config.get("job_name"):
+                return _resume_config_tune(run_cfg, storage_client, config)
+            logger.error(
+                "Run prefix already exists without job_name; use a new round_id"
+            )
+            return 1
+
+        if _gcs_prefix_has_any_blob(
+            storage_client, run_cfg.paths.gcs_prefix + "/"
+        ):
+            logger.error(
+                "Run prefix already exists without job_name; use a new round_id"
+            )
+            return 1
+
+        return _submit_config_tune(args, run_cfg, storage_client, local_run_dir)
+    except (OSError, ValueError, RuntimeError, TimeoutError) as e:
+        logger.error(str(e))  # noqa: TRY400
+        return 1
+
+
+def _resume_config_tune(
+    run_cfg: object, storage_client: object, config: dict
+) -> int:
+    from common.vertex import poll_tuning_job
+
+    local_run_dir = RESULTS_DIR / run_cfg.round_id
+    local_run_dir.mkdir(parents=True, exist_ok=True)
+    _local_config_path(run_cfg.round_id).write_text(
+        json.dumps(config, indent=2, default=str), encoding="utf-8"
+    )
+
+    job_name = str(config["job_name"])
+    logger.info(f"Re-attaching to config-driven job {job_name}")
+    endpoint = poll_tuning_job(
+        job_name, run_cfg.gcp_project, run_cfg.location
+    )
+    config.update(
+        {
+            "endpoint": endpoint,
+            "status": "succeeded",
+            "updated_at": _utc_now(),
+        }
+    )
+    config = _write_and_upload_config(config, run_cfg, storage_client)
+    root_status = {
+        "round_id": run_cfg.round_id,
+        "status": "succeeded",
+        "job_name": job_name,
+        "endpoint": endpoint,
+        "updated_at": _utc_now(),
+    }
+    tuning_status = {
+        **root_status,
+        "base_model": config.get("base_model", run_cfg.base_model),
+    }
+    _write_status(
+        local_run_dir,
+        storage_client,
+        run_cfg.paths.status_uri,
+        root_status,
+    )
+    _write_json_artifact(
+        local_run_dir / "tuning" / "status.json",
+        storage_client,
+        run_cfg.paths.tuning_status_uri,
+        tuning_status,
+    )
+    logger.info(f"Tune complete. Endpoint: {endpoint}")
+    return 0
+
+
+def _submit_config_tune(
+    args: argparse.Namespace,
+    run_cfg: object,
+    storage_client: object,
+    local_run_dir: Path,
+) -> int:
+    from common.vertex import poll_tuning_job, submit_tuning_job
+    from preflight import run_preflight
+
+    local_paths = _prepare_config_run_artifacts(
+        run_cfg, storage_client, local_run_dir
+    )
+    total_secs = float(local_paths["total_train_duration_seconds"])
+    n_examples = int(local_paths["canonical_train_rows"])
+    basis = f"{total_secs:,.0f}s actual total"
+    _print_tune_cost_estimate(
+        n_examples=n_examples,
+        epochs=run_cfg.epoch_count,
+        total_secs=total_secs,
+        base_model=run_cfg.base_model,
+        basis=basis,
+    )
+    if rc := _confirm_tune_cost(getattr(args, "confirm", False)):
+        return rc
+
+    report = run_preflight(
+        train_jsonl_path=local_paths["gemini_train_path"],
+        val_jsonl_path=local_paths["gemini_validation_path"],
+        storage_client=storage_client,
+        report_path=local_paths["preflight_report_path"],
+        system_prompt=run_cfg.system_prompt,
+        user_prompt=run_cfg.user_prompt,
+    )
+    _upload_local_file(
+        storage_client,
+        local_paths["preflight_report_path"],
+        run_cfg.paths.preflight_report_uri,
+    )
+    if not report.passed:
+        status = {
+            "round_id": run_cfg.round_id,
+            "status": "preflight_failed",
+            "updated_at": _utc_now(),
+        }
+        _write_status(
+            local_run_dir, storage_client, run_cfg.paths.status_uri, status
+        )
+        logger.error(
+            f"Preflight FAILED. {len(report.failures)} issue(s) found. "
+            f"Report: {run_cfg.paths.preflight_report_uri}. Fix the data and re-run."
+        )
+        return 1
+
+    resolved_config = {
+        **run_cfg.to_record_dict(),
+        "total_train_duration_seconds": total_secs,
+        "canonical_train_rows": n_examples,
+        "canonical_validation_rows": local_paths[
+            "canonical_validation_rows"
+        ],
+        "canonical_eval_rows": local_paths["canonical_eval_rows"],
+        "status": "preflight_passed",
+    }
+    config = _write_and_upload_config(
+        resolved_config, run_cfg, storage_client
+    )
+    _upload_prepared_config_artifacts(local_paths, run_cfg, storage_client)
+
+    root_status = {
+        "round_id": run_cfg.round_id,
+        "status": "preflight_passed",
+        "updated_at": _utc_now(),
+    }
+    _write_status(
+        local_run_dir, storage_client, run_cfg.paths.status_uri, root_status
+    )
+    _write_json_artifact(
+        local_run_dir / "tuning" / "status.json",
+        storage_client,
+        run_cfg.paths.tuning_status_uri,
+        {
+            "round_id": run_cfg.round_id,
+            "status": "not_submitted",
+            "updated_at": _utc_now(),
+        },
+    )
+    _write_text_artifact(
+        local_run_dir / "evals" / "README.txt",
+        storage_client,
+        run_cfg.paths.evals_readme_uri,
+        EVALS_README_TEXT,
+    )
+
+    display_name = f"wd-radio-sft-{run_cfg.round_id}"
+    job_name = submit_tuning_job(
+        train_uri=run_cfg.paths.gemini_train_uri,
+        display_name=display_name,
+        project=run_cfg.gcp_project,
+        location=run_cfg.location,
+        base_model=run_cfg.base_model,
+        val_uri=run_cfg.paths.gemini_validation_uri,
+        epoch_count=run_cfg.epoch_count,
+        adapter_size=run_cfg.adapter_size,
+        lr_multiplier=run_cfg.learning_rate_multiplier,
+    )
+    config.update(
+        {
+            "job_name": job_name,
+            "display_name": display_name,
+            "status": "submitted",
+            "updated_at": _utc_now(),
+        }
+    )
+    config = _write_and_upload_config(config, run_cfg, storage_client)
+    submitted_status = {
+        "round_id": run_cfg.round_id,
+        "status": "submitted",
+        "job_name": job_name,
+        "updated_at": _utc_now(),
+    }
+    _write_status(
+        local_run_dir,
+        storage_client,
+        run_cfg.paths.status_uri,
+        submitted_status,
+    )
+    _write_json_artifact(
+        local_run_dir / "tuning" / "status.json",
+        storage_client,
+        run_cfg.paths.tuning_status_uri,
+        submitted_status,
+    )
+    logger.info(f"Persisted job_name: {job_name}")
+
+    endpoint = poll_tuning_job(
+        job_name, run_cfg.gcp_project, run_cfg.location
+    )
+    config.update(
+        {
+            "endpoint": endpoint,
+            "status": "succeeded",
+            "updated_at": _utc_now(),
+        }
+    )
+    _write_and_upload_config(config, run_cfg, storage_client)
+    succeeded_status = {
+        "round_id": run_cfg.round_id,
+        "status": "succeeded",
+        "job_name": job_name,
+        "endpoint": endpoint,
+        "updated_at": _utc_now(),
+    }
+    _write_status(
+        local_run_dir,
+        storage_client,
+        run_cfg.paths.status_uri,
+        succeeded_status,
+    )
+    _write_json_artifact(
+        local_run_dir / "tuning" / "status.json",
+        storage_client,
+        run_cfg.paths.tuning_status_uri,
+        succeeded_status,
+    )
+    logger.info(f"Tune complete. Endpoint: {endpoint}")
+    return 0
+
+
+def _prepare_config_run_artifacts(
+    run_cfg: object, storage_client: object, local_run_dir: Path
+) -> dict:
+    canonical_dir = local_run_dir / "manifests" / "canonical"
+    model_inputs_dir = local_run_dir / "model_inputs" / "gemini"
+    preflight_dir = local_run_dir / "preflight"
+    for path in (canonical_dir, model_inputs_dir, preflight_dir):
+        path.mkdir(parents=True, exist_ok=True)
+
+    run_config_path = local_run_dir / "run_config.toml"
+    run_config_path.write_text(run_cfg.raw_toml, encoding="utf-8")
+    _upload_local_file(
+        storage_client, run_config_path, run_cfg.paths.run_config_uri
+    )
+
+    canonical_train_path = canonical_dir / "train.jsonl"
+    canonical_validation_path = canonical_dir / "validation.jsonl"
+    canonical_eval_path = canonical_dir / "eval.jsonl"
+    _download_gcs_uri(
+        storage_client, run_cfg.train_manifest_uri, canonical_train_path
+    )
+    _download_gcs_uri(
+        storage_client,
+        run_cfg.validation_manifest_uri,
+        canonical_validation_path,
+    )
+    _download_gcs_uri(
+        storage_client, run_cfg.eval_manifest_uri, canonical_eval_path
+    )
+
+    _, train_rows = _load_canonical_rows(canonical_train_path, "train")
+    _, validation_rows = _load_canonical_rows(
+        canonical_validation_path, "validation"
+    )
+    _, eval_rows = _load_canonical_rows(canonical_eval_path, "eval")
+    _reject_split_overlap("train", train_rows, "validation", validation_rows)
+    _reject_split_overlap("train", train_rows, "eval", eval_rows)
+
+    gemini_train_path = model_inputs_dir / "train.jsonl"
+    gemini_validation_path = model_inputs_dir / "validation.jsonl"
+    _write_gemini_jsonl(
+        train_rows,
+        gemini_train_path,
+        system_prompt=run_cfg.system_prompt,
+        user_prompt=run_cfg.user_prompt,
+    )
+    _write_gemini_jsonl(
+        validation_rows,
+        gemini_validation_path,
+        system_prompt=run_cfg.system_prompt,
+        user_prompt=run_cfg.user_prompt,
+    )
+
+    return {
+        "run_config_path": run_config_path,
+        "canonical_train_path": canonical_train_path,
+        "canonical_validation_path": canonical_validation_path,
+        "canonical_eval_path": canonical_eval_path,
+        "gemini_train_path": gemini_train_path,
+        "gemini_validation_path": gemini_validation_path,
+        "preflight_report_path": preflight_dir / "report.json",
+        "total_train_duration_seconds": sum(
+            row.duration for row in train_rows
+        ),
+        "canonical_train_rows": len(train_rows),
+        "canonical_validation_rows": len(validation_rows),
+        "canonical_eval_rows": len(eval_rows),
+    }
+
+
+def _upload_prepared_config_artifacts(
+    local_paths: dict, run_cfg: object, storage_client: object
+) -> None:
+    uploads = [
+        ("canonical_train_path", run_cfg.paths.canonical_train_uri),
+        (
+            "canonical_validation_path",
+            run_cfg.paths.canonical_validation_uri,
+        ),
+        ("canonical_eval_path", run_cfg.paths.canonical_eval_uri),
+        ("gemini_train_path", run_cfg.paths.gemini_train_uri),
+        ("gemini_validation_path", run_cfg.paths.gemini_validation_uri),
+        ("preflight_report_path", run_cfg.paths.preflight_report_uri),
+    ]
+    for local_key, gcs_uri in uploads:
+        _upload_local_file(storage_client, local_paths[local_key], gcs_uri)
+
+
+def _tune_legacy(args: argparse.Namespace) -> int:
     """Tune subcommand — submit or re-attach to a Vertex AI SFT tuning job.
 
     Persists job.name to config.json before entering the poll loop.
@@ -1101,8 +1744,13 @@ def _add_gcp_args(p: argparse.ArgumentParser) -> None:
 def _add_tune_args(p: argparse.ArgumentParser) -> None:
     _add_gcp_args(p)
     p.add_argument(
+        "--config",
+        default="",
+        help="External TOML config for one config-driven tune run",
+    )
+    p.add_argument(
         "--round-id",
-        required=True,
+        default="",
         help="Round identifier (must match build output)",
     )
     p.add_argument(
@@ -1117,7 +1765,7 @@ def _add_tune_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--adapter-size",
         default="EIGHT",
-        choices=["ONE", "FOUR", "EIGHT", "SIXTEEN"],
+        choices=["ONE", "TWO", "FOUR", "EIGHT", "SIXTEEN"],
         help="Adapter size",
     )
     p.add_argument(
@@ -1147,6 +1795,11 @@ def _add_eval_args(p: argparse.ArgumentParser) -> None:
 
 def _add_all_args(p: argparse.ArgumentParser) -> None:
     _add_build_args(p)
+    p.add_argument(
+        "--config",
+        default="",
+        help="Unsupported for all; use tune --config <run.toml>",
+    )
     # Tune-specific args (--round-id is already added by _add_build_args above)
     p.add_argument(
         "--base-model",
@@ -1160,7 +1813,7 @@ def _add_all_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--adapter-size",
         default="EIGHT",
-        choices=["ONE", "FOUR", "EIGHT", "SIXTEEN"],
+        choices=["ONE", "TWO", "FOUR", "EIGHT", "SIXTEEN"],
         help="Adapter size",
     )
     p.add_argument(
@@ -1183,6 +1836,16 @@ def _add_all_args(p: argparse.ArgumentParser) -> None:
 
 
 def main() -> int:
+    raw_args = sys.argv[1:]
+    if raw_args and raw_args[0] == "all" and any(
+        item == "--config" or item.startswith("--config=")
+        for item in raw_args[1:]
+    ):
+        logger.error(
+            "all --config is not supported in this milestone; use tune --config <run.toml>"
+        )
+        return 1
+
     ap = argparse.ArgumentParser(
         description="Watch Duty radio transcription Gemini SFT pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1213,6 +1876,7 @@ def main() -> int:
         )
     )
     args = ap.parse_args()
+    args._provided_flags = _provided_option_flags(sys.argv[2:])
     dispatch = {"build": _build, "tune": _tune, "eval": _eval, "all": _all}
     return dispatch[args.cmd](args)
 

@@ -155,6 +155,68 @@ class TestPipelineCLI(unittest.TestCase):
         args = mock_tune.call_args.args[0]
         self.assertEqual(args.base_model, "gemini-3.1-flash-lite")
 
+    def test_tune_accepts_config_without_round_id(self) -> None:
+        """Config-driven tune does not require the legacy --round-id flag."""
+        import pipeline
+
+        with unittest.mock.patch("pipeline._tune") as mock_tune:
+            mock_tune.return_value = 0
+            with unittest.mock.patch(
+                "sys.argv",
+                [
+                    "pipeline.py",
+                    "tune",
+                    "--config",
+                    "/tmp/run.toml",
+                    "--confirm",
+                ],
+            ):
+                pipeline.main()
+
+        args = mock_tune.call_args.args[0]
+        self.assertEqual(args.config, "/tmp/run.toml")
+        self.assertEqual(args.round_id, "")
+
+    def test_tune_config_rejects_experiment_flag_override(self) -> None:
+        """tune --config must not accept duplicate experiment-defining flags."""
+        import pipeline
+
+        with (
+            unittest.mock.patch(
+                "sys.argv",
+                [
+                    "pipeline.py",
+                    "tune",
+                    "--config",
+                    "/tmp/run.toml",
+                    "--base-model",
+                    "gemini-2.5-flash",
+                ],
+            ),
+            self.assertLogs("pipeline", level="ERROR") as logs,
+        ):
+            rc = pipeline.main()
+
+        self.assertEqual(rc, 1)
+        self.assertIn("--base-model", "\n".join(logs.output))
+
+    def test_all_config_is_rejected_before_required_args(self) -> None:
+        """all --config is intentionally unsupported for this milestone."""
+        import pipeline
+
+        with (
+            unittest.mock.patch(
+                "sys.argv", ["pipeline.py", "all", "--config", "/tmp/run.toml"]
+            ),
+            self.assertLogs("pipeline", level="ERROR") as logs,
+        ):
+            rc = pipeline.main()
+
+        self.assertEqual(rc, 1)
+        self.assertIn(
+            "all --config is not supported", "\n".join(logs.output)
+        )
+
     def test_tune_accepts_gcp_overrides(self) -> None:
         """Tune CLI accepts sandbox GCP project/bucket overrides."""
         import pipeline

@@ -120,6 +120,29 @@ class TestSubmitTuningJob(unittest.TestCase):
             gcs_uri="gs://b/val.jsonl"
         )
 
+    @unittest.mock.patch("common.vertex.types")
+    @unittest.mock.patch("common.vertex.genai")
+    def test_wires_adapter_size_two(self, mock_genai, mock_types):
+        """Adapter size TWO maps to the google-genai enum string."""
+        mock_client = _make_mock_client()
+        mock_genai.Client.return_value = mock_client
+        mock_types.TuningDataset.return_value = "train-dataset"
+        mock_types.CreateTuningJobConfig.side_effect = lambda **kwargs: kwargs
+        from common.vertex import submit_tuning_job
+
+        submit_tuning_job(
+            train_uri="gs://b/train.jsonl",
+            display_name="test",
+            project="p",
+            location="us-central1",
+            adapter_size="TWO",
+        )
+
+        call_kwargs = mock_client.tunings.tune.call_args.kwargs
+        self.assertEqual(
+            call_kwargs["config"]["adapter_size"], "ADAPTER_SIZE_TWO"
+        )
+
 
 class TestPollTuningJob(unittest.TestCase):
     """Tests for common.vertex.poll_tuning_job."""
@@ -245,8 +268,13 @@ class TestAdapterEnum(unittest.TestCase):
     def test_enum_contains_required_sizes(self):
         from common.vertex import _ADAPTER_ENUM
 
-        for key in ("ONE", "FOUR", "EIGHT", "SIXTEEN"):
+        for key in ("ONE", "TWO", "FOUR", "EIGHT", "SIXTEEN"):
             self.assertIn(key, _ADAPTER_ENUM, f"Missing adapter size: {key}")
+
+    def test_enum_maps_two(self):
+        from common.vertex import _ADAPTER_ENUM
+
+        self.assertEqual(_ADAPTER_ENUM["TWO"], "ADAPTER_SIZE_TWO")
 
     def test_enum_values_have_adapter_size_prefix(self):
         from common.vertex import _ADAPTER_ENUM
