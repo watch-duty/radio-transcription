@@ -53,7 +53,7 @@ def _validate_dict(payload: object) -> dict[str, object]:
     if not isinstance(payload, dict):
         msg = "invalid"
         raise TypeError(msg)
-    return payload
+    return typing.cast("dict[str, object]", payload)
 
 
 class TestFetchJsonWithRetries(unittest.IsolatedAsyncioTestCase):

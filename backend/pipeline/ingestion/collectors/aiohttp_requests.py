@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import collections.abc
 import dataclasses
 import logging
 import random
@@ -54,16 +53,15 @@ async def sleep_or_shutdown(
 def _retry_delay(
     attempt: int,
     *,
-    headers: object = None,
+    headers: Mapping[str, object] | None = None,
     base_delay_sec: float,
     jitter_max_sec: float,
 ) -> float:
     """Return retry delay, honoring a numeric Retry-After header."""
-    retry_after = None
-    if isinstance(headers, collections.abc.Mapping):
-        retry_after = headers.get("Retry-After")
-    if retry_after and str(retry_after).isdigit():
-        return float(retry_after)
+    retry_after = headers.get("Retry-After") if headers is not None else None
+    retry_after_text = str(retry_after) if retry_after is not None else ""
+    if retry_after_text.isdigit():
+        return float(retry_after_text)
 
     return (base_delay_sec * (2**attempt)) + random.uniform(  # noqa: S311
         0,
@@ -98,17 +96,18 @@ def _classification_for_status(
     )
 
 
-def _headers_dict(headers: object) -> dict[str, str]:
+def _headers_dict(headers: Mapping[object, object] | None) -> dict[str, str]:
     """Return a plain header dict from aiohttp headers or sparse test fakes."""
-    if not isinstance(headers, collections.abc.Mapping):
+    if headers is None:
         return {}
-    try:
-        return dict(headers)
-    except (TypeError, ValueError):
-        return {}
+    return {
+        key: value
+        for key, value in headers.items()
+        if isinstance(key, str) and isinstance(value, str)
+    }
 
 
-async def fetch_json_with_retries(  # noqa: PLR0912, UP047
+async def fetch_json_with_retries(  # noqa: UP047
     session: aiohttp.ClientSession,
     url: str,
     shutdown: asyncio.Event,
@@ -143,12 +142,12 @@ async def fetch_json_with_retries(  # noqa: PLR0912, UP047
             return None
 
         try:
-            request_kwargs: dict[str, object] = {"timeout": timeout}
-            if headers is not None:
-                request_kwargs["headers"] = headers
-            if params is not None:
-                request_kwargs["params"] = params
-            async with session.get(url, **request_kwargs) as response:
+            async with session.get(
+                url,
+                headers=headers,
+                params=params,
+                timeout=timeout,
+            ) as response:
                 if response.status == 200:
                     try:
                         payload = await response.json()
@@ -192,8 +191,7 @@ async def fetch_json_with_retries(  # noqa: PLR0912, UP047
                         jitter_max_sec=retry_jitter_max_sec,
                     )
                     logger.warning(
-                        "%s returned %d"
-                        " (attempt %d/%d, retry in %.1fs)",
+                        "%s returned %d (attempt %d/%d, retry in %.1fs)",
                         log_label,
                         response.status,
                         attempt + 1,
@@ -227,8 +225,7 @@ async def fetch_json_with_retries(  # noqa: PLR0912, UP047
                     jitter_max_sec=retry_jitter_max_sec,
                 )
                 logger.warning(
-                    "%s transport error"
-                    " (attempt %d/%d, retry in %.1fs)",
+                    "%s transport error (attempt %d/%d, retry in %.1fs)",
                     log_label,
                     attempt + 1,
                     max_attempts,
@@ -306,8 +303,7 @@ async def download_item_media(  # noqa: PLR0911
                         jitter_max_sec=retry_jitter_max_sec,
                     )
                     logger.warning(
-                        "%s returned %d"
-                        " (attempt %d/%d, retry in %.1fs)",
+                        "%s returned %d (attempt %d/%d, retry in %.1fs)",
                         log_label,
                         response.status,
                         attempt + 1,
@@ -334,8 +330,7 @@ async def download_item_media(  # noqa: PLR0911
                     jitter_max_sec=retry_jitter_max_sec,
                 )
                 logger.warning(
-                    "%s transport error"
-                    " (attempt %d/%d, retry in %.1fs)",
+                    "%s transport error (attempt %d/%d, retry in %.1fs)",
                     log_label,
                     attempt + 1,
                     max_attempts,
