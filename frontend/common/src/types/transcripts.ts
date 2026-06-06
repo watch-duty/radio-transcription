@@ -1,6 +1,6 @@
 export interface Transcript {
   feedId: string;
-  transmissionId: string;
+  segmentId: string;
   transcript: string;
   startTimestamp: string;
   endTimestamp: string;

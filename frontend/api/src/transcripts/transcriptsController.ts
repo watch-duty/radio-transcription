@@ -36,7 +36,7 @@ export interface TranscriptResponse {
 function convertTranscriptResponse(response: TranscriptResponse): Transcript {
   return {
     feedId: response.feed_id,
-    transmissionId: response.transmission_id,
+    segmentId: response.transmission_id,
     transcript: response.transcript,
     startTimestamp: response.start_timestamp,
     endTimestamp: response.end_timestamp,

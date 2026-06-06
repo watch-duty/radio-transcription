@@ -43,6 +43,7 @@ describe('FeedsController', () => {
     name: 'Test Feed',
     sourceType: 'openmhz',
     sourceFeedId: 'src_123',
+    externalId: 'ext_123',
     sourceUrl: 'https://openmhz.com/system/src_123',
     archiveUrl: undefined,
     status: 'active',
@@ -185,6 +186,7 @@ describe('FeedsController', () => {
         name: 'Test Feed',
         sourceType: SourceType.OPENMHZ,
         sourceFeedId: 'src_123',
+        externalId: 'ext_123',
       };
       const result = await controller.createFeed(payload);
 
@@ -212,6 +214,7 @@ describe('FeedsController', () => {
         name: 'Test Feed',
         sourceType: SourceType.OPENMHZ,
         sourceFeedId: 'src_123',
+        externalId: 'ext_123',
         tags: [{ key: 'county', value: 'Fulton' }],
       };
       const result = await controller.createFeed(payload);
@@ -240,6 +243,7 @@ describe('FeedsController', () => {
       const controller = new FeedsController();
       const payload = {
         name: 'Updated Feed',
+        externalId: 'ext_123',
       };
       const result = await controller.updateFeed('feed_123', payload);
 
@@ -249,6 +253,7 @@ describe('FeedsController', () => {
         method: 'PUT',
         data: {
           name: 'Updated Feed',
+          externalId: 'ext_123',
           tags: undefined,
         },
       });
@@ -258,6 +263,7 @@ describe('FeedsController', () => {
       const mockFeedWithTags = {
         ...mockBackendFeed,
         name: 'Updated Feed',
+        externalId: 'ext_123',
         tags: [{ key: 'county', value: 'Fulton' }],
       };
       mockRequest.mockResolvedValueOnce({ data: mockFeedWithTags });
@@ -265,6 +271,7 @@ describe('FeedsController', () => {
       const controller = new FeedsController();
       const payload = {
         name: 'Updated Feed',
+        externalId: 'ext_123',
         tags: [{ key: 'county', value: 'Fulton' }],
       };
       const result = await controller.updateFeed('feed_123', payload);
@@ -272,6 +279,7 @@ describe('FeedsController', () => {
       expect(result).toEqual({
         ...expectedFrontendFeed,
         name: 'Updated Feed',
+        externalId: 'ext_123',
         tags: [{ key: 'county', value: 'Fulton' }],
       });
       expect(mockRequest).toHaveBeenCalledWith({
@@ -279,6 +287,7 @@ describe('FeedsController', () => {
         method: 'PUT',
         data: {
           name: 'Updated Feed',
+          externalId: 'ext_123',
           tags: [{ key: 'county', value: 'Fulton' }],
         },
       });
@@ -294,6 +303,7 @@ describe('FeedsController', () => {
       const controller = new FeedsController();
       const payload = {
         name: 'Updated Feed',
+        externalId: 'ext_123',
       };
       await expect(controller.updateFeed('feed_123', payload)).rejects.toThrow(
         /Not Found/
@@ -310,6 +320,7 @@ describe('FeedsController', () => {
       const controller = new FeedsController();
       const payload = {
         name: 'Updated Feed',
+        externalId: 'ext_123',
       };
       await expect(controller.updateFeed('feed_123', payload)).rejects.toThrow(
         /Server Error/
