@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import collections.abc
 import dataclasses
 import logging
 import random
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import aiohttp
 
@@ -53,12 +54,15 @@ async def sleep_or_shutdown(
 def _retry_delay(
     attempt: int,
     *,
-    headers: Mapping[str, object] | None = None,
+    headers: object = None,
     base_delay_sec: float,
     jitter_max_sec: float,
 ) -> float:
     """Return retry delay, honoring a numeric Retry-After header."""
-    retry_after = headers.get("Retry-After") if headers is not None else None
+    retry_after = None
+    if isinstance(headers, collections.abc.Mapping):
+        header_map = cast("Mapping[object, object]", headers)
+        retry_after = header_map.get("Retry-After")
     retry_after_text = str(retry_after) if retry_after is not None else ""
     if retry_after_text.isdigit():
         return float(retry_after_text)
@@ -96,13 +100,14 @@ def _classification_for_status(
     )
 
 
-def _headers_dict(headers: Mapping[object, object] | None) -> dict[str, str]:
+def _headers_dict(headers: object) -> dict[str, str]:
     """Return a plain header dict from aiohttp headers or sparse test fakes."""
-    if headers is None:
+    if not isinstance(headers, collections.abc.Mapping):
         return {}
+    header_map = cast("Mapping[object, object]", headers)
     return {
         key: value
-        for key, value in headers.items()
+        for key, value in header_map.items()
         if isinstance(key, str) and isinstance(value, str)
     }
 
