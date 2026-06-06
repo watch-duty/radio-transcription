@@ -25,12 +25,12 @@ infer Broadcastify/OpenMHZ/Fire Notifications semantics from raw strings.
 
 For any error inside a capture function, follow this priority:
 
-1. **Configuration** (bad creds, wrong URL): raise ``CollectorFailure``.
+1. **Configuration** (bad creds, wrong URL): raise ``FeedFailure``.
 2. **Rate limit** (429): back off internally first. Raise
-   ``CollectorFailure`` only if collector policy says the feed is
+   ``FeedFailure`` only if collector policy says the feed is
    persistently rate-limited.
 3. **Transient** (500, timeout, disconnect): retry internally.
-   Skip the item if retries exhaust. Raise ``CollectorFailure`` if the
+   Skip the item if retries exhaust. Raise ``FeedFailure`` if the
    connection fails persistently (e.g. 10 consecutive transport failures).
 4. **Item failure** (one download 404, corrupt data): skip, log,
    continue. Raise only if ALL eligible items in one observation boundary
@@ -117,7 +117,7 @@ class AudioMimeType(StrEnum):
 
 
 @dataclasses.dataclass(init=False, eq=False)
-class CollectorFailure(Exception):
+class FeedFailure(Exception):
     """Feed-level collector failure classified at the collector boundary.
 
     This is intentionally small: `status_reason` is the bounded operator
@@ -142,7 +142,7 @@ class CollectorFailure(Exception):
             raise ValueError(msg) from e
 
         if not isinstance(reason, str) or not reason:
-            msg = "CollectorFailure.reason must be a non-empty string"
+            msg = "FeedFailure.reason must be a non-empty string"
             raise ValueError(msg)
 
         # Exception instances must remain runtime-mutable: Python sets

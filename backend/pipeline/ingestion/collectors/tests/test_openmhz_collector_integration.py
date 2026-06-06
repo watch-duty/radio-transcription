@@ -26,7 +26,9 @@ from backend.pipeline.ingestion.collectors.openmhz.collector import (
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
 )
+from backend.pipeline.ingestion.models import FeedFailure
 from backend.pipeline.storage.feed_store import (
+    FeedStatusReason,
     FeedStore,
     LeasedFeed,
     SourceType,
@@ -443,7 +445,7 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
     async def test_missing_source_feed_id_raises_without_side_effects(
         self,
     ) -> None:
-        """Feed without feed_properties -> ValueError, no GCS upload."""
+        """Feed without feed_properties -> typed failure, no GCS upload."""
         # Insert a valid feed
         feed_id = await self._insert_feed("no-id-feed")
         leased = await self.store.acquire_feeds_batch(self.worker_id, _CLAIM)
@@ -458,7 +460,7 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         feed["source_feed_id"] = None
 
         shutdown = asyncio.Event()
-        with self.assertRaises(ValueError) as ctx:
+        with self.assertRaises(FeedFailure) as ctx:
             async for _ in openmhz_collector(
                 feed,
                 shutdown,
@@ -467,6 +469,10 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             ):
                 pass
 
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        )
         self.assertEqual(str(ctx.exception), "missing_source_feed_id")
 
         row = await self._get_feed_row(feed_id)

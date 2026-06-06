@@ -17,7 +17,7 @@ from backend.pipeline.ingestion.collector_runtime import CollectorRuntime
 from backend.pipeline.ingestion.models import (
     CapturedChunk,
     CaptureResources,
-    CollectorFailure,
+    FeedFailure,
 )
 from backend.pipeline.storage.feed_store import (
     FeedStatusReason,
@@ -63,12 +63,12 @@ _FEED = LeasedFeed(
 )
 
 
-class TestCollectorFailureContract(unittest.TestCase):
+class TestFeedFailureContract(unittest.TestCase):
     """Tests for the typed collector failure boundary contract."""
 
     def test_carries_status_reason_and_reason(self) -> None:
-        """CollectorFailure exposes canonical and raw failure data."""
-        exc = CollectorFailure(
+        """FeedFailure exposes canonical and raw failure data."""
+        exc = FeedFailure(
             FeedStatusReason.SOURCE_OFFLINE,
             "source_offline",
         )
@@ -78,8 +78,8 @@ class TestCollectorFailureContract(unittest.TestCase):
         self.assertEqual(str(exc), "source_offline")
 
     def test_normalizes_status_reason_values(self) -> None:
-        """CollectorFailure accepts canonical DB text values at the boundary."""
-        exc = CollectorFailure(
+        """FeedFailure accepts canonical DB text values at the boundary."""
+        exc = FeedFailure(
             "source_offline",
             "source_offline",
         )
@@ -88,8 +88,8 @@ class TestCollectorFailureContract(unittest.TestCase):
         self.assertEqual(exc.reason, "source_offline")
 
     def test_allows_python_exception_runtime_fields(self) -> None:
-        """CollectorFailure remains compatible with Python exception handling."""
-        exc = CollectorFailure(
+        """FeedFailure remains compatible with Python exception handling."""
+        exc = FeedFailure(
             FeedStatusReason.SOURCE_OFFLINE,
             "source_offline",
         )
@@ -1535,10 +1535,10 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
     async def test_typed_collector_failure_persists_carried_status_reason(
         self,
     ) -> None:
-        """CollectorFailure carries canonical and raw reasons to storage."""
+        """FeedFailure carries canonical and raw reasons to storage."""
 
         async def _failing_capture(feed, shutdown, _resources):
-            raise CollectorFailure(
+            raise FeedFailure(
                 FeedStatusReason.SOURCE_OFFLINE,
                 "source_offline",
             )
@@ -1572,7 +1572,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         status_reason = "source_offline"
 
         async def _failing_capture(feed, shutdown, _resources):
-            raise CollectorFailure(
+            raise FeedFailure(
                 status_reason,
                 "source_offline",
             )

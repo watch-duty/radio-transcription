@@ -10,11 +10,19 @@ from __future__ import annotations
 
 import dataclasses
 
-from backend.pipeline.ingestion.models import CollectorFailure
+from backend.pipeline.ingestion.models import FeedFailure
 from backend.pipeline.storage.feed_store import FeedStatusReason
 
 MIXED_ITEM_FAILURE_REASON = "mixed_item_failures"
 MISSING_SOURCE_FEED_ID_REASON = "missing_source_feed_id"
+
+
+@dataclasses.dataclass(frozen=True)
+class FailureClassification:
+    """Neutral classified evidence before item or feed scope is applied."""
+
+    status_reason: FeedStatusReason
+    reason: str
 
 
 @dataclasses.dataclass(frozen=True)
@@ -29,6 +37,17 @@ class ItemFailure:
 
     status_reason: FeedStatusReason
     reason: str
+
+    @classmethod
+    def from_classification(
+        cls,
+        classification: FailureClassification,
+    ) -> ItemFailure:
+        """Apply item scope to neutral classified evidence."""
+        return cls(
+            classification.status_reason,
+            classification.reason,
+        )
 
 
 @dataclasses.dataclass
@@ -87,12 +106,12 @@ class ItemBatchOutcome:
 def collector_failure(
     status_reason: FeedStatusReason,
     reason: str,
-) -> CollectorFailure:
+) -> FeedFailure:
     """Build a typed feed-level collector failure."""
-    return CollectorFailure(status_reason=status_reason, reason=reason)
+    return FeedFailure(status_reason=status_reason, reason=reason)
 
 
-def missing_source_feed_id_failure() -> CollectorFailure:
+def missing_source_feed_id_failure() -> FeedFailure:
     """Build the typed failure for feeds missing source-specific ids."""
     return collector_failure(
         FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
