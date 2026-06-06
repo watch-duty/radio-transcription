@@ -20,11 +20,12 @@ if _SFT_DIR not in sys.path:
 if _COLABS_DIR not in sys.path:
     sys.path.insert(0, _COLABS_DIR)
 
+import pipeline  # noqa: E402
+import records  # noqa: E402
+
 
 class TestPipelineEvalKeywordMetrics(unittest.TestCase):
     def test_eval_records_base_keyword_metrics(self) -> None:
-        import pipeline
-
         with tempfile.TemporaryDirectory() as tmp:
             results_dir = Path(tmp) / "results"
             round_dir = results_dir / "round-keywords"
@@ -47,7 +48,7 @@ class TestPipelineEvalKeywordMetrics(unittest.TestCase):
             ]
 
             def fake_download_blob_to_file(
-                _client, _bucket: str, _blob: str, local_path: str
+                _client: object, _bucket: str, _blob: str, local_path: str
             ) -> None:
                 output = {
                     "request": {
@@ -88,11 +89,11 @@ class TestPipelineEvalKeywordMetrics(unittest.TestCase):
                     },
                 ),
                 unittest.mock.patch(
-                    "google.cloud.storage.Client",
+                    "pipeline.storage.Client",
                     return_value=storage_client,
                 ),
                 unittest.mock.patch(
-                    "common.gcs_utils.download_jsonl_manifest",
+                    "pipeline.download_jsonl_manifest",
                     return_value=[
                         {
                             "audio_filepath": "gs://bucket/a.flac",
@@ -101,17 +102,17 @@ class TestPipelineEvalKeywordMetrics(unittest.TestCase):
                         }
                     ],
                 ),
-                unittest.mock.patch("common.gcs_utils.upload_file_to_blob"),
+                unittest.mock.patch("pipeline.upload_file_to_blob"),
                 unittest.mock.patch(
-                    "common.gcs_utils.download_blob_to_file",
+                    "pipeline.download_blob_to_file",
                     side_effect=fake_download_blob_to_file,
                 ),
                 unittest.mock.patch(
-                    "common.scoring.build_normalizer",
+                    "pipeline.build_normalizer",
                     return_value=lambda text: text.lower(),
                 ),
                 unittest.mock.patch(
-                    "common.vertex.submit_batch_inference",
+                    "pipeline.submit_batch_inference",
                     return_value="gs://bucket/out/",
                 ),
                 unittest.mock.patch("records._git_sha", return_value="abc123"),
@@ -138,8 +139,6 @@ class TestPipelineEvalKeywordMetrics(unittest.TestCase):
             self.assertIn("| abc123 |", ledger)
 
     def test_eval_skips_malformed_batch_output_rows(self) -> None:
-        import pipeline
-
         with tempfile.TemporaryDirectory() as tmp:
             results_dir = Path(tmp) / "results"
             round_dir = results_dir / "round-malformed"
@@ -162,7 +161,7 @@ class TestPipelineEvalKeywordMetrics(unittest.TestCase):
             ]
 
             def fake_download_blob_to_file(
-                _client, _bucket: str, _blob: str, local_path: str
+                _client: object, _bucket: str, _blob: str, local_path: str
             ) -> None:
                 malformed_outputs = [
                     {
@@ -238,11 +237,11 @@ class TestPipelineEvalKeywordMetrics(unittest.TestCase):
                     },
                 ),
                 unittest.mock.patch(
-                    "google.cloud.storage.Client",
+                    "pipeline.storage.Client",
                     return_value=storage_client,
                 ),
                 unittest.mock.patch(
-                    "common.gcs_utils.download_jsonl_manifest",
+                    "pipeline.download_jsonl_manifest",
                     return_value=[
                         {
                             "audio_filepath": "gs://bucket/a.flac",
@@ -251,17 +250,17 @@ class TestPipelineEvalKeywordMetrics(unittest.TestCase):
                         }
                     ],
                 ),
-                unittest.mock.patch("common.gcs_utils.upload_file_to_blob"),
+                unittest.mock.patch("pipeline.upload_file_to_blob"),
                 unittest.mock.patch(
-                    "common.gcs_utils.download_blob_to_file",
+                    "pipeline.download_blob_to_file",
                     side_effect=fake_download_blob_to_file,
                 ),
                 unittest.mock.patch(
-                    "common.scoring.build_normalizer",
+                    "pipeline.build_normalizer",
                     return_value=lambda text: text.lower(),
                 ),
                 unittest.mock.patch(
-                    "common.vertex.submit_batch_inference",
+                    "pipeline.submit_batch_inference",
                     return_value="gs://bucket/out/",
                 ),
             ):
@@ -281,8 +280,6 @@ class TestPipelineEvalKeywordMetrics(unittest.TestCase):
     def test_eval_duplicate_audio_uris_do_not_warn_missing_predictions(
         self,
     ) -> None:
-        import pipeline
-
         with tempfile.TemporaryDirectory() as tmp:
             results_dir = Path(tmp) / "results"
             round_dir = results_dir / "round-duplicates"
@@ -305,7 +302,7 @@ class TestPipelineEvalKeywordMetrics(unittest.TestCase):
             ]
 
             def fake_download_blob_to_file(
-                _client, _bucket: str, _blob: str, local_path: str
+                _client: object, _bucket: str, _blob: str, local_path: str
             ) -> None:
                 output = {
                     "request": {
@@ -346,11 +343,11 @@ class TestPipelineEvalKeywordMetrics(unittest.TestCase):
                     },
                 ),
                 unittest.mock.patch(
-                    "google.cloud.storage.Client",
+                    "pipeline.storage.Client",
                     return_value=storage_client,
                 ),
                 unittest.mock.patch(
-                    "common.gcs_utils.download_jsonl_manifest",
+                    "pipeline.download_jsonl_manifest",
                     return_value=[
                         {
                             "audio_filepath": "gs://bucket/a.flac",
@@ -364,17 +361,17 @@ class TestPipelineEvalKeywordMetrics(unittest.TestCase):
                         },
                     ],
                 ),
-                unittest.mock.patch("common.gcs_utils.upload_file_to_blob"),
+                unittest.mock.patch("pipeline.upload_file_to_blob"),
                 unittest.mock.patch(
-                    "common.gcs_utils.download_blob_to_file",
+                    "pipeline.download_blob_to_file",
                     side_effect=fake_download_blob_to_file,
                 ),
                 unittest.mock.patch(
-                    "common.scoring.build_normalizer",
+                    "pipeline.build_normalizer",
                     return_value=lambda text: text.lower(),
                 ),
                 unittest.mock.patch(
-                    "common.vertex.submit_batch_inference",
+                    "pipeline.submit_batch_inference",
                     return_value="gs://bucket/out/",
                 ),
                 self.assertNoLogs("pipeline", level="WARNING"),
@@ -390,8 +387,6 @@ class TestPipelineEvalKeywordMetrics(unittest.TestCase):
         self.assertEqual(rc, 0)
 
     def test_eval_batch_submit_failure_returns_clean_error(self) -> None:
-        import pipeline
-
         with tempfile.TemporaryDirectory() as tmp:
             results_dir = Path(tmp) / "results"
             round_dir = results_dir / "round-batch-fails"
@@ -424,9 +419,9 @@ class TestPipelineEvalKeywordMetrics(unittest.TestCase):
                         }
                     },
                 ),
-                unittest.mock.patch("google.cloud.storage.Client"),
+                unittest.mock.patch("pipeline.storage.Client"),
                 unittest.mock.patch(
-                    "common.gcs_utils.download_jsonl_manifest",
+                    "pipeline.download_jsonl_manifest",
                     return_value=[
                         {
                             "audio_filepath": "gs://bucket/a.flac",
@@ -435,13 +430,13 @@ class TestPipelineEvalKeywordMetrics(unittest.TestCase):
                         }
                     ],
                 ),
-                unittest.mock.patch("common.gcs_utils.upload_file_to_blob"),
+                unittest.mock.patch("pipeline.upload_file_to_blob"),
                 unittest.mock.patch(
-                    "common.scoring.build_normalizer",
+                    "pipeline.build_normalizer",
                     return_value=lambda text: text.lower(),
                 ),
                 unittest.mock.patch(
-                    "common.vertex.submit_batch_inference",
+                    "pipeline.submit_batch_inference",
                     side_effect=TimeoutError("batch timed out"),
                 ),
                 self.assertLogs("pipeline", level="ERROR") as logs,
@@ -460,11 +455,9 @@ class TestPipelineEvalKeywordMetrics(unittest.TestCase):
 
 class TestWerSummaryKeywordMetrics(unittest.TestCase):
     def test_write_wer_summary_renders_keyword_accuracy(self) -> None:
-        from records import write_wer_summary
-
         with tempfile.TemporaryDirectory() as tmp:
             results_dir = Path(tmp)
-            write_wer_summary(
+            records.write_wer_summary(
                 results_dir,
                 "round-keywords",
                 {

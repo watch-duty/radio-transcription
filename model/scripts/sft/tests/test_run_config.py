@@ -14,6 +14,8 @@ if _SFT_DIR not in sys.path:
 if _COLABS_DIR not in sys.path:
     sys.path.insert(0, _COLABS_DIR)
 
+from run_config import RunConfigError, load_run_config  # noqa: E402
+
 
 class TestRunConfig(unittest.TestCase):
     def _write_config(self, body: str) -> Path:
@@ -61,8 +63,6 @@ learning_rate_multiplier = {values["learning_rate_multiplier"]}
 """
 
     def test_valid_minimal_toml_resolves_required_fields_and_paths(self) -> None:
-        from run_config import load_run_config
-
         cfg = load_run_config(self._write_config(self._valid_toml()))
 
         self.assertEqual(cfg.round_id, "round")
@@ -78,16 +78,12 @@ learning_rate_multiplier = {values["learning_rate_multiplier"]}
         self.assertEqual(record["combined_val_uri"], cfg.paths.gemini_validation_uri)
 
     def test_missing_validation_manifest_uri_raises(self) -> None:
-        from run_config import RunConfigError, load_run_config
-
         body = self._valid_toml(validation_manifest_uri='""')
 
         with self.assertRaisesRegex(RunConfigError, "validation_manifest_uri"):
             load_run_config(self._write_config(body))
 
     def test_inline_prompts_override_defaults(self) -> None:
-        from run_config import load_run_config
-
         body = self._valid_toml(
             prompts="""
 [prompts]
@@ -102,8 +98,6 @@ user = "custom user"
         self.assertEqual(cfg.user_prompt, "custom user")
 
     def test_prompt_file_keys_are_rejected(self) -> None:
-        from run_config import RunConfigError, load_run_config
-
         body = self._valid_toml(
             prompts="""
 [prompts]
@@ -115,8 +109,6 @@ system_file = "system.txt"
             load_run_config(self._write_config(body))
 
     def test_at_file_prompt_values_are_rejected(self) -> None:
-        from run_config import RunConfigError, load_run_config
-
         body = self._valid_toml(
             prompts="""
 [prompts]
@@ -128,16 +120,12 @@ system = "@prompt.txt"
             load_run_config(self._write_config(body))
 
     def test_gcs_bucket_must_be_bucket_name(self) -> None:
-        from run_config import RunConfigError, load_run_config
-
         body = self._valid_toml(bucket='"gs://bucket/path"')
 
         with self.assertRaisesRegex(RunConfigError, "bucket"):
             load_run_config(self._write_config(body))
 
     def test_adapter_size_two_is_accepted(self) -> None:
-        from run_config import load_run_config
-
         cfg = load_run_config(
             self._write_config(self._valid_toml(adapter_size='"TWO"'))
         )
@@ -145,8 +133,6 @@ system = "@prompt.txt"
         self.assertEqual(cfg.adapter_size, "TWO")
 
     def test_unknown_adapter_size_is_rejected(self) -> None:
-        from run_config import RunConfigError, load_run_config
-
         with self.assertRaisesRegex(RunConfigError, "adapter_size"):
             load_run_config(
                 self._write_config(self._valid_toml(adapter_size='"THREE"'))

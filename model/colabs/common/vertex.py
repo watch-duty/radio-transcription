@@ -151,6 +151,19 @@ def _require_vertex() -> None:
         ) from _VERTEX_MISSING
 
 
+def get_tuning_job_status(
+    name: str, project: str, location: str
+) -> tuple[str, str | None]:
+    """Return the current tuning job state and endpoint if one is exposed."""
+    _require_vertex()
+    client = genai.Client(vertexai=True, project=project, location=location)
+    cur = client.tunings.get(name=name)
+    state = getattr(cur.state, "name", str(cur.state))
+    tuned = getattr(cur, "tuned_model", None)
+    endpoint = getattr(tuned, "endpoint", None) if tuned else None
+    return state, endpoint
+
+
 def submit_tuning_job(
     *,
     train_uri: str,

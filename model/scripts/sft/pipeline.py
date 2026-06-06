@@ -21,14 +21,49 @@ import logging
 import os
 import shutil
 import sys
+import tempfile
 import tomllib
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import Any, Final, TypedDict
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
-    from common.manifest import CanonicalRow
+from adapters.gcs_manifest import GcsManifestAdapter
+from common.gcs_utils import (
+    download_blob_to_file,
+    download_jsonl_manifest,
+    parse_gcs_uri,
+    upload_file_to_blob,
+)
+from common.manifest import (
+    CanonicalRow,
+    DatasetAdapter,
+    load_manifest,
+    rows_from_manifest,
+)
+from common.prompts import GEMINI_TRANSCRIBE_KEYWORDS
+from common.scoring import (
+    bootstrap_paired,
+    build_normalizer,
+    compute_cer,
+    compute_wer,
+    duration_bucket_wer,
+    hallucination_rate,
+    keyword_metrics,
+)
+from common.sft import build_example, validate_example
+from common.vertex import (
+    build_request,
+    get_tuning_job_status,
+    poll_tuning_job,
+    submit_batch_inference,
+    submit_tuning_job,
+)
+from google.cloud import storage
+from preflight import run_preflight
+from prompts import PIPELINE_SYSTEM_PROMPT, PIPELINE_USER_PROMPT
+from records import append_ledger, write_config, write_wer_summary
+from run_config import RunConfig, RunConfigError, load_run_config
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -92,12 +127,26 @@ class PromptOverrideError(ValueError):
     """Clean CLI error for unreadable @file prompt overrides."""
 
 
-def _load_registry() -> dict:
+class PreparedConfigArtifacts(TypedDict):
+    run_config_path: Path
+    canonical_train_path: Path
+    canonical_validation_path: Path
+    canonical_eval_path: Path
+    gemini_train_path: Path
+    gemini_validation_path: Path
+    preflight_report_path: Path
+    total_train_duration_seconds: float
+    canonical_train_rows: int
+    canonical_validation_rows: int
+    canonical_eval_rows: int
+
+
+def _load_registry() -> dict[str, Any]:
     with open(_DATASETS_TOML, "rb") as f:
         return tomllib.load(f)
 
 
-def _load_round_config(round_id: str) -> dict:
+def _load_round_config(round_id: str) -> dict[str, Any]:
     cfg_path = RESULTS_DIR / round_id / "config.json"
     if cfg_path.exists():
         return json.loads(cfg_path.read_text(encoding="utf-8"))
@@ -110,7 +159,7 @@ def _parse_dataset_names(value: str) -> list[str]:
 
 
 def _resolve_gcp_project(
-    args: argparse.Namespace, config: dict | None = None
+    args: argparse.Namespace, config: dict[str, Any] | None = None
 ) -> str:
     """Resolve the GCP project for storage and Vertex calls.
 
@@ -127,7 +176,7 @@ def _resolve_gcp_project(
 
 
 def _resolve_gcs_bucket(
-    args: argparse.Namespace, config: dict | None = None
+    args: argparse.Namespace, config: dict[str, Any] | None = None
 ) -> str:
     """Resolve the GCS bucket for SFT staging output."""
     config = config or {}
@@ -148,7 +197,7 @@ def _gcs_sft_prefix(bucket: str) -> str:
     return f"gs://{bucket}/sft"
 
 
-def _save_round_config(round_id: str, config: dict) -> None:
+def _save_round_config(round_id: str, config: dict[str, Any]) -> None:
     cfg_path = RESULTS_DIR / round_id / "config.json"
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
     cfg_path.write_text(
@@ -175,7 +224,7 @@ def _provided_option_flags(argv: list[str]) -> set[str]:
 
 
 def _reject_config_tune_conflicts(args: argparse.Namespace) -> str | None:
-    flags = getattr(args, "_provided_flags", set())
+    flags = getattr(args, "provided_flags", set())
     conflicts = sorted(flags & CONFIG_TUNE_CONFLICT_FLAGS)
     if not conflicts:
         return None
@@ -185,17 +234,15 @@ def _reject_config_tune_conflicts(args: argparse.Namespace) -> str | None:
     )
 
 
-def _gcs_uri_exists(storage_client: object, uri: str) -> bool:
-    from common.gcs_utils import parse_gcs_uri
-
+def _gcs_uri_exists(storage_client: storage.Client, uri: str) -> bool:
     bucket_name, blob_path = parse_gcs_uri(uri)
     blob = storage_client.bucket(bucket_name).blob(blob_path)
     return bool(blob.exists())
 
 
-def _gcs_prefix_has_any_blob(storage_client: object, prefix_uri: str) -> bool:
-    from common.gcs_utils import parse_gcs_uri
-
+def _gcs_prefix_has_any_blob(
+    storage_client: storage.Client, prefix_uri: str
+) -> bool:
     bucket_name, blob_prefix = parse_gcs_uri(prefix_uri)
     bucket = storage_client.bucket(bucket_name)
     for _ in bucket.list_blobs(prefix=blob_prefix, max_results=1):
@@ -204,10 +251,8 @@ def _gcs_prefix_has_any_blob(storage_client: object, prefix_uri: str) -> bool:
 
 
 def _download_gcs_uri(
-    storage_client: object, uri: str, local_path: Path
+    storage_client: storage.Client, uri: str, local_path: Path
 ) -> None:
-    from common.gcs_utils import download_blob_to_file, parse_gcs_uri
-
     bucket_name, blob_path = parse_gcs_uri(uri)
     local_path.parent.mkdir(parents=True, exist_ok=True)
     download_blob_to_file(
@@ -216,30 +261,26 @@ def _download_gcs_uri(
 
 
 def _upload_local_file(
-    storage_client: object, local_path: Path, gcs_uri: str
+    storage_client: storage.Client, local_path: Path, gcs_uri: str
 ) -> None:
-    from common.gcs_utils import parse_gcs_uri, upload_file_to_blob
-
     bucket_name, blob_path = parse_gcs_uri(gcs_uri)
     upload_file_to_blob(storage_client, bucket_name, blob_path, str(local_path))
 
 
 def _upload_text(
-    storage_client: object,
+    storage_client: storage.Client,
     text: str,
     gcs_uri: str,
     *,
     content_type: str = "text/plain",
 ) -> None:
-    from common.gcs_utils import parse_gcs_uri
-
     bucket_name, blob_path = parse_gcs_uri(gcs_uri)
     blob = storage_client.bucket(bucket_name).blob(blob_path)
     blob.upload_from_string(text, content_type=content_type)
 
 
 def _upload_json_text(
-    storage_client: object, obj: dict, gcs_uri: str
+    storage_client: storage.Client, obj: dict[str, Any], gcs_uri: str
 ) -> None:
     _upload_text(
         storage_client,
@@ -249,30 +290,33 @@ def _upload_json_text(
     )
 
 
-def _download_json_text(storage_client: object, gcs_uri: str) -> dict:
-    from common.gcs_utils import parse_gcs_uri
-
+def _download_json_text(
+    storage_client: storage.Client, gcs_uri: str
+) -> dict[str, Any]:
     bucket_name, blob_path = parse_gcs_uri(gcs_uri)
     blob = storage_client.bucket(bucket_name).blob(blob_path)
     text = blob.download_as_text()
     obj = json.loads(text)
     if not isinstance(obj, dict):
-        raise ValueError(f"Expected JSON object at {gcs_uri}")
+        raise TypeError(f"Expected JSON object at {gcs_uri}")
     return obj
 
 
 def _write_status(
     local_run_dir: Path,
-    storage_client: object,
+    storage_client: storage.Client,
     status_uri: str,
-    status: dict,
+    status: dict[str, Any],
 ) -> None:
     local_path = local_run_dir / "status.json"
     _write_json_artifact(local_path, storage_client, status_uri, status)
 
 
 def _write_json_artifact(
-    local_path: Path, storage_client: object, gcs_uri: str, obj: dict
+    local_path: Path,
+    storage_client: storage.Client,
+    gcs_uri: str,
+    obj: dict[str, Any],
 ) -> None:
     local_path.parent.mkdir(parents=True, exist_ok=True)
     local_path.write_text(
@@ -282,7 +326,10 @@ def _write_json_artifact(
 
 
 def _write_text_artifact(
-    local_path: Path, storage_client: object, gcs_uri: str, text: str
+    local_path: Path,
+    storage_client: storage.Client,
+    gcs_uri: str,
+    text: str,
 ) -> None:
     local_path.parent.mkdir(parents=True, exist_ok=True)
     local_path.write_text(text, encoding="utf-8")
@@ -294,10 +341,10 @@ def _local_config_path(round_id: str) -> Path:
 
 
 def _write_and_upload_config(
-    config: dict, run_cfg: object, storage_client: object
-) -> dict:
-    from records import write_config
-
+    config: dict[str, Any],
+    run_cfg: RunConfig,
+    storage_client: storage.Client,
+) -> dict[str, Any]:
     written = write_config(RESULTS_DIR, run_cfg.round_id, config)
     _upload_local_file(
         storage_client, _local_config_path(run_cfg.round_id), run_cfg.paths.config_uri
@@ -307,9 +354,7 @@ def _write_and_upload_config(
 
 def _load_canonical_rows(
     path: Path, split: str
-) -> tuple[list[dict], list["CanonicalRow"]]:
-    from common.manifest import load_manifest, rows_from_manifest
-
+) -> tuple[list[dict[str, Any]], list[CanonicalRow]]:
     entries = load_manifest(str(path))
     rows = rows_from_manifest(entries)
     if not rows:
@@ -324,9 +369,9 @@ def _load_canonical_rows(
 
 def _reject_split_overlap(
     left_name: str,
-    left_rows: list["CanonicalRow"],
+    left_rows: list[CanonicalRow],
     right_name: str,
-    right_rows: list["CanonicalRow"],
+    right_rows: list[CanonicalRow],
 ) -> None:
     left_uris = {row.audio_filepath for row in left_rows}
     right_uris = {row.audio_filepath for row in right_rows}
@@ -341,14 +386,12 @@ def _reject_split_overlap(
 
 
 def _write_gemini_jsonl(
-    rows: list["CanonicalRow"],
+    rows: list[CanonicalRow],
     path: Path,
     *,
     system_prompt: str,
     user_prompt: str,
 ) -> None:
-    from common.sft import build_example, validate_example
-
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fh:
         for row in rows:
@@ -427,8 +470,6 @@ def _load_prompt_override(value: str, label: str) -> str:
 
 def _load_prompts(args: argparse.Namespace) -> tuple[str, str]:
     """Return (system_prompt, user_prompt) -- from args or pipeline defaults."""
-    from prompts import PIPELINE_SYSTEM_PROMPT, PIPELINE_USER_PROMPT
-
     system_prompt = PIPELINE_SYSTEM_PROMPT
     user_prompt = PIPELINE_USER_PROMPT
 
@@ -443,7 +484,7 @@ def _load_prompts(args: argparse.Namespace) -> tuple[str, str]:
     return system_prompt, user_prompt
 
 
-def _overall_keyword_accuracy(rows: list[dict]) -> float | None:
+def _overall_keyword_accuracy(rows: list[dict[str, Any]]) -> float | None:
     occurrences = sum(int(row.get("occurrences", 0)) for row in rows)
     if occurrences == 0:
         return None
@@ -452,13 +493,13 @@ def _overall_keyword_accuracy(rows: list[dict]) -> float | None:
 
 
 def _make_adapter(
-    dataset_cfg: dict, split: str, storage_client: object
-) -> object:
+    dataset_cfg: dict[str, Any],
+    split: str,
+    storage_client: storage.Client,
+) -> DatasetAdapter:
     """Instantiate the correct adapter from a datasets.toml entry."""
     adapter_type = dataset_cfg["adapter"]
     if adapter_type == "gcs_manifest":
-        from adapters.gcs_manifest import GcsManifestAdapter
-
         if split == "train":
             uri_key = "train_manifest_uri"
         elif split == "val":
@@ -484,7 +525,7 @@ def _make_adapter(
 
 
 def _resolve_eval_manifest_uris(
-    registry: dict, dataset_names: list[str]
+    registry: dict[str, Any], dataset_names: list[str]
 ) -> dict[str, str]:
     """Return eval manifest URIs for every configured gcs_manifest dataset."""
     resolved: dict[str, str] = {}
@@ -501,10 +542,10 @@ def _resolve_eval_manifest_uris(
 def _build_split_jsonl(
     *,
     dataset_names: list[str],
-    registry: dict,
+    registry: dict[str, Any],
     split: str,
     staging_dir: Path,
-    storage_client: object,
+    storage_client: storage.Client,
     normalizer: Callable[[str], str],
     system_prompt: str,
     user_prompt: str,
@@ -517,9 +558,6 @@ def _build_split_jsonl(
     through identical example construction, validation, staging, and upload paths.
     Returns ``(per_dataset_uris, combined_uri, total_duration_seconds)``.
     """
-    from common.gcs_utils import parse_gcs_uri, upload_file_to_blob
-    from common.sft import build_example, validate_example
-
     per_dataset_uris: dict[str, str] = {}
     total_duration_seconds = 0.0
 
@@ -530,7 +568,7 @@ def _build_split_jsonl(
         )
         do_normalize = ds_cfg.get("normalize", False)
 
-        examples: list[dict] = []
+        examples: list[dict[str, Any]] = []
         for row in adapter.iter_rows():
             text = row.text
             if do_normalize:
@@ -604,9 +642,6 @@ def _build(args: argparse.Namespace) -> int:
     except PromptOverrideError as e:
         logger.error(str(e))  # noqa: TRY400
         return 1
-
-    from common.scoring import build_normalizer
-    from google.cloud import storage
 
     registry = _load_registry()
     dataset_names = _parse_dataset_names(args.datasets)
@@ -714,20 +749,17 @@ def _build(args: argparse.Namespace) -> int:
 def _tune(args: argparse.Namespace) -> int:
     if getattr(args, "config", ""):
         if message := _reject_config_tune_conflicts(args):
-            logger.error(message)  # noqa: TRY400
+            logger.error(message)
             return 1
         return _tune_from_config(args)
     if not getattr(args, "round_id", ""):
-        logger.error("--round-id is required unless --config is provided")  # noqa: TRY400
+        logger.error("--round-id is required unless --config is provided")
         return 1
     return _tune_legacy(args)
 
 
 def _tune_from_config(args: argparse.Namespace) -> int:
     """Config-driven tune branch backed by GCS-authoritative run records."""
-    from google.cloud import storage
-    from run_config import RunConfigError, load_run_config
-
     try:
         run_cfg = load_run_config(args.config)
     except RunConfigError as e:
@@ -771,10 +803,10 @@ def _tune_from_config(args: argparse.Namespace) -> int:
 
 
 def _resume_config_tune(
-    run_cfg: object, storage_client: object, config: dict
+    run_cfg: RunConfig,
+    storage_client: storage.Client,
+    config: dict[str, Any],
 ) -> int:
-    from common.vertex import poll_tuning_job
-
     local_run_dir = RESULTS_DIR / run_cfg.round_id
     local_run_dir.mkdir(parents=True, exist_ok=True)
     _local_config_path(run_cfg.round_id).write_text(
@@ -823,13 +855,10 @@ def _resume_config_tune(
 
 def _submit_config_tune(
     args: argparse.Namespace,
-    run_cfg: object,
-    storage_client: object,
+    run_cfg: RunConfig,
+    storage_client: storage.Client,
     local_run_dir: Path,
 ) -> int:
-    from common.vertex import poll_tuning_job, submit_tuning_job
-    from preflight import run_preflight
-
     local_paths = _prepare_config_run_artifacts(
         run_cfg, storage_client, local_run_dir
     )
@@ -990,8 +1019,10 @@ def _submit_config_tune(
 
 
 def _prepare_config_run_artifacts(
-    run_cfg: object, storage_client: object, local_run_dir: Path
-) -> dict:
+    run_cfg: RunConfig,
+    storage_client: storage.Client,
+    local_run_dir: Path,
+) -> PreparedConfigArtifacts:
     canonical_dir = local_run_dir / "manifests" / "canonical"
     model_inputs_dir = local_run_dir / "model_inputs" / "gemini"
     preflight_dir = local_run_dir / "preflight"
@@ -1060,7 +1091,9 @@ def _prepare_config_run_artifacts(
 
 
 def _upload_prepared_config_artifacts(
-    local_paths: dict, run_cfg: object, storage_client: object
+    local_paths: PreparedConfigArtifacts,
+    run_cfg: RunConfig,
+    storage_client: storage.Client,
 ) -> None:
     uploads = [
         ("canonical_train_path", run_cfg.paths.canonical_train_uri),
@@ -1085,18 +1118,6 @@ def _tune_legacy(args: argparse.Namespace) -> int:
     Unsupported base models are rejected before any GCP call.
     --confirm gate: displays estimated token count + cost estimate before submitting.
     """
-    import tempfile
-
-    from common.gcs_utils import download_blob_to_file, parse_gcs_uri
-    from common.vertex import (
-        _require_vertex,
-        poll_tuning_job,
-        submit_tuning_job,
-    )
-    from google.cloud import storage
-    from preflight import run_preflight
-    from records import write_config
-
     # Reject unsupported base models before any GCP call. The supported list is
     # intentionally narrow and mirrors Google's supervised-tuning model list.
     if args.base_model not in SUPPORTED_SFT_BASE_MODELS:
@@ -1121,34 +1142,26 @@ def _tune_legacy(args: argparse.Namespace) -> int:
 
     # Resume: re-attach to an in-flight job if job_name is already recorded.
     if job_name := config.get("job_name"):
-        _require_vertex()
-        from google import genai
-
-        client = genai.Client(
-            vertexai=True, project=gcp_project, location=location
+        state, endpoint = get_tuning_job_status(
+            job_name, gcp_project, location
         )
-        cur = client.tunings.get(name=job_name)
-        state = getattr(cur.state, "name", str(cur.state))
         if state in {"JOB_STATE_SUCCEEDED", "SUCCEEDED"}:
-            endpoint = config.get("endpoint")
+            endpoint = config.get("endpoint") or endpoint
             if not endpoint:
                 # Crash recovery: the job succeeded but the endpoint was never
                 # persisted (the process died between submit and the endpoint write).
                 # Re-read it from the job resource so eval does not silently
                 # degrade to base-only.
-                tuned = getattr(cur, "tuned_model", None)
-                endpoint = getattr(tuned, "endpoint", None) if tuned else None
-                if endpoint:
-                    config["endpoint"] = endpoint
-                    write_config(RESULTS_DIR, args.round_id, config)
-                    logger.info(
-                        f"Recovered endpoint from succeeded job {job_name}: {endpoint}"
-                    )
-                else:
-                    logger.warning(
-                        f"Job {job_name} is SUCCEEDED but exposes no endpoint; "
-                        "eval will run base-only."
-                    )
+                logger.warning(
+                    f"Job {job_name} is SUCCEEDED but exposes no endpoint; "
+                    "eval will run base-only."
+                )
+            elif not config.get("endpoint"):
+                config["endpoint"] = endpoint
+                write_config(RESULTS_DIR, args.round_id, config)
+                logger.info(
+                    f"Recovered endpoint from succeeded job {job_name}: {endpoint}"
+                )
             else:
                 logger.info(
                     f"Tuning job already succeeded. Endpoint: {endpoint}"
@@ -1301,29 +1314,6 @@ def _eval(args: argparse.Namespace) -> int:
     rate, duration buckets, keyword accuracy, and bootstrap paired significance.
     Degrades gracefully to base-only metrics when no tuned model endpoint is available.
     """
-    import tempfile
-
-    from common.gcs_utils import (
-        download_blob_to_file,
-        download_jsonl_manifest,
-        parse_gcs_uri,
-        upload_file_to_blob,
-    )
-    from common.manifest import rows_from_manifest
-    from common.prompts import GEMINI_TRANSCRIBE_KEYWORDS
-    from common.scoring import (
-        bootstrap_paired,
-        build_normalizer,
-        compute_cer,
-        compute_wer,
-        duration_bucket_wer,
-        hallucination_rate,
-        keyword_metrics,
-    )
-    from common.vertex import build_request, submit_batch_inference
-    from google.cloud import storage
-    from records import append_ledger, write_config, write_wer_summary
-
     config = _load_round_config(args.round_id)
     if not config:
         logger.error(
@@ -1876,7 +1866,7 @@ def main() -> int:
         )
     )
     args = ap.parse_args()
-    args._provided_flags = _provided_option_flags(sys.argv[2:])
+    args.provided_flags = _provided_option_flags(sys.argv[2:])
     dispatch = {"build": _build, "tune": _tune, "eval": _eval, "all": _all}
     return dispatch[args.cmd](args)
 

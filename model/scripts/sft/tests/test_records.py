@@ -13,11 +13,11 @@ _SFT_DIR = str(Path(__file__).resolve().parent.parent)
 if _SFT_DIR not in sys.path:
     sys.path.insert(0, _SFT_DIR)
 
+import records  # noqa: E402
+
 
 class TestRunRecords(unittest.TestCase):
     def test_git_sha_uses_timeout(self) -> None:
-        import records
-
         completed = unittest.mock.Mock(returncode=0, stdout="abc123\n")
         with unittest.mock.patch(
             "records.subprocess.run", return_value=completed
@@ -27,11 +27,9 @@ class TestRunRecords(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["timeout"], 5)
 
     def test_append_ledger_allows_none_datasets(self) -> None:
-        from records import append_ledger
-
         with tempfile.TemporaryDirectory() as tmp:
             results_dir = Path(tmp)
-            append_ledger(
+            records.append_ledger(
                 results_dir,
                 {
                     "round_id": "round-none-datasets",
@@ -51,8 +49,6 @@ class TestRunRecords(unittest.TestCase):
         )
 
     def test_record_writers_use_utf8_encoding(self) -> None:
-        import records
-
         write_encodings: list[str | None] = []
         open_encodings: list[str | None] = []
         real_write_text = Path.write_text

@@ -226,20 +226,16 @@ known-first-party = ["backend", "local_dev"]
   "T201",   # `print()` found
 ]
 # model/scripts/sft/ — SFT pipeline scripts.
-# Relaxed rule set matching model/data_sources/ conventions; TC/FBT/EM/PLC/PLR
-# are suppressed because scripts/ uses lazy imports, boolean kwargs, and
-# non-top-level imports by design. INP001 suppressed (no __init__.py at scripts/sft/).
+# Relaxed rule set matching model/data_sources/ conventions; remaining suppressions
+# cover CLI ergonomics and large orchestration functions. INP001 suppressed because
+# scripts/sft/ is intentionally an implicit namespace.
 "model/scripts/**.py" = [
-  "ANN001",  # Missing type annotation for function argument
-  "ANN201",  # Missing return type annotation for public function
-  "ANN202",  # Missing return type annotation for private function
   "D403",    # First word of docstring capitalized (tune/eval/all names start lowercase)
   "EM101",   # Exception must not use string literal
   "EM102",   # Exception must not use f-string literal
   "FBT001",  # Boolean-typed positional argument in function definition
   "FBT002",  # Boolean default positional argument in function definition
   "INP001",  # File is part of an implicit namespace package
-  "PLC0415", # import should be at top-level (lazy imports by design)
   "PLR0911", # Too many return statements (resume state machine has multiple early returns)
   "PLR0912", # Too many branches
   "PLR0915", # Too many statements

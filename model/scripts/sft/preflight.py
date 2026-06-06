@@ -15,10 +15,11 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 from common.gcs_utils import blob_exists
 from common.sft import validate_example
+from google.cloud import storage
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ class PreflightReport:
         return len(self.failures) == 0
 
 
-def _safe_blob_exists(storage_client: object, uri: str) -> bool:
+def _safe_blob_exists(storage_client: storage.Client, uri: str) -> bool:
     """``blob_exists`` that never raises -- a malformed/unparseable URI is unreachable.
 
     ``blob_exists`` calls ``parse_gcs_uri``, which raises on a non-``gs://`` URI. Without
@@ -60,7 +61,7 @@ def _safe_blob_exists(storage_client: object, uri: str) -> bool:
 
 
 def _estimate_text_tokens(
-    example: dict, system_prompt: str, user_prompt: str
+    example: dict[str, Any], system_prompt: str, user_prompt: str
 ) -> int:
     """Conservative token estimate for the text portion of an example.
 
@@ -89,7 +90,7 @@ def _iter_batches(items: list[str], batch_size: int) -> list[list[str]]:
 
 
 def _find_unreachable_gcs_uris(
-    storage_client: object,
+    storage_client: storage.Client,
     uris: list[str],
     *,
     max_workers: int,
@@ -119,7 +120,7 @@ def _find_unreachable_gcs_uris(
     return unreachable
 
 
-def _extract_file_uris(example: dict) -> list[str]:
+def _extract_file_uris(example: dict[str, Any]) -> list[str]:
     uris: list[str] = []
     parts = (example.get("contents") or [{}])[0].get("parts", [])
     for p in parts:
@@ -132,10 +133,10 @@ def _check_examples(
     *,
     report: PreflightReport,
     split: str,
-    examples: list[dict],
+    examples: list[dict[str, Any]],
     system_prompt: str,
     user_prompt: str,
-    storage_client: object,
+    storage_client: storage.Client | None,
     unreachable: set[str],
 ) -> None:
     for i, ex in enumerate(examples):
@@ -168,7 +169,7 @@ def _check_examples(
 def run_preflight(
     train_jsonl_path: Path,
     val_jsonl_path: Path | None,
-    storage_client: object,
+    storage_client: storage.Client | None,
     report_path: Path,
     system_prompt: str = "",
     user_prompt: str = "",
@@ -188,7 +189,7 @@ def run_preflight(
     report_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Load train examples
-    train_examples: list[dict] = []
+    train_examples: list[dict[str, Any]] = []
     try:
         with train_jsonl_path.open() as tf:
             train_examples = [json.loads(line) for line in tf if line.strip()]
@@ -219,7 +220,7 @@ def run_preflight(
             seen.add(uri)
 
     # Load val examples if provided
-    val_examples: list[dict] = []
+    val_examples: list[dict[str, Any]] = []
     val_uris: list[str] = []
     if val_jsonl_path is not None:
         try:

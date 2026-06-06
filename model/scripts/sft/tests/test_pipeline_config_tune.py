@@ -26,6 +26,8 @@ if _SFT_DIR not in sys.path:
 if _COLABS_DIR not in sys.path:
     sys.path.insert(0, _COLABS_DIR)
 
+import pipeline  # noqa: E402
+
 
 def _split_gcs(uri: str) -> tuple[str, str]:
     assert uri.startswith("gs://")
@@ -195,21 +197,19 @@ class TestConfigTune(unittest.TestCase):
         submit_side_effect: object = "jobs/1",
         poll_return: str = "endpoints/1",
     ) -> tuple[int, unittest.mock.MagicMock, unittest.mock.MagicMock]:
-        import pipeline
-
         args = argparse.Namespace(
-            config=str(cfg_path), confirm=True, _provided_flags=set()
+            config=str(cfg_path), confirm=True, provided_flags=set()
         )
         with (
             unittest.mock.patch.object(pipeline, "RESULTS_DIR", results_dir),
             unittest.mock.patch(
-                "google.cloud.storage.Client", return_value=storage
+                "pipeline.storage.Client", return_value=storage
             ),
             unittest.mock.patch(
-                "preflight.run_preflight", side_effect=_fake_preflight
+                "pipeline.run_preflight", side_effect=_fake_preflight
             ),
             unittest.mock.patch(
-                "common.vertex.submit_tuning_job",
+                "pipeline.submit_tuning_job",
                 side_effect=(
                     submit_side_effect
                     if callable(submit_side_effect)
@@ -222,7 +222,7 @@ class TestConfigTune(unittest.TestCase):
                 ),
             ) as mock_submit,
             unittest.mock.patch(
-                "common.vertex.poll_tuning_job", return_value=poll_return
+                "pipeline.poll_tuning_job", return_value=poll_return
             ) as mock_poll,
             contextlib.redirect_stdout(io.StringIO()),
         ):

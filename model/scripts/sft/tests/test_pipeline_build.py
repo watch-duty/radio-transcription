@@ -28,14 +28,22 @@ if _SFT_DIR not in sys.path:
 if _COLABS_DIR not in sys.path:
     sys.path.insert(0, _COLABS_DIR)
 
+import pipeline  # noqa: E402
+from adapters.gcs_manifest import GcsManifestAdapter  # noqa: E402
+from common.manifest import CanonicalRow  # noqa: E402
+from preflight import (  # noqa: E402
+    PREFLIGHT_GCS_TIMEOUT_SECONDS,
+    PREFLIGHT_TOKEN_CAP,
+    _safe_blob_exists,
+    run_preflight,
+)
+
 
 class TestPipelineCLI(unittest.TestCase):
     """pipeline.py --help and build --help exit 0 and show expected subcommands."""
 
     def test_help_exits_zero(self) -> None:
         """Python pipeline.py --help exits 0."""
-        import pipeline
-
         # Re-parse with --help should raise SystemExit(0)
         with self.assertRaises(SystemExit) as ctx:
             with unittest.mock.patch("sys.argv", ["pipeline.py", "--help"]):
@@ -44,8 +52,6 @@ class TestPipelineCLI(unittest.TestCase):
 
     def test_build_help_exits_zero(self) -> None:
         """Python pipeline.py build --help exits 0."""
-        import pipeline
-
         with self.assertRaises(SystemExit) as ctx:
             with unittest.mock.patch(
                 "sys.argv", ["pipeline.py", "build", "--help"]
@@ -55,14 +61,10 @@ class TestPipelineCLI(unittest.TestCase):
 
     def test_subcommands_listed(self) -> None:
         """Verify main() is callable and returns int."""
-        import pipeline
-
         self.assertTrue(callable(pipeline.main))
 
     def test_help_names_gemini_sft_pipeline(self) -> None:
         """Main help labels the CLI as Gemini SFT-specific."""
-        import pipeline
-
         out = io.StringIO()
         with self.assertRaises(SystemExit) as ctx:
             with (
@@ -77,8 +79,6 @@ class TestPipelineCLI(unittest.TestCase):
 
     def test_build_returns_clean_error_for_missing_prompt_file(self) -> None:
         """Missing @file prompt overrides should fail cleanly, not traceback."""
-        import pipeline
-
         missing = Path(tempfile.gettempdir()) / "missing-sft-system-prompt.txt"
         args = argparse.Namespace(
             datasets="echo",
@@ -97,8 +97,6 @@ class TestPipelineCLI(unittest.TestCase):
 
     def test_dataset_names_are_deduped_in_order(self) -> None:
         """Repeated --datasets entries should not run adapters twice."""
-        import pipeline
-
         self.assertEqual(
             pipeline._parse_dataset_names("echo, echo,bench,echo"),
             ["echo", "bench"],
@@ -106,8 +104,6 @@ class TestPipelineCLI(unittest.TestCase):
 
     def test_dataset_names_ignore_empty_entries(self) -> None:
         """Trailing commas and empty comma slots should not create fake datasets."""
-        import pipeline
-
         self.assertEqual(
             pipeline._parse_dataset_names(" echo, ,bench,echo, "),
             ["echo", "bench"],
@@ -115,8 +111,6 @@ class TestPipelineCLI(unittest.TestCase):
 
     def test_build_rejects_empty_dataset_list(self) -> None:
         """All-empty --datasets should fail before staging or GCS work."""
-        import pipeline
-
         args = argparse.Namespace(
             datasets=" , ",
             round_id="empty-datasets",
@@ -135,15 +129,11 @@ class TestPipelineCLI(unittest.TestCase):
 
     def test_gcs_sft_prefix_rejects_full_gcs_uri(self) -> None:
         """--gcs-bucket expects a bucket name, not a gs:// URI."""
-        import pipeline
-
         with self.assertRaisesRegex(ValueError, "bucket name"):
             pipeline._gcs_sft_prefix("gs://sandbox-bucket")
 
     def test_tune_defaults_to_gemini_31_flash_lite(self) -> None:
         """Tune CLI defaults to the current supported Gemini SFT model."""
-        import pipeline
-
         with unittest.mock.patch("pipeline._tune") as mock_tune:
             mock_tune.return_value = 0
             with unittest.mock.patch(
@@ -157,8 +147,6 @@ class TestPipelineCLI(unittest.TestCase):
 
     def test_tune_accepts_config_without_round_id(self) -> None:
         """Config-driven tune does not require the legacy --round-id flag."""
-        import pipeline
-
         with unittest.mock.patch("pipeline._tune") as mock_tune:
             mock_tune.return_value = 0
             with unittest.mock.patch(
@@ -167,20 +155,18 @@ class TestPipelineCLI(unittest.TestCase):
                     "pipeline.py",
                     "tune",
                     "--config",
-                    "/tmp/run.toml",
+                    "run.toml",
                     "--confirm",
                 ],
             ):
                 pipeline.main()
 
         args = mock_tune.call_args.args[0]
-        self.assertEqual(args.config, "/tmp/run.toml")
+        self.assertEqual(args.config, "run.toml")
         self.assertEqual(args.round_id, "")
 
     def test_tune_config_rejects_experiment_flag_override(self) -> None:
         """tune --config must not accept duplicate experiment-defining flags."""
-        import pipeline
-
         with (
             unittest.mock.patch(
                 "sys.argv",
@@ -188,7 +174,7 @@ class TestPipelineCLI(unittest.TestCase):
                     "pipeline.py",
                     "tune",
                     "--config",
-                    "/tmp/run.toml",
+                    "run.toml",
                     "--base-model",
                     "gemini-2.5-flash",
                 ],
@@ -202,11 +188,9 @@ class TestPipelineCLI(unittest.TestCase):
 
     def test_all_config_is_rejected_before_required_args(self) -> None:
         """all --config is intentionally unsupported for this milestone."""
-        import pipeline
-
         with (
             unittest.mock.patch(
-                "sys.argv", ["pipeline.py", "all", "--config", "/tmp/run.toml"]
+                "sys.argv", ["pipeline.py", "all", "--config", "run.toml"]
             ),
             self.assertLogs("pipeline", level="ERROR") as logs,
         ):
@@ -219,8 +203,6 @@ class TestPipelineCLI(unittest.TestCase):
 
     def test_tune_accepts_gcp_overrides(self) -> None:
         """Tune CLI accepts sandbox GCP project/bucket overrides."""
-        import pipeline
-
         with unittest.mock.patch("pipeline._tune") as mock_tune:
             mock_tune.return_value = 0
             with unittest.mock.patch(
@@ -244,8 +226,6 @@ class TestPipelineCLI(unittest.TestCase):
 
     def test_gcp_settings_prefer_cli_then_config_then_env(self) -> None:
         """GCP settings resolve consistently across build/tune/eval reruns."""
-        import pipeline
-
         with unittest.mock.patch.dict(
             os.environ,
             {
@@ -297,8 +277,6 @@ class TestPipelineCLI(unittest.TestCase):
 
     def test_tune_accepts_gemini_31_flash_lite_before_gcp_calls(self) -> None:
         """Gemini 3.1 Flash-Lite is supported for SFT and must not hit old gemini-3 rejection."""
-        import pipeline
-
         args = argparse.Namespace(
             round_id="2026-06-01-echo",
             base_model="gemini-3.1-flash-lite",
@@ -324,8 +302,6 @@ class TestPipelineCLI(unittest.TestCase):
 
     def test_tune_cost_estimate_uses_gemini_31_flash_lite_rate(self) -> None:
         """Tune cost estimate references Gemini 3.1 Flash-Lite SFT pricing."""
-        import pipeline
-
         self.assertEqual(pipeline.DEFAULT_BASE_MODEL, "gemini-3.1-flash-lite")
         self.assertEqual(pipeline.FALLBACK_SEGMENT_DURATION_SECONDS, 15.0)
         self.assertEqual(
@@ -339,8 +315,6 @@ class TestPipelineCLI(unittest.TestCase):
 
     def test_tune_resume_path_checks_vertex_extra(self) -> None:
         """Resume path should use common.vertex's friendly dependency guard."""
-        import pipeline
-
         fake_cur = unittest.mock.MagicMock()
         fake_cur.state.name = "JOB_STATE_SUCCEEDED"
         fake_client = unittest.mock.MagicMock()
@@ -348,15 +322,6 @@ class TestPipelineCLI(unittest.TestCase):
         fake_genai = types.SimpleNamespace(
             Client=unittest.mock.MagicMock(return_value=fake_client)
         )
-        fake_google = types.SimpleNamespace(genai=fake_genai)
-        real_import = __import__
-
-        def _fake_import(
-            name, global_vars=None, local_vars=None, fromlist=(), level=0
-        ):
-            if name == "google" and "genai" in fromlist:
-                return fake_google
-            return real_import(name, global_vars, local_vars, fromlist, level)
 
         args = argparse.Namespace(
             round_id="2026-06-01-echo",
@@ -379,7 +344,7 @@ class TestPipelineCLI(unittest.TestCase):
                 },
             ),
             unittest.mock.patch("common.vertex._require_vertex") as require,
-            unittest.mock.patch("builtins.__import__", new=_fake_import),
+            unittest.mock.patch("common.vertex.genai", fake_genai),
         ):
             rc = pipeline._tune(args)
 
@@ -388,8 +353,6 @@ class TestPipelineCLI(unittest.TestCase):
 
     def test_tune_declined_confirmation_returns_user_abort(self) -> None:
         """Declined cost confirmation should stop `all` before eval."""
-        import pipeline
-
         args = argparse.Namespace(
             round_id="2026-06-01-echo",
             base_model="gemini-3.1-flash-lite",
@@ -403,7 +366,7 @@ class TestPipelineCLI(unittest.TestCase):
         )
 
         def fake_download_blob_to_file(
-            _client, _bucket: str, _blob: str, local_path: str
+            _client: object, _bucket: str, _blob: str, local_path: str
         ) -> None:
             Path(local_path).write_text('{"ok": true}\n')
 
@@ -418,17 +381,17 @@ class TestPipelineCLI(unittest.TestCase):
                     "total_train_duration_seconds": 10,
                 },
             ),
-            unittest.mock.patch("google.cloud.storage.Client"),
+            unittest.mock.patch("pipeline.storage.Client"),
             unittest.mock.patch(
-                "common.gcs_utils.download_blob_to_file",
+                "pipeline.download_blob_to_file",
                 side_effect=fake_download_blob_to_file,
             ),
             unittest.mock.patch(
-                "preflight.run_preflight",
+                "pipeline.run_preflight",
                 return_value=types.SimpleNamespace(passed=True, failures=[]),
             ),
             unittest.mock.patch("builtins.input", return_value="no"),
-            unittest.mock.patch("common.vertex.submit_tuning_job") as submit,
+            unittest.mock.patch("pipeline.submit_tuning_job") as submit,
         ):
             rc = pipeline._tune(args)
 
@@ -437,8 +400,6 @@ class TestPipelineCLI(unittest.TestCase):
 
     def test_tune_eof_confirmation_returns_user_abort(self) -> None:
         """Non-interactive tune without --confirm should abort cleanly."""
-        import pipeline
-
         args = argparse.Namespace(
             round_id="2026-06-01-echo",
             base_model="gemini-3.1-flash-lite",
@@ -452,7 +413,7 @@ class TestPipelineCLI(unittest.TestCase):
         )
 
         def fake_download_blob_to_file(
-            _client, _bucket: str, _blob: str, local_path: str
+            _client: object, _bucket: str, _blob: str, local_path: str
         ) -> None:
             Path(local_path).write_text('{"ok": true}\n')
 
@@ -467,17 +428,17 @@ class TestPipelineCLI(unittest.TestCase):
                     "total_train_duration_seconds": 10,
                 },
             ),
-            unittest.mock.patch("google.cloud.storage.Client"),
+            unittest.mock.patch("pipeline.storage.Client"),
             unittest.mock.patch(
-                "common.gcs_utils.download_blob_to_file",
+                "pipeline.download_blob_to_file",
                 side_effect=fake_download_blob_to_file,
             ),
             unittest.mock.patch(
-                "preflight.run_preflight",
+                "pipeline.run_preflight",
                 return_value=types.SimpleNamespace(passed=True, failures=[]),
             ),
             unittest.mock.patch("builtins.input", side_effect=EOFError),
-            unittest.mock.patch("common.vertex.submit_tuning_job") as submit,
+            unittest.mock.patch("pipeline.submit_tuning_job") as submit,
             self.assertLogs("pipeline", level="INFO") as logs,
         ):
             rc = pipeline._tune(args)
@@ -490,8 +451,6 @@ class TestPipelineCLI(unittest.TestCase):
         self,
     ) -> None:
         """Older build configs without recorded durations use the named fallback."""
-        import pipeline
-
         args = argparse.Namespace(
             round_id="2026-06-01-echo",
             base_model="gemini-3.1-flash-lite",
@@ -505,7 +464,7 @@ class TestPipelineCLI(unittest.TestCase):
         )
 
         def fake_download_blob_to_file(
-            _client, _bucket: str, _blob: str, local_path: str
+            _client: object, _bucket: str, _blob: str, local_path: str
         ) -> None:
             Path(local_path).write_text('{"ok": true}\n{"ok": true}\n')
 
@@ -520,13 +479,13 @@ class TestPipelineCLI(unittest.TestCase):
                     "user_prompt": "user",
                 },
             ),
-            unittest.mock.patch("google.cloud.storage.Client"),
+            unittest.mock.patch("pipeline.storage.Client"),
             unittest.mock.patch(
-                "common.gcs_utils.download_blob_to_file",
+                "pipeline.download_blob_to_file",
                 side_effect=fake_download_blob_to_file,
             ),
             unittest.mock.patch(
-                "preflight.run_preflight",
+                "pipeline.run_preflight",
                 return_value=types.SimpleNamespace(passed=True, failures=[]),
             ),
             unittest.mock.patch("builtins.input", return_value="no"),
@@ -566,8 +525,6 @@ class TestPreflightEmptyTarget(unittest.TestCase):
         }
 
     def test_preflight_fails_on_empty_target(self) -> None:
-        from preflight import run_preflight
-
         with tempfile.TemporaryDirectory() as tmp:
             train_path = Path(tmp) / "train.jsonl"
             report_path = Path(tmp) / "preflight_report.json"
@@ -584,8 +541,6 @@ class TestPreflightEmptyTarget(unittest.TestCase):
         self.assertTrue(len(report.failures) > 0)
 
     def test_preflight_report_written_on_failure(self) -> None:
-        from preflight import run_preflight
-
         with tempfile.TemporaryDirectory() as tmp:
             train_path = Path(tmp) / "train.jsonl"
             report_path = Path(tmp) / "preflight_report.json"
@@ -628,8 +583,6 @@ class TestPreflightDuplicateUri(unittest.TestCase):
         }
 
     def test_preflight_fails_on_duplicate_uri(self) -> None:
-        from preflight import run_preflight
-
         duplicate_uri = "gs://bucket/audio/duplicate.flac"
         with tempfile.TemporaryDirectory() as tmp:
             train_path = Path(tmp) / "train.jsonl"
@@ -652,8 +605,6 @@ class TestPreflightDuplicateUri(unittest.TestCase):
         self.assertTrue(any("uplicate" in f for f in report.failures))
 
     def test_preflight_passes_on_valid_data(self) -> None:
-        from preflight import run_preflight
-
         with tempfile.TemporaryDirectory() as tmp:
             train_path = Path(tmp) / "train.jsonl"
             report_path = Path(tmp) / "preflight_report.json"
@@ -674,8 +625,6 @@ class TestPreflightDuplicateUri(unittest.TestCase):
         )
 
     def test_safe_blob_exists_uses_timeout(self) -> None:
-        from preflight import PREFLIGHT_GCS_TIMEOUT_SECONDS, _safe_blob_exists
-
         storage_client = object()
         with unittest.mock.patch(
             "preflight.blob_exists", return_value=True
@@ -690,8 +639,6 @@ class TestPreflightDuplicateUri(unittest.TestCase):
         )
 
     def test_preflight_batches_gcs_reachability_checks(self) -> None:
-        from preflight import run_preflight
-
         with tempfile.TemporaryDirectory() as tmp:
             train_path = Path(tmp) / "train.jsonl"
             report_path = Path(tmp) / "preflight_report.json"
@@ -730,8 +677,6 @@ class TestPreflightDuplicateUri(unittest.TestCase):
         )
 
     def test_preflight_validates_val_examples(self) -> None:
-        from preflight import run_preflight
-
         with tempfile.TemporaryDirectory() as tmp:
             train_path = Path(tmp) / "train.jsonl"
             val_path = Path(tmp) / "val.jsonl"
@@ -762,8 +707,6 @@ class TestPreflightDuplicateUri(unittest.TestCase):
         self.assertIn("val[0]", report.offending_ids)
 
     def test_preflight_rejects_malformed_val_examples(self) -> None:
-        from preflight import run_preflight
-
         with tempfile.TemporaryDirectory() as tmp:
             train_path = Path(tmp) / "train.jsonl"
             val_path = Path(tmp) / "val.jsonl"
@@ -787,8 +730,6 @@ class TestPreflightDuplicateUri(unittest.TestCase):
         self.assertIn("val[0]", report.offending_ids)
 
     def test_preflight_fails_on_empty_train(self) -> None:
-        from preflight import run_preflight
-
         with tempfile.TemporaryDirectory() as tmp:
             train_path = Path(tmp) / "train.jsonl"
             report_path = Path(tmp) / "preflight_report.json"
@@ -808,9 +749,6 @@ class TestGcsManifestAdapter(unittest.TestCase):
     """GcsManifestAdapter.iter_rows yields CanonicalRow instances."""
 
     def test_iter_rows_yields_canonical_rows(self) -> None:
-        from adapters.gcs_manifest import GcsManifestAdapter
-        from common.manifest import CanonicalRow
-
         fake_manifest = [
             {
                 "audio_filepath": "gs://bucket/audio/seg_001.flac",
@@ -842,8 +780,6 @@ class TestGcsManifestAdapter(unittest.TestCase):
         self.assertEqual(rows[0].text, "engine 41 responding")
 
     def test_import_succeeds(self) -> None:
-        from adapters.gcs_manifest import GcsManifestAdapter
-
         self.assertTrue(callable(GcsManifestAdapter))
 
 
@@ -851,8 +787,6 @@ class TestPreflightTokenCap(unittest.TestCase):
     """PREFLIGHT_TOKEN_CAP is 131_072."""
 
     def test_token_cap_value(self) -> None:
-        from preflight import PREFLIGHT_TOKEN_CAP
-
         self.assertEqual(PREFLIGHT_TOKEN_CAP, 131_072)
 
 
@@ -860,17 +794,13 @@ class TestBuildSplitJsonl(unittest.TestCase):
     """_build_split_jsonl writes per-dataset + combined JSONL and returns URIs + duration."""
 
     def test_train_split_builds_uploads_and_sums_duration(self) -> None:
-        from types import SimpleNamespace
-
-        import pipeline
-
         rows = [
-            SimpleNamespace(
+            types.SimpleNamespace(
                 audio_filepath="gs://b/a1.flac",
                 text="engine 41 responding",
                 duration=2.0,
             ),
-            SimpleNamespace(
+            types.SimpleNamespace(
                 audio_filepath="gs://b/a2.flac",
                 text="copy that",
                 duration=3.0,
@@ -893,11 +823,9 @@ class TestBuildSplitJsonl(unittest.TestCase):
                 unittest.mock.patch(
                     "pipeline._make_adapter", return_value=fake_adapter
                 ),
+                unittest.mock.patch("pipeline.upload_file_to_blob") as mock_upload,
                 unittest.mock.patch(
-                    "common.gcs_utils.upload_file_to_blob"
-                ) as mock_upload,
-                unittest.mock.patch(
-                    "common.gcs_utils.parse_gcs_uri",
+                    "pipeline.parse_gcs_uri",
                     return_value=("bucket", "path"),
                 ),
             ):
@@ -937,8 +865,6 @@ class TestEvalManifestResolution(unittest.TestCase):
     """Eval resolves every configured gcs_manifest eval split, not just the first one."""
 
     def test_resolves_all_configured_gcs_eval_manifests(self) -> None:
-        import pipeline
-
         registry = {
             "datasets": {
                 "echo": {
