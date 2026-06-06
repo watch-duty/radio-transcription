@@ -18,6 +18,7 @@ from opentelemetry import trace
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
+from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.ingestion import (
     health_server,
     quarantine_telemetry,
@@ -27,7 +28,7 @@ from backend.pipeline.ingestion.models import (
     AudioMimeType,
     CapturedChunk,
     CaptureResources,
-    CollectorFailure,
+    FeedFailure,
 )
 from backend.pipeline.ingestion.retry import (
     LeaseExpiredError,
@@ -185,6 +186,7 @@ class CollectorRuntime:
             self._collector_settings.worker_id,
             self._collector_settings.max_feeds_per_worker,
         )
+        setup_tracing(service_name="ingestion-service", is_ingestion=True)
         asyncio.run(self._main(), loop_factory=uvloop.new_event_loop)
 
     # -- Async core -------------------------------------------------------
@@ -952,6 +954,15 @@ class CollectorRuntime:
         Iterates the capture generator, uploads each chunk to GCS, and
         bookmarks progress with fence violation detection.
         """
+        if (
+            not feed.get("id")
+            or not str(feed["id"]).strip()
+            or str(feed["id"]).strip() == "None"
+        ):
+            msg = f"Leased feed '{feed.get('name')}' missing required id"
+            logger.error(msg)
+            raise ValueError(msg)
+
         chunk_seq = 0
         worker_id = self._collector_settings.worker_id
         fencing_token = feed["fencing_token"]
@@ -1054,7 +1065,7 @@ class CollectorRuntime:
             )
             return
 
-        except CollectorFailure as e:
+        except FeedFailure as e:
             await self._record_feed_failure(
                 feed,
                 worker_id,
@@ -1077,7 +1088,7 @@ class CollectorRuntime:
         except Exception as e:
             # Transitional catch-all for bugs or untyped collector failures.
             # Source-specific attribution belongs in collectors that raise
-            # CollectorFailure; the runtime only records the explicit fallback.
+            # FeedFailure; the runtime only records the explicit fallback.
             reason = str(e)[:200] if str(e) else type(e).__name__
             await self._record_feed_failure(
                 feed,

@@ -21,7 +21,7 @@ from backend.pipeline.transcription.transcribers.factory import get_transcriber
 
 # Setup Logging and Tracing
 setup_logging()
-setup_tracing(use_batch=False)
+setup_tracing(service_name="transcription-service", use_batch=False)
 logger = logging.getLogger(__name__)
 
 

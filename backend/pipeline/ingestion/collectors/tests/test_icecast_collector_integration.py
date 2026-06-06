@@ -20,7 +20,7 @@ from backend.pipeline.ingestion.collectors.icecast import icecast_collector
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
 )
-from backend.pipeline.ingestion.models import CollectorFailure
+from backend.pipeline.ingestion.models import FeedFailure
 from backend.pipeline.storage.feed_store import (
     FeedStatusReason,
     FeedStore,
@@ -444,7 +444,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             new_callable=AsyncMock,
             return_value=None,
         ):
-            with self.assertRaises(CollectorFailure) as ctx:
+            with self.assertRaises(FeedFailure) as ctx:
                 async for _chunk in icecast_collector.capture_icecast_stream(
                     feed,
                     shutdown,
@@ -534,7 +534,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         feed["source_feed_id"] = None
 
         shutdown = asyncio.Event()
-        with self.assertRaises(CollectorFailure) as ctx:
+        with self.assertRaises(FeedFailure) as ctx:
             async for _chunk in icecast_collector.capture_icecast_stream(
                 feed,
                 shutdown,
