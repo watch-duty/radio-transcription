@@ -200,6 +200,7 @@ class AudioStitchingStateMachine:
             expected_next_chunk_start_ms=None,
             start_audio_offset_ms=None,
             buffer_duration_ms=0,
+            traceparent=ctx.traceparent,
         )
 
         raw_actions: list[StateMachineAction] = []

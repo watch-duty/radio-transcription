@@ -5,7 +5,6 @@ avoiding the overhead of multi-VAD abstractions.
 """
 
 import math
-import threading
 from pathlib import Path
 from typing import Any
 
@@ -58,9 +57,6 @@ logger = get_task_logger(
 MODELS_DIR = Path(__file__).parent / "models"
 TARGET_SAMPLE_RATE = 16000
 DEFAULT_SILERO_WINDOW_SIZE = 512
-
-_denoise_lock = threading.Lock()
-_silero_lock = threading.Lock()
 
 
 class VoiceActivityDetector:
@@ -222,16 +218,15 @@ class VoiceActivityDetector:
         # Pre-allocate and reuse the input dictionary to avoid heavy object allocation overhead in Python loop
         ort_inputs: dict[str, Any] = dict(states)
 
-        with _denoise_lock:
-            for i in range(num_frames):
-                ort_inputs[audio_input_name] = stft_features[:, :, i : i + 1, :]
-                ort_outs = self.ulunas_session.run(None, ort_inputs)
-                out_stft[:, :, i : i + 1, :] = ort_outs[0]
-                for j in range(1, len(outputs)):
-                    name = inputs[j].name
-                    val = ort_outs[j]
-                    states[name] = val
-                    ort_inputs[name] = val
+        for i in range(num_frames):
+            ort_inputs[audio_input_name] = stft_features[:, :, i : i + 1, :]
+            ort_outs = self.ulunas_session.run(None, ort_inputs)
+            out_stft[:, :, i : i + 1, :] = ort_outs[0]
+            for j in range(1, len(outputs)):
+                name = inputs[j].name
+                val = ort_outs[j]
+                states[name] = val
+                ort_inputs[name] = val
 
         return custom_numpy_istft(
             out_stft,
@@ -440,55 +435,54 @@ class VoiceActivityDetector:
         current_speech = {}
         raw_segments = []
 
-        with _silero_lock:
-            for i in range(0, len(vad_input), chunk_size):
-                chunk = vad_input[i : i + chunk_size]
-                if len(chunk) < chunk_size:
-                    chunk = np.pad(chunk, (0, chunk_size - len(chunk)))
+        for i in range(0, len(vad_input), chunk_size):
+            chunk = vad_input[i : i + chunk_size]
+            if len(chunk) < chunk_size:
+                chunk = np.pad(chunk, (0, chunk_size - len(chunk)))
 
-                x_with_context = np.concatenate([context, chunk])
-                ort_inputs = {
-                    "input": x_with_context.reshape(
-                        1, chunk_size + context_size
-                    ).astype(np.float32),
-                    "state": state,
-                    "sr": sr_tensor,
-                }
+            x_with_context = np.concatenate([context, chunk])
+            ort_inputs = {
+                "input": x_with_context.reshape(
+                    1, chunk_size + context_size
+                ).astype(np.float32),
+                "state": state,
+                "sr": sr_tensor,
+            }
 
-                outputs = self.silero_session.run(None, ort_inputs)
-                prob = float(np.asarray(outputs[0]).flatten()[0])
-                state = outputs[1]
-                context = x_with_context[-context_size:]
+            outputs = self.silero_session.run(None, ort_inputs)
+            prob = float(np.asarray(outputs[0]).flatten()[0])
+            state = outputs[1]
+            context = x_with_context[-context_size:]
 
-                current_frame = i / chunk_size
+            current_frame = i / chunk_size
 
-                if not triggered:
-                    if prob >= self.threshold_onset:
-                        triggered = True
-                        current_speech["start"] = current_frame
-                        temp_end = 0
-                elif prob < self.threshold_offset:
-                    temp_end += 1
-                    if temp_end >= min_silence_frames:
-                        current_speech["end"] = current_frame - temp_end
-                        if (
-                            current_speech["end"] - current_speech["start"]
-                        ) >= min_speech_frames:
-                            raw_segments.append(
-                                (
-                                    current_speech["start"]
-                                    * chunk_size
-                                    / TARGET_SAMPLE_RATE,
-                                    current_speech["end"]
-                                    * chunk_size
-                                    / TARGET_SAMPLE_RATE,
-                                )
-                            )
-                        triggered = False
-                        temp_end = 0
-                        current_speech = {}
-                else:
+            if not triggered:
+                if prob >= self.threshold_onset:
+                    triggered = True
+                    current_speech["start"] = current_frame
                     temp_end = 0
+            elif prob < self.threshold_offset:
+                temp_end += 1
+                if temp_end >= min_silence_frames:
+                    current_speech["end"] = current_frame - temp_end
+                    if (
+                        current_speech["end"] - current_speech["start"]
+                    ) >= min_speech_frames:
+                        raw_segments.append(
+                            (
+                                current_speech["start"]
+                                * chunk_size
+                                / TARGET_SAMPLE_RATE,
+                                current_speech["end"]
+                                * chunk_size
+                                / TARGET_SAMPLE_RATE,
+                            )
+                        )
+                    triggered = False
+                    temp_end = 0
+                    current_speech = {}
+            else:
+                temp_end = 0
 
         if triggered:
             current_speech["end"] = len(vad_input) / chunk_size

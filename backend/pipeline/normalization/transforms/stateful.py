@@ -190,6 +190,7 @@ def process_ordering(
         buffer_elements=buffer_elements,
         chunk_duration_ms=metadata.duration_ms,
         traceparent=metadata.traceparent,
+        max_emit=15,
     )
 
     if was_late:
@@ -209,13 +210,18 @@ def process_ordering(
     )
 
     # Handle Timer for Gap Timeout
-    if new_buffer_elements and not curr_context.order_timer_active:
-        deadline = timestamp + (
-            order_config.out_of_order_timeout_ms
-            / float(common_constants.MS_PER_SECOND)
-        )
-        out_of_order_timer.set(deadline)
-        curr_context = replace(curr_context, order_timer_active=True)
+    clamped = len(elements_to_emit) >= 15
+    if new_buffer_elements:
+        if clamped:
+            out_of_order_timer.set(timestamp)
+            curr_context = replace(curr_context, order_timer_active=True)
+        elif not curr_context.order_timer_active:
+            deadline = timestamp + (
+                order_config.out_of_order_timeout_ms
+                / float(common_constants.MS_PER_SECOND)
+            )
+            out_of_order_timer.set(deadline)
+            curr_context = replace(curr_context, order_timer_active=True)
     elif not new_buffer_elements and curr_context.order_timer_active:
         out_of_order_timer.clear()
         curr_context = replace(curr_context, order_timer_active=False)
@@ -444,6 +450,8 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
+        timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
+        out_of_order_timer: RuntimeTimer = OUT_OF_ORDER_TIMER,  # type: ignore
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest] | datatypes.NormalizationDlqOutput
     ]:
@@ -494,8 +502,18 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
                         expected_next_ts=new_expected,
                         buffer_elements=buffer_elements,
                         epsilon_ms=trans_constants.DEFAULT_FLOAT_TOLERANCE_MS,
+                        max_emit=15,
                     )
                 )
+
+                clamped = len(elements_to_emit) >= 15
+                if clamped and new_buffer_elements:
+                    # Timer was cleared when we transitioned to handling timeout.
+                    # We must set it again to trigger another bundle immediately.
+                    out_of_order_timer.set(timestamp)
+                    curr_context = replace(
+                        curr_context, order_timer_active=True
+                    )
 
                 curr_context = replace(
                     curr_context,
@@ -839,6 +857,8 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
+        timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
+        out_of_order_timer: RuntimeTimer = OUT_OF_ORDER_TIMER,  # type: ignore
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest] | datatypes.NormalizationDlqOutput
     ]:
@@ -889,8 +909,17 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
                         expected_next_ts=new_expected,
                         buffer_elements=buffer_elements,
                         epsilon_ms=trans_constants.DEFAULT_FLOAT_TOLERANCE_MS,
+                        max_emit=15,
                     )
                 )
+
+                clamped = len(elements_to_emit) >= 15
+                if clamped and new_buffer_elements:
+                    # Immediate timer since there are chunks still ready
+                    out_of_order_timer.set(timestamp)
+                    curr_context = replace(
+                        curr_context, order_timer_active=True
+                    )
 
                 curr_context = replace(
                     curr_context,

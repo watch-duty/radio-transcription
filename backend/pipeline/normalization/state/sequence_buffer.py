@@ -48,6 +48,7 @@ class SequenceBuffer:
         buffer_elements: list[BufferedChunk],
         chunk_duration_ms: int | None = None,
         traceparent: str | None = None,
+        max_emit: int | None = None,
     ) -> tuple[int, list[BufferedChunk], list[BufferedChunk], bool, bool]:
         """Processes a single incoming audio chunk against the expected sequence progression.
 
@@ -84,7 +85,10 @@ class SequenceBuffer:
             # that were previously held in the buffer.
             expected_next_ts, buffer_elements, drained = (
                 self.drain_ready_elements(
-                    expected_next_ts, buffer_elements, epsilon_ms
+                    expected_next_ts,
+                    buffer_elements,
+                    epsilon_ms,
+                    max_emit=max_emit,
                 )
             )
             to_emit.extend(drained)
@@ -126,12 +130,15 @@ class SequenceBuffer:
         expected_next_ts: int,
         buffer_elements: list[BufferedChunk],
         epsilon_ms: int = DEFAULT_FLOAT_TOLERANCE_MS,
+        max_emit: int | None = None,
     ) -> tuple[int, list[BufferedChunk], list[BufferedChunk]]:
         """Recursively scans the active buffer heap to find any chunks that sequentially match the newly advanced expected_next_ts."""
         heap = [ComparableChunk(c) for c in buffer_elements]
         heapq.heapify(heap)
         to_emit = []
         while heap:
+            if max_emit is not None and len(to_emit) >= max_emit:
+                break
             smallest = heap[0].chunk
             difference = smallest.timestamp_ms - expected_next_ts
             if abs(difference) <= epsilon_ms:
