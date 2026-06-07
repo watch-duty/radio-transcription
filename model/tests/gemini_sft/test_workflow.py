@@ -219,6 +219,36 @@ class TestPrepareRun(unittest.TestCase):
             }
             self.assertTrue(required.issubset(set(storage.uploads)))
 
+    def test_prepare_uploads_config_after_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            _seed_source_manifests(storage)
+            run_cfg = load_run_config(_write_config_file(tmp))
+
+            prepare_run(
+                run_cfg=run_cfg,
+                storage_client=storage,
+                results_dir=tmp / "results",
+            )
+
+            config_index = storage.uploads.index(
+                "gs://test-bucket/sft/runs/round-a/config.json"
+            )
+            prerequisite_indexes = [
+                storage.uploads.index(uri)
+                for uri in [
+                    "gs://test-bucket/sft/runs/round-a/run_config.toml",
+                    "gs://test-bucket/sft/runs/round-a/manifests/canonical/train.jsonl",
+                    "gs://test-bucket/sft/runs/round-a/manifests/canonical/validation.jsonl",
+                    "gs://test-bucket/sft/runs/round-a/manifests/canonical/eval.jsonl",
+                    "gs://test-bucket/sft/runs/round-a/model_inputs/gemini/train.jsonl",
+                    "gs://test-bucket/sft/runs/round-a/model_inputs/gemini/validation.jsonl",
+                    "gs://test-bucket/sft/runs/round-a/preflight/report.json",
+                ]
+            ]
+            self.assertGreater(config_index, max(prerequisite_indexes))
+
     def test_train_eval_overlap_fails_before_uploading_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
             tmp = Path(tmp_s)
@@ -307,6 +337,98 @@ class TestTuneRun(unittest.TestCase):
         self.assertEqual(rc, 130)
         submit.assert_not_called()
 
+    def test_existing_prepared_config_drives_tune_submission(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            cfg_path = _write_config_file(tmp)
+            run_cfg = load_run_config(cfg_path)
+            prepared_config = {
+                **run_cfg.to_record_dict(),
+                "status": "preflight_passed",
+                "base_model": "gemini-2.5-flash",
+                "epoch_count": 3,
+                "adapter_size": "FOUR",
+                "learning_rate_multiplier": 0.5,
+                "combined_train_uri": "gs://prepared/train.jsonl",
+                "combined_val_uri": "gs://prepared/validation.jsonl",
+                "canonical_train_rows": 10,
+                "total_train_duration_seconds": 30.0,
+            }
+            storage.put(run_cfg.paths.config_uri, json.dumps(prepared_config))
+            args = argparse.Namespace(config=str(cfg_path), confirm=True)
+
+            with (
+                unittest.mock.patch.object(
+                    tune_module, "RESULTS_DIR", tmp / "results"
+                ),
+                unittest.mock.patch.object(
+                    tune_module, "submit_tuning_job", return_value="jobs/1"
+                ) as submit,
+                unittest.mock.patch.object(
+                    tune_module, "poll_tuning_job", return_value="endpoints/1"
+                ),
+            ):
+                rc = tune_module.tune_run(
+                    args=args,
+                    run_cfg=run_cfg,
+                    storage_client=storage,
+                    results_dir=tmp / "results",
+                )
+
+        self.assertEqual(rc, 0)
+        kwargs = submit.call_args.kwargs
+        self.assertEqual(kwargs["train_uri"], "gs://prepared/train.jsonl")
+        self.assertEqual(kwargs["val_uri"], "gs://prepared/validation.jsonl")
+        self.assertEqual(kwargs["base_model"], "gemini-2.5-flash")
+        self.assertEqual(kwargs["epoch_count"], 3)
+        self.assertEqual(kwargs["adapter_size"], "FOUR")
+        self.assertEqual(kwargs["lr_multiplier"], 0.5)
+
+    def test_tune_validates_prepared_config_model_not_local_toml(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            cfg_path = tmp / "run.toml"
+            cfg_path.write_text(
+                _config_text().replace(
+                    'base_model = "gemini-3.1-flash-lite"',
+                    'base_model = "local-edited-model"',
+                ),
+                encoding="utf-8",
+            )
+            run_cfg = load_run_config(cfg_path)
+            prepared_config = {
+                **run_cfg.to_record_dict(),
+                "status": "preflight_passed",
+                "base_model": "gemini-3.1-flash-lite",
+                "canonical_train_rows": 10,
+                "total_train_duration_seconds": 30.0,
+            }
+            storage.put(run_cfg.paths.config_uri, json.dumps(prepared_config))
+            args = argparse.Namespace(config=str(cfg_path), confirm=True)
+
+            with (
+                unittest.mock.patch.object(
+                    tune_module.storage, "Client", return_value=storage
+                ),
+                unittest.mock.patch.object(
+                    tune_module, "RESULTS_DIR", tmp / "results"
+                ),
+                unittest.mock.patch.object(
+                    tune_module, "submit_tuning_job", return_value="jobs/1"
+                ) as submit,
+                unittest.mock.patch.object(
+                    tune_module, "poll_tuning_job", return_value="endpoints/1"
+                ),
+            ):
+                rc = tune_module.tune(args)
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            submit.call_args.kwargs["base_model"], "gemini-3.1-flash-lite"
+        )
+
 
 class TestEvaluateRun(unittest.TestCase):
     def test_eval_uses_shared_batch_parser_and_records_output_uri(self) -> None:
@@ -316,6 +438,10 @@ class TestEvaluateRun(unittest.TestCase):
             _seed_source_manifests(storage, eval_uri="gs://audio/eval.flac")
             cfg_path = _write_config_file(tmp)
             run_cfg = load_run_config(cfg_path)
+            storage.put(
+                run_cfg.paths.canonical_eval_uri,
+                _manifest([_row("gs://audio/eval.flac", "eval transcript")]),
+            )
             storage.put(
                 run_cfg.paths.config_uri, json.dumps(run_cfg.to_record_dict())
             )
@@ -375,3 +501,118 @@ class TestEvaluateRun(unittest.TestCase):
             )
             self.assertEqual(metrics["base_batch_output_uri"], output_uri)
             self.assertEqual(metrics["base_wer"], 0.0)
+
+    def test_eval_manifest_uri_comes_from_gcs_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            _seed_source_manifests(
+                storage,
+                eval_uri="gs://audio/local-eval.flac",
+            )
+            storage.put(
+                "gs://prepared/eval.jsonl",
+                _manifest([_row("gs://audio/prepared-eval.flac", "prepared")]),
+            )
+            cfg_path = _write_config_file(tmp)
+            run_cfg = load_run_config(cfg_path)
+            config = {
+                **run_cfg.to_record_dict(),
+                "canonical_eval_uri": "gs://prepared/eval.jsonl",
+            }
+            output_uri = f"{run_cfg.paths.gcs_prefix}/evals/base/output/"
+            storage.put(
+                f"{output_uri}predictions.jsonl",
+                json.dumps(
+                    {
+                        "request": {
+                            "contents": [
+                                {
+                                    "parts": [
+                                        {
+                                            "fileData": {
+                                                "fileUri": "gs://audio/prepared-eval.flac"
+                                            }
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        "response": {
+                            "candidates": [
+                                {"content": {"parts": [{"text": "prepared"}]}}
+                            ]
+                        },
+                    }
+                )
+                + "\n",
+            )
+            args = argparse.Namespace(config=str(cfg_path), base_only=True)
+
+            with (
+                unittest.mock.patch.object(
+                    evaluate_module, "RESULTS_DIR", tmp / "results"
+                ),
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "submit_batch_inference",
+                    return_value=output_uri,
+                ),
+            ):
+                rc = evaluate_module.evaluate_run(
+                    args, run_cfg, storage, config
+                )
+
+            metrics = json.loads(
+                (tmp / "results" / "round-a" / "wer_summary.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(metrics["base_wer"], 0.0)
+
+    def test_batch_infer_fails_when_vertex_writes_no_jsonl(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            run_cfg = load_run_config(_write_config_file(tmp))
+            output_uri = f"{run_cfg.paths.gcs_prefix}/evals/base/output/"
+            eval_rows = [
+                types.SimpleNamespace(audio_filepath="gs://audio/eval.flac")
+            ]
+
+            with unittest.mock.patch.object(
+                evaluate_module,
+                "submit_batch_inference",
+                return_value=output_uri,
+            ):
+                preds = evaluate_module.batch_infer(
+                    storage_client=storage,
+                    run_cfg=run_cfg,
+                    model_id="gemini-3.1-flash-lite",
+                    label="base",
+                    eval_rows=eval_rows,
+                    system_prompt="sys",
+                    user_prompt="user",
+                )
+
+        self.assertIsNone(preds)
+
+    def test_error_breakdown_denominator_matches_wer_denominator(self) -> None:
+        metrics: dict[str, Any] = {}
+
+        evaluate_module.add_error_breakdown(
+            metrics,
+            "base",
+            {
+                "hits": 2,
+                "substitutions": 1,
+                "deletions": 1,
+                "insertions": 1,
+            },
+        )
+
+        self.assertEqual(metrics["base_insertions"], 25.0)
+        self.assertEqual(metrics["base_deletions"], 25.0)
+        self.assertEqual(metrics["base_substitutions"], 25.0)

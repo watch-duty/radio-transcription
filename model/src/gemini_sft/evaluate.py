@@ -82,6 +82,11 @@ def evaluate_run(
     system_prompt = str(config.get("system_prompt") or run_cfg.system_prompt)
     user_prompt = str(config.get("user_prompt") or run_cfg.user_prompt)
     base_model = str(config.get("base_model") or DEFAULT_BASE_MODEL)
+    eval_manifest_uri = str(
+        config.get("canonical_eval_uri")
+        or config.get("eval_manifest_uri")
+        or run_cfg.eval_manifest_uri
+    )
     tuned_endpoint = config.get("endpoint")
     base_only = bool(getattr(args, "base_only", False))
     if not base_only and not tuned_endpoint:
@@ -93,14 +98,10 @@ def evaluate_run(
         )
         base_only = True
 
-    eval_entries = download_jsonl_manifest(
-        storage_client, run_cfg.eval_manifest_uri
-    )
+    eval_entries = download_jsonl_manifest(storage_client, eval_manifest_uri)
     eval_rows = rows_from_manifest(eval_entries)
     if not eval_rows:
-        logger.error(
-            "Eval manifest has no parsed rows: %s", run_cfg.eval_manifest_uri
-        )
+        logger.error("Eval manifest has no parsed rows: %s", eval_manifest_uri)
         return 1
 
     base_preds = batch_infer(
@@ -239,9 +240,7 @@ def batch_infer(
                 label,
                 output_loc,
             )
-            preds = PredictionMap()
-            preds.output_uri = output_loc
-            return preds
+            return None
         preds = PredictionMap()
         for i, blob in enumerate(pred_blobs):
             local_path = Path(tmp) / f"predictions_{i}.jsonl"
@@ -329,7 +328,7 @@ def build_metrics(
         "base_cer": base_cer_result["cer"],
         "n_eval_examples": n_eval_examples,
     }
-    add_error_breakdown(metrics, "base", base_wer_result, refs)
+    add_error_breakdown(metrics, "base", base_wer_result)
     # Historical reports called this "empty rate"; the scorer flags both empty
     # strings and the explicit [UNINTELLIGIBLE] token emitted for unusable audio.
     metrics["base_empty_rate"] = hallucination_rate(base_hyps)
@@ -366,7 +365,7 @@ def add_tuned_metrics(
     metrics["tuned_wer"] = tuned_wer_result["wer"]
     metrics["tuned_cer"] = tuned_cer_result["cer"]
     metrics["tuned_empty_rate"] = hallucination_rate(tuned_hyps)
-    add_error_breakdown(metrics, "tuned", tuned_wer_result, refs)
+    add_error_breakdown(metrics, "tuned", tuned_wer_result)
     tuned_keyword_rows = keyword_metrics(
         refs, tuned_hyps, GEMINI_TRANSCRIBE_KEYWORDS
     )
@@ -401,10 +400,13 @@ def add_error_breakdown(
     metrics: dict[str, Any],
     prefix: str,
     wer_result: dict[str, Any],
-    refs: list[str],
 ) -> None:
     """Add insertion/deletion/substitution rates to a metrics dictionary."""
-    total_ref_words = sum(len(ref.split()) for ref in refs)
+    total_ref_words = (
+        int(wer_result["hits"])
+        + int(wer_result["substitutions"])
+        + int(wer_result["deletions"])
+    )
     if total_ref_words <= 0:
         return
     metrics[f"{prefix}_insertions"] = (

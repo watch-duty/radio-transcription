@@ -42,7 +42,6 @@ def tune(args: argparse.Namespace) -> int:
     """CLI handler for ``gemini-sft tune``."""
     try:
         run_cfg = load_run_config(args.config)
-        validate_supported_model(run_cfg.base_model)
         storage_client = storage.Client(project=run_cfg.gcp_project)
         return tune_run(
             args=args,
@@ -102,6 +101,13 @@ def tune_run(
         if config.get("status") != "preflight_passed":
             return 1
 
+    base_model = _config_str(config, "base_model", run_cfg.base_model)
+    epoch_count = _config_int(
+        config,
+        "epoch_count",
+        _config_int(config, "epochs", run_cfg.epoch_count),
+    )
+    validate_supported_model(base_model)
     total_secs = float(
         config.get("total_train_duration_seconds")
         or config.get("canonical_train_rows", 0)
@@ -111,9 +117,9 @@ def tune_run(
     basis = f"{total_secs:,.0f}s actual total"
     print_tune_cost_estimate(
         n_examples=n_examples,
-        epochs=run_cfg.epoch_count,
+        epochs=epoch_count,
         total_secs=total_secs,
-        base_model=run_cfg.base_model,
+        base_model=base_model,
         basis=basis,
     )
     if rc := confirm_tune_cost(confirm=getattr(args, "confirm", False)):
@@ -135,7 +141,11 @@ def resume_tune(
     )
     job_name = str(config["job_name"])
     logger.info("Re-attaching to config-driven job %s", job_name)
-    endpoint = poll_tuning_job(job_name, run_cfg.gcp_project, run_cfg.location)
+    endpoint = poll_tuning_job(
+        job_name,
+        _config_str(config, "gcp_project", run_cfg.gcp_project),
+        _config_str(config, "location", run_cfg.location),
+    )
     config.update(
         {
             "endpoint": endpoint,
@@ -161,17 +171,37 @@ def submit_prepared_tune(
     config: dict[str, Any],
 ) -> int:
     """Submit a prepared Gemini SFT job, persist job name, then poll."""
-    display_name = f"wd-radio-sft-{run_cfg.round_id}"
+    display_name = _config_str(
+        config, "display_name", f"wd-radio-sft-{run_cfg.round_id}"
+    )
+    base_model = _config_str(config, "base_model", run_cfg.base_model)
+    epoch_count = _config_int(
+        config,
+        "epoch_count",
+        _config_int(config, "epochs", run_cfg.epoch_count),
+    )
+    adapter_size = _config_str(config, "adapter_size", run_cfg.adapter_size)
+    lr_multiplier = _config_float(
+        config,
+        "learning_rate_multiplier",
+        run_cfg.learning_rate_multiplier,
+    )
+    project = _config_str(config, "gcp_project", run_cfg.gcp_project)
+    location = _config_str(config, "location", run_cfg.location)
     job_name = submit_tuning_job(
-        train_uri=run_cfg.paths.gemini_train_uri,
+        train_uri=_config_str(
+            config, "combined_train_uri", run_cfg.paths.gemini_train_uri
+        ),
         display_name=display_name,
-        project=run_cfg.gcp_project,
-        location=run_cfg.location,
-        base_model=run_cfg.base_model,
-        val_uri=run_cfg.paths.gemini_validation_uri,
-        epoch_count=run_cfg.epoch_count,
-        adapter_size=run_cfg.adapter_size,
-        lr_multiplier=run_cfg.learning_rate_multiplier,
+        project=project,
+        location=location,
+        base_model=base_model,
+        val_uri=_config_str(
+            config, "combined_val_uri", run_cfg.paths.gemini_validation_uri
+        ),
+        epoch_count=epoch_count,
+        adapter_size=adapter_size,
+        lr_multiplier=lr_multiplier,
     )
     config.update(
         {
@@ -204,7 +234,7 @@ def submit_prepared_tune(
         submitted_status,
     )
     logger.info("Persisted job_name: %s", job_name)
-    endpoint = poll_tuning_job(job_name, run_cfg.gcp_project, run_cfg.location)
+    endpoint = poll_tuning_job(job_name, project, location)
     config.update(
         {
             "endpoint": endpoint,
@@ -245,3 +275,29 @@ def write_succeeded_status(
         run_cfg.paths.tuning_status_uri,
         {**status, "base_model": config.get("base_model", run_cfg.base_model)},
     )
+
+
+def _config_str(
+    config: dict[str, Any],
+    key: str,
+    fallback: str,
+) -> str:
+    value = config.get(key)
+    if value is None:
+        return fallback
+    text = str(value)
+    return text or fallback
+
+
+def _config_int(config: dict[str, Any], key: str, fallback: int) -> int:
+    value = config.get(key)
+    if value is None:
+        return fallback
+    return int(value)
+
+
+def _config_float(config: dict[str, Any], key: str, fallback: float) -> float:
+    value = config.get(key)
+    if value is None:
+        return fallback
+    return float(value)

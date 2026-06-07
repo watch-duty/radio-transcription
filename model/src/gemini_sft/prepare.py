@@ -105,13 +105,13 @@ def prepare_run(
         "canonical_eval_rows": artifacts.canonical_eval_rows,
         "status": "preflight_passed" if report.passed else "preflight_failed",
     }
+    upload_prepared_artifacts(artifacts, run_cfg, storage_client)
     config = write_and_upload_config(
         results_dir=results_dir,
         run_cfg=run_cfg,
         storage_client=storage_client,
         config=config,
     )
-    upload_prepared_artifacts(artifacts, run_cfg, storage_client)
     status = {
         "round_id": run_cfg.round_id,
         "status": config["status"],

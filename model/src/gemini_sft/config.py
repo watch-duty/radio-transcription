@@ -86,6 +86,9 @@ class RunConfig:
             "lr_multiplier": self.learning_rate_multiplier,
             "system_prompt": self.system_prompt,
             "user_prompt": self.user_prompt,
+            "canonical_train_uri": self.paths.canonical_train_uri,
+            "canonical_validation_uri": self.paths.canonical_validation_uri,
+            "canonical_eval_uri": self.paths.canonical_eval_uri,
             "combined_train_uri": self.paths.gemini_train_uri,
             "combined_val_uri": self.paths.gemini_validation_uri,
         }
