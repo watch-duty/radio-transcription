@@ -1,11 +1,18 @@
+# `round_id` becomes gs://<bucket>/sft/runs/<round_id>/ and must be unique
+# for a new experiment.
 round_id = "YYYY-MM-DD-short-description"
 dataset = "dataset-version-name"
+
+# These are canonical manifests. `prepare` derives Gemini SFT JSONL for train
+# and validation, while eval stays held out for `gemini-sft eval`.
 train_manifest_uri = "gs://your-bucket/path/manifests/canonical/train.jsonl"
 validation_manifest_uri = "gs://your-bucket/path/manifests/canonical/validation.jsonl"
 eval_manifest_uri = "gs://your-bucket/path/manifests/canonical/eval.jsonl"
 
 [gcp]
 project = "your-gcp-project"
+# Bucket name only, not a gs:// URI. Generated run artifacts go under
+# gs://<bucket>/sft/runs/<round_id>/.
 bucket = "your-gcs-bucket"
 location = "us-central1"
 
@@ -16,6 +23,7 @@ adapter_size = "SIXTEEN"
 learning_rate_multiplier = 1.0
 
 [prompts]
-# Optional inline overrides only.
+# Optional inline overrides only. Prompt files are intentionally unsupported so
+# the resolved prompt text can be stored in config.json for resume/eval.
 # system = "..."
 # user = "..."

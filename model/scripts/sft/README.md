@@ -41,6 +41,10 @@ There is no compatibility wrapper for the previous script entrypoint.
 Real run configs are external inputs and should not be committed. Commit only
 placeholder examples.
 
+`round_id` names the GCS run prefix `gs://<bucket>/sft/runs/<round_id>/`.
+Use a new `round_id` for each experiment; the CLI treats an existing prefix as
+owned by that run and will not overwrite it as a fresh run.
+
 ```toml
 round_id = "YYYY-MM-DD-short-description"
 dataset = "dataset-version-name"
@@ -66,6 +70,24 @@ learning_rate_multiplier = 1.0
 ```
 
 Supported adapter sizes are `ONE`, `TWO`, `FOUR`, `EIGHT`, and `SIXTEEN`.
+Prompt overrides are inline-only. Local prompt files are intentionally rejected
+because the resolved prompt text is copied into `config.json` for reproducible
+resume/eval runs.
+
+## Data Split Contract
+
+The input manifests are canonical row-per-segment JSONL, not Gemini SFT JSONL.
+`prepare` stores those canonical manifests under the run prefix, then derives
+Gemini model-input JSONL only for train and validation.
+
+`validation_manifest_uri` is wired into the Vertex tuning job as the validation
+dataset. `eval_manifest_uri` is held out for reporting and is converted to
+batch-inference requests during `eval`, not during `prepare`.
+
+`prepare` rejects train/validation and train/eval audio URI overlap. It also
+runs preflight checks against both train and validation Gemini JSONL because
+malformed validation rows can fail the paid Vertex job just like malformed
+training rows.
 
 ## Records
 
@@ -86,9 +108,28 @@ gs://<bucket>/sft/runs/<round-id>/
   evals/README.txt
 ```
 
-Local `results/<round-id>/` files are a mirror/cache only. Evaluation summaries
+After `eval`, the same prefix also contains batch inference inputs and outputs.
+The tuned paths are present only when eval runs against a tuned endpoint:
+
+```text
+evals/base/input.jsonl
+evals/base/output/
+evals/tuned/input.jsonl
+evals/tuned/output/
+```
+
+Local `results/<round-id>/` files are a mirror/cache only. `config.json` in GCS
+is the durable state machine: if it contains `job_name`, `tune` reattaches to
+that Vertex tuning job instead of submitting another one. Evaluation summaries
 include GCS batch-output paths so WER can be recalculated from raw inference
 results.
+
+## Evaluation Semantics
+
+`eval` can run base-only when `--base-only` is passed or when `config.json` has
+no tuned endpoint. Missing Vertex batch predictions are scored as empty
+hypotheses, which makes them count as full deletions instead of removing those
+segments from the denominator.
 
 ## Prompt Parity
 

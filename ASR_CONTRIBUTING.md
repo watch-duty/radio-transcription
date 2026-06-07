@@ -106,6 +106,24 @@ gcloud compute ssh <your_instance_name> \
 
 Alternatively, if you want to use VSCode or your local IDE, you can also use Remote SSH. This way you won't have to keep syncing changes between your machine and your local code.
 
+## Running Gemini SFT
+
+Gemini supervised fine-tuning is a packaged CLI workflow, not a notebook-only
+experiment. Use the lightweight ASR runtime (`notebooks-cpu` or `notebooks`) so
+the mounted `model/` package is installed with the `scoring` and `vertex`
+extras:
+
+```bash
+docker compose -f asr-eval-docker-compose.yml run --rm notebooks-cpu \
+  bash -lc 'gemini-sft --help'
+```
+
+Run configs are operator inputs and should stay outside the repo. The example
+shape lives at `model/scripts/sft/run_config.example.toml`; the detailed
+workflow contract is documented in `model/scripts/sft/README.md`. Every SFT run
+owns a GCS prefix under `gs://<bucket>/sft/runs/<round-id>/`, and that prefix is
+the durable state for prepare, tune resume, and eval.
+
 ## Adding a New Model Evaluation
 
 To add a new model to the evaluation framework, follow these guidelines:
