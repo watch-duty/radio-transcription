@@ -85,10 +85,12 @@ Gemini model-input JSONL only for train and validation.
 dataset. `eval_manifest_uri` is held out for reporting and is converted to
 batch-inference requests during `eval`, not during `prepare`.
 
-`prepare` rejects train/validation and train/eval audio URI overlap. It also
-runs preflight checks against both train and validation Gemini JSONL because
-malformed validation rows can fail the paid Vertex job just like malformed
-training rows.
+`prepare` rejects train/validation and train/eval audio URI overlap. Validation
+and eval may intentionally point at the same manifest for runs where the Vertex
+validation set is also the final reporting set; only training audio must stay
+out of both. `prepare` also runs preflight checks against both train and
+validation Gemini JSONL because malformed validation rows can fail the paid
+Vertex job just like malformed training rows.
 
 ## Records
 

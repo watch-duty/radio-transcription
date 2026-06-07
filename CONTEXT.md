@@ -53,7 +53,9 @@ input conversion. Rows include fields such as `audio_filepath`, `text`,
 Train rows become Gemini SFT training examples. Validation rows become the
 Vertex tuning validation dataset. Eval rows are held out for reporting and are
 converted to Vertex batch-inference requests only during `gemini-sft eval`.
-`prepare` rejects train/validation and train/eval audio URI overlap.
+`prepare` rejects train/validation and train/eval audio URI overlap. Validation
+and eval may point at the same manifest when the Vertex validation set is also
+the reporting set.
 
 ## Gemini Model-Input JSONL
 
