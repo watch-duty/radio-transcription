@@ -8,9 +8,6 @@ from typing import Final
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BASE_MODEL: Final = "gemini-3.1-flash-lite"
-# Used only for old prepared runs that predate duration accounting in config.json.
-FALLBACK_SEGMENT_DURATION_SECONDS: Final = 15.0
 SUPPORTED_SFT_BASE_MODELS: Final = frozenset(
     {
         "gemini-3.1-flash-lite",

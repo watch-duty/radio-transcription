@@ -39,8 +39,12 @@ from gemini_sft.artifacts import (
     gcs_uri_exists,
     write_and_upload_config,
 )
-from gemini_sft.config import RunConfigError, load_run_config
-from gemini_sft.cost import DEFAULT_BASE_MODEL
+from gemini_sft.config import (
+    RunConfigError,
+    load_run_config,
+    require_config_int,
+    require_config_str,
+)
 from gemini_sft.records import append_ledger, write_wer_summary
 
 if TYPE_CHECKING:
@@ -66,6 +70,7 @@ def evaluate(args: argparse.Namespace) -> int:
         ImportError,
         OSError,
         RunConfigError,
+        TypeError,
         ValueError,
         RuntimeError,
         TimeoutError,
@@ -80,14 +85,15 @@ def evaluate_run(
     config: dict[str, Any],
 ) -> int:
     """Run batch inference and score one config-driven run."""
-    system_prompt = str(config.get("system_prompt") or run_cfg.system_prompt)
-    user_prompt = str(config.get("user_prompt") or run_cfg.user_prompt)
-    base_model = str(config.get("base_model") or DEFAULT_BASE_MODEL)
-    eval_manifest_uri = str(
-        config.get("canonical_eval_uri")
-        or config.get("eval_manifest_uri")
-        or run_cfg.eval_manifest_uri
-    )
+    system_prompt = require_config_str(config, "system_prompt")
+    user_prompt = require_config_str(config, "user_prompt")
+    base_model = require_config_str(config, "base_model")
+    eval_manifest_uri = require_config_str(config, "canonical_eval_uri")
+    gcp_project = require_config_str(config, "gcp_project")
+    location = require_config_str(config, "location")
+    run_gcs_prefix = require_config_str(config, "run_gcs_prefix")
+    dataset = require_config_str(config, "dataset")
+    epoch_count = require_config_int(config, "epoch_count")
     tuned_endpoint = config.get("endpoint")
     base_only = bool(getattr(args, "base_only", False))
     if not base_only and not tuned_endpoint:
@@ -107,7 +113,9 @@ def evaluate_run(
 
     base_preds = batch_infer(
         storage_client=storage_client,
-        run_cfg=run_cfg,
+        run_gcs_prefix=run_gcs_prefix,
+        gcp_project=gcp_project,
+        location=location,
         model_id=base_model,
         label="base",
         eval_rows=eval_rows,
@@ -139,7 +147,9 @@ def evaluate_run(
     if not base_only and tuned_endpoint:
         tuned_preds = batch_infer(
             storage_client=storage_client,
-            run_cfg=run_cfg,
+            run_gcs_prefix=run_gcs_prefix,
+            gcp_project=gcp_project,
+            location=location,
             model_id=str(tuned_endpoint),
             label="tuned",
             eval_rows=eval_rows,
@@ -175,8 +185,8 @@ def evaluate_run(
         RESULTS_DIR,
         {
             **metrics,
-            "datasets": config.get("datasets", []),
-            "epochs": config.get("epochs", "—"),
+            "datasets": [dataset],
+            "epochs": epoch_count,
             "git_sha": config.get("git_sha", "—"),
             "timestamp": datetime.now(UTC).strftime("%Y-%m-%d"),
         },
@@ -197,7 +207,9 @@ class PredictionMap(dict[str, str]):
 def batch_infer(
     *,
     storage_client: storage.Client,
-    run_cfg: Any,
+    run_gcs_prefix: str,
+    gcp_project: str,
+    location: str,
     model_id: str,
     label: str,
     eval_rows: list[Any],
@@ -208,7 +220,7 @@ def batch_infer(
     with tempfile.TemporaryDirectory() as tmp:
         batch_input_gcs, batch_output_gcs = build_batch_jsonl(
             storage_client=storage_client,
-            run_cfg=run_cfg,
+            run_gcs_prefix=run_gcs_prefix,
             label=label,
             eval_rows=eval_rows,
             system_prompt=system_prompt,
@@ -220,8 +232,8 @@ def batch_infer(
                 input_uri=batch_input_gcs,
                 output_uri=batch_output_gcs,
                 model=model_id,
-                project=run_cfg.gcp_project,
-                location=run_cfg.location,
+                project=gcp_project,
+                location=location,
             )
         except (RuntimeError, TimeoutError) as exc:
             _log_batch_error(label, exc)
@@ -279,7 +291,7 @@ def _log_batch_error(label: str, exc: Exception) -> None:
 def build_batch_jsonl(
     *,
     storage_client: storage.Client,
-    run_cfg: Any,
+    run_gcs_prefix: str,
     label: str,
     eval_rows: list[Any],
     system_prompt: str,
@@ -300,8 +312,8 @@ def build_batch_jsonl(
                 )
                 + "\n"
             )
-    batch_input_gcs = f"{run_cfg.paths.gcs_prefix}/evals/{label}/input.jsonl"
-    batch_output_gcs = f"{run_cfg.paths.gcs_prefix}/evals/{label}/output/"
+    batch_input_gcs = f"{run_gcs_prefix}/evals/{label}/input.jsonl"
+    batch_output_gcs = f"{run_gcs_prefix}/evals/{label}/output/"
     in_bucket, in_blob = parse_gcs_uri(batch_input_gcs)
     upload_file_to_blob(
         storage_client, in_bucket, in_blob, str(batch_input_path)

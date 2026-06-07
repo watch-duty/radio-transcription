@@ -21,9 +21,15 @@ from gemini_sft.artifacts import (
     write_json_artifact,
     write_status,
 )
-from gemini_sft.config import RunConfig, RunConfigError, load_run_config
+from gemini_sft.config import (
+    RunConfig,
+    RunConfigError,
+    load_run_config,
+    require_config_float,
+    require_config_int,
+    require_config_str,
+)
 from gemini_sft.cost import (
-    FALLBACK_SEGMENT_DURATION_SECONDS,
     confirm_tune_cost,
     print_tune_cost_estimate,
     validate_supported_model,
@@ -53,6 +59,7 @@ def tune(args: argparse.Namespace) -> int:
         ImportError,
         OSError,
         RunConfigError,
+        TypeError,
         ValueError,
         RuntimeError,
         TimeoutError,
@@ -102,19 +109,11 @@ def tune_run(
         if config.get("status") != "preflight_passed":
             return 1
 
-    base_model = _config_str(config, "base_model", run_cfg.base_model)
-    epoch_count = _config_int(
-        config,
-        "epoch_count",
-        _config_int(config, "epochs", run_cfg.epoch_count),
-    )
+    base_model = require_config_str(config, "base_model")
+    epoch_count = require_config_int(config, "epoch_count")
     validate_supported_model(base_model)
-    total_secs = float(
-        config.get("total_train_duration_seconds")
-        or (config.get("canonical_train_rows") or 0)
-        * FALLBACK_SEGMENT_DURATION_SECONDS
-    )
-    n_examples = int(config.get("canonical_train_rows") or 0)
+    total_secs = require_config_float(config, "total_train_duration_seconds")
+    n_examples = require_config_int(config, "canonical_train_rows")
     basis = f"{total_secs:,.0f}s actual total"
     print_tune_cost_estimate(
         n_examples=n_examples,
@@ -144,8 +143,8 @@ def resume_tune(
     logger.info("Re-attaching to config-driven job %s", job_name)
     endpoint = poll_tuning_job(
         job_name,
-        _config_str(config, "gcp_project", run_cfg.gcp_project),
-        _config_str(config, "location", run_cfg.location),
+        require_config_str(config, "gcp_project"),
+        require_config_str(config, "location"),
     )
     config.update(
         {
@@ -175,31 +174,19 @@ def submit_prepared_tune(
     display_name = _config_str(
         config, "display_name", f"wd-radio-sft-{run_cfg.round_id}"
     )
-    base_model = _config_str(config, "base_model", run_cfg.base_model)
-    epoch_count = _config_int(
-        config,
-        "epoch_count",
-        _config_int(config, "epochs", run_cfg.epoch_count),
-    )
-    adapter_size = _config_str(config, "adapter_size", run_cfg.adapter_size)
-    lr_multiplier = _config_float(
-        config,
-        "learning_rate_multiplier",
-        run_cfg.learning_rate_multiplier,
-    )
-    project = _config_str(config, "gcp_project", run_cfg.gcp_project)
-    location = _config_str(config, "location", run_cfg.location)
+    base_model = require_config_str(config, "base_model")
+    epoch_count = require_config_int(config, "epoch_count")
+    adapter_size = require_config_str(config, "adapter_size")
+    lr_multiplier = require_config_float(config, "learning_rate_multiplier")
+    project = require_config_str(config, "gcp_project")
+    location = require_config_str(config, "location")
     job_name = submit_tuning_job(
-        train_uri=_config_str(
-            config, "combined_train_uri", run_cfg.paths.gemini_train_uri
-        ),
+        train_uri=require_config_str(config, "gemini_train_uri"),
         display_name=display_name,
         project=project,
         location=location,
         base_model=base_model,
-        val_uri=_config_str(
-            config, "combined_val_uri", run_cfg.paths.gemini_validation_uri
-        ),
+        val_uri=require_config_str(config, "gemini_validation_uri"),
         epoch_count=epoch_count,
         adapter_size=adapter_size,
         lr_multiplier=lr_multiplier,
@@ -274,7 +261,7 @@ def write_succeeded_status(
         run_dir / "tuning" / "status.json",
         storage_client,
         run_cfg.paths.tuning_status_uri,
-        {**status, "base_model": config.get("base_model", run_cfg.base_model)},
+        {**status, "base_model": require_config_str(config, "base_model")},
     )
 
 
@@ -288,17 +275,3 @@ def _config_str(
         return fallback
     text = str(value)
     return text or fallback
-
-
-def _config_int(config: dict[str, Any], key: str, fallback: int) -> int:
-    value = config.get(key)
-    if value is None:
-        return fallback
-    return int(value)
-
-
-def _config_float(config: dict[str, Any], key: str, fallback: float) -> float:
-    value = config.get(key)
-    if value is None:
-        return fallback
-    return float(value)

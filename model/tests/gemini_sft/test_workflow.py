@@ -281,9 +281,7 @@ class TestTuneRun(unittest.TestCase):
             run_cfg = load_run_config(cfg_path)
             storage.put(
                 run_cfg.paths.config_uri,
-                json.dumps(
-                    {"job_name": "jobs/1", "base_model": run_cfg.base_model}
-                ),
+                json.dumps({**run_cfg.to_record_dict(), "job_name": "jobs/1"}),
             )
             args = argparse.Namespace(config=str(cfg_path), confirm=True)
 
@@ -350,8 +348,8 @@ class TestTuneRun(unittest.TestCase):
                 "epoch_count": 3,
                 "adapter_size": "FOUR",
                 "learning_rate_multiplier": 0.5,
-                "combined_train_uri": "gs://prepared/train.jsonl",
-                "combined_val_uri": "gs://prepared/validation.jsonl",
+                "gemini_train_uri": "gs://prepared/train.jsonl",
+                "gemini_validation_uri": "gs://prepared/validation.jsonl",
                 "canonical_train_rows": 10,
                 "total_train_duration_seconds": 30.0,
             }
@@ -429,6 +427,43 @@ class TestTuneRun(unittest.TestCase):
             submit.call_args.kwargs["base_model"], "gemini-3.1-flash-lite"
         )
 
+    def test_prepared_config_requires_canonical_gemini_input_keys(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            cfg_path = _write_config_file(tmp)
+            run_cfg = load_run_config(cfg_path)
+            prepared_config = {
+                **run_cfg.to_record_dict(),
+                "status": "preflight_passed",
+                "base_model": "gemini-3.1-flash-lite",
+                "canonical_train_rows": 10,
+                "total_train_duration_seconds": 30.0,
+            }
+            prepared_config.pop("gemini_train_uri")
+            storage.put(run_cfg.paths.config_uri, json.dumps(prepared_config))
+            args = argparse.Namespace(config=str(cfg_path), confirm=True)
+
+            with (
+                unittest.mock.patch.object(
+                    tune_module, "RESULTS_DIR", tmp / "results"
+                ),
+                unittest.mock.patch.object(
+                    tune_module, "submit_tuning_job"
+                ) as submit,
+            ):
+                with self.assertRaisesRegex(ValueError, "gemini_train_uri"):
+                    tune_module.tune_run(
+                        args=args,
+                        run_cfg=run_cfg,
+                        storage_client=storage,
+                        results_dir=tmp / "results",
+                    )
+
+        submit.assert_not_called()
+
     def test_tune_handler_returns_clean_error_when_vertex_extra_missing(
         self,
     ) -> None:
@@ -463,7 +498,7 @@ class TestTuneRun(unittest.TestCase):
 
         self.assertEqual(rc, 1)
 
-    def test_missing_duration_and_row_count_falls_back_to_zero_cost(
+    def test_missing_duration_is_rejected_before_submit(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
@@ -474,7 +509,6 @@ class TestTuneRun(unittest.TestCase):
             prepared_config = {
                 **run_cfg.to_record_dict(),
                 "status": "preflight_passed",
-                "canonical_train_rows": None,
                 "total_train_duration_seconds": None,
             }
             storage.put(run_cfg.paths.config_uri, json.dumps(prepared_config))
@@ -486,23 +520,23 @@ class TestTuneRun(unittest.TestCase):
                 ),
                 unittest.mock.patch.object(
                     tune_module, "submit_tuning_job", return_value="jobs/1"
-                ),
+                ) as submit,
                 unittest.mock.patch.object(
-                    tune_module, "poll_tuning_job", return_value="endpoints/1"
-                ),
-                unittest.mock.patch.object(
-                    tune_module, "print_tune_cost_estimate"
-                ) as estimate,
+                    tune_module, "poll_tuning_job"
+                ) as poll,
             ):
-                rc = tune_module.tune_run(
-                    args=args,
-                    run_cfg=run_cfg,
-                    storage_client=storage,
-                    results_dir=tmp / "results",
-                )
+                with self.assertRaisesRegex(
+                    TypeError, "total_train_duration_seconds"
+                ):
+                    tune_module.tune_run(
+                        args=args,
+                        run_cfg=run_cfg,
+                        storage_client=storage,
+                        results_dir=tmp / "results",
+                    )
 
-        self.assertEqual(rc, 0)
-        self.assertEqual(estimate.call_args.kwargs["total_secs"], 0.0)
+        submit.assert_not_called()
+        poll.assert_not_called()
 
 
 class TestEvaluateRun(unittest.TestCase):
@@ -682,6 +716,31 @@ class TestEvaluateRun(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(metrics["base_wer"], 0.0)
 
+    def test_eval_requires_canonical_eval_uri_in_gcs_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            _seed_source_manifests(storage)
+            cfg_path = _write_config_file(tmp)
+            run_cfg = load_run_config(cfg_path)
+            config = run_cfg.to_record_dict()
+            config.pop("canonical_eval_uri")
+            storage.put(run_cfg.paths.config_uri, json.dumps(config))
+            args = argparse.Namespace(config=str(cfg_path), base_only=True)
+
+            with (
+                unittest.mock.patch.object(
+                    evaluate_module.storage, "Client", return_value=storage
+                ),
+                unittest.mock.patch.object(
+                    evaluate_module, "submit_batch_inference"
+                ) as submit,
+            ):
+                rc = evaluate_module.evaluate(args)
+
+        self.assertEqual(rc, 1)
+        submit.assert_not_called()
+
     def test_batch_infer_fails_when_vertex_writes_no_jsonl(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
             tmp = Path(tmp_s)
@@ -699,7 +758,9 @@ class TestEvaluateRun(unittest.TestCase):
             ):
                 preds = evaluate_module.batch_infer(
                     storage_client=storage,
-                    run_cfg=run_cfg,
+                    run_gcs_prefix=run_cfg.paths.gcs_prefix,
+                    gcp_project=run_cfg.gcp_project,
+                    location=run_cfg.location,
                     model_id="gemini-3.1-flash-lite",
                     label="base",
                     eval_rows=eval_rows,

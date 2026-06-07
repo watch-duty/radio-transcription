@@ -70,13 +70,19 @@ learning_rate_multiplier = {values["learning_rate_multiplier"]}
             "gs://bucket/sft/runs/round/model_inputs/gemini/validation.jsonl",
         )
         record = cfg.to_record_dict()
-        self.assertEqual(record["datasets"], ["wd-internal"])
+        self.assertEqual(record["dataset"], "wd-internal")
+        self.assertEqual(record["gemini_train_uri"], cfg.paths.gemini_train_uri)
         self.assertEqual(
-            record["combined_train_uri"], cfg.paths.gemini_train_uri
+            record["gemini_validation_uri"], cfg.paths.gemini_validation_uri
         )
-        self.assertEqual(
-            record["combined_val_uri"], cfg.paths.gemini_validation_uri
-        )
+        legacy_aliases = {
+            "datasets",
+            "epochs",
+            "lr_multiplier",
+            "combined_train_uri",
+            "combined_val_uri",
+        }
+        self.assertFalse(legacy_aliases & set(record))
 
     def test_missing_validation_manifest_uri_raises(self) -> None:
         body = self._valid_toml(validation_manifest_uri='""')

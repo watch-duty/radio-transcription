@@ -70,7 +70,6 @@ class RunConfig:
         """Return the resolved run config shape stored in config.json."""
         return {
             "round_id": self.round_id,
-            "datasets": [self.dataset],
             "dataset": self.dataset,
             "train_manifest_uri": self.train_manifest_uri,
             "validation_manifest_uri": self.validation_manifest_uri,
@@ -82,17 +81,15 @@ class RunConfig:
             "run_gcs_prefix": self.paths.gcs_prefix,
             "base_model": self.base_model,
             "epoch_count": self.epoch_count,
-            "epochs": self.epoch_count,
             "adapter_size": self.adapter_size,
             "learning_rate_multiplier": self.learning_rate_multiplier,
-            "lr_multiplier": self.learning_rate_multiplier,
             "system_prompt": self.system_prompt,
             "user_prompt": self.user_prompt,
             "canonical_train_uri": self.paths.canonical_train_uri,
             "canonical_validation_uri": self.paths.canonical_validation_uri,
             "canonical_eval_uri": self.paths.canonical_eval_uri,
-            "combined_train_uri": self.paths.gemini_train_uri,
-            "combined_val_uri": self.paths.gemini_validation_uri,
+            "gemini_train_uri": self.paths.gemini_train_uri,
+            "gemini_validation_uri": self.paths.gemini_validation_uri,
         }
 
 
@@ -169,6 +166,33 @@ def load_run_config(path: str | Path) -> RunConfig:
         user_prompt=user_prompt,
         paths=paths,
     )
+
+
+def require_config_str(config: dict[str, Any], key: str) -> str:
+    """Return a required string from durable GCS config.json state."""
+    value = config.get(key)
+    if not isinstance(value, str) or not value:
+        msg = f"config.json missing required string field: {key}"
+        raise ValueError(msg)
+    return value
+
+
+def require_config_int(config: dict[str, Any], key: str) -> int:
+    """Return a required integer from durable GCS config.json state."""
+    value = config.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        msg = f"config.json missing required integer field: {key}"
+        raise TypeError(msg)
+    return value
+
+
+def require_config_float(config: dict[str, Any], key: str) -> float:
+    """Return a required numeric value from durable GCS config.json state."""
+    value = config.get(key)
+    if isinstance(value, bool) or not isinstance(value, (float, int)):
+        msg = f"config.json missing required numeric field: {key}"
+        raise TypeError(msg)
+    return float(value)
 
 
 def _required_table(data: dict[str, Any], key: str) -> dict[str, Any]:
