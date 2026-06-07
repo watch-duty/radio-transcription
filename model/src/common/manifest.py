@@ -182,9 +182,9 @@ def merge_predictions_to_manifest(
         objects being mutated.
 
     Raises:
-        Exception: Re-raises any unexpected exception after logging. An
-            unexpected error here is a bug — silently returning [] would cause
-            downstream WER scoring to read 0 segments and report false success.
+        ValueError: If required prediction or ground-truth keys are missing.
+            Unexpected errors are intentionally not swallowed: returning an
+            empty merge would let downstream scoring report false success.
     """
     pred_index = _prediction_index(predictions)
     gt_by_file = _ground_truth_index(ground_truth)

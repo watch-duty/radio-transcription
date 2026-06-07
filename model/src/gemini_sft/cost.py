@@ -9,6 +9,7 @@ from typing import Final
 logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_MODEL: Final = "gemini-3.1-flash-lite"
+# Used only for old prepared runs that predate duration accounting in config.json.
 FALLBACK_SEGMENT_DURATION_SECONDS: Final = 15.0
 SUPPORTED_SFT_BASE_MODELS: Final = frozenset(
     {
@@ -24,6 +25,9 @@ SFT_MODEL_DISPLAY_NAMES: Final = {
     "gemini-2.5-flash": "Gemini 2.5 Flash",
     "gemini-2.5-flash-lite": "Gemini 2.5 Flash-Lite",
 }
+
+# Operator-facing estimate metadata. Keep this conservative, but treat GCP
+# billing exports/docs as authoritative when prices change.
 SFT_TRAINING_COST_PER_MILLION: Final = {
     "gemini-3.1-flash-lite": 3.00,
     "gemini-2.5-pro": 25.00,

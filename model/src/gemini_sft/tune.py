@@ -73,6 +73,9 @@ def tune_run(
     results_dir: Path,
 ) -> int:
     """Submit or resume one config-driven tuning job."""
+    # GCS config.json is the durable state machine for this CLI. A local
+    # results/ directory is only a mirror; tune/eval must be recoverable from
+    # the run prefix alone.
     if gcs_uri_exists(storage_client, run_cfg.paths.config_uri):
         config = download_json_text(storage_client, run_cfg.paths.config_uri)
         if config.get("job_name"):

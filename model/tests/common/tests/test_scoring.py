@@ -84,8 +84,8 @@ class TestBuildNormalizerGolden(unittest.TestCase):
 
     def test_splits_multi_digit_numbers_per_digit(self) -> None:
         """Multi-digit numbers ('41') split into single-digit tokens ('4 1')."""
-        # Per GOO-424 / #461: radio dispatch numbers (engine, batt, codes)
-        # are scored per digit so "41" vs "4 1" are equivalent transcripts.
+        # Radio unit IDs and ten-codes are often spoken digit-by-digit; scoring
+        # per digit keeps "41" and "4 1" equivalent transcripts.
         result = self.normalizer("engine 41 copy")
         tokens = result.split()
         self.assertNotIn("41", tokens)

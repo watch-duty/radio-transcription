@@ -1,9 +1,8 @@
 """Canonical Gemini transcription prompts and keyword set."""
 
-# Gemini production transcription — canonical source shared by the Gemini SFT
-# workflow and the gemini_transcribe_audio eval notebook. SEEDED BYTE-FOR-BYTE
-# from the notebook Cell 5 SYSTEM_PROMPT (stripped); zero-import, parenthesized
-# concatenation (no triple-quotes) so drift guards and import isolation hold.
+# Canonical Gemini radio-transcription prompt shared by SFT and batch eval.
+# Keep this module import-light: drift guard tests import it in environments
+# that may not have Vertex, notebook, or scoring extras installed.
 GEMINI_TRANSCRIBE_SYSTEM_PROMPT = (
     "Evaluate all audio specifically as VHF/UHF fire-related dispatch radio traffic."
     " The audio likely contains mic clicks, RF static, radio hum, and possibly some"

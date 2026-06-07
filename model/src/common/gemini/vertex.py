@@ -3,7 +3,7 @@
 Provides ``submit_tuning_job`` (submit-only, returns job.name), ``poll_tuning_job``
 (re-fetch by name and poll to terminal, returns endpoint), and
 ``submit_batch_inference`` for Vertex AI Gemini SFT tuning and batch inference
-via ``google-genai`` 2.x.
+via ``google-genai``.
 
 ``submit_tuning_job`` returns ``job.name`` immediately so the caller can persist
 the server-side job resource before polling. That prevents job loss if the
@@ -31,10 +31,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Canonical Gemini transcription inference setup — shared by the SFT pipeline ``_eval``
-# stage and the ``gemini_transcribe_audio`` eval notebook (single source, prevents drift).
-# Plain stdlib dicts/lists only, defined BEFORE the google-genai guard so they import
-# without the [vertex] extra.
+# Canonical Gemini transcription inference setup shared by ``gemini_sft.evaluate``
+# and the ``gemini_transcribe_audio`` notebook. Keep these as plain stdlib
+# dict/list values so prompt/config tests can import them without the [vertex] extra.
 GEMINI_GENERATION_CONFIG = {"temperature": 0.0, "max_output_tokens": 512}
 
 GEMINI_SAFETY_SETTINGS = [
@@ -56,16 +55,16 @@ def build_request(
     """Build the canonical Vertex batch-inference request dict for one audio segment.
 
     Returns the plain-dict batch request consumed by ``submit_batch_inference`` and the
-    Gemini batch API — the single shape used by both the SFT pipeline ``_eval`` stage and
+    Gemini batch API — the single shape used by both ``gemini_sft.evaluate`` and
     the ``gemini_transcribe_audio`` notebook. ``generation_config`` is ``.copy()``-ed so a
     caller mutating the result never touches the module-level default. Pure dict
     construction — does not require the ``[vertex]`` extra.
 
     Field keys are snake_case (``file_data``/``file_uri``/``mime_type``/
     ``system_instruction``/``generation_config``) on purpose: the google-genai batch
-    endpoint (``client.batches.create``) accepts the proto field names, and this matches
-    the proven ``gemini_transcribe_audio`` notebook. NOTE: Vertex echoes the request back
-    in camelCase in the batch OUTPUT, so any output parser must read both casings.
+    endpoint (``client.batches.create``) accepts the proto field names. Vertex may echo
+    the request back in camelCase in batch OUTPUT, so output parsers must read both
+    casings.
     """
     return {
         "request": {
@@ -171,6 +170,9 @@ try:
     from google.genai import types
 except ImportError as _e:
     _VERTEX_MISSING = _e
+    # Keep these names bound even without the optional SDK. That lets unit tests
+    # patch ``common.gemini.vertex.genai`` and lets lightweight imports fail only
+    # when a caller actually uses Vertex functionality.
     genai = None
     types = None
 else:
@@ -184,6 +186,8 @@ _ADAPTER_ENUM = {
     "SIXTEEN": "ADAPTER_SIZE_SIXTEEN",
 }
 
+# Vertex returns both short enum names and full JOB_STATE_* names across job
+# resources/SDK versions, so pollers normalize by accepting both spellings.
 _TERMINAL_STATES = {
     "JOB_STATE_SUCCEEDED",
     "JOB_STATE_FAILED",
@@ -204,6 +208,9 @@ _BATCH_TERMINAL_STATES = {
     "CANCELLED",
 }
 
+# PARTIALLY_SUCCEEDED still writes usable prediction JSONL. Missing predictions
+# are handled by the scorer as full deletions, which is more useful than throwing
+# away the completed rows.
 _BATCH_SUCCESS_STATES = {
     "JOB_STATE_SUCCEEDED",
     "SUCCEEDED",
@@ -299,7 +306,7 @@ def submit_tuning_job(
         config=types.CreateTuningJobConfig(**cfg_kwargs),
     )
     logger.info(f"Submitted tuning job: {job.name}")
-    return job.name  # RETURN IMMEDIATELY — caller persists before polling
+    return job.name
 
 
 def poll_tuning_job(
@@ -482,6 +489,8 @@ def submit_batch_inference(
     if dest_uri:
         output_location: str = dest_uri
     else:
+        # The requested output URI is still where Vertex was asked to write.
+        # Falling back preserves the path operators need for manual inspection.
         logger.warning(
             f"Batch job returned no destination GCS URI; falling back to requested "
             f"output URI: {output_uri}"

@@ -21,6 +21,13 @@ class RunConfigError(ValueError):
 
 @dataclass(frozen=True)
 class RunPaths:
+    """Resolved local/GCS artifact contract for one SFT round.
+
+    These paths are part of the resume/eval contract: later stages discover
+    their inputs by round_id under ``sft/runs/<round_id>`` rather than by
+    re-reading the operator's local TOML file.
+    """
+
     gcs_prefix: str
     run_config_uri: str
     config_uri: str
@@ -37,6 +44,8 @@ class RunPaths:
 
 @dataclass(frozen=True)
 class RunConfig:
+    """Validated operator config with defaults and derived paths resolved."""
+
     source_path: Path
     raw_toml: str
     round_id: str
@@ -230,10 +239,16 @@ def _resolve_prompt(
     if value.startswith("@"):
         msg = f"prompts.{key} supports inline text only"
         raise RunConfigError(msg)
+    # Prompts are copied into config.json in GCS for reproducibility. Local
+    # prompt files would make a run depend on developer workstation state, so
+    # this first config format only accepts inline text.
     return value
 
 
 def _build_paths(bucket: str, round_id: str) -> RunPaths:
+    # Keep every generated artifact for a round under one prefix. A non-empty
+    # prefix is treated as owned by that round_id, which prevents accidentally
+    # mixing manifests, tuning state, and eval outputs from different runs.
     gcs_prefix = f"gs://{bucket}/sft/runs/{round_id}"
     return RunPaths(
         gcs_prefix=gcs_prefix,

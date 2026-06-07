@@ -178,11 +178,16 @@ def prepare_artifacts(
         canonical_validation_path, "validation"
     )
     _, eval_rows = load_canonical_rows(canonical_eval_path, "eval")
+    # Validation is allowed to guide the Vertex tuning job, but eval is the
+    # held-out reporting set. Training/eval overlap would invalidate WER deltas.
     reject_split_overlap("train", train_rows, "validation", validation_rows)
     reject_split_overlap("train", train_rows, "eval", eval_rows)
 
     gemini_train_path = model_inputs_dir / "train.jsonl"
     gemini_validation_path = model_inputs_dir / "validation.jsonl"
+    # Only train/validation need Gemini SFT JSONL. Eval remains canonical here;
+    # batch-eval requests are built later so base and tuned models use the same
+    # prompt/config recorded in config.json.
     write_gemini_jsonl(
         train_rows,
         gemini_train_path,

@@ -26,9 +26,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-PREFLIGHT_TOKEN_CAP: Final = (
-    131_072  # VERIFIED: docs.cloud.google.com Gemini SFT docs
-)
+# Gemini 3.1 Flash-Lite SFT supports a 128k context. This local check only
+# catches obviously-too-large text examples; Vertex remains the source of truth
+# for exact multimodal token accounting.
+PREFLIGHT_TOKEN_CAP: Final = 131_072
 PREFLIGHT_GCS_MAX_WORKERS: Final = 16
 PREFLIGHT_GCS_BATCH_SIZE: Final = 256
 PREFLIGHT_GCS_TIMEOUT_SECONDS: Final = 30.0
@@ -211,10 +212,11 @@ def run_preflight(
         val_jsonl_path, train_uris, report
     )
 
-    # Pre-compute unreachable fileUris in parallel (network-bound; dedup + thread pool)
-    # so the per-example reachability check below is a fast set-membership test.
     unreachable: set[str] = set()
     if storage_client is not None:
+        # GCS reachability is network-bound and many examples can share the same
+        # fileUri. Dedup here so large validation sets do not multiply metadata
+        # calls for repeated audio.
         unique_uris = sorted({u for u in [*train_uris, *val_uris] if u})
         unreachable = _find_unreachable_gcs_uris(
             storage_client,
@@ -224,7 +226,8 @@ def run_preflight(
             batch_pause_seconds=gcs_batch_pause_seconds,
         )
 
-    # Check 3: per-example validate_audio_tuning_example + token cap + reachability
+    # The same schema/token/reachability checks run on validation examples:
+    # malformed validation data can fail a paid Vertex job just like train data.
     _check_examples(
         report=report,
         split="train",

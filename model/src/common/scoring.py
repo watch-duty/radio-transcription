@@ -1,12 +1,12 @@
 """WER normalizer and ASR scoring metrics for dispatch-domain radio transcription.
 
 This module is the canonical home for the dispatch text normalizer
-(``build_normalizer``) — ``evaluate_transcriptions.ipynb`` imports it rather
-than re-implementing inline. The normalizer adopts GOO-424's inverse-
-normalization recipe (#461, ported in commit ``99bbaf5``);
-``nemo_text_processing`` is version-pinned in the ``[scoring]`` extra
-because a version bump silently changes normalization output (and therefore
-WER).
+(``build_normalizer``) — notebooks and SFT eval import it rather than
+re-implementing inline. The normalizer uses inverse text normalization because
+radio traffic is number-heavy and references/predictions may spell the same
+unit ID differently (for example, "engine forty one" vs. "Engine 41").
+``nemo_text_processing`` is version-pinned in the ``[scoring]`` extra because
+a version bump can silently change normalization output and therefore WER.
 
 The WER-bearing functions (``build_normalizer``, ``compute_wer``,
 ``compute_cer``, ``duration_bucket_wer``, ``bootstrap_paired``) require the
@@ -66,12 +66,12 @@ def build_normalizer() -> "jiwer.Compose":
     Canonical home for the dispatch normalizer. `evaluate_transcriptions.ipynb`
     imports this rather than re-implementing inline; future changes go here.
 
-    Per GOO-424 (#461): uses NeMo INVERSE normalization (words → digits)
-    plus a manual small-number fallback and per-digit splitting, so
-    number-heavy radio dispatch is scored at single-digit granularity —
-    "engine forty one" and "engine 41" both normalize to "engine 4 1".
-    Behavior is pinned by the golden tests in tests/test_scoring.py — do
-    NOT change this logic without updating those goldens.
+    Uses NeMo INVERSE normalization (words → digits) plus a manual small-number
+    fallback and per-digit splitting, so number-heavy radio dispatch is scored
+    at single-digit granularity — "engine forty one" and "engine 41" both
+    normalize to "engine 4 1". Behavior is pinned by the golden tests in
+    tests/test_scoring.py — do NOT change this logic without updating those
+    goldens.
 
     The pipeline applies, in order:
       1. PreProcessCleanups — hallucination placeholder + filler stripping

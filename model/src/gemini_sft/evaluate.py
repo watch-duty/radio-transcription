@@ -85,6 +85,9 @@ def evaluate_run(
     tuned_endpoint = config.get("endpoint")
     base_only = bool(getattr(args, "base_only", False))
     if not base_only and not tuned_endpoint:
+        # Base-only eval is useful before tune and after a failed tune, but it
+        # must be visible in logs so a missing endpoint is not mistaken for a
+        # tuned-model comparison.
         logger.warning(
             "No tuned endpoint in config.json; running base-only eval."
         )
@@ -114,6 +117,8 @@ def evaluate_run(
 
     refs = [row.text for row in eval_rows]
     durations = [row.duration for row in eval_rows]
+    # Empty-string fallback is intentional: skipped/missing Vertex outputs
+    # score as deletions instead of disappearing from the denominator.
     base_hyps = [base_preds.get(row.audio_filepath, "") for row in eval_rows]
     normalizer = build_normalizer()
     metrics = build_metrics(
@@ -125,6 +130,8 @@ def evaluate_run(
         normalizer=normalizer,
         n_eval_examples=len(eval_rows),
     )
+    # Store raw batch output locations alongside metrics so future reviewers can
+    # recalculate WER from Vertex responses without rerunning inference.
     metrics["base_batch_output_uri"] = base_preds.output_uri
 
     if not base_only and tuned_endpoint:
@@ -245,6 +252,8 @@ def batch_infer(
                 parse_batch_output(local_path.read_text(encoding="utf-8"))
             )
         expected_count = len({row.audio_filepath for row in eval_rows})
+        # Predictions are keyed by audio URI. Duplicate eval rows intentionally
+        # share one prediction, so completeness is measured over unique URIs.
         missing = max(0, expected_count - len(preds))
         if missing > 0:
             logger.warning(
@@ -321,6 +330,8 @@ def build_metrics(
         "n_eval_examples": n_eval_examples,
     }
     add_error_breakdown(metrics, "base", base_wer_result, refs)
+    # Historical reports called this "empty rate"; the scorer flags both empty
+    # strings and the explicit [UNINTELLIGIBLE] token emitted for unusable audio.
     metrics["base_empty_rate"] = hallucination_rate(base_hyps)
     base_keyword_rows = keyword_metrics(
         refs, base_hyps, GEMINI_TRANSCRIBE_KEYWORDS
