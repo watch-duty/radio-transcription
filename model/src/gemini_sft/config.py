@@ -14,6 +14,7 @@ from common.gemini.prompts import (
 )
 
 ADAPTER_SIZES: Final = frozenset({"ONE", "TWO", "FOUR", "EIGHT", "SIXTEEN"})
+CONFIG_VERSION: Final = 1
 ROUND_ID_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
@@ -69,6 +70,7 @@ class RunConfig:
     def to_record_dict(self) -> dict[str, Any]:
         """Return the resolved run config shape stored in config.json."""
         return {
+            "config_version": CONFIG_VERSION,
             "round_id": self.round_id,
             "dataset": self.dataset,
             "train_manifest_uri": self.train_manifest_uri,
@@ -193,6 +195,14 @@ def require_config_float(config: dict[str, Any], key: str) -> float:
         msg = f"config.json missing required numeric field: {key}"
         raise TypeError(msg)
     return float(value)
+
+
+def require_config_version(config: dict[str, Any]) -> None:
+    """Require the current durable GCS config.json schema version."""
+    version = require_config_int(config, "config_version")
+    if version != CONFIG_VERSION:
+        msg = f"unsupported config_version {version}; expected {CONFIG_VERSION}"
+        raise ValueError(msg)
 
 
 def _required_table(data: dict[str, Any], key: str) -> dict[str, Any]:

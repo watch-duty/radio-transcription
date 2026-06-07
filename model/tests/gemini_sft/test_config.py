@@ -9,7 +9,12 @@ _SRC_DIR = str(Path(__file__).resolve().parents[2] / "src")
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
-from gemini_sft.config import RunConfigError, load_run_config  # noqa: E402
+from gemini_sft.config import (  # noqa: E402
+    CONFIG_VERSION,
+    RunConfigError,
+    load_run_config,
+    require_config_version,
+)
 
 
 class TestRunConfig(unittest.TestCase):
@@ -70,6 +75,7 @@ learning_rate_multiplier = {values["learning_rate_multiplier"]}
             "gs://bucket/sft/runs/round/model_inputs/gemini/validation.jsonl",
         )
         record = cfg.to_record_dict()
+        self.assertEqual(record["config_version"], CONFIG_VERSION)
         self.assertEqual(record["dataset"], "wd-internal")
         self.assertEqual(record["gemini_train_uri"], cfg.paths.gemini_train_uri)
         self.assertEqual(
@@ -83,6 +89,23 @@ learning_rate_multiplier = {values["learning_rate_multiplier"]}
             "combined_val_uri",
         }
         self.assertFalse(legacy_aliases & set(record))
+
+    def test_config_version_validator_accepts_only_current_schema(
+        self,
+    ) -> None:
+        cfg = load_run_config(self._write_config(self._valid_toml()))
+        record = cfg.to_record_dict()
+
+        require_config_version(record)
+
+        missing_version = dict(record)
+        missing_version.pop("config_version")
+        with self.assertRaisesRegex(TypeError, "config_version"):
+            require_config_version(missing_version)
+
+        unsupported_version = {**record, "config_version": CONFIG_VERSION + 1}
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            require_config_version(unsupported_version)
 
     def test_missing_validation_manifest_uri_raises(self) -> None:
         body = self._valid_toml(validation_manifest_uri='""')

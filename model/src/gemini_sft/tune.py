@@ -28,6 +28,7 @@ from gemini_sft.config import (
     require_config_float,
     require_config_int,
     require_config_str,
+    require_config_version,
 )
 from gemini_sft.cost import (
     confirm_tune_cost,
@@ -109,6 +110,7 @@ def tune_run(
         if config.get("status") != "preflight_passed":
             return 1
 
+    require_config_version(config)
     base_model = require_config_str(config, "base_model")
     epoch_count = require_config_int(config, "epoch_count")
     validate_supported_model(base_model)
@@ -134,6 +136,7 @@ def resume_tune(
     config: dict[str, Any],
 ) -> int:
     """Resume polling a previously submitted tuning job."""
+    require_config_version(config)
     run_dir = local_run_dir(results_dir, run_cfg.round_id)
     run_dir.mkdir(parents=True, exist_ok=True)
     local_config_path(results_dir, run_cfg.round_id).write_text(
