@@ -106,7 +106,9 @@ system_file = "system.txt"
 """
         )
 
-        with self.assertRaisesRegex(RunConfigError, "system_file"):
+        with self.assertRaisesRegex(
+            RunConfigError, "intentionally not supported"
+        ):
             load_run_config(self._write_config(body))
 
     def test_at_file_prompt_values_are_rejected(self) -> None:

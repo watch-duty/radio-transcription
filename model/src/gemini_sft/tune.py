@@ -110,7 +110,7 @@ def tune_run(
     validate_supported_model(base_model)
     total_secs = float(
         config.get("total_train_duration_seconds")
-        or config.get("canonical_train_rows", 0)
+        or (config.get("canonical_train_rows") or 0)
         * FALLBACK_SEGMENT_DURATION_SECONDS
     )
     n_examples = int(config.get("canonical_train_rows") or 0)

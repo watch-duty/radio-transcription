@@ -429,6 +429,47 @@ class TestTuneRun(unittest.TestCase):
             submit.call_args.kwargs["base_model"], "gemini-3.1-flash-lite"
         )
 
+    def test_missing_duration_and_row_count_falls_back_to_zero_cost(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            cfg_path = _write_config_file(tmp)
+            run_cfg = load_run_config(cfg_path)
+            prepared_config = {
+                **run_cfg.to_record_dict(),
+                "status": "preflight_passed",
+                "canonical_train_rows": None,
+                "total_train_duration_seconds": None,
+            }
+            storage.put(run_cfg.paths.config_uri, json.dumps(prepared_config))
+            args = argparse.Namespace(config=str(cfg_path), confirm=True)
+
+            with (
+                unittest.mock.patch.object(
+                    tune_module, "RESULTS_DIR", tmp / "results"
+                ),
+                unittest.mock.patch.object(
+                    tune_module, "submit_tuning_job", return_value="jobs/1"
+                ),
+                unittest.mock.patch.object(
+                    tune_module, "poll_tuning_job", return_value="endpoints/1"
+                ),
+                unittest.mock.patch.object(
+                    tune_module, "print_tune_cost_estimate"
+                ) as estimate,
+            ):
+                rc = tune_module.tune_run(
+                    args=args,
+                    run_cfg=run_cfg,
+                    storage_client=storage,
+                    results_dir=tmp / "results",
+                )
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(estimate.call_args.kwargs["total_secs"], 0.0)
+
 
 class TestEvaluateRun(unittest.TestCase):
     def test_eval_uses_shared_batch_parser_and_records_output_uri(self) -> None:

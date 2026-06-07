@@ -233,7 +233,10 @@ def _resolve_prompt(
     prompts: dict[str, Any], *, key: str, file_key: str, default: str
 ) -> str:
     if file_key in prompts:
-        msg = f"prompts.{file_key} is not supported yet"
+        msg = (
+            f"prompts.{file_key} is intentionally not supported for "
+            "reproducibility; use inline prompts instead"
+        )
         raise RunConfigError(msg)
     value = prompts.get(key, default)
     if not isinstance(value, str) or not value.strip():
