@@ -85,7 +85,7 @@ def build_request(
             ],
             "system_instruction": {
                 "role": "system",
-                "parts": [{"text": system_prompt.strip()}],
+                "parts": [{"text": system_prompt}],
             },
             "generation_config": generation_config.copy(),
             "safety_settings": list(safety_settings),

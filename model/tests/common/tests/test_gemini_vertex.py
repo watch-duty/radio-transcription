@@ -400,15 +400,15 @@ class TestBuildRequest(unittest.TestCase):
         result["request"]["safety_settings"].pop()
         self.assertEqual(len(self.default_safety), 4)
 
-    def test_system_prompt_stripped(self) -> None:
-        """system_prompt is stripped before embedding."""
+    def test_system_prompt_preserved_exactly(self) -> None:
+        """system_prompt is embedded without normalization."""
         result = self.build_request(
             "gs://bucket/audio.flac",
             system_prompt="  Leading space.  ",
             user_prompt="U",
         )
         parts = result["request"]["system_instruction"]["parts"]
-        self.assertEqual(parts[0]["text"], "Leading space.")
+        self.assertEqual(parts[0]["text"], "  Leading space.  ")
 
     def test_custom_generation_config_override(self) -> None:
         """Caller can pass a custom generation_config."""
