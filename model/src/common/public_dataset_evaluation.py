@@ -29,7 +29,10 @@ else:
 
 def _require_public_dataset_eval() -> None:
     if _PUBLIC_DATASET_EVAL_MISSING:
-        msg = "public dataset evaluation requires the [hf] extra: pip install 'common[hf]'"
+        msg = (
+            "public dataset evaluation requires the [hf] extra: "
+            "pip install 'radio-transcription-model[hf]'"
+        )
         raise ImportError(msg) from _PUBLIC_DATASET_EVAL_MISSING
 
 

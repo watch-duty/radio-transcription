@@ -63,6 +63,7 @@ def evaluate(args: argparse.Namespace) -> int:
         config = download_json_text(storage_client, run_cfg.paths.config_uri)
         return evaluate_run(args, run_cfg, storage_client, config)
     except (
+        ImportError,
         OSError,
         RunConfigError,
         ValueError,

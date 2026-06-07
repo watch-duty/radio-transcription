@@ -25,7 +25,10 @@ else:
 def _require_audio() -> None:
     """Raise a clear error if the [audio] extra is not installed."""
     if _AUDIO_MISSING:
-        msg = "audio_utils requires the [audio] extra: pip install 'common[audio]'"
+        msg = (
+            "audio_utils requires the [audio] extra: "
+            "pip install 'radio-transcription-model[audio]'"
+        )
         raise ImportError(msg) from _AUDIO_MISSING
 
 

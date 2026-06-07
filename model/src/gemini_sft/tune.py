@@ -50,6 +50,7 @@ def tune(args: argparse.Namespace) -> int:
             results_dir=RESULTS_DIR,
         )
     except (
+        ImportError,
         OSError,
         RunConfigError,
         ValueError,

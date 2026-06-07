@@ -43,7 +43,8 @@ placeholder examples.
 
 `round_id` names the GCS run prefix `gs://<bucket>/sft/runs/<round_id>/`.
 Use a new `round_id` for each experiment; the CLI treats an existing prefix as
-owned by that run and will not overwrite it as a fresh run.
+owned by that run and will not overwrite it as a fresh run. `round_id` must be
+a single portable path component: letters, numbers, `.`, `_`, and `-` only.
 
 ```toml
 round_id = "YYYY-MM-DD-short-description"

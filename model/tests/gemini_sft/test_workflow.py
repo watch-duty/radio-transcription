@@ -429,6 +429,40 @@ class TestTuneRun(unittest.TestCase):
             submit.call_args.kwargs["base_model"], "gemini-3.1-flash-lite"
         )
 
+    def test_tune_handler_returns_clean_error_when_vertex_extra_missing(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            cfg_path = _write_config_file(tmp)
+            run_cfg = load_run_config(cfg_path)
+            prepared_config = {
+                **run_cfg.to_record_dict(),
+                "status": "preflight_passed",
+                "canonical_train_rows": 1,
+                "total_train_duration_seconds": 3.0,
+            }
+            storage.put(run_cfg.paths.config_uri, json.dumps(prepared_config))
+            args = argparse.Namespace(config=str(cfg_path), confirm=True)
+
+            with (
+                unittest.mock.patch.object(
+                    tune_module.storage, "Client", return_value=storage
+                ),
+                unittest.mock.patch.object(
+                    tune_module, "RESULTS_DIR", tmp / "results"
+                ),
+                unittest.mock.patch.object(
+                    tune_module,
+                    "submit_tuning_job",
+                    side_effect=ImportError("missing vertex"),
+                ),
+            ):
+                rc = tune_module.tune(args)
+
+        self.assertEqual(rc, 1)
+
     def test_missing_duration_and_row_count_falls_back_to_zero_cost(
         self,
     ) -> None:
@@ -472,6 +506,41 @@ class TestTuneRun(unittest.TestCase):
 
 
 class TestEvaluateRun(unittest.TestCase):
+    def test_eval_handler_returns_clean_error_when_vertex_extra_missing(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            _seed_source_manifests(storage, eval_uri="gs://audio/eval.flac")
+            cfg_path = _write_config_file(tmp)
+            run_cfg = load_run_config(cfg_path)
+            storage.put(
+                run_cfg.paths.canonical_eval_uri,
+                _manifest([_row("gs://audio/eval.flac", "eval transcript")]),
+            )
+            storage.put(
+                run_cfg.paths.config_uri, json.dumps(run_cfg.to_record_dict())
+            )
+            args = argparse.Namespace(config=str(cfg_path), base_only=True)
+
+            with (
+                unittest.mock.patch.object(
+                    evaluate_module.storage, "Client", return_value=storage
+                ),
+                unittest.mock.patch.object(
+                    evaluate_module, "RESULTS_DIR", tmp / "results"
+                ),
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "submit_batch_inference",
+                    side_effect=ImportError("missing vertex"),
+                ),
+            ):
+                rc = evaluate_module.evaluate(args)
+
+        self.assertEqual(rc, 1)
+
     def test_eval_uses_shared_batch_parser_and_records_output_uri(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
             tmp = Path(tmp_s)

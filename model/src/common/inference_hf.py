@@ -33,7 +33,10 @@ else:
 def _require_hf() -> None:
     """Raise a clear error if the [hf] extra is not installed."""
     if _HF_MISSING:
-        msg = "inference_hf requires the [hf] extra: pip install 'common[hf]'"
+        msg = (
+            "inference_hf requires the [hf] extra: "
+            "pip install 'radio-transcription-model[hf]'"
+        )
         raise ImportError(msg) from _HF_MISSING
 
 

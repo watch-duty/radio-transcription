@@ -28,7 +28,10 @@ else:
 def _require_torch() -> None:
     """Raise a clear error if torch is not installed."""
     if _TORCH_MISSING:
-        msg = "inference_nemo requires torch: pip install 'common[hf]'"
+        msg = (
+            "inference_nemo requires torch: "
+            "pip install 'radio-transcription-model[hf]'"
+        )
         raise ImportError(msg) from _TORCH_MISSING
 
 

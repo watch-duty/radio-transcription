@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +14,7 @@ from common.gemini.prompts import (
 )
 
 ADAPTER_SIZES: Final = frozenset({"ONE", "TWO", "FOUR", "EIGHT", "SIXTEEN"})
+ROUND_ID_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 class RunConfigError(ValueError):
@@ -109,7 +111,7 @@ def load_run_config(path: str | Path) -> RunConfig:
         msg = f"could not parse TOML run config: {exc}"
         raise RunConfigError(msg) from exc
 
-    round_id = _required_str(data, "round_id")
+    round_id = _required_round_id(data, "round_id")
     dataset = _required_str(data, "dataset")
     train_manifest_uri = _required_gcs_uri(data, "train_manifest_uri")
     validation_manifest_uri = _required_gcs_uri(data, "validation_manifest_uri")
@@ -183,6 +185,17 @@ def _required_str(data: dict[str, Any], key: str) -> str:
         msg = f"missing required string field: {key}"
         raise RunConfigError(msg)
     return value.strip()
+
+
+def _required_round_id(data: dict[str, Any], key: str) -> str:
+    value = _required_str(data, key)
+    if not ROUND_ID_PATTERN.fullmatch(value):
+        msg = (
+            f"{key} must be a single path component using only letters, "
+            "numbers, '.', '_', and '-'"
+        )
+        raise RunConfigError(msg)
+    return value
 
 
 def _required_gcs_uri(data: dict[str, Any], key: str) -> str:

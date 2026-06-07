@@ -84,6 +84,19 @@ learning_rate_multiplier = {values["learning_rate_multiplier"]}
         with self.assertRaisesRegex(RunConfigError, "validation_manifest_uri"):
             load_run_config(self._write_config(body))
 
+    def test_round_id_must_be_safe_single_path_component(self) -> None:
+        for round_id in (
+            "../escape",
+            "/absolute",
+            "nested/round",
+            "space round",
+        ):
+            with self.subTest(round_id=round_id):
+                body = self._valid_toml(round_id=f'"{round_id}"')
+
+                with self.assertRaisesRegex(RunConfigError, "round_id"):
+                    load_run_config(self._write_config(body))
+
     def test_inline_prompts_override_defaults(self) -> None:
         body = self._valid_toml(
             prompts="""
