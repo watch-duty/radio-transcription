@@ -272,7 +272,7 @@ def submit_tuning_job(
         base_model: Base model name. Defaults to 'gemini-3.1-flash-lite'.
         val_uri: Optional GCS URI for validation JSONL. Wires eval_total_loss.
         epoch_count: Number of training epochs (1-100). SDK default is 5.
-        adapter_size: Adapter size key — one of ONE, FOUR, EIGHT, SIXTEEN.
+        adapter_size: Adapter size key — one of ONE, TWO, FOUR, EIGHT, SIXTEEN.
         lr_multiplier: Learning-rate multiplier (0.001-10.0). Defaults to 1.0.
 
     Returns:
@@ -281,7 +281,7 @@ def submit_tuning_job(
 
     Raises:
         ImportError: If the [vertex] extra is not installed.
-        KeyError: If adapter_size is not in _ADAPTER_ENUM.
+        ValueError: If adapter_size is not in _ADAPTER_ENUM.
     """
     _require_vertex()
     if adapter_size not in _ADAPTER_ENUM:

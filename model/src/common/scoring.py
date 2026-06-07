@@ -41,7 +41,10 @@ else:
 def _require_scoring() -> None:
     """Raise a clear error if the [scoring] extra is not installed."""
     if _SCORING_MISSING:
-        msg = "scoring requires the [scoring] extra: pip install 'common[scoring]'"
+        msg = (
+            "scoring requires the [scoring] extra: "
+            "pip install 'radio-transcription-model[scoring]'"
+        )
         raise ImportError(msg) from _SCORING_MISSING
 
 
