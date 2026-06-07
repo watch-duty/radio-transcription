@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "radio-transcription-model"
 version = "0.1.0"
 description = "Shared transcription library for the radio-transcription model subtree."
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     # Core stays light: `import common.prompts` must NOT pull NeMo / torch / datasets.
     # google-cloud-storage is used by gcs_utils everywhere — it is genuinely core.

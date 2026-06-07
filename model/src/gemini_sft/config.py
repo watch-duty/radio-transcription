@@ -271,5 +271,11 @@ def _build_paths(bucket: str, round_id: str) -> RunPaths:
 
 
 def _lookup(data: dict[str, Any], dotted_key: str) -> Any:
+    """Return the leaf key from an already-selected TOML table.
+
+    ``dotted_key`` is only used for human-readable error names such as
+    ``gcp.project``. This is not a generic nested lookup; callers must pass the
+    immediate parent table, for example ``_required_str(gcp, "gcp.project")``.
+    """
     key = dotted_key.rsplit(".", maxsplit=1)[-1]
     return data.get(key)
