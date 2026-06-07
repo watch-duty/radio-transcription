@@ -44,7 +44,6 @@ from gemini_sft.config import (
     load_run_config,
     require_config_int,
     require_config_str,
-    require_config_version,
 )
 from gemini_sft.records import append_ledger, write_wer_summary
 
@@ -86,7 +85,6 @@ def evaluate_run(
     config: dict[str, Any],
 ) -> int:
     """Run batch inference and score one config-driven run."""
-    require_config_version(config)
     system_prompt = require_config_str(config, "system_prompt")
     user_prompt = require_config_str(config, "user_prompt")
     base_model = require_config_str(config, "base_model")
