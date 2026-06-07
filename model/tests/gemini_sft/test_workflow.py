@@ -271,6 +271,28 @@ class TestPrepareRun(unittest.TestCase):
             storage.has("gs://test-bucket/sft/runs/round-a/config.json")
         )
 
+    def test_validation_eval_overlap_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            _seed_source_manifests(
+                storage,
+                validation_uri="gs://audio/shared.flac",
+                eval_uri="gs://audio/shared.flac",
+            )
+            run_cfg = load_run_config(_write_config_file(tmp))
+
+            _, config = prepare_run(
+                run_cfg=run_cfg,
+                storage_client=storage,
+                results_dir=tmp / "results",
+            )
+
+        self.assertEqual(config["status"], "preflight_passed")
+        self.assertTrue(
+            storage.has("gs://test-bucket/sft/runs/round-a/config.json")
+        )
+
 
 class TestTuneRun(unittest.TestCase):
     def test_existing_job_resumes_without_submit(self) -> None:

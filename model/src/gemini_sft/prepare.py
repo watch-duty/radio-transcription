@@ -178,8 +178,8 @@ def prepare_artifacts(
         canonical_validation_path, "validation"
     )
     _, eval_rows = load_canonical_rows(canonical_eval_path, "eval")
-    # Validation is allowed to guide the Vertex tuning job, but eval is the
-    # held-out reporting set. Training/eval overlap would invalidate WER deltas.
+    # Training audio must stay out of both validation and eval. Validation and
+    # eval may intentionally point at the same manifest for Gemini SFT runs.
     reject_split_overlap("train", train_rows, "validation", validation_rows)
     reject_split_overlap("train", train_rows, "eval", eval_rows)
 
