@@ -18,6 +18,7 @@ from backend.pipeline.ingestion.models import (
     CapturedChunk,
     CaptureResources,
     FeedFailure,
+    SourceObservation,
 )
 from backend.pipeline.storage.feed_store import (
     FeedStatusReason,
@@ -59,6 +60,8 @@ _FEED = LeasedFeed(
     last_processed_filename=None,
     last_bookmark_time=None,
     fencing_token=1,
+    failure_count=0,
+    status_reason=None,
     source_feed_id="123",
 )
 
@@ -456,6 +459,180 @@ class TestProcessFeedNormalCompletion(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rt._releasing_feeds, set())
 
 
+class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
+    """Tests for non-audio source success observations."""
+
+    async def test_clean_observation_skips_db_reset_and_audio_pipeline(
+        self,
+    ) -> None:
+        """Clean leased rows do not write on empty successful polls."""
+
+        async def _one_observation(feed, shutdown, _resources):
+            yield SourceObservation()
+
+        feed = cast("LeasedFeed", dict(_FEED))
+        rt = CollectorRuntime(
+            capture_fn=_one_observation,
+            settings=_make_settings(),
+        )
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+
+        with (
+            _mock_upload_audio() as mock_upload,
+            _mock_pubsub_publish() as mock_publish,
+        ):
+            await rt._process_feed(feed)
+
+        rt._store.record_source_observation.assert_not_called()
+        mock_upload.assert_not_called()
+        mock_publish.assert_not_called()
+        rt._store.release_feed.assert_awaited_once()
+
+    async def test_dirty_observation_records_reset_and_updates_lease_copy(
+        self,
+    ) -> None:
+        """Dirty leased rows clear failure state after an empty successful poll."""
+        resume_position = datetime.datetime(
+            2026,
+            6,
+            8,
+            12,
+            0,
+            tzinfo=datetime.UTC,
+        )
+
+        async def _one_observation(feed, shutdown, _resources):
+            yield SourceObservation(resume_position=resume_position)
+
+        feed = cast(
+            "LeasedFeed",
+            dict(
+                _FEED,
+                failure_count=2,
+                status_reason=(
+                    FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED
+                ),
+            ),
+        )
+        rt = CollectorRuntime(
+            capture_fn=_one_observation,
+            settings=_make_settings(),
+        )
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.record_source_observation.return_value = {
+            "id": _FEED_ID,
+            "current_worker": _WORKER_ID,
+            "current_status": "active",
+            "current_fencing_token": 1,
+            "recorded": True,
+        }
+        rt._releasing_feeds = set()
+
+        with _mock_upload_audio(), _mock_pubsub_publish():
+            await rt._process_feed(feed)
+
+        rt._store.record_source_observation.assert_awaited_once_with(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            resume_position,
+        )
+        self.assertEqual(feed["failure_count"], 0)
+        self.assertIsNone(feed["status_reason"])
+        self.assertEqual(feed["last_bookmark_time"], resume_position)
+        rt._store.release_feed.assert_awaited_once()
+
+    async def test_dirty_observation_aborts_without_failure_when_row_inactive(
+        self,
+    ) -> None:
+        """Inactive or missing rows stop the task without reporting failure."""
+
+        async def _one_observation(feed, shutdown, _resources):
+            yield SourceObservation()
+
+        feed = cast(
+            "LeasedFeed",
+            dict(
+                _FEED,
+                failure_count=1,
+                status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+            ),
+        )
+        rt = CollectorRuntime(
+            capture_fn=_one_observation,
+            settings=_make_settings(),
+        )
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.record_source_observation.return_value = {
+            "id": _FEED_ID,
+            "current_worker": None,
+            "current_status": "unclaimed",
+            "current_fencing_token": None,
+            "recorded": False,
+        }
+        rt._releasing_feeds = set()
+
+        await rt._process_feed(feed)
+
+        rt._store.record_source_observation.assert_awaited_once()
+        rt._store.release_feed.assert_not_called()
+        rt._store.report_feed_failure.assert_not_called()
+
+    async def test_dirty_observation_exits_on_active_fence_violation(
+        self,
+    ) -> None:
+        """An active row owned by another lease is treated as a fence violation."""
+        other_worker = uuid.UUID("22222222-3333-4444-5555-666666666666")
+
+        async def _one_observation(feed, shutdown, _resources):
+            yield SourceObservation()
+
+        feed = cast(
+            "LeasedFeed",
+            dict(
+                _FEED,
+                failure_count=1,
+                status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+            ),
+        )
+        rt = CollectorRuntime(
+            capture_fn=_one_observation,
+            settings=_make_settings(),
+        )
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.record_source_observation.return_value = {
+            "id": _FEED_ID,
+            "current_worker": other_worker,
+            "current_status": "active",
+            "current_fencing_token": 2,
+            "recorded": False,
+        }
+        rt._releasing_feeds = set()
+
+        with (
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.os._exit",
+            ) as mock_exit,
+            mock.patch("logging.shutdown"),
+        ):
+            await rt._process_feed(feed)
+
+        mock_exit.assert_called_once_with(1)
+
+
 class TestProcessFeedTimestamps(unittest.IsolatedAsyncioTestCase):
     """Tests for _process_feed timestamp population."""
 
@@ -584,6 +761,8 @@ class TestProcessFeedTopicRouting(unittest.IsolatedAsyncioTestCase):
             last_processed_filename=None,
             last_bookmark_time=None,
             fencing_token=1,
+            failure_count=0,
+            status_reason=None,
             source_feed_id="123",
         )
 
@@ -615,6 +794,8 @@ class TestProcessFeedTopicRouting(unittest.IsolatedAsyncioTestCase):
             last_processed_filename=None,
             last_bookmark_time=None,
             fencing_token=1,
+            failure_count=0,
+            status_reason=None,
             source_feed_id="123",
         )
 

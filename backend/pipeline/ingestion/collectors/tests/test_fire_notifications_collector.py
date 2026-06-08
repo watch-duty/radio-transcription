@@ -13,7 +13,11 @@ from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemFailure,
 )
 from backend.pipeline.ingestion.collectors.fire_notifications import collector
-from backend.pipeline.ingestion.models import AudioMimeType, FeedFailure
+from backend.pipeline.ingestion.models import (
+    AudioMimeType,
+    FeedFailure,
+    SourceObservation,
+)
 from backend.pipeline.storage.feed_store import FeedStatusReason, SourceType
 
 
@@ -593,11 +597,11 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
             self.resources,
         )
 
-        chunks = []
-        async for chunk in collector_generator:
-            chunks.append(chunk)
+        events = []
+        async for event in collector_generator:
+            events.append(event)
 
-        self.assertEqual(len(chunks), 0)
+        self.assertEqual(events, [SourceObservation()])
         self.assertEqual(mock_session.get.call_count, 11)
 
     @patch(

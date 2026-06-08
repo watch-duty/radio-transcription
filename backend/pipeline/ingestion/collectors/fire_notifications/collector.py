@@ -26,7 +26,9 @@ from backend.pipeline.ingestion.collectors.failure_classifiers import (
 from backend.pipeline.ingestion.models import (
     AudioMimeType,
     CapturedChunk,
+    CaptureEvent,
     FeedFailure,
+    SourceObservation,
 )
 from backend.pipeline.ingestion.settings import _require_env
 from backend.pipeline.ingestion.slo_contract import (
@@ -331,10 +333,11 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
     shutdown_event: asyncio.Event,
     url_base: str,
     _resources: CaptureResources,
-) -> AsyncIterator[CapturedChunk]:
+) -> AsyncIterator[CaptureEvent]:
     """Capture Fire Notifications audio via HTTP Polling.
 
-    Yields :class:`CapturedChunk` for each new MP3 file found.
+    Yields :class:`CapturedChunk` for each new MP3 file found, and
+    :class:`SourceObservation` for successful empty file listings.
     """
     try:
         s3_base_url = _require_env("FIRE_NOTIFICATIONS_S3_BASE")
@@ -391,17 +394,20 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
                     data = resp.json()
                     files = data.get("files", [])
 
-                    async for chunk in _process_file_list(
-                        files,
-                        session,
-                        shutdown_event,
-                        connection_session_id,
-                        feed,
-                        processed_uuids,
-                        source_feed_id,
-                        s3_base_url,
-                    ):
-                        yield chunk
+                    if files == []:
+                        yield SourceObservation()
+                    else:
+                        async for chunk in _process_file_list(
+                            files,
+                            session,
+                            shutdown_event,
+                            connection_session_id,
+                            feed,
+                            processed_uuids,
+                            source_feed_id,
+                            s3_base_url,
+                        ):
+                            yield chunk
                     poll_ok = True
                 else:
                     last_poll_failure = _classify_poll_status(resp.status_code)

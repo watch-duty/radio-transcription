@@ -38,6 +38,8 @@ _TEST_FEED = LeasedFeed(
     last_processed_filename=None,
     last_bookmark_time=None,
     fencing_token=1,
+    failure_count=0,
+    status_reason=None,
     source_feed_id="wmata",
 )
 
@@ -250,6 +252,8 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             last_processed_filename=None,
             last_bookmark_time=None,
             fencing_token=1,
+            failure_count=0,
+            status_reason=None,
             source_feed_id=None,
         )
         shutdown = asyncio.Event()

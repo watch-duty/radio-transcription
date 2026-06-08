@@ -36,6 +36,8 @@ _LEASE_ROW = {
     "last_processed_filename": None,
     "last_bookmark_time": None,
     "fencing_token": 1,
+    "failure_count": 0,
+    "status_reason": None,
     "source_feed_id": "123",
 }
 
@@ -212,14 +214,28 @@ class TestStatusReasonLifecycleIsolation(unittest.TestCase):
             feed_queries.RELEASE_FEEDS_BATCH_SQL,
             feed_queries.COUNT_HELD_BY_TYPE_SQL,
             feed_queries.DEACTIVATE_FEED_SQL,
+        ]
+
+        for sql in lifecycle_sql:
+            self.assertNotIn("status_reason", _sql_without_comments(sql))
+
+    def test_claim_sql_projects_failure_state_without_mutating_it(
+        self,
+    ) -> None:
+        claim_sql = [
             feed_queries.build_acquire_feeds_batch_sql([SourceType.BCFY_FEEDS]),
             feed_queries.build_acquire_feeds_recovery_sql(
                 [SourceType.BCFY_FEEDS]
             ),
         ]
 
-        for sql in lifecycle_sql:
-            self.assertNotIn("status_reason", _sql_without_comments(sql))
+        for sql in claim_sql:
+            stripped = _sql_without_comments(sql)
+            self.assertIn("feeds.failure_count", stripped)
+            self.assertIn("feeds.status_reason", stripped)
+            self.assertIn("leased.failure_count", stripped)
+            self.assertIn("leased.status_reason", stripped)
+            self.assertNotIn("status_reason =", stripped)
 
 
 class TestWorkerOwnedLifecycleGuards(unittest.TestCase):
@@ -314,6 +330,27 @@ class TestStatusReasonClearSql(unittest.TestCase):
         )
         self.assertIn("status = 'unclaimed'::feed_status", sql)
 
+    def test_record_source_observation_sql_clears_stale_reason_when_active(
+        self,
+    ) -> None:
+        sql = _sql_without_comments(feed_queries.RECORD_SOURCE_OBSERVATION_SQL)
+
+        self.assertIn("failure_count = 0", sql)
+        self.assertIn(
+            "last_bookmark_time = COALESCE($4, last_bookmark_time)",
+            sql,
+        )
+        self.assertIn("status_reason = NULL", sql)
+        self.assertIn("current_state.worker_id = $2", sql)
+        self.assertIn("current_state.fencing_token = $3", sql)
+        self.assertIn("current_state.status = 'active'::feed_status", sql)
+        self.assertIn("current_state.worker_id AS current_worker", sql)
+        self.assertIn("current_state.status::text AS current_status", sql)
+        self.assertIn(
+            "current_state.fencing_token AS current_fencing_token",
+            sql,
+        )
+
 
 class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.update_feed_progress."""
@@ -383,6 +420,70 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             args[1:],
             (gcs_path, _FEED_ID, _WORKER_ID, 1, last_bookmark_time),
+        )
+
+
+class TestRecordSourceObservation(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.record_source_observation."""
+
+    async def test_returns_diagnostic_result_when_row_exists(self) -> None:
+        """Diagnostic row identifies whether the source observation was recorded."""
+        resume_position = datetime.datetime(2026, 6, 8, tzinfo=datetime.UTC)
+        pool = make_mock_pool(
+            fetchrow_result={
+                "id": _FEED_ID,
+                "current_worker": _WORKER_ID,
+                "current_status": "active",
+                "current_fencing_token": 1,
+                "recorded": True,
+            },
+        )
+        store = FeedStore(pool)
+
+        result = await store.record_source_observation(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            resume_position,
+        )
+
+        self.assertEqual(
+            result,
+            {
+                "id": _FEED_ID,
+                "current_worker": _WORKER_ID,
+                "current_status": "active",
+                "current_fencing_token": 1,
+                "recorded": True,
+            },
+        )
+        args = pool.fetchrow.call_args[0]
+        self.assertEqual(
+            args[1:],
+            (_FEED_ID, _WORKER_ID, 1, resume_position),
+        )
+
+    async def test_returns_missing_diagnostic_when_row_absent(self) -> None:
+        """Missing feed rows are returned as a non-recorded diagnostic result."""
+        pool = make_mock_pool(fetchrow_result=None)
+        store = FeedStore(pool)
+
+        result = await store.record_source_observation(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            None,
+        )
+
+        self.assertEqual(
+            result,
+            {
+                "id": _FEED_ID,
+                "current_worker": None,
+                "current_status": None,
+                "current_fencing_token": None,
+                "recorded": False,
+            },
         )
 
 
@@ -650,6 +751,8 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
                 "last_processed_filename": None,
                 "last_bookmark_time": None,
                 "fencing_token": 1,
+                "failure_count": 0,
+                "status_reason": None,
                 "source_feed_id": "123",
             },
             {
@@ -659,6 +762,8 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
                 "last_processed_filename": "gs://bucket/path",
                 "last_bookmark_time": None,
                 "fencing_token": 1,
+                "failure_count": 2,
+                "status_reason": "source_unreachable",
                 "source_feed_id": None,
             },
         ]
@@ -910,11 +1015,13 @@ class TestBuildAcquireFeedsBatchSql(unittest.TestCase):
             "    WHERE feeds.id = claimed.id\n"
             "    RETURNING feeds.id, feeds.name, feeds.source_type,\n"
             "              feeds.last_processed_filename, feeds.last_bookmark_time,\n"
-            "              feeds.fencing_token\n"
+            "              feeds.fencing_token, feeds.failure_count,\n"
+            "              feeds.status_reason\n"
             ")\n"
             "SELECT leased.id, leased.name, leased.source_type,\n"
             "       leased.last_processed_filename, leased.last_bookmark_time,\n"
-            "       leased.fencing_token, fpi.source_feed_id\n"
+            "       leased.fencing_token, leased.failure_count,\n"
+            "       leased.status_reason, fpi.source_feed_id\n"
             "FROM leased\n"
             "JOIN feed_properties fpi ON fpi.feed_id = leased.id\n"
         )
@@ -1003,6 +1110,8 @@ class TestRowToLeasedFeed(unittest.TestCase):
         self.assertEqual(result["name"], "My Feed")
         self.assertEqual(result["source_type"], SourceType.BCFY_FEEDS)
         self.assertEqual(result["fencing_token"], 1)
+        self.assertEqual(result["failure_count"], 0)
+        self.assertIsNone(result["status_reason"])
 
     def test_invalid_source_type_raises(self) -> None:
         bad_row = {**_LEASE_ROW, "source_type": "not_a_real_type"}

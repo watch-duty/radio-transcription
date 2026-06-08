@@ -24,6 +24,7 @@ from backend.pipeline.ingestion.collectors.openmhz._ws_transport import (
 )
 from backend.pipeline.ingestion.models import (
     CapturedChunk,
+    CaptureEvent,
     CaptureResources,
     FeedFailure,
 )
@@ -140,7 +141,7 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
     shutdown_event: asyncio.Event,
     url_base: str,
     _resources: CaptureResources,
-) -> AsyncIterator[CapturedChunk]:
+) -> AsyncIterator[CaptureEvent]:
     """Capture OpenMHZ call recordings via WebSocket.
 
     Yields :class:`CapturedChunk` for each call received.

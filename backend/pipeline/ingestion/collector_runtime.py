@@ -27,8 +27,10 @@ from backend.pipeline.ingestion.health_server import HealthState
 from backend.pipeline.ingestion.models import (
     AudioMimeType,
     CapturedChunk,
+    CaptureEvent,
     CaptureResources,
     FeedFailure,
+    SourceObservation,
 )
 from backend.pipeline.ingestion.retry import (
     LeaseExpiredError,
@@ -56,7 +58,7 @@ FeedID = uuid.UUID
 # See CollectorFn in models.py for the 4-arg raw collector signature.
 CaptureFn = Callable[
     [LeasedFeed, asyncio.Event, CaptureResources],
-    AsyncIterator[CapturedChunk],
+    AsyncIterator[CaptureEvent],
 ]
 logger = logging.getLogger(__name__)
 
@@ -101,7 +103,7 @@ class CollectorRuntime:
     interruptibility is moot at that point.
 
     Args:
-        capture_fn: Async generator factory ``(feed, shutdown_event) -> AsyncIterator[CapturedChunk]``.
+        capture_fn: Async generator factory ``(feed, shutdown_event) -> AsyncIterator[CaptureEvent]``.
         settings: Runtime configuration. Defaults to ``CollectorSettings()``.
 
     """
@@ -947,7 +949,101 @@ class CollectorRuntime:
             # absent from _releasing_feeds but the task is not yet .done().
             self._releasing_feeds.discard(feed["id"])
 
-    async def _process_feed(self, feed: LeasedFeed) -> None:  # noqa: PLR0912, PLR0915
+    @staticmethod
+    def _leased_feed_has_failure_state(feed: LeasedFeed) -> bool:
+        """Return whether a leased feed carries persisted failure state."""
+        return feed["failure_count"] > 0 or feed["status_reason"] is not None
+
+    async def _process_source_observation(
+        self,
+        feed: LeasedFeed,
+        observation: SourceObservation,
+        worker_id: uuid.UUID,
+        fencing_token: int,
+    ) -> bool:
+        """Record a non-audio source success when persisted state is dirty.
+
+        Returns ``True`` when processing may continue, ``False`` when the task
+        should stop because the row is no longer owned by this active lease.
+        """
+        if not self._leased_feed_has_failure_state(feed):
+            return True
+
+        try:
+            result = await retry_with_lease_check(
+                self._store.record_source_observation,
+                feed["id"],
+                worker_id,
+                fencing_token,
+                observation.resume_position,
+                lease_lost=self._lease_lost,
+                shutdown=self._shutdown,
+                max_retries=self._collector_settings.bookmark_max_retries,
+                base_delay_sec=(
+                    self._collector_settings.bookmark_retry_base_delay_sec
+                ),
+                max_delay_sec=(
+                    self._collector_settings.bookmark_retry_max_delay_sec
+                ),
+                retryable=(
+                    asyncpg.PostgresConnectionError,
+                    asyncpg.InterfaceError,
+                    OSError,
+                ),
+                operation_name="source observation write",
+            )
+        except (asyncio.CancelledError, LeaseExpiredError):
+            raise
+        except Exception:
+            logger.exception(
+                "Failed to record source observation for feed %s",
+                feed["name"],
+            )
+            return True
+
+        if result["recorded"]:
+            feed["failure_count"] = 0
+            feed["status_reason"] = None
+            if observation.resume_position is not None:
+                feed["last_bookmark_time"] = observation.resume_position
+            return True
+
+        current_status = result["current_status"]
+        current_worker = result["current_worker"]
+        current_fencing_token = result["current_fencing_token"]
+        if current_status == "active" and (
+            current_worker != worker_id
+            or current_fencing_token != fencing_token
+        ):
+            logger.critical(
+                "Fence violation on source observation for feed %s -- terminating",
+                feed["name"],
+            )
+            logging.shutdown()
+            os._exit(1)
+
+        logger.info(
+            "Source observation ignored because feed is no longer active "
+            "under this lease",
+            extra={
+                "json_fields": {
+                    "feed_id": str(feed["id"]),
+                    "current_status": current_status,
+                    "current_worker": (
+                        str(current_worker)
+                        if current_worker is not None
+                        else None
+                    ),
+                    "current_fencing_token": current_fencing_token,
+                },
+            },
+        )
+        return False
+
+    async def _process_feed(  # noqa: PLR0911, PLR0912, PLR0915
+        self,
+        feed: LeasedFeed,
+    ) -> None:
         """
         Run the capture-upload-bookmark pipeline for a single feed.
 
@@ -989,18 +1085,32 @@ class CollectorRuntime:
             raise ValueError(msg)
 
         try:
-            async for captured_chunk in self._capture_fn(
+            async for capture_event in self._capture_fn(
                 feed,
                 self._shutdown,
                 self._capture_resources,
             ):
-                if not isinstance(captured_chunk, CapturedChunk):
+                if isinstance(capture_event, SourceObservation):
+                    should_continue = await self._process_source_observation(
+                        feed,
+                        capture_event,
+                        worker_id,
+                        fencing_token,
+                    )
+                    if not should_continue:
+                        return
+                    if self._shutdown.is_set():
+                        return
+                    continue
+
+                if not isinstance(capture_event, CapturedChunk):
                     msg = (
                         f"Collector yielded "
-                        f"{type(captured_chunk).__name__}, "
-                        f"expected CapturedChunk"
+                        f"{type(capture_event).__name__}, "
+                        f"expected CapturedChunk or SourceObservation"
                     )
                     raise TypeError(msg)  # noqa: TRY301
+                captured_chunk = capture_event
                 tracer = trace.get_tracer(__name__)
                 with tracer.start_as_current_span("process_captured_chunk"):
                     chunk_extension = extension

@@ -4,7 +4,7 @@ This guide explains the collector contract and the failure-classification
 policy. The code is still the source of truth:
 
 - `backend/pipeline/ingestion/models.py` defines `CapturedChunk`,
-  `CaptureResources`, `CollectorFn`, and `FeedFailure`.
+  `SourceObservation`, `CaptureResources`, `CollectorFn`, and `FeedFailure`.
 - `backend/pipeline/storage/feed_store.py` defines `SourceType` and
   `FeedStatusReason`.
 - `backend/pipeline/ingestion/router.py` defines the VM collector registry.
@@ -20,13 +20,13 @@ misleading.
 ## Feed Failure Runtime Boundary
 
 VM collectors have one job: turn a source-specific stream or polling API into
-`CapturedChunk` values, or raise a typed `FeedFailure` for known
-feed-level failures. The runtime owns lifecycle state, leases, GCS upload,
-Pub/Sub publish, progress bookmarks, heartbeats, retries after failure, and
-quarantine telemetry.
+`CapturedChunk` audio values, emit `SourceObservation` for successful non-audio
+source checks, or raise a typed `FeedFailure` for known feed-level failures.
+The runtime owns lifecycle state, leases, GCS upload, Pub/Sub publish, progress
+bookmarks, heartbeats, retries after failure, and quarantine telemetry.
 
-Do not write feed lifecycle state from a collector. A collector should either
-yield valid chunks or report source-specific feed failure evidence through
+Do not write feed lifecycle state from a collector. A collector should yield
+valid capture events or report source-specific feed failure evidence through
 `FeedFailure`.
 
 Runtime-side `_PipelineFailure` is separate from `FeedFailure`. It represents
@@ -89,6 +89,28 @@ every eligible attempted item in that boundary fails:
   record a feed failure.
 
 The helper for this policy is `ItemBatchOutcome`.
+
+## Successful Empty Polls
+
+Polling collectors distinguish poll/fetch success from audio production:
+
+- If the poll/fetch fails, count it as a collector-local failure.
+- If the poll/fetch succeeds and the response has no source items to process,
+  reset the collector-local failure streak and yield `SourceObservation`.
+- If the poll/fetch succeeds and the response has at least one source item,
+  keep the existing item handling behavior for that source.
+
+`SourceObservation` is not an audio chunk. The runtime must not upload, publish,
+or count it as audio progress. It may clear stale persisted failure state when
+the leased feed is dirty (`failure_count > 0` or `status_reason IS NOT NULL`).
+
+For Broadcastify Calls, the source item is a call entry in the API `calls`
+array. A missing or non-list `calls` field is treated as an empty page under the
+collector's current extraction semantics. A missing `lastPos` is still a
+successful observation but does not advance a resume cursor.
+
+For Fire Notifications, yield `SourceObservation` only when the poll succeeds
+and `files == []`. Non-empty file lists continue through `_process_file_list`.
 
 ## Failure Classification Model
 

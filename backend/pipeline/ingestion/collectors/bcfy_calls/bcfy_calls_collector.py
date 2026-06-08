@@ -27,8 +27,10 @@ from backend.pipeline.ingestion.collectors.failure_classifiers import (
 from backend.pipeline.ingestion.models import (
     AudioMimeType,
     CapturedChunk,
+    CaptureEvent,
     CaptureResources,
     FeedFailure,
+    SourceObservation,
 )
 from backend.pipeline.ingestion.slo_contract import (
     EVENT_TYPE_BCFY_JWT_FETCH_FAILED,
@@ -548,6 +550,25 @@ def _extract_calls_from_response(
     return response_calls if isinstance(response_calls, list) else []
 
 
+def _last_pos_to_resume_position(
+    bcfy_calls: dict[str, Any] | None,
+) -> datetime.datetime | None:
+    """Convert a Broadcastify Calls ``lastPos`` cursor to UTC datetime."""
+    if not bcfy_calls or "lastPos" not in bcfy_calls:
+        return None
+    try:
+        return datetime.datetime.fromtimestamp(
+            int(bcfy_calls["lastPos"]),
+            datetime.UTC,
+        )
+    except (TypeError, ValueError, OSError, OverflowError):
+        logger.warning(
+            "bcfy_calls response contained invalid lastPos",
+            extra={"json_fields": {"event_type": "bcfy_calls_invalid_last_pos"}},
+        )
+        return None
+
+
 async def _create_chunk_from_call(
     session: aiohttp.ClientSession,
     result: dict[str, Any],
@@ -650,7 +671,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
     shutdown_event: asyncio.Event,
     url_base: str,
     resources: CaptureResources,
-) -> AsyncIterator[CapturedChunk]:
+) -> AsyncIterator[CaptureEvent]:
     """Capture audio chunks from Broadcastify Calls API.
 
     Args:
@@ -781,6 +802,11 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                 promoted = outcome.promoted_failure()
                 if promoted is not None:
                     _raise_item_failure(promoted)
+            elif bcfy_calls is not None:
+                consecutive_failures = 0
+                yield SourceObservation(
+                    resume_position=_last_pos_to_resume_position(bcfy_calls),
+                )
             # Update last_bookmark_time_unix for pagination AFTER processing
             # all calls in the response — ensures we don't skip any calls if
             # an error occurs mid-page.
