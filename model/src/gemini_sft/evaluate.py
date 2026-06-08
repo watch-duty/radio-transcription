@@ -40,6 +40,7 @@ from gemini_sft.artifacts import (
     write_and_upload_config,
 )
 from gemini_sft.config import (
+    RunConfig,
     RunConfigError,
     load_run_config,
     require_config_int,
@@ -80,7 +81,7 @@ def evaluate(args: argparse.Namespace) -> int:
 
 def evaluate_run(
     args: argparse.Namespace,
-    run_cfg: Any,
+    run_cfg: RunConfig,
     storage_client: storage.Client,
     config: dict[str, Any],
 ) -> int:

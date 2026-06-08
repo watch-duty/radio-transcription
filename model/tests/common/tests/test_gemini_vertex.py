@@ -575,6 +575,33 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
         self.assertEqual(mock_client.batches.get.call_count, 2)
         mock_sleep.assert_called_once()
 
+    @unittest.mock.patch("common.gemini.vertex.genai")
+    def test_batch_uses_full_model_resource_location(self, mock_genai) -> None:
+        """Full tuned endpoint resources choose their own Vertex location."""
+        mock_dest = unittest.mock.MagicMock()
+        mock_dest.gcs_uri = "gs://bucket/output/"
+        mock_batch_job = unittest.mock.MagicMock()
+        mock_batch_job.name = "projects/p/locations/us/batchPredictionJobs/1"
+        mock_cur = unittest.mock.MagicMock()
+        mock_cur.state.name = "JOB_STATE_SUCCEEDED"
+        mock_cur.dest = mock_dest
+        mock_client = unittest.mock.MagicMock()
+        mock_client.batches.create.return_value = mock_batch_job
+        mock_client.batches.get.return_value = mock_cur
+        mock_genai.Client.return_value = mock_client
+
+        submit_batch_inference(
+            input_uri="gs://bucket/input.jsonl",
+            output_uri="gs://bucket/output/",
+            model="projects/p/locations/us/endpoints/123",
+            project="p",
+            location="us-central1",
+        )
+
+        mock_genai.Client.assert_called_once_with(
+            vertexai=True, project="p", location="us"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

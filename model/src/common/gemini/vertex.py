@@ -26,6 +26,7 @@ Important behavior:
 
 import json
 import logging
+import re
 import time
 from typing import Any
 
@@ -221,6 +222,7 @@ _BATCH_SUCCESS_STATES = {
 _TUNING_SUCCESS_STATES = {"JOB_STATE_SUCCEEDED", "SUCCEEDED"}
 _POLL_GET_RETRY_LIMIT = 3
 _POLL_GET_RETRY_SLEEP_SECONDS = 5.0
+_RESOURCE_LOCATION_RE = re.compile(r"/locations/([^/]+)/")
 
 
 def _require_vertex() -> None:
@@ -253,7 +255,7 @@ def submit_tuning_job(
     project: str,
     location: str,
     base_model: str = "gemini-3.1-flash-lite",
-    val_uri: "str | None" = None,
+    val_uri: str | None = None,
     epoch_count: int = 5,
     adapter_size: str = "ONE",
     lr_multiplier: float = 1.0,
@@ -430,7 +432,16 @@ def submit_batch_inference(
         TimeoutError: If no terminal state is reached within timeout_hours.
     """
     _require_vertex()
-    client = genai.Client(vertexai=True, project=project, location=location)
+    batch_location = _resource_location(model) or location
+    if batch_location != location:
+        logger.info(
+            "Using model resource location %s for batch inference instead of %s",
+            batch_location,
+            location,
+        )
+    client = genai.Client(
+        vertexai=True, project=project, location=batch_location
+    )
 
     batch_job = client.batches.create(
         model=model,
@@ -498,3 +509,9 @@ def submit_batch_inference(
         output_location = output_uri
     logger.info(f"Batch output location: {output_location}")
     return output_location
+
+
+def _resource_location(resource_name: str) -> str | None:
+    """Extract a Vertex resource location from a full resource name."""
+    match = _RESOURCE_LOCATION_RE.search(resource_name)
+    return match.group(1) if match else None

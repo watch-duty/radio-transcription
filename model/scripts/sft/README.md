@@ -134,6 +134,10 @@ no tuned endpoint. Missing Vertex batch predictions are scored as empty
 hypotheses, which makes them count as full deletions instead of removing those
 segments from the denominator.
 
+Base-model batch inference uses `[gcp].location`. If the tuned endpoint stored
+in `config.json` is a full Vertex resource name, tuned batch inference uses the
+endpoint's own resource location, for example `locations/us`.
+
 ## Prompt Parity
 
 Gemini prompts live in `common.gemini.prompts`. Gemini request construction,
