@@ -345,7 +345,6 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
         self.assertEqual(format(span_ctx.span_id, "016x"), "00f067aa0ba902b7")
 
 
-
 class OrderedStitchAudioTest(unittest.TestCase):
     @patch("backend.pipeline.common.tracing_utils.with_tracer_context")
     @patch(

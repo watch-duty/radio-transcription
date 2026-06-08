@@ -89,7 +89,6 @@ class CoderVerificationTest(unittest.TestCase):
             time_range=datatypes.TimeRange(0, 1000),
             segment_id="tx-uuid-123",
             feed_metadata=datatypes.FeedMetadata("Feed"),
-
             sample_rate=16000,
             missing_prior_context=False,
             missing_post_context=False,

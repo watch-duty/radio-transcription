@@ -64,7 +64,6 @@ class DownloadedChunkPayload:
 
 
 @dataclass(frozen=True)
-
 class TranscriptionResult:
     """Intermediate transcription result holding payload data before Protobuf serialization, bypassing Protobuf pickling issues during Dataflow shuffle."""
 
@@ -162,6 +161,7 @@ class StitchAudioConfig:
 
 
 FlushRequest = bp_state.FlushRequestProto
+AudioClassification = bp_state.FlushRequestProtoAudioClassification
 
 
 @dataclass(frozen=True)

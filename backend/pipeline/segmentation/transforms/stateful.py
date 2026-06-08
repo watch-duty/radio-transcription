@@ -96,31 +96,16 @@ from google.cloud import storage
 
 from backend.pipeline.common import constants as common_constants
 from backend.pipeline.common import tracing_utils
-<<<<<<< HEAD
-<<<<<<< HEAD:backend/pipeline/normalization/transforms/stateful.py
-from backend.pipeline.common.storage import gcs_uploader
-from backend.pipeline.normalization.audio import audio_processor, vad
-from backend.pipeline.normalization.common import coders as trans_coders
-from backend.pipeline.normalization.common import constants as trans_constants
-from backend.pipeline.normalization.common import datatypes
-from backend.pipeline.normalization.common import logging as trans_logging
-from backend.pipeline.normalization.common.constants import (
-    MAX_CHUNKS_PER_WINDMILL_BUNDLE,
-)
-from backend.pipeline.normalization.state import sequence_buffer
-from backend.pipeline.normalization.transforms import stitcher_engine
-=======
-from backend.pipeline.common.logging import get_logger, get_task_logger
-=======
 from backend.pipeline.common.log_helper import get_logger, get_task_logger
->>>>>>> 619570f6 (refactor(segmentation): fix broken common.logging imports due to upstream log_helper rename)
 from backend.pipeline.segmentation import coders as trans_coders
 from backend.pipeline.segmentation import constants as trans_constants
 from backend.pipeline.segmentation import datatypes
 from backend.pipeline.segmentation.audio import vad
+from backend.pipeline.segmentation.constants import (
+    MAX_CHUNKS_PER_WINDMILL_BUNDLE,
+)
 from backend.pipeline.segmentation.state import sequence_buffer
 from backend.pipeline.segmentation.transforms import stitcher_engine
->>>>>>> a413d0d1 (refactor: relocate normalization packages to segmentation (mechanical renames)):backend/pipeline/segmentation/transforms/stateful.py
 
 SHARED_RESOURCE_HANDLE = Shared()
 
@@ -1144,4 +1129,3 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
     def audio_processor(self, val: Any) -> None:
         if hasattr(self, "engine"):
             self.engine.processor = val
-
