@@ -14,6 +14,8 @@ import aiohttp
 import asyncpg
 import uvloop
 from aiohttp import web
+from google.api_core import exceptions as google_exceptions
+from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
 from opentelemetry import trace
 
 from backend.pipeline.common import gcp_helper
@@ -125,10 +127,9 @@ class CollectorRuntime:
         # every usage site.  Accessing before _main() is a programming error.
         # asyncio.Event must be created inside a running event loop.
         self._shutdown: asyncio.Event = None  # type: ignore # set in _main()
-        # Monotonic (set-only, never cleared) signal: once the lease is flagged
-        # as uncertain it stays flagged.  Prevents a race where a successful
-        # heartbeat clears a set() from a failed heartbeat, allowing retry
-        # loops to continue when they should be aborting.
+        # Monotonic (set-only, never cleared) signal: once this process has
+        # confirmed lease loss, retry loops must stop permanently for this
+        # runtime epoch.
         self._lease_lost: asyncio.Event = None  # type: ignore # set in _main()
         self._data_pool: asyncpg.Pool = None  # type: ignore # set in _main()
         # Dedicated 1-connection pool for heartbeat (control-plane / data-plane
@@ -767,7 +768,7 @@ class CollectorRuntime:
         chunk_extension: str,
         chunk_content_type: str,
     ) -> None:
-        """Run post-capture upload, publish, bookmark, and SLO logging."""
+        """Run post-capture upload, bookmark, publish, and SLO logging."""
         settings = self._collector_settings
         try:
             gcs_uri = await retry_with_lease_check(
@@ -803,29 +804,6 @@ class CollectorRuntime:
             ).total_seconds()
             * 1000
         )
-        try:
-            message_id = await gcp_helper.publish_audio_chunk(
-                self._pubsub_client,
-                topic_path,
-                str(feed["id"]),
-                feed["name"],
-                gcs_uri,
-                start_timestamp=captured_chunk.chunk_start_time,
-                session_id=captured_chunk.session_id,
-                source_type=feed["source_type"],
-                duration_ms=duration_ms,
-            )
-        except (asyncio.CancelledError, LeaseExpiredError):
-            raise
-        except Exception as exc:
-            raise _PipelineFailure(_PIPELINE_PUBSUB_PUBLISH_FAILED) from exc
-
-        logger.info(
-            "Published message %s for feed %s",
-            message_id,
-            feed["name"],
-        )
-
         try:
             ok = await retry_with_lease_check(
                 self._store.update_feed_progress,
@@ -865,13 +843,54 @@ class CollectorRuntime:
                 "Fence violation on bookmark for feed %s -- terminating",
                 feed["name"],
             )
+            self._lease_lost.set()
             # logging.shutdown() flushes background logging threads
             # (e.g. Cloud Logging's CloudLoggingHandler) that os._exit
             # would bypass.
             logging.shutdown()
             os._exit(1)
 
-        # SLO: chunk_ingested emit -- strictly-after-bookmark-ok
+        try:
+            message_id = await retry_with_lease_check(
+                gcp_helper.publish_audio_chunk,
+                self._pubsub_client,
+                topic_path,
+                str(feed["id"]),
+                feed["name"],
+                gcs_uri,
+                captured_chunk.session_id,
+                captured_chunk.chunk_start_time,
+                duration_ms,
+                feed["source_type"],
+                lease_lost=self._lease_lost,
+                shutdown=self._shutdown,
+                max_retries=settings.pubsub_publish_max_retries,
+                base_delay_sec=settings.pubsub_publish_retry_base_delay_sec,
+                max_delay_sec=settings.pubsub_publish_retry_max_delay_sec,
+                retryable=(
+                    google_exceptions.Aborted,
+                    google_exceptions.DeadlineExceeded,
+                    google_exceptions.InternalServerError,
+                    google_exceptions.ResourceExhausted,
+                    google_exceptions.ServiceUnavailable,
+                    google_exceptions.Unknown,
+                    google_exceptions.Cancelled,
+                    pubsub_exceptions.PublishToPausedOrderingKeyException,
+                ),
+                operation_name="Pub/Sub publish",
+            )
+        except (asyncio.CancelledError, LeaseExpiredError):
+            raise
+        except Exception as exc:
+            raise _PipelineFailure(_PIPELINE_PUBSUB_PUBLISH_FAILED) from exc
+
+        logger.info(
+            "Published message %s for feed %s",
+            message_id,
+            feed["name"],
+        )
+
+        # SLO: chunk_ingested emit -- strictly after publish success.
         chunk_ingested_payload: dict[str, object] = {
             "event_type": EVENT_TYPE_CHUNK_INGESTED,
             "feed_id": str(feed["id"]),
@@ -1054,11 +1073,8 @@ class CollectorRuntime:
             return
 
         except LeaseExpiredError:
-            # Lease validity is uncertain (heartbeat DB error or fence
-            # violation).  Do NOT attempt report_feed_failure -- the DB
-            # connection that feeds it may be unreachable, causing this
-            # coroutine to hang.  The 60s abandonment window is the
-            # safety net; another worker will re-lease the feed.
+            # Confirmed lease loss. Do NOT attempt report_feed_failure:
+            # fenced ownership is gone, so another worker owns recovery.
             logger.warning(
                 "Lease lost for feed %s -- aborting without DB write",
                 feed["name"],
@@ -1158,14 +1174,10 @@ class CollectorRuntime:
                 logging.shutdown()  # flush before os._exit bypasses handlers
                 os._exit(1)
             except Exception:
-                # Transient DB error — log and retry. Don't kill: mass
-                # os._exit(1) across the MIG during a DB outage would cause
-                # a thundering herd cold-start on recovery.
+                # Transient DB error -- log and retry. A failed renewal
+                # attempt does not prove confirmed lease loss; fenced writes
+                # and heartbeat diagnostics remain authoritative.
                 logger.exception("Heartbeat renewal error")
-                # Signal retry loops that lease validity is uncertain.
-                # Must use call_soon_threadsafe from the OS thread since
-                # asyncio.Event.set() is not thread-safe.
-                self._loop.call_soon_threadsafe(self._lease_lost.set)
 
             # Advance ticker. If cycle took longer than one interval, the next
             # sleep_time clamps to 0 — fires immediately to catch up.
