@@ -47,17 +47,19 @@ class RequestHandler(BaseHTTPRequestHandler):
                 call_index[self.path] += 1
                 
                 calls.append({
-                    "url": f"{url_base}broadcastify_calls/{source_feed_id}/{current_file.name}",
+                    "id": int(time.time() * 1000) + call_index[parsed_url.path],
+                    "url": f"{url_base}broadcastify_calls/{source_feed_id}/{current_file.name}?id={int(time.time() * 1000) + call_index[parsed_url.path]}",
                     "start_ts": int(time.time()),
                     "end_ts": int(time.time()) + 5,
                     "ts": int(time.time()),
                 })
 
             response = {
-                "calls": calls
+                "calls": calls,
+                "lastPos": int(time.time())
             }
             self.wfile.write(json.dumps(response).encode("utf-8"))
-        elif self.path.startswith("/api/audio/"):
+        elif parsed_url.path.startswith("/api/audio/"):
             auth_header = self.headers.get("Authorization")
             expected_auth = "Basic bW9jay11c2VyOm1vY2stcGFzc3dvcmQ="
 
@@ -75,18 +77,18 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.send_header("Content-type", "application/json")
             self.end_headers()
 
-            source_feed_id = self.path[len("/api/audio/"):]
+            source_feed_id = parsed_url.path[len("/api/audio/"):]
             audio_files = self.get_audio_files("fire_notifications", source_feed_id)
             
             files_payload = []
             if audio_files:
-                current_file = audio_files[call_index[self.path] % len(audio_files)]
-                call_index[self.path] += 1
+                current_file = audio_files[call_index[parsed_url.path] % len(audio_files)]
+                call_index[parsed_url.path] += 1
                 
                 files_payload.append({
                     "type": "file",
-                    "name": f"{current_file.stem}.mp3",
-                    "uuid": f"fire_notifications/{source_feed_id}/{current_file.stem}",
+                    "name": f"{current_file.stem}.mp3?id={int(time.time() * 1000) + call_index[parsed_url.path]}",
+                    "uuid": f"fire_notifications/{source_feed_id}/{current_file.stem}?id={int(time.time() * 1000) + call_index[parsed_url.path]}",
                     "size": current_file.stat().st_size if current_file.exists() else 10240,
                 })
 
@@ -96,7 +98,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             }
             self.wfile.write(json.dumps(payload).encode("utf-8"))
         else:
-            path = self.path.lstrip('/')
+            path = parsed_url.path.lstrip('/')
             if path.startswith("mock-s3/"):
                 path = path[len("mock-s3/"):]
                 
