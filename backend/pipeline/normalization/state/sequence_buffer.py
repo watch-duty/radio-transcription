@@ -48,6 +48,7 @@ class SequenceBuffer:
         buffer_elements: list[BufferedChunk],
         chunk_duration_ms: int | None = None,
         traceparent: str | None = None,
+        max_emit: int | None = None,
     ) -> tuple[int, list[BufferedChunk], list[BufferedChunk], bool, bool]:
         """Processes a single incoming audio chunk against the expected sequence progression.
 
@@ -84,7 +85,10 @@ class SequenceBuffer:
             # that were previously held in the buffer.
             expected_next_ts, buffer_elements, drained = (
                 self.drain_ready_elements(
-                    expected_next_ts, buffer_elements, epsilon_ms
+                    expected_next_ts,
+                    buffer_elements,
+                    epsilon_ms,
+                    max_emit=max_emit,
                 )
             )
             to_emit.extend(drained)
@@ -126,12 +130,37 @@ class SequenceBuffer:
         expected_next_ts: int,
         buffer_elements: list[BufferedChunk],
         epsilon_ms: int = DEFAULT_FLOAT_TOLERANCE_MS,
+        max_emit: int | None = None,
     ) -> tuple[int, list[BufferedChunk], list[BufferedChunk]]:
-        """Recursively scans the active buffer heap to find any chunks that sequentially match the newly advanced expected_next_ts."""
+        """Drain sequentially-ready chunks from the buffer heap.
+
+        Walks the min-heap in timestamp order and emits every chunk whose
+        timestamp falls within epsilon_ms of expected_next_ts, advancing the
+        expected pointer after each emission.
+
+        Args:
+            expected_next_ts: The timestamp (ms) of the next expected chunk.
+            buffer_elements: The current out-of-order buffer (mutated in-place).
+            epsilon_ms: Float-arithmetic tolerance for timestamp matching.
+            max_emit: Optional hard cap on the number of chunks emitted per call.
+                When set and the cap is reached, remaining chunks stay in the
+                buffer and the caller is responsible for scheduling follow-up
+                processing — in practice, by setting an immediate Dataflow timer
+                so the next Windmill bundle drains the next slice. Without this
+                cap, a large backlog (e.g. after a pipeline restart or traffic
+                spike) would be drained in a single bundle, potentially breaching
+                Windmill's 300-second lease and causing the bundle to be aborted
+                and replayed. See MAX_CHUNKS_PER_WINDMILL_BUNDLE in constants.py.
+        """
         heap = [ComparableChunk(c) for c in buffer_elements]
         heapq.heapify(heap)
         to_emit = []
         while heap:
+            # Windmill lease guard: stop early if the per-bundle emit cap is
+            # reached. The caller checks len(emitted) >= max_emit and sets an
+            # immediate self-chaining timer so the next bundle drains the rest.
+            if max_emit is not None and len(to_emit) >= max_emit:
+                break
             smallest = heap[0].chunk
             difference = smallest.timestamp_ms - expected_next_ts
             if abs(difference) <= epsilon_ms:
