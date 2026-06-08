@@ -122,7 +122,7 @@ def test_notification_sent(
                     filtered = list(
                         filter(
                             lambda r: (
-                                r.get("transmissionId") == test_notification_id
+                                r.get("segmentId") == test_notification_id
                             ),
                             requests_data,
                         )
@@ -192,7 +192,7 @@ def test_notification_sent_with_tags(
                     filtered = list(
                         filter(
                             lambda r: (
-                                r.get("transmissionId") == test_notification_id
+                                r.get("segmentId") == test_notification_id
                             ),
                             requests_data,
                         )
