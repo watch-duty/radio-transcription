@@ -299,7 +299,6 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             assert_that(parsed[MAIN_TAG], equal_to([]))
             assert_that(parsed[DEAD_LETTER_QUEUE_TAG], assert_dlq)
 
-
     def test_parse_and_key_span_lifecycle(self) -> None:
         """Verifies that ParseAndKeyFn doesn't leak trace context scope on execution."""
         chunk = ContinuousAudio(
@@ -344,7 +343,6 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
             "4bf92f3577b34da6a3ce929d0e0e4736",
         )
         self.assertEqual(format(span_ctx.span_id, "016x"), "00f067aa0ba902b7")
-
 
 
 

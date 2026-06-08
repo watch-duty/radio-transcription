@@ -1145,5 +1145,3 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
         if hasattr(self, "engine"):
             self.engine.processor = val
 
-
-
