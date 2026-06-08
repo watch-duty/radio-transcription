@@ -27,7 +27,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         global call_index
         parsed_url = urlparse(self.path)
         
-        if parsed_url.path == "/calls":
+        if parsed_url.path in ("/calls", "/calls/"):
             self.send_response(200)
             self.send_header("Content-type", "application/json")
             self.end_headers()
