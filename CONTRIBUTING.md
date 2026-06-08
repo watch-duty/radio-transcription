@@ -64,7 +64,7 @@ This option runs the entire pipeline (ingestion, transcription, rules, database,
    mise run dev
    ```
    > [!TIP]
-   > Use `mise run dev:add-audio` to quickly mock incoming audio streams for specific feeds. See [documentation/local-dev-mock-audio.md](documentation/local-dev-mock-audio.md) for usage instructions.
+   > Use `mise run dev:add-audio` to quickly mock incoming audio files for specific feeds. See [documentation/local-dev-mock-audio.md](documentation/local-dev-mock-audio.md) for usage instructions.
 
    *Alternatively, to start the local environment using the local Whisper STT service instead of mock:*
    1. Set `TRANSCRIBER_TYPE=local_whisper` in `local_dev/LOCAL.env`.

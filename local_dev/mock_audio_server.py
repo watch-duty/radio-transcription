@@ -10,6 +10,12 @@ from urllib.parse import parse_qs, urlparse
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+DATA_SOURCE_BCFY_CALLS = "broadcastify_calls"
+DATA_SOURCE_FIRE_NOTIFICATIONS = "fire_notifications"
+PATH_BCFY_CALLS = "/calls"
+PATH_FIRE_NOTIFICATIONS_PREFIX = "/api/audio/"
+DEFAULT_DATA_DIR = "/data"
+
 call_index: dict[str, int] = collections.defaultdict(int)
 
 
@@ -17,7 +23,7 @@ class RequestHandler(BaseHTTPRequestHandler):
     def get_audio_files(
         self, data_source: str, source_feed_id: str
     ) -> list[Path]:
-        data_dir = Path("/data") / data_source / source_feed_id
+        data_dir = Path(DEFAULT_DATA_DIR) / data_source / source_feed_id
         if not data_dir.exists() or not data_dir.is_dir():
             return []
 
@@ -33,9 +39,9 @@ class RequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed_url = urlparse(self.path)
 
-        if parsed_url.path in ("/calls", "/calls/"):
+        if parsed_url.path in (PATH_BCFY_CALLS, f"{PATH_BCFY_CALLS}/"):
             self._handle_bcfy_calls(parsed_url)
-        elif parsed_url.path.startswith("/api/audio/"):
+        elif parsed_url.path.startswith(PATH_FIRE_NOTIFICATIONS_PREFIX):
             self._handle_fire_notifications(parsed_url)
         else:
             self._handle_file_download(parsed_url)
@@ -45,14 +51,17 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-type", "application/json")
         self.end_headers()
 
-        url_base = os.environ.get(
-            "BCFY_FEEDS_URL_BASE", "http://mock-audio-server:8090/"
-        )
+        url_base = os.environ.get("BCFY_FEEDS_URL_BASE")
+        if not url_base:
+            msg = "BCFY_FEEDS_URL_BASE environment variable is not set"
+            raise RuntimeError(msg)
 
         qs = parse_qs(parsed_url.query)
         source_feed_id = qs.get("groups", [""])[0]
 
-        audio_files = self.get_audio_files("broadcastify_calls", source_feed_id)
+        audio_files = self.get_audio_files(
+            DATA_SOURCE_BCFY_CALLS, source_feed_id
+        )
 
         calls = []
         if audio_files:
@@ -62,7 +71,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             calls.append(
                 {
                     "id": int(time.time() * 1000) + call_index[parsed_url.path],
-                    "url": f"{url_base}broadcastify_calls/{source_feed_id}/{current_file.name}?id={int(time.time() * 1000) + call_index[parsed_url.path]}",
+                    "url": f"{url_base}{DATA_SOURCE_BCFY_CALLS}/{source_feed_id}/{current_file.name}?id={int(time.time() * 1000) + call_index[parsed_url.path]}",
                     "start_ts": int(time.time()),
                     "end_ts": int(time.time()) + 5,
                     "ts": int(time.time()),
@@ -91,8 +100,10 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-type", "application/json")
         self.end_headers()
 
-        source_feed_id = parsed_url.path[len("/api/audio/") :]
-        audio_files = self.get_audio_files("fire_notifications", source_feed_id)
+        source_feed_id = parsed_url.path[len(PATH_FIRE_NOTIFICATIONS_PREFIX) :]
+        audio_files = self.get_audio_files(
+            DATA_SOURCE_FIRE_NOTIFICATIONS, source_feed_id
+        )
 
         files_payload = []
         if audio_files:
@@ -105,7 +116,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 {
                     "type": "file",
                     "name": f"{current_file.stem}.mp3?id={int(time.time() * 1000) + call_index[parsed_url.path]}",
-                    "uuid": f"fire_notifications/{source_feed_id}/{current_file.stem}?id={int(time.time() * 1000) + call_index[parsed_url.path]}",
+                    "uuid": f"{DATA_SOURCE_FIRE_NOTIFICATIONS}/{source_feed_id}/{current_file.stem}?id={int(time.time() * 1000) + call_index[parsed_url.path]}",
                     "size": current_file.stat().st_size
                     if current_file.exists()
                     else 10240,
@@ -141,6 +152,10 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Content-type", "audio/mpeg")
             elif filename.endswith(".wav"):
                 self.send_header("Content-type", "audio/wav")
+            elif filename.endswith(".m4a"):
+                self.send_header("Content-type", "audio/mp4")
+            elif filename.endswith(".ogg"):
+                self.send_header("Content-type", "audio/ogg")
             else:
                 self.send_header("Content-type", "application/octet-stream")
             self.end_headers()
