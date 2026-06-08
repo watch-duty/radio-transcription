@@ -63,15 +63,15 @@ message EvaluatedTranscribedAudio {
   // The human-readable name of the radio feed as stored in the database.
   string feed_name = 15;
 
-  // Reserved old enum field for backward compatibility in Pub/Sub schemas.
-  // Field 16 (external_id) removed in GOO-498.
-  reserved 14, 16;
-  reserved "external_id";
-
   // Per-rule annotations describing how each triggered rule matched.
   // Text-match rules carry span offsets; future non-text rule kinds will carry
   // their own annotation messages via the oneof in RuleAnnotation.
   repeated RuleAnnotation rule_annotations = 18;
+
+  // Reserved old enum field for backward compatibility in Pub/Sub schemas.
+  // Field 16 (external_id) removed in GOO-498.
+  reserved 14, 16;
+  reserved "external_id";
 }
 
 // A span of text within the transcript that matched a rule.
