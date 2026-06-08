@@ -42,6 +42,9 @@ from backend.pipeline.normalization.common import coders as trans_coders
 from backend.pipeline.normalization.common import constants as trans_constants
 from backend.pipeline.normalization.common import datatypes
 from backend.pipeline.normalization.common import logging as trans_logging
+from backend.pipeline.normalization.common.constants import (
+    MAX_CHUNKS_PER_WINDMILL_BUNDLE,
+)
 from backend.pipeline.normalization.state import sequence_buffer
 from backend.pipeline.normalization.transforms import stitcher_engine
 
@@ -176,7 +179,10 @@ def process_ordering(
     buffer_elements = curr_context.out_of_order_buffer
     current_ts_ms = int(float(timestamp) * common_constants.MS_PER_SECOND)
 
-    # Process chunk through jitter buffer
+    # Process chunk through jitter buffer. max_emit caps this bundle's output at
+    # ~67 s of audio (MAX_CHUNKS_PER_WINDMILL_BUNDLE × ~4.5 s/chunk), safely
+    # under Windmill's 300-second lease limit. If the drain hits the cap, the
+    # timer block below re-arms immediately so the next bundle drains the rest.
     (
         new_expected_next_ts,
         new_buffer_elements,
@@ -190,7 +196,7 @@ def process_ordering(
         buffer_elements=buffer_elements,
         chunk_duration_ms=metadata.duration_ms,
         traceparent=metadata.traceparent,
-        max_emit=15,
+        max_emit=MAX_CHUNKS_PER_WINDMILL_BUNDLE,
     )
 
     if was_late:
@@ -209,10 +215,26 @@ def process_ordering(
         out_of_order_buffer=new_buffer_elements,
     )
 
-    # Handle Timer for Gap Timeout
-    clamped = len(elements_to_emit) >= 15
+    # Timer management after a clamped or normal drain — three cases:
+    #
+    # 1. CLAMPED (buffer still has chunks AND drain hit MAX_CHUNKS_PER_WINDMILL_BUNDLE):
+    #    The previous drain stopped early to stay under Windmill's 300-second bundle
+    #    lease. Setting the timer to `timestamp` (current watermark) causes Dataflow
+    #    to fire handle_gap_timeout in the very next bundle, draining the next slice.
+    #    Bundles chain this way until the buffer is empty. This is the core of the
+    #    Windmill poison-pill fix: instead of one oversized bundle that gets aborted
+    #    and replayed (triggered by pipeline restarts, lock-induced slowdowns, or
+    #    traffic spikes), we emit in bounded bites and chain to the next bundle.
+    #
+    # 2. NORMAL GAP (buffer has chunks, drain was not clamped): schedule the
+    #    standard gap-timeout deadline so we eventually flush even if some
+    #    predecessors never arrive.
+    #
+    # 3. DRAINED (buffer is now empty): clear the timer to avoid spurious firing.
+    clamped = len(elements_to_emit) >= MAX_CHUNKS_PER_WINDMILL_BUNDLE
     if new_buffer_elements:
         if clamped:
+            # Immediate self-chaining timer — next bundle drains the next slice.
             out_of_order_timer.set(timestamp)
             curr_context = replace(curr_context, order_timer_active=True)
         elif not curr_context.order_timer_active:
@@ -502,14 +524,21 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
                         expected_next_ts=new_expected,
                         buffer_elements=buffer_elements,
                         epsilon_ms=trans_constants.DEFAULT_FLOAT_TOLERANCE_MS,
-                        max_emit=15,
+                        max_emit=MAX_CHUNKS_PER_WINDMILL_BUNDLE,
                     )
                 )
 
-                clamped = len(elements_to_emit) >= 15
+                clamped = (
+                    len(elements_to_emit) >= MAX_CHUNKS_PER_WINDMILL_BUNDLE
+                )
                 if clamped and new_buffer_elements:
-                    # Timer was cleared when we transitioned to handling timeout.
-                    # We must set it again to trigger another bundle immediately.
+                    # The drain was capped at MAX_CHUNKS_PER_WINDMILL_BUNDLE to
+                    # stay under Windmill's 300-second bundle lease. Entering
+                    # this handler clears order_timer_active, so the timer is
+                    # no longer set. Re-arming it at `timestamp` (this bundle's
+                    # firing time) schedules an immediate Windmill callback so
+                    # Dataflow opens a fresh bundle to drain the next slice.
+                    # Self-chaining continues until new_buffer_elements is empty.
                     out_of_order_timer.set(timestamp)
                     curr_context = replace(
                         curr_context, order_timer_active=True
@@ -909,13 +938,21 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
                         expected_next_ts=new_expected,
                         buffer_elements=buffer_elements,
                         epsilon_ms=trans_constants.DEFAULT_FLOAT_TOLERANCE_MS,
-                        max_emit=15,
+                        max_emit=MAX_CHUNKS_PER_WINDMILL_BUNDLE,
                     )
                 )
 
-                clamped = len(elements_to_emit) >= 15
+                clamped = (
+                    len(elements_to_emit) >= MAX_CHUNKS_PER_WINDMILL_BUNDLE
+                )
                 if clamped and new_buffer_elements:
-                    # Immediate timer since there are chunks still ready
+                    # The drain was capped at MAX_CHUNKS_PER_WINDMILL_BUNDLE to
+                    # stay under Windmill's 300-second bundle lease. Entering
+                    # this handler clears order_timer_active, so the timer is
+                    # no longer set. Re-arming it at `timestamp` (this bundle's
+                    # firing time) schedules an immediate Windmill callback so
+                    # Dataflow opens a fresh bundle to drain the next slice.
+                    # Self-chaining continues until new_buffer_elements is empty.
                     out_of_order_timer.set(timestamp)
                     curr_context = replace(
                         curr_context, order_timer_active=True

@@ -218,6 +218,12 @@ class VoiceActivityDetector:
         # Pre-allocate and reuse the input dictionary to avoid heavy object allocation overhead in Python loop
         ort_inputs: dict[str, Any] = dict(states)
 
+        # Thread safety: `states` and `ort_inputs` are call-local; each caller
+        # maintains its own recurrent denoiser state (UL-UNAS hidden tensors).
+        # ulunas_session.run() is thread-safe — the ONNX graph is immutable after
+        # construction and no mutable state lives on the session object itself.
+        # No lock is needed even though the session is shared across threads via
+        # Beam's Shared() handle.
         for i in range(num_frames):
             ort_inputs[audio_input_name] = stft_features[:, :, i : i + 1, :]
             ort_outs = self.ulunas_session.run(None, ort_inputs)
@@ -435,6 +441,11 @@ class VoiceActivityDetector:
         current_speech = {}
         raw_segments = []
 
+        # Thread safety: `state` and `context` are call-local numpy arrays
+        # initialized above. silero_session.run() is thread-safe for the same
+        # reason as ulunas_session — the ONNX graph is immutable; all VAD RNN
+        # state is passed in and returned as tensors rather than stored on the
+        # session.
         for i in range(0, len(vad_input), chunk_size):
             chunk = vad_input[i : i + chunk_size]
             if len(chunk) < chunk_size:
