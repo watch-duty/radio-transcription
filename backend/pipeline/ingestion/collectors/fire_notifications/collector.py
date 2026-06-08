@@ -28,7 +28,6 @@ from backend.pipeline.ingestion.models import (
     CapturedChunk,
     FeedFailure,
 )
-
 from backend.pipeline.ingestion.settings import _require_env
 from backend.pipeline.ingestion.slo_contract import (
     EVENT_TYPE_CALL_DOWNLOAD_FAILED,
