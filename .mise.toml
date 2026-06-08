@@ -256,6 +256,7 @@ yarn --cwd frontend/transcription-ui dev
 [tasks."dev:remote"]
 description = "Run frontend proxy API and UI locally, and connect to backend in GCP"
 depends = ["dev:stop", "build:common", "install:ui", "install:api"]
+env = { VITE_API_BASE_URL = "", VITE_PROXY_API_TARGET = "http://localhost:8080" }
 run = """
 if [ ! -f frontend/api/.env.local ] || [ ! -f frontend/transcription-ui/.env.dev.local ]; then
   echo "No configuration found. Initializing..."
