@@ -713,6 +713,29 @@ class TestExtractCallsFromResponse(unittest.TestCase):
         self.assertEqual(res, calls)
 
 
+class TestLastPosToResumePosition(unittest.TestCase):
+    def test_none_last_pos_returns_none_without_warning(self) -> None:
+        with self.assertNoLogs(
+            "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector",
+            level="WARNING",
+        ):
+            result = bcfy_calls_collector._last_pos_to_resume_position(
+                {"calls": [], "lastPos": None}
+            )
+
+        self.assertIsNone(result)
+
+    def test_float_string_last_pos_is_accepted(self) -> None:
+        result = bcfy_calls_collector._last_pos_to_resume_position(
+            {"calls": [], "lastPos": "1700000010.0"}
+        )
+
+        self.assertEqual(
+            result,
+            datetime.datetime.fromtimestamp(1_700_000_010, datetime.UTC),
+        )
+
+
 class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.session = MagicMock()

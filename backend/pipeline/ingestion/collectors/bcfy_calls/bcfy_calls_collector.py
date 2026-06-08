@@ -554,11 +554,11 @@ def _last_pos_to_resume_position(
     bcfy_calls: dict[str, Any] | None,
 ) -> datetime.datetime | None:
     """Convert a Broadcastify Calls ``lastPos`` cursor to UTC datetime."""
-    if not bcfy_calls or "lastPos" not in bcfy_calls:
+    if not bcfy_calls or bcfy_calls.get("lastPos") is None:
         return None
     try:
         return datetime.datetime.fromtimestamp(
-            int(bcfy_calls["lastPos"]),
+            int(float(bcfy_calls["lastPos"])),
             datetime.UTC,
         )
     except (TypeError, ValueError, OSError, OverflowError):

@@ -27,6 +27,7 @@ from backend.pipeline.ingestion.models import (
     CaptureEvent,
     CaptureResources,
     FeedFailure,
+    SourceObservation,
 )
 from backend.pipeline.ingestion.slo_contract import (
     EVENT_TYPE_CALL_DOWNLOAD_FAILED,
@@ -187,10 +188,15 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                 async with transport_factory(
                     short_name, url_base, shutdown_event
                 ) as events:
+                    consecutive_ws_failures = 0
+                    if (
+                        feed["failure_count"] > 0
+                        or feed["status_reason"] is not None
+                    ):
+                        yield SourceObservation()
                     async for call in events:
                         # SLO: receipt_time stamp — OpenMHZ WS event arrived
                         receipt_time = datetime.datetime.now(datetime.UTC)
-                        consecutive_ws_failures = 0
 
                         if call.length_sec == 0:
                             continue

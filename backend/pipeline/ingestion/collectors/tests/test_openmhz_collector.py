@@ -24,7 +24,7 @@ from backend.pipeline.ingestion.collectors.openmhz.collector import (
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
 )
-from backend.pipeline.ingestion.models import FeedFailure
+from backend.pipeline.ingestion.models import FeedFailure, SourceObservation
 from backend.pipeline.storage.feed_store import (
     FeedStatusReason,
     LeasedFeed,
@@ -160,6 +160,33 @@ class TestDownloadM4a(unittest.IsolatedAsyncioTestCase):
 
 
 class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
+    @patch(f"{_COL_MOD}.websocket_transport")
+    async def test_dirty_feed_yields_observation_on_successful_connection(
+        self,
+        mock_transport: MagicMock,
+    ) -> None:
+        feed = LeasedFeed(
+            **dict(
+                _TEST_FEED,
+                failure_count=1,
+                status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+            )
+        )
+        mock_transport.side_effect = lambda *a, **kw: _mock_transport([])
+
+        shutdown = asyncio.Event()
+        events = []
+        async for event in openmhz_collector(
+            feed,
+            shutdown,
+            "https://api.openmhz.com/",
+            _default_resources(),
+        ):
+            events.append(event)
+            shutdown.set()
+
+        self.assertEqual(events, [SourceObservation()])
+
     @patch(f"{_COL_MOD}.websocket_transport")
     @patch(f"{_COL_MOD}._download_m4a")
     async def test_yields_flac_and_call_time(
