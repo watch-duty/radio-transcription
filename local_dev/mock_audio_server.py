@@ -197,22 +197,21 @@ class RequestHandler(BaseHTTPRequestHandler):
             if current_file:
                 file_path = current_file
 
-        filename = file_path.name
-
         if file_path.exists() and file_path.is_file():
             self.send_response(200)
-            if filename.endswith(".flac"):
-                self.send_header("Content-type", "audio/flac")
-            elif filename.endswith(".mp3"):
-                self.send_header("Content-type", "audio/mpeg")
-            elif filename.endswith(".wav"):
-                self.send_header("Content-type", "audio/wav")
-            elif filename.endswith(".m4a"):
-                self.send_header("Content-type", "audio/mp4")
-            elif filename.endswith(".ogg"):
-                self.send_header("Content-type", "audio/ogg")
-            else:
-                self.send_header("Content-type", "application/octet-stream")
+
+            content_types = {
+                ".flac": "audio/flac",
+                ".mp3": "audio/mpeg",
+                ".wav": "audio/wav",
+                ".m4a": "audio/mp4",
+                ".ogg": "audio/ogg",
+                ".json": "application/json",
+            }
+            content_type = content_types.get(
+                file_path.suffix.lower(), "application/octet-stream"
+            )
+            self.send_header("Content-type", content_type)
             self.end_headers()
 
             with open(file_path, "rb") as f:
