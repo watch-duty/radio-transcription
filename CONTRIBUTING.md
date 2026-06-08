@@ -30,7 +30,7 @@ On a high level, this local pipeline runs the following:
 #### Shared infrastructure
 1. Pub/Sub emulator (manages all PubSub topics for each Pub/Sub instance in the pipeline)
 2. GCS emulator (manages all GCS buckets for audio storage in the pipeline)
-3. Mock Audio server (simulates all the supported audio streams for testing e.g. Icecast and API polling). See `local_dev/mock_audio/README.md` for instructions on adding test audio files.
+3. Mock Audio server (simulates all the supported audio streams for testing e.g. Icecast and API polling). See [documentation/local-dev-mock-audio.md](documentation/local-dev-mock-audio.md) for instructions on adding test audio files.
 
 #### Pipeline
 1. Audio ingestion service (fetches audio from streams and uploads to GCS)
@@ -64,7 +64,7 @@ This option runs the entire pipeline (ingestion, transcription, rules, database,
    mise run dev
    ```
    > [!TIP]
-   > Use `mise run dev:add-audio` to quickly mock incoming audio streams for specific feeds. See `local_dev/mock_audio/README.md` for usage instructions.
+   > Use `mise run dev:add-audio` to quickly mock incoming audio streams for specific feeds. See [documentation/local-dev-mock-audio.md](documentation/local-dev-mock-audio.md) for usage instructions.
 
    *Alternatively, to start the local environment using the local Whisper STT service instead of mock:*
    1. Set `TRANSCRIBER_TYPE=local_whisper` in `local_dev/LOCAL.env`.

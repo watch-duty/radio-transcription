@@ -1,6 +1,6 @@
 # Mock Audio Files Directory
 
-This directory is mounted to the local `mock-audio-server` Docker container at `/data`.
+The `local_dev/mock_audio` directory is mounted to the local `mock-audio-server` Docker container at `/data`.
 
 When you run the system locally (e.g., using `mise run dev:start`), the mock audio server will automatically serve audio files from subdirectories based on the requested data source and feed ID.
 
