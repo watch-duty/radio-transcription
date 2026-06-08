@@ -64,17 +64,15 @@ function CollapsedFeedSearch({
       <Autocomplete
         disablePortal
         options={feeds}
+        // Prevents client-side filtering since all filtering is done server-side.
         filterOptions={(x) => x}
         getOptionLabel={(option) => option.name}
         size="small"
-        sx={{
-          width: '100%',
-        }}
         value={selectedFeed}
         inputValue={localInputValue}
         onChange={(_, option) => {
-          if (option) {
-            onFeedSelect?.(option.id);
+          if (option && onFeedSelect) {
+            onFeedSelect(option.id);
           }
         }}
         onInputChange={(_, newInputValue, reason) => {
