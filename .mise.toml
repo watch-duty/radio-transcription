@@ -169,6 +169,15 @@ if [ "$response" = "y" ] || [ "$response" = "Y" ]; then
 fi
 """
 
+[tasks."install:hooks"]
+description = "Install git pre-commit and pre-push hooks if missing"
+run = """
+if [ ! -f .git/hooks/pre-commit ] || [ ! -f .git/hooks/pre-push ]; then
+  echo "Installing git hooks (pre-commit, pre-push)..."
+  uv run pre-commit install -t pre-commit -t pre-push
+fi
+"""
+
 [tasks."dev:start"]
 description = "Start the transcription pipeline in local Docker containers"
 depends = ["dev:stop", "build:common", "generate:protos", "install:api", "install:env"]
@@ -196,7 +205,7 @@ docker-compose --env-file local_dev/LOCAL.env logs --tail 100 -t -f {{ arg(name=
 
 [tasks.dev]
 description = "Start the entire system (backend (via Docker) and frontend UI hosted locally)"
-depends = ["dev:start", "build:common", "install:ui", "install:env"]
+depends = ["dev:start", "build:common", "install:ui", "install:env", "install:hooks"]
 run = "yarn --cwd frontend/transcription-ui run local"
 
 [tasks."dev:add-audio"]
@@ -224,7 +233,7 @@ docker-compose --env-file local_dev/LOCAL.env -f docker-compose.yml -f docker-co
 
 [tasks."dev:whisper"]
 description = "Start the entire system (transcription pipeline, API services, and frontend UI) with a local ASR model (Whisper)"
-depends = ["dev:whisper:start", "build:common", "install:ui", "install:api", "install:env"]
+depends = ["dev:whisper:start", "build:common", "install:ui", "install:api", "install:env", "install:hooks"]
 run = "yarn --cwd frontend/transcription-ui run local"
 
 [tasks."dev:remote:init"]
@@ -237,7 +246,7 @@ python3 local_dev/setup_remote_dev.py
 
 [tasks."dev:remote:ui"]
 description = "Run frontend UI locally and connect to the frontend Proxy API in GCP"
-depends = ["dev:stop", "build:common", "install:ui"]
+depends = ["dev:stop", "build:common", "install:ui", "install:hooks"]
 run = """
 if [ ! -f frontend/transcription-ui/.env.dev.local ]; then
   echo "No configuration found. Initializing..."
@@ -249,7 +258,7 @@ yarn --cwd frontend/transcription-ui dev
 
 [tasks."dev:remote"]
 description = "Run frontend proxy API and UI locally, and connect to backend in GCP"
-depends = ["dev:stop", "build:common", "install:ui", "install:api"]
+depends = ["dev:stop", "build:common", "install:ui", "install:api", "install:hooks"]
 env = { VITE_API_BASE_URL = "", VITE_PROXY_API_TARGET = "http://localhost:8080" }
 run = """
 if [ ! -f frontend/api/.env.local ] || [ ! -f frontend/transcription-ui/.env.dev.local ]; then
