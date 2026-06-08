@@ -92,4 +92,3 @@ class ListFeedsResponse(BaseModel):
     feeds: list[Feed]
     next_token: str | None = None
     total: int
-    filtered_total: int

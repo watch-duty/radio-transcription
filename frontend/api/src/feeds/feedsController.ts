@@ -68,7 +68,6 @@ interface ListFeedsBackendResponse {
   feeds: FeedBackend[];
   next_token?: string;
   total: number;
-  filtered_total: number;
 }
 
 function getSourceUrl(
@@ -204,7 +203,6 @@ export class FeedsController extends Controller {
             feeds: data.feeds.map(convertFeedBackend),
             nextToken: data.next_token,
             total: data.total,
-            filteredTotal: data.filtered_total,
           };
     } catch (error: unknown) {
       const { status, message } = handleBackendError(error, 'fetching feeds');

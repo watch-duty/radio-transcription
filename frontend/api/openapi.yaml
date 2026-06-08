@@ -328,13 +328,9 @@ components:
         total:
           type: number
           format: double
-        filteredTotal:
-          type: number
-          format: double
       required:
         - feeds
         - total
-        - filteredTotal
       type: object
       additionalProperties: false
     ListFeedsQueryParams:

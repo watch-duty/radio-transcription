@@ -15,7 +15,6 @@ from backend.pipeline.common.exceptions import (
     FeedNameAlreadyExistsError,
 )
 from backend.pipeline.storage.feed_queries import (
-    COUNT_ALL_FEEDS_SQL,
     COUNT_FEEDS_SQL,
     COUNT_HELD_BY_TYPE_SQL,
     CREATE_FEED_SQL,
@@ -156,7 +155,6 @@ class PaginatedFeeds:
     feeds: list[Feed]
     next_token: str | None
     total: int
-    filtered_total: int
 
 
 class FeedStore:
@@ -788,8 +786,7 @@ class FeedStore:
             name,
             limit + 1,
         )
-        total_task = self._pool.fetchval(COUNT_ALL_FEEDS_SQL)
-        filtered_task = self._pool.fetchval(
+        total_task = self._pool.fetchval(
             COUNT_FEEDS_SQL,
             source_types,
             statuses,
@@ -797,16 +794,14 @@ class FeedStore:
             name,
         )
 
-        rows, total, filtered_total = await asyncio.gather(
-            rows_task, total_task, filtered_task
-        )
+        rows, total = await asyncio.gather(rows_task, total_task)
 
         rows, new_next_token = get_paginated_results(
             rows, limit, "created_at", "id"
         )
 
         feeds = [self._row_to_feed(row) for row in rows]
-        return PaginatedFeeds(feeds, new_next_token, total, filtered_total)
+        return PaginatedFeeds(feeds, new_next_token, total)
 
     async def deactivate_feed(self, feed_id: uuid.UUID) -> bool:
         """Deactivate a feed by ID.

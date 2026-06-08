@@ -475,7 +475,3 @@ WHERE ($1::text[] IS NULL OR f.source_type = ANY($1))
   AND ($3::jsonb IS NULL OR fp.tags @> $3::jsonb)
   AND ($4::text IS NULL OR f.name ILIKE '%' || $4 || '%')
 """
-
-COUNT_ALL_FEEDS_SQL = """\
-SELECT COUNT(*) FROM feeds
-"""

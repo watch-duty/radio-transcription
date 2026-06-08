@@ -181,7 +181,6 @@ class TestFeedsAPI(unittest.TestCase):
             feeds=[mock_feed],
             next_token=None,
             total=1,
-            filtered_total=1,
         )
         response = self.client.get("/v1/feeds")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -190,7 +189,6 @@ class TestFeedsAPI(unittest.TestCase):
         self.assertEqual(data["feeds"][0]["id"], str(feed_id))
         self.assertIsNone(data["next_token"])
         self.assertEqual(data["total"], 1)
-        self.assertEqual(data["filtered_total"], 1)
         self.mock_service.list_feeds.assert_called_once_with(
             limit=100,
             next_token=None,
@@ -216,7 +214,6 @@ class TestFeedsAPI(unittest.TestCase):
             feeds=[mock_feed],
             next_token="token123",
             total=1,
-            filtered_total=1,
         )
         url = (
             "/v1/feeds?limit=10&next_token=token123&order=asc"
@@ -229,7 +226,6 @@ class TestFeedsAPI(unittest.TestCase):
         self.assertEqual(data["feeds"][0]["id"], str(feed_id))
         self.assertEqual(data["next_token"], "token123")
         self.assertEqual(data["total"], 1)
-        self.assertEqual(data["filtered_total"], 1)
         self.mock_service.list_feeds.assert_called_once_with(
             limit=10,
             next_token="token123",
@@ -255,7 +251,6 @@ class TestFeedsAPI(unittest.TestCase):
             feeds=[mock_feed],
             next_token=None,
             total=1,
-            filtered_total=1,
         )
         url = (
             '/v1/feeds?tags=[{"key":"region","value":"West"},'
@@ -267,7 +262,6 @@ class TestFeedsAPI(unittest.TestCase):
         self.assertIsInstance(data["feeds"], list)
         self.assertEqual(data["feeds"][0]["id"], str(feed_id))
         self.assertEqual(data["total"], 1)
-        self.assertEqual(data["filtered_total"], 1)
         self.mock_service.list_feeds.assert_called_once_with(
             limit=100,
             next_token=None,
@@ -303,7 +297,6 @@ class TestFeedsAPI(unittest.TestCase):
             feeds=[mock_feed],
             next_token=None,
             total=1,
-            filtered_total=1,
         )
         url = (
             "/v1/feeds?source_types=bcfy_feeds , openmhz"
@@ -313,7 +306,6 @@ class TestFeedsAPI(unittest.TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data = response.json()
         self.assertEqual(data["total"], 1)
-        self.assertEqual(data["filtered_total"], 1)
         self.mock_service.list_feeds.assert_called_once_with(
             limit=100,
             next_token=None,
@@ -339,13 +331,11 @@ class TestFeedsAPI(unittest.TestCase):
             feeds=[mock_feed],
             next_token=None,
             total=1,
-            filtered_total=1,
         )
         response = self.client.get("/v1/feeds?name=Test%20Feed")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data = response.json()
         self.assertEqual(data["total"], 1)
-        self.assertEqual(data["filtered_total"], 1)
         self.mock_service.list_feeds.assert_called_once_with(
             limit=100,
             next_token=None,

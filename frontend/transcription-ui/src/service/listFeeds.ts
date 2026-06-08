@@ -48,7 +48,6 @@ export async function listFeedsPage(
       return {
         feeds: resp,
         total: resp.length,
-        filteredTotal: resp.length,
       };
     } else {
       return resp;
