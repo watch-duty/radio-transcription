@@ -29,7 +29,7 @@ from backend.pipeline.common.constants import (
     MS_PER_SECOND,
     NANOS_PER_MS,
 )
-from backend.pipeline.common.logging import get_task_logger
+from backend.pipeline.common.log_helper import get_task_logger
 from backend.pipeline.common.tracing_utils import (
     extract_trace_context,
     get_current_traceparent,

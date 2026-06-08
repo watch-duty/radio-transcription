@@ -18,7 +18,7 @@ from pedalboard import (
     Pedalboard,
 )
 
-from backend.pipeline.common.logging import get_task_logger
+from backend.pipeline.common.log_helper import get_task_logger
 from backend.pipeline.segmentation.audio.dsp import (
     TorchaudioHannResampler,
     custom_numpy_istft,
