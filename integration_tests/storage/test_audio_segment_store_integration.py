@@ -235,7 +235,11 @@ class TestListAudioSegmentsFilters:
             {
                 "audio_segment_id": test_segments["segment_no_transcript"].id,
                 "type": AnnotationType.EVALUATION,
-                "data": {"decisions": ["rule-1"], "errors": []},
+                "data": {
+                    "decisions": ["rule-1"],
+                    "errors": [],
+                    "rule_annotations": [],
+                },
             }
         ]
 
@@ -244,7 +248,11 @@ class TestListAudioSegmentsFilters:
             {
                 "audio_segment_id": test_segments["segment_is_alert"].id,
                 "type": AnnotationType.EVALUATION,
-                "data": {"decisions": ["rule-2"], "errors": []},
+                "data": {
+                    "decisions": ["rule-2"],
+                    "errors": [],
+                    "rule_annotations": [],
+                },
             },
             {
                 "audio_segment_id": test_segments["segment_is_alert"].id,
@@ -276,7 +284,11 @@ class TestListAudioSegmentsFilters:
             {
                 "audio_segment_id": test_segments["segment_no_alert"].id,
                 "type": AnnotationType.EVALUATION,
-                "data": {"decisions": [], "errors": []},
+                "data": {
+                    "decisions": [],
+                    "errors": [],
+                    "rule_annotations": [],
+                },
             },
             {
                 "audio_segment_id": test_segments["segment_no_alert"].id,
