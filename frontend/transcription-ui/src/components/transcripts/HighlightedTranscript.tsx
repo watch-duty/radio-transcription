@@ -26,7 +26,9 @@ function collectIntervals(
       }
     }
   }
-  intervals.sort((a, b) => a.start - b.start || b.end - b.start - (a.end - a.start));
+  intervals.sort(
+    (a, b) => a.start - b.start || b.end - b.start - (a.end - a.start)
+  );
 
   const merged: MatchInterval[] = [];
   for (const span of intervals) {
