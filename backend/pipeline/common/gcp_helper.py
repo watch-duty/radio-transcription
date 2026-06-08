@@ -15,7 +15,7 @@ from opentelemetry.trace.propagation.tracecontext import (
 )
 
 from backend.pipeline.common import tracing_utils
-from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
+from backend.pipeline.schema_types.continuous_audio_pb2 import ContinuousAudio
 
 if TYPE_CHECKING:
     from google.cloud import pubsub_v1
@@ -228,7 +228,7 @@ def publish_audio_chunk_sync(
     ingestion) and the async wrapper below.
     """
     with tracer.start_as_current_span("publish_raw_audio_chunk"):
-        audio_chunk_msg = AudioChunk(
+        audio_chunk_msg = ContinuousAudio(
             gcs_uri=gcs_uri,
             feed_id=feed_id,
             feed_name=feed_name,
@@ -280,7 +280,7 @@ async def publish_audio_chunk(
     """
     with tracer.start_as_current_span("publish_raw_audio_chunk"):
         publisher = pubsub_client.get_publisher()
-        audio_chunk_msg = AudioChunk(
+        audio_chunk_msg = ContinuousAudio(
             gcs_uri=gcs_uri,
             feed_id=feed_id,
             feed_name=feed_name,

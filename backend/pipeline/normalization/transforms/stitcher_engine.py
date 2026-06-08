@@ -244,14 +244,14 @@ class StitcherEngine:
                 time_range = datatypes.TimeRange(
                     start_ms=start_time_ms, end_ms=end_time_ms
                 )
-                transmission_id = trans_utils.generate_transmission_id(
+                segment_id = trans_utils.generate_segment_id(
                     curr_ctx.session_id,
                     time_range,
                     curr_ctx.buffer_duration_ms,
                 )
 
                 task_logger.info(
-                    f"[Stale Timer] Fired for session {session_id}. Emitting buffered contents {transmission_id}."
+                    f"[Stale Timer] Fired for session {session_id}. Emitting buffered contents {segment_id}."
                 )
                 self.stale_flushes.inc()
 
@@ -269,7 +269,7 @@ class StitcherEngine:
                         end_audio_offset_ms=end_time_ms
                         - curr_ctx.buffer_start_time_ms,
                         speech_segments=curr_ctx.speech_segments,
-                        transmission_id=transmission_id,
+                        segment_id=segment_id,
                         feed_metadata=curr_ctx.feed_metadata,
                         sample_rate=curr_ctx.sample_rate
                         or common_constants.SAMPLE_RATE_HZ,
@@ -328,13 +328,13 @@ class StitcherEngine:
                 else np.frombuffer(b, dtype=np.int16)
                 for b in raw_buffer
             ]
-            transmission_id = trans_utils.generate_transmission_id(
+            segment_id = trans_utils.generate_segment_id(
                 session_id,
                 action.speech_time_range,
                 trans_utils.get_duration_ms(action.speech_time_range),
             )
             task_logger.info(
-                f"[Flush] Emitting transmission {transmission_id} with {len(processed_uris)} chunks"
+                f"[Flush] Emitting transmission {segment_id} with {len(processed_uris)} chunks"
             )
 
             current_start_ms = action.speech_time_range.start_ms
@@ -365,7 +365,7 @@ class StitcherEngine:
                     start_audio_offset_ms=action.start_audio_offset_ms,
                     end_audio_offset_ms=action.end_audio_offset_ms,
                     speech_segments=action.speech_segments,
-                    transmission_id=transmission_id,
+                    segment_id=segment_id,
                     feed_metadata=curr_context.feed_metadata,
                     sample_rate=curr_context.sample_rate
                     or (chunk_data.sample_rate if chunk_data else None)

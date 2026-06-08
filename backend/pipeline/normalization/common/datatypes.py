@@ -68,7 +68,7 @@ class NormalizationResult:
     session_id: str
     contributing_audio_uris: list[str]
     time_range: TimeRange
-    transmission_id: str
+    segment_id: str
     start_audio_offset_ms: int
     end_audio_offset_ms: int
     canonical_audio_uri: str
@@ -88,7 +88,7 @@ class TranscriptionResult:
     contributing_audio_uris: list[str]
     transcript: str
     time_range: TimeRange
-    transmission_id: str
+    segment_id: str
     start_audio_offset_ms: int
     end_audio_offset_ms: int
     canonical_audio_uri: str

@@ -12,6 +12,12 @@ from typing import (
 import betterproto
 
 
+class FlushRequestProtoAudioClassification(betterproto.Enum):
+    AUDIO_CLASSIFICATION_UNSPECIFIED = 0
+    AUDIO_CLASSIFICATION_SPEECH = 1
+    AUDIO_CLASSIFICATION_NO_SPEECH = 2
+
+
 @dataclass(eq=False, repr=False)
 class TimeRangeProto(betterproto.Message):
     """Nested domain dependencies"""
@@ -70,7 +76,9 @@ class FlushRequestProto(betterproto.Message):
     traceparent: Optional[str] = betterproto.string_field(
         14, optional=True, group="_traceparent"
     )
-    audio_classification: int = betterproto.int32_field(15)
+    audio_classification: "FlushRequestProtoAudioClassification" = (
+        betterproto.enum_field(15)
+    )
 
 
 @dataclass(eq=False, repr=False)

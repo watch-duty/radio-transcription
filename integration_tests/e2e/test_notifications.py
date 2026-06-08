@@ -73,7 +73,7 @@ def test_notification_sent(
     """
     test_notification_id = f"test-integration-notification-{uuid.uuid4()}"
     test_message = EvaluatedTranscribedAudio(
-        transmission_id=test_notification_id,
+        segment_id=test_notification_id,
         transcript="liar liar pants on fire",
         feed_id="test-feed",
         evaluation_decisions=["rule1", "rule2"],
@@ -147,7 +147,7 @@ def test_notification_sent_with_tags(
     """Tests that a notification is sent with tags fetched from feeds API."""
     test_notification_id = f"test-integration-tags-{uuid.uuid4()}"
     test_message = EvaluatedTranscribedAudio(
-        transmission_id=test_notification_id,
+        segment_id=test_notification_id,
         transcript="liar liar pants on fire",
         feed_id=test_feed_with_tags,
         evaluation_decisions=["rule1", "rule2"],

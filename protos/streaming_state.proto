@@ -45,7 +45,12 @@ message FlushRequestProto {
   optional int64 end_audio_offset_ms = 12;
   repeated TimeRangeProto speech_segments = 13;
   optional string traceparent = 14;
-  int32 audio_classification = 15;
+  enum AudioClassification {
+    AUDIO_CLASSIFICATION_UNSPECIFIED = 0;
+    AUDIO_CLASSIFICATION_SPEECH = 1;
+    AUDIO_CLASSIFICATION_NO_SPEECH = 2;
+  }
+  AudioClassification audio_classification = 15;
 }
 
 // Persistent State Checkpoints

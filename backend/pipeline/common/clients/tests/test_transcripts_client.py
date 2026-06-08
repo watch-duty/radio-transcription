@@ -18,7 +18,7 @@ class TestTranscriptsClient(unittest.TestCase):
         self.client.session = self.mock_session
 
         self.payload = evaluated_pb2.EvaluatedTranscribedAudio()
-        self.payload.transmission_id = "12345"
+        self.payload.segment_id = "12345"
         self.payload.transcript = "Test transcript"
         self.payload.feed_id = "1234"
         self.payload.source_audio_uris.append("gs://bucket/audio.flac")

@@ -13,7 +13,7 @@ from yarl import URL
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
-from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
+from backend.pipeline.schema_types.continuous_audio_pb2 import ContinuousAudio
 from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 
 _DUMMY_REQUEST_INFO = aiohttp.RequestInfo(
@@ -426,7 +426,7 @@ class TestPublishAudioChunkSync(unittest.TestCase):
 
         self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
 
-        chunk = AudioChunk()
+        chunk = ContinuousAudio()
         chunk.ParseFromString(publish_args[1])
         self.assertEqual(chunk.gcs_uri, "gs://bucket/audio.flac")
         self.assertEqual(chunk.feed_id, "feed-42")
@@ -555,7 +555,7 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, "message-123")
         mock_publisher.publish.assert_called_once()
         publish_args, publish_kwargs = mock_publisher.publish.call_args
-        chunk = AudioChunk()
+        chunk = ContinuousAudio()
         chunk.ParseFromString(publish_args[1])
         self.assertEqual(chunk.feed_name, "Central Fire")
         self.assertEqual(publish_kwargs["ordering_key"], "feed-42")

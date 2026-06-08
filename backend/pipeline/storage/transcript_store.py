@@ -47,7 +47,7 @@ class TranscriptStore:
         we'll maintain them as separate types.
         """
         msg = EvaluatedTranscribedAudio()
-        msg.transmission_id = str(row["transmission_id"])
+        msg.segment_id = str(row["transmission_id"])
         msg.feed_id = str(row["feed_id"])
         msg.transcript = row["transcript"]
 
@@ -103,9 +103,9 @@ class TranscriptStore:
     ) -> EvaluatedTranscribedAudio:
         """Stores a new transcript record."""
         try:
-            transmission_id = uuid.UUID(transcript.transmission_id)
+            transmission_id = uuid.UUID(transcript.segment_id)
         except ValueError as e:
-            msg = f"Invalid transmission_id UUID: {transcript.transmission_id}"
+            msg = f"Invalid segment_id UUID: {transcript.segment_id}"
             raise ValueError(msg) from e
 
         try:
