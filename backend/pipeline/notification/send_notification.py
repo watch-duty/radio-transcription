@@ -9,6 +9,7 @@ from cloudevents.http.event import CloudEvent
 
 from backend.pipeline.common import env
 from backend.pipeline.common.clients.feeds_client import FeedsClient
+from backend.pipeline.common.constants import MS_PER_SECOND, NANOS_PER_MS
 from backend.pipeline.common.exceptions import NonRetryableError
 from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.storage.redis_service import RedisService
@@ -132,7 +133,7 @@ def _build_app_url(
     if evaluated_transcribed_audio.start_timestamp.seconds:
         timestamp = evaluated_transcribed_audio.start_timestamp
         query_params["timestamp"] = str(
-            timestamp.seconds * 1000 + timestamp.nanos // 1_000_000
+            timestamp.seconds * MS_PER_SECOND + timestamp.nanos // NANOS_PER_MS
         )
 
     return f"{app_url}/transcripts?{urllib.parse.urlencode(query_params)}"
