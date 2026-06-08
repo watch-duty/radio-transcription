@@ -131,22 +131,12 @@ description = "Generate Python code from Protobuf definitions"
 run = "mkdir -p .betterproto_out && uv run --with grpcio-tools python -m grpc_tools.protoc --proto_path=protos --python_out=backend/pipeline/schema_types --grpc_python_out=backend/pipeline/schema_types --pyi_out=backend/pipeline/schema_types protos/*.proto && uv run --with grpcio-tools --with \"betterproto[compiler]>=2.0.0b6\" python -m grpc_tools.protoc --proto_path=protos --python_betterproto_out=.betterproto_out protos/streaming_state.proto && cp .betterproto_out/streaming/pipeline/state/v1/__init__.py backend/pipeline/schema_types/streaming_state.py && rm -rf .betterproto_out"
 
 [tasks."build:common"]
-description = "Install and build shared frontend common package if missing"
-run = """
-if [ ! -d frontend/common/node_modules ] || [ ! -d frontend/common/dist ]; then
-  echo "Installing and building shared frontend common package..."
-  yarn --cwd frontend/common install && yarn --cwd frontend/common build
-fi
-"""
+description = "Install and build shared frontend common package"
+run = "yarn --cwd frontend/common install && yarn --cwd frontend/common build"
 
 [tasks."install:ui"]
-description = "Install UI dependencies if missing"
-run = """
-if [ ! -d frontend/transcription-ui/node_modules ]; then
-  echo "Installing UI dependencies..."
-  yarn --cwd frontend/transcription-ui install
-fi
-"""
+description = "Install UI dependencies"
+run = "yarn --cwd frontend/transcription-ui install"
 
 [tasks."install:env"]
 description = "Initialize local env file from example"
@@ -167,13 +157,8 @@ fi
 """
 
 [tasks."install:api"]
-description = "Install API Proxy dependencies if missing"
-run = """
-if [ ! -d frontend/api/node_modules ]; then
-  echo "Installing API Proxy dependencies..."
-  yarn --cwd frontend/api install
-fi
-"""
+description = "Install API Proxy dependencies"
+run = "yarn --cwd frontend/api install"
 
 [tasks."dev:start"]
 description = "Start the transcription pipeline in local Docker containers"
