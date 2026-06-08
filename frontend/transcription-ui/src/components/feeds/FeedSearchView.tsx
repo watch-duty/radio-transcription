@@ -56,9 +56,8 @@ function CollapsedFeedSearch({
       sx={{
         width: '100%',
         textAlign: 'left',
-        display: 'flex',
-        alignItems: 'center',
-        flexWrap: 'wrap',
+        display: 'grid',
+        gridTemplateColumns: { xs: '100%', md: 'repeat(2, 1fr)' },
         gap: 1.5,
       }}
     >
@@ -69,9 +68,7 @@ function CollapsedFeedSearch({
         getOptionLabel={(option) => option.name}
         size="small"
         sx={{
-          flexGrow: 1,
-          width: { xs: '100%', md: 'calc(50% - 6px)' },
-          maxWidth: { md: 'calc(50% - 6px)' },
+          width: '100%',
         }}
         value={selectedFeed}
         inputValue={localInputValue}
@@ -177,9 +174,7 @@ function CollapsedFeedSearch({
           alignItems: 'center',
           gap: 1.5,
           flexWrap: 'wrap',
-          flexGrow: 1,
-          width: { xs: '100%', md: 'calc(50% - 6px)' },
-          maxWidth: { md: 'calc(50% - 6px)' },
+          width: '100%',
         }}
       >
         <TuneIcon color="action" fontSize="small" />
