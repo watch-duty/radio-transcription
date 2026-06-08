@@ -45,7 +45,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Free up disk space
+      - name: Free up disk space (Host SSD)
         run: |
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /usr/local/lib/android
@@ -53,37 +53,22 @@ jobs:
           sudo rm -rf /opt/hostedtoolcache/CodeQL
           sudo docker image prune --all --force
 
-      - name: Install mise, install tools
-        uses: jdx/mise-action@v3
-
-      - name: Cache uv dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/uv
-          key: ${{ runner.os }}-uv-${{ hashFiles('**/uv.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-uv-
-
-      - name: Install dependencies (host)
-        run: uv sync
-
-      - name: Generate protobufs (host)
-        run: mise run generate:protos
+      - name: Pull persistent staging base images from ghcr.io
+        run: docker compose -f docker-compose.yml pull --ignore-pull-failures
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build microservices using Buildx Bake (with caching)
+      - name: Load pre-compiled microservice binaries from GHA cache
         run: |
           docker buildx bake \
             --set *.cache-from=type=gha,scope=integration-tests \
-            --set *.cache-to=type=gha,mode=max,scope=integration-tests \
             -f docker-compose.yml \
             --load
 
       - name: Run E2E tests
         run: |
-          docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run -e PYTHONPATH=/app/.venv/lib/python3.13/site-packages:/app --rm integration-tests python -m pytest integration_tests/ --ignore=integration_tests/storage/ -n auto -v -s --log-cli-level=INFO
+          docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run --rm integration-tests sh -c "pip install -q uv && uv sync && uv run python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto && uv run pytest integration_tests/ --ignore=integration_tests/storage/ -n auto -v -s --log-cli-level=INFO"
 
       - name: Clean up containers
         if: always()
