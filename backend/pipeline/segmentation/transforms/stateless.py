@@ -299,6 +299,9 @@ class UploadRawSegmentFn(beam.DoFn):
             if not self.staging_audio_bucket:
                 err_msg = "staging_audio_bucket is not configured"
                 raise ValueError(err_msg)  # noqa: TRY301
+            if not self.gcs_client:
+                err_msg = "GCS client not initialized"
+                raise RuntimeError(err_msg)  # noqa: TRY301
 
             bucket = self.gcs_client.bucket(self.staging_audio_bucket)
             blob = bucket.blob(flac_path)
