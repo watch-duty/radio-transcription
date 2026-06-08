@@ -1,14 +1,22 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import AppRegistrationIcon from '@mui/icons-material/AppRegistration';
 import Box from '@mui/material/Box';
 import Grid from '@mui/material/Grid';
 import Typography from '@mui/material/Typography';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { Feed, FeedCreate, FeedUpdate, Tag } from '@transcription/common';
+import type { InfiniteData } from '@tanstack/react-query';
+import type {
+  Feed,
+  FeedCreate,
+  FeedUpdate,
+  ListFeedsResponse,
+  Tag,
+} from '@transcription/common';
 import { SourceType } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
+import { useListFeeds } from '../../hooks/useListFeeds';
 import { createFeed } from '../../service/createFeed';
 import { deactivateFeed } from '../../service/deactivateFeed';
 import { deleteFeed } from '../../service/deleteFeed';
@@ -23,7 +31,25 @@ interface FeedConfigurationViewProps {
   onError: (error: Error, titleMessage?: string) => void;
 }
 
-const QUERY_DEBOUNCE_TIME_MS = 300;
+const updateFeedInCache = (
+  oldData: Feed[] | InfiniteData<ListFeedsResponse> | undefined,
+  updatedFeed: Feed
+) => {
+  if (!oldData) return oldData;
+  if ('pages' in oldData) {
+    return {
+      ...oldData,
+      pages: oldData.pages.map((page) => ({
+        ...page,
+        feeds: page.feeds.map((f) => (f.id === updatedFeed.id ? updatedFeed : f)),
+      })),
+    };
+  }
+  if (Array.isArray(oldData)) {
+    return oldData.map((f) => (f.id === updatedFeed.id ? updatedFeed : f));
+  }
+  return oldData;
+};
 
 export function FeedConfigurationView({
   triggerSnackbar,
@@ -46,57 +72,22 @@ export function FeedConfigurationView({
     tags: [],
   });
 
-  // We are only debouncing the query because the keystrokes can be fast and we want to avoid querying every keypress.
-  // However for the filter selections, selecting options is a bit slower and we want to show immediate feedback from checkboxes.
-  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState(
-    filters.searchQuery
-  );
-
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedSearchQuery(filters.searchQuery);
-    }, QUERY_DEBOUNCE_TIME_MS);
-    return () => clearTimeout(handler);
-  }, [filters.searchQuery]);
-
   const feedsErrorHandled = useRef<Error | null>(null);
 
-  // We flatten the filter object and include array lengths in the query key.
-  // In JavaScript, empty arrays ([]) are compared by object reference rather than value.
-  // Flattening the keys and including primitive lengths (e.g. 0) ensures that we can define
-  // a stable, static query key for `allFeeds` (['listFeeds', token, '', [], 0, [], 0, [], 0])
-  // that matches the structure of the main query, allowing `queryClient.setQueriesData`
-  // and `invalidateQueries` prefix matching to successfully update both query caches at once.
   const {
-    data: feeds = [],
+    feeds,
     isLoading: feedsLoading,
     error: feedsError,
-  } = useQuery({
-    queryKey: [
-      'listFeeds',
-      token,
-      debouncedSearchQuery,
-      filters.sourceTypes,
-      filters.sourceTypes.length,
-      filters.statuses,
-      filters.statuses.length,
-      filters.tags,
-      filters.tags.length,
-    ],
-    queryFn: () =>
-      listFeeds(token!, {
-        name: debouncedSearchQuery || undefined,
-        sourceTypes:
-          filters.sourceTypes.length > 0 ? filters.sourceTypes : undefined,
-        statuses: filters.statuses.length > 0 ? filters.statuses : undefined,
-        tags: filters.tags.length > 0 ? filters.tags : undefined,
-      }),
-    enabled: !!token,
-    refetchOnWindowFocus: false,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useListFeeds({
+    token,
+    filters,
   });
 
   const { data: allFeeds = [] } = useQuery({
-    queryKey: ['listFeeds', token, '', [], 0, [], 0, [], 0],
+    queryKey: ['listFeeds', token, 'all', '', [], 0, [], 0, [], 0],
     queryFn: () => listFeeds(token!, {}),
     enabled: !!token,
     refetchOnWindowFocus: false,
@@ -119,16 +110,12 @@ export function FeedConfigurationView({
     setTags([]);
   };
 
-  const resetFormAndRefresh = () => {
-    resetForm();
-    queryClient.invalidateQueries({ queryKey: ['listFeeds', token] });
-  };
-
   const createMutation = useMutation({
     mutationFn: (newFeed: FeedCreate) => createFeed(newFeed, token!),
     onSuccess: (data) => {
       triggerSnackbar(`Feed "${data.name}" registered successfully!`);
       queryClient.invalidateQueries({ queryKey: ['listFeeds', token] });
+      resetForm();
     },
     onError: (error: Error) => {
       onError(error, 'Registering Feed');
@@ -146,7 +133,11 @@ export function FeedConfigurationView({
     onSuccess: (data) => {
       triggerSnackbar(`Feed "${data.name}" updated successfully!`);
       setIsEditing(false);
-      resetFormAndRefresh();
+      queryClient.setQueriesData<Feed[] | InfiniteData<ListFeedsResponse>>(
+        { queryKey: ['listFeeds', token] },
+        (oldData) => updateFeedInCache(oldData, data)
+      );
+      resetForm();
     },
     onError: (error: Error) => {
       onError(error, 'Updating Feed Settings');
@@ -158,11 +149,26 @@ export function FeedConfigurationView({
     onSuccess: (_, feedId) => {
       triggerSnackbar('Feed deleted successfully!');
       setIsEditing(false);
-      queryClient.setQueriesData<Feed[]>(
+      queryClient.setQueriesData<Feed[] | InfiniteData<ListFeedsResponse>>(
         { queryKey: ['listFeeds', token] },
-        (oldFeeds) => (oldFeeds ? oldFeeds.filter((f) => f.id !== feedId) : [])
+        (oldData) => {
+          if (!oldData) return oldData;
+          if ('pages' in oldData) {
+            return {
+              ...oldData,
+              pages: oldData.pages.map((page) => ({
+                ...page,
+                feeds: page.feeds.filter((f) => f.id !== feedId),
+              })),
+            };
+          }
+          if (Array.isArray(oldData)) {
+            return oldData.filter((f) => f.id !== feedId);
+          }
+          return oldData;
+        }
       );
-      resetFormAndRefresh();
+      resetForm();
     },
     onError: (error: Error) => {
       onError(error, 'Deleting Feed');
@@ -171,10 +177,33 @@ export function FeedConfigurationView({
 
   const deactivateMutation = useMutation({
     mutationFn: (feedId: string) => deactivateFeed(feedId, token!),
-    onSuccess: () => {
+    onSuccess: (_, feedId) => {
       triggerSnackbar('Feed deactivated successfully!');
       setIsEditing(false);
-      resetFormAndRefresh();
+      queryClient.setQueriesData<Feed[] | InfiniteData<ListFeedsResponse>>(
+        { queryKey: ['listFeeds', token] },
+        (oldData) => {
+          if (!oldData) return oldData;
+          const updateStatus = (f: Feed): Feed =>
+            f.id === feedId
+              ? { ...f, status: 'inactive', substatus: 'deactivated' }
+              : f;
+          if ('pages' in oldData) {
+            return {
+              ...oldData,
+              pages: oldData.pages.map((page) => ({
+                ...page,
+                feeds: page.feeds.map(updateStatus),
+              })),
+            };
+          }
+          if (Array.isArray(oldData)) {
+            return oldData.map(updateStatus);
+          }
+          return oldData;
+        }
+      );
+      resetForm();
     },
     onError: (error: Error) => {
       onError(error, 'Deactivating Feed');
@@ -186,7 +215,11 @@ export function FeedConfigurationView({
     onSuccess: (data) => {
       triggerSnackbar(`Feed "${data.name}" reset successfully!`);
       setIsEditing(false);
-      resetFormAndRefresh();
+      queryClient.setQueriesData<Feed[] | InfiniteData<ListFeedsResponse>>(
+        { queryKey: ['listFeeds', token] },
+        (oldData) => updateFeedInCache(oldData, data)
+      );
+      resetForm();
     },
     onError: (error: Error) => {
       onError(error, 'Resetting Feed');
@@ -325,6 +358,9 @@ export function FeedConfigurationView({
             isSubmitting={isSubmitting}
             filters={filters}
             onFiltersChange={setFilters}
+            hasNextPage={hasNextPage}
+            onLoadMore={fetchNextPage}
+            isFetchingNextPage={isFetchingNextPage}
           />
         </Grid>
       </Grid>

@@ -9,6 +9,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import TroubleshootIcon from '@mui/icons-material/Troubleshoot';
 import TuneIcon from '@mui/icons-material/Tune';
 import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
 import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -51,6 +52,9 @@ export interface FeedTableProps {
   isSubmitting?: boolean;
   filters: FeedFilters;
   onFiltersChange: (filters: FeedFilters) => void;
+  hasNextPage?: boolean;
+  onLoadMore?: () => void;
+  isFetchingNextPage?: boolean;
 }
 
 interface SortConfig {
@@ -170,6 +174,9 @@ export function FeedTable({
   isSubmitting = false,
   filters,
   onFiltersChange,
+  hasNextPage,
+  onLoadMore,
+  isFetchingNextPage,
 }: FeedTableProps) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -178,6 +185,7 @@ export function FeedTable({
     column: 'name',
     direction: 'asc',
   });
+  const [isNearBottom, setIsNearBottom] = useState(false);
 
   // Calculate unique tags across all feeds
   const tags = useMemo<{ key: string; value: string }[]>(() => {
@@ -207,7 +215,7 @@ export function FeedTable({
   };
 
   const sortFeeds = useMemo(() => {
-    return feeds.sort((a, b) => {
+    return [...feeds].sort((a, b) => {
       let comparison = 0;
       if (sortConfig.column === 'name') {
         comparison = a.name.localeCompare(b.name);
@@ -480,20 +488,6 @@ export function FeedTable({
               {title}
             </Typography>
           </Box>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            {sortFeeds.length !== feeds.length && (
-              <Typography variant="body2" color="text.secondary">
-                Showing {sortFeeds.length} of {feeds.length} feeds
-              </Typography>
-            )}
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ fontWeight: 500 }}
-            >
-              {feeds.length} Feeds
-            </Typography>
-          </Box>
         </Box>
 
         <Box
@@ -670,13 +664,67 @@ export function FeedTable({
       ) : (
         <TableVirtuoso
           data={sortFeeds}
-          context={{ editingFeedId, allowEdit }}
+          context={{ editingFeedId, allowEdit, isFetchingNextPage }}
           computeItemKey={(_index, feed) => feed.id}
           components={VIRTUOSO_COMPONENTS}
           style={{ flexGrow: 1, minHeight: 0 }}
           fixedHeaderContent={() => tableHeader}
           itemContent={(_index, feed) => renderRowContent(feed)}
+          rangeChanged={(range) => {
+            const threshold = 15;
+            const nearBottom = range.endIndex >= sortFeeds.length - 3;
+            setIsNearBottom(nearBottom);
+
+            if (
+              hasNextPage &&
+              onLoadMore &&
+              !isFetchingNextPage &&
+              range.endIndex >= sortFeeds.length - threshold
+            ) {
+              onLoadMore();
+            }
+          }}
         />
+      )}
+      {isMobile && hasNextPage && onLoadMore && (
+        <Box
+          sx={{
+            display: 'flex',
+            justifyContent: 'center',
+            p: 2,
+            borderTop: '1px solid',
+            borderColor: 'divider',
+          }}
+        >
+          {isFetchingNextPage ? (
+            <CircularProgress size={24} />
+          ) : (
+            <Button onClick={onLoadMore} variant="outlined" size="small">
+              Load More
+            </Button>
+          )}
+        </Box>
+      )}
+      {!isMobile && isFetchingNextPage && isNearBottom && (
+        <Box
+          sx={{
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            py: 2,
+            backgroundColor: 'background.paper',
+            gap: 1.5,
+          }}
+        >
+          <CircularProgress size={20} thickness={5} />
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ fontWeight: 500 }}
+          >
+            Loading more feeds...
+          </Typography>
+        </Box>
       )}
     </Card>
   );

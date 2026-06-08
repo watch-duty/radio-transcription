@@ -4,6 +4,7 @@ import { Box } from '@mui/material';
 import { useQuery } from '@tanstack/react-query';
 
 import { useAuth } from '../../context/AuthContext';
+import { useListFeeds } from '../../hooks/useListFeeds';
 import { listFeeds } from '../../service/listFeeds';
 import { type FeedFilters, FeedTable } from './FeedTable';
 
@@ -14,7 +15,6 @@ interface FeedSearchViewProps {
 }
 
 const FEED_REFETCH_INTERVAL_MS = 15000; // 15 seconds
-const QUERY_DEBOUNCE_TIME_MS = 300;
 
 export function FeedSearchView({ title, onError }: FeedSearchViewProps) {
   const { token } = useAuth();
@@ -26,48 +26,21 @@ export function FeedSearchView({ title, onError }: FeedSearchViewProps) {
     tags: [],
   });
 
-  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState(
-    filters.searchQuery
-  );
-
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedSearchQuery(filters.searchQuery);
-    }, QUERY_DEBOUNCE_TIME_MS);
-    return () => clearTimeout(handler);
-  }, [filters.searchQuery]);
-
   const {
-    data: feeds,
+    feeds,
     error: feedsError,
     isLoading: feedsLoading,
-  } = useQuery({
-    queryKey: [
-      'listFeeds',
-      token,
-      debouncedSearchQuery,
-      filters.sourceTypes,
-      filters.sourceTypes.length,
-      filters.statuses,
-      filters.statuses.length,
-      filters.tags,
-      filters.tags.length,
-    ],
-    queryFn: () =>
-      listFeeds(token!, {
-        name: debouncedSearchQuery || undefined,
-        sourceTypes:
-          filters.sourceTypes.length > 0 ? filters.sourceTypes : undefined,
-        statuses: filters.statuses.length > 0 ? filters.statuses : undefined,
-        tags: filters.tags.length > 0 ? filters.tags : undefined,
-      }),
-    enabled: !!token,
-    refetchOnWindowFocus: false,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useListFeeds({
+    token,
+    filters,
     refetchInterval: FEED_REFETCH_INTERVAL_MS,
   });
 
   const { data: allFeeds = [] } = useQuery({
-    queryKey: ['listFeeds', token, '', [], 0, [], 0, [], 0],
+    queryKey: ['listFeeds', token, 'all', '', [], 0, [], 0, [], 0],
     queryFn: () => listFeeds(token!, {}),
     enabled: !!token,
     refetchOnWindowFocus: false,
@@ -91,11 +64,14 @@ export function FeedSearchView({ title, onError }: FeedSearchViewProps) {
     >
       <FeedTable
         title={title}
-        feeds={feeds ?? []}
+        feeds={feeds}
         allFeeds={allFeeds}
         isLoading={feedsLoading}
         filters={filters}
         onFiltersChange={setFilters}
+        hasNextPage={hasNextPage}
+        onLoadMore={fetchNextPage}
+        isFetchingNextPage={isFetchingNextPage}
       />
     </Box>
   );

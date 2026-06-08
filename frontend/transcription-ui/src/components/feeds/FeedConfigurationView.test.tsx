@@ -21,7 +21,7 @@ import { SourceType } from '@transcription/common';
 import { createFeed } from '../../service/createFeed';
 import { deactivateFeed } from '../../service/deactivateFeed';
 import { deleteFeed } from '../../service/deleteFeed';
-import { listFeeds } from '../../service/listFeeds';
+import { listFeeds, listFeedsPage } from '../../service/listFeeds';
 import { resetFeed } from '../../service/resetFeed';
 import { updateFeed } from '../../service/updateFeed';
 import { renderWithQueryClient } from '../../test/testUtils';
@@ -30,6 +30,7 @@ import FeedConfigurationView from './FeedConfigurationView';
 // Mock API services
 vi.mock('../../service/listFeeds', () => ({
   listFeeds: vi.fn(),
+  listFeedsPage: vi.fn(),
 }));
 
 vi.mock('../../service/createFeed', () => ({
@@ -95,6 +96,14 @@ describe('FeedConfigurationView', () => {
         filtered = filtered.filter((f) => f.name.toLowerCase().includes(q));
       }
       return Promise.resolve(filtered);
+    });
+    vi.mocked(listFeedsPage).mockImplementation((_, params) => {
+      let filtered = mockFeeds;
+      if (params?.name) {
+        const q = params.name.toLowerCase();
+        filtered = filtered.filter((f) => f.name.toLowerCase().includes(q));
+      }
+      return Promise.resolve({ feeds: filtered });
     });
     vi.mocked(deleteFeed).mockResolvedValue(undefined);
     vi.mocked(deactivateFeed).mockResolvedValue(undefined);
@@ -893,6 +902,9 @@ describe('FeedConfigurationView', () => {
       tags: [],
     };
     vi.mocked(listFeeds).mockResolvedValue([...mockFeeds, unclaimedFeed]);
+    vi.mocked(listFeedsPage).mockResolvedValue({
+      feeds: [...mockFeeds, unclaimedFeed],
+    });
 
     renderView();
 
