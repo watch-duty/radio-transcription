@@ -24,6 +24,249 @@ const FEED_REFETCH_INTERVAL_MS = 15000; // 15 seconds
 const QUERY_DEBOUNCE_TIME_MS = 300;
 const ALL_SOURCE_TYPES = Object.values(SourceType);
 
+interface CollapsedFeedSearchProps {
+  feeds: Feed[];
+  selectedFeed: Feed | null;
+  localInputValue: string;
+  setLocalInputValue: (value: string) => void;
+  isFocused: boolean;
+  setIsFocused: (focused: boolean) => void;
+  filters: FeedFilters;
+  onFiltersChange: (filters: FeedFilters) => void;
+  feedsLoading: boolean;
+  tags: { key: string; value: string }[];
+  onFeedSelect?: (feedId: string) => void;
+}
+
+function CollapsedFeedSearch({
+  feeds,
+  selectedFeed,
+  localInputValue,
+  setLocalInputValue,
+  isFocused,
+  setIsFocused,
+  filters,
+  onFiltersChange,
+  feedsLoading,
+  tags,
+  onFeedSelect,
+}: CollapsedFeedSearchProps) {
+  return (
+    <Box
+      sx={{
+        width: '100%',
+        textAlign: 'left',
+        display: 'flex',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: 1.5,
+      }}
+    >
+      <Autocomplete
+        disablePortal
+        options={feeds}
+        filterOptions={(x) => x}
+        getOptionLabel={(option) => option.name}
+        size="small"
+        sx={{
+          flexGrow: 1,
+          width: { xs: '100%', md: 'calc(50% - 6px)' },
+          maxWidth: { md: 'calc(50% - 6px)' },
+        }}
+        value={selectedFeed}
+        inputValue={localInputValue}
+        onChange={(_, option) => {
+          if (option) {
+            onFeedSelect?.(option.id);
+          }
+        }}
+        onInputChange={(_, newInputValue, reason) => {
+          if (reason === 'reset' && isFocused) {
+            return;
+          }
+          setLocalInputValue(newInputValue);
+          if (reason === 'input' || reason === 'clear') {
+            onFiltersChange({ ...filters, searchQuery: newInputValue });
+          }
+        }}
+        onFocus={() => setIsFocused(true)}
+        onBlur={() => setIsFocused(false)}
+        loading={feedsLoading}
+        renderInput={(params) => (
+          <TextField
+            {...params}
+            label="Select feed"
+            placeholder="Search or select feed..."
+          />
+        )}
+        renderOption={(props, option) => {
+          const { key, ...optionProps } = props;
+          return (
+            <Box
+              key={key}
+              component="li"
+              {...optionProps}
+              sx={{
+                display: 'block !important',
+                textAlign: 'left !important',
+                width: '100%',
+                borderBottom: '1px solid',
+                borderColor: 'divider',
+                py: 1,
+                px: 2,
+                '&:last-child': {
+                  borderBottom: 'none',
+                },
+              }}
+            >
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1,
+                }}
+              >
+                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                  {option.name}
+                </Typography>
+                <FeedStatusIndicator
+                  status={option.status}
+                  substatus={option.substatus}
+                  lastHeartbeat={option.lastHeartbeat}
+                />
+              </Box>
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  gap: 0.75,
+                  mt: 0.5,
+                }}
+              >
+                <Chip
+                  label={option.sourceType}
+                  size="small"
+                  variant="outlined"
+                />
+                {option.tags && option.tags.length > 0 && (
+                  <>
+                    {option.tags.map((tag, i) => (
+                      <Chip
+                        key={`feed-${option.id}-tag-${i}`}
+                        label={
+                          <Typography variant="body2">
+                            <b>{tag.key}</b>: {tag.value}
+                          </Typography>
+                        }
+                        size="small"
+                        variant="filled"
+                      />
+                    ))}
+                  </>
+                )}
+              </Box>
+            </Box>
+          );
+        }}
+      />
+
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1.5,
+          flexWrap: 'wrap',
+          flexGrow: 1,
+          width: { xs: '100%', md: 'calc(50% - 6px)' },
+          maxWidth: { md: 'calc(50% - 6px)' },
+        }}
+      >
+        <TuneIcon color="action" fontSize="small" />
+        <Box sx={{ flexGrow: 1, minWidth: 120, maxWidth: { sm: 200 } }}>
+          <MultiSelectFilter
+            label="Source Type"
+            options={ALL_SOURCE_TYPES}
+            value={filters.sourceTypes}
+            onChange={(types) =>
+              onFiltersChange({ ...filters, sourceTypes: types })
+            }
+            size="small"
+          />
+        </Box>
+        <Box sx={{ flexGrow: 1, minWidth: 120, maxWidth: { sm: 160 } }}>
+          <MultiSelectFilter
+            label="Status"
+            options={['Active', 'Inactive', 'Error']}
+            value={filters.statuses}
+            onChange={(statuses) => onFiltersChange({ ...filters, statuses })}
+            size="small"
+          />
+        </Box>
+        <Box sx={{ flexGrow: 1, minWidth: 120, maxWidth: { sm: 200 } }}>
+          <MultiSelectFilter
+            label="Tags"
+            options={tags}
+            value={filters.tags}
+            onChange={(tags) => onFiltersChange({ ...filters, tags })}
+            size="small"
+            groupBy={(tag) => tag.key}
+            getOptionLabel={(tag) => `${tag.key}: ${tag.value}`}
+            isOptionEqualToValue={(a, b) =>
+              a.key === b.key && a.value === b.value
+            }
+            renderOptionContent={(tag) => tag.value}
+            renderValueLabel={(tag) => (
+              <Typography variant="body2">
+                <b>{tag.key}</b>: {tag.value}
+              </Typography>
+            )}
+          />
+        </Box>
+      </Box>
+    </Box>
+  );
+}
+
+interface ExpandedFeedSearchProps {
+  title: string;
+  feeds: Feed[];
+  allFeeds: Feed[];
+  feedsLoading: boolean;
+  filters: FeedFilters;
+  onFiltersChange: (filters: FeedFilters) => void;
+}
+
+function ExpandedFeedSearch({
+  title,
+  feeds,
+  allFeeds,
+  feedsLoading,
+  filters,
+  onFiltersChange,
+}: ExpandedFeedSearchProps) {
+  return (
+    <Box
+      sx={{
+        width: '100%',
+        textAlign: 'left',
+        display: 'flex',
+        flexDirection: 'column',
+        height: 'calc(100vh - 100px)',
+      }}
+    >
+      <FeedTable
+        title={title}
+        feeds={feeds}
+        allFeeds={allFeeds}
+        isLoading={feedsLoading}
+        filters={filters}
+        onFiltersChange={onFiltersChange}
+      />
+    </Box>
+  );
+}
+
 export function FeedSearchView({
   title,
   onError,
@@ -134,200 +377,31 @@ export function FeedSearchView({
 
   if (collapsed) {
     return (
-      <Box
-        sx={{
-          width: '100%',
-          textAlign: 'left',
-          display: 'flex',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: 1.5,
-        }}
-      >
-        <Autocomplete
-          disablePortal
-          options={sortedFeedsForAutocomplete}
-          getOptionLabel={(option) => option.name}
-          size="small"
-          sx={{
-            flexGrow: 1,
-            width: { xs: '100%', md: 'calc(50% - 6px)' },
-            maxWidth: { md: 'calc(50% - 6px)' },
-          }}
-          value={selectedFeed}
-          inputValue={localInputValue}
-          onChange={(_, option) => {
-            if (option) {
-              onFeedSelect?.(option.id);
-            }
-          }}
-          onInputChange={(_, newInputValue, reason) => {
-            if (reason === 'reset' && isFocused) {
-              return;
-            }
-            setLocalInputValue(newInputValue);
-            if (reason === 'input' || reason === 'clear') {
-              setFilters((prev) => ({ ...prev, searchQuery: newInputValue }));
-            }
-          }}
-          onFocus={() => setIsFocused(true)}
-          onBlur={() => setIsFocused(false)}
-          loading={feedsLoading}
-          renderInput={(params) => (
-            <TextField
-              {...params}
-              label="Select feed"
-              placeholder="Search or select feed..."
-            />
-          )}
-          renderOption={(props, option) => {
-            const { key, ...optionProps } = props;
-            return (
-              <Box
-                key={key}
-                component="li"
-                {...optionProps}
-                sx={{
-                  display: 'block !important',
-                  textAlign: 'left !important',
-                  width: '100%',
-                  borderBottom: '1px solid',
-                  borderColor: 'divider',
-                  py: 1,
-                  px: 2,
-                  '&:last-child': {
-                    borderBottom: 'none',
-                  },
-                }}
-              >
-                <Box
-                  sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 1,
-                  }}
-                >
-                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                    {option.name}
-                  </Typography>
-                  <FeedStatusIndicator
-                    status={option.status}
-                    substatus={option.substatus}
-                    lastHeartbeat={option.lastHeartbeat}
-                  />
-                </Box>
-                <Box
-                  sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    flexWrap: 'wrap',
-                    gap: 0.75,
-                    mt: 0.5,
-                  }}
-                >
-                  <Chip
-                    label={option.sourceType}
-                    size="small"
-                    variant="outlined"
-                  />
-                  {option.tags && option.tags.length > 0 && (
-                    <>
-                      {option.tags.map((tag, i) => (
-                        <Chip
-                          key={`feed-${option.id}-tag-${i}`}
-                          label={
-                            <Typography variant="body2">
-                              <b>{tag.key}</b>: {tag.value}
-                            </Typography>
-                          }
-                          size="small"
-                          variant="filled"
-                        />
-                      ))}
-                    </>
-                  )}
-                </Box>
-              </Box>
-            );
-          }}
-        />
-
-        <Box
-          sx={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 1.5,
-            flexWrap: 'wrap',
-            flexGrow: 1,
-            width: { xs: '100%', md: 'calc(50% - 6px)' },
-            maxWidth: { md: 'calc(50% - 6px)' },
-          }}
-        >
-          <TuneIcon color="action" fontSize="small" />
-          <Box sx={{ flexGrow: 1, minWidth: 120, maxWidth: { sm: 200 } }}>
-            <MultiSelectFilter
-              label="Source Type"
-              options={ALL_SOURCE_TYPES}
-              value={filters.sourceTypes}
-              onChange={(types) =>
-                setFilters({ ...filters, sourceTypes: types })
-              }
-              size="small"
-            />
-          </Box>
-          <Box sx={{ flexGrow: 1, minWidth: 120, maxWidth: { sm: 160 } }}>
-            <MultiSelectFilter
-              label="Status"
-              options={['Active', 'Inactive', 'Error']}
-              value={filters.statuses}
-              onChange={(statuses) => setFilters({ ...filters, statuses })}
-              size="small"
-            />
-          </Box>
-          <Box sx={{ flexGrow: 1, minWidth: 120, maxWidth: { sm: 200 } }}>
-            <MultiSelectFilter
-              label="Tags"
-              options={tags}
-              value={filters.tags}
-              onChange={(tags) => setFilters({ ...filters, tags })}
-              size="small"
-              groupBy={(tag) => tag.key}
-              getOptionLabel={(tag) => `${tag.key}: ${tag.value}`}
-              isOptionEqualToValue={(a, b) =>
-                a.key === b.key && a.value === b.value
-              }
-              renderOptionContent={(tag) => tag.value}
-              renderValueLabel={(tag) => (
-                <Typography variant="body2">
-                  <b>{tag.key}</b>: {tag.value}
-                </Typography>
-              )}
-            />
-          </Box>
-        </Box>
-      </Box>
+      <CollapsedFeedSearch
+        feeds={sortedFeedsForAutocomplete}
+        selectedFeed={selectedFeed}
+        localInputValue={localInputValue}
+        setLocalInputValue={setLocalInputValue}
+        isFocused={isFocused}
+        setIsFocused={setIsFocused}
+        filters={filters}
+        onFiltersChange={setFilters}
+        feedsLoading={feedsLoading}
+        tags={tags}
+        onFeedSelect={onFeedSelect}
+      />
     );
   }
 
   return (
-    <Box
-      sx={{
-        width: '100%',
-        textAlign: 'left',
-        display: 'flex',
-        flexDirection: 'column',
-        height: 'calc(100vh - 100px)',
-      }}
-    >
-      <FeedTable
-        title={title}
-        feeds={feeds ?? []}
-        allFeeds={allFeeds}
-        isLoading={feedsLoading}
-        filters={filters}
-        onFiltersChange={setFilters}
-      />
-    </Box>
+    <ExpandedFeedSearch
+      title={title}
+      feeds={feeds ?? []}
+      allFeeds={allFeeds}
+      feedsLoading={feedsLoading}
+      filters={filters}
+      onFiltersChange={setFilters}
+    />
   );
 }
 
