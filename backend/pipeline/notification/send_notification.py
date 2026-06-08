@@ -127,7 +127,7 @@ def _build_app_url(
 ) -> str:
     query_params = {
         "feedId": evaluated_transcribed_audio.feed_id,
-        "transmissionId": evaluated_transcribed_audio.segment_id,
+        "segmentId": evaluated_transcribed_audio.segment_id,
     }
     if evaluated_transcribed_audio.start_timestamp.seconds:
         timestamp = evaluated_transcribed_audio.start_timestamp
