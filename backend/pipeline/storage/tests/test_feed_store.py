@@ -336,10 +336,9 @@ class TestStatusReasonClearSql(unittest.TestCase):
         sql = _sql_without_comments(feed_queries.RECORD_SOURCE_OBSERVATION_SQL)
 
         self.assertIn("failure_count = 0", sql)
-        self.assertIn(
-            "last_bookmark_time = COALESCE($4, last_bookmark_time)",
-            sql,
-        )
+        self.assertIn("WHEN $4 IS NULL THEN last_bookmark_time", sql)
+        self.assertIn("WHEN last_bookmark_time IS NULL THEN $4", sql)
+        self.assertIn("ELSE GREATEST(last_bookmark_time, $4)", sql)
         self.assertIn("status_reason = NULL", sql)
         self.assertIn("current_state.worker_id = $2", sql)
         self.assertIn("current_state.fencing_token = $3", sql)
