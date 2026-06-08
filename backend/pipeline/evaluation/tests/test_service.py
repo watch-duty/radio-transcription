@@ -133,9 +133,7 @@ class TestEvaluationService(unittest.TestCase):
                     rule_id="r1",
                     text_match=TextMatchAnnotation(
                         spans=[
-                            TextMatchSpan(
-                                start=11, end=15, matched_text="fire"
-                            )
+                            TextMatchSpan(start=11, end=15, matched_text="fire")
                         ]
                     ),
                 )

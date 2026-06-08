@@ -6,7 +6,9 @@ from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, Field
 
-from backend.pipeline.common.evaluation.annotations import RuleAnnotation
+from backend.pipeline.common.evaluation.annotations import (  # noqa: TC001
+    RuleAnnotation,
+)
 
 
 class AudioClassification(StrEnum):

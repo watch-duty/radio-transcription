@@ -41,8 +41,9 @@ class TestTextEvaluator(unittest.TestCase):
         annotations = result["rule_annotations"]
         self.assertEqual(len(annotations), 1)
         self.assertEqual(annotations[0].rule_id, "basic_fire_terms")
-        self.assertIsNotNone(annotations[0].text_match)
-        spans = annotations[0].text_match.spans
+        text_match = annotations[0].text_match
+        assert text_match is not None
+        spans = text_match.spans
         self.assertEqual(len(spans), 1)
         self.assertEqual(spans[0].start, text.index("fire"))
         self.assertEqual(spans[0].end, text.index("fire") + 4)
@@ -53,7 +54,9 @@ class TestTextEvaluator(unittest.TestCase):
         text = "The FIRE is spreading."
         result = self.static_evaluator.evaluate(text, feed_id="test_feed")
         self.assertTrue(result["is_flagged"])
-        spans = result["rule_annotations"][0].text_match.spans
+        text_match = result["rule_annotations"][0].text_match
+        assert text_match is not None
+        spans = text_match.spans
         matched_texts = [s.matched_text for s in spans]
         self.assertIn("FIRE", matched_texts)
         self.assertIn("spreading", matched_texts)
@@ -143,7 +146,9 @@ def _keyword_rule(
     )
 
 
-def _regex_rule(rule_id: str, expression: str, *, flags: str = "i") -> models.Rule:
+def _regex_rule(
+    rule_id: str, expression: str, *, flags: str = "i"
+) -> models.Rule:
     return models.Rule(
         rule_id=rule_id,
         rule_name=rule_id,
@@ -175,7 +180,9 @@ class TestKeywordAnnotations(unittest.TestCase):
         text = "Fire on the ridge, evacuate now"
         result = self.evaluator._evaluate_ruleset([rule], text, "feed-1")
         self.assertTrue(result["is_flagged"])
-        spans = result["rule_annotations"][0].text_match.spans
+        text_match = result["rule_annotations"][0].text_match
+        assert text_match is not None
+        spans = text_match.spans
         matched = [(s.start, s.end, s.matched_text) for s in spans]
         self.assertEqual(
             matched,
@@ -232,7 +239,9 @@ class TestRegexAnnotations(unittest.TestCase):
             [rule], "unit 12 to unit 34", "feed-1"
         )
         self.assertTrue(result["is_flagged"])
-        spans = result["rule_annotations"][0].text_match.spans
+        text_match = result["rule_annotations"][0].text_match
+        assert text_match is not None
+        spans = text_match.spans
         self.assertEqual(
             [(s.start, s.end, s.matched_text) for s in spans],
             [(5, 7, "12"), (16, 18, "34")],
@@ -243,7 +252,9 @@ class TestRegexAnnotations(unittest.TestCase):
         result = self.evaluator._evaluate_ruleset(
             [rule], "FIRE on the ridge", "feed-1"
         )
-        spans = result["rule_annotations"][0].text_match.spans
+        text_match = result["rule_annotations"][0].text_match
+        assert text_match is not None
+        spans = text_match.spans
         self.assertEqual(spans[0].matched_text, "FIRE")
 
     def test_regex_no_match_produces_no_annotation(self) -> None:

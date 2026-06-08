@@ -93,70 +93,80 @@ class BaseTextEvaluator(ABC):
         conditions = rule.conditions
 
         if isinstance(conditions, models.RegexConditions):
-            flags = re.IGNORECASE if "i" in conditions.flags else 0
-            spans = [
-                TextMatchSpan(
-                    start=m.start(),
-                    end=m.end(),
-                    matched_text=m.group(0),
-                )
-                for m in re.finditer(conditions.expression, text, flags)
-            ]
-            if not spans:
-                return None
-            return RuleAnnotation(
-                rule_id=rule.rule_id,
-                text_match=TextMatchAnnotation(spans=spans),
-            )
+            return self._evaluate_regex(rule, conditions, text)
 
         if isinstance(conditions, models.KeywordConditions):
-            # Filter out empty, empty-string, or whitespace-only keywords
-            valid_keywords = [
-                k.strip() for k in conditions.keywords if k and k.strip()
-            ]
-            if not valid_keywords:
-                return None
-
-            # Reuse the cached word-boundary patterns so span capture matches
-            # the flagging semantics exactly.
-            compiled = _get_compiled_keyword_regex(
-                tuple(valid_keywords),
-                case_sensitive=conditions.case_sensitive,
-                operator=conditions.operator,
-            )
-
-            if conditions.operator == models.LogicalOperator.ANY and isinstance(
-                compiled, re.Pattern
-            ):
-                per_keyword_matches = [list(compiled.finditer(text))]
-                if not any(per_keyword_matches):
-                    return None
-            elif conditions.operator == models.LogicalOperator.ALL and isinstance(
-                compiled, list
-            ):
-                per_keyword_matches = [list(p.finditer(text)) for p in compiled]
-                if not all(per_keyword_matches):
-                    return None
-            else:
-                return None
-
-            spans = [
-                TextMatchSpan(
-                    start=m.start(),
-                    end=m.end(),
-                    matched_text=m.group(0),
-                )
-                for matches in per_keyword_matches
-                for m in matches
-            ]
-            spans.sort(key=lambda s: (s.start, -s.end))
-            return RuleAnnotation(
-                rule_id=rule.rule_id,
-                text_match=TextMatchAnnotation(spans=spans),
-            )
+            return self._evaluate_keywords(rule, conditions, text)
 
         # For now, we skip GroupConditions as it requires a rule lookup
         return None
+
+    def _evaluate_regex(
+        self, rule: models.Rule, conditions: models.RegexConditions, text: str
+    ) -> RuleAnnotation | None:
+        flags = re.IGNORECASE if "i" in conditions.flags else 0
+        spans = [
+            TextMatchSpan(
+                start=m.start(),
+                end=m.end(),
+                matched_text=m.group(0),
+            )
+            for m in re.finditer(conditions.expression, text, flags)
+        ]
+        if not spans:
+            return None
+        return RuleAnnotation(
+            rule_id=rule.rule_id,
+            text_match=TextMatchAnnotation(spans=spans),
+        )
+
+    def _evaluate_keywords(
+        self, rule: models.Rule, conditions: models.KeywordConditions, text: str
+    ) -> RuleAnnotation | None:
+        # Filter out empty, empty-string, or whitespace-only keywords
+        valid_keywords = [
+            k.strip() for k in conditions.keywords if k and k.strip()
+        ]
+        if not valid_keywords:
+            return None
+
+        # Reuse the cached word-boundary patterns so span capture matches
+        # the flagging semantics exactly.
+        compiled = _get_compiled_keyword_regex(
+            tuple(valid_keywords),
+            case_sensitive=conditions.case_sensitive,
+            operator=conditions.operator,
+        )
+
+        if conditions.operator == models.LogicalOperator.ANY and isinstance(
+            compiled, re.Pattern
+        ):
+            per_keyword_matches = [list(compiled.finditer(text))]
+            if not any(per_keyword_matches):
+                return None
+        elif conditions.operator == models.LogicalOperator.ALL and isinstance(
+            compiled, list
+        ):
+            per_keyword_matches = [list(p.finditer(text)) for p in compiled]
+            if not all(per_keyword_matches):
+                return None
+        else:
+            return None
+
+        spans = [
+            TextMatchSpan(
+                start=m.start(),
+                end=m.end(),
+                matched_text=m.group(0),
+            )
+            for matches in per_keyword_matches
+            for m in matches
+        ]
+        spans.sort(key=lambda s: (s.start, -s.end))
+        return RuleAnnotation(
+            rule_id=rule.rule_id,
+            text_match=TextMatchAnnotation(spans=spans),
+        )
 
     def _organize_rules(self, rules: list[models.Rule]) -> OrganizedRules:
         organized_rules = OrganizedRules()

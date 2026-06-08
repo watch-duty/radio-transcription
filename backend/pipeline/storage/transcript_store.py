@@ -135,9 +135,7 @@ class TranscriptStore:
 
         annotations_json = json.dumps(
             [
-                json_format.MessageToDict(
-                    a, preserving_proto_field_name=True
-                )
+                json_format.MessageToDict(a, preserving_proto_field_name=True)
                 for a in transcript.rule_annotations
             ]
         )

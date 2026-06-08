@@ -12,6 +12,7 @@ from backend.pipeline.storage.tests.connection_util import make_mock_pool
 from backend.services.audio_segments.models import (
     AnnotationType,
     AudioClassification,
+    EvaluationAnnotationData,
 )
 
 
@@ -130,8 +131,12 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             eval_data,
         )
 
-        self.assertEqual(result.data.rule_annotations[0].rule_id, "rule-1")
-        spans = result.data.rule_annotations[0].text_match.spans
+        data = result.data
+        assert isinstance(data, EvaluationAnnotationData)
+        self.assertEqual(data.rule_annotations[0].rule_id, "rule-1")
+        text_match = data.rule_annotations[0].text_match
+        assert text_match is not None
+        spans = text_match.spans
         self.assertEqual(len(spans), 1)
         self.assertEqual(spans[0].start, 0)
         self.assertEqual(spans[0].end, 4)
