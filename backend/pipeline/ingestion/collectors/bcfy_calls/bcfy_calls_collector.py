@@ -564,7 +564,9 @@ def _last_pos_to_resume_position(
     except (TypeError, ValueError, OSError, OverflowError):
         logger.warning(
             "bcfy_calls response contained invalid lastPos",
-            extra={"json_fields": {"event_type": "bcfy_calls_invalid_last_pos"}},
+            extra={
+                "json_fields": {"event_type": "bcfy_calls_invalid_last_pos"}
+            },
         )
         return None
 

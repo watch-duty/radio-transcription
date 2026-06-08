@@ -513,9 +513,7 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
             dict(
                 _FEED,
                 failure_count=2,
-                status_reason=(
-                    FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED
-                ),
+                status_reason=(FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED),
             ),
         )
         rt = CollectorRuntime(

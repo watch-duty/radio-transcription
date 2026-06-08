@@ -20,6 +20,7 @@ from backend.pipeline.ingestion.collectors.failure_classification import (
 )
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
+    _require_captured_chunk,
 )
 from backend.pipeline.ingestion.models import (
     AudioMimeType,
@@ -1105,9 +1106,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             for e in events
             if isinstance(e, bcfy_calls_collector.CapturedChunk)
         ]
-        observations = [
-            e for e in events if isinstance(e, SourceObservation)
-        ]
+        observations = [e for e in events if isinstance(e, SourceObservation)]
 
         self.assertEqual(len(chunks), 1)
         self.assertEqual(len(observations), 1)
@@ -1224,7 +1223,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         ) as mock_datetime:
             mock_datetime.now.return_value = fixed_now
             chunks = [
-                c
+                _require_captured_chunk(c)
                 async for c in bcfy_calls_collector.capture_bcfy_calls(
                     self.leased_feed,
                     self.shutdown,
@@ -1281,7 +1280,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         mock_sleep.side_effect = sleep_side_effect
 
         chunks = [
-            c
+            _require_captured_chunk(c)
             async for c in bcfy_calls_collector.capture_bcfy_calls(
                 self.leased_feed,
                 self.shutdown,
@@ -2045,7 +2044,7 @@ class TestCaptureBcfyCallsReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
             "https://api.example/",
             _default_resources(),
         ):
-            results.append(chunk)
+            results.append(_require_captured_chunk(chunk))
             shutdown.set()
 
         self.assertEqual(len(results), 1)

@@ -36,7 +36,6 @@ from backend.pipeline.ingestion.collectors.failure_classifiers import (
 )
 from backend.pipeline.ingestion.models import (
     CapturedChunk,
-    CaptureEvent,
     CaptureResources,
     FeedFailure,
 )
@@ -220,7 +219,7 @@ async def capture_icecast_stream(  # noqa: PLR0912, PLR0915
     shutdown_event: asyncio.Event,
     url_base: str,
     resources: CaptureResources,
-) -> AsyncIterator[CaptureEvent]:
+) -> AsyncIterator[CapturedChunk]:
     """
     Capture audio chunks from an Icecast stream using ffmpeg segment muxing.
 

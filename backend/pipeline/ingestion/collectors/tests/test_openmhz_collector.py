@@ -23,6 +23,7 @@ from backend.pipeline.ingestion.collectors.openmhz.collector import (
 )
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
+    _require_captured_chunk,
 )
 from backend.pipeline.ingestion.models import FeedFailure, SourceObservation
 from backend.pipeline.storage.feed_store import (
@@ -165,12 +166,13 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         self,
         mock_transport: MagicMock,
     ) -> None:
-        feed = LeasedFeed(
-            **dict(
-                _TEST_FEED,
-                failure_count=1,
-                status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
-            )
+        feed = cast(
+            "LeasedFeed",
+            {
+                **_TEST_FEED,
+                "failure_count": 1,
+                "status_reason": FeedStatusReason.SOURCE_UNREACHABLE,
+            },
         )
         mock_transport.side_effect = lambda *a, **kw: _mock_transport([])
 
@@ -206,7 +208,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             "https://api.openmhz.com/",
             _default_resources(),
         ):
-            results.append(chunk)
+            results.append(_require_captured_chunk(chunk))
             shutdown.set()
 
         self.assertEqual(len(results), 1)
@@ -406,7 +408,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             "https://api.openmhz.com/",
             _default_resources(),
         ):
-            results.append(chunk)
+            results.append(_require_captured_chunk(chunk))
             if len(results) == 2:
                 shutdown.set()
 
@@ -458,7 +460,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             "https://api.openmhz.com/",
             _default_resources(),
         ):
-            results.append(chunk)
+            results.append(_require_captured_chunk(chunk))
             if len(results) == 2:
                 shutdown.set()
 
@@ -498,7 +500,7 @@ class TestOpenmhzReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
             "https://api.openmhz.com/",
             _default_resources(),
         ):
-            results.append(chunk)
+            results.append(_require_captured_chunk(chunk))
             shutdown.set()
 
         self.assertEqual(len(results), 1)

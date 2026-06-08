@@ -24,16 +24,15 @@ class TestCollectorContracts(unittest.TestCase):
     def test_all_registered_collectors_have_correct_return_annotation(
         self,
     ) -> None:
-        """Each collector returns the shared capture event stream."""
+        """Each collector returns capture events or a chunk-only specialization."""
         for source_type, (fn, _url_base) in _COLLECTORS.items():
             with self.subTest(source_type=source_type.value):
                 sig = inspect.signature(fn)
                 ret = str(sig.return_annotation)
-                self.assertIn(
-                    "CaptureEvent",
-                    ret,
+                self.assertTrue(
+                    "CaptureEvent" in ret or "CapturedChunk" in ret,
                     f"{getattr(fn, '__name__', fn)} return annotation {ret!r} "
-                    f"does not mention CaptureEvent",
+                    f"does not mention CaptureEvent or CapturedChunk",
                 )
 
 
