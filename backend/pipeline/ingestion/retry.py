@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class LeaseExpiredError(Exception):
-    """Raised when a retry loop detects heartbeat loss."""
+    """Raised when a retry loop observes confirmed lease loss."""
 
 
 async def retry_with_lease_check[T](
@@ -40,7 +40,7 @@ async def retry_with_lease_check[T](
     Args:
         fn: Async callable to invoke.
         *args: Positional arguments forwarded to *fn*.
-        lease_lost: Monotonic event set when heartbeat is uncertain.
+        lease_lost: Monotonic event set when lease loss is confirmed.
         shutdown: Event set on SIGTERM for graceful shutdown.
         max_retries: Maximum number of retry attempts (total calls = max_retries + 1).
         base_delay_sec: Base delay for exponential backoff.
@@ -59,7 +59,7 @@ async def retry_with_lease_check[T](
 
     for attempt in range(max_retries + 1):
         if lease_lost.is_set():
-            msg = f"Heartbeat lost before {operation_name} attempt {attempt}"
+            msg = f"Lease lost before {operation_name} attempt {attempt}"
             raise LeaseExpiredError(msg)
         if shutdown.is_set():
             raise asyncio.CancelledError
@@ -114,7 +114,7 @@ async def retry_with_lease_check[T](
                         pass
 
             if lease_lost.is_set():
-                msg = f"Heartbeat lost during {operation_name} backoff"
+                msg = f"Lease lost during {operation_name} backoff"
                 raise LeaseExpiredError(msg) from last_exception
             if shutdown.is_set():
                 raise asyncio.CancelledError
