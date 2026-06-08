@@ -82,6 +82,7 @@ services:
   # ----------- Pipeline Services ----------
 
   audio-ingestion:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/audio-ingestion:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/pipeline/ingestion/Dockerfile
@@ -107,6 +108,7 @@ services:
       - pipeline-network
 
   normalization:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/normalization:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/pipeline/normalization/Dockerfile
@@ -136,6 +138,7 @@ services:
         condition: service_completed_successfully
 
   transcription:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/transcription:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/pipeline/transcription/Dockerfile
@@ -161,6 +164,7 @@ services:
         condition: service_started
 
   rules-evaluation:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/rules-evaluation:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/pipeline/evaluation/Dockerfile
@@ -187,6 +191,7 @@ services:
       - postgres
 
   notification:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/notification:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/pipeline/notification/Dockerfile
@@ -212,6 +217,7 @@ services:
 
   # ----------- API Management Services ----------
   rules-management:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/rules-management:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/services/rules/Dockerfile
@@ -234,6 +240,7 @@ services:
       - pipeline-network
 
   transcripts-api:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/transcripts-api:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/services/transcripts/Dockerfile
@@ -256,6 +263,7 @@ services:
       - pipeline-network
 
   feeds-api:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/feeds-api:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/services/feeds/Dockerfile
@@ -278,6 +286,7 @@ services:
       - pipeline-network
 
   audio-segments-api:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/audio-segments-api:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/services/audio_segments/Dockerfile
@@ -330,6 +339,7 @@ services:
 
 
   frontend-api:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/frontend-api:${TAG:-latest}
     build:
       context: .
       dockerfile: frontend/api/Dockerfile
