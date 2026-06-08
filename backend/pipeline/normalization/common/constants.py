@@ -6,6 +6,18 @@ DEAD_LETTER_QUEUE_TAG: Final = "normalization_dlq"
 
 # Pipeline Defaults
 DEFAULT_SIGNIFICANT_GAP_MS: Final = 800
+
+# Maximum number of chunks emitted per Dataflow bundle by the stateful ordering
+# DoFns. Keeps bundle execution time at ~67 s (15 × ~4.5 s/chunk) well under
+# Windmill's hard 300-second lease limit. When the drain hits this cap, the
+# DoFn sets an immediate self-chaining timer so the next Windmill bundle picks
+# up the remainder. This prevents the "poison-pill" pattern where a large
+# out-of-order backlog (caused by pipeline restarts, lock-induced slowdowns, or
+# traffic spikes) would be retried as a single oversized bundle indefinitely.
+# Tune this value if per-chunk processing latency changes significantly; both
+# the max_emit argument and the clamped-detection check in stateful.py must
+# stay in sync with this constant.
+MAX_CHUNKS_PER_WINDMILL_BUNDLE: Final = 15
 DEFAULT_STALE_TIMEOUT_MS: Final = 75000
 DEFAULT_SEGMENTED_STALE_TIMEOUT_MS: Final = 5000
 DEFAULT_MAX_TRANSMISSION_DURATION_MS: Final = 60000
@@ -44,7 +56,7 @@ VAD_DEFAULT_COMP_RELEASE_MS: Final = 150.0
 VAD_DEFAULT_COMP_PEAK_THRESHOLD: Final = 0.55
 VAD_NORMALIZATION_TARGET_PEAK: Final = 0.95
 VAD_NORMALIZATION_MIN_PEAK: Final = 0.01
-VAD_DEFAULT_SPIKINESS_RATIO_THRESHOLD: Final = 10.0
+VAD_DEFAULT_SPIKINESS_RATIO_THRESHOLD: Final = 15.0
 VAD_DEFAULT_MIN_RMS_THRESHOLD: Final = 0.001
 VAD_DEFAULT_SEED: Final = 2147483647
 DEFAULT_VAD_POST_ROLL_MS: Final = 500
