@@ -18,8 +18,8 @@ INSERT INTO feeds (id, name, source_type, status) VALUES
     ('22222222-3333-4444-5555-666666666666', 'mock-bcfy-calls-feed', 'bcfy_calls', 'unclaimed')
 ON CONFLICT (name) DO NOTHING;
 
-INSERT INTO feed_properties (feed_id, source_feed_id, external_id) VALUES
-    ('22222222-3333-4444-5555-666666666666', '2912', 'ext-bcfy-calls-feed')
+INSERT INTO feed_properties (feed_id, source_feed_id) VALUES
+    ('22222222-3333-4444-5555-666666666666', '2912')
 ON CONFLICT (feed_id) DO NOTHING;
 
 

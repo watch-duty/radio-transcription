@@ -144,13 +144,6 @@ echo "Installing UI dependencies..."
 yarn --cwd frontend/transcription-ui install
 """
 
-[tasks."install:api"]
-description = "Install and update API Proxy dependencies"
-run = """
-echo "Installing API Proxy dependencies..."
-yarn --cwd frontend/api install
-"""
-
 [tasks."install:env"]
 description = "Initialize local env file from example"
 run = """
@@ -167,6 +160,13 @@ else
     echo "Skipped."
   fi
 fi
+"""
+
+[tasks."install:api"]
+description = "Install and update API Proxy dependencies"
+run = """
+echo "Installing API Proxy dependencies..."
+yarn --cwd frontend/api install
 """
 
 [tasks."dev:start"]
