@@ -124,6 +124,26 @@ class TestVadEngine(unittest.TestCase):
         segments = self.vad.detect_speech_segments(tone, sample_rate=16000)
         self.assertEqual(segments, [])
 
+    def test_is_speech_segment_spiky_voice_retained(self) -> None:
+        """Verifies that a vocal harmonic signal with high RMS spikiness is retained by tandem spectral flatness verification."""
+        t = np.linspace(0, 1.0, 16000, endpoint=False)
+        voice = (
+            np.sin(2 * np.pi * 150 * t)
+            + 0.5 * np.sin(2 * np.pi * 300 * t)
+            + 0.25 * np.sin(2 * np.pi * 450 * t)
+        ).astype(np.float32) * 0.1
+        voice[:100] = 1.0
+        self.assertTrue(self.vad._is_speech_segment(voice, chunk_size=512))
+
+    def test_is_speech_segment_spiky_static_rejected(self) -> None:
+        """Verifies that an unpitched noise burst with high RMS spikiness is rejected by tandem spectral flatness verification."""
+        t = np.linspace(0, 1.0, 16000, endpoint=False)
+        rng = np.random.default_rng(42)
+        static = (
+            np.sin(2 * np.pi * 3000 * t) + 0.0001 * rng.normal(0, 1, 16000)
+        ).astype(np.float32) * 0.0005
+        self.assertFalse(self.vad._is_speech_segment(static, chunk_size=512))
+
     def _run_integration_test(
         self,
         filename: str,
@@ -260,15 +280,25 @@ class TestVadEngine(unittest.TestCase):
             min_f1=0.85,
         )
 
-    def test_integration_middlebury_file(self) -> None:
-        """Integration test to verify VAD performance on test_middlebury.mp3 (quiet segments)."""
+    def test_integration_middlebury_quiet_segments_file(self) -> None:
+        """Integration test to verify VAD performance on test_middlebury_quiet_segments.mp3 (quiet segments)."""
         self._run_integration_test(
-            "test_middlebury.mp3",
+            "test_middlebury_quiet_segments.mp3",
             [
                 (0.6, 2.2),
                 (4.2, 6.7),
             ],
             min_f1=0.85,
+        )
+
+    def test_integration_middlebury_quiet_spiky_file(self) -> None:
+        """Integration test to verify VAD performance on test_middlebury_quiet_spiky.mp3 (quiet EMS speech)."""
+        self._run_integration_test(
+            "test_middlebury_quiet_spiky.mp3",
+            [
+                (0.18, 1.45),
+            ],
+            min_f1=0.55,
         )
 
     def test_integration_quiet_speech_loud_transient(self) -> None:

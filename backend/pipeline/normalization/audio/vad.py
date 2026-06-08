@@ -376,7 +376,14 @@ class VoiceActivityDetector:
 
         # 1. Ratio check: reject if there are high spikes with very quiet median (clicks/transients)
         if rms_ratio > self.spikiness_ratio_threshold:
-            return False
+            # High spikiness detected: perform tandem verification using spectral flatness
+            spec = np.abs(np.fft.rfft(sig)) ** 2
+            spec = np.maximum(spec[1:], 1e-10)
+            a_mean = np.mean(spec)
+            g_mean = np.exp(np.mean(np.log(spec)))
+            flatness = float(g_mean / a_mean) if a_mean > 1e-10 else 1.0
+            if flatness < 0.0005:  # Static noise shelf is ~0.0003
+                return False
 
         # 2. Floor check: reject if the segment is extremely quiet
         if mean_rms < self.min_rms_threshold:
