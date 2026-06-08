@@ -86,6 +86,11 @@ describe('TranscriptView', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mockHandleError.mockClear();
+    // Default mock for listTranscripts to prevent errors on mount
+    vi.mocked(listTranscripts).mockResolvedValue({
+      transcripts: [],
+      nextToken: undefined,
+    });
     // Default mock for listFeeds to prevent errors on mount
     vi.mocked(listFeeds).mockResolvedValue([
       {
@@ -281,7 +286,7 @@ describe('TranscriptView', () => {
     );
 
     await waitFor(() => {
-      expect(listFeeds).toHaveBeenCalledTimes(1);
+      expect(listFeeds).toHaveBeenCalledTimes(2);
     });
   });
 
