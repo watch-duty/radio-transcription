@@ -272,11 +272,11 @@ depends = ["generate:protos"]
 run = "uv run python -m pytest backend/ -q --ignore-glob='**/test_*_integration.py'"
 
 [tasks."test:model"]
-description = "Run model/ common-library unit tests (pytest)"
+description = "Run model package unit tests (pytest)"
 dir = "model"
-# Install [scoring] alongside [dev] so the WER/normalizer/bootstrap goldens
-# (jiwer + nemo_text_processing) actually run instead of skipping silently.
-run = "uv run --extra dev --extra scoring pytest colabs/common/tests/"
+# Install [scoring] and [vertex] alongside [dev] so the WER/normalizer
+# goldens and mocked Vertex helper tests exercise the packaged model code.
+run = "uv run --extra dev --extra scoring --extra vertex pytest tests/"
 
 [tasks."test:component:rules"]
 description = "Run RulesStore component tests"
