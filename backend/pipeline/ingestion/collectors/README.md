@@ -33,12 +33,17 @@ Runtime-side `_PipelineFailure` is separate from `FeedFailure`. It represents
 post-capture system failures after the collector already obtained source data,
 and the runtime records those as `system_pipeline_error`.
 
+Echo is the exception to the VM runtime shape: it runs as a synchronous Cloud
+Function. It still writes the same status-reason fields through
+`SyncFeedStore`, so admin-facing semantics stay consistent.
+
 ## Status Reason Policy
 
 `feeds.status` remains lifecycle and scheduling state. `feeds.status_reason`
 is a nullable, current abnormal-condition label that helps operators answer:
-"is this caused by the upstream source, or by the ingestion system?" Successful async
-progress and manual reset clear stale status reasons.
+"is this caused by the upstream source, or by the ingestion system?" Successful
+async progress, successful Echo heartbeat/progress, and manual reset clear
+stale status reasons.
 
 `quarantine_reason` is different. It preserves the short raw forensic reason
 on quarantine transitions. Do not parse it for canonical ownership, and do not
@@ -61,7 +66,7 @@ the likely owner:
 | `system_authentication_failed` | Configured credentials, tokens, or partner auth are rejected. |
 | `system_configuration_invalid` | The feed row is missing or has an invalid source-specific identifier, URL, or required configuration. |
 | `system_collector_error` | The collector cannot turn apparently available source data into a chunk, or all item failures are mixed/ambiguous. |
-| `system_pipeline_error` | Runtime post-capture processing fails after source data was obtained, such as GCS upload, Pub/Sub publish, or progress bookmark writes. |
+| `system_pipeline_error` | Runtime or Echo post-capture processing fails after source data was obtained, such as GCS upload, Pub/Sub publish, staging, duration probing, or heartbeat writes. |
 | `system_unexpected_error` | Defensive fallback for bugs or untyped exceptions that should become typed in a future collector fix. |
 
 ## Observation Boundaries
@@ -166,3 +171,7 @@ request bodies, signed URLs, feed IDs, call IDs, or secrets in `reason`.
    per-item files.
 9. Update router/settings tests if a new source type changes the registry,
    caps, or topic-routing behavior.
+
+For Echo-like synchronous ingestion, do not register a VM collector. Keep its
+classification in the Cloud Function path and write reasons through
+`SyncFeedStore`.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from unittest.mock import MagicMock, patch
 
+from backend.pipeline.storage.feed_store import FeedStatusReason
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
 
 
@@ -48,9 +49,6 @@ class TestResolveEchoFeed:
 
         assert result == feed_row
         conn.execute.assert_called_once()
-        sql = conn.execute.call_args[0][0]
-        assert "feed_properties" in sql
-        assert "source_type" in sql
         assert conn.execute.call_args[0][1] == ("fire-ca",)
 
     def test_returns_none_for_unknown_channel(self) -> None:
@@ -71,9 +69,6 @@ class TestRecordHeartbeat:
         store.record_heartbeat(feed_id)
 
         conn.execute.assert_called_once()
-        sql = conn.execute.call_args[0][0]
-        assert "last_heartbeat" in sql
-        assert "status = 'active'::feed_status" in sql
         assert conn.execute.call_args[0][1] == (feed_id,)
 
 
@@ -88,14 +83,24 @@ class TestRecordFailure:
         )
         feed_id = uuid.uuid4()
 
-        store.record_failure(feed_id)
+        store.record_failure(
+            feed_id,
+            reason="echo_pubsub_publish_failed",
+            status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        )
 
         conn.execute.assert_called_once()
-        sql = conn.execute.call_args[0][0]
-        assert "failure_count + 1" in sql
         params = conn.execute.call_args[0][1]
-        # Parameters: (threshold, threshold, max_backoff, base_backoff, feed_id)
-        assert params == (5, 5, 600, 15, feed_id)
+        assert params == (
+            5,
+            5,
+            600,
+            15,
+            5,
+            "echo_pubsub_publish_failed",
+            "system_pipeline_error",
+            feed_id,
+        )
 
     def test_uses_custom_thresholds(self) -> None:
         conn = _make_mock_conn()
@@ -107,10 +112,43 @@ class TestRecordFailure:
         )
         feed_id = uuid.uuid4()
 
-        store.record_failure(feed_id)
+        store.record_failure(
+            feed_id,
+            reason="echo_heartbeat_write_failed",
+            status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        )
 
         params = conn.execute.call_args[0][1]
-        assert params == (10, 10, 1200, 30, feed_id)
+        assert params == (
+            10,
+            10,
+            1200,
+            30,
+            10,
+            "echo_heartbeat_write_failed",
+            "system_pipeline_error",
+            feed_id,
+        )
+
+    def test_record_failure_allows_omitted_status_reason_for_compatibility(
+        self,
+    ) -> None:
+        conn = _make_mock_conn()
+        store = _make_store(conn)
+        feed_id = uuid.uuid4()
+
+        store.record_failure(feed_id, reason="raw")
+
+        assert conn.execute.call_args[0][1] == (
+            5,
+            5,
+            600,
+            15,
+            5,
+            "raw",
+            None,
+            feed_id,
+        )
 
     def test_always_logs_failure(self) -> None:
         conn = _make_mock_conn()

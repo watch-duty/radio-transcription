@@ -20,6 +20,8 @@ if TYPE_CHECKING:
 
     import psycopg
 
+    from backend.pipeline.storage.feed_store import FeedStatusReason
+
 # ---------------------------------------------------------------------------
 # SQL — psycopg v3 uses %s params (not asyncpg's $1)
 # ---------------------------------------------------------------------------
@@ -36,7 +38,12 @@ _HEARTBEAT_SQL = """\
 UPDATE feeds
 SET last_heartbeat = NOW(),
     failure_count = CASE WHEN failure_count > 0 THEN 0 ELSE failure_count END,
-    status = 'active'::feed_status
+    status = 'active'::feed_status,
+    status_reason_updated_at = CASE
+        WHEN status_reason IS NOT NULL THEN NOW()
+        ELSE status_reason_updated_at
+    END,
+    status_reason = NULL
 WHERE id = %s
 """
 
@@ -54,7 +61,10 @@ SET status = CASE WHEN failure_count + 1 >= %s
                             %s * INTERVAL '1 second',
                             %s * INTERVAL '1 second' * POWER(2, failure_count)
                        ) + (RANDOM() * INTERVAL '10 seconds')
-                       ELSE NULL END
+                       ELSE NULL END,
+    quarantine_reason = CASE WHEN failure_count + 1 >= %s THEN COALESCE(%s, quarantine_reason) ELSE quarantine_reason END,
+    status_reason = COALESCE(%s, 'system_unexpected_error'),
+    status_reason_updated_at = NOW()
 WHERE id = %s
 """
 
@@ -113,7 +123,13 @@ class SyncFeedStore:
         with self._connect_db() as conn:
             conn.execute(_HEARTBEAT_SQL, (feed_id,))
 
-    def record_failure(self, feed_id: uuid.UUID) -> None:
+    def record_failure(
+        self,
+        feed_id: uuid.UUID,
+        *,
+        reason: str | None = None,
+        status_reason: FeedStatusReason | None = None,
+    ) -> None:
         """Record a processing failure with exponential backoff.
 
         Increments ``failure_count`` and sets ``retry_after`` using the
@@ -121,6 +137,7 @@ class SyncFeedStore:
         plus 0-10 s jitter).  Quarantines the feed when the threshold is
         reached.
         """
+        status_reason_value = status_reason.value if status_reason is not None else None  # fmt: skip
         with self._connect_db() as conn:
             conn.execute(
                 _RECORD_FAILURE_SQL,
@@ -129,6 +146,9 @@ class SyncFeedStore:
                     self._failure_threshold,
                     self._max_backoff_sec,
                     self._base_backoff_sec,
+                    self._failure_threshold,
+                    reason,
+                    status_reason_value,
                     feed_id,
                 ),
             )

@@ -18,6 +18,7 @@ from backend.pipeline.ingestion.collectors.echo.main import (
     _parse_timestamp,
 )
 from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
+from backend.pipeline.storage.feed_store import FeedStatusReason
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
 
 
@@ -100,6 +101,7 @@ class TestHandle:
                 "gcs": mock_gcs,
                 "pubsub": mock_pubsub,
                 "publisher": mock_publisher,
+                "get_duration": mock_get_duration,
             }
 
     def _make_event(
@@ -116,17 +118,45 @@ class TestHandle:
         """Configure mock_store to return a feed row from resolve."""
         mock_store.resolve_echo_feed.return_value = feed
 
+    def _assert_failure_recorded(
+        self,
+        mock_store: MagicMock,
+        feed_id: uuid.UUID,
+        *,
+        reason: str,
+        status_reason: FeedStatusReason,
+    ) -> None:
+        mock_store.record_failure.assert_called_once_with(
+            feed_id,
+            reason=reason,
+            status_reason=status_reason,
+        )
+
     @pytest.mark.usefixtures("_patch_globals")
     def test_skips_non_mp3(self, mock_store) -> None:
         event = self._make_event(name="fire-ca/20260326/notes.txt")
         _handle(event)
         mock_store.resolve_echo_feed.assert_not_called()
+        mock_store.record_failure.assert_not_called()
+        mock_store.record_heartbeat.assert_not_called()
+
+    @pytest.mark.usefixtures("_patch_globals")
+    def test_skips_unexpected_path_structure(self, mock_store) -> None:
+        event = self._make_event(name="fire-ca/fire_20260326_143022.mp3")
+
+        _handle(event)
+
+        mock_store.resolve_echo_feed.assert_not_called()
+        mock_store.record_failure.assert_not_called()
+        mock_store.record_heartbeat.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_skips_unknown_channel(self, mock_store) -> None:
         self._set_feed(mock_store, None)
         _handle(self._make_event())
         mock_store.resolve_echo_feed.assert_called_once()
+        mock_store.record_failure.assert_not_called()
+        mock_store.record_heartbeat.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_quarantined_feed_drops_event(self, mock_store) -> None:
@@ -155,6 +185,8 @@ class TestHandle:
             },
         )
         _handle(self._make_event())
+        mock_store.record_heartbeat.assert_not_called()
+        mock_store.record_failure.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_successful_processing(self, mock_store, _patch_globals) -> None:
@@ -302,7 +334,69 @@ class TestHandle:
         with pytest.raises(Exception, match="GCS error"):
             _handle(self._make_event())
 
-        mock_store.record_failure.assert_called_once_with(feed_id)
+        self._assert_failure_recorded(
+            mock_store,
+            feed_id,
+            reason="echo_recording_download_failed",
+            status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        )
+
+    @pytest.mark.usefixtures("_patch_globals")
+    def test_duration_failure_records_pipeline_reason(
+        self, mock_store, _patch_globals
+    ) -> None:
+        feed_id = uuid.uuid4()
+        self._set_feed(
+            mock_store,
+            {
+                "id": feed_id,
+                "name": "Central Fire",
+                "external_id": "ext-id",
+                "status": "active",
+                "failure_count": 0,
+            },
+        )
+        _patch_globals["get_duration"].side_effect = Exception("duration error")
+
+        with pytest.raises(Exception, match="duration error"):
+            _handle(self._make_event())
+
+        self._assert_failure_recorded(
+            mock_store,
+            feed_id,
+            reason="echo_duration_probe_failed",
+            status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        )
+
+    @pytest.mark.usefixtures("_patch_globals")
+    def test_staging_upload_failure_records_pipeline_reason(
+        self, mock_store, _patch_globals
+    ) -> None:
+        feed_id = uuid.uuid4()
+        self._set_feed(
+            mock_store,
+            {
+                "id": feed_id,
+                "name": "Central Fire",
+                "external_id": "ext-id",
+                "status": "active",
+                "failure_count": 0,
+            },
+        )
+        upload_call = _patch_globals[
+            "gcs"
+        ].bucket.return_value.blob.return_value.upload_from_string
+        upload_call.side_effect = Exception("upload error")
+
+        with pytest.raises(Exception, match="upload error"):
+            _handle(self._make_event())
+
+        self._assert_failure_recorded(
+            mock_store,
+            feed_id,
+            reason="echo_staging_upload_failed",
+            status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        )
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_failure_recording_db_error_preserves_original(
@@ -326,8 +420,21 @@ class TestHandle:
 
         mock_store.record_failure.side_effect = Exception("DB error")
 
-        with pytest.raises(Exception, match="Original error"):
-            _handle(self._make_event())
+        with patch(
+            "backend.pipeline.ingestion.collectors.echo.main.logger"
+        ) as mock_logger:
+            with pytest.raises(Exception, match="Original error"):
+                _handle(self._make_event())
+
+        self._assert_failure_recorded(
+            mock_store,
+            feed_id,
+            reason="echo_recording_download_failed",
+            status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        )
+        mock_logger.exception.assert_called_once_with(
+            "Failed to record failure for feed %s", feed_id
+        )
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_malformed_filename_skips_gracefully(self, mock_store) -> None:
@@ -391,7 +498,96 @@ class TestHandle:
         with pytest.raises(Exception, match="Pub/Sub error"):
             _handle(self._make_event())
 
-        mock_store.record_failure.assert_called_once_with(feed_id)
+        self._assert_failure_recorded(
+            mock_store,
+            feed_id,
+            reason="echo_pubsub_publish_failed",
+            status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        )
+
+    @pytest.mark.usefixtures("_patch_globals")
+    def test_publisher_factory_failure_records_pipeline_reason(
+        self, mock_store, _patch_globals
+    ) -> None:
+        feed_id = uuid.uuid4()
+        self._set_feed(
+            mock_store,
+            {
+                "id": feed_id,
+                "name": "Central Fire",
+                "external_id": "ext-id",
+                "status": "active",
+                "failure_count": 0,
+            },
+        )
+        _patch_globals["pubsub"].get_publisher.side_effect = Exception(
+            "publisher error"
+        )
+
+        with pytest.raises(Exception, match="publisher error"):
+            _handle(self._make_event())
+
+        self._assert_failure_recorded(
+            mock_store,
+            feed_id,
+            reason="echo_pubsub_publish_failed",
+            status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        )
+
+    @pytest.mark.usefixtures("_patch_globals")
+    def test_heartbeat_failure_records_pipeline_reason(
+        self, mock_store
+    ) -> None:
+        feed_id = uuid.uuid4()
+        self._set_feed(
+            mock_store,
+            {
+                "id": feed_id,
+                "name": "Central Fire",
+                "external_id": "ext-id",
+                "status": "active",
+                "failure_count": 0,
+            },
+        )
+        mock_store.record_heartbeat.side_effect = Exception("heartbeat error")
+
+        with pytest.raises(Exception, match="heartbeat error"):
+            _handle(self._make_event())
+
+        self._assert_failure_recorded(
+            mock_store,
+            feed_id,
+            reason="echo_heartbeat_write_failed",
+            status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        )
+
+    @pytest.mark.usefixtures("_patch_globals")
+    def test_unwrapped_bug_records_unexpected_reason(self, mock_store) -> None:
+        feed_id = uuid.uuid4()
+        self._set_feed(
+            mock_store,
+            {
+                "id": feed_id,
+                "name": "Central Fire",
+                "external_id": "ext-id",
+                "status": "active",
+                "failure_count": 0,
+            },
+        )
+
+        with patch(
+            "backend.pipeline.ingestion.collectors.echo.main._parse_timestamp",
+            side_effect=RuntimeError("unexpected bug"),
+        ):
+            with pytest.raises(RuntimeError, match="unexpected bug"):
+                _handle(self._make_event())
+
+        self._assert_failure_recorded(
+            mock_store,
+            feed_id,
+            reason="unexpected bug",
+            status_reason=FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
+        )
 
     # -----------------------------------------------------------------
     # Dual-write to dev recordings bucket (best-effort mirror)
