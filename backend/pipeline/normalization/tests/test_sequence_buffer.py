@@ -174,3 +174,33 @@ class TestSequenceBuffer(unittest.TestCase):
         )
         self.assertFalse(was_late)
         self.assertFalse(was_buffered)
+
+    def test_max_emit_clamp(self) -> None:
+        """Verifies that drain_ready_elements respects the max_emit clamp, leaving the rest in the buffer."""
+        initial_buffer = [
+            BufferedChunk(timestamp_ms=7000, gcs_uri="gs://chunk3"),
+            BufferedChunk(timestamp_ms=10000, gcs_uri="gs://chunk4"),
+            BufferedChunk(timestamp_ms=13000, gcs_uri="gs://chunk5"),
+            BufferedChunk(timestamp_ms=16000, gcs_uri="gs://chunk6"),
+        ]
+
+        # Use the underlying drain_ready_elements directly to test the clamp
+        (
+            new_expected,
+            new_buffer,
+            to_emit,
+        ) = self.buffer.drain_ready_elements(
+            expected_next_ts=7000,
+            buffer_elements=initial_buffer,
+            epsilon_ms=10,
+            max_emit=2,
+        )
+
+        self.assertEqual(len(to_emit), 2)
+        self.assertEqual(to_emit[0].gcs_uri, "gs://chunk3")
+        self.assertEqual(to_emit[1].gcs_uri, "gs://chunk4")
+
+        self.assertEqual(new_expected, 13000)
+        self.assertEqual(len(new_buffer), 2)
+        self.assertEqual(new_buffer[0].gcs_uri, "gs://chunk5")
+        self.assertEqual(new_buffer[1].gcs_uri, "gs://chunk6")
