@@ -481,10 +481,12 @@ class VoiceActivityDetector:
                         if (
                             current_speech["end"] - current_speech["start"]
                         ) >= min_speech_frames:
-                            raw_segments.append((
-                                frames_to_sec(current_speech["start"]),
-                                frames_to_sec(current_speech["end"]),
-                            ))
+                            raw_segments.append(
+                                (
+                                    frames_to_sec(current_speech["start"]),
+                                    frames_to_sec(current_speech["end"]),
+                                )
+                            )
                         triggered = False
                         temp_end = 0
                         current_speech = {}
@@ -496,10 +498,12 @@ class VoiceActivityDetector:
             if (
                 current_speech["end"] - current_speech["start"]
             ) >= min_speech_frames:
-                raw_segments.append((
-                    frames_to_sec(current_speech["start"]),
-                    frames_to_sec(current_speech["end"]),
-                ))
+                raw_segments.append(
+                    (
+                        frames_to_sec(current_speech["start"]),
+                        frames_to_sec(current_speech["end"]),
+                    )
+                )
 
         return raw_segments
 
