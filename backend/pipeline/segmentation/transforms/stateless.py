@@ -20,10 +20,8 @@ import numpy as np
 import soundfile as sf
 from apache_beam.io.gcp.pubsub import PubsubMessage
 from google.cloud import storage
-from google.protobuf.duration_pb2 import Duration  # type: ignore[attr-defined]
-from google.protobuf.timestamp_pb2 import (
-    Timestamp,  # type: ignore[attr-defined]
-)
+from google.protobuf.duration_pb2 import Duration  # type: ignore
+from google.protobuf.timestamp_pb2 import Timestamp  # type: ignore
 from opentelemetry import trace
 
 from backend.pipeline.common.constants import (
