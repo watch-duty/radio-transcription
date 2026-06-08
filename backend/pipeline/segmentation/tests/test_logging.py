@@ -3,14 +3,14 @@ import logging
 import unittest
 from unittest import mock
 
-from backend.pipeline.common.logging import TaskJsonFormatter
+from backend.pipeline.common.log_helper import TaskJsonFormatter
 
 
 class TestTaskJsonFormatter(unittest.TestCase):
     def test_format_adds_trace_info_when_span_valid(self) -> None:
         with (
             mock.patch(
-                "backend.pipeline.common.logging.get_trace_attributes",
+                "backend.pipeline.common.log_helper.get_trace_attributes",
                 return_value={
                     "trace": "projects/test-project/traces/4bf92f3577b34da6a3ce929d0e0e4736",
                     "spanId": "00f067aa0ba902b7",
@@ -38,7 +38,7 @@ class TestTaskJsonFormatter(unittest.TestCase):
 
     def test_format_sets_no_trace_info_when_span_invalid(self) -> None:
         with mock.patch(
-            "backend.pipeline.common.logging.get_trace_attributes",
+            "backend.pipeline.common.log_helper.get_trace_attributes",
             return_value={
                 "trace": "",
                 "spanId": "",

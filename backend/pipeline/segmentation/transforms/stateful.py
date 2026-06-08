@@ -96,6 +96,7 @@ from google.cloud import storage
 
 from backend.pipeline.common import constants as common_constants
 from backend.pipeline.common import tracing_utils
+<<<<<<< HEAD
 <<<<<<< HEAD:backend/pipeline/normalization/transforms/stateful.py
 from backend.pipeline.common.storage import gcs_uploader
 from backend.pipeline.normalization.audio import audio_processor, vad
@@ -110,6 +111,9 @@ from backend.pipeline.normalization.state import sequence_buffer
 from backend.pipeline.normalization.transforms import stitcher_engine
 =======
 from backend.pipeline.common.logging import get_logger, get_task_logger
+=======
+from backend.pipeline.common.log_helper import get_logger, get_task_logger
+>>>>>>> 619570f6 (refactor(segmentation): fix broken common.logging imports due to upstream log_helper rename)
 from backend.pipeline.segmentation import coders as trans_coders
 from backend.pipeline.segmentation import constants as trans_constants
 from backend.pipeline.segmentation import datatypes

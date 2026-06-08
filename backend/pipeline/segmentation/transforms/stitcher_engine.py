@@ -22,7 +22,7 @@ from apache_beam.metrics import Metrics
 from google.cloud import storage
 
 from backend.pipeline.common import constants as common_constants
-from backend.pipeline.common.logging import get_task_logger
+from backend.pipeline.common.log_helper import get_task_logger
 from backend.pipeline.segmentation import constants as trans_constants
 from backend.pipeline.segmentation import datatypes
 from backend.pipeline.segmentation import utils as trans_utils
