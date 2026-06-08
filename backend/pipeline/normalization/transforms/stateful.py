@@ -9,6 +9,69 @@ DoFns in our Apache Beam DAG. It houses transforms responsible for:
 
 All high-level audio download/concatenation/VAD heuristics are cleanly
 decoupled from Beam timer variables and delegated to StitcherEngine.
+
+
+## Dataflow Windmill Execution Model
+
+**This section is critical reading for anyone familiar with Beam on other runners
+(Flink, Spark, Direct) but new to GCP Dataflow Streaming.**
+
+### What is Windmill?
+
+Windmill is Dataflow's internal streaming execution engine — the component that
+manages work distribution, state persistence, and exactly-once semantics. It is
+entirely invisible at the Beam API level: your DoFn code looks identical whether
+it runs on Dataflow, Flink, or the Direct runner. However, Windmill has execution
+constraints that don't exist on other runners and that materially affect how
+stateful DoFns should be written.
+
+### Bundle Leases
+
+Windmill executes DoFn work in *bundles*. Each bundle is a unit of work assigned
+to a worker thread with a **hard 300-second wall-clock lease**. If a bundle does
+not complete and commit its outputs within that window, Windmill considers it
+failed, rolls back all state changes from that bundle, and re-enqueues the work
+for retry on another worker.
+
+On other runners, bundles are either unbounded or their timeout behavior is
+configurable and generally much more forgiving. On Dataflow Streaming, the 300s
+limit is non-negotiable.
+
+### Implications for Stateful DoFns
+
+Stateful DoFns (those using `@StateSpec` and `@TimerSpec`) are particularly
+affected because all elements sharing the same key are processed sequentially
+within a single bundle. This means:
+
+- If a feed's `out_of_order_buffer` contains N chunks and draining it takes
+  longer than 300 seconds, the entire bundle is aborted and retried.
+- Large backlogs can accumulate after pipeline restarts, upstream traffic spikes,
+  or processing slowdowns (e.g., lock contention in worker threads). When the
+  pipeline tries to drain a large backlog in a single bundle, it risks breaching
+  the lease.
+- Unlike element-level failures (which surface as exceptions and can be sent to
+  a DLQ), a lease timeout produces no output at all — the work simply replays.
+
+### The Self-Chaining Timer Pattern
+
+To work around the lease limit without discarding data, we use a *self-chaining
+timer* pattern:
+
+1. `drain_ready_elements` is called with `max_emit=MAX_CHUNKS_PER_WINDMILL_BUNDLE`
+   to cap the number of chunks processed in a single bundle.
+2. If the buffer still has remaining chunks after the cap is hit (`clamped=True`),
+   the DoFn immediately sets `out_of_order_timer` to the current watermark
+   timestamp (`out_of_order_timer.set(timestamp)`).
+3. Because the timer fires at or before the current watermark, Windmill schedules
+   a new bundle immediately, which calls `handle_gap_timeout` and drains the next
+   slice of up to `MAX_CHUNKS_PER_WINDMILL_BUNDLE` chunks.
+4. This continues until the buffer is empty, at which point no timer is set and
+   normal gap-timeout behavior resumes.
+
+The constant `MAX_CHUNKS_PER_WINDMILL_BUNDLE` (defined in `constants.py`) is
+sized so that `N_chunks x per_chunk_latency` stays well under 300 seconds. If
+model inference latency increases significantly in the future, this value should
+be reduced accordingly.
 """
 
 import logging as std_logging
