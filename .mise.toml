@@ -199,6 +199,22 @@ description = "Start the entire system (backend (via Docker) and frontend UI hos
 depends = ["dev:start", "build:common", "install:ui", "install:env"]
 run = "yarn --cwd frontend/transcription-ui run local"
 
+[tasks."dev:add-audio"]
+description = "Add a test audio file to the mock audio server for a specific source and feed"
+usage = """
+arg "<source>" help="The data source (e.g., broadcastify_calls, fire_notifications)"
+arg "<feed>" help="The feed ID (e.g., 2912, RECORDINGS/SAN-JOSE-DISP)"
+arg "<file>" help="Path to the audio file to add"
+"""
+run = """
+#!/usr/bin/env bash
+set -e
+DEST_DIR="local_dev/mock_audio/{{ arg(name="source") }}/{{ arg(name="feed") }}"
+mkdir -p "$DEST_DIR"
+cp "{{ arg(name="file") }}" "$DEST_DIR/"
+echo "Added $(basename "{{ arg(name="file") }}") to $DEST_DIR/"
+"""
+
 [tasks."dev:whisper:start"]
 description = "Start the transcription pipeline with a local ASR model (Whisper) service in Docker"
 depends = ["dev:stop"]
