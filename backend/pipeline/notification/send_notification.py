@@ -210,6 +210,6 @@ def send_notification(cloud_event: CloudEvent) -> None:
             request_handler.send_notification(alert_notification)
         except NonRetryableError:
             logger.exception(
-                "Failed to send notification for audio segment (transmission_id: %s) due to client (4xx) error. Message will not be retried.",
+                "Failed to send notification for audio segment (segment_id: %s) due to client (4xx) error. Message will not be retried.",
                 notification_id,
             )
