@@ -309,6 +309,12 @@ components:
           items:
             $ref: "#/components/schemas/Tag"
           type: array
+        quarantineReason:
+          type: string
+          nullable: true
+        statusReason:
+          type: string
+          nullable: true
       required:
         - name
         - sourceType
@@ -325,12 +331,8 @@ components:
           type: array
         nextToken:
           type: string
-        total:
-          type: number
-          format: double
       required:
         - feeds
-        - total
       type: object
       additionalProperties: false
     ListFeedsQueryParams:
