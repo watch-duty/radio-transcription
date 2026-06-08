@@ -38,6 +38,8 @@ interface FeedBackend extends BaseFeedBackend {
   status: BackendFeedStatus;
   last_heartbeat: string | null;
   tags?: Tag[];
+  quarantine_reason: string | null;
+  status_reason: string | null;
 }
 
 interface FeedCreateBackend extends BaseFeedBackend {
@@ -133,6 +135,8 @@ function convertFeedBackend(response: FeedBackend): Feed {
     substatus: response.status,
     lastHeartbeat: response.last_heartbeat ?? undefined,
     tags: response.tags,
+    quarantineReason: response.quarantine_reason ?? undefined,
+    statusReason: response.status_reason ?? undefined,
   };
 }
 

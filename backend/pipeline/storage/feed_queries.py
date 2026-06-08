@@ -342,7 +342,7 @@ WITH new_feed AS (
     RETURNING id, name, source_type, status, status_reason,
               status_reason_updated_at, failure_count, worker_id,
               last_heartbeat, last_processed_filename,
-              last_bookmark_time, created_at
+              last_bookmark_time, created_at, quarantine_reason
 ),
 new_props AS (
     INSERT INTO feed_properties (feed_id, source_feed_id, source_type, tags)
@@ -358,7 +358,7 @@ GET_FEED_SQL = """\
 SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
-       f.last_bookmark_time, f.created_at,
+       f.last_bookmark_time, f.created_at, f.quarantine_reason,
        fp.source_feed_id, fp.tags
 FROM feeds f
 JOIN feed_properties fp ON f.id = fp.feed_id
@@ -369,7 +369,7 @@ LIST_FEEDS_DESC_SQL = """\
 SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
-       f.last_bookmark_time, f.created_at,
+       f.last_bookmark_time, f.created_at, f.quarantine_reason,
        fp.source_feed_id, fp.tags
 FROM feeds f
 JOIN feed_properties fp ON f.id = fp.feed_id
@@ -386,7 +386,7 @@ LIST_FEEDS_ASC_SQL = """\
 SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
-       f.last_bookmark_time, f.created_at,
+       f.last_bookmark_time, f.created_at, f.quarantine_reason,
        fp.source_feed_id, fp.tags
 FROM feeds f
 JOIN feed_properties fp ON f.id = fp.feed_id
@@ -437,7 +437,8 @@ WITH updated AS (
     WHERE id = $1
     RETURNING id, name, source_type, status, failure_count, worker_id,
               status_reason, status_reason_updated_at, last_heartbeat,
-              last_processed_filename, last_bookmark_time, created_at
+              last_processed_filename, last_bookmark_time, created_at,
+              quarantine_reason
 )
 SELECT u.*, fp.source_feed_id, fp.tags
 FROM updated u
@@ -452,7 +453,7 @@ WITH updated_feed AS (
     RETURNING id, name, source_type, status, status_reason,
               status_reason_updated_at, failure_count, worker_id,
               last_heartbeat, last_processed_filename,
-              last_bookmark_time, created_at
+              last_bookmark_time, created_at, quarantine_reason
 ),
 updated_props AS (
     UPDATE feed_properties
