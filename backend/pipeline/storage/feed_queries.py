@@ -464,3 +464,18 @@ SELECT uf.*, up.source_feed_id, up.tags
 FROM updated_feed uf
 JOIN updated_props up ON TRUE;
 """
+
+
+COUNT_FEEDS_SQL = """\
+SELECT COUNT(*)
+FROM feeds f
+JOIN feed_properties fp ON f.id = fp.feed_id
+WHERE ($1::text[] IS NULL OR f.source_type = ANY($1))
+  AND ($2::text[] IS NULL OR f.status::text = ANY($2))
+  AND ($3::jsonb IS NULL OR fp.tags @> $3::jsonb)
+  AND ($4::text IS NULL OR f.name ILIKE '%' || $4 || '%')
+"""
+
+COUNT_ALL_FEEDS_SQL = """\
+SELECT COUNT(*) FROM feeds
+"""

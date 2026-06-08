@@ -49,6 +49,8 @@ describe('listFeeds', () => {
         JSON.stringify({
           feeds: page1Feeds,
           nextToken: 'token_abc',
+          total: 2,
+          filteredTotal: 2,
         }),
       headers: {
         get: (key: string) =>
@@ -61,6 +63,8 @@ describe('listFeeds', () => {
       text: async () =>
         JSON.stringify({
           feeds: page2Feeds,
+          total: 2,
+          filteredTotal: 2,
         }),
       headers: {
         get: (key: string) =>
@@ -102,7 +106,8 @@ describe('listFeeds', () => {
   it('should serialize query parameters correctly including JSON-serialized tags array', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
-      text: async () => JSON.stringify({ feeds: [] }),
+      text: async () =>
+        JSON.stringify({ feeds: [], total: 0, filteredTotal: 0 }),
       headers: {
         get: (key: string) =>
           key === 'content-type' ? 'application/json' : null,
