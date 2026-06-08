@@ -87,7 +87,7 @@ class CoderVerificationTest(unittest.TestCase):
             session_id="session-123",
             contributing_audio_uris=["gs://bucket/audio.flac"],
             time_range=datatypes.TimeRange(0, 1000),
-            transmission_id="tx-uuid-123",
+            segment_id="tx-uuid-123",
             feed_metadata=datatypes.FeedMetadata("Feed"),
             sample_rate=16000,
             missing_prior_context=False,

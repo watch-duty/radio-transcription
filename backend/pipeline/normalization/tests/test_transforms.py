@@ -410,7 +410,7 @@ class NormalizeAudioTest(unittest.TestCase):
                             time_range=TimeRange(
                                 start_ms=101000, end_ms=101500
                             ),
-                            transmission_id="test-uuid",
+                            segment_id="test-uuid",
                             missing_prior_context=False,
                             missing_post_context=False,
                             start_audio_offset_ms=0,
@@ -466,7 +466,7 @@ class SerializeNormalizationClaimTest(unittest.TestCase):
                 session_id="fake-session",
                 contributing_audio_uris=["gs://bucket/1.flac"],
                 time_range=TimeRange(1000, 2000),
-                transmission_id="uuid-1",
+                segment_id="uuid-1",
                 missing_prior_context=False,
                 missing_post_context=False,
                 start_audio_offset_ms=100,
@@ -482,7 +482,7 @@ class SerializeNormalizationClaimTest(unittest.TestCase):
                 session_id="fake-session",
                 contributing_audio_uris=["gs://bucket/2.flac"],
                 time_range=TimeRange(1000, 3000),
-                transmission_id="uuid-2",
+                segment_id="uuid-2",
                 missing_prior_context=False,
                 missing_post_context=False,
                 start_audio_offset_ms=100,
@@ -822,7 +822,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 assert len(msgs) == 1
                 feed_id, request = msgs[0]
                 assert feed_id == "test-feed"
-                assert request.transmission_id is not None
+                assert request.segment_id is not None
                 assert isinstance(request.buffer, bytes)
                 assert request.traceparent == "mock-traceparent"
 

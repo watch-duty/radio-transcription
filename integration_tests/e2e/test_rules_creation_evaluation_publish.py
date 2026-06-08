@@ -51,7 +51,7 @@ def publish_test_message(
 ) -> None:
     """Publishes a test message to the transcription topic."""
     message = TranscribedAudio(
-        transmission_id=transmission_id,
+        segment_id=transmission_id,
         transcript=transcript,
         source_audio_uris=["chunk1", "chunk2"],
         feed_id=feed_id,

@@ -29,7 +29,7 @@ async def skip_auth() -> dict[str, str]:
 def _make_transcript_msg() -> EvaluatedTranscribedAudio:
     """Helper to create a populated EvaluatedTranscribedAudio message."""
     msg = EvaluatedTranscribedAudio()
-    msg.transmission_id = _TRANSMISSION_ID
+    msg.segment_id = _TRANSMISSION_ID
     msg.feed_id = _FEED_ID
     msg.transcript = "Hello world"
     msg.start_timestamp.FromDatetime(

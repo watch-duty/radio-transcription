@@ -33,7 +33,7 @@ class ConfigBase(pydantic.BaseModel):
             raise ValueError(msg) from e
 
 
-def generate_transmission_id(
+def generate_segment_id(
     feed_or_session_id: str,
     time_range: bp_state.TimeRangeProto,
     segment_duration_ms: int = 0,

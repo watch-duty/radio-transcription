@@ -50,8 +50,8 @@ class TranscriptsClient:
         def _raise(msg: str) -> None:
             raise ValueError(msg)
 
-        if not payload.transmission_id:
-            _raise("transmission_id is required")
+        if not payload.segment_id:
+            _raise("segment_id is required")
         if not payload.feed_id:
             _raise("feed_id is required")
         if not payload.transcript:
@@ -64,6 +64,8 @@ class TranscriptsClient:
             preserving_proto_field_name=True,
             always_print_fields_with_no_presence=True,
         )
+        if "segment_id" in data:
+            data["transmission_id"] = data.pop("segment_id")
 
         headers = {}
         traceparent = get_current_traceparent()
@@ -85,5 +87,5 @@ class TranscriptsClient:
             response.raise_for_status()
         except requests.exceptions.HTTPError as e:
             if response.status_code == 409:
-                raise AlreadyExistsError(payload.transmission_id) from e
+                raise AlreadyExistsError(payload.segment_id) from e
             raise

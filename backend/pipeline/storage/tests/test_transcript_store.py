@@ -53,7 +53,7 @@ class TestCreateTranscript(BaseTranscriptStoreTest):
     async def test_creates_successfully(self) -> None:
         """Verifies creating a transcript returns the created transcript."""
         msg = EvaluatedTranscribedAudio()
-        msg.transmission_id = str(_TRANSMISSION_ID)
+        msg.segment_id = str(_TRANSMISSION_ID)
         msg.feed_id = str(_FEED_ID)
         msg.transcript = "Hello world"
         msg.start_timestamp.FromDatetime(
@@ -70,7 +70,7 @@ class TestCreateTranscript(BaseTranscriptStoreTest):
 
         result = await self.store.create_transcript(msg)
 
-        self.assertEqual(result.transmission_id, str(_TRANSMISSION_ID))
+        self.assertEqual(result.segment_id, str(_TRANSMISSION_ID))
         self.assertEqual(result.feed_id, str(_FEED_ID))
         self.assertEqual(result.transcript, "Hello world")
         self.assertEqual(len(result.source_audio_uris), 1)
@@ -86,7 +86,7 @@ class TestCreateTranscript(BaseTranscriptStoreTest):
         self.pool.fetchrow.return_value = None
 
         msg = EvaluatedTranscribedAudio()
-        msg.transmission_id = str(_TRANSMISSION_ID)
+        msg.segment_id = str(_TRANSMISSION_ID)
         msg.feed_id = str(_FEED_ID)
 
         with self.assertRaises(ValueError) as cm:
@@ -99,18 +99,18 @@ class TestCreateTranscript(BaseTranscriptStoreTest):
     async def test_raises_invalid_transmission_id(self) -> None:
         """Verifies it raises ValueError for invalid transmission_id UUID."""
         msg = EvaluatedTranscribedAudio()
-        msg.transmission_id = "invalid-uuid"
+        msg.segment_id = "invalid-uuid"
         msg.feed_id = str(_FEED_ID)
 
         with self.assertRaises(ValueError) as cm:
             await self.store.create_transcript(msg)
 
-        self.assertIn("Invalid transmission_id UUID", str(cm.exception))
+        self.assertIn("Invalid segment_id UUID", str(cm.exception))
 
     async def test_raises_invalid_feed_id(self) -> None:
         """Verifies it raises ValueError for invalid feed_id UUID."""
         msg = EvaluatedTranscribedAudio()
-        msg.transmission_id = str(_TRANSMISSION_ID)
+        msg.segment_id = str(_TRANSMISSION_ID)
         msg.feed_id = "invalid-uuid"
 
         with self.assertRaises(ValueError) as cm:
@@ -125,7 +125,7 @@ class TestCreateTranscript(BaseTranscriptStoreTest):
         )
 
         msg = EvaluatedTranscribedAudio()
-        msg.transmission_id = str(_TRANSMISSION_ID)
+        msg.segment_id = str(_TRANSMISSION_ID)
         msg.feed_id = str(_FEED_ID)
 
         with self.assertRaises(AlreadyExistsError) as cm:
@@ -143,7 +143,7 @@ class TestGetTranscript(BaseTranscriptStoreTest):
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(result.transmission_id, str(_TRANSMISSION_ID))
+        self.assertEqual(result.segment_id, str(_TRANSMISSION_ID))
 
     async def test_returns_none_if_not_found(self) -> None:
         """Verify fetching non-existent transmission ID returns None."""
@@ -169,7 +169,7 @@ class TestListTranscriptsByFeedId(BaseTranscriptStoreTest):
 
         self.assertEqual(len(result.transcripts), 1)
         self.assertEqual(
-            result.transcripts[0].transmission_id, str(_TRANSMISSION_ID)
+            result.transcripts[0].segment_id, str(_TRANSMISSION_ID)
         )
         self.assertIsNone(result.next_token)
 
@@ -257,7 +257,7 @@ class TestListTranscripts(BaseTranscriptStoreTest):
 
         self.assertEqual(len(result.transcripts), 1)
         self.assertEqual(
-            result.transcripts[0].transmission_id, str(_TRANSMISSION_ID)
+            result.transcripts[0].segment_id, str(_TRANSMISSION_ID)
         )
         self.assertIsNone(result.next_token)
 

@@ -206,7 +206,7 @@ class SerializeFn(beam.DoFn):
             proto = TranscribedAudio(
                 feed_id=value.feed_id,
                 source_audio_uris=value.contributing_audio_uris,
-                transmission_id=value.transmission_id,
+                segment_id=value.segment_id,
                 transcript=value.transcript,
                 missing_prior_context=value.missing_prior_context,
                 missing_post_context=value.missing_post_context,
@@ -286,7 +286,7 @@ class SerializeNormalizationClaimFn(beam.DoFn):
             proto = NormalizedAudio(
                 feed_id=value.feed_id,
                 source_audio_uris=value.contributing_audio_uris,
-                transmission_id=value.transmission_id,
+                segment_id=value.segment_id,
                 missing_prior_context=value.missing_prior_context,
                 missing_post_context=value.missing_post_context,
                 start_audio_offset=start_offset,

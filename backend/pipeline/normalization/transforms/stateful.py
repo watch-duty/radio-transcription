@@ -1236,8 +1236,8 @@ class NormalizeAudioFn(beam.DoFn):
                 tz=UTC,
             )
 
-            flac_path = f"lossless/{request.feed_id}/{dt:%Y/%m/%d}/{request.transmission_id}.flac"
-            m4a_path = f"playback/{request.feed_id}/{dt:%Y/%m/%d}/{request.transmission_id}.m4a"
+            flac_path = f"lossless/{request.feed_id}/{dt:%Y/%m/%d}/{request.segment_id}.flac"
+            m4a_path = f"playback/{request.feed_id}/{dt:%Y/%m/%d}/{request.segment_id}.m4a"
 
             if self.audio_uploader is None:
                 msg = "AudioUploader not initialized. setup() must be called."
@@ -1281,7 +1281,7 @@ class NormalizeAudioFn(beam.DoFn):
             session_id=request.session_id,
             contributing_audio_uris=request.contributing_audio_uris,
             time_range=request.time_range,
-            transmission_id=request.transmission_id,
+            segment_id=request.segment_id,
             missing_prior_context=request.missing_prior_context,
             missing_post_context=request.missing_post_context,
             start_audio_offset_ms=request.start_audio_offset_ms,
