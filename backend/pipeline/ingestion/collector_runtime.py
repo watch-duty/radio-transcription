@@ -954,6 +954,18 @@ class CollectorRuntime:
         """Return whether a leased feed carries persisted failure state."""
         return feed["failure_count"] > 0 or feed["status_reason"] is not None
 
+    @staticmethod
+    def _advance_local_bookmark(
+        feed: LeasedFeed,
+        resume_position: datetime.datetime | None,
+    ) -> None:
+        """Keep the local lease copy monotonic with observation SQL."""
+        if resume_position is None:
+            return
+        current_bookmark = feed["last_bookmark_time"]
+        if current_bookmark is None or resume_position > current_bookmark:
+            feed["last_bookmark_time"] = resume_position
+
     async def _process_source_observation(
         self,
         feed: LeasedFeed,
@@ -1004,8 +1016,7 @@ class CollectorRuntime:
         if result["recorded"]:
             feed["failure_count"] = 0
             feed["status_reason"] = None
-            if observation.resume_position is not None:
-                feed["last_bookmark_time"] = observation.resume_position
+            self._advance_local_bookmark(feed, observation.resume_position)
             return True
 
         current_status = result["current_status"]

@@ -547,6 +547,59 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(feed["last_bookmark_time"], resume_position)
         rt._store.release_feed.assert_awaited_once()
 
+    async def test_dirty_observation_does_not_rewind_local_bookmark(
+        self,
+    ) -> None:
+        """Local lease copy mirrors SQL monotonic bookmark advancement."""
+        existing_bookmark = datetime.datetime(
+            2026,
+            6,
+            8,
+            12,
+            0,
+            tzinfo=datetime.UTC,
+        )
+        older_resume_position = existing_bookmark - datetime.timedelta(
+            minutes=5
+        )
+
+        async def _one_observation(feed, shutdown, _resources):
+            yield SourceObservation(resume_position=older_resume_position)
+
+        feed = cast(
+            "LeasedFeed",
+            dict(
+                _FEED,
+                last_bookmark_time=existing_bookmark,
+                failure_count=2,
+                status_reason=FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+            ),
+        )
+        rt = CollectorRuntime(
+            capture_fn=_one_observation,
+            settings=_make_settings(),
+        )
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.record_source_observation.return_value = {
+            "id": _FEED_ID,
+            "current_worker": _WORKER_ID,
+            "current_status": "active",
+            "current_fencing_token": 1,
+            "recorded": True,
+        }
+        rt._releasing_feeds = set()
+
+        with _mock_upload_audio(), _mock_pubsub_publish():
+            await rt._process_feed(feed)
+
+        self.assertEqual(feed["failure_count"], 0)
+        self.assertIsNone(feed["status_reason"])
+        self.assertEqual(feed["last_bookmark_time"], existing_bookmark)
+        rt._store.release_feed.assert_awaited_once()
+
     async def test_dirty_observation_aborts_without_failure_when_row_inactive(
         self,
     ) -> None:

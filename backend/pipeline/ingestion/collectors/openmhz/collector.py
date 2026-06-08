@@ -145,7 +145,8 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
 ) -> AsyncIterator[CaptureEvent]:
     """Capture OpenMHZ call recordings via WebSocket.
 
-    Yields :class:`CapturedChunk` for each call received.
+    Yields :class:`CapturedChunk` for each call received. A dirty leased feed
+    also yields :class:`SourceObservation` after a successful connection.
 
     Args:
         feed: Leased feed containing source_feed_id.

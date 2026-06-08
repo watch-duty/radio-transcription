@@ -674,7 +674,10 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
     url_base: str,
     resources: CaptureResources,
 ) -> AsyncIterator[CaptureEvent]:
-    """Capture audio chunks from Broadcastify Calls API.
+    """Capture Broadcastify Calls audio and no-audio observations.
+
+    Yields :class:`CapturedChunk` for processed call audio and
+    :class:`SourceObservation` for successful empty/skipped-only API pages.
 
     Args:
         feed: Leased feed containing source_feed_id.

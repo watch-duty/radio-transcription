@@ -336,7 +336,7 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
     """Capture Fire Notifications audio via HTTP Polling.
 
     Yields :class:`CapturedChunk` for each new MP3 file found, and
-    :class:`SourceObservation` for successful empty file listings.
+    :class:`SourceObservation` for successful empty/skipped-only file listings.
     """
     try:
         s3_base_url = _require_env("FIRE_NOTIFICATIONS_S3_BASE")
