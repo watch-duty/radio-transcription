@@ -41,11 +41,11 @@ from backend.pipeline.normalization.options import (
     DataflowSystemOptions,  # noqa: F401
     TranscriptionOptions,  # noqa: F401
 )
+from backend.pipeline.schema_types.continuous_audio_pb2 import (
+    ContinuousAudio,
+)
 from backend.pipeline.schema_types.normalized_audio_pb2 import (
     NormalizedAudio,
-)
-from backend.pipeline.schema_types.raw_audio_chunk_pb2 import (
-    AudioChunk,
 )
 from backend.pipeline.schema_types.transcribed_audio_pb2 import (
     TranscribedAudio,
@@ -90,7 +90,7 @@ class ParseAndKeyFn(beam.DoFn):
 
         outputs = []
         try:
-            chunk_proto = AudioChunk()
+            chunk_proto = ContinuousAudio()
             chunk_proto.ParseFromString(element.data)
             feed_id = chunk_proto.feed_id
             context = extract_trace_context(element.attributes)
@@ -99,16 +99,16 @@ class ParseAndKeyFn(beam.DoFn):
                 "receive_audio_chunk_for_normalization", context=context
             ):
                 if not feed_id:
-                    msg = "AudioChunk missing required feed_id"
+                    msg = "ContinuousAudio missing required feed_id"
                     _raise(msg)
                 if not chunk_proto.gcs_uri:
-                    msg = "AudioChunk missing required gcs_uri"
+                    msg = "ContinuousAudio missing required gcs_uri"
                     _raise(msg)
                 if self.is_continuous and not chunk_proto.session_id:
-                    msg = "AudioChunk missing required session_id for continuous feed"
+                    msg = "ContinuousAudio missing required session_id for continuous feed"
                     _raise(msg)
                 if not chunk_proto.feed_name:
-                    msg = "AudioChunk missing required feed_name"
+                    msg = "ContinuousAudio missing required feed_name"
                     _raise(msg)
 
                 source_type = (
@@ -143,7 +143,7 @@ class ParseAndKeyFn(beam.DoFn):
                     traceparent=traceparent,
                 )
                 logger.debug(
-                    "Parsed AudioChunk feed_id=%s gcs_uri=%s duration=%dms",
+                    "Parsed ContinuousAudio feed_id=%s gcs_uri=%s duration=%dms",
                     feed_id,
                     chunk_proto.gcs_uri,
                     chunk_proto.duration_ms,
