@@ -66,6 +66,20 @@ class RequestHandler(BaseHTTPRequestHandler):
         files.sort(key=lambda x: x.name)
         return files
 
+    def _get_next_audio_file(
+        self, parsed_url, data_source: str, source_feed_id: str
+    ) -> Path | None:
+        """Cycles through audio files for the given feed, returning the next one."""
+        audio_files = self.get_audio_files(data_source, source_feed_id)
+        if not audio_files:
+            return None
+
+        current_file = audio_files[
+            call_index[parsed_url.path] % len(audio_files)
+        ]
+        call_index[parsed_url.path] += 1
+        return current_file
+
     def do_GET(self) -> None:
         parsed_url = urlparse(self.path)
 
@@ -89,15 +103,12 @@ class RequestHandler(BaseHTTPRequestHandler):
         qs = parse_qs(parsed_url.query)
         source_feed_id = qs.get("groups", [""])[0]
 
-        audio_files = self.get_audio_files(
-            DATA_SOURCE_BCFY_CALLS, source_feed_id
+        current_file = self._get_next_audio_file(
+            parsed_url, DATA_SOURCE_BCFY_CALLS, source_feed_id
         )
 
         calls = []
-        if audio_files:
-            current_file = audio_files[call_index[self.path] % len(audio_files)]
-            call_index[self.path] += 1
-
+        if current_file:
             relative_path = current_file.relative_to(
                 Path(DEFAULT_DATA_DIR)
             ).as_posix()
@@ -135,17 +146,12 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
         source_feed_id = parsed_url.path[len(PATH_FIRE_NOTIFICATIONS_PREFIX) :]
-        audio_files = self.get_audio_files(
-            DATA_SOURCE_FIRE_NOTIFICATIONS, source_feed_id
+        current_file = self._get_next_audio_file(
+            parsed_url, DATA_SOURCE_FIRE_NOTIFICATIONS, source_feed_id
         )
 
         files_payload = []
-        if audio_files:
-            current_file = audio_files[
-                call_index[parsed_url.path] % len(audio_files)
-            ]
-            call_index[parsed_url.path] += 1
-
+        if current_file:
             relative_path_no_ext = (
                 current_file.relative_to(Path(DEFAULT_DATA_DIR))
                 .with_suffix("")
@@ -184,9 +190,12 @@ class RequestHandler(BaseHTTPRequestHandler):
 
         if not file_path.exists() and "/" not in path:
             # Fallback for E2E integration tests requesting dynamic bcfy_feeds source_feed_ids.
-            fallback_path = Path("/data") / DATA_SOURCE_BCFY_CALLS / DEFAULT_BCFY_FEED_ID / "test_bcfy.flac"
-            if fallback_path.exists():
-                file_path = fallback_path
+            # Treat the root request as a continuous stream and reuse the calls mock data.
+            current_file = self._get_next_audio_file(
+                parsed_url, DATA_SOURCE_BCFY_CALLS, path
+            )
+            if current_file:
+                file_path = current_file
 
         filename = file_path.name
 
