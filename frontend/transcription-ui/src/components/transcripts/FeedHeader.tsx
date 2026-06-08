@@ -10,38 +10,38 @@ import Typography from '@mui/material/Typography';
 import type { Feed, FeedStatus } from '@transcription/common';
 
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
-import FeedSearch from './FeedSearch';
+import FeedSearchView from '../feeds/FeedSearchView';
 
 interface FeedHeaderProps {
-  feeds: Feed[];
   searchedFeed: Feed | null;
   onSelectFeed: (feedId: string) => void;
-  feedsLoading: boolean;
   sourceUrl?: string;
   archiveUrl?: string;
   status?: FeedStatus;
   lastHeartbeat?: string;
   triggerSnackbar: (message: string) => void;
+  onError: (error: Error, titleMessage?: string) => void;
 }
 
 const FeedHeader: React.FC<FeedHeaderProps> = ({
-  feeds,
   searchedFeed,
   onSelectFeed,
-  feedsLoading,
   sourceUrl,
   archiveUrl,
   status,
   lastHeartbeat,
   triggerSnackbar,
+  onError,
 }) => {
   return (
     <>
-      <FeedSearch
-        feeds={feeds}
-        selectedFeed={searchedFeed}
+      <FeedSearchView
+        title="Select feed"
+        collapsed={true}
+        selectedFeedId={searchedFeed?.id}
         onFeedSelect={onSelectFeed}
-        isFetching={feedsLoading}
+        triggerSnackbar={triggerSnackbar}
+        onError={onError}
       />
       {searchedFeed && (
         <Box
