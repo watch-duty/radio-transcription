@@ -16,15 +16,45 @@ PATH_BCFY_CALLS = "/calls"
 PATH_FIRE_NOTIFICATIONS_PREFIX = "/api/audio/"
 DEFAULT_DATA_DIR = "/data"
 
+# Pre-populated default mock feed IDs.
+# Used for manual local development and as a fallback for E2E integration tests
+# that generate random UUIDs for their source_feed_ids to ensure test isolation.
+DEFAULT_BCFY_FEED_ID = "2912"
+DEFAULT_FN_FEED_ID = "RECORDINGS/SAN-JOSE-DISP"
+
 call_index: dict[str, int] = collections.defaultdict(int)
 
 
 class RequestHandler(BaseHTTPRequestHandler):
+    """
+    Handles HTTP requests for the mock audio server.
+
+    Serves mock API responses and audio files for Broadcastify Calls and
+    Fire Notifications. Used during local development to emulate real audio sources
+    and during automated E2E integration tests.
+    """
+
+    def _resolve_data_dir(self, data_source: str, source_feed_id: str) -> Path:
+        """Resolves the data directory, falling back to defaults if necessary."""
+        data_dir = Path(DEFAULT_DATA_DIR) / data_source / source_feed_id
+        if data_dir.is_dir():
+            return data_dir
+
+        # Fallback for E2E integration tests.
+        # Tests generate random UUID source_feed_ids to guarantee complete isolation.
+        # We gracefully fall back to the pre-populated standard mock data here so tests
+        # don't need to manually populate audio files for their dynamic IDs.
+        if data_source == DATA_SOURCE_BCFY_CALLS:
+            return Path(DEFAULT_DATA_DIR) / data_source / DEFAULT_BCFY_FEED_ID
+        if data_source == DATA_SOURCE_FIRE_NOTIFICATIONS:
+            return Path(DEFAULT_DATA_DIR) / data_source / DEFAULT_FN_FEED_ID
+        return data_dir
+
     def get_audio_files(
         self, data_source: str, source_feed_id: str
     ) -> list[Path]:
-        data_dir = Path(DEFAULT_DATA_DIR) / data_source / source_feed_id
-        if not data_dir.exists() or not data_dir.is_dir():
+        data_dir = self._resolve_data_dir(data_source, source_feed_id)
+        if not data_dir.is_dir():
             return []
 
         valid_extensions = {".mp3", ".wav", ".flac", ".m4a", ".ogg"}
@@ -68,10 +98,14 @@ class RequestHandler(BaseHTTPRequestHandler):
             current_file = audio_files[call_index[self.path] % len(audio_files)]
             call_index[self.path] += 1
 
+            relative_path = current_file.relative_to(
+                Path(DEFAULT_DATA_DIR)
+            ).as_posix()
+
             calls.append(
                 {
                     "id": int(time.time() * 1000) + call_index[parsed_url.path],
-                    "url": f"{url_base}{DATA_SOURCE_BCFY_CALLS}/{source_feed_id}/{current_file.name}?id={int(time.time() * 1000) + call_index[parsed_url.path]}",
+                    "url": f"{url_base}{relative_path}?id={int(time.time() * 1000) + call_index[parsed_url.path]}",
                     "start_ts": int(time.time()),
                     "end_ts": int(time.time()) + 5,
                     "ts": int(time.time()),
@@ -112,11 +146,17 @@ class RequestHandler(BaseHTTPRequestHandler):
             ]
             call_index[parsed_url.path] += 1
 
+            relative_path_no_ext = (
+                current_file.relative_to(Path(DEFAULT_DATA_DIR))
+                .with_suffix("")
+                .as_posix()
+            )
+
             files_payload.append(
                 {
                     "type": "file",
                     "name": f"{current_file.stem}.mp3?id={int(time.time() * 1000) + call_index[parsed_url.path]}",
-                    "uuid": f"{DATA_SOURCE_FIRE_NOTIFICATIONS}/{source_feed_id}/{current_file.stem}?id={int(time.time() * 1000) + call_index[parsed_url.path]}",
+                    "uuid": f"{relative_path_no_ext}?id={int(time.time() * 1000) + call_index[parsed_url.path]}",
                     "size": current_file.stat().st_size
                     if current_file.exists()
                     else 10240,
