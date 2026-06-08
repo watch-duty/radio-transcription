@@ -70,8 +70,8 @@ timer* pattern:
 
 The constant `MAX_CHUNKS_PER_WINDMILL_BUNDLE` (defined in `constants.py`) is
 sized so that `N_chunks x per_chunk_latency` stays well under 300 seconds. If
-model inference latency increases significantly in the future, this value should
-be reduced accordingly.
+per-chunk processing or external I/O latency increases significantly in the
+future, this value should be reduced accordingly.
 """
 
 import logging as std_logging

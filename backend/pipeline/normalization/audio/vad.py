@@ -438,15 +438,18 @@ class VoiceActivityDetector:
 
         triggered = False
         temp_end = 0
-        current_speech = {}
+        current_speech: dict[str, int | float] = {}
         raw_segments = []
+
+        def frames_to_sec(frame_idx: float) -> float:
+            return (frame_idx * chunk_size) / TARGET_SAMPLE_RATE
 
         # Thread safety: `state` and `context` are call-local numpy arrays
         # initialized above. silero_session.run() is thread-safe for the same
         # reason as ulunas_session — the ONNX graph is immutable; all VAD RNN
         # state is passed in and returned as tensors rather than stored on the
         # session.
-        for i in range(0, len(vad_input), chunk_size):
+        for frame_idx, i in enumerate(range(0, len(vad_input), chunk_size)):
             chunk = vad_input[i : i + chunk_size]
             if len(chunk) < chunk_size:
                 chunk = np.pad(chunk, (0, chunk_size - len(chunk)))
@@ -465,49 +468,38 @@ class VoiceActivityDetector:
             state = outputs[1]
             context = x_with_context[-context_size:]
 
-            current_frame = i / chunk_size
-
             if not triggered:
                 if prob >= self.threshold_onset:
                     triggered = True
-                    current_speech["start"] = current_frame
+                    current_speech["start"] = frame_idx
                     temp_end = 0
-            elif prob < self.threshold_offset:
-                temp_end += 1
-                if temp_end >= min_silence_frames:
-                    current_speech["end"] = current_frame - temp_end
-                    if (
-                        current_speech["end"] - current_speech["start"]
-                    ) >= min_speech_frames:
-                        raw_segments.append(
-                            (
-                                current_speech["start"]
-                                * chunk_size
-                                / TARGET_SAMPLE_RATE,
-                                current_speech["end"]
-                                * chunk_size
-                                / TARGET_SAMPLE_RATE,
-                            )
-                        )
-                    triggered = False
+            else:  # noqa: PLR5501
+                if prob < self.threshold_offset:
+                    temp_end += 1
+                    if temp_end >= min_silence_frames:
+                        current_speech["end"] = frame_idx - temp_end
+                        if (
+                            current_speech["end"] - current_speech["start"]
+                        ) >= min_speech_frames:
+                            raw_segments.append((
+                                frames_to_sec(current_speech["start"]),
+                                frames_to_sec(current_speech["end"]),
+                            ))
+                        triggered = False
+                        temp_end = 0
+                        current_speech = {}
+                else:
                     temp_end = 0
-                    current_speech = {}
-            else:
-                temp_end = 0
 
         if triggered:
             current_speech["end"] = len(vad_input) / chunk_size
             if (
                 current_speech["end"] - current_speech["start"]
             ) >= min_speech_frames:
-                raw_segments.append(
-                    (
-                        current_speech["start"]
-                        * chunk_size
-                        / TARGET_SAMPLE_RATE,
-                        current_speech["end"] * chunk_size / TARGET_SAMPLE_RATE,
-                    )
-                )
+                raw_segments.append((
+                    frames_to_sec(current_speech["start"]),
+                    frames_to_sec(current_speech["end"]),
+                ))
 
         return raw_segments
 
