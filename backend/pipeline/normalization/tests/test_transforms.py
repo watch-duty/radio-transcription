@@ -50,7 +50,7 @@ from backend.pipeline.normalization.transforms.stateless import (
     ParseAndKeyFn,
     SerializeNormalizationClaimFn,
 )
-from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
+from backend.pipeline.schema_types.continuous_audio_pb2 import ContinuousAudio
 
 # Test Helper: override ChunkMetadata locally in tests to default is_continuous to True
 _OriginalChunkMetadata = ChunkMetadata
@@ -112,8 +112,8 @@ def get_test_normalize_config(**kwargs: Any) -> NormalizeAudioConfig:
 
 class ParseAndKeyTimestampTest(unittest.TestCase):
     def test_parse_and_key_success(self) -> None:
-        """Verifies that well-formed Pub/Sub messages containing a serialized AudioChunk and feed_id are correctly unmarshalled and keyed by feed."""
-        chunk = AudioChunk(
+        """Verifies that well-formed Pub/Sub messages containing a serialized ContinuousAudio and feed_id are correctly unmarshalled and keyed by feed."""
+        chunk = ContinuousAudio(
             gcs_uri="gs://test-bucket/path/to/test.flac",
             session_id="mock-session-id",
             feed_name="mock-feed-name",
@@ -163,7 +163,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
 
     def test_parse_and_key_dlq(self) -> None:
         """Verifies that incoming data missing a critical routing attribute like 'feed_id' is gracefully intercepted and routed to the Dead Letter Queue."""
-        chunk = AudioChunk(gcs_uri="gs://test-bucket/path/to/test.flac")
+        chunk = ContinuousAudio(gcs_uri="gs://test-bucket/path/to/test.flac")
         mock_msg = PubsubMessage(
             chunk.SerializeToString(),
             {},  # Missing feed_id
@@ -200,7 +200,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
 
     def test_parse_and_key_missing_feed_id_dlq(self) -> None:
         """Verifies that a message with a missing feed_id but otherwise valid fields is routed to the DLQ."""
-        chunk = AudioChunk(
+        chunk = ContinuousAudio(
             gcs_uri="gs://test-bucket/path/to/test.flac",
             feed_name="mock-feed-name",
             duration_ms=1000,
@@ -229,7 +229,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
                 assert len(elements) == 1
                 assert isinstance(elements[0]["error"], str)
                 assert (
-                    "AudioChunk missing required feed_id"
+                    "ContinuousAudio missing required feed_id"
                     in elements[0]["error"]
                 )
 
@@ -240,7 +240,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
 
     def test_parse_and_key_mismatched_routing_continuous_dlq(self) -> None:
         """Verifies that a segmented source type received on a continuous subscription is routed to the DLQ."""
-        chunk = AudioChunk(
+        chunk = ContinuousAudio(
             gcs_uri="gs://test-bucket/path/to/test.flac",
             session_id="mock-session-id",
             feed_name="mock-feed-name",
@@ -280,7 +280,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
 
     def test_parse_and_key_mismatched_routing_segmented_dlq(self) -> None:
         """Verifies that a continuous source type received on a segmented subscription is routed to the DLQ."""
-        chunk = AudioChunk(
+        chunk = ContinuousAudio(
             gcs_uri="gs://test-bucket/path/to/test.flac",
             session_id="mock-session-id",
             feed_name="mock-feed-name",
@@ -320,7 +320,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
 
     def test_parse_and_key_span_lifecycle(self) -> None:
         """Verifies that ParseAndKeyFn doesn't leak trace context scope on execution."""
-        chunk = AudioChunk(
+        chunk = ContinuousAudio(
             gcs_uri="gs://test-bucket/path/to/test.flac",
             session_id="mock-session-id",
             feed_name="mock-feed-name",
