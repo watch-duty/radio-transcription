@@ -1,5 +1,14 @@
 # Contributing
 
+## Quick Start
+
+* Run Backend (and API services) locally: `mise run dev:start`
+* Run Frontend and Backend locally: `mise run dev`
+* Setup environment for Frontend development against GCP backend: `mise run dev:remote:init`
+* Run Frontend and Frontend Proxy API against GCP backend: `mise run dev:remote`
+
+More mise commands can be found in [.mise.toml](/.mise.toml).
+
 ## Pre-requisites
 
 1. Install Mise (`curl https://mise.run | sh` or `brew install mise` - https://mise.jdx.dev/getting-started.html)
