@@ -11,8 +11,8 @@ from google.protobuf.timestamp_pb2 import Timestamp  # type: ignore
 from backend.pipeline.normalization.processor import (
     NormalizationEventProcessor,
 )
-from backend.pipeline.schema_types.segmented_audio_pb2 import SegmentedAudio
 from backend.pipeline.schema_types.normalized_audio_pb2 import NormalizedAudio
+from backend.pipeline.schema_types.segmented_audio_pb2 import SegmentedAudio
 
 
 class NormalizationEventProcessorTest(unittest.TestCase):

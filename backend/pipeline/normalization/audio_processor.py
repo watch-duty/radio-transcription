@@ -9,8 +9,6 @@ import logging
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any
-
 
 logger = logging.getLogger(__name__)
 
@@ -110,5 +108,3 @@ class AudioProcessor:
                 Path(temp_filename).unlink()
             except OSError:
                 pass
-
-

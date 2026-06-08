@@ -5,23 +5,19 @@ import datetime
 import logging
 import urllib.parse
 
-import grpc
 from cloudevents.http.event import CloudEvent
 from google.cloud import pubsub_v1, storage
 
 from backend.pipeline.common.clients.audio_segments_client import (
     AudioSegmentsClient,
 )
-from backend.pipeline.common.constants import MS_PER_SECOND, NANOS_PER_SECOND
+from backend.pipeline.common.constants import NANOS_PER_SECOND
 from backend.pipeline.common.storage import gcs_uploader
 from backend.pipeline.common.tracing_utils import with_tracer_context
 from backend.pipeline.normalization import audio_processor
 from backend.pipeline.schema_types.normalized_audio_pb2 import NormalizedAudio
 from backend.pipeline.schema_types.segmented_audio_pb2 import (
     SegmentedAudio,
-)
-from backend.pipeline.schema_types.streaming_state_pb2 import (
-    TimeRangeProto as TimeRange,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,9 +48,7 @@ class NormalizationEventProcessor:
         self.gcs_client = gcs_client or storage.Client(project=self.project_id)
 
         # Set up specialized shared audio processing components
-        self.audio_processor = audio_processor.AudioProcessor(
-            gcs_client_instance=self.gcs_client,
-        )
+        self.audio_processor = audio_processor.AudioProcessor()
         self.audio_processor.setup()
 
         self.audio_uploader = gcs_uploader.GCSAudioUploader(
@@ -278,7 +272,9 @@ class NormalizationEventProcessor:
             start_audio_offset=segmented_audio.start_audio_offset,
             end_audio_offset=segmented_audio.end_audio_offset,
             feed_name=segmented_audio.feed_name,
-            audio_classification=segmented_audio.audio_classification,
+            audio_classification=SegmentedAudio.AudioClassification.Name(
+                segmented_audio.audio_classification
+            ),
         )
 
         topic_name = self.output_topic.split("/")[-1]
