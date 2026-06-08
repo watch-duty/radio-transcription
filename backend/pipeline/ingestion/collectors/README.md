@@ -97,8 +97,11 @@ Polling collectors distinguish poll/fetch success from audio production:
 - If the poll/fetch fails, count it as a collector-local failure.
 - If the poll/fetch succeeds and the response has no source items to process,
   reset the collector-local failure streak and yield `SourceObservation`.
-- If the poll/fetch succeeds and the response has at least one source item,
-  keep the existing item handling behavior for that source.
+- If the poll/fetch succeeds and every returned source item is skipped before
+  any item attempt (for example, all items were already seen), treat that as a
+  successful non-audio source observation.
+- If the poll/fetch succeeds and at least one source item is attempted, keep
+  the existing item handling behavior for that source.
 
 `SourceObservation` is not an audio chunk. The runtime must not upload, publish,
 or count it as audio progress. It may clear stale persisted failure state when
@@ -109,8 +112,10 @@ array. A missing or non-list `calls` field is treated as an empty page under the
 collector's current extraction semantics. A missing `lastPos` is still a
 successful observation but does not advance a resume cursor.
 
-For Fire Notifications, yield `SourceObservation` only when the poll succeeds
-and `files == []`. Non-empty file lists continue through `_process_file_list`.
+For Fire Notifications, yield `SourceObservation` when the poll succeeds and
+`files == []`, or when a non-empty file list produces no attempted items because
+all files were skipped before download. Non-empty file lists with at least one
+attempted item continue through `_process_file_list` item handling.
 
 ## Failure Classification Model
 
