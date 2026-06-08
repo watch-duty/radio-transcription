@@ -11,6 +11,7 @@ from unittest import mock
 
 import aiohttp
 import asyncpg
+from google.api_core import exceptions as google_exceptions
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
 from backend.pipeline.ingestion.collector_runtime import CollectorRuntime
@@ -168,6 +169,9 @@ def _make_settings(**overrides) -> mock.MagicMock:
         "bookmark_max_retries": 2,
         "bookmark_retry_base_delay_sec": 0.5,
         "bookmark_retry_max_delay_sec": 4.0,
+        "pubsub_publish_max_retries": 2,
+        "pubsub_publish_retry_base_delay_sec": 0.5,
+        "pubsub_publish_retry_max_delay_sec": 4.0,
         # Real values so health_server doesn't try to bind the MagicMock-default
         # port 1 when a test exercises _main().
         "health_check_port": 8080,
@@ -361,6 +365,52 @@ class TestLeasingLoopOrphanedTask(unittest.IsolatedAsyncioTestCase):
         )
 
 
+class TestProcessFeedSideEffectOrdering(unittest.IsolatedAsyncioTestCase):
+    """Tests for post-capture side-effect ordering in _process_feed."""
+
+    async def test_upload_then_bookmark_then_publish(self) -> None:
+        """A committed chunk is uploaded, bookmarked, then published."""
+
+        async def _one_chunk(feed, shutdown, _resources):
+            yield _make_captured_chunk(b"audio")
+
+        call_order: list[str] = []
+
+        async def _upload(*_args: object, **_kwargs: object) -> str:
+            call_order.append("upload")
+            return "gs://b/p"
+
+        async def _bookmark(*_args: object, **_kwargs: object) -> bool:
+            call_order.append("bookmark")
+            return True
+
+        async def _publish(*_args: object, **_kwargs: object) -> str:
+            call_order.append("publish")
+            return "message-1"
+
+        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress = mock.AsyncMock(side_effect=_bookmark)
+        rt._releasing_feeds = set()
+
+        with (
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.gcp_helper.upload_staged_audio",
+                mock.AsyncMock(side_effect=_upload),
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.gcp_helper.publish_audio_chunk",
+                mock.AsyncMock(side_effect=_publish),
+            ),
+        ):
+            await rt._process_feed(_FEED)
+
+        self.assertEqual(call_order, ["upload", "bookmark", "publish"])
+
+
 class TestProcessFeedFenceViolation(unittest.IsolatedAsyncioTestCase):
     """Tests for _process_feed fence violation."""
 
@@ -380,14 +430,20 @@ class TestProcessFeedFenceViolation(unittest.IsolatedAsyncioTestCase):
 
         with (
             _mock_upload_audio(),
-            _mock_pubsub_publish(),
+            _mock_pubsub_publish() as publish_mock,
             mock.patch(
                 "backend.pipeline.ingestion.collector_runtime.os._exit",
+                side_effect=SystemExit(1),
             ) as mock_exit,
-            mock.patch("logging.shutdown"),
+            mock.patch("logging.shutdown") as mock_shutdown,
         ):
-            await rt._process_feed(_FEED)
-            mock_exit.assert_called_once_with(1)
+            with self.assertRaises(SystemExit):
+                await rt._process_feed(_FEED)
+
+        publish_mock.assert_not_awaited()
+        mock_exit.assert_called_once_with(1)
+        mock_shutdown.assert_called_once()
+        self.assertTrue(rt._lease_lost.is_set())
 
 
 class TestProcessFeedShutdown(unittest.IsolatedAsyncioTestCase):
@@ -1253,10 +1309,10 @@ class TestSigtermRelease(unittest.IsolatedAsyncioTestCase):
 
 
 class TestHeartbeatLoopSetsLeaseLost(unittest.IsolatedAsyncioTestCase):
-    """Tests for _heartbeat_loop setting _lease_lost on exception."""
+    """Tests for _heartbeat_loop _lease_lost semantics."""
 
-    async def test_heartbeat_exception_sets_lease_lost(self) -> None:
-        """Transient heartbeat error sets _lease_lost via call_soon_threadsafe."""
+    async def test_heartbeat_exception_does_not_set_lease_lost(self) -> None:
+        """Transient heartbeat error does not prove lease loss."""
         rt = _make_runtime()
         rt._loop = asyncio.get_running_loop()
         rt._thread_stop = mock.MagicMock()
@@ -1279,11 +1335,8 @@ class TestHeartbeatLoopSetsLeaseLost(unittest.IsolatedAsyncioTestCase):
             coro = mock_run.call_args[0][0]
             coro.close()
 
-        # _lease_lost should have been set via call_soon_threadsafe.
-        # Since we're already on the event loop, we can check directly.
-        # The call_soon_threadsafe was scheduled but we need to yield.
         await asyncio.sleep(0)
-        self.assertTrue(rt._lease_lost.is_set())
+        self.assertFalse(rt._lease_lost.is_set())
 
     async def test_fence_violation_sets_lease_lost(self) -> None:
         """Fence violation in _heartbeat_cycle sets _lease_lost before exit."""
@@ -1413,6 +1466,64 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
 
         # LeaseExpiredError caught by dedicated handler — no DB write attempted
         rt._store.report_feed_failure.assert_not_awaited()
+
+    async def test_transient_pubsub_failure_retries_after_bookmark(
+        self,
+    ) -> None:
+        """Pub/Sub publish retry happens after a successful bookmark."""
+
+        async def _one_chunk(feed, shutdown, _resources):
+            yield _make_captured_chunk(b"audio")
+
+        call_order: list[str] = []
+        publish_results: list[object] = [
+            google_exceptions.ServiceUnavailable("pubsub transient"),
+            "message-2",
+        ]
+
+        async def _upload(*_args: object, **_kwargs: object) -> str:
+            call_order.append("upload")
+            return "gs://b/p"
+
+        async def _bookmark(*_args: object, **_kwargs: object) -> bool:
+            call_order.append("bookmark")
+            return True
+
+        async def _publish(*_args: object, **_kwargs: object) -> str:
+            call_order.append("publish")
+            result = publish_results.pop(0)
+            if isinstance(result, Exception):
+                raise result
+            return cast("str", result)
+
+        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress = mock.AsyncMock(side_effect=_bookmark)
+        rt._store.report_feed_failure.return_value = "failing"
+        rt._releasing_feeds = set()
+
+        with (
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.gcp_helper.upload_staged_audio",
+                mock.AsyncMock(side_effect=_upload),
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.gcp_helper.publish_audio_chunk",
+                mock.AsyncMock(side_effect=_publish),
+            ),
+        ):
+            await rt._process_feed(_FEED)
+
+        self.assertEqual(
+            call_order,
+            ["upload", "bookmark", "publish", "publish"],
+        )
+        rt._store.update_feed_progress.assert_awaited_once()
+        rt._store.report_feed_failure.assert_not_awaited()
+        rt._store.release_feed.assert_awaited_once()
 
 
 class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
@@ -1552,6 +1663,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress.return_value = True
         rt._store.report_feed_failure.return_value = "failing"
         rt._releasing_feeds = set()
 
@@ -1653,6 +1765,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         ):
             await rt._process_feed(_FEED)
 
+        rt._store.update_feed_progress.assert_awaited_once()
         rt._store.report_feed_failure.assert_awaited_once()
         kwargs = rt._store.report_feed_failure.await_args.kwargs
         self.assertEqual(kwargs["reason"], "pubsub_publish_failed")
