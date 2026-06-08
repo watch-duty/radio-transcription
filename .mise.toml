@@ -197,7 +197,24 @@ docker-compose --env-file local_dev/LOCAL.env logs --tail 100 -t -f {{ arg(name=
 [tasks.dev]
 description = "Start the entire system (backend (via Docker) and frontend UI hosted locally)"
 depends = ["dev:start", "build:common", "install:ui", "install:env"]
+env = { VITE_AUTH_BACKEND = "none", VITE_PROXY_API_TARGET = "http://localhost:8088", VITE_API_BASE_URL = "" }
 run = "yarn --cwd frontend/transcription-ui run local"
+
+[tasks."dev:add-audio"]
+description = "Add a test audio file to the mock audio server for a specific source and feed"
+usage = """
+arg "<source>" help="The data source (e.g., broadcastify_calls, fire_notifications)"
+arg "<feed>" help="The feed ID (e.g., 2912, RECORDINGS/SAN-JOSE-DISP)"
+arg "<file>" help="Path to the audio file to add"
+"""
+run = """
+#!/usr/bin/env bash
+set -e
+DEST_DIR="local_dev/mock_audio/{{ arg(name="source") }}/{{ arg(name="feed") }}"
+mkdir -p "$DEST_DIR"
+cp "{{ arg(name="file") }}" "$DEST_DIR/"
+echo "Added $(basename "{{ arg(name="file") }}") to $DEST_DIR/"
+"""
 
 [tasks."dev:whisper:start"]
 description = "Start the transcription pipeline with a local ASR model (Whisper) service in Docker"
@@ -209,6 +226,7 @@ docker-compose --env-file local_dev/LOCAL.env -f docker-compose.yml -f docker-co
 [tasks."dev:whisper"]
 description = "Start the entire system (transcription pipeline, API services, and frontend UI) with a local ASR model (Whisper)"
 depends = ["dev:whisper:start", "build:common", "install:ui", "install:api", "install:env"]
+env = { VITE_AUTH_BACKEND = "none", VITE_PROXY_API_TARGET = "http://localhost:8088", VITE_API_BASE_URL = "" }
 run = "yarn --cwd frontend/transcription-ui run local"
 
 [tasks."dev:remote:init"]

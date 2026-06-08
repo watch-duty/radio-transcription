@@ -318,7 +318,7 @@ services:
       - "127.0.0.1:8090:8090"
     volumes:
       - ./local_dev/mock_audio_server.py:/app/mock_audio_server.py:ro
-      - ./backend/pipeline/normalization/tests/test_data/test_bcfy.flac:/data/test_bcfy.flac:ro
+      - ./local_dev/mock_audio:/data:ro
     working_dir: /app
     env_file:
       - path: ./local_dev/LOCAL.env
