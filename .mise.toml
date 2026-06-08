@@ -123,7 +123,7 @@ description = "Apply all frontend fixes"
 depends = ["format:frontend:eslint", "format:frontend:prettier"]
 
 # ---------------------------------------------------------------------------- #
-#                              Dev Tasks                                       #
+#                              Developer Tasks                                 #
 # ---------------------------------------------------------------------------- #
 
 [tasks."generate:protos"]
@@ -131,21 +131,24 @@ description = "Generate Python code from Protobuf definitions"
 run = "mkdir -p .betterproto_out && uv run --with grpcio-tools python -m grpc_tools.protoc --proto_path=protos --python_out=backend/pipeline/schema_types --grpc_python_out=backend/pipeline/schema_types --pyi_out=backend/pipeline/schema_types protos/*.proto && uv run --with grpcio-tools --with \"betterproto[compiler]>=2.0.0b6\" python -m grpc_tools.protoc --proto_path=protos --python_betterproto_out=.betterproto_out protos/streaming_state.proto && cp .betterproto_out/streaming/pipeline/state/v1/__init__.py backend/pipeline/schema_types/streaming_state.py && rm -rf .betterproto_out"
 
 [tasks."build:common"]
-description = "Install and build shared frontend common package if missing"
+description = "Install, update, and build shared frontend common package"
 run = """
-if [ ! -d frontend/common/node_modules ] || [ ! -d frontend/common/dist ]; then
-  echo "Installing and building shared frontend common package..."
-  yarn --cwd frontend/common install && yarn --cwd frontend/common build
-fi
+echo "Installing and building shared frontend common package..."
+yarn --cwd frontend/common install && yarn --cwd frontend/common build
 """
 
 [tasks."install:ui"]
-description = "Install UI dependencies if missing"
+description = "Install and update UI dependencies"
 run = """
-if [ ! -d frontend/transcription-ui/node_modules ]; then
-  echo "Installing UI dependencies..."
-  yarn --cwd frontend/transcription-ui install
-fi
+echo "Installing UI dependencies..."
+yarn --cwd frontend/transcription-ui install
+"""
+
+[tasks."install:api"]
+description = "Install and update API Proxy dependencies"
+run = """
+echo "Installing API Proxy dependencies..."
+yarn --cwd frontend/api install
 """
 
 [tasks."install:env"]
@@ -154,28 +157,27 @@ run = """
 if [ ! -f frontend/transcription-ui/.env.local-dev ]; then
   echo "Initializing .env.local-dev..."
   cp frontend/transcription-ui/.env.local-dev.example frontend/transcription-ui/.env.local-dev
-fi
-"""
-
-
-[tasks."install:api"]
-description = "Install API Proxy dependencies if missing"
-run = """
-if [ ! -d frontend/api/node_modules ]; then
-  echo "Installing API Proxy dependencies..."
-  yarn --cwd frontend/api install
+else
+  echo -n ".env.local-dev already exists. Overwrite? (Y/N): "
+  read -r response
+  if [ "$response" = "y" ] || [ "$response" = "Y" ]; then
+    echo "Overwriting .env.local-dev..."
+    cp frontend/transcription-ui/.env.local-dev.example frontend/transcription-ui/.env.local-dev
+  else
+    echo "Skipped."
+  fi
 fi
 """
 
 [tasks."dev:start"]
-description = "Start the dev pipeline and UI in local Docker containers"
-depends = ["dev:stop"]
+description = "Start the transcription pipeline in local Docker containers"
+depends = ["dev:stop", "build:common", "generate:protos", "install:api", "install:env"]
 run = """
 docker-compose --env-file local_dev/LOCAL.env up --build -d
 """
 
 [tasks."dev:stop"]
-description = "Stop all dev containers and release host ports"
+description = "Stop all Docker containers and release host ports"
 run = """
 docker-compose --env-file local_dev/LOCAL.env down -v --remove-orphans
 lsof -t -i :5173 | xargs kill -9 2>/dev/null || true
@@ -183,7 +185,8 @@ lsof -t -i :8080 | xargs kill -9 2>/dev/null || true
 """
 
 [tasks."dev:log"]
-description = "Run the pipeline in local Docker containers"
+description = "Run the transcription pipeline in local Docker containers with logs"
+depends = ["dev:stop", "build:common", "generate:protos", "install:api", "install:env"]
 usage = """
 arg "[service]..." help="Services to log from. Default: all"
 """
@@ -192,24 +195,24 @@ docker-compose --env-file local_dev/LOCAL.env logs --tail 100 -t -f {{ arg(name=
 """
 
 [tasks.dev]
-description = "Start the entire system (backend in Docker, frontend on host)"
+description = "Start the entire system (backend (via Docker) and frontend UI hosted locally)"
 depends = ["dev:start", "build:common", "install:ui", "install:env"]
 run = "yarn --cwd frontend/transcription-ui run local"
 
 [tasks."dev:whisper:start"]
-description = "Start the dev pipeline with local Whisper STT service in Docker"
+description = "Start the transcription pipeline with a local ASR model (Whisper) service in Docker"
 depends = ["dev:stop"]
 run = """
 docker-compose --env-file local_dev/LOCAL.env -f docker-compose.yml -f docker-compose.whisper.yml --profile local-whisper up --build -d
 """
 
 [tasks."dev:whisper"]
-description = "Start the entire system with local Whisper STT service (backend in Docker, frontend on host)"
-depends = ["dev:whisper:start", "build:common", "install:ui", "install:env"]
+description = "Start the entire system (transcription pipeline, API services, and frontend UI) with a local ASR model (Whisper)"
+depends = ["dev:whisper:start", "build:common", "install:ui", "install:api", "install:env"]
 run = "yarn --cwd frontend/transcription-ui run local"
 
 [tasks."dev:remote:init"]
-description = "Automatically fetch and configure remote dev environment variables from GCP"
+description = "Automatically fetch and configure remote dev environment variables from GCP for running Frontend UI against the dev GCP environment"
 run = """
 export PROJECT_ID=$(gcloud config get-value project)
 gcloud auth application-default login --impersonate-service-account=radio-transcription-api-dev@$PROJECT_ID.iam.gserviceaccount.com
@@ -217,7 +220,7 @@ python3 local_dev/setup_remote_dev.py
 """
 
 [tasks."dev:remote:ui"]
-description = "Run frontend UI on host and connect directly to remote GCP API Gateway"
+description = "Run frontend UI locally and connect to the frontend Proxy API in GCP"
 depends = ["dev:stop", "build:common", "install:ui"]
 run = """
 if [ ! -f frontend/transcription-ui/.env.dev.local ]; then
@@ -229,7 +232,7 @@ yarn --cwd frontend/transcription-ui dev
 """
 
 [tasks."dev:remote"]
-description = "Run frontend on host (FE Proxy API + UI) and connect to dev backend in GCP"
+description = "Run frontend proxy API and UI locally, and connect to backend in GCP"
 depends = ["dev:stop", "build:common", "install:ui", "install:api"]
 env = { VITE_API_BASE_URL = "", VITE_PROXY_API_TARGET = "http://localhost:8080" }
 run = """
