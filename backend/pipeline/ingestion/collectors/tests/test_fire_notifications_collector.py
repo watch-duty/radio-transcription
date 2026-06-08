@@ -10,6 +10,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.pipeline.ingestion.collectors.failure_classification import (
+    ItemBatchOutcome,
     ItemFailure,
 )
 from backend.pipeline.ingestion.collectors.fire_notifications import collector
@@ -230,6 +231,7 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
                 self.processed_uuids,
                 "CHAN",
                 "http://mock-s3-bucket",
+                ItemBatchOutcome(),
             ):
                 chunks.append(chunk)
 
@@ -283,6 +285,7 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
                 self.processed_uuids,
                 "CHAN",
                 "http://mock-s3-bucket",
+                ItemBatchOutcome(),
             ):
                 chunks.append(chunk)
 
@@ -321,6 +324,7 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
             self.processed_uuids,
             "CHAN",
             "http://mock-s3-bucket",
+            ItemBatchOutcome(),
         ):
             chunks.append(chunk)
 
@@ -358,6 +362,7 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
                 self.processed_uuids,
                 "CHAN",
                 "http://mock-s3-bucket",
+                ItemBatchOutcome(),
             ):
                 pass
 
@@ -410,6 +415,7 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
                 self.processed_uuids,
                 "CHAN",
                 "http://mock-s3-bucket",
+                ItemBatchOutcome(),
             ):
                 pass
 
@@ -603,6 +609,81 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(events, [SourceObservation()])
         self.assertEqual(mock_session.get.call_count, 11)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.AsyncSession",
+    )
+    async def test_all_seen_files_yield_source_observation(
+        self,
+        mock_session_cls: MagicMock,
+        mock_download: AsyncMock,
+        mock_sleep: AsyncMock,
+    ) -> None:
+        mock_download.return_value = b"mp3"
+        mock_session = mock_session_cls.return_value
+        mock_session.close = AsyncMock()
+
+        first_resp = MagicMock(status_code=200)
+        first_resp.json.return_value = {
+            "files": [
+                {
+                    "type": "file",
+                    "name": "CHAN 2026-05-20 12-00-00.mp3",
+                    "uuid": "uuid1",
+                    "size": 1000,
+                }
+            ]
+        }
+        second_resp = MagicMock(status_code=200)
+        second_resp.json.return_value = {
+            "files": [
+                {
+                    "type": "file",
+                    "name": "CHAN 2026-05-20 12-00-00.mp3",
+                    "uuid": "uuid1",
+                    "size": 1000,
+                }
+            ]
+        }
+        mock_session.get = AsyncMock(side_effect=[first_resp, second_resp])
+
+        sleep_calls = 0
+
+        async def sleep_side_effect(*args, **kwargs) -> bool:
+            nonlocal sleep_calls
+            sleep_calls += 1
+            if sleep_calls >= 2:
+                self.shutdown.set()
+                return True
+            return False
+
+        mock_sleep.side_effect = sleep_side_effect
+
+        events = []
+        with patch(
+            "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
+            return_value=1000,
+        ):
+            async for event in collector.fire_notifications_collector(
+                self.feed,  # type: ignore
+                self.shutdown,
+                "http://base",
+                self.resources,
+            ):
+                events.append(event)
+
+        self.assertEqual(len(events), 2)
+        self.assertIsInstance(events[0], collector.CapturedChunk)
+        self.assertEqual(events[1], SourceObservation())
+        mock_download.assert_awaited_once()
 
     @patch(
         "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",

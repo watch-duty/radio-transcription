@@ -207,6 +207,7 @@ async def _process_file_list(
     processed_uuids: collections.deque[str],
     source_feed_id: str,
     s3_base_url: str,
+    outcome: ItemBatchOutcome,
 ) -> AsyncIterator[CapturedChunk]:
     """Filter, sort and process audio files, yielding CapturedChunks."""
     # Filter for files and sort by name to process chronologically
@@ -220,8 +221,6 @@ async def _process_file_list(
     # A Fire Notifications file-list response is the observation boundary:
     # all eligible attempted MP3s failing is meaningful, but isolated stale or
     # corrupt files should not mark the feed unhealthy.
-    outcome = ItemBatchOutcome()
-
     for f in audio_files:
         if shutdown_event.is_set():
             break
@@ -397,6 +396,7 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
                     if files == []:
                         yield SourceObservation()
                     else:
+                        outcome = ItemBatchOutcome()
                         async for chunk in _process_file_list(
                             files,
                             session,
@@ -406,8 +406,15 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
                             processed_uuids,
                             source_feed_id,
                             s3_base_url,
+                            outcome,
                         ):
                             yield chunk
+                        if (
+                            outcome.attempted_count == 0
+                            and not outcome.chunk_produced
+                            and not shutdown_event.is_set()
+                        ):
+                            yield SourceObservation()
                     poll_ok = True
                 else:
                     last_poll_failure = _classify_poll_status(resp.status_code)

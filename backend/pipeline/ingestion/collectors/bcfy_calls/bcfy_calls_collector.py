@@ -804,6 +804,17 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                 promoted = outcome.promoted_failure()
                 if promoted is not None:
                     _raise_item_failure(promoted)
+                if (
+                    outcome.attempted_count == 0
+                    and not outcome.chunk_produced
+                    and not shutdown_event.is_set()
+                ):
+                    consecutive_failures = 0
+                    yield SourceObservation(
+                        resume_position=_last_pos_to_resume_position(
+                            bcfy_calls
+                        ),
+                    )
             elif bcfy_calls is not None:
                 consecutive_failures = 0
                 yield SourceObservation(

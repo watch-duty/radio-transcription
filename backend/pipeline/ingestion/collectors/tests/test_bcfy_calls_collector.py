@@ -1187,6 +1187,101 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
         new_callable=AsyncMock,
     )
+    async def test_all_seen_calls_yield_source_observation(
+        self,
+        mock_sleep: AsyncMock,
+        mock_dl: AsyncMock,
+        mock_fetch: AsyncMock,
+        mock_jwt: MagicMock,
+    ) -> None:
+        mock_jwt.return_value = "token"
+        mock_dl.return_value = b"flac"
+        mock_fetch.side_effect = [
+            _fetch_payload(
+                {
+                    "calls": [
+                        {
+                            "url": "http://dup",
+                            "ts": 1_700_000_000,
+                            "start_ts": 1_700_000_000,
+                            "end_ts": 1_700_000_005,
+                        }
+                    ],
+                    "lastPos": 1_700_000_005,
+                }
+            ),
+            _fetch_payload(
+                {
+                    "calls": [
+                        {
+                            "url": "http://dup",
+                            "ts": 1_700_000_000,
+                            "start_ts": 1_700_000_000,
+                            "end_ts": 1_700_000_005,
+                        }
+                    ],
+                    "lastPos": 1_700_000_010,
+                }
+            ),
+        ]
+
+        sleep_calls = 0
+
+        async def sleep_side_effect(*args, **kwargs) -> bool:
+            nonlocal sleep_calls
+            sleep_calls += 1
+            if sleep_calls >= 2:
+                self.shutdown.set()
+            return True
+
+        mock_sleep.side_effect = sleep_side_effect
+
+        events = [
+            e
+            async for e in bcfy_calls_collector.capture_bcfy_calls(
+                self.leased_feed,
+                self.shutdown,
+                self.url_base,
+                _default_resources(),
+            )
+        ]
+
+        chunks = [
+            e
+            for e in events
+            if isinstance(e, bcfy_calls_collector.CapturedChunk)
+        ]
+        observations = [e for e in events if isinstance(e, SourceObservation)]
+
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(
+            observations,
+            [
+                SourceObservation(
+                    resume_position=datetime.datetime.fromtimestamp(
+                        1_700_000_010,
+                        datetime.UTC,
+                    )
+                )
+            ],
+        )
+        mock_dl.assert_awaited_once()
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._download_audio",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
     async def test_duplicate_urls_and_missing_ts(
         self,
         mock_sleep: AsyncMock,
