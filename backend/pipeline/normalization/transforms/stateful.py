@@ -9,6 +9,69 @@ DoFns in our Apache Beam DAG. It houses transforms responsible for:
 
 All high-level audio download/concatenation/VAD heuristics are cleanly
 decoupled from Beam timer variables and delegated to StitcherEngine.
+
+
+## Dataflow Windmill Execution Model
+
+**This section is critical reading for anyone familiar with Beam on other runners
+(Flink, Spark, Direct) but new to GCP Dataflow Streaming.**
+
+### What is Windmill?
+
+Windmill is Dataflow's internal streaming execution engine — the component that
+manages work distribution, state persistence, and exactly-once semantics. It is
+entirely invisible at the Beam API level: your DoFn code looks identical whether
+it runs on Dataflow, Flink, or the Direct runner. However, Windmill has execution
+constraints that don't exist on other runners and that materially affect how
+stateful DoFns should be written.
+
+### Bundle Leases
+
+Windmill executes DoFn work in *bundles*. Each bundle is a unit of work assigned
+to a worker thread with a **hard 300-second wall-clock lease**. If a bundle does
+not complete and commit its outputs within that window, Windmill considers it
+failed, rolls back all state changes from that bundle, and re-enqueues the work
+for retry on another worker.
+
+On other runners, bundles are either unbounded or their timeout behavior is
+configurable and generally much more forgiving. On Dataflow Streaming, the 300s
+limit is non-negotiable.
+
+### Implications for Stateful DoFns
+
+Stateful DoFns (those using `@StateSpec` and `@TimerSpec`) are particularly
+affected because all elements sharing the same key are processed sequentially
+within a single bundle. This means:
+
+- If a feed's `out_of_order_buffer` contains N chunks and draining it takes
+  longer than 300 seconds, the entire bundle is aborted and retried.
+- Large backlogs can accumulate after pipeline restarts, upstream traffic spikes,
+  or processing slowdowns (e.g., lock contention in worker threads). When the
+  pipeline tries to drain a large backlog in a single bundle, it risks breaching
+  the lease.
+- Unlike element-level failures (which surface as exceptions and can be sent to
+  a DLQ), a lease timeout produces no output at all — the work simply replays.
+
+### The Self-Chaining Timer Pattern
+
+To work around the lease limit without discarding data, we use a *self-chaining
+timer* pattern:
+
+1. `drain_ready_elements` is called with `max_emit=MAX_CHUNKS_PER_WINDMILL_BUNDLE`
+   to cap the number of chunks processed in a single bundle.
+2. If the buffer still has remaining chunks after the cap is hit (`clamped=True`),
+   the DoFn immediately sets `out_of_order_timer` to the current watermark
+   timestamp (`out_of_order_timer.set(timestamp)`).
+3. Because the timer fires at or before the current watermark, Windmill schedules
+   a new bundle immediately, which calls `handle_gap_timeout` and drains the next
+   slice of up to `MAX_CHUNKS_PER_WINDMILL_BUNDLE` chunks.
+4. This continues until the buffer is empty, at which point no timer is set and
+   normal gap-timeout behavior resumes.
+
+The constant `MAX_CHUNKS_PER_WINDMILL_BUNDLE` (defined in `constants.py`) is
+sized so that `N_chunks x per_chunk_latency` stays well under 300 seconds. If
+per-chunk processing or external I/O latency increases significantly in the
+future, this value should be reduced accordingly.
 """
 
 import logging as std_logging
@@ -42,6 +105,9 @@ from backend.pipeline.normalization.common import coders as trans_coders
 from backend.pipeline.normalization.common import constants as trans_constants
 from backend.pipeline.normalization.common import datatypes
 from backend.pipeline.normalization.common import logging as trans_logging
+from backend.pipeline.normalization.common.constants import (
+    MAX_CHUNKS_PER_WINDMILL_BUNDLE,
+)
 from backend.pipeline.normalization.state import sequence_buffer
 from backend.pipeline.normalization.transforms import stitcher_engine
 
@@ -176,7 +242,10 @@ def process_ordering(
     buffer_elements = curr_context.out_of_order_buffer
     current_ts_ms = int(float(timestamp) * common_constants.MS_PER_SECOND)
 
-    # Process chunk through jitter buffer
+    # Process chunk through jitter buffer. max_emit caps this bundle's output at
+    # ~67 s of audio (MAX_CHUNKS_PER_WINDMILL_BUNDLE × ~4.5 s/chunk), safely
+    # under Windmill's 300-second lease limit. If the drain hits the cap, the
+    # timer block below re-arms immediately so the next bundle drains the rest.
     (
         new_expected_next_ts,
         new_buffer_elements,
@@ -190,6 +259,7 @@ def process_ordering(
         buffer_elements=buffer_elements,
         chunk_duration_ms=metadata.duration_ms,
         traceparent=metadata.traceparent,
+        max_emit=MAX_CHUNKS_PER_WINDMILL_BUNDLE,
     )
 
     if was_late:
@@ -208,14 +278,35 @@ def process_ordering(
         out_of_order_buffer=new_buffer_elements,
     )
 
-    # Handle Timer for Gap Timeout
-    if new_buffer_elements and not curr_context.order_timer_active:
-        deadline = timestamp + (
-            order_config.out_of_order_timeout_ms
-            / float(common_constants.MS_PER_SECOND)
-        )
-        out_of_order_timer.set(deadline)
-        curr_context = replace(curr_context, order_timer_active=True)
+    # Timer management after a clamped or normal drain — three cases:
+    #
+    # 1. CLAMPED (buffer still has chunks AND drain hit MAX_CHUNKS_PER_WINDMILL_BUNDLE):
+    #    The previous drain stopped early to stay under Windmill's 300-second bundle
+    #    lease. Setting the timer to `timestamp` (current watermark) causes Dataflow
+    #    to fire handle_gap_timeout in the very next bundle, draining the next slice.
+    #    Bundles chain this way until the buffer is empty. This is the core of the
+    #    Windmill poison-pill fix: instead of one oversized bundle that gets aborted
+    #    and replayed (triggered by pipeline restarts, lock-induced slowdowns, or
+    #    traffic spikes), we emit in bounded bites and chain to the next bundle.
+    #
+    # 2. NORMAL GAP (buffer has chunks, drain was not clamped): schedule the
+    #    standard gap-timeout deadline so we eventually flush even if some
+    #    predecessors never arrive.
+    #
+    # 3. DRAINED (buffer is now empty): clear the timer to avoid spurious firing.
+    clamped = len(elements_to_emit) >= MAX_CHUNKS_PER_WINDMILL_BUNDLE
+    if new_buffer_elements:
+        if clamped:
+            # Immediate self-chaining timer — next bundle drains the next slice.
+            out_of_order_timer.set(timestamp)
+            curr_context = replace(curr_context, order_timer_active=True)
+        elif not curr_context.order_timer_active:
+            deadline = timestamp + (
+                order_config.out_of_order_timeout_ms
+                / float(common_constants.MS_PER_SECOND)
+            )
+            out_of_order_timer.set(deadline)
+            curr_context = replace(curr_context, order_timer_active=True)
     elif not new_buffer_elements and curr_context.order_timer_active:
         out_of_order_timer.clear()
         curr_context = replace(curr_context, order_timer_active=False)
@@ -444,6 +535,8 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
+        timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
+        out_of_order_timer: RuntimeTimer = OUT_OF_ORDER_TIMER,  # type: ignore
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest] | datatypes.NormalizationDlqOutput
     ]:
@@ -494,8 +587,25 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
                         expected_next_ts=new_expected,
                         buffer_elements=buffer_elements,
                         epsilon_ms=trans_constants.DEFAULT_FLOAT_TOLERANCE_MS,
+                        max_emit=MAX_CHUNKS_PER_WINDMILL_BUNDLE,
                     )
                 )
+
+                clamped = (
+                    len(elements_to_emit) >= MAX_CHUNKS_PER_WINDMILL_BUNDLE
+                )
+                if clamped and new_buffer_elements:
+                    # The drain was capped at MAX_CHUNKS_PER_WINDMILL_BUNDLE to
+                    # stay under Windmill's 300-second bundle lease. Entering
+                    # this handler clears order_timer_active, so the timer is
+                    # no longer set. Re-arming it at `timestamp` (this bundle's
+                    # firing time) schedules an immediate Windmill callback so
+                    # Dataflow opens a fresh bundle to drain the next slice.
+                    # Self-chaining continues until new_buffer_elements is empty.
+                    out_of_order_timer.set(timestamp)
+                    curr_context = replace(
+                        curr_context, order_timer_active=True
+                    )
 
                 curr_context = replace(
                     curr_context,
@@ -839,6 +949,8 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
+        timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
+        out_of_order_timer: RuntimeTimer = OUT_OF_ORDER_TIMER,  # type: ignore
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest] | datatypes.NormalizationDlqOutput
     ]:
@@ -889,8 +1001,25 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
                         expected_next_ts=new_expected,
                         buffer_elements=buffer_elements,
                         epsilon_ms=trans_constants.DEFAULT_FLOAT_TOLERANCE_MS,
+                        max_emit=MAX_CHUNKS_PER_WINDMILL_BUNDLE,
                     )
                 )
+
+                clamped = (
+                    len(elements_to_emit) >= MAX_CHUNKS_PER_WINDMILL_BUNDLE
+                )
+                if clamped and new_buffer_elements:
+                    # The drain was capped at MAX_CHUNKS_PER_WINDMILL_BUNDLE to
+                    # stay under Windmill's 300-second bundle lease. Entering
+                    # this handler clears order_timer_active, so the timer is
+                    # no longer set. Re-arming it at `timestamp` (this bundle's
+                    # firing time) schedules an immediate Windmill callback so
+                    # Dataflow opens a fresh bundle to drain the next slice.
+                    # Self-chaining continues until new_buffer_elements is empty.
+                    out_of_order_timer.set(timestamp)
+                    curr_context = replace(
+                        curr_context, order_timer_active=True
+                    )
 
                 curr_context = replace(
                     curr_context,
