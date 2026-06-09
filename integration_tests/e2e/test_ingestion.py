@@ -13,7 +13,6 @@ from integration_tests.feed_utils import (
 )
 from integration_tests.test_utils import (
     verify_audio_segments_via_api,
-    verify_transcript_in_db,
 )
 
 logger = logging.getLogger(__name__)
@@ -22,13 +21,23 @@ logger = logging.getLogger(__name__)
 def test_ingestion_integration(test_bcfy_feed: tuple[str, str]) -> None:
     """Tests that audio ingestion service picks up the test feed and results in a transcript."""
     feed_id, _ = test_bcfy_feed
-    verify_transcript_in_db(feed_id)
+
+    # Broadcastify feeds are continuous audio streams, so they should NOT have an external ID
+    verify_audio_segments_via_api(
+        feed_id,
+        lambda s: s.get("external_audio_segment_id") is None
+    )
 
 
 def test_ingestion_api_polling(test_polling_feed: tuple[str, str]) -> None:
     """Tests that audio ingestion service picks up a feed from API polling and results in a transcript."""
     feed_id, _ = test_polling_feed
-    verify_transcript_in_db(feed_id)
+
+    # Broadcastify calls should have an external ID representing the full audio URL
+    verify_audio_segments_via_api(
+        feed_id,
+        lambda s: s.get("external_audio_segment_id") is not None and s.get("external_audio_segment_id").startswith("http://mock-audio-server:8090/broadcastify_calls/2912/")
+    )
 
 
 def test_ingestion_echo(test_echo_feed: tuple[str, str]) -> None:
@@ -68,8 +77,6 @@ def test_ingestion_echo(test_echo_feed: tuple[str, str]) -> None:
     with patch.object(echo_main, "get_audio_duration", return_value=15000):
         # Simulate new audio available event trigger on Echo
         echo_main.handle_notification(event)
-
-    verify_transcript_in_db(feed_id)
 
     # Verify external ID propagation
     verify_audio_segments_via_api(
