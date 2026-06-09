@@ -75,6 +75,16 @@ class ItemBatchOutcome:
         """Record that at least one chunk crossed the runtime boundary."""
         self._chunk_produced = True
 
+    @property
+    def attempted_count(self) -> int:
+        """Number of source items attempted in this observation boundary."""
+        return self._attempted_count
+
+    @property
+    def chunk_produced(self) -> bool:
+        """Whether any chunk crossed the runtime boundary."""
+        return self._chunk_produced
+
     def promoted_failure(self) -> ItemFailure | None:
         """Promote all-items-failed observations to a feed-level failure.
 

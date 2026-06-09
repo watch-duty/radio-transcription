@@ -82,10 +82,11 @@ cd radio-transcription
 docker compose -f asr-eval-docker-compose.yml up -d [notebooks-cpu|notebooks]
 
 # 2. Run non-NeMo command-line workflows, such as Gemini SFT, in the same lightweight runtime
-# The container installs the mounted repo package as /workspace/model[scoring,vertex]
+# The container installs the mounted radio-transcription-model package as
+# /workspace/model[scoring,vertex]
 # before executing the command.
 docker compose -f asr-eval-docker-compose.yml run --rm notebooks-cpu \
-  bash -lc 'cd /workspace/model/scripts/sft && python pipeline.py --help'
+  bash -lc 'gemini-sft --help'
 
 # 3. Run NeMo CLI (CPU or GPU)
 # These containers do not run Jupyter by default; they are designed for interactive shell use.
@@ -105,17 +106,35 @@ gcloud compute ssh <your_instance_name> \
 
 Alternatively, if you want to use VSCode or your local IDE, you can also use Remote SSH. This way you won't have to keep syncing changes between your machine and your local code.
 
+## Running Gemini SFT
+
+Gemini supervised fine-tuning is a packaged CLI workflow, not a notebook-only
+experiment. Use the lightweight ASR runtime (`notebooks-cpu` or `notebooks`) so
+the mounted `model/` package is installed with the `scoring` and `vertex`
+extras:
+
+```bash
+docker compose -f asr-eval-docker-compose.yml run --rm notebooks-cpu \
+  bash -lc 'gemini-sft --help'
+```
+
+Run configs are operator inputs and should stay outside the repo. The example
+shape lives at `model/scripts/sft/run_config.example.toml`; the detailed
+workflow contract is documented in `model/scripts/sft/README.md`. Every SFT run
+owns a GCS prefix under `gs://<bucket>/sft/runs/<round-id>/`, and that prefix is
+the durable state for prepare, tune resume, and eval.
+
 ## Adding a New Model Evaluation
 
 To add a new model to the evaluation framework, follow these guidelines:
 
 1.  **Create a Notebook**: Create a new notebook in `model/colabs/` named `evaluate_[model_name].ipynb`.
-2.  **Use the Common Runner**: Import `run_inference_pipeline` from `colabs.common.inference_pipeline_runner` to handle the evaluation loop. This handles downloading, preprocessing, and cleanup automatically.
+2.  **Use the Common Runner**: Import `run_inference_pipeline` from `common.inference_pipeline_runner` to handle the evaluation loop. This handles downloading, preprocessing, and cleanup automatically.
 3.  **Define Required Callables**:
     *   `prompt_formatter(entry, local_path)`: Returns the prompt structure for the model.
     *   `inference_fn(model, prompts)`: Runs inference on a batch of prompts.
     *   `decode_fn(output, model)`: Extracts the text transcription from the output.
-4.  **Dependencies**: If the model requires new third-party packages, add them to `model/notebook_docker/requirements.txt`. The lightweight runtime already installs the mounted repo's local `common` package in editable mode on startup, so changes under `model/colabs/common/` are immediately available to notebooks and CLI workflows. If a cutting-edge version is needed (e.g. not in stable release yet), you can use a Git URL (e.g., `git+https://github.com/...`).
+4.  **Dependencies**: If the model requires new third-party packages, add them to `model/notebook_docker/requirements.txt`. The lightweight runtime already installs the mounted `radio-transcription-model` package in editable mode on startup, so changes under `model/src/common/` and `model/src/gemini_sft/` are immediately available to notebooks and CLI workflows. If a cutting-edge version is needed (e.g. not in stable release yet), you can use a Git URL (e.g., `git+https://github.com/...`).
 
 ## Formatting and Linting Notebooks
 
