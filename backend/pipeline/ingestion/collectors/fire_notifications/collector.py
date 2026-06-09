@@ -316,6 +316,7 @@ async def _process_file_list(
             receipt_time=receipt_time,
             mime_type=AudioMimeType.MPEG,
             resume_position=end_time,
+            external_audio_segment_id=file_uuid,
         )
         # Only mark as processed after a successful yield, confirming
         # the chunk was handed off to the pipeline.

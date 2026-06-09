@@ -94,6 +94,7 @@ class AudioSegment(BaseModel):
     start_audio_offset: timedelta | None = None
     end_audio_offset: timedelta | None = None
     playback_audio_uri: str | None = None
+    external_audio_segment_id: str | None = None
     created_at: datetime
     annotations: list[Annotation] = Field(default_factory=list)
 
@@ -113,6 +114,7 @@ class AudioSegmentCreate(BaseModel):
     start_audio_offset: timedelta | None = None
     end_audio_offset: timedelta | None = None
     playback_audio_uri: str | None = None
+    external_audio_segment_id: str | None = None
 
 
 class ListAudioSegmentsResponse(BaseModel):

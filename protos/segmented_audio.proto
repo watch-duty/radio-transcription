@@ -57,4 +57,7 @@ message SegmentedAudio {
 
   // The GCS URI of the raw stitched WAV file in the staging bucket.
   string raw_audio_uri = 13;
+
+  // Optional external ID for tracking the source segment.
+  optional string external_audio_segment_id = 14;
 }

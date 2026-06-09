@@ -190,6 +190,7 @@ class CapturedChunk:
     receipt_time: datetime.datetime | None = None
     mime_type: AudioMimeType | None = None
     resume_position: datetime.datetime | None = None
+    external_audio_segment_id: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
