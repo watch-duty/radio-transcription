@@ -12,6 +12,7 @@ from integration_tests.feed_utils import (
     create_test_polling_feed,  # noqa: F401
 )
 from integration_tests.test_utils import (
+    verify_audio_segments_via_api,
     verify_transcript_in_db,
 )
 
@@ -71,5 +72,7 @@ def test_ingestion_echo(test_echo_feed: tuple[str, str]) -> None:
     verify_transcript_in_db(feed_id)
 
     # Verify external ID propagation
-    from integration_tests.test_utils import verify_external_audio_segment_id_via_api
-    verify_external_audio_segment_id_via_api(feed_id, f"{source_bucket_name}/{gcs_path}")
+    verify_audio_segments_via_api(
+        feed_id,
+        lambda s: s.get("external_audio_segment_id") == f"{source_bucket_name}/{gcs_path}",
+    )

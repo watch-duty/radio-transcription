@@ -84,9 +84,12 @@ def get_audio_segments_api_url() -> str:
     return f"http://{host}/v1"
 
 
-def verify_external_audio_segment_id_via_api(
-    feed_id: str, expected_external_id: str, timeout_sec: float = 300.0
+def verify_audio_segments_via_api(
+    feed_id: str,
+    matcher: Callable[[dict], bool],
+    timeout_sec: float = 300.0,
 ) -> bool:
+    """Polls /v1/audio_segments until a segment matching the condition is found."""
     base_url = get_audio_segments_api_url()
 
     async def _check_api():
@@ -95,10 +98,7 @@ def verify_external_audio_segment_id_via_api(
             if res.status_code != 200:
                 return False
             data = res.json()
-            for segment in data.get("segments", []):
-                if segment.get("external_audio_segment_id") == expected_external_id:
-                    return True
-            return False
+            return any(matcher(segment) for segment in data.get("segments", []))
 
     def condition():
         try:
@@ -107,10 +107,10 @@ def verify_external_audio_segment_id_via_api(
             logger.warning(f"API check failed: {e}")
             return False
 
-    logger.info(f"Waiting for audio segment with external ID {expected_external_id}...")
+    logger.info("Waiting for matching audio segment via API...")
     assert_eventually(
         condition,
         timeout_sec=timeout_sec,
-        error_msg=f"Audio segment with external ID {expected_external_id} not found",
+        error_msg="No matching audio segment found via API",
     )
     return True
