@@ -114,7 +114,7 @@ export function FeedConfigurationView({
   const uniqueTagsForFilter = useMemo<{ key: string; value: string }[]>(() => {
     const seen = new Set<string>();
     const result: { key: string; value: string }[] = [];
-    const sourceFeeds = allFeeds || feeds || [];
+    const sourceFeeds = allFeeds || [];
     sourceFeeds.forEach((feed) => {
       feed.tags?.forEach((tag) => {
         const identifier = `${tag.key}:${tag.value}`;
@@ -127,7 +127,7 @@ export function FeedConfigurationView({
     return result.sort(
       (a, b) => a.key.localeCompare(b.key) || a.value.localeCompare(b.value)
     );
-  }, [feeds, allFeeds]);
+  }, [allFeeds]);
 
   const resetForm = () => {
     setId('');
