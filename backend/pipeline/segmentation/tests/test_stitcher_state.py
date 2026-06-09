@@ -96,15 +96,15 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         self.assertTrue(any(isinstance(a, DropAction) for a in actions))
 
     def test_stitch_initial_non_speech_continuous(self) -> None:
-        """Verifies completely silent chunks on continuous streams are discarded to prevent silence buildup."""
+        """Verifies completely silent chunks on continuous streams are stitched into a non-speech transmission."""
         chunk = mock_audio_chunk(0, 15000, [])
         actions = self._process(chunk)
 
-        self.assertTrue(any(isinstance(a, DropAction) for a in actions))
-        self.assertFalse(
-            any(isinstance(a, AppendBufferAction) for a in actions)
-        )
-        self.assertIsNone(self.ctx.transmission_start_time_ms)
+        # Should append the silent chunk's audio and NOT drop it
+        self.assertTrue(any(isinstance(a, AppendBufferAction) for a in actions))
+        self.assertFalse(any(isinstance(a, DropAction) for a in actions))
+        self.assertEqual(self.ctx.transmission_start_time_ms, 0)
+        self.assertEqual(len(self.ctx.speech_segments), 0)
 
     def test_continuous_speech_accumulation(self) -> None:
         """Verifies adjacent speech segments beneath gap boundaries strictly trigger AppendBuffer bounds across sequential requests."""
@@ -192,7 +192,7 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         self.assertTrue(self.ctx.missing_prior_context)
 
     def test_max_non_speech_duration_split(self) -> None:
-        """Verifies that sequential silent chunks on continuous streams continue to be dropped without building up."""
+        """Verifies that long silent non-speech segments are force-split when exceeding max_transmission_duration_ms."""
         config = get_test_stitch_config(
             max_transmission_duration_ms=10000
         )  # 10s max
@@ -200,14 +200,26 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
 
         # Chunk 1: Silent 15s (0 to 15s)
         chunk1 = mock_audio_chunk(0, 15000, [])
-        actions1 = self._process(chunk1)
-        self.assertTrue(any(isinstance(a, DropAction) for a in actions1))
+        self._process(chunk1)
 
         # Chunk 2: Silent 15s (15s to 30s)
         chunk2 = mock_audio_chunk(15000, 15000, [])
         actions2 = self._process(chunk2)
-        self.assertTrue(any(isinstance(a, DropAction) for a in actions2))
-        self.assertIsNone(self.ctx.transmission_start_time_ms)
+
+        # We expect a flush action for maximum duration exceeded
+        flush_action = next(
+            (a for a in actions2 if isinstance(a, FlushAction)), None
+        )
+        self.assertIsNotNone(flush_action)
+        assert flush_action is not None
+        self.assertEqual(
+            flush_action.reason,
+            "Maximum non-speech transmission duration exceeded",
+        )
+        self.assertTrue(flush_action.missing_post_context)
+        self.assertEqual(
+            flush_action.audio_classification, 2
+        )  # SEGMENTED_AUDIO_NO_SPEECH
 
     def test_late_chunk_isolated_discard(self) -> None:
         """Verifies severely misordered messages falling outside chronological bounds are skipped over and isolated securely without corrupting native timeline context."""

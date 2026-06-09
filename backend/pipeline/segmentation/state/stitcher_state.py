@@ -364,7 +364,28 @@ class AudioStitchingStateMachine:
             ctx.missing_prior_context = False
             self._reset_transmission_context(ctx)
 
+            # Start a new NON_SPEECH transmission for the remainder of the chunk
+            remaining_samples = len(chunk_data.audio) - (
+                append_end * (chunk_data.sample_rate // 1000)
+            )
+            if remaining_samples > 0:
+                ctx.transmission_start_time_ms = file_start_ms + append_end
+                ctx.buffer_start_time_ms = file_start_ms + append_end
+                ctx.start_audio_offset_ms = 0
+                ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
+                actions.append(
+                    AppendBufferAction(
+                        audio_buffer=chunk_data.audio[
+                            append_end * (chunk_data.sample_rate // 1000) :
+                        ]
+                    )
+                )
+                ctx.buffer_duration_ms = remaining_samples // (
+                    chunk_data.sample_rate // 1000
+                )
+
             actions.append(UpdateStateAction())
+            actions.append(ScheduleStaleTimerAction(deadline_ms=0))
             return actions
 
         if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
@@ -407,11 +428,50 @@ class AudioStitchingStateMachine:
         file_start_ms: int,
         chunk_duration: int,
     ) -> list[StateMachineAction]:
-        """Discards silent continuous chunks when no speech transmission is active."""
-        actions: list[StateMachineAction] = [
-            DropAction(reason="Discarding silent continuous chunk"),
-            UpdateStateAction(),
-        ]
+        """Handles silent chunk processing when no speech transmission is active."""
+        actions: list[StateMachineAction] = []
+        is_max_duration_exceeded = (
+            ctx.transmission_start_time_ms is not None
+            and (
+                (file_start_ms + chunk_duration)
+                - ctx.transmission_start_time_ms
+            )
+            >= self.config.max_transmission_duration_ms
+        )
+
+        if is_max_duration_exceeded:
+            actions.append(
+                self._flush_current_transmission(
+                    "Maximum non-speech transmission duration exceeded",
+                    ctx,
+                    missing_post_context=True,
+                    audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_OTHER,
+                )
+            )
+            ctx.missing_prior_context = True
+            self._reset_transmission_context(ctx)
+
+        if ctx.transmission_start_time_ms is None:
+            ctx.transmission_start_time_ms = file_start_ms
+            ctx.buffer_start_time_ms = file_start_ms
+            ctx.start_audio_offset_ms = 0
+            ctx.buffer_duration_ms = 0
+
+        if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
+            ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
+
+        # Append the whole chunk!
+        actions.append(AppendBufferAction(audio_buffer=chunk_data.audio))
+        ctx.buffer_duration_ms += chunk_duration
+
+        expected_stale_deadline_ms = (
+            file_start_ms + chunk_duration
+        ) + self.config.stale_timeout_ms
+
+        actions.append(UpdateStateAction())
+        actions.append(
+            ScheduleStaleTimerAction(deadline_ms=expected_stale_deadline_ms)
+        )
         return actions
 
     def _evaluate_mid_stream_flush(
