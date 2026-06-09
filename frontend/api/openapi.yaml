@@ -277,6 +277,17 @@ components:
         - value
       type: object
       additionalProperties: false
+    BackendFeedStatusReason:
+      type: string
+      enum:
+        - source_offline
+        - source_unreachable
+        - source_rate_limited
+        - system_authentication_failed
+        - system_configuration_invalid
+        - system_collector_error
+        - system_pipeline_error
+        - system_unexpected_error
     SourceType:
       enum:
         - bcfy_feeds
@@ -311,10 +322,8 @@ components:
           type: array
         quarantineReason:
           type: string
-          nullable: true
         statusReason:
-          type: string
-          nullable: true
+          $ref: "#/components/schemas/BackendFeedStatusReason"
       required:
         - name
         - sourceType
