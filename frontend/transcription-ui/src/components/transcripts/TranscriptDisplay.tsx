@@ -40,12 +40,12 @@ export interface TranscriptDisplayProps {
   triggerSnackbar: (message: string) => void;
   ruleIdToNameMap: Map<string, string>;
   rulesLoading: boolean;
-  onToggleAudio: (transmissionId: string, audioUri: string) => void;
+  onToggleAudio: (segmentId: string, audioUri: string) => void;
   isAudioPlaying: boolean;
-  currentlyPlayingTransmissionId: string | null;
-  highlightedTransmissionId: string | null;
+  currentlyPlayingSegmentId: string | null;
+  highlightedSegmentId: string | null;
   redactTranscripts: boolean;
-  onRowClick: (transmissionId: string) => void;
+  onRowClick: (segmentId: string) => void;
 }
 
 export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
@@ -68,8 +68,8 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
   rulesLoading,
   onToggleAudio,
   isAudioPlaying,
-  currentlyPlayingTransmissionId,
-  highlightedTransmissionId,
+  currentlyPlayingSegmentId,
+  highlightedSegmentId,
   redactTranscripts,
   onRowClick,
 }) => {
@@ -169,7 +169,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
           const transcript = transcripts[index];
           return (
             <TranscriptRow
-              key={transcript.transmissionId}
+              key={transcript.segmentId}
               transcript={transcript}
               index={index}
               totalTranscripts={transcripts.length}
@@ -177,12 +177,10 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
               rulesLoading={rulesLoading}
               onToggleAudio={onToggleAudio}
               isAudioPlaying={isAudioPlaying}
-              currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
+              currentlyPlayingSegmentId={currentlyPlayingSegmentId}
               triggerSnackbar={triggerSnackbar}
               showHeader={false}
-              isHighlighted={
-                transcript.transmissionId === highlightedTransmissionId
-              }
+              isHighlighted={transcript.segmentId === highlightedSegmentId}
               redactTranscripts={redactTranscripts}
               onRowClick={onRowClick}
             />

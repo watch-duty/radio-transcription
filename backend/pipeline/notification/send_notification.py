@@ -9,6 +9,7 @@ from cloudevents.http.event import CloudEvent
 
 from backend.pipeline.common import env
 from backend.pipeline.common.clients.feeds_client import FeedsClient
+from backend.pipeline.common.constants import MS_PER_SECOND, NANOS_PER_MS
 from backend.pipeline.common.exceptions import NonRetryableError
 from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.storage.redis_service import RedisService
@@ -127,12 +128,12 @@ def _build_app_url(
 ) -> str:
     query_params = {
         "feedId": evaluated_transcribed_audio.feed_id,
-        "transmissionId": evaluated_transcribed_audio.segment_id,
+        "segmentId": evaluated_transcribed_audio.segment_id,
     }
     if evaluated_transcribed_audio.start_timestamp.seconds:
         timestamp = evaluated_transcribed_audio.start_timestamp
         query_params["timestamp"] = str(
-            timestamp.seconds * 1000 + timestamp.nanos // 1_000_000
+            timestamp.seconds * MS_PER_SECOND + timestamp.nanos // NANOS_PER_MS
         )
 
     return f"{app_url}/transcripts?{urllib.parse.urlencode(query_params)}"
@@ -209,6 +210,6 @@ def send_notification(cloud_event: CloudEvent) -> None:
             request_handler.send_notification(alert_notification)
         except NonRetryableError:
             logger.exception(
-                "Failed to send notification for audio segment (transmission_id: %s) due to client (4xx) error. Message will not be retried.",
+                "Failed to send notification for audio segment (segment_id: %s) due to client (4xx) error. Message will not be retried.",
                 notification_id,
             )

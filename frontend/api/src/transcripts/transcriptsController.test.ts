@@ -33,7 +33,7 @@ describe('listTranscripts', () => {
       transcripts: [
         {
           feed_id: 'test',
-          transmission_id: '1',
+          segment_id: '1',
           transcript: 'hello',
           start_timestamp: '1',
           end_timestamp: '2',
@@ -53,7 +53,7 @@ describe('listTranscripts', () => {
       transcripts: [
         {
           feedId: 'test',
-          transmissionId: '1',
+          segmentId: '1',
           transcript: 'hello',
           startTimestamp: '1',
           endTimestamp: '2',

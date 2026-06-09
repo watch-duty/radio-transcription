@@ -64,8 +64,6 @@ class TranscriptsClient:
             preserving_proto_field_name=True,
             always_print_fields_with_no_presence=True,
         )
-        if "segment_id" in data:
-            data["transmission_id"] = data.pop("segment_id")
 
         headers = {}
         traceparent = get_current_traceparent()
