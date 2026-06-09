@@ -8,6 +8,7 @@ from cloudevents.http.event import CloudEvent
 from google.protobuf.duration_pb2 import Duration  # type: ignore
 from google.protobuf.timestamp_pb2 import Timestamp  # type: ignore
 
+from backend.pipeline.common.constants import GCS_DOWNLOAD_TIMEOUT_SEC
 from backend.pipeline.normalization.processor import (
     NormalizationEventProcessor,
 )
@@ -117,7 +118,11 @@ class NormalizationEventProcessorTest(unittest.TestCase):
 
         # Verify GCS download was called
         self.mock_gcs.return_value.bucket.return_value.get_blob.assert_called_once_with(
-            "raw_segments/tx-1111.flac"
+            "raw_segments/tx-1111.flac",
+            timeout=GCS_DOWNLOAD_TIMEOUT_SEC,
+        )
+        mock_blob.download_as_bytes.assert_called_once_with(
+            timeout=GCS_DOWNLOAD_TIMEOUT_SEC
         )
 
         # Verify we copied FLAC directly (no transcode_to_flac called)

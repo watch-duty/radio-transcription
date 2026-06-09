@@ -239,9 +239,9 @@ def process_ordering(
     current_ts_ms = int(float(timestamp) * common_constants.MS_PER_SECOND)
 
     # Process chunk through jitter buffer. max_emit caps this bundle's output at
-    # ~67 s of audio (MAX_CHUNKS_PER_WINDMILL_BUNDLE × ~4.5 s/chunk), safely
-    # under Windmill's 300-second lease limit. If the drain hits the cap, the
-    # timer block below re-arms immediately so the next bundle drains the rest.
+    # ~75 s of audio (MAX_CHUNKS_PER_WINDMILL_BUNDLE × ~15 s/chunk under load),
+    # safely under Windmill's 300-second lease limit. If the drain hits the cap,
+    # the timer block below re-arms immediately so the next bundle drains the rest.
     (
         new_expected_next_ts,
         new_buffer_elements,
