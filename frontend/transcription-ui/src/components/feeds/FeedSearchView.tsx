@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { Autocomplete, Box, Chip, CircularProgress, TextField, Typography } from '@mui/material';
+import {
+  Autocomplete,
+  Box,
+  Chip,
+  CircularProgress,
+  TextField,
+  Typography,
+} from '@mui/material';
 import { useQuery } from '@tanstack/react-query';
 import { type Feed } from '@transcription/common';
 
@@ -84,7 +91,11 @@ function CondensedFeedSearchResults({
         onFocus={() => setIsFocused(true)}
         onBlur={() => setIsFocused(false)}
         loading={feedsLoading}
-        loadingText={<Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}><CircularProgress size={16} /> Loading feeds...</Box>}
+        loadingText={
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <CircularProgress size={16} /> Loading feeds...
+          </Box>
+        }
         renderInput={(params) => (
           <TextField
             {...params}
