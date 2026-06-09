@@ -5,7 +5,7 @@ import type { RuleAnnotation } from '@transcription/common';
 
 interface HighlightedTranscriptProps {
   text: string;
-  ruleAnnotations: RuleAnnotation[] | undefined;
+  ruleAnnotations: Record<string, RuleAnnotation> | undefined;
 }
 
 interface MatchInterval {
@@ -14,15 +14,25 @@ interface MatchInterval {
 }
 
 function collectIntervals(
-  annotations: RuleAnnotation[] | undefined
+  annotations: Record<string, RuleAnnotation> | undefined
 ): MatchInterval[] {
   if (!annotations) return [];
   const intervals: MatchInterval[] = [];
-  for (const annotation of annotations) {
+  for (const [ruleId, annotation] of Object.entries(annotations)) {
     if (!annotation.textMatch) continue;
-    for (const span of annotation.textMatch.spans) {
-      if (span.end > span.start) {
-        intervals.push({ start: span.start, end: span.end });
+    for (const span of annotation.textMatch) {
+      // Zero-width spans (endIndex === startIndex) are legitimate — an
+      // arbitrary regex rule can match empty — and are simply nothing to
+      // highlight. An inverted span (endIndex < startIndex) violates a backend
+      // invariant, so surface it rather than silently dropping it.
+      if (span.endIndex < span.startIndex) {
+        console.warn(
+          `Ignoring rule annotation span with endIndex (${span.endIndex}) before startIndex (${span.startIndex}) for rule ${ruleId}. This indicates a backend bug.`
+        );
+        continue;
+      }
+      if (span.endIndex > span.startIndex) {
+        intervals.push({ start: span.startIndex, end: span.endIndex });
       }
     }
   }
@@ -57,7 +67,7 @@ export function HighlightedTranscript({
   const chars = Array.from(text);
   const segments: ReactNode[] = [];
   let cursor = 0;
-  intervals.forEach((interval, i) => {
+  intervals.forEach((interval) => {
     if (interval.start > cursor) {
       segments.push(
         <Fragment key={`text-${cursor}`}>
@@ -67,7 +77,7 @@ export function HighlightedTranscript({
     }
     segments.push(
       <Box
-        key={`match-${interval.start}-${i}`}
+        key={`match-${interval.start}`}
         component="span"
         sx={{ color: 'warning.main', fontWeight: 600 }}
       >

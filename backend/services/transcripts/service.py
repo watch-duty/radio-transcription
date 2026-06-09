@@ -30,6 +30,14 @@ class TranscriptService:
         try:
             # Use exclude_unset=True to avoid sending defaults for fields not provided
             data = transcript.model_dump(mode="json", exclude_unset=True)
+            # The API carries text_match spans as a flat list, but the proto
+            # wraps them in a TextMatchAnnotation message (a oneof can't hold a
+            # repeated field), so re-nest before parsing into the proto.
+            for annotation in data.get("rule_annotations", {}).values():
+                if isinstance(annotation.get("text_match"), list):
+                    annotation["text_match"] = {
+                        "spans": annotation["text_match"]
+                    }
             json_format.ParseDict(data, msg, ignore_unknown_fields=True)
         except json_format.ParseError as e:
             logger.exception("Failed to parse transcript JSON")

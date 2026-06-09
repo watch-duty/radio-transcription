@@ -68,7 +68,7 @@ def _sanitize_duration(duration: Duration, context: str = "") -> None:
 def _rule_annotation_to_proto(
     annotation: RuleAnnotation,
 ) -> evaluated_pb2.RuleAnnotation:
-    proto = evaluated_pb2.RuleAnnotation(rule_id=annotation.rule_id)
+    proto = evaluated_pb2.RuleAnnotation()
     if annotation.text_match is not None:
         proto.text_match.spans.extend(
             evaluated_pb2.TextMatchSpan(
@@ -76,7 +76,7 @@ def _rule_annotation_to_proto(
                 end=span.end,
                 matched_text=span.matched_text,
             )
-            for span in annotation.text_match.spans
+            for span in annotation.text_match
         )
     return proto
 
@@ -157,7 +157,7 @@ class EvaluationService:
                 )
 
             # 4. Create Evaluation Result Payload
-            rule_annotations = evaluation_result.get("rule_annotations", [])
+            rule_annotations = evaluation_result.get("rule_annotations", {})
             evaluated_payload = evaluated_pb2.EvaluatedTranscribedAudio(
                 feed_id=new_audio.feed_id,
                 segment_id=new_audio.segment_id,
@@ -172,9 +172,10 @@ class EvaluationService:
                 canonical_audio_uri=new_audio.canonical_audio_uri,
                 playback_audio_uri=new_audio.playback_audio_uri,
                 feed_name=new_audio.feed_name,
-                rule_annotations=[
-                    _rule_annotation_to_proto(a) for a in rule_annotations
-                ],
+                rule_annotations={
+                    rule_id: _rule_annotation_to_proto(a)
+                    for rule_id, a in rule_annotations.items()
+                },
             )
             evaluated_payload.start_timestamp.CopyFrom(
                 new_audio.start_timestamp

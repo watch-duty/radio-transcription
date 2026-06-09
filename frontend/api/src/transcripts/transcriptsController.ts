@@ -25,8 +25,7 @@ interface TextMatchSpanResponse {
 }
 
 interface RuleAnnotationResponse {
-  rule_id: string;
-  text_match?: { spans: TextMatchSpanResponse[] };
+  text_match?: TextMatchSpanResponse[];
 }
 
 export interface TranscriptResponse {
@@ -43,22 +42,19 @@ export interface TranscriptResponse {
   start_audio_offset: string;
   end_audio_offset: string;
   evaluation_decisions: string[];
-  rule_annotations?: RuleAnnotationResponse[];
+  rule_annotations?: Record<string, RuleAnnotationResponse>;
 }
 
 function convertRuleAnnotation(
   response: RuleAnnotationResponse
 ): RuleAnnotation {
   return {
-    ruleId: response.rule_id,
     textMatch: response.text_match
-      ? {
-          spans: response.text_match.spans.map((s) => ({
-            start: s.start ?? 0,
-            end: s.end ?? 0,
-            matchedText: s.matched_text ?? '',
-          })),
-        }
+      ? response.text_match.map((s) => ({
+          startIndex: s.start,
+          endIndex: s.end,
+          matchedText: s.matched_text,
+        }))
       : undefined,
   };
 }
@@ -78,8 +74,10 @@ function convertTranscriptResponse(response: TranscriptResponse): Transcript {
     startAudioOffset: response.start_audio_offset,
     endAudioOffset: response.end_audio_offset,
     evaluationDecisions: response.evaluation_decisions,
-    ruleAnnotations: (response.rule_annotations ?? []).map(
-      convertRuleAnnotation
+    ruleAnnotations: Object.fromEntries(
+      Object.entries(response.rule_annotations ?? {}).map(
+        ([ruleId, annotation]) => [ruleId, convertRuleAnnotation(annotation)]
+      )
     ),
   };
 }

@@ -1,16 +1,11 @@
 export interface TextMatchSpan {
-  start: number;
-  end: number;
+  startIndex: number;
+  endIndex: number;
   matchedText: string;
 }
 
-export interface TextMatchAnnotation {
-  spans: TextMatchSpan[];
-}
-
 export interface RuleAnnotation {
-  ruleId: string;
-  textMatch?: TextMatchAnnotation;
+  textMatch?: TextMatchSpan[];
 }
 
 export interface Transcript {
@@ -27,7 +22,7 @@ export interface Transcript {
   startAudioOffset: string;
   endAudioOffset: string;
   evaluationDecisions: string[];
-  ruleAnnotations: RuleAnnotation[];
+  ruleAnnotations: Record<string, RuleAnnotation>;
 }
 
 export interface ListTranscriptsResponse {

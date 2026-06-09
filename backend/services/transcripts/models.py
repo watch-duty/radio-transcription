@@ -23,7 +23,7 @@ class Transcript(BaseModel):
     evaluation_decisions: list[str] = []
     playback_audio_uri: str | None = None
     evaluation_errors: list[str] = []
-    rule_annotations: list[RuleAnnotation] = []
+    rule_annotations: dict[str, RuleAnnotation] = {}
     errors: list[str] = []
 
     @model_validator(mode="before")

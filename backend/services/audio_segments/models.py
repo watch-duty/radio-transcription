@@ -38,7 +38,7 @@ class EvaluationAnnotationData(BaseModel):
 
     decisions: list[str]
     errors: list[str]
-    rule_annotations: list[RuleAnnotation] = Field(default_factory=list)
+    rule_annotations: dict[str, RuleAnnotation] = Field(default_factory=dict)
 
 
 class TranscriptAnnotation(BaseModel):

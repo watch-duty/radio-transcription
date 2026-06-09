@@ -8,40 +8,34 @@ components:
   schemas:
     TextMatchSpan:
       properties:
-        start:
+        startIndex:
           type: number
           format: double
-        end:
+        endIndex:
           type: number
           format: double
         matchedText:
           type: string
       required:
-        - start
-        - end
+        - startIndex
+        - endIndex
         - matchedText
-      type: object
-      additionalProperties: false
-    TextMatchAnnotation:
-      properties:
-        spans:
-          items:
-            $ref: "#/components/schemas/TextMatchSpan"
-          type: array
-      required:
-        - spans
       type: object
       additionalProperties: false
     RuleAnnotation:
       properties:
-        ruleId:
-          type: string
         textMatch:
-          $ref: "#/components/schemas/TextMatchAnnotation"
-      required:
-        - ruleId
+          items:
+            $ref: "#/components/schemas/TextMatchSpan"
+          type: array
       type: object
       additionalProperties: false
+    Record_string.RuleAnnotation_:
+      properties: {}
+      additionalProperties:
+        $ref: "#/components/schemas/RuleAnnotation"
+      type: object
+      description: Construct a type with a set of properties K of type T
     Transcript:
       properties:
         feedId:
@@ -75,9 +69,7 @@ components:
             type: string
           type: array
         ruleAnnotations:
-          items:
-            $ref: "#/components/schemas/RuleAnnotation"
-          type: array
+          $ref: "#/components/schemas/Record_string.RuleAnnotation_"
       required:
         - feedId
         - segmentId

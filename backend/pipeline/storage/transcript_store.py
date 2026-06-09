@@ -14,7 +14,6 @@ from google.protobuf import json_format
 from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
-    RuleAnnotation,
 )
 from backend.pipeline.storage import transcript_queries
 from backend.pipeline.storage.pagination_utils import SortOrder
@@ -82,10 +81,8 @@ class TranscriptStore:
                 if isinstance(raw_annotations, str)
                 else raw_annotations
             )
-            for entry in entries:
-                annotation_msg = RuleAnnotation()
-                json_format.ParseDict(entry, annotation_msg)
-                msg.rule_annotations.append(annotation_msg)
+            for rule_id, entry in entries.items():
+                json_format.ParseDict(entry, msg.rule_annotations[rule_id])
 
         return msg
 
@@ -134,10 +131,12 @@ class TranscriptStore:
             end_offset = transcript.end_audio_offset.ToTimedelta()
 
         annotations_json = json.dumps(
-            [
-                json_format.MessageToDict(a, preserving_proto_field_name=True)
-                for a in transcript.rule_annotations
-            ]
+            {
+                rule_id: json_format.MessageToDict(
+                    annotation, preserving_proto_field_name=True
+                )
+                for rule_id, annotation in transcript.rule_annotations.items()
+            }
         )
 
         try:

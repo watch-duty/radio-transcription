@@ -29,7 +29,7 @@ _TRANSCRIPT_ROW = {
     "evaluation_decisions": ["rule-1"],
     "playback_audio_uri": None,
     "evaluation_errors": [],
-    "evaluation_annotations": "[]",
+    "evaluation_annotations": "{}",
     "created_at": datetime.datetime(2026, 1, 1, 0, 2, tzinfo=datetime.UTC),
 }
 
@@ -118,15 +118,16 @@ class TestCreateTranscript(BaseTranscriptStoreTest):
 
     async def test_round_trips_rule_annotations(self) -> None:
         """Annotations on the input proto are serialized to JSONB and read back as the same proto shape."""
-        annotation_dict = {
-            "rule_id": "rule-1",
-            "text_match": {
-                "spans": [{"start": 5, "end": 9, "matched_text": "fire"}]
-            },
+        annotations_dict = {
+            "rule-1": {
+                "text_match": {
+                    "spans": [{"start": 5, "end": 9, "matched_text": "fire"}]
+                },
+            }
         }
         self.pool.fetchrow.return_value = {
             **_TRANSCRIPT_ROW,
-            "evaluation_annotations": [annotation_dict],
+            "evaluation_annotations": annotations_dict,
         }
 
         msg = EvaluatedTranscribedAudio()
@@ -139,8 +140,7 @@ class TestCreateTranscript(BaseTranscriptStoreTest):
         msg.end_timestamp.FromDatetime(
             datetime.datetime(2026, 1, 1, 0, 1, tzinfo=datetime.UTC)
         )
-        annotation = msg.rule_annotations.add(rule_id="rule-1")
-        span = annotation.text_match.spans.add()
+        span = msg.rule_annotations["rule-1"].text_match.spans.add()
         span.start = 5
         span.end = 9
         span.matched_text = "fire"
@@ -148,9 +148,10 @@ class TestCreateTranscript(BaseTranscriptStoreTest):
         result = await self.store.create_transcript(msg)
 
         self.assertEqual(len(result.rule_annotations), 1)
-        self.assertEqual(result.rule_annotations[0].rule_id, "rule-1")
+        self.assertIn("rule-1", result.rule_annotations)
         self.assertEqual(
-            result.rule_annotations[0].text_match.spans[0].matched_text, "fire"
+            result.rule_annotations["rule-1"].text_match.spans[0].matched_text,
+            "fire",
         )
 
     async def test_raises_already_exists_error_on_duplicate(self) -> None:

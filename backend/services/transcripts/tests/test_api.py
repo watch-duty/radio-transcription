@@ -84,6 +84,36 @@ class TestTranscriptsAPI(unittest.TestCase):
         self.assertEqual(data["segment_id"], _SEGMENT_ID)
         self.mock_store.create_transcript.assert_called_once()
 
+    def test_create_transcript_renests_rule_annotations(self) -> None:
+        """The flat text_match list is re-nested into the proto's oneof wrapper."""
+        payload = {
+            "transmission_id": _TRANSMISSION_ID,
+            "feed_id": _FEED_ID,
+            "transcript": "Hello world",
+            "start_timestamp": "2026-01-01T00:00:00Z",
+            "end_timestamp": "2026-01-01T00:01:00Z",
+            "source_audio_uris": ["gs://bucket/audio1.ogg"],
+            "evaluation_decisions": ["rule-1"],
+            "rule_annotations": {
+                "rule-1": {
+                    "text_match": [
+                        {"start": 0, "end": 5, "matched_text": "Hello"}
+                    ],
+                }
+            },
+        }
+        self.mock_store.create_transcript.return_value = _make_transcript_msg()
+
+        response = self.client.post("/v1/transcripts", json=payload)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        sent_msg = self.mock_store.create_transcript.call_args.args[0]
+        self.assertEqual(len(sent_msg.rule_annotations), 1)
+        annotation = sent_msg.rule_annotations["rule-1"]
+        self.assertEqual(annotation.WhichOneof("annotation"), "text_match")
+        self.assertEqual(len(annotation.text_match.spans), 1)
+        self.assertEqual(annotation.text_match.spans[0].matched_text, "Hello")
+
     def test_create_transcript_parsing_error(self) -> None:
         """Test creating a transcript with invalid JSON schema."""
         payload = {

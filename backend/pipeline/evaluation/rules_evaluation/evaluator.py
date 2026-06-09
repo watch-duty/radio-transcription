@@ -13,7 +13,6 @@ from backend.pipeline.common.clients.session_helper import (
 from backend.pipeline.common.env import is_gcp_env
 from backend.pipeline.common.evaluation.annotations import (
     RuleAnnotation,
-    TextMatchAnnotation,
     TextMatchSpan,
 )
 from backend.pipeline.common.rules import models
@@ -51,7 +50,9 @@ def _get_compiled_keyword_regex(
 class EvaluationResult(TypedDict):
     is_flagged: bool
     triggered_rules: list[str]
-    rule_annotations: list[RuleAnnotation]
+    # Keyed by rule_id. triggered_rules is the ordered source of truth; this
+    # map only carries the optional payload for rules that produced one.
+    rule_annotations: dict[str, RuleAnnotation]
     errors: list[EvaluationErrorType]
 
 
@@ -93,16 +94,16 @@ class BaseTextEvaluator(ABC):
         conditions = rule.conditions
 
         if isinstance(conditions, models.RegexConditions):
-            return self._evaluate_regex(rule, conditions, text)
+            return self._evaluate_regex(conditions, text)
 
         if isinstance(conditions, models.KeywordConditions):
-            return self._evaluate_keywords(rule, conditions, text)
+            return self._evaluate_keywords(conditions, text)
 
         # For now, we skip GroupConditions as it requires a rule lookup
         return None
 
     def _evaluate_regex(
-        self, rule: models.Rule, conditions: models.RegexConditions, text: str
+        self, conditions: models.RegexConditions, text: str
     ) -> RuleAnnotation | None:
         flags = re.IGNORECASE if "i" in conditions.flags else 0
         spans = [
@@ -115,13 +116,10 @@ class BaseTextEvaluator(ABC):
         ]
         if not spans:
             return None
-        return RuleAnnotation(
-            rule_id=rule.rule_id,
-            text_match=TextMatchAnnotation(spans=spans),
-        )
+        return RuleAnnotation(text_match=spans)
 
     def _evaluate_keywords(
-        self, rule: models.Rule, conditions: models.KeywordConditions, text: str
+        self, conditions: models.KeywordConditions, text: str
     ) -> RuleAnnotation | None:
         # Filter out empty, empty-string, or whitespace-only keywords
         valid_keywords = [
@@ -163,10 +161,7 @@ class BaseTextEvaluator(ABC):
             for m in matches
         ]
         spans.sort(key=lambda s: (s.start, -s.end))
-        return RuleAnnotation(
-            rule_id=rule.rule_id,
-            text_match=TextMatchAnnotation(spans=spans),
-        )
+        return RuleAnnotation(text_match=spans)
 
     def _organize_rules(self, rules: list[models.Rule]) -> OrganizedRules:
         organized_rules = OrganizedRules()
@@ -198,7 +193,7 @@ class BaseTextEvaluator(ABC):
             return {
                 "is_flagged": False,
                 "triggered_rules": [],
-                "rule_annotations": [],
+                "rule_annotations": {},
                 "errors": [],
             }
 
@@ -206,15 +201,13 @@ class BaseTextEvaluator(ABC):
         rules_to_evaluate = self._get_applicable_rules(organized_rules, feed_id)
 
         triggered_rules: list[str] = []
-        rule_annotations: list[RuleAnnotation] = []
-        seen: set[str] = set()
+        rule_annotations: dict[str, RuleAnnotation] = {}
         for rule in rules_to_evaluate:
             annotation = self._evaluate_rule(rule, text)
-            if annotation is None or rule.rule_id in seen:
+            if annotation is None or rule.rule_id in rule_annotations:
                 continue
-            seen.add(rule.rule_id)
             triggered_rules.append(rule.rule_id)
-            rule_annotations.append(annotation)
+            rule_annotations[rule.rule_id] = annotation
 
         return {
             "is_flagged": len(triggered_rules) > 0,
@@ -305,7 +298,7 @@ class RemoteTextEvaluator(BaseTextEvaluator):
             return {
                 "is_flagged": False,
                 "triggered_rules": [],
-                "rule_annotations": [],
+                "rule_annotations": {},
                 "errors": [EvaluationErrorType.ERROR_FEED_ID_MISSING],
             }
         try:
@@ -315,7 +308,7 @@ class RemoteTextEvaluator(BaseTextEvaluator):
             return {
                 "is_flagged": False,
                 "triggered_rules": [],
-                "rule_annotations": [],
+                "rule_annotations": {},
                 "errors": [EvaluationErrorType.ERROR_RULES_FETCH_FAILED],
             }
 
