@@ -9,13 +9,14 @@ import "google/protobuf/duration.proto";
 // the database via the segment ID!
 message NormalizedAudio {
 
-  // --- Identifiers & Base Metadata ---
-  
-  // A unique, deterministic identifier for this specific audio segment (formatted as a RFC 4122 UUID).
-  string segment_id = 1;
+  reserved 1;
+  reserved "transmission_id";
 
   // The unique identifier of the radio feed this segment originated from (formatted as a RFC 4122 UUID).
   string feed_id = 2;
+
+  // A unique, deterministic identifier for this specific audio segment (formatted as a RFC 4122 UUID).
+  string segment_id = 15;
 
 
   // --- Global Timing & Context Flags ---
