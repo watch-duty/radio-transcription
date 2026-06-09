@@ -26,6 +26,7 @@ from backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector impor
 )
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
+    _require_captured_chunk,
 )
 from backend.pipeline.ingestion.models import FeedFailure
 from backend.pipeline.storage.feed_store import (
@@ -257,12 +258,13 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
         shutdown = asyncio.Event()
         chunks_uploaded = []
-        async for chunk in capture_bcfy_calls(
+        async for event in capture_bcfy_calls(
             feed,
             shutdown,
             "http://api.example.com/",
             _default_resources(),
         ):
+            chunk = _require_captured_chunk(event)
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs,
                 chunk.audio_bytes,
@@ -343,12 +345,13 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         gcs_paths = []
         seq = 0
-        async for chunk in capture_bcfy_calls(
+        async for event in capture_bcfy_calls(
             feed,
             shutdown,
             "http://api.example.com/",
             _default_resources(),
         ):
+            chunk = _require_captured_chunk(event)
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs, chunk.audio_bytes, feed, _TEST_BUCKET, seq
             )
@@ -417,12 +420,13 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
         shutdown = asyncio.Event()
         chunks = []
-        async for chunk in capture_bcfy_calls(
+        async for event in capture_bcfy_calls(
             feed,
             shutdown,
             "http://api.example.com/",
             _default_resources(),
         ):
+            chunk = _require_captured_chunk(event)
             chunks.append(chunk)
             if len(chunks) == 2:
                 shutdown.set()

@@ -19,7 +19,11 @@ from unittest import mock
 
 import aiohttp
 
-from backend.pipeline.ingestion.models import CaptureResources
+from backend.pipeline.ingestion.models import (
+    CapturedChunk,
+    CaptureEvent,
+    CaptureResources,
+)
 
 
 def _default_resources() -> CaptureResources:
@@ -27,3 +31,11 @@ def _default_resources() -> CaptureResources:
     return CaptureResources(
         http_session=mock.AsyncMock(spec=aiohttp.ClientSession),
     )
+
+
+def _require_captured_chunk(event: CaptureEvent) -> CapturedChunk:
+    """Return an audio chunk for tests that intentionally expect one."""
+    if not isinstance(event, CapturedChunk):
+        msg = f"Expected CapturedChunk, got {event!r}"
+        raise TypeError(msg)
+    return event

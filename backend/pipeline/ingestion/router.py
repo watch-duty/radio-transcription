@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from backend.pipeline.ingestion.models import (
-        CapturedChunk,
+        CaptureEvent,
         CaptureResources,
         CollectorFn,
     )
@@ -84,7 +84,7 @@ def route_capturer(
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
     resources: CaptureResources,
-) -> AsyncIterator[CapturedChunk]:
+) -> AsyncIterator[CaptureEvent]:
     """Routes the feed to the appropriate capture function."""
     source_type = feed["source_type"]
     entry = _COLLECTORS.get(source_type)
