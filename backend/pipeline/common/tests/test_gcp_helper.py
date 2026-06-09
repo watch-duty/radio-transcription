@@ -34,6 +34,8 @@ def _make_feed(
         last_processed_filename=None,
         last_bookmark_time=None,
         fencing_token=fencing_token,
+        failure_count=0,
+        status_reason=None,
         source_feed_id=None,
     )
 
