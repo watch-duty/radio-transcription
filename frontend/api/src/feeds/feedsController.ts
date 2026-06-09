@@ -7,7 +7,11 @@ import type {
   ListFeedsResponse,
   Tag,
 } from '@transcription/common';
-import { SourceType, convertFeedStatusBackend } from '@transcription/common';
+import {
+  SourceType,
+  convertFeedStatusBackend,
+  convertFeedStatusReason,
+} from '@transcription/common';
 import {
   Body,
   Controller,
@@ -137,7 +141,7 @@ function convertFeedBackend(response: FeedBackend): Feed {
     lastHeartbeat: response.last_heartbeat ?? undefined,
     tags: response.tags,
     quarantineReason: response.quarantine_reason ?? undefined,
-    statusReason: response.status_reason ?? undefined,
+    statusReason: convertFeedStatusReason(response.status_reason),
   };
 }
 

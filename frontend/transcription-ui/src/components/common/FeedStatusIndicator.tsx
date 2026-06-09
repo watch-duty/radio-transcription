@@ -22,6 +22,7 @@ const FEED_STATUS_REASON_UI_TEXT_DISPLAY: Record<
   BackendFeedStatusReason,
   string
 > = {
+  unknown: 'Unknown Status',
   source_offline: 'Source Offline',
   source_unreachable: 'Source Unreachable',
   source_rate_limited: 'Source Rate Limited',

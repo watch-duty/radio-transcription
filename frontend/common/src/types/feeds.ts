@@ -16,6 +16,7 @@ export type BackendFeedStatus =
 export type FeedStatus = 'active' | 'inactive' | 'error';
 
 export type BackendFeedStatusReason =
+  | 'unknown'
   | 'source_offline'
   | 'source_unreachable'
   | 'source_rate_limited'

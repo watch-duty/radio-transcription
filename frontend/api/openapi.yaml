@@ -280,6 +280,7 @@ components:
     BackendFeedStatusReason:
       type: string
       enum:
+        - unknown
         - source_offline
         - source_unreachable
         - source_rate_limited
