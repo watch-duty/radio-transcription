@@ -14,7 +14,7 @@ describe('listTranscripts', () => {
     const mockData = {
       transcripts: [
         {
-          transmissionId: '1',
+          segmentId: '1',
           transcript: 'Hello',
           startTimestamp: '2026-04-10T12:00:00Z',
         },

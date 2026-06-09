@@ -62,5 +62,6 @@ export interface FeedUpdate {
 export interface ListFeedsResponse {
   feeds: Feed[];
   nextToken?: string;
+  total: number;
 }
 

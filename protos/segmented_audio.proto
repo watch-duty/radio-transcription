@@ -1,0 +1,60 @@
+syntax = "proto3";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+// Represents a segmented audio transmission that is ready to be normalized.
+message SegmentedAudio {
+
+  // --- Identifiers & Base Metadata ---
+  
+  // A unique, deterministic identifier for this specific audio segment (formatted as a RFC 4122 UUID).
+  string segment_id = 1;
+
+  // The unique identifier of the radio feed this segment originated from (formatted as a RFC 4122 UUID).
+  string feed_id = 2;
+
+
+  // --- Global Timing & Context Flags ---
+  
+  // The exact global timestamp when this transmission started.
+  google.protobuf.Timestamp start_timestamp = 3;
+
+  // The exact global timestamp when this transmission ended.
+  google.protobuf.Timestamp end_timestamp = 4;
+
+  // Indicates this transmission lacks prior context (e.g., cut off abruptly mid-speech).
+  bool missing_prior_context = 5;
+
+  // Indicates this transmission lacks subsequent context (e.g., transmission duration exceeded).
+  bool missing_post_context = 6;
+
+
+  // --- Physical Audio Storage Details ---
+
+  // Ordered list of GCS URIs for the raw audio files used to assemble this transmission.
+  repeated string source_audio_uris = 7;
+
+  // The exact slice offset within the *first* URI in source_audio_uris where the transcribed speech formally begins.
+  google.protobuf.Duration start_audio_offset = 8;
+
+  // The exact slice offset within the *last* URI in source_audio_uris where the transcribed speech formally ends.
+  google.protobuf.Duration end_audio_offset = 9;
+
+  // The human-readable name of the radio feed as stored in the database.
+  string feed_name = 10;
+
+  // The ID used for mapping the feed ID within the application.
+  string external_id = 11;
+
+  enum AudioClassification {
+    AUDIO_CLASSIFICATION_UNSPECIFIED = 0;
+    AUDIO_CLASSIFICATION_SPEECH = 1;
+    AUDIO_CLASSIFICATION_OTHER = 2;
+  }
+
+  // The classification of the audio segment (speech vs. non-speech).
+  AudioClassification audio_classification = 12;
+
+  // The GCS URI of the raw stitched WAV file in the staging bucket.
+  string raw_audio_uri = 13;
+}

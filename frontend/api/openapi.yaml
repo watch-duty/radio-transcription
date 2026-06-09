@@ -10,7 +10,7 @@ components:
       properties:
         feedId:
           type: string
-        transmissionId:
+        segmentId:
           type: string
         transcript:
           type: string
@@ -40,7 +40,7 @@ components:
           type: array
       required:
         - feedId
-        - transmissionId
+        - segmentId
         - transcript
         - startTimestamp
         - endTimestamp
@@ -341,8 +341,12 @@ components:
           type: array
         nextToken:
           type: string
+        total:
+          type: number
+          format: double
       required:
         - feeds
+        - total
       type: object
       additionalProperties: false
     ListFeedsQueryParams:

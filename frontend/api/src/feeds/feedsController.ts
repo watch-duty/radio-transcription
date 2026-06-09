@@ -74,6 +74,7 @@ export class ListFeedsQueryParams {
 interface ListFeedsBackendResponse {
   feeds: FeedBackend[];
   next_token?: string;
+  total: number;
 }
 
 function getSourceUrl(
@@ -210,6 +211,7 @@ export class FeedsController extends Controller {
         : {
             feeds: data.feeds.map(convertFeedBackend),
             nextToken: data.next_token,
+            total: data.total,
           };
     } catch (error: unknown) {
       const { status, message } = handleBackendError(error, 'fetching feeds');
