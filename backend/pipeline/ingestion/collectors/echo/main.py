@@ -214,7 +214,7 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
                 start_ts,
                 duration_ms=duration_ms,
                 source_type="echo",
-                external_audio_segment_id=f"gs://{bucket}/{name}",
+                external_audio_segment_id=f"{bucket}/{name}",
             )
         except Exception:
             failure = _pipeline_failure(_PUBSUB_PUBLISH_FAILED)
