@@ -15,6 +15,8 @@ class LeaseExpiredError(Exception):
     """Raised when a retry loop observes confirmed lease loss."""
 
 
+# TODO: https://linear.app/watchduty/issue/GOO-566/ - Move retry callers to a
+# RetryConfig + coroutine-factory API so keyword args and type checking survive.
 async def retry_with_lease_check[T](
     fn: Callable[..., Awaitable[T]],
     *args: object,
