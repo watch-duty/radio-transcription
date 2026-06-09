@@ -10,6 +10,7 @@ from typing import cast
 from unittest import mock
 
 import asyncpg
+import yaml
 
 from backend.pipeline.storage import feed_queries
 from backend.pipeline.storage.feed_store import (
@@ -136,6 +137,34 @@ class TestFeedStatusReason(unittest.TestCase):
             },
         )
 
+    def test_matches_openapi_spec(self) -> None:
+        current_file = pathlib.Path(__file__).resolve()
+        repo_root = current_file.parents[4]
+        openapi_path = repo_root / "frontend" / "api" / "openapi.yaml"
+        self.assertTrue(
+            openapi_path.exists(),
+            f"Could not find openapi.yaml at {openapi_path}",
+        )
+
+        with openapi_path.open("r") as f:
+            spec = yaml.safe_load(f)
+
+        schemas = spec.get("components", {}).get("schemas", {})
+        backend_reasons = schemas.get("BackendFeedStatusReason", {}).get(
+            "enum", []
+        )
+
+        python_reasons = {reason.value for reason in FeedStatusReason}
+        expected_openapi_reasons = python_reasons | {"unknown"}
+
+        self.assertEqual(
+            set(backend_reasons),
+            expected_openapi_reasons,
+            "The status reasons in backend.pipeline.storage.feed_store.FeedStatusReason "
+            "do not match BackendFeedStatusReason in frontend/api/openapi.yaml. "
+            "Please run `yarn generate-spec` in frontend/api to sync the spec after updating TypeScript types.",
+        )
+
     def test_reason_values_encode_source_or_system_ownership(self) -> None:
         prefixes = {
             reason.value.split("_", 1)[0] for reason in FeedStatusReason
@@ -147,6 +176,64 @@ class TestFeedStatusReason(unittest.TestCase):
                 reason.value,
             )
         self.assertEqual(prefixes, {"source", "system"})
+
+
+class TestSourceType(unittest.TestCase):
+    """Contract tests for SourceType enum."""
+
+    def test_matches_openapi_spec(self) -> None:
+        current_file = pathlib.Path(__file__).resolve()
+        repo_root = current_file.parents[4]
+        openapi_path = repo_root / "frontend" / "api" / "openapi.yaml"
+        self.assertTrue(
+            openapi_path.exists(),
+            f"Could not find openapi.yaml at {openapi_path}",
+        )
+
+        with openapi_path.open("r") as f:
+            spec = yaml.safe_load(f)
+
+        schemas = spec.get("components", {}).get("schemas", {})
+        openapi_sources = schemas.get("SourceType", {}).get("enum", [])
+
+        python_sources = {source.value for source in SourceType}
+
+        self.assertEqual(
+            set(openapi_sources),
+            python_sources,
+            "The sources in backend.pipeline.storage.feed_store.SourceType "
+            "do not match SourceType in frontend/api/openapi.yaml. "
+            "Please run `yarn generate-spec` in frontend/api to sync the spec after updating TypeScript types.",
+        )
+
+
+class TestFeedStatus(unittest.TestCase):
+    """Contract tests for FeedStatus enum."""
+
+    def test_matches_openapi_spec(self) -> None:
+        current_file = pathlib.Path(__file__).resolve()
+        repo_root = current_file.parents[4]
+        openapi_path = repo_root / "frontend" / "api" / "openapi.yaml"
+        self.assertTrue(
+            openapi_path.exists(),
+            f"Could not find openapi.yaml at {openapi_path}",
+        )
+
+        with openapi_path.open("r") as f:
+            spec = yaml.safe_load(f)
+
+        schemas = spec.get("components", {}).get("schemas", {})
+        openapi_statuses = schemas.get("BackendFeedStatus", {}).get("enum", [])
+
+        python_statuses = {status.value for status in FeedStatus}
+
+        self.assertEqual(
+            set(openapi_statuses),
+            python_statuses,
+            "The status values in backend.pipeline.storage.feed_store.FeedStatus "
+            "do not match BackendFeedStatus in frontend/api/openapi.yaml. "
+            "Please run `yarn generate-spec` in frontend/api to sync the spec after updating TypeScript types.",
+        )
 
 
 class TestStatusReasonRowMapping(unittest.TestCase):
