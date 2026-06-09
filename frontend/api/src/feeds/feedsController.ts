@@ -1,5 +1,6 @@
 import type {
   BackendFeedStatus,
+  BackendFeedStatusReason,
   Feed,
   FeedCreate,
   FeedUpdate,
@@ -39,7 +40,7 @@ interface FeedBackend extends BaseFeedBackend {
   last_heartbeat: string | null;
   tags?: Tag[];
   quarantine_reason: string | null;
-  status_reason: string | null;
+  status_reason: BackendFeedStatusReason | null;
 }
 
 interface FeedCreateBackend extends BaseFeedBackend {
