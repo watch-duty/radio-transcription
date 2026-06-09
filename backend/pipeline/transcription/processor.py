@@ -99,9 +99,10 @@ class TranscriptionEventProcessor:
                 # Determine audio duration from start and end timestamps
                 duration_ms = self._get_duration_ms(claim)
 
-                # Retrieve active transcriber and run Speech API
+                # Retrieve active transcriber and run Speech API on ephemeral mono FLAC link
                 transcript = self.transcriber.transcribe(
-                    uri=claim.canonical_audio_uri,
+                    uri=claim.transcription_audio_uri
+                    or claim.canonical_audio_uri,
                     duration_ms=duration_ms,
                 )
 
@@ -127,6 +128,7 @@ class TranscriptionEventProcessor:
                     canonical_audio_uri=claim.canonical_audio_uri,
                     playback_audio_uri=claim.playback_audio_uri,
                     feed_name=claim.feed_name,
+                    transcription_audio_uri=claim.transcription_audio_uri,
                 )
 
                 # Egress to final output topic, strictly ordered by feed_id
