@@ -27,8 +27,25 @@ const defaultFilters: FeedFilters = {
 const renderFeedTable = (
   props: Partial<React.ComponentProps<typeof FeedTable>> = {}
 ) => {
+  const feeds = props.feeds ?? [];
+  const seen = new Set<string>();
+  const uniqueTags: { key: string; value: string }[] = [];
+  feeds.forEach((feed) => {
+    feed.tags?.forEach((tag) => {
+      const identifier = `${tag.key}:${tag.value}`;
+      if (!seen.has(identifier)) {
+        seen.add(identifier);
+        uniqueTags.push({ key: tag.key, value: tag.value });
+      }
+    });
+  });
+  const sortedTags = uniqueTags.sort(
+    (a, b) => a.key.localeCompare(b.key) || a.value.localeCompare(b.value)
+  );
+
   const finalProps = {
     feeds: [],
+    tags: sortedTags,
     isLoading: false,
     filters: defaultFilters,
     onFiltersChange: vi.fn(),
@@ -222,6 +239,7 @@ describe('FeedTable', () => {
             isLoading={false}
             filters={defaultFilters}
             onFiltersChange={vi.fn()}
+            tags={[]}
           />
         </VirtuosoMockContext.Provider>
       </MemoryRouter>

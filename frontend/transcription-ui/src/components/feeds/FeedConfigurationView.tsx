@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import AppRegistrationIcon from '@mui/icons-material/AppRegistration';
 import Box from '@mui/material/Box';
@@ -110,6 +110,24 @@ export function FeedConfigurationView({
       }
     }
   }, [feedsError, onError]);
+
+  const uniqueTagsForFilter = useMemo<{ key: string; value: string }[]>(() => {
+    const seen = new Set<string>();
+    const result: { key: string; value: string }[] = [];
+    const sourceFeeds = allFeeds || feeds || [];
+    sourceFeeds.forEach((feed) => {
+      feed.tags?.forEach((tag) => {
+        const identifier = `${tag.key}:${tag.value}`;
+        if (!seen.has(identifier)) {
+          seen.add(identifier);
+          result.push({ key: tag.key, value: tag.value });
+        }
+      });
+    });
+    return result.sort(
+      (a, b) => a.key.localeCompare(b.key) || a.value.localeCompare(b.value)
+    );
+  }, [feeds, allFeeds]);
 
   const resetForm = () => {
     setId('');
@@ -317,7 +335,7 @@ export function FeedConfigurationView({
         >
           <FeedTable
             feeds={feeds}
-            allFeeds={allFeeds}
+            tags={uniqueTagsForFilter}
             isLoading={feedsLoading}
             allowEdit
             editingFeedId={isEditing ? id : undefined}

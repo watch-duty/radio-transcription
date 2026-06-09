@@ -224,7 +224,7 @@ function CollapsedFeedSearch({
 interface ExpandedFeedSearchProps {
   title: string;
   feeds: Feed[];
-  allFeeds: Feed[];
+  tags: { key: string; value: string }[];
   feedsLoading: boolean;
   filters: FeedFilters;
   onFiltersChange: (filters: FeedFilters) => void;
@@ -233,7 +233,7 @@ interface ExpandedFeedSearchProps {
 function ExpandedFeedSearch({
   title,
   feeds,
-  allFeeds,
+  tags,
   feedsLoading,
   filters,
   onFiltersChange,
@@ -251,7 +251,7 @@ function ExpandedFeedSearch({
       <FeedTable
         title={title}
         feeds={feeds}
-        allFeeds={allFeeds}
+        tags={tags}
         isLoading={feedsLoading}
         filters={filters}
         onFiltersChange={onFiltersChange}
@@ -390,7 +390,7 @@ export function FeedSearchView({
     <ExpandedFeedSearch
       title={title}
       feeds={feeds ?? []}
-      allFeeds={allFeeds}
+      tags={tags}
       feedsLoading={feedsLoading}
       filters={filters}
       onFiltersChange={setFilters}
