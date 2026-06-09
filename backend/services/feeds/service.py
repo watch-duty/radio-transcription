@@ -92,6 +92,7 @@ class FeedService:
         return ListFeedsResponse(
             feeds=[Feed.model_validate(f) for f in store_feeds.feeds],
             next_token=store_feeds.next_token,
+            total=store_feeds.total,
         )
 
     async def deactivate_feed(self, feed_id: str) -> bool:
