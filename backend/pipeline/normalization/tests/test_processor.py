@@ -87,6 +87,7 @@ class NormalizationEventProcessorTest(unittest.TestCase):
             external_id="ext-1234",
             audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH,
             raw_audio_uri="gs://staging-bucket/raw_segments/tx-1111.flac",
+            external_audio_segment_id="ext-id-1234",
         )
 
         # Serialize and wrap in CloudEvent envelope
@@ -160,6 +161,13 @@ class NormalizationEventProcessorTest(unittest.TestCase):
             destination_path="ephemeral/transcription/feed-2222/1970/01/01/tx-1111.flac",
             content_type="audio/flac",
         )
+
+        # Verify database persist was called with correct payload including external_audio_segment_id
+        self.mock_segments_client.add_audio_segment.assert_called_once()
+        saved_payload = self.mock_segments_client.add_audio_segment.call_args[0][0]
+        self.assertEqual(saved_payload["id"], "tx-1111")
+        self.assertEqual(saved_payload["feed_id"], "feed-2222")
+        self.assertEqual(saved_payload["external_audio_segment_id"], "ext-id-1234")
 
     @patch("backend.pipeline.normalization.audio_processor.AudioProcessor")
     @patch("backend.pipeline.common.storage.gcs_uploader.GCSAudioUploader")
