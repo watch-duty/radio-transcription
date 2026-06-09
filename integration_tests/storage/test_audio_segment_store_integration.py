@@ -238,7 +238,7 @@ class TestListAudioSegmentsFilters:
                 "data": {
                     "decisions": ["rule-1"],
                     "errors": [],
-                    "rule_annotations": [],
+                    "rule_annotations": {},
                 },
             }
         ]
@@ -251,7 +251,7 @@ class TestListAudioSegmentsFilters:
                 "data": {
                     "decisions": ["rule-2"],
                     "errors": [],
-                    "rule_annotations": [],
+                    "rule_annotations": {},
                 },
             },
             {
@@ -287,7 +287,7 @@ class TestListAudioSegmentsFilters:
                 "data": {
                     "decisions": [],
                     "errors": [],
-                    "rule_annotations": [],
+                    "rule_annotations": {},
                 },
             },
             {
