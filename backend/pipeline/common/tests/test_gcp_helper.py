@@ -14,6 +14,7 @@ from yarl import URL
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.schema_types.continuous_audio_pb2 import ContinuousAudio
+from backend.pipeline.schema_types.segmented_audio_pb2 import SegmentedAudio
 from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 
 _DUMMY_REQUEST_INFO = aiohttp.RequestInfo(
@@ -426,9 +427,9 @@ class TestPublishAudioChunkSync(unittest.TestCase):
 
         self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
 
-        chunk = ContinuousAudio()
+        chunk = SegmentedAudio()
         chunk.ParseFromString(publish_args[1])
-        self.assertEqual(chunk.gcs_uri, "gs://bucket/audio.flac")
+        self.assertEqual(chunk.raw_audio_uri, "gs://bucket/audio.flac")
         self.assertEqual(chunk.feed_id, "feed-42")
         self.assertTrue(chunk.HasField("start_timestamp"))
         self.assertEqual(
