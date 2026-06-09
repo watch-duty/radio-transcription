@@ -1,12 +1,17 @@
 import type {
   BackendFeedStatus,
+  BackendFeedStatusReason,
   Feed,
   FeedCreate,
   FeedUpdate,
   ListFeedsResponse,
   Tag,
 } from '@transcription/common';
-import { SourceType, convertFeedStatusBackend } from '@transcription/common';
+import {
+  SourceType,
+  convertFeedStatusBackend,
+  convertFeedStatusReason,
+} from '@transcription/common';
 import {
   Body,
   Controller,
@@ -39,7 +44,7 @@ interface FeedBackend extends BaseFeedBackend {
   last_heartbeat: string | null;
   tags?: Tag[];
   quarantine_reason: string | null;
-  status_reason: string | null;
+  status_reason: BackendFeedStatusReason | null;
 }
 
 interface FeedCreateBackend extends BaseFeedBackend {
@@ -137,7 +142,7 @@ function convertFeedBackend(response: FeedBackend): Feed {
     lastHeartbeat: response.last_heartbeat ?? undefined,
     tags: response.tags,
     quarantineReason: response.quarantine_reason ?? undefined,
-    statusReason: response.status_reason ?? undefined,
+    statusReason: convertFeedStatusReason(response.status_reason),
   };
 }
 

@@ -288,6 +288,8 @@ export function FeedConfigurationTable({
           <FeedStatusIndicator
             status={feed.status}
             substatus={feed.substatus}
+            statusReason={feed.statusReason}
+            quarantineReason={feed.quarantineReason}
             lastHeartbeat={feed.lastHeartbeat}
           />
         </TableCell>
