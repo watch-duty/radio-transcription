@@ -280,7 +280,24 @@ def publish_audio_chunk_sync(
             ordering_key=feed_id,
             **attrs,
         )
-        return future.result()
+        try:
+            return future.result()
+        except PublishToPausedOrderingKeyException:
+            try:
+                publisher.resume_publish(topic_path, ordering_key=feed_id)
+            except (RuntimeError, ValueError):
+                logger.exception(
+                    "resume_publish failed for feed=%s topic=%s",
+                    feed_id,
+                    topic_path,
+                )
+            retry_future = publisher.publish(
+                topic_path,
+                serialized_data,
+                ordering_key=feed_id,
+                **attrs,
+            )
+            return retry_future.result()
 
 
 async def publish_audio_chunk(
@@ -354,14 +371,9 @@ async def publish_audio_chunk(
         try:
             return await asyncio.wrap_future(future)
         except PublishToPausedOrderingKeyException:
-            # Clear the local Publisher pause flag so a post-un-quarantine
-            # re-lease on the same worker can publish. The exception still
-            # propagates to _process_feed's catch-all, which will quarantine
-            # the feed after threshold strikes.
-            # Defensive try/except: resume_publish is documented to raise
-            # RuntimeError (publisher stopped) or ValueError (unseen key).
-            # Neither should occur here in normal operation, but a crash on
-            # the failure-cleanup path itself would be worse than swallowing.
+            # Clear the local Publisher pause flag and retry publishing the
+            # message once so a transient pause doesn't discard valid audio
+            # or cause unnecessary strikes against the feed.
             try:
                 publisher.resume_publish(topic_path, ordering_key=feed_id)
             except (RuntimeError, ValueError):
@@ -370,4 +382,10 @@ async def publish_audio_chunk(
                     feed_id,
                     topic_path,
                 )
-            raise
+            retry_future = publisher.publish(
+                topic_path,
+                serialized_data,
+                ordering_key=feed_id,
+                **attrs,
+            )
+            return await asyncio.wrap_future(retry_future)
