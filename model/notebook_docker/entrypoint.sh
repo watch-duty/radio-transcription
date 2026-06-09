@@ -9,7 +9,7 @@ git config --global --add safe.directory "${WORKSPACE_DIR}"
 if [ -f "${MODEL_DIR}/pyproject.toml" ]; then
   /opt/conda/bin/python -m pip install --no-cache-dir -e "${MODEL_DIR}[scoring,vertex]"
 else
-  echo "warning: ${MODEL_DIR}/pyproject.toml not found; skipping editable common install" >&2
+  echo "warning: ${MODEL_DIR}/pyproject.toml not found; skipping editable model package install" >&2
 fi
 
 exec "$@"
