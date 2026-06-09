@@ -170,11 +170,11 @@ fi
 """
 
 [tasks."install:hooks"]
-description = "Install git pre-commit and pre-push hooks if missing"
+description = "Install git pre-commit hook if missing"
 run = """
-if [ ! -f .git/hooks/pre-commit ] || [ ! -f .git/hooks/pre-push ]; then
-  echo "Installing git hooks (pre-commit, pre-push)..."
-  uv run pre-commit install -t pre-commit -t pre-push
+if [ ! -f .git/hooks/pre-commit ]; then
+  echo "Installing git pre-commit hook..."
+  uv run pre-commit install
 fi
 """
 
@@ -236,8 +236,9 @@ description = "Start the entire system (transcription pipeline, API services, an
 depends = ["dev:whisper:start", "build:common", "install:ui", "install:api", "install:env", "install:hooks"]
 run = "yarn --cwd frontend/transcription-ui run local"
 
-[tasks."dev:remote:init"]
+[tasks."dev:init"]
 description = "Automatically fetch and configure remote dev environment variables from GCP for running Frontend UI against the dev GCP environment"
+depends = ["install:hooks"]
 run = """
 export PROJECT_ID=$(gcloud config get-value project)
 gcloud auth application-default login --impersonate-service-account=radio-transcription-api-dev@$PROJECT_ID.iam.gserviceaccount.com
@@ -246,11 +247,11 @@ python3 local_dev/setup_remote_dev.py
 
 [tasks."dev:remote:ui"]
 description = "Run frontend UI locally and connect to the frontend Proxy API in GCP"
-depends = ["dev:stop", "build:common", "install:ui", "install:hooks"]
+depends = ["dev:stop", "build:common", "install:ui"]
 run = """
 if [ ! -f frontend/transcription-ui/.env.dev.local ]; then
   echo "No configuration found. Initializing..."
-  mise run dev:remote:init
+  mise run dev:init
 fi
 
 yarn --cwd frontend/transcription-ui dev
@@ -258,12 +259,12 @@ yarn --cwd frontend/transcription-ui dev
 
 [tasks."dev:remote"]
 description = "Run frontend proxy API and UI locally, and connect to backend in GCP"
-depends = ["dev:stop", "build:common", "install:ui", "install:api", "install:hooks"]
+depends = ["dev:stop", "build:common", "install:ui", "install:api"]
 env = { VITE_API_BASE_URL = "", VITE_PROXY_API_TARGET = "http://localhost:8080" }
 run = """
 if [ ! -f frontend/api/.env.local ] || [ ! -f frontend/transcription-ui/.env.dev.local ]; then
   echo "No configuration found. Initializing..."
-  mise run dev:remote:init
+  mise run dev:init
 fi
 
 npx concurrently "yarn --cwd frontend/api local" "yarn --cwd frontend/transcription-ui dev"
