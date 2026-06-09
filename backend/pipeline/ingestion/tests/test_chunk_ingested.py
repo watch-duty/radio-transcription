@@ -289,7 +289,8 @@ class TestChunkIngestedEmit(unittest.IsolatedAsyncioTestCase):
         """Post-bookmark publish failure records failure and skips emit."""
         chunk = _make_chunk(datetime.datetime.now(datetime.UTC))
         rt = _build_runtime_for_one_chunk(chunk, bookmark_ok=True)
-        rt._store.report_feed_failure.return_value = "failing"
+        store = cast("Any", rt._store)
+        store.report_feed_failure.return_value = "failing"
 
         with (
             _mock_upload_audio(),
@@ -305,9 +306,9 @@ class TestChunkIngestedEmit(unittest.IsolatedAsyncioTestCase):
         ):
             await rt._process_feed(_FEED)
 
-        rt._store.update_feed_progress.assert_awaited_once()
-        rt._store.report_feed_failure.assert_awaited_once()
-        kwargs = rt._store.report_feed_failure.await_args.kwargs
+        store.update_feed_progress.assert_awaited_once()
+        store.report_feed_failure.assert_awaited_once()
+        kwargs = store.report_feed_failure.await_args.kwargs
         self.assertEqual(kwargs["reason"], "pubsub_publish_failed")
         self.assertIs(
             kwargs["status_reason"],
