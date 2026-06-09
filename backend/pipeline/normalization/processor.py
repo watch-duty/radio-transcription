@@ -151,7 +151,7 @@ class NormalizationEventProcessor:
                 logger.info("Uploaded playback audio to %s", playback_audio_uri)
 
                 mono_flac_bytes = self.audio_processor.transcode_to_mono_flac(
-                    raw_audio_bytes
+                    flac_bytes
                 )
                 mono_flac_path = f"ephemeral/transcription/{feed_id}/{dt:%Y/%m/%d}/{segment_id}.flac"
                 transcription_audio_uri = self.audio_uploader.upload_bytes(
