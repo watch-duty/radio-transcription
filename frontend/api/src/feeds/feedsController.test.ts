@@ -94,6 +94,7 @@ describe('FeedsController', () => {
         data: {
           feeds: [mockBackendFeed],
           next_token: 'token_123',
+          total: 10,
         },
       });
 
@@ -103,6 +104,7 @@ describe('FeedsController', () => {
       expect(result).toEqual({
         feeds: [expectedFrontendFeed],
         nextToken: 'token_123',
+        total: 10,
       });
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://feeds-api.example.com',

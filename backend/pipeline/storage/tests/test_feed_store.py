@@ -1643,6 +1643,17 @@ class TestListFeeds(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result.feeds), 1)
         self.assertEqual(result.feeds[0]["tags"], tags)
 
+    async def test_list_feeds_returns_total_count(self) -> None:
+        """The total filtered count is fetched and returned."""
+        row = _full_feed_row(name="Feed E")
+        pool = make_mock_pool(fetch_result=[row], fetchval_result=42)
+        store = FeedStore(pool)
+
+        result = await store.list_feeds()
+
+        self.assertEqual(result.total, 42)
+        self.assertEqual(pool.fetchval.call_count, 1)
+
 
 class TestDeactivateFeed(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.deactivate_feed."""
