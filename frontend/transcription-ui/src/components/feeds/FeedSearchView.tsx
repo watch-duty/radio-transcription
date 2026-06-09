@@ -76,6 +76,7 @@ export function FeedSearchView({ title, onError }: FeedSearchViewProps) {
     refetchOnWindowFocus: false,
   });
 
+  // TODO: this is going away in https://github.com/watch-duty/radio-transcription/pull/664
   const allFeeds = allFeedData.feeds;
 
   useEffect(() => {
