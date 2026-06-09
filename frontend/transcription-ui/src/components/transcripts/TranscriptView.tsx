@@ -62,7 +62,7 @@ export function TranscriptView({
 
   const [searchParams, setSearchParams] = useSearchParams();
   const targetFeedId = searchParams.get('feedId');
-  const targetTransmissionId = searchParams.get('transmissionId');
+  const targetSegmentId = searchParams.get('segmentId');
   const targetTimestampParam = searchParams.get('timestamp');
 
   // Need to memoize the timestamp since Dates are compared by object reference.
@@ -103,11 +103,12 @@ export function TranscriptView({
   const [redactTranscripts, setRedactTranscripts] = useState(false);
   const [alertFilter, setAlertFilter] = useState<AlertFilter>('all');
 
-  const [currentlyPlayingTransmissionId, setCurrentlyPlayingTransmissionId] =
-    useState<string | null>(null);
-  const [highlightedTransmissionId, setHighlightedTransmissionId] = useState<
+  const [currentlyPlayingSegmentId, setCurrentlyPlayingSegmentId] = useState<
     string | null
-  >(targetTransmissionId);
+  >(null);
+  const [highlightedSegmentId, setHighlightedSegmentId] = useState<
+    string | null
+  >(targetSegmentId);
   const [isViewAtTopOfTranscripts, setIsViewAtTopOfTranscripts] =
     useState(true);
   const [isTranscriptsPolling, setIsTranscriptsPolling] = useState(false);
@@ -135,8 +136,8 @@ export function TranscriptView({
 
   // Play and pause audio from a URL.
   const toggleAudio = useCallback(
-    (transmissionId: string, audioUri: string) => {
-      const newAudio = currentlyPlayingTransmissionId !== transmissionId;
+    (segmentId: string, audioUri: string) => {
+      const newAudio = currentlyPlayingSegmentId !== segmentId;
 
       if (newAudio) {
         if (currentAudio.current) {
@@ -144,8 +145,8 @@ export function TranscriptView({
           currentAudio.current.unload();
           currentAudio.current = null;
         }
-        setCurrentlyPlayingTransmissionId(transmissionId);
-        setHighlightedTransmissionId(transmissionId);
+        setCurrentlyPlayingSegmentId(segmentId);
+        setHighlightedSegmentId(segmentId);
       }
 
       if (!currentAudio.current) {
@@ -158,7 +159,7 @@ export function TranscriptView({
           onend: () => {
             const currentTranscripts = transcriptsRef.current;
             const currentIndex = currentTranscripts.findIndex(
-              (t) => t.transmissionId === transmissionId
+              (t) => t.segmentId === segmentId
             );
             const hasNext = currentIndex > 0;
 
@@ -166,7 +167,7 @@ export function TranscriptView({
               setIsAudioPlaying(false);
             }
 
-            setPlaybackEndedForId(transmissionId);
+            setPlaybackEndedForId(segmentId);
             sound.unload();
             if (currentAudio.current === sound) {
               currentAudio.current = null;
@@ -183,7 +184,7 @@ export function TranscriptView({
         currentAudio.current.pause();
       }
     },
-    [currentlyPlayingTransmissionId, isAudioPlaying]
+    [currentlyPlayingSegmentId, isAudioPlaying]
   );
 
   const {
@@ -356,10 +357,10 @@ export function TranscriptView({
       listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? [];
     const seenIds = new Set<string>();
     const uniqueTranscripts = allTranscripts.filter((transcript) => {
-      if (seenIds.has(transcript.transmissionId)) {
+      if (seenIds.has(transcript.segmentId)) {
         return false;
       }
-      seenIds.add(transcript.transmissionId);
+      seenIds.add(transcript.segmentId);
       return true;
     });
     return uniqueTranscripts.sort(
@@ -380,15 +381,12 @@ export function TranscriptView({
     if (!playbackEndedForId) return;
 
     const currentIndex = transcripts.findIndex(
-      (t) => t.transmissionId === playbackEndedForId
+      (t) => t.segmentId === playbackEndedForId
     );
 
     if (currentIndex > 0) {
       const nextTranscript = transcripts[currentIndex - 1];
-      toggleAudio(
-        nextTranscript.transmissionId,
-        nextTranscript.playbackAudioUri
-      );
+      toggleAudio(nextTranscript.segmentId, nextTranscript.playbackAudioUri);
     }
 
     setPlaybackEndedForId(null);
@@ -506,12 +504,10 @@ export function TranscriptView({
           // Filter out duplicates to prevent rendering issues if a transcript
           // was caught in both the initial fetch and the poll.
           const existingIds = new Set(
-            oldData.pages.flatMap((p) =>
-              p.transcripts.map((t) => t.transmissionId)
-            )
+            oldData.pages.flatMap((p) => p.transcripts.map((t) => t.segmentId))
           );
           const filteredNew = newTranscripts.filter(
-            (t) => !existingIds.has(t.transmissionId)
+            (t) => !existingIds.has(t.segmentId)
           );
 
           if (filteredNew.length === 0) return oldData;
@@ -581,7 +577,7 @@ export function TranscriptView({
         // Trigger the new audio to play if no audio is currently playing
         if (!isAudioPlaying && playLatestAudio) {
           const audioToPlay = cachedTranscripts[cachedTranscripts.length - 1];
-          toggleAudio(audioToPlay.transmissionId, audioToPlay.playbackAudioUri);
+          toggleAudio(audioToPlay.segmentId, audioToPlay.playbackAudioUri);
         }
       } catch (error) {
         console.error('Polling error:', error);
@@ -631,17 +627,17 @@ export function TranscriptView({
 
   useEffect(() => {
     hasScrolledToTarget.current = false;
-  }, [targetTransmissionId]);
+  }, [targetSegmentId]);
 
   useEffect(() => {
     if (
       isTranscriptsSuccess &&
-      targetTransmissionId &&
+      targetSegmentId &&
       transcripts.length > 0 &&
       !hasScrolledToTarget.current
     ) {
       const index = transcripts.findIndex(
-        (t) => t.transmissionId === targetTransmissionId
+        (t) => t.segmentId === targetSegmentId
       );
       if (index !== -1) {
         const timer = setTimeout(() => {
@@ -655,12 +651,10 @@ export function TranscriptView({
         return () => clearTimeout(timer);
       }
     }
-  }, [isTranscriptsSuccess, targetTransmissionId, transcripts]);
+  }, [isTranscriptsSuccess, targetSegmentId, transcripts]);
 
-  const handleClipClick = (transmissionId: string) => {
-    const index = transcripts.findIndex(
-      (t) => t.transmissionId === transmissionId
-    );
+  const handleClipClick = (segmentId: string) => {
+    const index = transcripts.findIndex((t) => t.segmentId === segmentId);
     if (index !== -1) {
       virtuosoRef.current?.scrollToIndex({
         index,
@@ -668,25 +662,25 @@ export function TranscriptView({
         behavior: 'smooth',
       });
     }
-    setHighlightedTransmissionId(transmissionId);
+    setHighlightedSegmentId(segmentId);
   };
 
   const handleTogglePlayPause = () => {
     const targetId = isAudioPlaying
-      ? currentlyPlayingTransmissionId || highlightedTransmissionId
-      : highlightedTransmissionId ||
-        currentlyPlayingTransmissionId ||
-        transcripts[0]?.transmissionId;
+      ? currentlyPlayingSegmentId || highlightedSegmentId
+      : highlightedSegmentId ||
+        currentlyPlayingSegmentId ||
+        transcripts[0]?.segmentId;
     if (!targetId) return;
 
-    const transcript = transcripts.find((t) => t.transmissionId === targetId);
+    const transcript = transcripts.find((t) => t.segmentId === targetId);
     if (transcript) {
-      toggleAudio(transcript.transmissionId, transcript.playbackAudioUri);
+      toggleAudio(transcript.segmentId, transcript.playbackAudioUri);
     }
   };
 
-  const handleRowClick = (transmissionId: string) => {
-    setHighlightedTransmissionId(transmissionId);
+  const handleRowClick = (segmentId: string) => {
+    setHighlightedSegmentId(segmentId);
   };
 
   const handleFilterByDateTime = (date: Date | null) => {
@@ -723,15 +717,15 @@ export function TranscriptView({
     // Reset all state
     handleFilterByDateTime(null);
     setNewMessageCount(0);
-    setCurrentlyPlayingTransmissionId(null);
-    setHighlightedTransmissionId(null);
+    setCurrentlyPlayingSegmentId(null);
+    setHighlightedSegmentId(null);
     setIsViewAtTopOfTranscripts(true);
     setPlaybackEndedForId(null);
     setIsAudioPlaying(false);
     // Update URL params
     setSearchParams((prev) => {
       prev.set('feedId', feedId);
-      prev.delete('transmissionId');
+      prev.delete('segmentId');
       return prev;
     });
   };
@@ -808,8 +802,8 @@ export function TranscriptView({
 
       <AudioDisplay
         transcripts={transcripts}
-        currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
-        highlightedTransmissionId={highlightedTransmissionId}
+        currentlyPlayingSegmentId={currentlyPlayingSegmentId}
+        highlightedSegmentId={highlightedSegmentId}
         onClipClick={handleClipClick}
         isAudioPlaying={isAudioPlaying}
         onTogglePlayPause={handleTogglePlayPause}
@@ -855,8 +849,8 @@ export function TranscriptView({
             rulesLoading={rulesLoading}
             onToggleAudio={toggleAudio}
             isAudioPlaying={isAudioPlaying}
-            currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
-            highlightedTransmissionId={highlightedTransmissionId}
+            currentlyPlayingSegmentId={currentlyPlayingSegmentId}
+            highlightedSegmentId={highlightedSegmentId}
             redactTranscripts={redactTranscripts}
             onRowClick={handleRowClick}
           />

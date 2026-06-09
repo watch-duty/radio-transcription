@@ -1,7 +1,7 @@
 """SQL query constants for TranscriptStore."""
 
 TRANSCRIPT_COLUMNS_SQL = """\
-    transmission_id,
+    segment_id,
     feed_id,
     transcript,
     start_timestamp,
@@ -21,7 +21,7 @@ TRANSCRIPT_COLUMNS_SQL = """\
 CREATE_TRANSCRIPT_SQL = (
     """\
 INSERT INTO transcripts (
-    transmission_id,
+    segment_id,
     feed_id,
     transcript,
     start_timestamp,
@@ -49,12 +49,12 @@ SELECT
     + TRANSCRIPT_COLUMNS_SQL
     + """\
 FROM transcripts
-WHERE transmission_id = $1
+WHERE segment_id = $1
 """
 )
 
 # Fetches transcripts for a specific feed, ordered from newest to oldest.
-# Keyset pagination: $2 (timestamp) and $3 (transmission_id) define the cursor.
+# Keyset pagination: $2 (timestamp) and $3 (segment_id) define the cursor.
 # We fetch records that are older than the cursor (i.e., strictly less than).
 # $4 (start_time) and $5 (end_time) define the time window.
 GET_TRANSCRIPTS_BY_FEED_SQL = (
@@ -65,11 +65,11 @@ SELECT
     + """\
 FROM transcripts
 WHERE feed_id = $1
-  AND ($2::timestamptz IS NULL OR end_timestamp < $2 OR (end_timestamp = $2 AND transmission_id < $3))
+  AND ($2::timestamptz IS NULL OR end_timestamp < $2 OR (end_timestamp = $2 AND segment_id < $3))
   AND ($4::timestamptz IS NULL OR end_timestamp >= $4)
   AND ($5::timestamptz IS NULL OR end_timestamp <= $5)
   AND ($6::boolean IS NULL OR (cardinality(evaluation_decisions) > 0) = $6::boolean)
-ORDER BY end_timestamp DESC, transmission_id DESC
+ORDER BY end_timestamp DESC, segment_id DESC
 LIMIT $7
 """
 )
@@ -82,17 +82,17 @@ SELECT
     + """\
 FROM transcripts
 WHERE feed_id = $1
-  AND ($2::timestamptz IS NULL OR end_timestamp > $2 OR (end_timestamp = $2 AND transmission_id > $3))
+  AND ($2::timestamptz IS NULL OR end_timestamp > $2 OR (end_timestamp = $2 AND segment_id > $3))
   AND ($4::timestamptz IS NULL OR end_timestamp >= $4)
   AND ($5::timestamptz IS NULL OR end_timestamp <= $5)
   AND ($6::boolean IS NULL OR (cardinality(evaluation_decisions) > 0) = $6::boolean)
-ORDER BY end_timestamp ASC, transmission_id ASC
+ORDER BY end_timestamp ASC, segment_id ASC
 LIMIT $7
 """
 )
 
 # Fetches transcripts across all feeds, ordered from newest to oldest.
-# Keyset pagination: $1 (timestamp) and $2 (transmission_id) define the cursor.
+# Keyset pagination: $1 (timestamp) and $2 (segment_id) define the cursor.
 # We fetch records that are older than the cursor (i.e., strictly less than).
 # $3 (start_time) and $4 (end_time) define the time window.
 LIST_TRANSCRIPTS_SQL = (
@@ -102,11 +102,11 @@ SELECT
     + TRANSCRIPT_COLUMNS_SQL
     + """\
 FROM transcripts
-WHERE ($1::timestamptz IS NULL OR end_timestamp < $1 OR (end_timestamp = $1 AND transmission_id < $2))
+WHERE ($1::timestamptz IS NULL OR end_timestamp < $1 OR (end_timestamp = $1 AND segment_id < $2))
   AND ($3::timestamptz IS NULL OR end_timestamp >= $3)
   AND ($4::timestamptz IS NULL OR end_timestamp <= $4)
   AND ($5::boolean IS NULL OR (cardinality(evaluation_decisions) > 0) = $5::boolean)
-ORDER BY end_timestamp DESC, transmission_id DESC
+ORDER BY end_timestamp DESC, segment_id DESC
 LIMIT $6
 """
 )
@@ -118,16 +118,16 @@ SELECT
     + TRANSCRIPT_COLUMNS_SQL
     + """\
 FROM transcripts
-WHERE ($1::timestamptz IS NULL OR end_timestamp > $1 OR (end_timestamp = $1 AND transmission_id > $2))
+WHERE ($1::timestamptz IS NULL OR end_timestamp > $1 OR (end_timestamp = $1 AND segment_id > $2))
   AND ($3::timestamptz IS NULL OR end_timestamp >= $3)
   AND ($4::timestamptz IS NULL OR end_timestamp <= $4)
   AND ($5::boolean IS NULL OR (cardinality(evaluation_decisions) > 0) = $5::boolean)
-ORDER BY end_timestamp ASC, transmission_id ASC
+ORDER BY end_timestamp ASC, segment_id ASC
 LIMIT $6
 """
 )
 
 DELETE_TRANSCRIPT_SQL = """\
 DELETE FROM transcripts
-WHERE transmission_id = $1
+WHERE segment_id = $1
 """

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
+import uuid
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
@@ -15,7 +16,8 @@ from opentelemetry.trace.propagation.tracecontext import (
 )
 
 from backend.pipeline.common import tracing_utils
-from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
+from backend.pipeline.schema_types.continuous_audio_pb2 import ContinuousAudio
+from backend.pipeline.schema_types.segmented_audio_pb2 import SegmentedAudio
 
 if TYPE_CHECKING:
     from google.cloud import pubsub_v1
@@ -228,15 +230,34 @@ def publish_audio_chunk_sync(
     ingestion) and the async wrapper below.
     """
     with tracer.start_as_current_span("publish_raw_audio_chunk"):
-        audio_chunk_msg = AudioChunk(
-            gcs_uri=gcs_uri,
-            feed_id=feed_id,
-            feed_name=feed_name,
-            duration_ms=duration_ms,
-        )
-        if session_id is not None:
-            audio_chunk_msg.session_id = session_id
-        audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
+        if "segmented" in topic_path or (
+            source_type and "bcfy_feeds" not in str(source_type).lower()
+        ):
+            s_msg = SegmentedAudio(
+                segment_id=session_id or str(uuid.uuid4()),
+                feed_id=feed_id,
+                feed_name=feed_name,
+                raw_audio_uri=gcs_uri,
+                audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH,
+            )
+            s_msg.source_audio_uris.append(gcs_uri)
+            s_msg.start_timestamp.FromDatetime(start_timestamp)
+            end_ts = start_timestamp + datetime.timedelta(
+                milliseconds=duration_ms
+            )
+            s_msg.end_timestamp.FromDatetime(end_ts)
+            serialized_data = s_msg.SerializeToString()
+        else:
+            c_msg = ContinuousAudio(
+                gcs_uri=gcs_uri,
+                feed_id=feed_id,
+                feed_name=feed_name,
+                duration_ms=duration_ms,
+            )
+            if session_id is not None:
+                c_msg.session_id = session_id
+            c_msg.start_timestamp.FromDatetime(start_timestamp)
+            serialized_data = c_msg.SerializeToString()
 
         attrs: dict[str, str] = {
             "feed_id": feed_id,
@@ -246,7 +267,7 @@ def publish_audio_chunk_sync(
         if session_id is not None:
             attrs["session_id"] = session_id
         if source_type is not None:
-            attrs["source_type"] = source_type
+            attrs["source_type"] = str(source_type)
 
         carrier: dict[str, str] = {}
         TraceContextTextMapPropagator().inject(carrier)
@@ -255,7 +276,7 @@ def publish_audio_chunk_sync(
 
         future = publisher.publish(
             topic_path,
-            audio_chunk_msg.SerializeToString(),
+            serialized_data,
             ordering_key=feed_id,
             **attrs,
         )
@@ -280,15 +301,34 @@ async def publish_audio_chunk(
     """
     with tracer.start_as_current_span("publish_raw_audio_chunk"):
         publisher = pubsub_client.get_publisher()
-        audio_chunk_msg = AudioChunk(
-            gcs_uri=gcs_uri,
-            feed_id=feed_id,
-            feed_name=feed_name,
-            duration_ms=duration_ms,
-        )
-        if session_id is not None:
-            audio_chunk_msg.session_id = session_id
-        audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
+        if "segmented" in topic_path or (
+            source_type and "bcfy_feeds" not in str(source_type).lower()
+        ):
+            s_msg = SegmentedAudio(
+                segment_id=session_id or str(uuid.uuid4()),
+                feed_id=feed_id,
+                feed_name=feed_name,
+                raw_audio_uri=gcs_uri,
+                audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH,
+            )
+            s_msg.source_audio_uris.append(gcs_uri)
+            s_msg.start_timestamp.FromDatetime(start_timestamp)
+            end_ts = start_timestamp + datetime.timedelta(
+                milliseconds=duration_ms
+            )
+            s_msg.end_timestamp.FromDatetime(end_ts)
+            serialized_data = s_msg.SerializeToString()
+        else:
+            c_msg = ContinuousAudio(
+                gcs_uri=gcs_uri,
+                feed_id=feed_id,
+                feed_name=feed_name,
+                duration_ms=duration_ms,
+            )
+            if session_id is not None:
+                c_msg.session_id = session_id
+            c_msg.start_timestamp.FromDatetime(start_timestamp)
+            serialized_data = c_msg.SerializeToString()
 
         attrs: dict[str, str] = {
             "feed_id": feed_id,
@@ -298,7 +338,7 @@ async def publish_audio_chunk(
         if session_id is not None:
             attrs["session_id"] = session_id
         if source_type is not None:
-            attrs["source_type"] = source_type
+            attrs["source_type"] = str(source_type)
 
         carrier: dict[str, str] = {}
         TraceContextTextMapPropagator().inject(carrier)
@@ -307,7 +347,7 @@ async def publish_audio_chunk(
 
         future = publisher.publish(
             topic_path,
-            audio_chunk_msg.SerializeToString(),
+            serialized_data,
             ordering_key=feed_id,
             **attrs,
         )

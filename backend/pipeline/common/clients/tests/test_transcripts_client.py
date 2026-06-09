@@ -18,7 +18,7 @@ class TestTranscriptsClient(unittest.TestCase):
         self.client.session = self.mock_session
 
         self.payload = evaluated_pb2.EvaluatedTranscribedAudio()
-        self.payload.transmission_id = "12345"
+        self.payload.segment_id = "12345"
         self.payload.transcript = "Test transcript"
         self.payload.feed_id = "1234"
         self.payload.source_audio_uris.append("gs://bucket/audio.flac")
@@ -37,7 +37,7 @@ class TestTranscriptsClient(unittest.TestCase):
         args, kwargs = self.mock_session.post.call_args
         self.assertEqual(args[0], "http://test-api.com/v1/transcripts")
         self.assertIn("json", kwargs)
-        self.assertEqual(kwargs["json"]["transmission_id"], "12345")
+        self.assertEqual(kwargs["json"]["segment_id"], "12345")
 
     @patch("backend.pipeline.common.clients.transcripts_client.is_gcp_env")
     @patch("backend.pipeline.common.clients.transcripts_client.get_id_token")
@@ -81,7 +81,7 @@ class TestTranscriptsClient(unittest.TestCase):
         with self.assertRaises(AlreadyExistsError) as cm:
             self.client.create_transcript(self.payload)
 
-        self.assertEqual(cm.exception.transmission_id, "12345")
+        self.assertEqual(cm.exception.segment_id, "12345")
 
 
 if __name__ == "__main__":
