@@ -192,6 +192,28 @@ class CapturedChunk:
     resume_position: datetime.datetime | None = None
 
 
+@dataclasses.dataclass(frozen=True)
+class SourceObservation:
+    """A non-audio source success observed by a capture function.
+
+    Use this when a collector successfully reaches the source and confirms
+    there is no audio item to emit. The runtime may use it to clear stale
+    failure state, but it must never upload, publish, or treat it as audio
+    progress.
+
+    Attributes:
+        resume_position: Optional source-specific cursor for the successful
+            observation. For Broadcastify Calls this is the API ``lastPos``.
+            ``None`` means the observation should not advance the persisted
+            bookmark.
+    """
+
+    resume_position: datetime.datetime | None = None
+
+
+type CaptureEvent = CapturedChunk | SourceObservation
+
+
 @dataclasses.dataclass(frozen=True, kw_only=True)
 class CaptureResources:
     """Runtime-owned resources passed to capture functions.
@@ -218,8 +240,8 @@ class CaptureResources:
 
 if TYPE_CHECKING:
     # 4-arg collector: (feed, shutdown_event, url_base, resources)
-    # -> AsyncIterator[CapturedChunk]
+    # -> AsyncIterator[CaptureEvent]
     CollectorFn = Callable[
         [LeasedFeed, asyncio.Event, str, CaptureResources],
-        AsyncIterator[CapturedChunk],
+        AsyncIterator[CaptureEvent],
     ]

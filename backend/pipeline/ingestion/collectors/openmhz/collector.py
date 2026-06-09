@@ -24,8 +24,10 @@ from backend.pipeline.ingestion.collectors.openmhz._ws_transport import (
 )
 from backend.pipeline.ingestion.models import (
     CapturedChunk,
+    CaptureEvent,
     CaptureResources,
     FeedFailure,
+    SourceObservation,
 )
 from backend.pipeline.ingestion.slo_contract import (
     EVENT_TYPE_CALL_DOWNLOAD_FAILED,
@@ -140,10 +142,11 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
     shutdown_event: asyncio.Event,
     url_base: str,
     _resources: CaptureResources,
-) -> AsyncIterator[CapturedChunk]:
+) -> AsyncIterator[CaptureEvent]:
     """Capture OpenMHZ call recordings via WebSocket.
 
-    Yields :class:`CapturedChunk` for each call received.
+    Yields :class:`CapturedChunk` for each call received. A dirty leased feed
+    also yields :class:`SourceObservation` after a successful connection.
 
     Args:
         feed: Leased feed containing source_feed_id.
@@ -172,8 +175,8 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
 
     consecutive_ws_failures = 0
     # OpenMHz streams item events continuously, so there is no natural API page
-    # or poll batch. Use a bounded failure window and reset it after any
-    # successful chunk crosses the runtime boundary.
+    # or poll batch. Use a bounded failure window and reset it once the
+    # WebSocket connection is successfully established.
     item_outcome = ItemBatchOutcome()
     item_failure_count = 0
     download_session = AsyncSession()
@@ -186,10 +189,15 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                 async with transport_factory(
                     short_name, url_base, shutdown_event
                 ) as events:
+                    consecutive_ws_failures = 0
+                    if (
+                        feed["failure_count"] > 0
+                        or feed["status_reason"] is not None
+                    ):
+                        yield SourceObservation()
                     async for call in events:
                         # SLO: receipt_time stamp — OpenMHZ WS event arrived
                         receipt_time = datetime.datetime.now(datetime.UTC)
-                        consecutive_ws_failures = 0
 
                         if call.length_sec == 0:
                             continue

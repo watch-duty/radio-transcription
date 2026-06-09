@@ -199,6 +199,22 @@ description = "Start the entire system (backend (via Docker) and frontend UI hos
 depends = ["dev:start", "build:common", "install:ui", "install:env"]
 run = "yarn --cwd frontend/transcription-ui run local"
 
+[tasks."dev:add-audio"]
+description = "Add a test audio file to the mock audio server for a specific source and feed"
+usage = """
+arg "<source>" help="The data source (e.g., broadcastify_calls, fire_notifications)"
+arg "<feed>" help="The feed ID (e.g., 2912, RECORDINGS/SAN-JOSE-DISP)"
+arg "<file>" help="Path to the audio file to add"
+"""
+run = """
+#!/usr/bin/env bash
+set -e
+DEST_DIR="local_dev/mock_audio/{{ arg(name="source") }}/{{ arg(name="feed") }}"
+mkdir -p "$DEST_DIR"
+cp "{{ arg(name="file") }}" "$DEST_DIR/"
+echo "Added $(basename "{{ arg(name="file") }}") to $DEST_DIR/"
+"""
+
 [tasks."dev:whisper:start"]
 description = "Start the transcription pipeline with a local ASR model (Whisper) service in Docker"
 depends = ["dev:stop"]
@@ -256,11 +272,11 @@ depends = ["generate:protos"]
 run = "uv run python -m pytest backend/ -q --ignore-glob='**/test_*_integration.py'"
 
 [tasks."test:model"]
-description = "Run model/ common-library unit tests (pytest)"
+description = "Run model package unit tests (pytest)"
 dir = "model"
-# Install [scoring] alongside [dev] so the WER/normalizer/bootstrap goldens
-# (jiwer + nemo_text_processing) actually run instead of skipping silently.
-run = "uv run --extra dev --extra scoring pytest colabs/common/tests/"
+# Install [scoring] and [vertex] alongside [dev] so the WER/normalizer
+# goldens and mocked Vertex helper tests exercise the packaged model code.
+run = "uv run --extra dev --extra scoring --extra vertex pytest tests/"
 
 [tasks."test:component:rules"]
 description = "Run RulesStore component tests"
