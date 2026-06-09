@@ -69,3 +69,7 @@ def test_ingestion_echo(test_echo_feed: tuple[str, str]) -> None:
         echo_main.handle_notification(event)
 
     verify_transcript_in_db(feed_id)
+
+    # Verify external ID propagation
+    from integration_tests.test_utils import verify_external_audio_segment_id_via_api
+    verify_external_audio_segment_id_via_api(feed_id, f"{source_bucket_name}/{gcs_path}")
