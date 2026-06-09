@@ -27,10 +27,6 @@ const ALL_SOURCE_TYPES = Object.values(SourceType);
 interface CondensedFeedSearchResultsProps {
   feeds: Feed[];
   selectedFeed: Feed | null;
-  localInputValue: string;
-  setLocalInputValue: (value: string) => void;
-  isFocused: boolean;
-  setIsFocused: (focused: boolean) => void;
   filters: FeedFilters;
   onFiltersChange: (filters: FeedFilters) => void;
   feedsLoading: boolean;
@@ -41,16 +37,30 @@ interface CondensedFeedSearchResultsProps {
 function CondensedFeedSearchResults({
   feeds,
   selectedFeed,
-  localInputValue,
-  setLocalInputValue,
-  isFocused,
-  setIsFocused,
   filters,
   onFiltersChange,
   feedsLoading,
   tags,
   onFeedSelect,
 }: CondensedFeedSearchResultsProps) {
+  const [localInputValue, setLocalInputValue] = useState(
+    selectedFeed?.name || ''
+  );
+  const [isFocused, setIsFocused] = useState(false);
+  const [prevSelectedFeedId, setPrevSelectedFeedId] = useState<string | undefined>(
+    selectedFeed?.id
+  );
+
+  // Sync search input state with selectedFeed prop changes.
+  // We use React's recommended render-phase state adjustment pattern instead of useEffect
+  // to avoid double renders and visual flashes of stale values.
+  // We compare feed IDs (primitive string) to prevent background query refetches from
+  // changing object references and wiping out active user typing.
+  if (selectedFeed?.id !== prevSelectedFeedId) {
+    setPrevSelectedFeedId(selectedFeed?.id);
+    setLocalInputValue(selectedFeed?.name || '');
+  }
+
   return (
     <Box
       sx={{
@@ -333,18 +343,7 @@ export function FeedSearchView({
     return allFeeds.find((f) => f.id === selectedFeedId) || null;
   }, [allFeeds, selectedFeedId]);
 
-  const [prevSelectedFeed, setPrevSelectedFeed] = useState<Feed | null>(
-    selectedFeed
-  );
-  const [localInputValue, setLocalInputValue] = useState(
-    selectedFeed?.name || ''
-  );
-  const [isFocused, setIsFocused] = useState(false);
 
-  if (selectedFeed?.id !== prevSelectedFeed?.id) {
-    setPrevSelectedFeed(selectedFeed);
-    setLocalInputValue(selectedFeed?.name || '');
-  }
 
   const sortedFeedsForAutocomplete = useMemo(() => {
     return [...(feeds ?? [])].sort((a, b) => a.name.localeCompare(b.name));
@@ -373,10 +372,6 @@ export function FeedSearchView({
       <CondensedFeedSearchResults
         feeds={sortedFeedsForAutocomplete}
         selectedFeed={selectedFeed}
-        localInputValue={localInputValue}
-        setLocalInputValue={setLocalInputValue}
-        isFocused={isFocused}
-        setIsFocused={setIsFocused}
         filters={filters}
         onFiltersChange={setFilters}
         feedsLoading={feedsLoading}
