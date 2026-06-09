@@ -68,7 +68,7 @@ export function FeedConfigurationView({
   // that matches the structure of the main query, allowing `queryClient.setQueriesData`
   // and `invalidateQueries` prefix matching to successfully update both query caches at once.
   const {
-    data: feeds = [],
+    data: feedsData,
     isLoading: feedsLoading,
     error: feedsError,
   } = useQuery({
@@ -95,12 +95,17 @@ export function FeedConfigurationView({
     refetchOnWindowFocus: false,
   });
 
-  const { data: allFeeds = [] } = useQuery({
+  const feeds = feedsData?.feeds ?? [];
+  const feedTotal = feedsData?.total ?? 0;
+
+  const { data: allFeedData = { feeds: [], total: 0 } } = useQuery({
     queryKey: ['listFeeds', token, '', [], 0, [], 0, [], 0],
     queryFn: () => listFeeds(token!, {}),
     enabled: !!token,
     refetchOnWindowFocus: false,
   });
+
+  const allFeeds = allFeedData.feeds;
 
   useEffect(() => {
     if (feedsError && feedsErrorHandled.current !== feedsError) {
@@ -319,6 +324,7 @@ export function FeedConfigurationView({
             feeds={feeds}
             allFeeds={allFeeds}
             isLoading={feedsLoading}
+            feedTotal={feedTotal}
             allowEdit
             editingFeedId={isEditing ? id : undefined}
             onEditFeed={handleStartEdit}
