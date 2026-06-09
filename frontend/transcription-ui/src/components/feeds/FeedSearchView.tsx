@@ -15,7 +15,7 @@ interface FeedSearchViewProps {
   title: string;
   triggerSnackbar: (message: string) => void;
   onError: (error: Error, titleMessage?: string) => void;
-  collapsed?: boolean;
+  condensed?: boolean;
   selectedFeedId?: string | null;
   onFeedSelect?: (feedId: string) => void;
 }
@@ -24,7 +24,7 @@ const FEED_REFETCH_INTERVAL_MS = 15000; // 15 seconds
 const QUERY_DEBOUNCE_TIME_MS = 300;
 const ALL_SOURCE_TYPES = Object.values(SourceType);
 
-interface CollapsedFeedSearchProps {
+interface CondensedFeedSearchResultsProps {
   feeds: Feed[];
   selectedFeed: Feed | null;
   localInputValue: string;
@@ -38,7 +38,7 @@ interface CollapsedFeedSearchProps {
   onFeedSelect?: (feedId: string) => void;
 }
 
-function CollapsedFeedSearch({
+function CondensedFeedSearchResults({
   feeds,
   selectedFeed,
   localInputValue,
@@ -50,7 +50,7 @@ function CollapsedFeedSearch({
   feedsLoading,
   tags,
   onFeedSelect,
-}: CollapsedFeedSearchProps) {
+}: CondensedFeedSearchResultsProps) {
   return (
     <Box
       sx={{
@@ -221,7 +221,7 @@ function CollapsedFeedSearch({
   );
 }
 
-interface ExpandedFeedSearchProps {
+interface TableFeedSearchResultsProps {
   title: string;
   feeds: Feed[];
   tags: { key: string; value: string }[];
@@ -230,14 +230,14 @@ interface ExpandedFeedSearchProps {
   onFiltersChange: (filters: FeedFilters) => void;
 }
 
-function ExpandedFeedSearch({
+function TableFeedSearchResults({
   title,
   feeds,
   tags,
   feedsLoading,
   filters,
   onFiltersChange,
-}: ExpandedFeedSearchProps) {
+}: TableFeedSearchResultsProps) {
   return (
     <Box
       sx={{
@@ -263,7 +263,7 @@ function ExpandedFeedSearch({
 export function FeedSearchView({
   title,
   onError,
-  collapsed = false,
+  condensed = false,
   selectedFeedId = null,
   onFeedSelect,
 }: FeedSearchViewProps) {
@@ -368,9 +368,9 @@ export function FeedSearchView({
     );
   }, [feeds, allFeeds]);
 
-  if (collapsed) {
+  if (condensed) {
     return (
-      <CollapsedFeedSearch
+      <CondensedFeedSearchResults
         feeds={sortedFeedsForAutocomplete}
         selectedFeed={selectedFeed}
         localInputValue={localInputValue}
@@ -387,7 +387,7 @@ export function FeedSearchView({
   }
 
   return (
-    <ExpandedFeedSearch
+    <TableFeedSearchResults
       title={title}
       feeds={feeds ?? []}
       tags={tags}

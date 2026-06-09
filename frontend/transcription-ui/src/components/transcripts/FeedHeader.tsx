@@ -37,7 +37,7 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
     <>
       <FeedSearchView
         title="Select feed"
-        collapsed={true}
+        condensed={true}
         selectedFeedId={searchedFeed?.id}
         onFeedSelect={onSelectFeed}
         triggerSnackbar={triggerSnackbar}
