@@ -34,8 +34,14 @@ jobs:
         shell: bash
         env:
           PR_URL: ${{github.event.pull_request.html_url}}
+          PR_TITLE: ${{github.event.pull_request.title}}
           GH_TOKEN: ${{ github.token }}
         run: |
+          if [[ "$PR_TITLE" =~ \[[A-Za-z]+-[0-9]+\] ]]; then
+            echo "PR title already contains a Linear issue ID: $PR_TITLE"
+            exit 0
+          fi
+
           # Workaround required to use `gh`: https://github.com/cli/cli/issues/9072#issuecomment-2106065080
           git init
           git remote add origin $GITHUB_SERVER_URL/$GITHUB_REPOSITORY
