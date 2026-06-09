@@ -36,7 +36,8 @@ message FlushRequestProto {
   string session_id = 3;
   repeated string contributing_audio_uris = 4;
   TimeRangeProto time_range = 5;
-  string transmission_id = 6;
+  reserved 6;
+  reserved "transmission_id";
   FeedMetadataProto feed_metadata = 7;
   int32 sample_rate = 8;
   bool missing_prior_context = 9;
@@ -45,6 +46,13 @@ message FlushRequestProto {
   optional int64 end_audio_offset_ms = 12;
   repeated TimeRangeProto speech_segments = 13;
   optional string traceparent = 14;
+  enum AudioClassification {
+    AUDIO_CLASSIFICATION_UNSPECIFIED = 0;
+    AUDIO_CLASSIFICATION_SPEECH = 1;
+    AUDIO_CLASSIFICATION_NO_SPEECH = 2;
+  }
+  AudioClassification audio_classification = 15;
+  string segment_id = 16;
 }
 
 // Persistent State Checkpoints

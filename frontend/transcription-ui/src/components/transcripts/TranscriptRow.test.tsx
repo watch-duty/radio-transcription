@@ -12,9 +12,9 @@ import TranscriptRow from './TranscriptRow';
 // We do not need to test the actual audio player functionality here
 // as that is tested separately in AudioPlayer.test.tsx
 vi.mock('../audio/AudioPlayer', () => ({
-  default: (props: { audioUri: string; transmissionId: string }) => (
+  default: (props: { audioUri: string; segmentId: string }) => (
     <div
-      data-testid={`audio-player-${props.transmissionId}`}
+      data-testid={`audio-player-${props.segmentId}`}
       data-audio-uri={props.audioUri}
     >
       AudioPlayer Mock
@@ -23,7 +23,7 @@ vi.mock('../audio/AudioPlayer', () => ({
 }));
 
 const mockTranscript: Transcript = {
-  transmissionId: 'tx-123',
+  segmentId: 'tx-123',
   feedId: 'feed-123',
   startTimestamp: '2026-04-15T16:00:00Z',
   endTimestamp: '2026-04-15T16:00:05Z',
@@ -69,7 +69,7 @@ describe('TranscriptRow', () => {
           onToggleAudio={mockOnToggleAudio}
           isAudioPlaying={false}
           onRowClick={mockOnRowClick}
-          currentlyPlayingTransmissionId={null}
+          currentlyPlayingSegmentId={null}
           triggerSnackbar={mockTriggerSnackbar}
           showHeader={false}
         />
@@ -94,7 +94,7 @@ describe('TranscriptRow', () => {
           onToggleAudio={mockOnToggleAudio}
           isAudioPlaying={false}
           onRowClick={mockOnRowClick}
-          currentlyPlayingTransmissionId={null}
+          currentlyPlayingSegmentId={null}
           triggerSnackbar={mockTriggerSnackbar}
           showHeader={true}
         />
@@ -116,7 +116,7 @@ describe('TranscriptRow', () => {
           onToggleAudio={mockOnToggleAudio}
           isAudioPlaying={false}
           onRowClick={mockOnRowClick}
-          currentlyPlayingTransmissionId={null}
+          currentlyPlayingSegmentId={null}
           triggerSnackbar={mockTriggerSnackbar}
           showHeader={false}
         />
@@ -144,7 +144,7 @@ describe('TranscriptRow', () => {
           onToggleAudio={mockOnToggleAudio}
           isAudioPlaying={false}
           onRowClick={mockOnRowClick}
-          currentlyPlayingTransmissionId={null}
+          currentlyPlayingSegmentId={null}
           triggerSnackbar={mockTriggerSnackbar}
           showHeader={false}
         />
@@ -160,7 +160,7 @@ describe('TranscriptRow', () => {
       expect.stringContaining('feedId=feed-123')
     );
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-      expect.stringContaining('transmissionId=tx-123')
+      expect.stringContaining('segmentId=tx-123')
     );
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
       expect.stringContaining(`timestamp=${startMs}`)
@@ -180,7 +180,7 @@ describe('TranscriptRow', () => {
           onToggleAudio={mockOnToggleAudio}
           isAudioPlaying={false}
           onRowClick={mockOnRowClick}
-          currentlyPlayingTransmissionId={null}
+          currentlyPlayingSegmentId={null}
           triggerSnackbar={mockTriggerSnackbar}
           showHeader={false}
         />
@@ -188,7 +188,7 @@ describe('TranscriptRow', () => {
     );
 
     const audioPlayer = screen.getByTestId(
-      `audio-player-${mockTranscript.transmissionId}`
+      `audio-player-${mockTranscript.segmentId}`
     );
     expect(audioPlayer).toBeTruthy();
     expect(audioPlayer.getAttribute('data-audio-uri')).toBe(
@@ -208,7 +208,7 @@ describe('TranscriptRow', () => {
           onToggleAudio={mockOnToggleAudio}
           isAudioPlaying={false}
           onRowClick={mockOnRowClick}
-          currentlyPlayingTransmissionId={null}
+          currentlyPlayingSegmentId={null}
           triggerSnackbar={mockTriggerSnackbar}
           showHeader={false}
           redactTranscripts={true}

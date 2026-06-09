@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import enum
 import json
 import logging
@@ -14,6 +15,7 @@ from backend.pipeline.common.exceptions import (
     FeedNameAlreadyExistsError,
 )
 from backend.pipeline.storage.feed_queries import (
+    COUNT_FEEDS_SQL,
     COUNT_HELD_BY_TYPE_SQL,
     CREATE_FEED_SQL,
     DEACTIVATE_FEED_SQL,
@@ -151,6 +153,7 @@ class Feed(TypedDict):
     status: FeedStatus
     status_reason: FeedStatusReason | None
     status_reason_updated_at: datetime.datetime | None
+    quarantine_reason: str | None
     failure_count: int
     worker_id: uuid.UUID | None
     last_heartbeat: datetime.datetime | None
@@ -165,6 +168,7 @@ class Feed(TypedDict):
 class PaginatedFeeds:
     feeds: list[Feed]
     next_token: str | None
+    total: int
 
 
 class FeedStore:
@@ -248,6 +252,7 @@ class FeedStore:
             status=status,
             status_reason=status_reason,
             status_reason_updated_at=row["status_reason_updated_at"],
+            quarantine_reason=row["quarantine_reason"],
             failure_count=row["failure_count"],
             worker_id=row["worker_id"],
             last_heartbeat=row["last_heartbeat"],
@@ -842,7 +847,7 @@ class FeedStore:
         if tags:
             tags_json = json.dumps(tags)
 
-        rows = await self._pool.fetch(
+        rows_task = self._pool.fetch(
             query,
             cursor_ts,
             cursor_uid,
@@ -852,13 +857,22 @@ class FeedStore:
             name,
             limit + 1,
         )
+        total_task = self._pool.fetchval(
+            COUNT_FEEDS_SQL,
+            source_types,
+            statuses,
+            tags_json,
+            name,
+        )
+
+        rows, total = await asyncio.gather(rows_task, total_task)
 
         rows, new_next_token = get_paginated_results(
             rows, limit, "created_at", "id"
         )
 
         feeds = [self._row_to_feed(row) for row in rows]
-        return PaginatedFeeds(feeds, new_next_token)
+        return PaginatedFeeds(feeds, new_next_token, total)
 
     async def deactivate_feed(self, feed_id: uuid.UUID) -> bool:
         """Deactivate a feed by ID.

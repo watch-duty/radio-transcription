@@ -5,7 +5,7 @@ from typing import Self
 
 import pydantic
 
-from backend.pipeline.normalization.common.logging import get_task_logger
+from backend.pipeline.common.log_helper import get_task_logger
 from backend.pipeline.schema_types import streaming_state as bp_state
 
 logger = get_task_logger(
@@ -33,7 +33,7 @@ class ConfigBase(pydantic.BaseModel):
             raise ValueError(msg) from e
 
 
-def generate_transmission_id(
+def generate_segment_id(
     feed_or_session_id: str,
     time_range: bp_state.TimeRangeProto,
     segment_duration_ms: int = 0,
