@@ -34,6 +34,8 @@ export interface Feed extends BaseFeed {
   substatus: BackendFeedStatus;
   lastHeartbeat?: string;
   tags?: Tag[];
+  quarantineReason?: string | null;
+  statusReason?: string | null;
 }
 
 export interface FeedCreate extends BaseFeed {
