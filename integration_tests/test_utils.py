@@ -5,11 +5,11 @@ import logging
 import os
 import time
 from collections.abc import Callable
+from pathlib import Path
 
 import asyncpg
 import httpx
 import pytest
-from pathlib import Path
 
 
 def assert_eventually(
@@ -94,7 +94,9 @@ def verify_audio_segments_via_api(
 
     async def _check_api():
         async with httpx.AsyncClient(base_url=base_url) as client:
-            res = await client.get("/audio_segments", params={"feed_ids": [feed_id]})
+            res = await client.get(
+                "/audio_segments", params={"feed_ids": [feed_id]}
+            )
             if res.status_code != 200:
                 return False
             data = res.json()

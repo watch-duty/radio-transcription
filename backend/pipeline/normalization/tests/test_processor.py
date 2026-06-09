@@ -164,10 +164,14 @@ class NormalizationEventProcessorTest(unittest.TestCase):
 
         # Verify database persist was called with correct payload including external_audio_segment_id
         self.mock_segments_client.add_audio_segment.assert_called_once()
-        saved_payload = self.mock_segments_client.add_audio_segment.call_args[0][0]
+        saved_payload = self.mock_segments_client.add_audio_segment.call_args[
+            0
+        ][0]
         self.assertEqual(saved_payload["id"], "tx-1111")
         self.assertEqual(saved_payload["feed_id"], "feed-2222")
-        self.assertEqual(saved_payload["external_audio_segment_id"], "ext-id-1234")
+        self.assertEqual(
+            saved_payload["external_audio_segment_id"], "ext-id-1234"
+        )
 
     @patch("backend.pipeline.normalization.audio_processor.AudioProcessor")
     @patch("backend.pipeline.common.storage.gcs_uploader.GCSAudioUploader")
