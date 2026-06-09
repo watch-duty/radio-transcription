@@ -127,8 +127,7 @@ class TestEmitMarkerCount(unittest.TestCase):
                 f"{_INGESTION_DIR.relative_to(_REPO_ROOT)} (excluding tests/), "
                 f"found {count}. Files: {found_files}. "
                 "The emit lives in collector_runtime._process_feed strictly "
-                "after retry_with_lease_check(update_feed_progress) returns "
-                "ok=True (02-CONTEXT.md D-11 + LOG-01 SC#1)."
+                "after the fenced bookmark and Pub/Sub publish both succeed."
             ),
         )
 
