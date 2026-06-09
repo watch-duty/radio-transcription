@@ -29,7 +29,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-workspace --package normalization-pipeline && \
     uv pip install grpcio-tools
 
-ENV FLEX_TEMPLATE_PYTHON_PY_FILE="/app/backend/pipeline/normalization/main.py"
 ENV PYTHONPATH="/app"
 ENV PYTHONUNBUFFERED=1
 
