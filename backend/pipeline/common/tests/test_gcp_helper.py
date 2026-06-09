@@ -528,6 +528,39 @@ class TestPublishAudioChunkSync(unittest.TestCase):
             ordering_key="feed-42",
         )
 
+    def test_resume_publish_failure_sync(self) -> None:
+        """RuntimeError or ValueError from resume_publish skips retry and propagates the PausedOrderingKey exception."""
+        mock_now = datetime.datetime(2026, 4, 25, 12, 0, tzinfo=datetime.UTC)
+
+        for resume_exc in (
+            RuntimeError("publisher stopped"),
+            ValueError("unseen key"),
+        ):
+            with self.subTest(resume_exc=type(resume_exc).__name__):
+                mock_fail_future = MagicMock()
+                mock_fail_future.result.side_effect = (
+                    PublishToPausedOrderingKeyException("feed-42")
+                )
+
+                _, mock_publisher = _make_pubsub_client()
+                mock_publisher.publish.side_effect = [mock_fail_future]
+                mock_publisher.resume_publish.side_effect = resume_exc
+
+                with self.assertRaises(PublishToPausedOrderingKeyException):
+                    gcp_helper.publish_audio_chunk_sync(
+                        mock_publisher,
+                        topic_path="projects/test/topics/audio",
+                        feed_id="feed-42",
+                        feed_name="Central Fire",
+                        gcs_uri="gs://bucket/audio.flac",
+                        session_id="test-session-1",
+                        start_timestamp=mock_now,
+                        duration_ms=15000,
+                    )
+
+                mock_publisher.resume_publish.assert_called_once()
+                self.assertEqual(mock_publisher.publish.call_count, 1)
+
 
 class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
     """Test suite for the async publish_audio_chunk wrapper."""
@@ -625,8 +658,8 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
             ordering_key="feed-42",
         )
 
-    async def test_resume_publish_failure_swallowed(self) -> None:
-        """RuntimeError or ValueError from resume_publish is swallowed; retry publish still succeeds."""
+    async def test_resume_publish_failure(self) -> None:
+        """RuntimeError or ValueError from resume_publish skips retry and propagates the PausedOrderingKey exception."""
         mock_now = datetime.datetime(2026, 4, 25, 12, 0, tzinfo=datetime.UTC)
 
         for resume_exc in (
@@ -639,25 +672,24 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
                 fut_fail.set_exception(
                     PublishToPausedOrderingKeyException("feed-42")
                 )
-                fut_retry = concurrent.futures.Future()
-                fut_retry.set_result("retry-success")
 
-                mock_publisher.publish.side_effect = [fut_fail, fut_retry]
+                mock_publisher.publish.side_effect = [fut_fail]
                 mock_publisher.resume_publish.side_effect = resume_exc
 
-                result = await gcp_helper.publish_audio_chunk(
-                    mock_pubsub_client,
-                    topic_path="projects/test/topics/audio",
-                    feed_id="feed-42",
-                    feed_name="Central Fire",
-                    gcs_uri="gs://bucket/audio.flac",
-                    session_id="test-session-1",
-                    start_timestamp=mock_now,
-                    duration_ms=15000,
-                )
+                with self.assertRaises(PublishToPausedOrderingKeyException):
+                    await gcp_helper.publish_audio_chunk(
+                        mock_pubsub_client,
+                        topic_path="projects/test/topics/audio",
+                        feed_id="feed-42",
+                        feed_name="Central Fire",
+                        gcs_uri="gs://bucket/audio.flac",
+                        session_id="test-session-1",
+                        start_timestamp=mock_now,
+                        duration_ms=15000,
+                    )
 
-                self.assertEqual(result, "retry-success")
                 mock_publisher.resume_publish.assert_called_once()
+                self.assertEqual(mock_publisher.publish.call_count, 1)
 
 
 class TestParseGcsUri(unittest.TestCase):

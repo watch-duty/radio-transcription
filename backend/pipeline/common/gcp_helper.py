@@ -274,30 +274,33 @@ def publish_audio_chunk_sync(
         if "traceparent" in carrier:
             attrs["traceparent"] = carrier["traceparent"]
 
-        future = publisher.publish(
-            topic_path,
-            serialized_data,
-            ordering_key=feed_id,
-            **attrs,
-        )
-        try:
-            return future.result()
-        except PublishToPausedOrderingKeyException:
-            try:
-                publisher.resume_publish(topic_path, ordering_key=feed_id)
-            except (RuntimeError, ValueError):
-                logger.exception(
-                    "resume_publish failed for feed=%s topic=%s",
-                    feed_id,
-                    topic_path,
-                )
-            retry_future = publisher.publish(
+        max_retries = 1
+        for attempt in range(max_retries + 1):
+            future = publisher.publish(
                 topic_path,
                 serialized_data,
                 ordering_key=feed_id,
                 **attrs,
             )
-            return retry_future.result()
+            try:
+                return future.result()
+            except PublishToPausedOrderingKeyException:
+                if attempt >= max_retries:
+                    raise
+                resume_succeeded = False
+                try:
+                    publisher.resume_publish(topic_path, ordering_key=feed_id)
+                    resume_succeeded = True
+                except (RuntimeError, ValueError):
+                    logger.exception(
+                        "resume_publish failed for feed=%s topic=%s",
+                        feed_id,
+                        topic_path,
+                    )
+                if not resume_succeeded:
+                    raise
+        msg = "Unreachable"
+        raise RuntimeError(msg)
 
 
 async def publish_audio_chunk(
@@ -362,30 +365,33 @@ async def publish_audio_chunk(
         if "traceparent" in carrier:
             attrs["traceparent"] = carrier["traceparent"]
 
-        future = publisher.publish(
-            topic_path,
-            serialized_data,
-            ordering_key=feed_id,
-            **attrs,
-        )
-        try:
-            return await asyncio.wrap_future(future)
-        except PublishToPausedOrderingKeyException:
-            # Clear the local Publisher pause flag and retry publishing the
-            # message once so a transient pause doesn't discard valid audio
-            # or cause unnecessary strikes against the feed.
-            try:
-                publisher.resume_publish(topic_path, ordering_key=feed_id)
-            except (RuntimeError, ValueError):
-                logger.exception(
-                    "resume_publish failed for feed=%s topic=%s",
-                    feed_id,
-                    topic_path,
-                )
-            retry_future = publisher.publish(
+        max_retries = 1
+        for attempt in range(max_retries + 1):
+            future = publisher.publish(
                 topic_path,
                 serialized_data,
                 ordering_key=feed_id,
                 **attrs,
             )
-            return await asyncio.wrap_future(retry_future)
+            try:
+                return await asyncio.wrap_future(future)
+            except PublishToPausedOrderingKeyException:
+                # Clear the local Publisher pause flag and retry publishing the
+                # message once so a transient pause doesn't discard valid audio
+                # or cause unnecessary strikes against the feed.
+                if attempt >= max_retries:
+                    raise
+                resume_succeeded = False
+                try:
+                    publisher.resume_publish(topic_path, ordering_key=feed_id)
+                    resume_succeeded = True
+                except (RuntimeError, ValueError):
+                    logger.exception(
+                        "resume_publish failed for feed=%s topic=%s",
+                        feed_id,
+                        topic_path,
+                    )
+                if not resume_succeeded:
+                    raise
+        msg = "Unreachable"
+        raise RuntimeError(msg)
