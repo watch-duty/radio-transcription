@@ -36,13 +36,13 @@ async def create_api_client() -> AsyncIterator[httpx.AsyncClient]:
 async def test_transcripts_api(
     api_client: httpx.AsyncClient, test_bcfy_feed: tuple[str, str]
 ) -> None:
-    transmission_id = str(uuid.uuid4())
+    segment_id = str(uuid.uuid4())
     transcript_text = "Hello integration test for transcripts API"
 
     feed_id, _ = test_bcfy_feed
     payload = {
         "feed_id": feed_id,
-        "transmission_id": transmission_id,
+        "segment_id": segment_id,
         "transcript": transcript_text,
     }
 
@@ -50,7 +50,7 @@ async def test_transcripts_api(
     response = await api_client.post("/transcripts", json=payload, timeout=10.0)
     assert response.status_code == 201, f"Failed to create: {response.text}"
     created_data = response.json()
-    assert created_data["transmission_id"] == transmission_id
+    assert created_data["segment_id"] == segment_id
     assert created_data["transcript"] == transcript_text
 
     # 2. List transcripts and verify it's there
@@ -59,29 +59,24 @@ async def test_transcripts_api(
     data = response.json()
     assert "transcripts" in data
     found = any(
-        item["transmission_id"] == transmission_id
-        for item in data["transcripts"]
+        item["segment_id"] == segment_id for item in data["transcripts"]
     )
-    assert found, f"Created transcript {transmission_id} not found in listing"
+    assert found, f"Created transcript {segment_id} not found in listing"
 
     # 3. Get specific transcript
-    response = await api_client.get(
-        f"/transcripts/{transmission_id}", timeout=10.0
-    )
+    response = await api_client.get(f"/transcripts/{segment_id}", timeout=10.0)
     assert response.status_code == 200, f"Failed to get: {response.text}"
     get_data = response.json()
-    assert get_data["transmission_id"] == transmission_id
+    assert get_data["segment_id"] == segment_id
 
     # 4. Delete transcript
     response = await api_client.delete(
-        f"/transcripts/{transmission_id}", timeout=10.0
+        f"/transcripts/{segment_id}", timeout=10.0
     )
     assert response.status_code == 204, f"Failed to delete: {response.text}"
 
     # 5. Verify deletion
-    response = await api_client.get(
-        f"/transcripts/{transmission_id}", timeout=10.0
-    )
+    response = await api_client.get(f"/transcripts/{segment_id}", timeout=10.0)
     assert response.status_code == 404, (
         f"Expected 404 after delete, got {response.status_code}"
     )
@@ -91,14 +86,14 @@ async def test_transcripts_api(
 async def test_transcripts_api_duplicate_conflict(
     api_client: httpx.AsyncClient, test_bcfy_feed: tuple[str, str]
 ) -> None:
-    """Verify that creating a transcript with a duplicate transmission_id returns 409."""
-    transmission_id = str(uuid.uuid4())
+    """Verify that creating a transcript with a duplicate segment_id returns 409."""
+    segment_id = str(uuid.uuid4())
     transcript_text = "Hello integration test for duplicate conflict"
 
     feed_id, _ = test_bcfy_feed
     payload = {
         "feed_id": feed_id,
-        "transmission_id": transmission_id,
+        "segment_id": segment_id,
         "transcript": transcript_text,
     }
 
@@ -114,6 +109,6 @@ async def test_transcripts_api_duplicate_conflict(
 
     # 3. Cleanup
     response = await api_client.delete(
-        f"/transcripts/{transmission_id}", timeout=10.0
+        f"/transcripts/{segment_id}", timeout=10.0
     )
     assert response.status_code == 204, f"Failed to delete: {response.text}"

@@ -47,11 +47,11 @@ def create_test_rule(test_keyword: str) -> None:
 
 
 def publish_test_message(
-    transmission_id: str, transcript: str, feed_id: str
+    segment_id: str, transcript: str, feed_id: str
 ) -> None:
     """Publishes a test message to the transcription topic."""
     message = TranscribedAudio(
-        segment_id=transmission_id,
+        segment_id=segment_id,
         transcript=transcript,
         source_audio_uris=["chunk1", "chunk2"],
         feed_id=feed_id,
