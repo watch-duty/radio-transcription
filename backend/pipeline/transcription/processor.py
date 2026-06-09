@@ -87,6 +87,14 @@ class TranscriptionEventProcessor:
                 claim.canonical_audio_uri,
             )
 
+            if claim.audio_classification == claim.AUDIO_CLASSIFICATION_OTHER:
+                logger.info(
+                    "Skipping transcription for non-speech segment %s (feed %s)",
+                    segment_id,
+                    feed_id,
+                )
+                return
+
             try:
                 # Determine audio duration from start and end timestamps
                 duration_ms = self._get_duration_ms(claim)
