@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import TuneIcon from '@mui/icons-material/Tune';
 import { Autocomplete, Box, Chip, TextField, Typography } from '@mui/material';
 import { useQuery } from '@tanstack/react-query';
-import { type Feed, SourceType } from '@transcription/common';
+import { type Feed } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { listFeeds } from '../../service/listFeeds';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
-import { MultiSelectFilter } from '../common/MultiSelectFilter';
 import { type FeedFilters, FeedTable } from './FeedTable';
 
 interface FeedSearchViewProps {
@@ -22,34 +20,27 @@ interface FeedSearchViewProps {
 
 const FEED_REFETCH_INTERVAL_MS = 15000; // 15 seconds
 const QUERY_DEBOUNCE_TIME_MS = 300;
-const ALL_SOURCE_TYPES = Object.values(SourceType);
 
 interface CondensedFeedSearchResultsProps {
   feeds: Feed[];
   selectedFeed: Feed | null;
-  filters: FeedFilters;
-  onFiltersChange: (filters: FeedFilters) => void;
   feedsLoading: boolean;
-  tags: { key: string; value: string }[];
   onFeedSelect?: (feedId: string) => void;
 }
 
 function CondensedFeedSearchResults({
   feeds,
   selectedFeed,
-  filters,
-  onFiltersChange,
   feedsLoading,
-  tags,
   onFeedSelect,
 }: CondensedFeedSearchResultsProps) {
   const [localInputValue, setLocalInputValue] = useState(
     selectedFeed?.name || ''
   );
   const [isFocused, setIsFocused] = useState(false);
-  const [prevSelectedFeedId, setPrevSelectedFeedId] = useState<string | undefined>(
-    selectedFeed?.id
-  );
+  const [prevSelectedFeedId, setPrevSelectedFeedId] = useState<
+    string | undefined
+  >(selectedFeed?.id);
 
   // Sync search input state with selectedFeed prop changes.
   // We use React's recommended render-phase state adjustment pattern instead of useEffect
@@ -62,20 +53,32 @@ function CondensedFeedSearchResults({
   }
 
   return (
-    <Box
-      sx={{
-        width: '100%',
-        textAlign: 'left',
-        display: 'grid',
-        gridTemplateColumns: { xs: '100%', md: 'repeat(2, 1fr)' },
-        gap: 1.5,
-      }}
-    >
+    <Box sx={{ width: '50%', textAlign: 'left' }}>
       <Autocomplete
         disablePortal
         options={feeds}
-        // Prevents client-side filtering since all filtering is done server-side.
-        filterOptions={(x) => x}
+        // Custom search to match name, source type, status, and tags.
+        filterOptions={(options, state) => {
+          const inputValue = state.inputValue.toLowerCase().trim();
+          if (!inputValue) return options;
+
+          return options.filter((feed) => {
+            if (feed.name.toLowerCase().includes(inputValue)) return true;
+            if (feed.sourceType.toLowerCase().includes(inputValue)) return true;
+            if (feed.status.toLowerCase().includes(inputValue)) return true;
+            if (feed.substatus?.toLowerCase().includes(inputValue)) return true;
+            if (
+              feed.tags?.some(
+                (tag) =>
+                  tag.key.toLowerCase().includes(inputValue) ||
+                  tag.value.toLowerCase().includes(inputValue)
+              )
+            ) {
+              return true;
+            }
+            return false;
+          });
+        }}
         getOptionLabel={(option) => option.name}
         size="small"
         value={selectedFeed}
@@ -90,9 +93,6 @@ function CondensedFeedSearchResults({
             return;
           }
           setLocalInputValue(newInputValue);
-          if (reason === 'input' || reason === 'clear') {
-            onFiltersChange({ ...filters, searchQuery: newInputValue });
-          }
         }}
         onFocus={() => setIsFocused(true)}
         onBlur={() => setIsFocused(false)}
@@ -175,58 +175,6 @@ function CondensedFeedSearchResults({
           );
         }}
       />
-
-      <Box
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 1.5,
-          flexWrap: 'wrap',
-          width: '100%',
-        }}
-      >
-        <TuneIcon color="action" fontSize="small" />
-        <Box sx={{ flexGrow: 1, minWidth: 120, maxWidth: { sm: 200 } }}>
-          <MultiSelectFilter
-            label="Source Type"
-            options={ALL_SOURCE_TYPES}
-            value={filters.sourceTypes}
-            onChange={(types) =>
-              onFiltersChange({ ...filters, sourceTypes: types })
-            }
-            size="small"
-          />
-        </Box>
-        <Box sx={{ flexGrow: 1, minWidth: 120, maxWidth: { sm: 160 } }}>
-          <MultiSelectFilter
-            label="Status"
-            options={['Active', 'Inactive', 'Error']}
-            value={filters.statuses}
-            onChange={(statuses) => onFiltersChange({ ...filters, statuses })}
-            size="small"
-          />
-        </Box>
-        <Box sx={{ flexGrow: 1, minWidth: 120, maxWidth: { sm: 200 } }}>
-          <MultiSelectFilter
-            label="Tags"
-            options={tags}
-            value={filters.tags}
-            onChange={(tags) => onFiltersChange({ ...filters, tags })}
-            size="small"
-            groupBy={(tag) => tag.key}
-            getOptionLabel={(tag) => `${tag.key}: ${tag.value}`}
-            isOptionEqualToValue={(a, b) =>
-              a.key === b.key && a.value === b.value
-            }
-            renderOptionContent={(tag) => tag.value}
-            renderValueLabel={(tag) => (
-              <Typography variant="body2">
-                <b>{tag.key}</b>: {tag.value}
-              </Typography>
-            )}
-          />
-        </Box>
-      </Box>
     </Box>
   );
 }
@@ -321,7 +269,7 @@ export function FeedSearchView({
         statuses: filters.statuses.length > 0 ? filters.statuses : undefined,
         tags: filters.tags.length > 0 ? filters.tags : undefined,
       }),
-    enabled: !!token,
+    enabled: !!token && !condensed,
     refetchOnWindowFocus: false,
     refetchInterval: FEED_REFETCH_INTERVAL_MS,
   });
@@ -343,12 +291,6 @@ export function FeedSearchView({
     return allFeeds.find((f) => f.id === selectedFeedId) || null;
   }, [allFeeds, selectedFeedId]);
 
-
-
-  const sortedFeedsForAutocomplete = useMemo(() => {
-    return [...(feeds ?? [])].sort((a, b) => a.name.localeCompare(b.name));
-  }, [feeds]);
-
   const tags = useMemo<{ key: string; value: string }[]>(() => {
     const seen = new Set<string>();
     const uniqueTags: { key: string; value: string }[] = [];
@@ -367,15 +309,16 @@ export function FeedSearchView({
     );
   }, [feeds, allFeeds]);
 
+  const sortedAllFeeds = useMemo(() => {
+    return [...allFeeds].sort((a, b) => a.name.localeCompare(b.name));
+  }, [allFeeds]);
+
   if (condensed) {
     return (
       <CondensedFeedSearchResults
-        feeds={sortedFeedsForAutocomplete}
+        feeds={sortedAllFeeds}
         selectedFeed={selectedFeed}
-        filters={filters}
-        onFiltersChange={setFilters}
-        feedsLoading={feedsLoading}
-        tags={tags}
+        feedsLoading={false}
         onFeedSelect={onFeedSelect}
       />
     );
