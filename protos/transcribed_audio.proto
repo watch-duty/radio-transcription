@@ -5,13 +5,14 @@ import "google/protobuf/duration.proto";
 // Represents a processed audio transmission, including its metadata, source segment IDs, and the resulting transcript.
 message TranscribedAudio {
 
-  // --- Identifiers & Base Metadata ---
-  
-  // A unique, deterministic identifier for this specific segment (formatted as a RFC 4122 UUID).
-  string segment_id = 1;
+  reserved 1;
+  reserved "transmission_id";
 
   // The unique identifier of the radio feed this transmission originated from (formatted as a RFC 4122 UUID).
   string feed_id = 2;
+
+  // A unique, deterministic identifier for this specific segment (formatted as a RFC 4122 UUID).
+  string segment_id = 15;
 
 
   // --- Transcription Content ---
