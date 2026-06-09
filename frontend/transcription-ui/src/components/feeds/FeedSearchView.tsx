@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { Autocomplete, Box, Chip, TextField, Typography } from '@mui/material';
+import { Autocomplete, Box, Chip, CircularProgress, TextField, Typography } from '@mui/material';
 import { useQuery } from '@tanstack/react-query';
 import { type Feed } from '@transcription/common';
 
@@ -24,6 +24,8 @@ const QUERY_DEBOUNCE_TIME_MS = 300;
 interface CondensedFeedSearchResultsProps {
   feeds: Feed[];
   selectedFeed: Feed | null;
+  filters: FeedFilters;
+  onFiltersChange: (filters: FeedFilters) => void;
   feedsLoading: boolean;
   onFeedSelect?: (feedId: string) => void;
 }
@@ -31,6 +33,8 @@ interface CondensedFeedSearchResultsProps {
 function CondensedFeedSearchResults({
   feeds,
   selectedFeed,
+  filters,
+  onFiltersChange,
   feedsLoading,
   onFeedSelect,
 }: CondensedFeedSearchResultsProps) {
@@ -57,28 +61,8 @@ function CondensedFeedSearchResults({
       <Autocomplete
         disablePortal
         options={feeds}
-        // Custom search to match name, source type, status, and tags.
-        filterOptions={(options, state) => {
-          const inputValue = state.inputValue.toLowerCase().trim();
-          if (!inputValue) return options;
-
-          return options.filter((feed) => {
-            if (feed.name.toLowerCase().includes(inputValue)) return true;
-            if (feed.sourceType.toLowerCase().includes(inputValue)) return true;
-            if (feed.status.toLowerCase().includes(inputValue)) return true;
-            if (feed.substatus?.toLowerCase().includes(inputValue)) return true;
-            if (
-              feed.tags?.some(
-                (tag) =>
-                  tag.key.toLowerCase().includes(inputValue) ||
-                  tag.value.toLowerCase().includes(inputValue)
-              )
-            ) {
-              return true;
-            }
-            return false;
-          });
-        }}
+        // Prevents client-side filtering since all filtering is done server-side.
+        filterOptions={(x) => x}
         getOptionLabel={(option) => option.name}
         size="small"
         value={selectedFeed}
@@ -93,15 +77,22 @@ function CondensedFeedSearchResults({
             return;
           }
           setLocalInputValue(newInputValue);
+          if (reason === 'input' || reason === 'clear') {
+            onFiltersChange({ ...filters, searchQuery: newInputValue });
+          }
         }}
         onFocus={() => setIsFocused(true)}
         onBlur={() => setIsFocused(false)}
         loading={feedsLoading}
+        loadingText={<Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}><CircularProgress size={16} /> Loading feeds...</Box>}
         renderInput={(params) => (
           <TextField
             {...params}
             label="Select feed"
             placeholder="Search or select feed..."
+            slotProps={{
+              ...params.slotProps,
+            }}
           />
         )}
         renderOption={(props, option) => {
@@ -269,7 +260,7 @@ export function FeedSearchView({
         statuses: filters.statuses.length > 0 ? filters.statuses : undefined,
         tags: filters.tags.length > 0 ? filters.tags : undefined,
       }),
-    enabled: !!token && !condensed,
+    enabled: !!token,
     refetchOnWindowFocus: false,
     refetchInterval: FEED_REFETCH_INTERVAL_MS,
   });
@@ -309,16 +300,18 @@ export function FeedSearchView({
     );
   }, [feeds, allFeeds]);
 
-  const sortedAllFeeds = useMemo(() => {
-    return [...allFeeds].sort((a, b) => a.name.localeCompare(b.name));
-  }, [allFeeds]);
+  const sortedFeedsForAutocomplete = useMemo(() => {
+    return [...(feeds ?? [])].sort((a, b) => a.name.localeCompare(b.name));
+  }, [feeds]);
 
   if (condensed) {
     return (
       <CondensedFeedSearchResults
-        feeds={sortedAllFeeds}
+        feeds={sortedFeedsForAutocomplete}
         selectedFeed={selectedFeed}
-        feedsLoading={false}
+        filters={filters}
+        onFiltersChange={setFilters}
+        feedsLoading={feedsLoading}
         onFeedSelect={onFeedSelect}
       />
     );
