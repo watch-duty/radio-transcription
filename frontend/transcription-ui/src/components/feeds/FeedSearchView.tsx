@@ -38,7 +38,7 @@ export function FeedSearchView({ title, onError }: FeedSearchViewProps) {
   }, [filters.searchQuery]);
 
   const {
-    data: feeds,
+    data: feedData,
     error: feedsError,
     isLoading: feedsLoading,
   } = useQuery({
@@ -66,12 +66,17 @@ export function FeedSearchView({ title, onError }: FeedSearchViewProps) {
     refetchInterval: FEED_REFETCH_INTERVAL_MS,
   });
 
-  const { data: allFeeds = [] } = useQuery({
+  const feeds = feedData?.feeds ?? [];
+  const feedTotal = feedData?.total ?? 0;
+
+  const { data: allFeedData = { feeds: [], total: 0 } } = useQuery({
     queryKey: ['listFeeds', token, '', [], 0, [], 0, [], 0],
     queryFn: () => listFeeds(token!, {}),
     enabled: !!token,
     refetchOnWindowFocus: false,
   });
+
+  const allFeeds = allFeedData.feeds;
 
   useEffect(() => {
     if (feedsError) {
@@ -91,9 +96,10 @@ export function FeedSearchView({ title, onError }: FeedSearchViewProps) {
     >
       <FeedTable
         title={title}
-        feeds={feeds ?? []}
+        feeds={feeds}
         allFeeds={allFeeds}
         isLoading={feedsLoading}
+        feedTotal={feedTotal}
         filters={filters}
         onFiltersChange={setFilters}
       />
