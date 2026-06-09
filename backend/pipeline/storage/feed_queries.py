@@ -32,11 +32,7 @@ WITH current_state AS (
 do_update AS (
     UPDATE feeds
     SET failure_count = 0,
-        last_bookmark_time = CASE
-            WHEN $4 IS NULL THEN last_bookmark_time
-            WHEN last_bookmark_time IS NULL THEN $4
-            ELSE GREATEST(last_bookmark_time, $4)
-        END,
+        last_bookmark_time = GREATEST(last_bookmark_time, $4),
         status_reason_updated_at = CASE
             WHEN status_reason IS NOT NULL THEN NOW()
             ELSE status_reason_updated_at
