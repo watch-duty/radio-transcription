@@ -140,6 +140,7 @@ services:
         condition: service_completed_successfully
 
   segmentation:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/segmentation:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/pipeline/segmentation/Dockerfile
