@@ -181,6 +181,12 @@ class CapturedChunk:
             feed's resume cursor. ``None`` → the runtime falls back to
             ``chunk_end_time``. Set by cursor-paginated collectors (bcfy_calls);
             ``None`` for stream/push collectors.
+        external_audio_segment_id: Optional external ID for tracking the source segment.
+            Represents:
+            - Echo: Original uploaded filename (e.g. "dispatch_recording.mp3").
+            - Broadcastify Calls: Full source audio URL (e.g. "https://calls.broadcastify.com/.../123456.mp3").
+            - Fire Notifications: S3 file UUID (e.g. "c1465213-2998-4ed7-a6a2-bf16ebf67265").
+            - Broadcastify Feeds: Not applicable (omitted).
     """
 
     audio_bytes: bytes
