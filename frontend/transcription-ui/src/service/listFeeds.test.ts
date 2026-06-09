@@ -83,7 +83,10 @@ describe('listFeeds', () => {
       expect.stringContaining('/api/v1/feeds?limit=100&nextToken=token_abc'),
       expect.any(Object)
     );
-    expect(feeds).toStrictEqual({ feeds: [...page1Feeds, ...page2Feeds], total: 2 });
+    expect(feeds).toStrictEqual({
+      feeds: [...page1Feeds, ...page2Feeds],
+      total: 2,
+    });
   });
 
   it('should throw error if response not ok', async () => {
