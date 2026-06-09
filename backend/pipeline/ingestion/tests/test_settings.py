@@ -50,6 +50,9 @@ class TestCollectorSettings(unittest.TestCase):
             "BOOKMARK_MAX_RETRIES": "4",
             "BOOKMARK_RETRY_BASE_DELAY_SEC": "0.25",
             "BOOKMARK_RETRY_MAX_DELAY_SEC": "2.0",
+            "PUBSUB_PUBLISH_MAX_RETRIES": "4",
+            "PUBSUB_PUBLISH_RETRY_BASE_DELAY_SEC": "0.25",
+            "PUBSUB_PUBLISH_RETRY_MAX_DELAY_SEC": "2.0",
             "GOOGLE_CLOUD_PROJECT": "test-project",
             "HEALTH_CHECK_PORT": "9090",
             "HEALTH_CHECK_STARTUP_GRACE_SEC": "90.0",
@@ -93,6 +96,9 @@ class TestCollectorSettings(unittest.TestCase):
         self.assertEqual(settings.bookmark_max_retries, 4)
         self.assertEqual(settings.bookmark_retry_base_delay_sec, 0.25)
         self.assertEqual(settings.bookmark_retry_max_delay_sec, 2.0)
+        self.assertEqual(settings.pubsub_publish_max_retries, 4)
+        self.assertEqual(settings.pubsub_publish_retry_base_delay_sec, 0.25)
+        self.assertEqual(settings.pubsub_publish_retry_max_delay_sec, 2.0)
         self.assertEqual(settings.google_cloud_project, "test-project")
         self.assertEqual(settings.health_check_port, 9090)
         self.assertEqual(settings.health_check_startup_grace_sec, 90.0)
@@ -140,6 +146,9 @@ class TestCollectorSettings(unittest.TestCase):
         self.assertEqual(settings.bookmark_max_retries, 2)
         self.assertEqual(settings.bookmark_retry_base_delay_sec, 0.5)
         self.assertEqual(settings.bookmark_retry_max_delay_sec, 4.0)
+        self.assertEqual(settings.pubsub_publish_max_retries, 2)
+        self.assertEqual(settings.pubsub_publish_retry_base_delay_sec, 0.5)
+        self.assertEqual(settings.pubsub_publish_retry_max_delay_sec, 4.0)
         self.assertIsNone(settings.google_cloud_project)
         self.assertEqual(settings.health_check_port, 8080)
         self.assertEqual(settings.health_check_startup_grace_sec, 120.0)

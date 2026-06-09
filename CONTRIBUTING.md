@@ -1,5 +1,14 @@
 # Contributing
 
+## Quick Start
+
+* Run Backend (and API services) locally: `mise run dev:start`
+* Run Frontend and Backend locally: `mise run dev`
+* Setup environment for Frontend development against GCP backend: `mise run dev:remote:init`
+* Run Frontend and Frontend Proxy API against GCP backend: `mise run dev:remote`
+
+More mise commands can be found in [.mise.toml](/.mise.toml).
+
 ## Pre-requisites
 
 1. Install Mise (`curl https://mise.run | sh` or `brew install mise` - https://mise.jdx.dev/getting-started.html)
@@ -21,7 +30,7 @@ On a high level, this local pipeline runs the following:
 #### Shared infrastructure
 1. Pub/Sub emulator (manages all PubSub topics for each Pub/Sub instance in the pipeline)
 2. GCS emulator (manages all GCS buckets for audio storage in the pipeline)
-3. Mock Audio server (simulates all the supported audio streams for testing e.g. Icecast and API polling)
+3. Mock Audio server (simulates all the supported audio streams for testing e.g. Icecast and API polling). See [documentation/local-dev-mock-audio.md](documentation/local-dev-mock-audio.md) for instructions on adding test audio files.
 
 #### Pipeline
 1. Audio ingestion service (fetches audio from streams and uploads to GCS)
@@ -54,6 +63,9 @@ This option runs the entire pipeline (ingestion, transcription, rules, database,
    ```bash
    mise run dev
    ```
+   > [!TIP]
+   > Use `mise run dev:add-audio` to quickly mock incoming audio files for specific feeds. See [documentation/local-dev-mock-audio.md](documentation/local-dev-mock-audio.md) for usage instructions.
+
    *Alternatively, to start the local environment using the local Whisper STT service instead of mock:*
    1. Set `TRANSCRIBER_TYPE=local_whisper` in `local_dev/LOCAL.env`.
    2. Start the system:

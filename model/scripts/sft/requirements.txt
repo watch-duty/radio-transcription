@@ -1,4 +1,0 @@
-# Install the common library with all extras needed for the Gemini SFT pipeline.
-# Run from model/scripts/sft/: pip install -e "../../.[scoring,vertex]"
-# Or install into a venv: python -m venv .venv && .venv/bin/pip install -e "../../.[scoring,vertex]"
--e ../../.[scoring,vertex]

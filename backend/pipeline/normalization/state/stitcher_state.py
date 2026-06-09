@@ -185,8 +185,10 @@ class AudioStitchingStateMachine:
             ctx.feed_id,
             ctx.current_gcs_uri,
         )
-        # Create a detached context to prevent state corruption of the leading edge
-
+        # Create a detached context to prevent state corruption of the leading edge.
+        # traceparent is propagated from ctx so that Cloud Trace spans created during
+        # independent processing of this late chunk are correctly parented to the
+        # active session trace, rather than appearing as orphaned root spans.
         temp_ctx = StitcherContext(
             feed_id=ctx.feed_id,
             current_gcs_uri=ctx.current_gcs_uri,
@@ -200,6 +202,7 @@ class AudioStitchingStateMachine:
             expected_next_chunk_start_ms=None,
             start_audio_offset_ms=None,
             buffer_duration_ms=0,
+            traceparent=ctx.traceparent,
         )
 
         raw_actions: list[StateMachineAction] = []

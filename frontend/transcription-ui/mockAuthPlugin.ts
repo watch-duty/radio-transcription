@@ -11,7 +11,7 @@ export const mockAuthPlugin: Plugin = {
       ) {
         const header = Buffer.from(
           JSON.stringify({ alg: 'none', typ: 'JWT' })
-        ).toString('base64');
+        ).toString('base64url');
         const payload = Buffer.from(
           JSON.stringify({
             email: 'local-dev@example.com',
@@ -21,7 +21,7 @@ export const mockAuthPlugin: Plugin = {
             iss: 'https://accounts.google.com',
             exp: Math.floor(Date.now() / 1000) + 24 * 60 * 60,
           })
-        ).toString('base64');
+        ).toString('base64url');
         res.setHeader('Content-Type', 'application/json');
         res.end(
           JSON.stringify({

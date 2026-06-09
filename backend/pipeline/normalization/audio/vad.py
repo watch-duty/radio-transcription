@@ -5,7 +5,6 @@ avoiding the overhead of multi-VAD abstractions.
 """
 
 import math
-import threading
 from pathlib import Path
 from typing import Any
 
@@ -58,9 +57,6 @@ logger = get_task_logger(
 MODELS_DIR = Path(__file__).parent / "models"
 TARGET_SAMPLE_RATE = 16000
 DEFAULT_SILERO_WINDOW_SIZE = 512
-
-_denoise_lock = threading.Lock()
-_silero_lock = threading.Lock()
 
 
 class VoiceActivityDetector:
@@ -222,16 +218,21 @@ class VoiceActivityDetector:
         # Pre-allocate and reuse the input dictionary to avoid heavy object allocation overhead in Python loop
         ort_inputs: dict[str, Any] = dict(states)
 
-        with _denoise_lock:
-            for i in range(num_frames):
-                ort_inputs[audio_input_name] = stft_features[:, :, i : i + 1, :]
-                ort_outs = self.ulunas_session.run(None, ort_inputs)
-                out_stft[:, :, i : i + 1, :] = ort_outs[0]
-                for j in range(1, len(outputs)):
-                    name = inputs[j].name
-                    val = ort_outs[j]
-                    states[name] = val
-                    ort_inputs[name] = val
+        # Thread safety: `states` and `ort_inputs` are call-local; each caller
+        # maintains its own recurrent denoiser state (UL-UNAS hidden tensors).
+        # ulunas_session.run() is thread-safe — the ONNX graph is immutable after
+        # construction and no mutable state lives on the session object itself.
+        # No lock is needed even though the session is shared across threads via
+        # Beam's Shared() handle.
+        for i in range(num_frames):
+            ort_inputs[audio_input_name] = stft_features[:, :, i : i + 1, :]
+            ort_outs = self.ulunas_session.run(None, ort_inputs)
+            out_stft[:, :, i : i + 1, :] = ort_outs[0]
+            for j in range(1, len(outputs)):
+                name = inputs[j].name
+                val = ort_outs[j]
+                states[name] = val
+                ort_inputs[name] = val
 
         return custom_numpy_istft(
             out_stft,
@@ -437,51 +438,53 @@ class VoiceActivityDetector:
 
         triggered = False
         temp_end = 0
-        current_speech = {}
+        current_speech: dict[str, int | float] = {}
         raw_segments = []
 
-        with _silero_lock:
-            for i in range(0, len(vad_input), chunk_size):
-                chunk = vad_input[i : i + chunk_size]
-                if len(chunk) < chunk_size:
-                    chunk = np.pad(chunk, (0, chunk_size - len(chunk)))
+        def frames_to_sec(frame_idx: float) -> float:
+            return (frame_idx * chunk_size) / TARGET_SAMPLE_RATE
 
-                x_with_context = np.concatenate([context, chunk])
-                ort_inputs = {
-                    "input": x_with_context.reshape(
-                        1, chunk_size + context_size
-                    ).astype(np.float32),
-                    "state": state,
-                    "sr": sr_tensor,
-                }
+        # Thread safety: `state` and `context` are call-local numpy arrays
+        # initialized above. silero_session.run() is thread-safe for the same
+        # reason as ulunas_session — the ONNX graph is immutable; all VAD RNN
+        # state is passed in and returned as tensors rather than stored on the
+        # session.
+        for frame_idx, i in enumerate(range(0, len(vad_input), chunk_size)):
+            chunk = vad_input[i : i + chunk_size]
+            if len(chunk) < chunk_size:
+                chunk = np.pad(chunk, (0, chunk_size - len(chunk)))
 
-                outputs = self.silero_session.run(None, ort_inputs)
-                prob = float(np.asarray(outputs[0]).flatten()[0])
-                state = outputs[1]
-                context = x_with_context[-context_size:]
+            x_with_context = np.concatenate([context, chunk])
+            ort_inputs = {
+                "input": x_with_context.reshape(
+                    1, chunk_size + context_size
+                ).astype(np.float32),
+                "state": state,
+                "sr": sr_tensor,
+            }
 
-                current_frame = i / chunk_size
+            outputs = self.silero_session.run(None, ort_inputs)
+            prob = float(np.asarray(outputs[0]).flatten()[0])
+            state = outputs[1]
+            context = x_with_context[-context_size:]
 
-                if not triggered:
-                    if prob >= self.threshold_onset:
-                        triggered = True
-                        current_speech["start"] = current_frame
-                        temp_end = 0
-                elif prob < self.threshold_offset:
+            if not triggered:
+                if prob >= self.threshold_onset:
+                    triggered = True
+                    current_speech["start"] = frame_idx
+                    temp_end = 0
+            else:  # noqa: PLR5501
+                if prob < self.threshold_offset:
                     temp_end += 1
                     if temp_end >= min_silence_frames:
-                        current_speech["end"] = current_frame - temp_end
+                        current_speech["end"] = frame_idx - temp_end
                         if (
                             current_speech["end"] - current_speech["start"]
                         ) >= min_speech_frames:
                             raw_segments.append(
                                 (
-                                    current_speech["start"]
-                                    * chunk_size
-                                    / TARGET_SAMPLE_RATE,
-                                    current_speech["end"]
-                                    * chunk_size
-                                    / TARGET_SAMPLE_RATE,
+                                    frames_to_sec(current_speech["start"]),
+                                    frames_to_sec(current_speech["end"]),
                                 )
                             )
                         triggered = False
@@ -497,10 +500,8 @@ class VoiceActivityDetector:
             ) >= min_speech_frames:
                 raw_segments.append(
                     (
-                        current_speech["start"]
-                        * chunk_size
-                        / TARGET_SAMPLE_RATE,
-                        current_speech["end"] * chunk_size / TARGET_SAMPLE_RATE,
+                        frames_to_sec(current_speech["start"]),
+                        frames_to_sec(current_speech["end"]),
                     )
                 )
 
