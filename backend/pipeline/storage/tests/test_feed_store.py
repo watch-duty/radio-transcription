@@ -50,6 +50,7 @@ def _full_feed_row(**overrides: object) -> dict[str, object]:
         "status": "unclaimed",
         "status_reason": None,
         "status_reason_updated_at": None,
+        "quarantine_reason": None,
         "failure_count": 0,
         "worker_id": None,
         "last_heartbeat": None,

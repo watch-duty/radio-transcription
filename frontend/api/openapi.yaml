@@ -309,6 +309,12 @@ components:
           items:
             $ref: "#/components/schemas/Tag"
           type: array
+        quarantineReason:
+          type: string
+          nullable: true
+        statusReason:
+          type: string
+          nullable: true
       required:
         - name
         - sourceType

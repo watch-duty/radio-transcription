@@ -151,6 +151,7 @@ class Feed(TypedDict):
     status: FeedStatus
     status_reason: FeedStatusReason | None
     status_reason_updated_at: datetime.datetime | None
+    quarantine_reason: str | None
     failure_count: int
     worker_id: uuid.UUID | None
     last_heartbeat: datetime.datetime | None
@@ -248,6 +249,7 @@ class FeedStore:
             status=status,
             status_reason=status_reason,
             status_reason_updated_at=row["status_reason_updated_at"],
+            quarantine_reason=row["quarantine_reason"],
             failure_count=row["failure_count"],
             worker_id=row["worker_id"],
             last_heartbeat=row["last_heartbeat"],
