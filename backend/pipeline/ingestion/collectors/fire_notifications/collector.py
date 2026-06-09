@@ -409,11 +409,12 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
                             outcome,
                         ):
                             yield chunk
-                        if (
+                        is_skipped_only_listing_while_running = (
                             outcome.attempted_count == 0
                             and not outcome.chunk_produced
                             and not shutdown_event.is_set()
-                        ):
+                        )
+                        if is_skipped_only_listing_while_running:
                             yield SourceObservation()
                     poll_ok = True
                 else:
