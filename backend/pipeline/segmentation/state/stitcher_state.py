@@ -143,7 +143,15 @@ class AudioStitchingStateMachine:
 
         # When flushing due to dropped chunks, we might not have a last_segment_end_time_ms yet
         # if the transmission was very short, so fallback to transmission_start_time_ms.
-        # Also, ensure last_segment_end_time_ms is not stale from a previous transmission.
+        #
+        # Rationale:
+        # ctx.last_segment_end_time_ms is retained across transmissions in StitcherContext to
+        # measure silence gaps between speech windows. However, if the current transmission window is
+        # completely silent (non-speech), no new speech segments are added to update this timestamp.
+        # Falling back to it would use a stale end time from the previous transmission (which is in the past).
+        # This results in negative speech offsets (end_ms - ctx.buffer_start_time_ms < 0) and causes
+        # downstream Protobuf JSON serialization failures. We only use last_segment_end_time_ms if it
+        # is part of the current transmission window (i.e., >= buffer_start_time_ms).
         end_ms = (
             ctx.last_segment_end_time_ms
             if (
