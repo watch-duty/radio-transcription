@@ -18,6 +18,7 @@ dependencies = [
     "betterproto>=2.0.0b6",
     "radio-transcription-common",
     "requests>=2.31.0",
+    "google-genai",
 ]
 
 [tool.setuptools]

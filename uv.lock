@@ -2900,7 +2900,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiohttp", specifier = ">=3.14.0" },
+    { name = "aiohttp", specifier = ">=3.14" },
     { name = "fastapi", specifier = ">=0.110.0" },
     { name = "gcloud-aio-storage", specifier = ">=9.6.4" },
     { name = "google-auth", specifier = ">=2.29.0" },
@@ -3247,6 +3247,7 @@ dependencies = [
     { name = "google-cloud-logging" },
     { name = "google-cloud-pubsub" },
     { name = "google-cloud-speech" },
+    { name = "google-genai" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-gcp-trace" },
     { name = "opentelemetry-sdk" },
@@ -3264,6 +3265,7 @@ requires-dist = [
     { name = "google-cloud-logging", specifier = ">=3.14.0" },
     { name = "google-cloud-pubsub", specifier = ">=2.35.0" },
     { name = "google-cloud-speech", specifier = ">=2.37.0" },
+    { name = "google-genai" },
     { name = "opentelemetry-api", specifier = ">=1.41.1" },
     { name = "opentelemetry-exporter-gcp-trace", specifier = ">=1.12.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.41.1" },

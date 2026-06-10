@@ -4,6 +4,7 @@ Exposes get_transcriber using standard statically-typed imports from sibling mod
 """
 
 from backend.pipeline.transcription.enums import TranscriberType
+from backend.pipeline.transcription.transcribers import gemini_3_1_flash_lite
 from backend.pipeline.transcription.transcribers.base import Transcriber
 from backend.pipeline.transcription.transcribers.chirp import (
     ChirpConfig,
@@ -44,5 +45,10 @@ def get_transcriber(
         return MockTranscriber(MockConfig.from_json(config_json))
     if transcriber_type == TranscriberType.LOCAL_WHISPER:
         return LocalApiTranscriber()
+    if transcriber_type == TranscriberType.GEMINI:
+        return gemini_3_1_flash_lite.GeminiTranscriber(
+            project_id,
+            gemini_3_1_flash_lite.GeminiConfig.from_json(config_json),
+        )
     msg = f"Unknown transcriber type: {transcriber_type}"
     raise ValueError(msg)

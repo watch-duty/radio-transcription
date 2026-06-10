@@ -1,0 +1,180 @@
+"""Google Gemini 3.1 Flash Lite transcriber implementation."""
+
+import typing
+
+import pydantic
+from google import genai
+from google.genai import types
+
+from backend.pipeline.common.log_helper import get_task_logger
+from backend.pipeline.common.utils import ConfigBase
+from backend.pipeline.transcription.transcribers import base
+from model.src.common.gemini import prompts as gemini_prompts
+from model.src.common.gemini import vertex as gemini_vertex
+
+DEFAULT_GEMINI_LOCATION = "us-central1"
+DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
+
+logger = get_task_logger(
+    __name__, {"system": "transcription", "component": "gemini"}
+)
+
+
+class SafetySetting(typing.TypedDict):
+    """Safety setting category and threshold."""
+
+    category: str
+    threshold: str
+
+
+class GeminiConfig(ConfigBase):
+    """Strongly typed configuration for the Gemini Transcriber."""
+
+    model: str = DEFAULT_GEMINI_MODEL
+    temperature: float = gemini_vertex.GEMINI_GENERATION_CONFIG["temperature"]
+    max_output_tokens: int = int(
+        gemini_vertex.GEMINI_GENERATION_CONFIG["max_output_tokens"]
+    )
+    safety_settings: list[SafetySetting] = pydantic.Field(
+        default_factory=lambda: [
+            SafetySetting(
+                category=setting["category"], threshold=setting["threshold"]
+            )
+            for setting in gemini_vertex.GEMINI_SAFETY_SETTINGS
+        ]
+    )
+    prompt: str | None = (
+        gemini_prompts.GEMINI_TRANSCRIBE_WITH_CONTEXT_SYSTEM_PROMPT
+    )
+
+
+class GeminiTranscriber(base.Transcriber):
+    """Transcriber implementation using Google GenAI SDK with Gemini 3.1."""
+
+    def __init__(
+        self,
+        project_id: str,
+        config: GeminiConfig,
+        location: str = DEFAULT_GEMINI_LOCATION,
+    ) -> None:
+        """Binds the GCP Project ID and parsed configuration."""
+        self.project_id = project_id
+        self.config = config
+        self.client: genai.Client | None = None
+        self.location = location
+
+    def setup(self) -> None:
+        """Instantiate the GenAI API client."""
+        self.client = genai.Client(
+            vertexai=True,
+            project=self.project_id,
+            location=self.location,
+        )
+
+    def transcribe(
+        self,
+        *,
+        audio_data: bytes | None = None,
+        uri: str | None = None,
+        duration_ms: int,
+    ) -> str | None:
+        """Transcribes the audio payload using Gemini API.
+
+        Accepts either raw bytes or a GCS URI reference.
+        """
+        if self.client is None:
+            msg = "Transcriber client used before setup() was called."
+            raise RuntimeError(msg)
+
+        logger.info(
+            "Transcribing %.3fs of audio %s",
+            duration_ms / 1000,
+            f"from GCS URI: {uri}" if uri else "from in-memory bytes",
+        )
+
+        # TODO: Add in audio format conversion  # noqa: TD003
+        parts = []
+        if uri:
+            parts.append(
+                types.Part.from_uri(file_uri=uri, mime_type="audio/flac")
+            )
+        elif audio_data:
+            parts.append(
+                types.Part.from_bytes(data=audio_data, mime_type="audio/flac")
+            )
+        else:
+            logger.error("No audio_data or uri provided to Gemini transcriber.")
+            return None
+
+        contents = types.Content(role="user", parts=parts)
+
+        generation_config = types.GenerateContentConfig(
+            temperature=self.config.temperature,
+            max_output_tokens=self.config.max_output_tokens,
+            system_instruction=self.config.prompt,
+            safety_settings=[
+                types.SafetySetting(
+                    category=types.HarmCategory(setting["category"]),
+                    threshold=types.HarmBlockThreshold(setting["threshold"]),
+                )
+                for setting in self.config.safety_settings
+            ]
+            if self.config.safety_settings
+            else None,
+        )
+
+        # TODO: Add in a retry policy  # noqa: TD003
+
+        response = self.client.models.generate_content(
+            # TODO: Use fine tuned model # noqa: TD003
+            model=self.config.model,
+            contents=contents,
+            config=generation_config,
+        )
+
+        return self._parse_response(response)
+
+    def _parse_response(
+        self,
+        response: types.GenerateContentResponse,
+    ) -> str | None:
+        """Extracts transcript text from Gemini GenerateContentResponse."""
+        transcript = None
+        try:
+            if response.candidates:
+                candidate = response.candidates[0]
+                finish_reason = getattr(candidate, "finish_reason", None)
+                reason_str = (
+                    getattr(finish_reason, "name", str(finish_reason))
+                    if finish_reason
+                    else None
+                )
+
+                valid_reasons = ("STOP", "MAX_TOKENS", "Stop", "MaxTokens")
+                if reason_str is None or reason_str in valid_reasons:
+                    if candidate.content and candidate.content.parts:
+                        text_val = response.text
+                        if text_val is not None:
+                            transcript = text_val.strip()
+                    else:
+                        logger.warning(
+                            "Gemini response candidate had no content/parts."
+                        )
+                else:
+                    logger.warning(
+                        f"Gemini response finished with reason: {reason_str}"
+                    )
+            else:
+                logger.warning("Gemini response returned no candidates.")
+        except Exception as e:
+            logger.warning(f"Failed to extract text from Gemini response: {e}")
+
+        if transcript == "[UNINTELLIGIBLE]" or not transcript:
+            if transcript == "[UNINTELLIGIBLE]":
+                logger.info(
+                    "Transcription returned [UNINTELLIGIBLE] "
+                    "(no discernable speech)."
+                )
+            return None
+
+        return transcript
