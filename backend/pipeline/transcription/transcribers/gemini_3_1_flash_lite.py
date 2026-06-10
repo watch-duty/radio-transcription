@@ -1,5 +1,6 @@
 """Google Gemini 3.1 Flash Lite transcriber implementation."""
 
+import mimetypes
 import typing
 
 import pydantic
@@ -32,7 +33,9 @@ class GeminiConfig(ConfigBase):
     """Strongly typed configuration for the Gemini Transcriber."""
 
     model: str = DEFAULT_GEMINI_MODEL
+    mime_type: str = "audio/flac"
     temperature: float = gemini_vertex.GEMINI_GENERATION_CONFIG["temperature"]
+
     max_output_tokens: int = int(
         gemini_vertex.GEMINI_GENERATION_CONFIG["max_output_tokens"]
     )
@@ -94,15 +97,20 @@ class GeminiTranscriber(base.Transcriber):
         )
 
         # TODO(http://linear.app/watchduty/issue/GOO-580/extend-gemini-transcriber-to-support-context-and-masking): Support context and masking
+        mime_type = self.config.mime_type
+        if uri:
+            guessed_mime, _ = mimetypes.guess_type(uri)
+            if guessed_mime:
+                mime_type = guessed_mime
+
         parts = []
         if uri:
-            parts.append(
-                types.Part.from_uri(file_uri=uri, mime_type="audio/flac")
-            )
+            parts.append(types.Part.from_uri(file_uri=uri, mime_type=mime_type))
         elif audio_data:
             parts.append(
-                types.Part.from_bytes(data=audio_data, mime_type="audio/flac")
+                types.Part.from_bytes(data=audio_data, mime_type=mime_type)
             )
+
         else:
             logger.error("No audio_data or uri provided to Gemini transcriber.")
             return None
