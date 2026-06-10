@@ -8,8 +8,24 @@ import { SourceType } from '@transcription/common';
 import { renderWithRouter } from '../../test/testUtils';
 import FeedHeader from './FeedHeader';
 
+vi.mock('../feeds/FeedSearchView', () => ({
+  default: vi.fn(({ onFeedSelect }) => (
+    <div
+      data-testid="mock-feed-search-view"
+      onClick={() => onFeedSelect?.('feed123')}
+    />
+  )),
+  FeedSearchView: vi.fn(({ onFeedSelect }) => (
+    <div
+      data-testid="mock-feed-search-view"
+      onClick={() => onFeedSelect?.('feed123')}
+    />
+  )),
+}));
+
 describe('FeedHeader', () => {
   const mockTriggerSnackbar = vi.fn();
+  const mockOnError = vi.fn();
   const mockFeed: Feed = {
     id: 'feed123',
     name: 'Test Scanner Feed',
@@ -37,12 +53,11 @@ describe('FeedHeader', () => {
   it('renders feed name and status when available', () => {
     renderWithRouter(
       <FeedHeader
-        feeds={[]}
         searchedFeed={mockFeed}
         onSelectFeed={vi.fn()}
-        feedsLoading={false}
         status="active"
         triggerSnackbar={mockTriggerSnackbar}
+        onError={mockOnError}
       />
     );
 
@@ -53,11 +68,10 @@ describe('FeedHeader', () => {
   it('displays the source type chip in the header', () => {
     renderWithRouter(
       <FeedHeader
-        feeds={[]}
         searchedFeed={mockFeed}
         onSelectFeed={vi.fn()}
-        feedsLoading={false}
         triggerSnackbar={mockTriggerSnackbar}
+        onError={mockOnError}
       />
     );
 
@@ -67,12 +81,11 @@ describe('FeedHeader', () => {
   it('shows source url link when sourceUrl is available', () => {
     renderWithRouter(
       <FeedHeader
-        feeds={[]}
         searchedFeed={mockFeed}
         onSelectFeed={vi.fn()}
-        feedsLoading={false}
         sourceUrl="https://test.example/source"
         triggerSnackbar={mockTriggerSnackbar}
+        onError={mockOnError}
       />
     );
 
@@ -86,12 +99,11 @@ describe('FeedHeader', () => {
   it('shows archive url link when archiveUrl is available', () => {
     renderWithRouter(
       <FeedHeader
-        feeds={[]}
         searchedFeed={mockFeed}
         onSelectFeed={vi.fn()}
-        feedsLoading={false}
         archiveUrl="https://test.example/archives"
         triggerSnackbar={mockTriggerSnackbar}
+        onError={mockOnError}
       />
     );
 
@@ -105,15 +117,14 @@ describe('FeedHeader', () => {
   it('does not render links when neither sourceUrl nor archiveUrl is supplied', () => {
     renderWithRouter(
       <FeedHeader
-        feeds={[]}
         searchedFeed={{
           ...mockFeed,
           sourceUrl: undefined,
           archiveUrl: undefined,
         }}
         onSelectFeed={vi.fn()}
-        feedsLoading={false}
         triggerSnackbar={mockTriggerSnackbar}
+        onError={mockOnError}
       />
     );
 
@@ -131,11 +142,10 @@ describe('FeedHeader', () => {
 
     renderWithRouter(
       <FeedHeader
-        feeds={[]}
         searchedFeed={mockFeed}
         onSelectFeed={vi.fn()}
-        feedsLoading={false}
         triggerSnackbar={mockTriggerSnackbar}
+        onError={mockOnError}
       />
     );
 
@@ -161,15 +171,14 @@ describe('FeedHeader', () => {
     try {
       renderWithRouter(
         <FeedHeader
-          feeds={[]}
           searchedFeed={mockFeed}
           onSelectFeed={vi.fn()}
-          feedsLoading={false}
           status="active"
           lastHeartbeat={new Date(
             fixedNow.getTime() - 5 * 60 * 1000
           ).toISOString()}
           triggerSnackbar={mockTriggerSnackbar}
+          onError={mockOnError}
         />
       );
 

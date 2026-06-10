@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import AppRegistrationIcon from '@mui/icons-material/AppRegistration';
 import Box from '@mui/material/Box';
@@ -101,17 +101,8 @@ export function FeedConfigurationView({
     refetchOnWindowFocus: false,
   });
 
-  const feeds = feedsData?.feeds ?? [];
+  const feeds = useMemo(() => feedsData?.feeds ?? [], [feedsData]);
   const feedTotal = feedsData?.total ?? 0;
-
-  const { data: allFeedData = { feeds: [], total: 0 } } = useQuery({
-    queryKey: ['listFeeds', token, '', [], 0, [], 0, [], 0],
-    queryFn: () => listFeeds(token!, {}),
-    enabled: !!token,
-    refetchOnWindowFocus: false,
-  });
-
-  const allFeeds = allFeedData.feeds;
 
   useEffect(() => {
     if (feedsError && feedsErrorHandled.current !== feedsError) {
@@ -121,6 +112,35 @@ export function FeedConfigurationView({
       }
     }
   }, [feedsError, onError]);
+
+  // TODO: https://linear.app/watchduty/issue/GOO-575 - Remove allFeeds once the tags are computed in the backend
+  const { data: allFeedData = { feeds: [], total: 0 } } = useQuery({
+    queryKey: ['listFeeds', token, '', [], 0, [], 0, [], 0],
+    queryFn: () => listFeeds(token!, {}),
+    enabled: !!token,
+    refetchOnWindowFocus: false,
+  });
+
+  const allFeeds = allFeedData.feeds;
+
+  // TODO: https://linear.app/watchduty/issue/GOO-575 - Provide filter tags in backend
+  const uniqueTagsForFilter = useMemo<{ key: string; value: string }[]>(() => {
+    const seen = new Set<string>();
+    const result: { key: string; value: string }[] = [];
+    const sourceFeeds = allFeeds || [];
+    sourceFeeds.forEach((feed) => {
+      feed.tags?.forEach((tag) => {
+        const identifier = `${tag.key}:${tag.value}`;
+        if (!seen.has(identifier)) {
+          seen.add(identifier);
+          result.push({ key: tag.key, value: tag.value });
+        }
+      });
+    });
+    return result.sort(
+      (a, b) => a.key.localeCompare(b.key) || a.value.localeCompare(b.value)
+    );
+  }, [allFeeds]);
 
   const resetForm = () => {
     setId('');
@@ -335,7 +355,7 @@ export function FeedConfigurationView({
         >
           <FeedTable
             feeds={feeds}
-            allFeeds={allFeeds}
+            tags={uniqueTagsForFilter}
             isLoading={feedsLoading}
             feedTotal={feedTotal}
             allowEdit
