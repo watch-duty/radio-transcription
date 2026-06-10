@@ -5,7 +5,13 @@ import Box from '@mui/material/Box';
 import Grid from '@mui/material/Grid';
 import Typography from '@mui/material/Typography';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { Feed, FeedCreate, FeedUpdate, Tag } from '@transcription/common';
+import type {
+  Feed,
+  FeedCreate,
+  FeedUpdate,
+  ListFeedsResponse,
+  Tag,
+} from '@transcription/common';
 import { SourceType } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
@@ -163,9 +169,16 @@ export function FeedConfigurationView({
     onSuccess: (_, feedId) => {
       triggerSnackbar('Feed deleted successfully!');
       setIsEditing(false);
-      queryClient.setQueriesData<Feed[]>(
+      queryClient.setQueriesData<ListFeedsResponse>(
         { queryKey: ['listFeeds', token] },
-        (oldFeeds) => (oldFeeds ? oldFeeds.filter((f) => f.id !== feedId) : [])
+        (oldData) => {
+          if (!oldData) return oldData;
+          const updatedFeeds = oldData.feeds.filter((f) => f.id !== feedId);
+          return {
+            feeds: updatedFeeds,
+            total: oldData.total - (oldData.feeds.length - updatedFeeds.length),
+          };
+        }
       );
       resetFormAndRefresh();
     },
