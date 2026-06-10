@@ -46,7 +46,7 @@ class TestAudioSegmentsAPI(unittest.TestCase):
         mock_segment = AudioSegment(
             id=_SEGMENT_ID,
             feed_id=_FEED_ID,
-            classification=AudioClassification.SPEECH_DETECTED,
+            classification=AudioClassification.SPEECH,
             start_timestamp=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
             end_timestamp=datetime.datetime(
                 2026, 1, 1, 0, 1, tzinfo=datetime.UTC
@@ -119,7 +119,7 @@ class TestAudioSegmentsAPI(unittest.TestCase):
         payload = {
             "id": _SEGMENT_ID,
             "feed_id": _FEED_ID,
-            "classification": "SPEECH_DETECTED",
+            "classification": "SPEECH",
             "start_timestamp": "2026-01-01T00:00:00Z",
             "end_timestamp": "2026-01-01T00:01:00Z",
             "missing_prior_context": False,
@@ -133,7 +133,7 @@ class TestAudioSegmentsAPI(unittest.TestCase):
         mock_segment = AudioSegment(
             id=_SEGMENT_ID,
             feed_id=_FEED_ID,
-            classification=AudioClassification.SPEECH_DETECTED,
+            classification=AudioClassification.SPEECH,
             start_timestamp=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
             end_timestamp=datetime.datetime(
                 2026, 1, 1, 0, 1, tzinfo=datetime.UTC

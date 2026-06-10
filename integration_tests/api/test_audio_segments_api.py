@@ -41,7 +41,7 @@ async def test_audio_segments_api_routes(
     segment_data = {
         "id": segment_id,
         "feed_id": feed_id,
-        "classification": "SPEECH_DETECTED",
+        "classification": "SPEECH",
         "start_timestamp": "2026-01-01T10:00:00Z",
         "end_timestamp": "2026-01-01T10:01:00Z",
         "missing_prior_context": False,
@@ -61,7 +61,7 @@ async def test_audio_segments_api_routes(
     created_segment = post_res.json()
     assert created_segment["id"] == segment_id
     assert created_segment["feed_id"] == feed_id
-    assert created_segment["classification"] == "SPEECH_DETECTED"
+    assert created_segment["classification"] == "SPEECH"
     assert created_segment["start_timestamp"].startswith("2026-01-01T10:00:00")
     assert created_segment["source_audio_uris"] == ["gs://bucket/audio1.ogg"]
 
