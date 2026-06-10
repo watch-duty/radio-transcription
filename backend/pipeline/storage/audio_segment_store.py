@@ -111,6 +111,7 @@ class AudioSegmentStore:
         start_audio_offset: datetime.timedelta | None = None,
         end_audio_offset: datetime.timedelta | None = None,
         playback_audio_uri: str | None = None,
+        external_audio_segment_id: str | None = None,
         *,
         missing_prior_context: bool,
         missing_post_context: bool,
@@ -143,6 +144,7 @@ class AudioSegmentStore:
                 start_audio_offset,
                 end_audio_offset,
                 playback_audio_uri,
+                external_audio_segment_id,
             )
         except asyncpg.exceptions.ForeignKeyViolationError as e:
             msg = f"Feed {feed_id} does not exist."

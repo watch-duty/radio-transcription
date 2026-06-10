@@ -44,7 +44,7 @@ async def test_segments(
     segment_no_alert = await store.create_audio_segment(
         segment_id=str(uuid.uuid4()),
         feed_id=str(feed_id),
-        classification=AudioClassification.SPEECH_DETECTED,
+        classification=AudioClassification.SPEECH,
         start_timestamp=ts1,
         end_timestamp=ts1 + datetime.timedelta(seconds=30),
         source_audio_uris=["gs://bucket/s1.ogg"],
@@ -66,7 +66,7 @@ async def test_segments(
     segment_no_transcript = await store.create_audio_segment(
         segment_id=str(uuid.uuid4()),
         feed_id=str(feed_id),
-        classification=AudioClassification.SPEECH_DETECTED,
+        classification=AudioClassification.SPEECH,
         start_timestamp=ts2,
         end_timestamp=ts2 + datetime.timedelta(seconds=30),
         source_audio_uris=["gs://bucket/s2.ogg"],
@@ -83,7 +83,7 @@ async def test_segments(
     segment_no_evaluation = await store.create_audio_segment(
         segment_id=str(uuid.uuid4()),
         feed_id=str(feed_id),
-        classification=AudioClassification.SPEECH_DETECTED,
+        classification=AudioClassification.SPEECH,
         start_timestamp=ts3,
         end_timestamp=ts3 + datetime.timedelta(seconds=30),
         source_audio_uris=["gs://bucket/s3.ogg"],
@@ -100,7 +100,7 @@ async def test_segments(
     segment_no_annotation = await store.create_audio_segment(
         segment_id=str(uuid.uuid4()),
         feed_id=str(feed_id),
-        classification=AudioClassification.SPEECH_DETECTED,
+        classification=AudioClassification.SPEECH,
         start_timestamp=ts4,
         end_timestamp=ts4 + datetime.timedelta(seconds=30),
         source_audio_uris=["gs://bucket/s4.ogg"],
@@ -112,7 +112,7 @@ async def test_segments(
     segment_has_alert = await store.create_audio_segment(
         segment_id=str(uuid.uuid4()),
         feed_id=str(feed_id),
-        classification=AudioClassification.SPEECH_DETECTED,
+        classification=AudioClassification.SPEECH,
         start_timestamp=ts5,
         end_timestamp=ts5 + datetime.timedelta(seconds=30),
         source_audio_uris=["gs://bucket/s5.ogg"],
@@ -152,7 +152,7 @@ async def test_create_and_list_audio_segments(
     segment = await store.create_audio_segment(
         segment_id=str(uuid.uuid4()),
         feed_id=str(feed_id),
-        classification=AudioClassification.SPEECH_DETECTED,
+        classification=AudioClassification.SPEECH,
         start_timestamp=start_time,
         end_timestamp=end_time,
         source_audio_uris=["gs://bucket/audio1.ogg"],
@@ -162,7 +162,7 @@ async def test_create_and_list_audio_segments(
 
     assert segment.id is not None
     assert segment.feed_id == str(feed_id)
-    assert segment.classification == AudioClassification.SPEECH_DETECTED
+    assert segment.classification == AudioClassification.SPEECH
     assert segment.start_timestamp == start_time
     assert segment.end_timestamp == end_time
     assert segment.source_audio_uris == ["gs://bucket/audio1.ogg"]
@@ -193,7 +193,7 @@ async def test_add_annotation(
     segment = await store.create_audio_segment(
         segment_id=str(uuid.uuid4()),
         feed_id=str(feed_id),
-        classification=AudioClassification.SPEECH_DETECTED,
+        classification=AudioClassification.SPEECH,
         start_timestamp=start_time,
         end_timestamp=end_time,
         source_audio_uris=["gs://bucket/audio1.ogg"],

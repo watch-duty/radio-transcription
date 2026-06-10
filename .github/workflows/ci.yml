@@ -158,6 +158,11 @@ jobs:
         run: uv sync
       - name: Generate Protobuf Python files
         run: mise run generate:protos
+      - name: Pre-pull Testcontainers images
+        run: |
+          docker pull testcontainers/ryuk:0.8.1 || true
+          docker pull google/alloydbomni:15 || true
+          docker pull fsouza/fake-gcs-server:latest || true
       - name: Run tests
         run: uv run python -m pytest backend/ -q
 
