@@ -37,6 +37,8 @@ INSERT INTO transcripts (
     evaluation_errors
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+ON CONFLICT (segment_id) DO UPDATE
+SET segment_id = transcripts.segment_id
 RETURNING
 """
     + TRANSCRIPT_COLUMNS_SQL
