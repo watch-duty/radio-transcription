@@ -1,4 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+
+import { jwtDecode } from 'jwt-decode';
 
 import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -14,6 +16,7 @@ const MAX_REFRESH_ATTEMPTS = 10; // Max attempts to refresh token
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [token, setToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const isRefreshingRef = useRef(false);
 
   /**
    * Effect which checks the user's session.
@@ -37,9 +40,43 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   /**
    * Effect which performs a silent refresh of the user's session.
    * Runs 10 minutes before the token expires.
+   * Also listens for visibility changes and window focus to refresh expired or soon-to-expire tokens.
    */
   useEffect(() => {
     if (!token) return;
+
+    const checkAndRefresh = async () => {
+      if (isRefreshingRef.current) return;
+      try {
+        const decoded = jwtDecode(token);
+        const isExpiredOrSoon = decoded.exp
+          ? decoded.exp * 1000 - Date.now() < 5 * 60 * 1000
+          : true;
+
+        if (isExpiredOrSoon) {
+          isRefreshingRef.current = true;
+          const newToken = await authSession();
+          setToken(newToken);
+        }
+      } catch (error) {
+        console.error(
+          'Failed to check/refresh token on visibility change/focus:',
+          error
+        );
+      } finally {
+        isRefreshingRef.current = false;
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        checkAndRefresh();
+      }
+    };
+
+    const handleFocus = () => {
+      checkAndRefresh();
+    };
 
     const refreshTimer = setTimeout(async () => {
       let refreshed = false;
@@ -60,7 +97,14 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       }
     }, REFRESH_TOKEN_INTERVAL);
 
-    return () => clearTimeout(refreshTimer);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      clearTimeout(refreshTimer);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+    };
   }, [token]);
 
   if (loading) {
