@@ -413,6 +413,20 @@ export function AudioDisplay({
     []
   );
 
+  // Scroll the transcript list to the clip at the window's right edge, so the
+  // clips on screen in the timeline stay in view in the list. Deduped so a drag
+  // (or scrub) that stays on one clip doesn't re-scroll the list each frame.
+  const notifyWindowPan = useCallback(
+    (end: number) => {
+      const segId = findRepresentativeSegmentId(end);
+      if (segId && segId !== lastPannedSegmentRef.current) {
+        lastPannedSegmentRef.current = segId;
+        onWindowPanRef.current?.(segId);
+      }
+    },
+    [findRepresentativeSegmentId]
+  );
+
   // Pick the clips inside the settled viewport (+ margin) and mount their
   // waveforms; warm their peaks. Runs on settle, not per scroll frame.
   const computeMounted = useCallback(() => {
@@ -565,14 +579,23 @@ export function AudioDisplay({
       );
       setWindowEndTime(end);
       setAnchor(end);
-      const segId = findRepresentativeSegmentId(end);
-      if (segId && segId !== lastPannedSegmentRef.current) {
-        lastPannedSegmentRef.current = segId;
-        onWindowPanRef.current?.(segId);
-      }
+      notifyWindowPan(end);
       scheduleMounted();
     });
-  }, [findRepresentativeSegmentId, scheduleMounted, setAnchor, syncIconLayer]);
+  }, [notifyWindowPan, scheduleMounted, setAnchor, syncIconLayer]);
+
+  // Mini-map scrub: move the window to the chosen center and scroll the list to
+  // match, so a click on the overview brings those clips into view in the list.
+  const handleMiniMapScrub = useCallback(
+    (center: number) => {
+      const end = center + windowDurationMs / 2;
+      goToWindowEnd(end);
+      const { minEnd, maxEnd } = stateRef.current;
+      if (minEnd == null || maxEnd == null) return;
+      notifyWindowPan(clamp(end, minEnd, maxEnd));
+    },
+    [windowDurationMs, goToWindowEnd, notifyWindowPan]
+  );
 
   // Keep the right edge pinned across data growth and zoom: follow the live edge
   // when not panned; otherwise hold the anchored end-time steady (so paging in
@@ -813,9 +836,7 @@ export function AudioDisplay({
           windowEndTime={windowEndTime}
           windowDurationMs={windowDurationMs}
           isDarkTheme={isDarkTheme}
-          onScrubToCenter={(center) =>
-            goToWindowEnd(center + windowDurationMs / 2)
-          }
+          onScrubToCenter={handleMiniMapScrub}
           onScrubbingChange={setIsScrubbing}
           onPrefetchWindow={prefetchWindowAt}
         />
