@@ -70,13 +70,13 @@ jobs:
         run: |
           docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run --rm integration-tests sh -c "pip install -q uv && uv sync && uv run python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto && uv run pytest integration_tests/ --ignore=integration_tests/storage/ -n auto -v -s --log-cli-level=INFO"
 
-      - name: Clean up containers
-        if: always()
-        run: docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env down --remove-orphans
-
       - name: Print container logs on failure
         if: failure()
         run: docker compose --env-file local_dev/LOCAL.env logs
+
+      - name: Clean up containers
+        if: always()
+        run: docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env down --remove-orphans
 
       - name: Open SSH session if workflow fails
         uses: mxschmitt/action-tmate@v3

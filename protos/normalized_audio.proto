@@ -65,5 +65,8 @@ message NormalizedAudio {
 
   // The classification of the audio segment (speech vs. non-speech).
   AudioClassification audio_classification = 14;
+
+  // The URI of the mono downmixed FLAC file optimized specifically for ephemeral ASR transcription inference.
+  optional string transcription_audio_uri = 16;
 }
 
