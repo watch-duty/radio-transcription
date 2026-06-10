@@ -242,6 +242,10 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         )
         self.assertTrue(flush_action.missing_prior_context)
         self.assertFalse(flush_action.missing_post_context)
+        self.assertEqual(
+            flush_action.audio_classification,
+            1,
+        )
 
     def test_process_speech_segments_avoids_overlap(self) -> None:
         """Verifies that _process_speech_segments avoids overlap by updating actual_start_ms."""
