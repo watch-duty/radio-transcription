@@ -21,7 +21,7 @@ interface FeedSearchViewProps {
   triggerSnackbar: (message: string) => void;
   onError: (error: Error, titleMessage?: string) => void;
   condensed?: boolean;
-  selectedFeedId?: string | null;
+  selectedFeed?: Feed | null;
   onFeedSelect?: (feedId: string) => void;
 }
 
@@ -34,6 +34,7 @@ interface CondensedFeedSearchResultsProps {
   filters: FeedFilters;
   onFiltersChange: (filters: FeedFilters) => void;
   feedsLoading: boolean;
+  feedTotal: number;
   onFeedSelect?: (feedId: string) => void;
 }
 
@@ -186,6 +187,7 @@ interface TableFeedSearchResultsProps {
   feeds: Feed[];
   tags: { key: string; value: string }[];
   feedsLoading: boolean;
+  feedTotal: number;
   filters: FeedFilters;
   onFiltersChange: (filters: FeedFilters) => void;
 }
@@ -195,6 +197,7 @@ function TableFeedSearchResults({
   feeds,
   tags,
   feedsLoading,
+  feedTotal,
   filters,
   onFiltersChange,
 }: TableFeedSearchResultsProps) {
@@ -212,6 +215,7 @@ function TableFeedSearchResults({
         title={title}
         feeds={feeds}
         tags={tags}
+        feedTotal={feedTotal}
         isLoading={feedsLoading}
         filters={filters}
         onFiltersChange={onFiltersChange}
@@ -224,7 +228,7 @@ export function FeedSearchView({
   title,
   onError,
   condensed = false,
-  selectedFeedId = null,
+  selectedFeed = null,
   onFeedSelect,
 }: FeedSearchViewProps) {
   const { token } = useAuth();
@@ -248,7 +252,7 @@ export function FeedSearchView({
   }, [filters.searchQuery]);
 
   const {
-    data: feeds,
+    data: feedData,
     error: feedsError,
     isLoading: feedsLoading,
   } = useQuery({
@@ -276,12 +280,17 @@ export function FeedSearchView({
     refetchInterval: FEED_REFETCH_INTERVAL_MS,
   });
 
-  const { data: allFeeds = [] } = useQuery({
+  const feeds = feedData?.feeds ?? [];
+  const feedTotal = feedData?.total ?? 0;
+
+  const { data: allFeedData = { feeds: [], total: 0 } } = useQuery({
     queryKey: ['listFeeds', token, '', [], 0, [], 0, [], 0],
     queryFn: () => listFeeds(token!, {}),
-    enabled: !!token,
+    enabled: !!token && !condensed,
     refetchOnWindowFocus: false,
   });
+
+  const allFeeds = allFeedData.feeds;
 
   useEffect(() => {
     if (feedsError) {
@@ -289,14 +298,10 @@ export function FeedSearchView({
     }
   }, [feedsError, onError]);
 
-  const selectedFeed: Feed | null = useMemo(() => {
-    return allFeeds.find((f) => f.id === selectedFeedId) || null;
-  }, [allFeeds, selectedFeedId]);
-
   const tags = useMemo<{ key: string; value: string }[]>(() => {
     const seen = new Set<string>();
     const uniqueTags: { key: string; value: string }[] = [];
-    const sourceFeeds = allFeeds || feeds || [];
+    const sourceFeeds = allFeeds.length > 0 ? allFeeds : feeds;
     sourceFeeds.forEach((feed) => {
       feed.tags?.forEach((tag) => {
         const identifier = `${tag.key}:${tag.value}`;
@@ -323,6 +328,7 @@ export function FeedSearchView({
         filters={filters}
         onFiltersChange={setFilters}
         feedsLoading={feedsLoading}
+        feedTotal={feedTotal}
         onFeedSelect={onFeedSelect}
       />
     );
@@ -334,6 +340,7 @@ export function FeedSearchView({
       feeds={feeds ?? []}
       tags={tags}
       feedsLoading={feedsLoading}
+      feedTotal={feedTotal}
       filters={filters}
       onFiltersChange={setFilters}
     />

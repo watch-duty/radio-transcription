@@ -3,6 +3,8 @@ import type { ComponentProps, HTMLAttributes } from 'react';
 import { Link as RouterLink } from 'react-router';
 import { TableVirtuoso } from 'react-virtuoso';
 
+import pluralize from 'pluralize';
+
 import ClearIcon from '@mui/icons-material/Clear';
 import EditIcon from '@mui/icons-material/Edit';
 import SearchIcon from '@mui/icons-material/Search';
@@ -45,6 +47,7 @@ export interface FeedTableProps {
   feeds: Feed[];
   tags: { key: string; value: string }[];
   isLoading: boolean;
+  feedTotal: number;
   allowEdit?: boolean;
   editingFeedId?: string;
   onEditFeed?: (feed: Feed) => void;
@@ -165,6 +168,7 @@ export function FeedTable({
   feeds,
   tags,
   isLoading,
+  feedTotal,
   allowEdit = false,
   editingFeedId,
   onEditFeed,
@@ -464,20 +468,13 @@ export function FeedTable({
               {title}
             </Typography>
           </Box>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            {sortFeeds.length !== feeds.length && (
-              <Typography variant="body2" color="text.secondary">
-                Showing {sortFeeds.length} of {feeds.length} feeds
-              </Typography>
-            )}
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ fontWeight: 500 }}
-            >
-              {feeds.length} Feeds
-            </Typography>
-          </Box>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ fontWeight: 500 }}
+          >
+            {!isLoading && `${feedTotal} ${pluralize('Feed', feedTotal)}`}
+          </Typography>
         </Box>
 
         <Box

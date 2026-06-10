@@ -92,15 +92,18 @@ describe('TranscriptView', () => {
       nextToken: undefined,
     });
     // Default mock for listFeeds to prevent errors on mount
-    vi.mocked(listFeeds).mockResolvedValue([
-      {
-        id: 'feed123',
-        name: 'Feed 123',
-        sourceType: SourceType.BCFY_FEEDS,
-        status: 'active' as FeedStatus,
-        substatus: 'active' as BackendFeedStatus,
-      },
-    ]);
+    vi.mocked(listFeeds).mockResolvedValue({
+      feeds: [
+        {
+          id: 'feed123',
+          name: 'Feed 123',
+          sourceType: SourceType.BCFY_FEEDS,
+          status: 'active' as FeedStatus,
+          substatus: 'active' as BackendFeedStatus,
+        },
+      ],
+      total: 1,
+    });
     // Default mock for getFeed
     vi.mocked(getFeed).mockResolvedValue({
       id: 'feed123',
@@ -269,16 +272,18 @@ describe('TranscriptView', () => {
   });
 
   it('loads feeds on mount', async () => {
-    const mockFeeds = [
-      {
-        id: 'feed1',
-        name: 'Feed 1',
-        sourceType: SourceType.BCFY_FEEDS,
-        status: 'active' as FeedStatus,
-        substatus: 'active' as BackendFeedStatus,
-      },
-    ];
-    vi.mocked(listFeeds).mockResolvedValueOnce(mockFeeds);
+    vi.mocked(listFeeds).mockResolvedValueOnce({
+      feeds: [
+        {
+          id: 'feed1',
+          name: 'Feed 1',
+          sourceType: SourceType.BCFY_FEEDS,
+          status: 'active' as FeedStatus,
+          substatus: 'active' as BackendFeedStatus,
+        },
+      ],
+      total: 1,
+    });
 
     renderTranscriptView(
       <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
@@ -323,18 +328,20 @@ describe('TranscriptView', () => {
   });
 
   it('displays source and archive links for the active feed', async () => {
-    const mockFeeds = [
-      {
-        id: 'feed123',
-        name: 'Feed 123',
-        sourceType: SourceType.BCFY_FEEDS,
-        status: 'active' as FeedStatus,
-        substatus: 'active' as BackendFeedStatus,
-        sourceUrl: 'https://partner.broadcastify.com/12345',
-        archiveUrl: 'https://www.broadcastify.com/archives/feed/12345',
-      },
-    ];
-    vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
+    vi.mocked(listFeeds).mockResolvedValue({
+      feeds: [
+        {
+          id: 'feed123',
+          name: 'Feed 123',
+          sourceType: SourceType.BCFY_FEEDS,
+          status: 'active' as FeedStatus,
+          substatus: 'active' as BackendFeedStatus,
+          sourceUrl: 'https://partner.broadcastify.com/12345',
+          archiveUrl: 'https://www.broadcastify.com/archives/feed/12345',
+        },
+      ],
+      total: 1,
+    });
     vi.mocked(listTranscripts).mockResolvedValueOnce({
       transcripts: mockTranscripts,
       nextToken: undefined,
