@@ -11,7 +11,10 @@ from google.cloud import pubsub_v1, storage
 from backend.pipeline.common.clients.audio_segments_client import (
     AudioSegmentsClient,
 )
-from backend.pipeline.common.constants import NANOS_PER_SECOND
+from backend.pipeline.common.constants import (
+    GCS_DOWNLOAD_TIMEOUT_SEC,
+    NANOS_PER_SECOND,
+)
 from backend.pipeline.common.storage import gcs_uploader
 from backend.pipeline.common.tracing_utils import with_tracer_context
 from backend.pipeline.normalization import audio_processor
@@ -198,13 +201,15 @@ class NormalizationEventProcessor:
         bucket_name = parsed_uri.netloc
         blob_name = parsed_uri.path.lstrip("/")
 
-        blob = self.gcs_client.bucket(bucket_name).get_blob(blob_name)
+        blob = self.gcs_client.bucket(bucket_name).get_blob(
+            blob_name, timeout=GCS_DOWNLOAD_TIMEOUT_SEC
+        )
         if not blob:
             err_msg = f"Raw audio staging object not found: {raw_audio_uri}"
             logger.error(err_msg)
             raise FileNotFoundError(err_msg)
 
-        return blob.download_as_bytes()
+        return blob.download_as_bytes(timeout=GCS_DOWNLOAD_TIMEOUT_SEC)
 
     def _persist_segment(
         self,
