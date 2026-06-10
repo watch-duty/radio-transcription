@@ -52,6 +52,13 @@ class ChunkMetadataProto(betterproto.Message):
         5, optional=True, group="_traceparent"
     )
     is_continuous: bool = betterproto.bool_field(6)
+    timestamp_ms: Optional[int] = betterproto.int64_field(
+        7, optional=True, group="_timestamp_ms"
+    )
+    """
+    True recording event timestamp of the incoming audio chunk in milliseconds
+    since epoch.
+    """
 
 
 @dataclass(eq=False, repr=False)

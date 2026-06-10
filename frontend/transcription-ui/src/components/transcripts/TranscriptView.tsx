@@ -188,7 +188,7 @@ export function TranscriptView({
   );
 
   const {
-    data: feeds,
+    data: feedsData,
     error: feedsError,
     isFetching: feedsFetching,
     isSuccess: isFeedsSuccess,
@@ -198,6 +198,8 @@ export function TranscriptView({
     enabled: !!token,
     refetchOnWindowFocus: false,
   });
+
+  const feeds = useMemo(() => feedsData?.feeds || [], [feedsData]);
 
   const { data: activeFeedData } = useQuery({
     queryKey: ['getFeed', token, searchedFeedId],
@@ -764,10 +766,8 @@ export function TranscriptView({
       }}
     >
       <FeedHeader
-        feeds={feeds || []}
         searchedFeed={searchedFeed}
         onSelectFeed={handleFeedSelect}
-        feedsLoading={feedsFetching}
         sourceUrl={sourceUrl}
         archiveUrl={archiveUrl}
         status={activeFeedData?.status ?? searchedFeed?.status}
@@ -775,6 +775,7 @@ export function TranscriptView({
           activeFeedData?.lastHeartbeat ?? searchedFeed?.lastHeartbeat
         }
         triggerSnackbar={triggerSnackbar}
+        onError={onError}
       />
 
       <Box

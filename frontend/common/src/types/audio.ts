@@ -1,6 +1,7 @@
 export enum AudioClassification {
-  SPEECH_DETECTED = 'SPEECH_DETECTED',
-  UNCLASSIFIED = 'UNCLASSIFIED',
+  UNSPECIFIED = 'UNSPECIFIED',
+  SPEECH = 'SPEECH',
+  OTHER = 'OTHER',
 }
 
 export enum AnnotationType {
@@ -37,6 +38,7 @@ export interface AudioSegment {
   startAudioOffset?: string;
   endAudioOffset?: string;
   playbackAudioUri?: string;
+  externalAudioSegmentId?: string;
   createdAt: string;
   annotations: Annotation[];
 }

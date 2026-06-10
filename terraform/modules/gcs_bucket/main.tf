@@ -35,6 +35,7 @@ resource "google_storage_bucket" "this" {
         with_state            = lifecycle_rule.value.condition.with_state
         num_newer_versions    = lifecycle_rule.value.condition.num_newer_versions
         matches_storage_class = lifecycle_rule.value.condition.matches_storage_class
+        matches_prefix        = lifecycle_rule.value.condition.matches_prefix
       }
     }
   }

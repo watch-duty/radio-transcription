@@ -11,7 +11,10 @@ from google.cloud import pubsub_v1, storage
 from backend.pipeline.common.clients.audio_segments_client import (
     AudioSegmentsClient,
 )
-from backend.pipeline.common.constants import NANOS_PER_SECOND
+from backend.pipeline.common.constants import (
+    GCS_DOWNLOAD_TIMEOUT_SEC,
+    NANOS_PER_SECOND,
+)
 from backend.pipeline.common.storage import gcs_uploader
 from backend.pipeline.common.tracing_utils import with_tracer_context
 from backend.pipeline.normalization import audio_processor
@@ -19,10 +22,17 @@ from backend.pipeline.schema_types.normalized_audio_pb2 import NormalizedAudio
 from backend.pipeline.schema_types.segmented_audio_pb2 import (
     SegmentedAudio,
 )
+from backend.services.audio_segments.models import AudioClassification
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_FFMPEG_TIMEOUT_SEC = 30
+
+_CLASSIFICATION_MAP = {
+    SegmentedAudio.AUDIO_CLASSIFICATION_UNSPECIFIED: AudioClassification.UNSPECIFIED,
+    SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH: AudioClassification.SPEECH,
+    SegmentedAudio.AUDIO_CLASSIFICATION_OTHER: AudioClassification.OTHER,
+}
 
 
 class NormalizationEventProcessor:
@@ -150,6 +160,21 @@ class NormalizationEventProcessor:
                 )
                 logger.info("Uploaded playback audio to %s", playback_audio_uri)
 
+                mono_flac_bytes = self.audio_processor.transcode_to_mono_flac(
+                    flac_bytes
+                )
+                mono_flac_path = f"ephemeral/transcription/{feed_id}/{dt:%Y/%m/%d}/{segment_id}.flac"
+                transcription_audio_uri = self.audio_uploader.upload_bytes(
+                    data=mono_flac_bytes,
+                    bucket_name=self.canonical_audio_bucket,
+                    destination_path=mono_flac_path,
+                    content_type="audio/flac",
+                )
+                logger.info(
+                    "Uploaded ephemeral transcription audio to %s",
+                    transcription_audio_uri,
+                )
+
                 # 4. Persist audio segment metadata record to AlloyDB database
                 self._persist_segment(
                     segmented_audio=segmented_audio,
@@ -163,6 +188,7 @@ class NormalizationEventProcessor:
                     segmented_audio=segmented_audio,
                     canonical_audio_uri=canonical_audio_uri,
                     playback_audio_uri=playback_audio_uri,
+                    transcription_audio_uri=transcription_audio_uri,
                     traceparent=traceparent,
                 )
 
@@ -182,13 +208,15 @@ class NormalizationEventProcessor:
         bucket_name = parsed_uri.netloc
         blob_name = parsed_uri.path.lstrip("/")
 
-        blob = self.gcs_client.bucket(bucket_name).get_blob(blob_name)
+        blob = self.gcs_client.bucket(bucket_name).get_blob(
+            blob_name, timeout=GCS_DOWNLOAD_TIMEOUT_SEC
+        )
         if not blob:
             err_msg = f"Raw audio staging object not found: {raw_audio_uri}"
             logger.error(err_msg)
             raise FileNotFoundError(err_msg)
 
-        return blob.download_as_bytes()
+        return blob.download_as_bytes(timeout=GCS_DOWNLOAD_TIMEOUT_SEC)
 
     def _persist_segment(
         self,
@@ -220,12 +248,10 @@ class NormalizationEventProcessor:
             + segmented_audio.end_audio_offset.nanos // 1000000
         )
 
-        classification_val = (
-            "SPEECH_DETECTED"
-            if segmented_audio.audio_classification
-            == SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH
-            else "UNCLASSIFIED"
-        )
+        classification_val = _CLASSIFICATION_MAP.get(
+            segmented_audio.audio_classification,
+            AudioClassification.UNSPECIFIED,
+        ).value
 
         segment_payload = {
             "id": segment_id,
@@ -242,6 +268,11 @@ class NormalizationEventProcessor:
             "end_audio_offset": end_offset_ms / 1000.0,
         }
 
+        if segmented_audio.external_audio_segment_id:
+            segment_payload["external_audio_segment_id"] = (
+                segmented_audio.external_audio_segment_id
+            )
+
         logger.info(
             "Saving audio segment %s record to database...",
             segment_id,
@@ -253,6 +284,7 @@ class NormalizationEventProcessor:
         segmented_audio: SegmentedAudio,
         canonical_audio_uri: str,
         playback_audio_uri: str,
+        transcription_audio_uri: str,
         traceparent: str,
     ) -> None:
         """Publishes the egress NormalizedAudio message downstream to Pub/Sub."""
@@ -275,6 +307,7 @@ class NormalizationEventProcessor:
             audio_classification=SegmentedAudio.AudioClassification.Name(
                 segmented_audio.audio_classification
             ),
+            transcription_audio_uri=transcription_audio_uri,
         )
 
         topic_name = self.output_topic.split("/")[-1]
