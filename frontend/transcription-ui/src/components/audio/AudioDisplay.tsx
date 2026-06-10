@@ -125,7 +125,6 @@ const TimelineClip = React.memo(
       >
         {renderWaveform ? (
           <WavesurferPlayer
-            url={clip.url}
             peaks={clip.peaks}
             duration={clip.duration}
             waveColor={theme.palette.text.secondary}
@@ -590,13 +589,33 @@ export function AudioDisplay({
   // match, so a click on the overview brings those clips into view in the list.
   const handleMiniMapScrub = useCallback(
     (center: number) => {
-      const end = center + windowDurationMs / 2;
-      goToWindowEnd(end);
-      const { minEnd, maxEnd } = stateRef.current;
+      const { minEnd, maxEnd, windowDurationMs, transcriptTimes } =
+        stateRef.current;
       if (minEnd == null || maxEnd == null) return;
+      let end = center + windowDurationMs / 2;
+      // Clicking in a gap between clip clusters yields an empty window (nothing
+      // to mount). Snap to the clip nearest the click so a scrub always lands on
+      // audio rather than blank space.
+      const winStart = end - windowDurationMs;
+      const windowHasClip = transcriptTimes.some(
+        (t) => t.startMs < end && t.endMs > winStart
+      );
+      if (!windowHasClip && transcriptTimes.length > 0) {
+        let nearest = transcriptTimes[0];
+        let best = Infinity;
+        for (const t of transcriptTimes) {
+          const d = Math.abs((t.startMs + t.endMs) / 2 - center);
+          if (d < best) {
+            best = d;
+            nearest = t;
+          }
+        }
+        end = (nearest.startMs + nearest.endMs) / 2 + windowDurationMs / 2;
+      }
+      goToWindowEnd(end);
       notifyWindowPan(clamp(end, minEnd, maxEnd));
     },
-    [windowDurationMs, goToWindowEnd, notifyWindowPan]
+    [goToWindowEnd, notifyWindowPan]
   );
 
   // Keep the right edge pinned across data growth and zoom: follow the live edge

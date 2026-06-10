@@ -27,8 +27,16 @@ import {
 } from './usePeaksDecodeQueue';
 
 vi.mock('@wavesurfer/react', () => ({
-  default: (props: { url: string }) => (
-    <div data-testid="wavesurfer-player" data-url={props.url} />
+  // Display-only: the player renders from cached peaks/duration, not a url.
+  default: (props: {
+    peaks?: (number[] | Float32Array)[];
+    duration?: number;
+  }) => (
+    <div
+      data-testid="wavesurfer-player"
+      data-peaks-len={props.peaks?.[0]?.length}
+      data-duration={props.duration}
+    />
   ),
 }));
 
@@ -372,7 +380,7 @@ describe('AudioDisplay', () => {
     });
   });
 
-  it('passes playbackAudioUri to WavesurferPlayer (transformed via getAudioUrl)', async () => {
+  it('renders the waveform from peaks cached under the getAudioUrl-transformed playbackAudioUri', async () => {
     const mockTranscripts: Transcript[] = [
       {
         segmentId: '1',
@@ -407,12 +415,12 @@ describe('AudioDisplay', () => {
     );
 
     // Waveforms mount lazily once the viewport settles after the initial scroll.
+    // The player only appears when peaks are found under the getAudioUrl key, so
+    // its presence (with peaks) proves the playbackAudioUri transform is the key.
     const wavesurfer = await screen.findByTestId('wavesurfer-player');
     expect(wavesurfer).toBeTruthy();
-    expect(wavesurfer.getAttribute('data-url')).toBe(
-      getAudioUrl(mockTranscripts[0].playbackAudioUri)
-    );
-    expect(wavesurfer.getAttribute('data-url')).toContain('.m4a');
+    expect(wavesurfer.getAttribute('data-peaks-len')).toBe('3');
+    expect(wavesurfer.getAttribute('data-duration')).toBe('1');
   });
 
   it('should render play button and call onTogglePlayPause when clicked', () => {
@@ -598,7 +606,7 @@ describe('AudioDisplay', () => {
     await waitFor(() => {
       const players = screen.getAllByTestId('wavesurfer-player');
       expect(players).toHaveLength(1);
-      expect(players[0].getAttribute('data-url')).toBe(getAudioUrl('live.m4a'));
+      expect(players[0].getAttribute('data-peaks-len')).toBe('3');
     });
   });
 });
