@@ -159,7 +159,7 @@ export function TranscriptView({
           onend: () => {
             const currentTranscripts = transcriptsRef.current;
             const currentIndex = currentTranscripts.findIndex(
-              (t) => t.segmentId === segmentId
+              (t) => t.id === segmentId
             );
             const hasNext = currentIndex > 0;
 
@@ -357,10 +357,10 @@ export function TranscriptView({
       listTranscriptsResponse?.pages.flatMap((page) => page.segments) ?? [];
     const seenIds = new Set<string>();
     const uniqueTranscripts = allTranscripts.filter((transcript) => {
-      if (seenIds.has(transcript.segmentId)) {
+      if (seenIds.has(transcript.id)) {
         return false;
       }
-      seenIds.add(transcript.segmentId);
+      seenIds.add(transcript.id);
       return true;
     });
     return uniqueTranscripts.sort(
@@ -381,12 +381,14 @@ export function TranscriptView({
     if (!playbackEndedForId) return;
 
     const currentIndex = transcripts.findIndex(
-      (t) => t.segmentId === playbackEndedForId
+      (t) => t.id === playbackEndedForId
     );
 
     if (currentIndex > 0) {
       const nextTranscript = transcripts[currentIndex - 1];
-      toggleAudio(nextTranscript.segmentId, nextTranscript.playbackAudioUri);
+      if (nextTranscript.playbackAudioUri) {
+        toggleAudio(nextTranscript.id, nextTranscript.playbackAudioUri);
+      }
     }
 
     setPlaybackEndedForId(null);
@@ -504,10 +506,10 @@ export function TranscriptView({
           // Filter out duplicates to prevent rendering issues if a transcript
           // was caught in both the initial fetch and the poll.
           const existingIds = new Set(
-            oldData.pages.flatMap((p) => p.transcripts.map((t) => t.segmentId))
+            oldData.pages.flatMap((p) => p.segments.map((t) => t.id))
           );
           const filteredNew = newTranscripts.filter(
-            (t) => !existingIds.has(t.segmentId)
+            (t) => !existingIds.has(t.id)
           );
 
           if (filteredNew.length === 0) return oldData;
@@ -577,7 +579,9 @@ export function TranscriptView({
         // Trigger the new audio to play if no audio is currently playing
         if (!isAudioPlaying && playLatestAudio) {
           const audioToPlay = cachedTranscripts[cachedTranscripts.length - 1];
-          toggleAudio(audioToPlay.segmentId, audioToPlay.playbackAudioUri);
+          if (audioToPlay.playbackAudioUri) {
+            toggleAudio(audioToPlay.id, audioToPlay.playbackAudioUri);
+          }
         }
       } catch (error) {
         console.error('Polling error:', error);
@@ -636,9 +640,7 @@ export function TranscriptView({
       transcripts.length > 0 &&
       !hasScrolledToTarget.current
     ) {
-      const index = transcripts.findIndex(
-        (t) => t.segmentId === targetSegmentId
-      );
+      const index = transcripts.findIndex((t) => t.id === targetSegmentId);
       if (index !== -1) {
         const timer = setTimeout(() => {
           virtuosoRef.current?.scrollToIndex({
@@ -654,7 +656,7 @@ export function TranscriptView({
   }, [isTranscriptsSuccess, targetSegmentId, transcripts]);
 
   const handleClipClick = (segmentId: string) => {
-    const index = transcripts.findIndex((t) => t.segmentId === segmentId);
+    const index = transcripts.findIndex((t) => t.id === segmentId);
     if (index !== -1) {
       virtuosoRef.current?.scrollToIndex({
         index,
@@ -668,14 +670,12 @@ export function TranscriptView({
   const handleTogglePlayPause = () => {
     const targetId = isAudioPlaying
       ? currentlyPlayingSegmentId || highlightedSegmentId
-      : highlightedSegmentId ||
-        currentlyPlayingSegmentId ||
-        transcripts[0]?.segmentId;
+      : highlightedSegmentId || currentlyPlayingSegmentId || transcripts[0]?.id;
     if (!targetId) return;
 
-    const transcript = transcripts.find((t) => t.segmentId === targetId);
-    if (transcript) {
-      toggleAudio(transcript.segmentId, transcript.playbackAudioUri);
+    const transcript = transcripts.find((t) => t.id === targetId);
+    if (transcript && transcript.playbackAudioUri) {
+      toggleAudio(transcript.id, transcript.playbackAudioUri);
     }
   };
 

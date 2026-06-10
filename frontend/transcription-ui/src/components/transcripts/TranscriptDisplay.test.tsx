@@ -5,16 +5,26 @@ import { VirtuosoMockContext } from 'react-virtuoso';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanup, render, screen } from '@testing-library/react';
-import type { Transcript } from '@transcription/common';
+import {
+  AnnotationType,
+  AudioClassification,
+  type AudioSegment,
+} from '@transcription/common';
 
+import { findTranscriptAnnotationData } from '../../utils/annotationUtils';
 import { TranscriptDisplay } from './TranscriptDisplay';
 
 vi.mock('./TranscriptRow', () => ({
-  default: (props: { transcript: Transcript; index: number }) => (
-    <div data-testid={`transcript-row-${props.index}`}>
-      {props.transcript.transcript}
-    </div>
-  ),
+  default: (props: { transcript: AudioSegment; index: number }) => {
+    const transcriptData = findTranscriptAnnotationData(
+      props.transcript.annotations
+    );
+    return (
+      <div data-testid={`transcript-row-${props.index}`}>
+        {transcriptData?.text ?? ''}
+      </div>
+    );
+  },
 }));
 
 describe('TranscriptDisplay', () => {
@@ -22,21 +32,31 @@ describe('TranscriptDisplay', () => {
     cleanup();
   });
 
-  const mockTranscripts: Transcript[] = [
+  const mockTranscripts: AudioSegment[] = [
     {
+      id: 'tx-1',
       feedId: 'feed123',
-      segmentId: 'tx-1',
-      transcript: 'Hello from component first',
-      canonicalAudioUri: 'gs://audio.flac',
-      playbackAudioUri: 'gs://audio.m4a',
+      classification: AudioClassification.SPEECH_DETECTED,
       startTimestamp: '2026-04-10T12:00:00Z',
       endTimestamp: '2026-04-10T12:00:05Z',
+      canonicalAudioUri: 'gs://audio.flac',
+      playbackAudioUri: 'gs://audio.m4a',
       missingPriorContext: false,
       missingPostContext: false,
       sourceAudioUris: [],
       startAudioOffset: '0s',
       endAudioOffset: '5s',
-      evaluationDecisions: [],
+      createdAt: '2026-04-10T12:00:00Z',
+      annotations: [
+        {
+          type: AnnotationType.TRANSCRIPT,
+          createdAt: '2026-04-10T12:00:00Z',
+          data: {
+            text: 'Hello from component first',
+            errors: [],
+          },
+        },
+      ],
     },
   ];
 

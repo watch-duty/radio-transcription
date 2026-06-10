@@ -10,7 +10,7 @@ export function findEvaluationAnnotationData(
 ): EvaluationAnnotationData | null {
   for (const annotation of annotations) {
     if (annotation.type === AnnotationType.EVALUATION) {
-      return annotation as unknown as EvaluationAnnotationData;
+      return annotation.data as EvaluationAnnotationData;
     }
   }
   return null;
@@ -21,7 +21,7 @@ export function findTranscriptAnnotationData(
 ): TranscriptAnnotationData | null {
   for (const annotation of annotations) {
     if (annotation.type === AnnotationType.TRANSCRIPT) {
-      return annotation as unknown as TranscriptAnnotationData;
+      return annotation.data as TranscriptAnnotationData;
     }
   }
   return null;

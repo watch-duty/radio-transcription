@@ -71,7 +71,12 @@ export function TranscriptRow({
 
   // Only show speech-detected audio segments in the transcript list
   if (transcript.classification !== AudioClassification.SPEECH_DETECTED) {
-    console.warn("Skipping audio segment", transcript.id, "classification", transcript.classification);
+    console.warn(
+      'Skipping audio segment',
+      transcript.id,
+      'classification',
+      transcript.classification
+    );
     return null;
   }
 
@@ -118,7 +123,7 @@ export function TranscriptRow({
         </ListItem>
       )}
       <ListItem
-        id={`transcript-${transcript.segmentId}`}
+        id={`transcript-${transcript.id}`}
         divider={index < totalTranscripts - 1}
         className="compactTable"
         sx={{
@@ -132,7 +137,7 @@ export function TranscriptRow({
             bgcolor: isHighlighted ? 'action.selected' : 'action.hover',
           },
         }}
-        onClick={() => onRowClick(transcript.segmentId)}
+        onClick={() => onRowClick(transcript.id)}
       >
         <Box
           sx={{
@@ -179,8 +184,8 @@ export function TranscriptRow({
           </Typography>
         </Box>
         <AudioPlayer
-          audioUri={transcript.playbackAudioUri}
-          segmentId={transcript.segmentId}
+          audioUri={transcript.playbackAudioUri ?? ''}
+          segmentId={transcript.id}
           onToggleAudio={onToggleAudio}
           isAudioPlaying={isAudioPlaying}
           currentlyPlayingSegmentId={currentlyPlayingSegmentId}
@@ -210,7 +215,9 @@ export function TranscriptRow({
                 }
               }}
               sx={{ cursor: 'copy' }}
-              disabled={!transcriptAnnotation || transcriptAnnotation.errors.length > 0}
+              disabled={
+                !transcriptAnnotation || transcriptAnnotation.errors.length > 0
+              }
             >
               <ContentCopyIcon fontSize="small" />
             </IconButton>
@@ -225,7 +232,7 @@ export function TranscriptRow({
                   window.location.origin + window.location.pathname
                 );
                 url.searchParams.set('feedId', transcript.feedId);
-                url.searchParams.set('segmentId', transcript.segmentId);
+                url.searchParams.set('segmentId', transcript.id);
                 url.searchParams.set(
                   'timestamp',
                   new Date(transcript.startTimestamp).getTime().toString()

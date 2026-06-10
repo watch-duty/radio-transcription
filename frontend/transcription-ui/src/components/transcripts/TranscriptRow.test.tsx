@@ -4,7 +4,11 @@ import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import type { Transcript } from '@transcription/common';
+import {
+  AnnotationType,
+  AudioClassification,
+  type AudioSegment,
+} from '@transcription/common';
 
 import TranscriptRow from './TranscriptRow';
 
@@ -22,20 +26,38 @@ vi.mock('../audio/AudioPlayer', () => ({
   ),
 }));
 
-const mockTranscript: Transcript = {
-  segmentId: 'tx-123',
+const mockTranscript: AudioSegment = {
+  id: 'tx-123',
   feedId: 'feed-123',
+  classification: AudioClassification.SPEECH_DETECTED,
   startTimestamp: '2026-04-15T16:00:00Z',
   endTimestamp: '2026-04-15T16:00:05Z',
   canonicalAudioUri: 'https://watchduty.example/audio.flac',
   playbackAudioUri: 'https://watchduty.example/audio.m4a',
-  transcript: 'This is a test transcription',
-  evaluationDecisions: ['rule-1'],
   missingPriorContext: false,
   missingPostContext: false,
   sourceAudioUris: ['https://watchduty.example/audio.flac'],
   startAudioOffset: '0',
   endAudioOffset: '0',
+  createdAt: '2026-04-15T16:00:00Z',
+  annotations: [
+    {
+      type: AnnotationType.TRANSCRIPT,
+      createdAt: '2026-04-15T16:00:00Z',
+      data: {
+        text: 'This is a test transcription',
+        errors: [],
+      },
+    },
+    {
+      type: AnnotationType.EVALUATION,
+      createdAt: '2026-04-15T16:00:00Z',
+      data: {
+        decisions: ['rule-1'],
+        errors: [],
+      },
+    },
+  ],
 };
 
 describe('TranscriptRow', () => {
@@ -187,9 +209,7 @@ describe('TranscriptRow', () => {
       </MemoryRouter>
     );
 
-    const audioPlayer = screen.getByTestId(
-      `audio-player-${mockTranscript.segmentId}`
-    );
+    const audioPlayer = screen.getByTestId(`audio-player-${mockTranscript.id}`);
     expect(audioPlayer).toBeTruthy();
     expect(audioPlayer.getAttribute('data-audio-uri')).toBe(
       mockTranscript.playbackAudioUri

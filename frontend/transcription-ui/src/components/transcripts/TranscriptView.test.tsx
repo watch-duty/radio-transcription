@@ -8,15 +8,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import {
+  AnnotationType,
+  AudioClassification,
+  type AudioSegment,
   type BackendFeedStatus,
   type FeedStatus,
   SourceType,
 } from '@transcription/common';
 
 import { getFeed } from '../../service/getFeed';
+import { listAudioSegments } from '../../service/listAudioSegments';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
-import { listTranscripts } from '../../service/listTranscripts';
 import { renderWithQueryClient } from '../../test/testUtils';
 import TranscriptView from './TranscriptView';
 
@@ -36,9 +39,56 @@ const renderTranscriptView = (
   );
 };
 
-// Mock the services
-vi.mock('../../service/listTranscripts', () => ({
-  listTranscripts: vi.fn(),
+function makeMockAudioSegment(
+  id: string,
+  feedId: string,
+  startTimestamp: string,
+  endTimestamp: string,
+  transcriptText: string,
+  playbackAudioUri: string,
+  evaluationDecisions: string[] = []
+): AudioSegment {
+  return {
+    id,
+    feedId,
+    classification: AudioClassification.SPEECH_DETECTED,
+    startTimestamp,
+    endTimestamp,
+    canonicalAudioUri: 'gs://bucket/audio.flac',
+    playbackAudioUri,
+    missingPriorContext: false,
+    missingPostContext: false,
+    sourceAudioUris: [],
+    startAudioOffset: '0s',
+    endAudioOffset: '5s',
+    createdAt: startTimestamp,
+    annotations: [
+      {
+        type: AnnotationType.TRANSCRIPT,
+        createdAt: startTimestamp,
+        data: {
+          text: transcriptText,
+          errors: [],
+        },
+      },
+      ...(evaluationDecisions.length > 0
+        ? [
+            {
+              type: AnnotationType.EVALUATION,
+              createdAt: startTimestamp,
+              data: {
+                decisions: evaluationDecisions,
+                errors: [],
+              },
+            },
+          ]
+        : []),
+    ],
+  };
+}
+
+vi.mock('../../service/listAudioSegments', () => ({
+  listAudioSegments: vi.fn(),
 }));
 
 vi.mock('../../service/listFeeds', () => ({
@@ -66,21 +116,15 @@ describe('TranscriptView', () => {
   const mockHandleError = vi.fn();
 
   const mockTranscripts = [
-    {
-      feedId: 'feed123',
-      segmentId: '1',
-      transcript: 'Hello',
-      canonicalAudioUri: 'gs:://foo.flac',
-      playbackAudioUri: 'gs:://foo.m4a',
-      startTimestamp: '2026-04-10T12:00:00Z',
-      endTimestamp: '2026-04-10T12:00:05Z',
-      missingPriorContext: false,
-      missingPostContext: false,
-      sourceAudioUris: ['gs:://foo.flac'],
-      startAudioOffset: '0s',
-      endAudioOffset: '5s',
-      evaluationDecisions: [],
-    },
+    makeMockAudioSegment(
+      '1',
+      'feed123',
+      '2026-04-10T12:00:00Z',
+      '2026-04-10T12:00:05Z',
+      'Hello',
+      'gs:://foo.m4a',
+      []
+    ),
   ];
 
   beforeEach(() => {
@@ -115,8 +159,8 @@ describe('TranscriptView', () => {
   });
 
   it('shows loading state when fetching', async () => {
-    vi.mocked(listTranscripts).mockResolvedValueOnce({
-      transcripts: [],
+    vi.mocked(listAudioSegments).mockResolvedValueOnce({
+      segments: [],
       nextToken: undefined,
     });
 
@@ -132,24 +176,18 @@ describe('TranscriptView', () => {
 
   it('renders transcripts when fetched', async () => {
     const mockTranscripts = [
-      {
-        feedId: 'feed123',
-        segmentId: '1',
-        transcript: 'Hello',
-        canonicalAudioUri: 'gs:://foo.flac',
-        playbackAudioUri: 'gs:://foo.m4a',
-        startTimestamp: '2026-04-10T12:00:00Z',
-        endTimestamp: '2026-04-10T12:00:05Z',
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: ['gs:://foo.flac'],
-        startAudioOffset: '0s',
-        endAudioOffset: '5s',
-        evaluationDecisions: [],
-      },
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Hello',
+        'gs:://foo.m4a',
+        []
+      ),
     ];
-    vi.mocked(listTranscripts).mockResolvedValueOnce({
-      transcripts: mockTranscripts,
+    vi.mocked(listAudioSegments).mockResolvedValueOnce({
+      segments: mockTranscripts,
       nextToken: undefined,
     });
 
@@ -165,55 +203,37 @@ describe('TranscriptView', () => {
 
   it('sorts transcripts in descending order based on startTimestamp', async () => {
     const mockUnsortedTranscripts = [
-      {
-        feedId: 'feed123',
-        segmentId: '1',
-        transcript: 'Oldest',
-        canonicalAudioUri: 'gs:://foo.flac',
-        playbackAudioUri: 'gs:://foo.m4a',
-        startTimestamp: '2026-04-10T12:00:00Z',
-        endTimestamp: '2026-04-10T12:00:05Z',
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: ['gs:://foo.flac'],
-        startAudioOffset: '0s',
-        endAudioOffset: '5s',
-        evaluationDecisions: [],
-      },
-      {
-        feedId: 'feed123',
-        segmentId: '3',
-        transcript: 'Newest',
-        canonicalAudioUri: 'gs:://foo.flac',
-        playbackAudioUri: 'gs:://foo.m4a',
-        startTimestamp: '2026-04-10T12:10:00Z',
-        endTimestamp: '2026-04-10T12:10:05Z',
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: ['gs:://foo.flac'],
-        startAudioOffset: '0s',
-        endAudioOffset: '5s',
-        evaluationDecisions: [],
-      },
-      {
-        feedId: 'feed123',
-        segmentId: '2',
-        transcript: 'Middle',
-        canonicalAudioUri: 'gs:://foo.flac',
-        playbackAudioUri: 'gs:://foo.m4a',
-        startTimestamp: '2026-04-10T12:05:00Z',
-        endTimestamp: '2026-04-10T12:05:05Z',
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: ['gs:://foo.flac'],
-        startAudioOffset: '0s',
-        endAudioOffset: '5s',
-        evaluationDecisions: [],
-      },
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Oldest',
+        'gs:://foo.m4a',
+        []
+      ),
+      makeMockAudioSegment(
+        '3',
+        'feed123',
+        '2026-04-10T12:10:00Z',
+        '2026-04-10T12:10:05Z',
+        'Newest',
+        'gs:://foo.m4a',
+        []
+      ),
+      makeMockAudioSegment(
+        '2',
+        'feed123',
+        '2026-04-10T12:05:00Z',
+        '2026-04-10T12:05:05Z',
+        'Middle',
+        'gs:://foo.m4a',
+        []
+      ),
     ];
 
-    vi.mocked(listTranscripts).mockResolvedValueOnce({
-      transcripts: mockUnsortedTranscripts,
+    vi.mocked(listAudioSegments).mockResolvedValueOnce({
+      segments: mockUnsortedTranscripts,
       nextToken: undefined,
     });
 
@@ -251,7 +271,9 @@ describe('TranscriptView', () => {
   });
 
   it('shows error message on failure', async () => {
-    vi.mocked(listTranscripts).mockRejectedValueOnce(new Error('Fetch failed'));
+    vi.mocked(listAudioSegments).mockRejectedValueOnce(
+      new Error('Fetch failed')
+    );
 
     renderTranscriptView(
       <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
@@ -302,8 +324,8 @@ describe('TranscriptView', () => {
   });
 
   it('shows no transcripts found message', async () => {
-    vi.mocked(listTranscripts).mockResolvedValueOnce({
-      transcripts: [],
+    vi.mocked(listAudioSegments).mockResolvedValueOnce({
+      segments: [],
       nextToken: undefined,
     });
 
@@ -330,8 +352,8 @@ describe('TranscriptView', () => {
       },
     ];
     vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
-    vi.mocked(listTranscripts).mockResolvedValueOnce({
-      transcripts: mockTranscripts,
+    vi.mocked(listAudioSegments).mockResolvedValueOnce({
+      segments: mockTranscripts,
       nextToken: undefined,
     });
 
@@ -348,25 +370,19 @@ describe('TranscriptView', () => {
 
   it('scrolls to highlighted transcript when segmentId is in search params', async () => {
     const mockTranscripts = [
-      {
-        feedId: 'feed123',
-        segmentId: 'target-id',
-        transcript: 'Hello target',
-        canonicalAudioUri: 'gs:://foo.flac',
-        playbackAudioUri: 'gs:://foo.m4a',
-        startTimestamp: '2026-04-10T12:00:00Z',
-        endTimestamp: '2026-04-10T12:00:05Z',
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: ['gs:://foo.flac'],
-        startAudioOffset: '0s',
-        endAudioOffset: '5s',
-        evaluationDecisions: [],
-      },
+      makeMockAudioSegment(
+        'target-id',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Hello target',
+        'gs:://foo.m4a',
+        []
+      ),
     ];
 
-    vi.mocked(listTranscripts).mockResolvedValueOnce({
-      transcripts: mockTranscripts,
+    vi.mocked(listAudioSegments).mockResolvedValueOnce({
+      segments: mockTranscripts,
       nextToken: undefined,
     });
 
@@ -381,32 +397,26 @@ describe('TranscriptView', () => {
     });
   });
 
-  it('passes correct params to listTranscripts when loading older transcripts', async () => {
+  it('passes correct params to listAudioSegments when loading older transcripts', async () => {
     const initialTranscripts = [
-      {
-        feedId: 'feed123',
-        segmentId: '1',
-        transcript: 'Transcript 1',
-        canonicalAudioUri: 'gs:://foo.flac',
-        playbackAudioUri: 'gs:://foo.m4a',
-        startTimestamp: '2026-04-10T12:00:00Z',
-        endTimestamp: '2026-04-10T12:00:05Z',
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: ['gs:://foo.flac'],
-        startAudioOffset: '0s',
-        endAudioOffset: '5s',
-        evaluationDecisions: [],
-      },
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Transcript 1',
+        'gs:://foo.m4a',
+        []
+      ),
     ];
 
-    vi.mocked(listTranscripts)
+    vi.mocked(listAudioSegments)
       .mockResolvedValueOnce({
-        transcripts: initialTranscripts,
+        segments: initialTranscripts,
         nextToken: 'next-token-123',
       })
       .mockResolvedValueOnce({
-        transcripts: [],
+        segments: [],
         nextToken: undefined,
       });
 
@@ -431,8 +441,8 @@ describe('TranscriptView', () => {
     fireEvent.click(loadMoreButton);
 
     await waitFor(() => {
-      expect(listTranscripts).toHaveBeenCalledTimes(2);
-      expect(listTranscripts).toHaveBeenLastCalledWith(
+      expect(listAudioSegments).toHaveBeenCalledTimes(2);
+      expect(listAudioSegments).toHaveBeenLastCalledWith(
         'feed123',
         'fake-token',
         undefined,
@@ -445,33 +455,27 @@ describe('TranscriptView', () => {
     });
   });
 
-  it('passes correct params to listTranscripts when loading newer transcripts', async () => {
+  it('passes correct params to listAudioSegments when loading newer transcripts', async () => {
     const testTimestamp = new Date('2026-04-10T12:00:00Z').getTime();
     const initialTranscripts = [
-      {
-        feedId: 'feed123',
-        segmentId: '1',
-        transcript: 'Transcript 1',
-        canonicalAudioUri: 'gs:://foo.flac',
-        playbackAudioUri: 'gs:://foo.m4a',
-        startTimestamp: '2026-04-10T12:00:00Z',
-        endTimestamp: '2026-04-10T12:00:05Z',
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: ['gs:://foo.flac'],
-        startAudioOffset: '0s',
-        endAudioOffset: '5s',
-        evaluationDecisions: [],
-      },
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Transcript 1',
+        'gs:://foo.m4a',
+        []
+      ),
     ];
 
-    vi.mocked(listTranscripts)
+    vi.mocked(listAudioSegments)
       .mockResolvedValueOnce({
-        transcripts: initialTranscripts,
+        segments: initialTranscripts,
         nextToken: 'next-token-newer',
       })
       .mockResolvedValueOnce({
-        transcripts: [],
+        segments: [],
         nextToken: undefined,
       });
 
@@ -490,8 +494,8 @@ describe('TranscriptView', () => {
     fireEvent.click(loadNewerButton);
 
     await waitFor(() => {
-      expect(listTranscripts).toHaveBeenCalledTimes(2);
-      expect(listTranscripts).toHaveBeenLastCalledWith(
+      expect(listAudioSegments).toHaveBeenCalledTimes(2);
+      expect(listAudioSegments).toHaveBeenLastCalledWith(
         'feed123',
         'fake-token',
         undefined,
@@ -504,44 +508,43 @@ describe('TranscriptView', () => {
     });
   });
 
-  it('passes correct params to listTranscripts when loading newer transcripts with alerts filter active', async () => {
+  it('passes correct params to listAudioSegments when loading newer transcripts with alerts filter active', async () => {
     const testTimestamp = new Date('2026-04-10T12:00:00Z').getTime();
     const initialTranscripts = [
-      {
-        feedId: 'feed123',
-        segmentId: '1',
-        transcript: 'Transcript 1 (Alert)',
-        canonicalAudioUri: 'gs:://foo.flac',
-        playbackAudioUri: 'gs:://foo.m4a',
-        startTimestamp: '2026-04-10T12:00:00Z',
-        endTimestamp: '2026-04-10T12:00:05Z',
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: ['gs:://foo.flac'],
-        startAudioOffset: '0s',
-        endAudioOffset: '5s',
-        evaluationDecisions: ['Rule A'],
-      },
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Transcript 1 (Alert)',
+        'gs:://foo.m4a',
+        ['Rule A']
+      ),
     ];
 
     const alertTranscripts = [
-      {
-        ...initialTranscripts[0],
-        transcript: 'Transcript 2 (Alert only)',
-      },
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Transcript 2 (Alert only)',
+        'gs:://foo.m4a',
+        ['Rule A']
+      ),
     ];
 
-    vi.mocked(listTranscripts)
+    vi.mocked(listAudioSegments)
       .mockResolvedValueOnce({
-        transcripts: initialTranscripts,
+        segments: initialTranscripts,
         nextToken: undefined,
       })
       .mockResolvedValueOnce({
-        transcripts: alertTranscripts,
+        segments: alertTranscripts,
         nextToken: 'next-token-alert-newer',
       })
       .mockResolvedValueOnce({
-        transcripts: [],
+        segments: [],
         nextToken: undefined,
       });
 
@@ -582,8 +585,8 @@ describe('TranscriptView', () => {
     fireEvent.click(loadNewerButton);
 
     await waitFor(() => {
-      expect(listTranscripts).toHaveBeenCalledTimes(3);
-      expect(listTranscripts).toHaveBeenLastCalledWith(
+      expect(listAudioSegments).toHaveBeenCalledTimes(3);
+      expect(listAudioSegments).toHaveBeenLastCalledWith(
         'feed123',
         'fake-token',
         undefined,
@@ -600,48 +603,36 @@ describe('TranscriptView', () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
     const initialTranscripts = [
-      {
-        feedId: 'feed123',
-        segmentId: '1',
-        transcript: 'Transcript 1',
-        canonicalAudioUri: 'gs:://foo.flac',
-        playbackAudioUri: 'gs:://foo.m4a',
-        startTimestamp: '2026-04-10T12:00:00Z',
-        endTimestamp: '2026-04-10T12:00:05Z',
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: ['gs:://foo.flac'],
-        startAudioOffset: '0s',
-        endAudioOffset: '5s',
-        evaluationDecisions: [],
-      },
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Transcript 1',
+        'gs:://foo.m4a',
+        []
+      ),
     ];
 
     const newerTranscripts = [
-      {
-        feedId: 'feed123',
-        segmentId: '2',
-        transcript: 'Newer Transcript',
-        canonicalAudioUri: 'gs:://foo.flac',
-        playbackAudioUri: 'gs:://foo.m4a',
-        startTimestamp: '2026-04-10T12:05:00Z',
-        endTimestamp: '2026-04-10T12:05:05Z',
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: ['gs:://foo.flac'],
-        startAudioOffset: '0s',
-        endAudioOffset: '5s',
-        evaluationDecisions: [],
-      },
+      makeMockAudioSegment(
+        '2',
+        'feed123',
+        '2026-04-10T12:05:00Z',
+        '2026-04-10T12:05:05Z',
+        'Newer Transcript',
+        'gs:://foo.m4a',
+        []
+      ),
     ];
 
-    vi.mocked(listTranscripts)
+    vi.mocked(listAudioSegments)
       .mockResolvedValueOnce({
-        transcripts: initialTranscripts,
+        segments: initialTranscripts,
         nextToken: undefined,
       })
       .mockResolvedValueOnce({
-        transcripts: newerTranscripts,
+        segments: newerTranscripts,
         nextToken: undefined,
       });
 
@@ -664,7 +655,7 @@ describe('TranscriptView', () => {
     vi.advanceTimersByTime(15000);
 
     await waitFor(() => {
-      expect(listTranscripts).toHaveBeenCalledTimes(2);
+      expect(listAudioSegments).toHaveBeenCalledTimes(2);
       expect(screen.getByText('Newer Transcript')).toBeTruthy();
     });
 
@@ -674,8 +665,8 @@ describe('TranscriptView', () => {
   it('polls for feed status in background', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
-    vi.mocked(listTranscripts).mockResolvedValue({
-      transcripts: [],
+    vi.mocked(listAudioSegments).mockResolvedValue({
+      segments: [],
       nextToken: undefined,
     });
 
@@ -718,8 +709,8 @@ describe('TranscriptView', () => {
       lastHeartbeat: new Date(fixedNow.getTime() - 5 * 60 * 1000).toISOString(),
     };
     vi.mocked(getFeed).mockResolvedValue(mockFeed);
-    vi.mocked(listTranscripts).mockResolvedValue({
-      transcripts: mockTranscripts,
+    vi.mocked(listAudioSegments).mockResolvedValue({
+      segments: mockTranscripts,
       nextToken: undefined,
     });
 
@@ -748,48 +739,36 @@ describe('TranscriptView', () => {
     const playSpy = vi.spyOn(Howl.prototype, 'play');
 
     const initialTranscripts = [
-      {
-        feedId: 'feed123',
-        segmentId: '1',
-        transcript: 'Transcript 1',
-        canonicalAudioUri: 'gs:://foo.flac',
-        playbackAudioUri: 'gs:://foo.m4a',
-        startTimestamp: '2026-04-10T12:00:00Z',
-        endTimestamp: '2026-04-10T12:00:05Z',
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: ['gs:://foo.flac'],
-        startAudioOffset: '0s',
-        endAudioOffset: '5s',
-        evaluationDecisions: [],
-      },
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Transcript 1',
+        'gs:://foo.m4a',
+        []
+      ),
     ];
 
     const newerTranscripts = [
-      {
-        feedId: 'feed123',
-        segmentId: '2',
-        transcript: 'Newer Transcript 1',
-        canonicalAudioUri: 'gs:://foo.flac',
-        playbackAudioUri: 'gs:://foo.m4a',
-        startTimestamp: '2026-04-10T12:05:00Z',
-        endTimestamp: '2026-04-10T12:05:05Z',
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: ['gs:://foo.flac'],
-        startAudioOffset: '0s',
-        endAudioOffset: '5s',
-        evaluationDecisions: [],
-      },
+      makeMockAudioSegment(
+        '2',
+        'feed123',
+        '2026-04-10T12:05:00Z',
+        '2026-04-10T12:05:05Z',
+        'Newer Transcript 1',
+        'gs:://foo.m4a',
+        []
+      ),
     ];
 
-    vi.mocked(listTranscripts)
+    vi.mocked(listAudioSegments)
       .mockResolvedValueOnce({
-        transcripts: initialTranscripts,
+        segments: initialTranscripts,
         nextToken: undefined,
       })
       .mockResolvedValueOnce({
-        transcripts: newerTranscripts,
+        segments: newerTranscripts,
         nextToken: undefined,
       });
 
@@ -827,48 +806,36 @@ describe('TranscriptView', () => {
     const playSpy = vi.spyOn(Howl.prototype, 'play');
 
     const initialTranscripts = [
-      {
-        feedId: 'feed123',
-        segmentId: '1',
-        transcript: 'Transcript 1',
-        canonicalAudioUri: 'gs:://foo.flac',
-        playbackAudioUri: 'gs:://foo.m4a',
-        startTimestamp: '2026-04-10T12:00:00Z',
-        endTimestamp: '2026-04-10T12:00:05Z',
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: ['gs:://foo.flac'],
-        startAudioOffset: '0s',
-        endAudioOffset: '5s',
-        evaluationDecisions: [],
-      },
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Transcript 1',
+        'gs:://foo.m4a',
+        []
+      ),
     ];
 
     const newerTranscripts = [
-      {
-        feedId: 'feed123',
-        segmentId: '2',
-        transcript: 'Newer Transcript 1',
-        canonicalAudioUri: 'gs:://foo.flac',
-        playbackAudioUri: 'gs:://foo.m4a',
-        startTimestamp: '2026-04-10T12:05:00Z',
-        endTimestamp: '2026-04-10T12:05:05Z',
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: ['gs:://foo.flac'],
-        startAudioOffset: '0s',
-        endAudioOffset: '5s',
-        evaluationDecisions: [],
-      },
+      makeMockAudioSegment(
+        '2',
+        'feed123',
+        '2026-04-10T12:05:00Z',
+        '2026-04-10T12:05:05Z',
+        'Newer Transcript 1',
+        'gs:://foo.m4a',
+        []
+      ),
     ];
 
-    vi.mocked(listTranscripts)
+    vi.mocked(listAudioSegments)
       .mockResolvedValueOnce({
-        transcripts: initialTranscripts,
+        segments: initialTranscripts,
         nextToken: undefined,
       })
       .mockResolvedValueOnce({
-        transcripts: newerTranscripts,
+        segments: newerTranscripts,
         nextToken: undefined,
       });
 
@@ -899,8 +866,8 @@ describe('TranscriptView', () => {
   });
 
   it('applies the isAlert filter when selected in the dropdown', async () => {
-    vi.mocked(listTranscripts).mockResolvedValue({
-      transcripts: [],
+    vi.mocked(listAudioSegments).mockResolvedValue({
+      segments: [],
       nextToken: undefined,
     });
 
@@ -911,7 +878,7 @@ describe('TranscriptView', () => {
 
     // Default load should have been triggered on mount due to feedId param
     await waitFor(() => {
-      expect(listTranscripts).toHaveBeenCalledWith(
+      expect(listAudioSegments).toHaveBeenCalledWith(
         'feed123',
         expect.any(String),
         undefined,
@@ -942,7 +909,7 @@ describe('TranscriptView', () => {
 
     // React query should refetch transcripts using the isAlert filter
     await waitFor(() => {
-      expect(listTranscripts).toHaveBeenLastCalledWith(
+      expect(listAudioSegments).toHaveBeenLastCalledWith(
         'feed123',
         expect.any(String),
         undefined,
@@ -958,30 +925,24 @@ describe('TranscriptView', () => {
   it('does not set timestamp in query/params when toggling alerts filter', async () => {
     const testTimestampString = '2026-04-10T12:00:00Z';
     const initialTranscripts = [
-      {
-        feedId: 'feed123',
-        segmentId: '1',
-        transcript: 'Transcript 1',
-        canonicalAudioUri: 'gs:://foo.flac',
-        playbackAudioUri: 'gs:://foo.m4a',
-        startTimestamp: testTimestampString,
-        endTimestamp: '2026-04-10T12:00:05Z',
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: ['gs:://foo.flac'],
-        startAudioOffset: '0s',
-        endAudioOffset: '5s',
-        evaluationDecisions: [],
-      },
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        testTimestampString,
+        new Date(new Date(testTimestampString).getTime() + 5000).toISOString(),
+        'Transcript 1',
+        'gs:://foo.m4a',
+        []
+      ),
     ];
 
-    vi.mocked(listTranscripts)
+    vi.mocked(listAudioSegments)
       .mockResolvedValueOnce({
-        transcripts: initialTranscripts,
+        segments: initialTranscripts,
         nextToken: undefined,
       })
       .mockResolvedValueOnce({
-        transcripts: [],
+        segments: [],
         nextToken: undefined,
       });
 
@@ -1013,8 +974,8 @@ describe('TranscriptView', () => {
 
     // React query should refetch transcripts using the isAlert filter and undefined for timestamps
     await waitFor(() => {
-      expect(listTranscripts).toHaveBeenCalledTimes(2);
-      expect(listTranscripts).toHaveBeenLastCalledWith(
+      expect(listAudioSegments).toHaveBeenCalledTimes(2);
+      expect(listAudioSegments).toHaveBeenLastCalledWith(
         'feed123',
         expect.any(String),
         undefined,
@@ -1030,25 +991,19 @@ describe('TranscriptView', () => {
   it('clears the timestamp filter when clicking Jump to live', async () => {
     const testTimestamp = new Date('2026-04-10T12:00:00Z').getTime();
     const initialTranscripts = [
-      {
-        feedId: 'feed123',
-        segmentId: '1',
-        transcript: 'Transcript 1',
-        canonicalAudioUri: 'gs:://foo.flac',
-        playbackAudioUri: 'gs:://foo.m4a',
-        startTimestamp: '2026-04-10T12:00:00Z',
-        endTimestamp: '2026-04-10T12:00:05Z',
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: ['gs:://foo.flac'],
-        startAudioOffset: '0s',
-        endAudioOffset: '5s',
-        evaluationDecisions: [],
-      },
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Transcript 1',
+        'gs:://foo.m4a',
+        []
+      ),
     ];
 
-    vi.mocked(listTranscripts).mockResolvedValue({
-      transcripts: initialTranscripts,
+    vi.mocked(listAudioSegments).mockResolvedValue({
+      segments: initialTranscripts,
       nextToken: 'next-token-newer',
     });
 
@@ -1069,7 +1024,7 @@ describe('TranscriptView', () => {
     fireEvent.click(jumpToLiveButton);
 
     await waitFor(() => {
-      expect(listTranscripts).toHaveBeenLastCalledWith(
+      expect(listAudioSegments).toHaveBeenLastCalledWith(
         'feed123',
         'fake-token',
         undefined,

@@ -169,7 +169,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
           const transcript = transcripts[index];
           return (
             <TranscriptRow
-              key={transcript.segmentId}
+              key={transcript.id}
               transcript={transcript}
               index={index}
               totalTranscripts={transcripts.length}
@@ -180,7 +180,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
               currentlyPlayingSegmentId={currentlyPlayingSegmentId}
               triggerSnackbar={triggerSnackbar}
               showHeader={false}
-              isHighlighted={transcript.segmentId === highlightedSegmentId}
+              isHighlighted={transcript.id === highlightedSegmentId}
               redactTranscripts={redactTranscripts}
               onRowClick={onRowClick}
             />

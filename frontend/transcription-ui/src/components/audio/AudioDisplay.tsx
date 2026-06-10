@@ -16,7 +16,7 @@ import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { CustomAlertIcon } from '../common/AlertIcon';
 
 interface AudioDisplayProps {
-  transcripts: Transcript[];
+  transcripts: AudioSegment[];
   currentlyPlayingSegmentId: string | null;
   highlightedSegmentId: string | null;
   onClipClick: (segmentId: string) => void;
@@ -158,7 +158,7 @@ export function AudioDisplay({
   }, [userDuration]);
 
   const firstTranscript = transcripts[0];
-  const firstTranscriptId = firstTranscript?.segmentId || null;
+  const firstTranscriptId = firstTranscript?.id || null;
   const firstTranscriptEndTimestamp = firstTranscript?.endTimestamp || null;
 
   // Reset windowEndTime when first transcript changes
@@ -186,9 +186,7 @@ export function AudioDisplay({
 
     const targetId = highlightedSegmentId || playingId;
     if (targetId) {
-      const targetTranscript = transcripts.find(
-        (t) => t.segmentId === targetId
-      );
+      const targetTranscript = transcripts.find((t) => t.id === targetId);
       if (targetTranscript) {
         const tStart = new Date(targetTranscript.startTimestamp).getTime();
         const tEnd = new Date(targetTranscript.endTimestamp).getTime();
@@ -248,13 +246,13 @@ export function AudioDisplay({
           t.annotations
         );
         return {
-          id: t.segmentId,
+          id: t.id,
           url,
           left,
           width,
-          isAudioPlaying: t.segmentId === currentlyPlayingSegmentId,
-          isHighlighted: t.segmentId === highlightedSegmentId,
-          hasAlert: t.evaluationDecisions && t.evaluationDecisions.length > 0,
+          isAudioPlaying: t.id === currentlyPlayingSegmentId,
+          isHighlighted: t.id === highlightedSegmentId,
+          hasAlert: evaluationAnnotation !== null,
         };
       });
 
