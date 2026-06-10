@@ -150,6 +150,21 @@ class NormalizationEventProcessor:
                 )
                 logger.info("Uploaded playback audio to %s", playback_audio_uri)
 
+                mono_flac_bytes = self.audio_processor.transcode_to_mono_flac(
+                    flac_bytes
+                )
+                mono_flac_path = f"ephemeral/transcription/{feed_id}/{dt:%Y/%m/%d}/{segment_id}.flac"
+                transcription_audio_uri = self.audio_uploader.upload_bytes(
+                    data=mono_flac_bytes,
+                    bucket_name=self.canonical_audio_bucket,
+                    destination_path=mono_flac_path,
+                    content_type="audio/flac",
+                )
+                logger.info(
+                    "Uploaded ephemeral transcription audio to %s",
+                    transcription_audio_uri,
+                )
+
                 # 4. Persist audio segment metadata record to AlloyDB database
                 self._persist_segment(
                     segmented_audio=segmented_audio,
@@ -163,6 +178,7 @@ class NormalizationEventProcessor:
                     segmented_audio=segmented_audio,
                     canonical_audio_uri=canonical_audio_uri,
                     playback_audio_uri=playback_audio_uri,
+                    transcription_audio_uri=transcription_audio_uri,
                     traceparent=traceparent,
                 )
 
@@ -253,6 +269,7 @@ class NormalizationEventProcessor:
         segmented_audio: SegmentedAudio,
         canonical_audio_uri: str,
         playback_audio_uri: str,
+        transcription_audio_uri: str,
         traceparent: str,
     ) -> None:
         """Publishes the egress NormalizedAudio message downstream to Pub/Sub."""
@@ -275,6 +292,7 @@ class NormalizationEventProcessor:
             audio_classification=SegmentedAudio.AudioClassification.Name(
                 segmented_audio.audio_classification
             ),
+            transcription_audio_uri=transcription_audio_uri,
         )
 
         topic_name = self.output_topic.split("/")[-1]

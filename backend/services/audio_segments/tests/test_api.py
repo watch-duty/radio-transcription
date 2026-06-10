@@ -117,6 +117,7 @@ class TestAudioSegmentsAPI(unittest.TestCase):
     def test_create_audio_segment_success(self) -> None:
         """Test creating an audio segment successfully."""
         payload = {
+            "id": _SEGMENT_ID,
             "feed_id": _FEED_ID,
             "classification": "SPEECH_DETECTED",
             "start_timestamp": "2026-01-01T00:00:00Z",

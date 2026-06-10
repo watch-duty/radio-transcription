@@ -177,8 +177,11 @@ class AudioStitchingStateMachine:
             ),
             missing_prior_context=ctx.missing_prior_context,
             missing_post_context=missing_post_context,
-            start_audio_offset_ms=ctx.start_audio_offset_ms,
-            end_audio_offset_ms=end_ms - ctx.buffer_start_time_ms,
+            start_audio_offset_ms=max(0, ctx.start_audio_offset_ms or 0),
+            end_audio_offset_ms=max(
+                0,
+                min(ctx.buffer_duration_ms, end_ms - ctx.buffer_start_time_ms),
+            ),
             clear_state=True,
             isolated_audio_buffer=[],
             speech_segments=ctx.speech_segments.copy(),

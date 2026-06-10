@@ -42,6 +42,7 @@ async def test_segments(
 
     # Segment 1: No alert (evaluation with empty decisions, and transcript)
     segment_no_alert = await store.create_audio_segment(
+        segment_id=str(uuid.uuid4()),
         feed_id=str(feed_id),
         classification=AudioClassification.SPEECH_DETECTED,
         start_timestamp=ts1,
@@ -63,6 +64,7 @@ async def test_segments(
 
     # Segment 2: Has evaluation with decision, but no transcript
     segment_no_transcript = await store.create_audio_segment(
+        segment_id=str(uuid.uuid4()),
         feed_id=str(feed_id),
         classification=AudioClassification.SPEECH_DETECTED,
         start_timestamp=ts2,
@@ -79,6 +81,7 @@ async def test_segments(
 
     # Segment 3: Has transcript, but no evaluation
     segment_no_evaluation = await store.create_audio_segment(
+        segment_id=str(uuid.uuid4()),
         feed_id=str(feed_id),
         classification=AudioClassification.SPEECH_DETECTED,
         start_timestamp=ts3,
@@ -95,6 +98,7 @@ async def test_segments(
 
     # Segment 4: No annotations
     segment_no_annotation = await store.create_audio_segment(
+        segment_id=str(uuid.uuid4()),
         feed_id=str(feed_id),
         classification=AudioClassification.SPEECH_DETECTED,
         start_timestamp=ts4,
@@ -106,6 +110,7 @@ async def test_segments(
 
     # Segment 5: Has alert (transcript and evaluation with decisions)
     segment_has_alert = await store.create_audio_segment(
+        segment_id=str(uuid.uuid4()),
         feed_id=str(feed_id),
         classification=AudioClassification.SPEECH_DETECTED,
         start_timestamp=ts5,
@@ -145,6 +150,7 @@ async def test_create_and_list_audio_segments(
 
     # 1. Create
     segment = await store.create_audio_segment(
+        segment_id=str(uuid.uuid4()),
         feed_id=str(feed_id),
         classification=AudioClassification.SPEECH_DETECTED,
         start_timestamp=start_time,
@@ -185,6 +191,7 @@ async def test_add_annotation(
     end_time = datetime.datetime(2026, 1, 1, 10, 1, 0, tzinfo=datetime.UTC)
 
     segment = await store.create_audio_segment(
+        segment_id=str(uuid.uuid4()),
         feed_id=str(feed_id),
         classification=AudioClassification.SPEECH_DETECTED,
         start_timestamp=start_time,

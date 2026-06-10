@@ -85,6 +85,8 @@ LIMIT $7
 ADD_ANNOTATION_SQL = """
 INSERT INTO annotations (audio_segment_id, type, data)
 VALUES ($1, $2, $3)
+ON CONFLICT (audio_segment_id, type) DO UPDATE
+SET audio_segment_id = annotations.audio_segment_id
 RETURNING audio_segment_id, type, data, created_at, updated_at
 """
 
@@ -104,6 +106,8 @@ INSERT INTO audio_segments (
     playback_audio_uri
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+ON CONFLICT (id) DO UPDATE
+SET id = audio_segments.id
 RETURNING
     id,
     feed_id,
