@@ -19,3 +19,9 @@ class MockCacheProvider(CacheProvider):
         if key in self.cache:
             return self.cache[key]
         return None
+
+    def delete(self, key: str) -> bool:
+        if key in self.cache:
+            del self.cache[key]
+            return True
+        return False

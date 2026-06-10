@@ -25,6 +25,13 @@ class TestNotificationDeduplication(TestCase):
         self.assertTrue(notification_deduplication.process_notification("1234"))
         self.assertEqual(cache_provider.get_value("1234"), "12345")
 
+    def test_clear_notification(self) -> None:
+        cache_provider = MockCacheProvider()
+        notification_deduplication = NotificationDeduplication(cache_provider)
+        self.assertTrue(notification_deduplication.process_notification("1234"))
+        self.assertTrue(notification_deduplication.clear_notification("1234"))
+        self.assertTrue(notification_deduplication.process_notification("1234"))
+
 
 if __name__ == "__main__":
     main()
