@@ -84,6 +84,13 @@ ORDER BY s.end_timestamp ASC, s.id ASC
 LIMIT $7
 """
 
+# Rationale for conditional INSERT SELECT:
+# While normal sequential FIFO pipelines guarantee that parent audio segments are created
+# before child annotations are attached, distributed system error modes (e.g. out-of-order DLQ
+# re-plays or older trapped Pub/Sub backlogs encountered after developer database wipes) can cause
+# child annotations to arrive before the parent segment exists.
+# Using a conditional INSERT ... SELECT quietly returns None (0 rows) instead of triggering
+# a hard Postgres Foreign Key exception, allowing the API layer to cleanly signal an HTTP 429 NACK.
 ADD_ANNOTATION_SQL = """
 INSERT INTO annotations (audio_segment_id, type, data)
 SELECT $1, $2, $3

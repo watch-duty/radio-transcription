@@ -138,17 +138,21 @@ class EvaluationEventProcessor:
                         new_audio.segment_id,
                     )
                 except requests.exceptions.HTTPError as e:
+                    # Rationale: In error recovery modes (e.g. ad-hoc DB resets or out-of-order Dead-Letter Queue re-plays),
+                    # this worker might attempt to attach an evaluation annotation before the parent segment exists.
+                    # The Audio Segments API returns HTTP 429 in this scenario, which we re-raise to trigger an automated
+                    # Negative Acknowledge (NACK) in Google Cloud Pub/Sub, queuing the payload for exponential backoff retries.
                     if e.response is not None and e.response.status_code == 429:
                         logger.warning(
                             "Transient failure adding evaluation annotation for segment %s: parent segment not ready or storage lag. Retrying via Pub/Sub backoff...",
                             new_audio.segment_id,
                         )
                         raise
-                        logger.exception(
-                            "Failed to add evaluation annotation for segment %s: %s",
-                            new_audio.segment_id,
-                            e,
-                        )
+                    logger.exception(
+                        "Failed to add evaluation annotation for segment %s: %s",
+                        new_audio.segment_id,
+                        e,
+                    )
                 except Exception as e:
                     logger.exception(
                         "Failed to add evaluation annotation for segment %s: %s",

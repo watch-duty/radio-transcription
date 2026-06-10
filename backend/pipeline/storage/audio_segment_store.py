@@ -81,6 +81,9 @@ class AudioSegmentStore:
 
         data_json = json.dumps(data)
 
+        # Explicitly raise NotFoundError if the parent segment doesn't exist or if our conditional
+        # INSERT SELECT query returned None. The API layer catches this and returns HTTP 429 to trigger
+        # automated exponential backoff and retries in the distributed event consumer.
         try:
             row = await self._pool.fetchrow(
                 audio_segment_queries.ADD_ANNOTATION_SQL,
