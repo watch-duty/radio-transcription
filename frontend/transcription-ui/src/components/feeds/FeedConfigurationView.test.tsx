@@ -94,7 +94,7 @@ describe('FeedConfigurationView', () => {
         const q = params.name.toLowerCase();
         filtered = filtered.filter((f) => f.name.toLowerCase().includes(q));
       }
-      return Promise.resolve(filtered);
+      return Promise.resolve({ feeds: filtered, total: filtered.length });
     });
     vi.mocked(deleteFeed).mockResolvedValue(undefined);
     vi.mocked(deactivateFeed).mockResolvedValue(undefined);
@@ -892,7 +892,10 @@ describe('FeedConfigurationView', () => {
       substatus: 'unclaimed',
       tags: [],
     };
-    vi.mocked(listFeeds).mockResolvedValue([...mockFeeds, unclaimedFeed]);
+    vi.mocked(listFeeds).mockResolvedValue({
+      feeds: [...mockFeeds, unclaimedFeed],
+      total: mockFeeds.length + 1,
+    });
 
     renderView();
 

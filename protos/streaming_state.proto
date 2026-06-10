@@ -28,6 +28,8 @@ message ChunkMetadataProto {
   FeedMetadataProto feed_metadata = 4;
   optional string traceparent = 5;
   bool is_continuous = 6;
+  // True recording event timestamp of the incoming audio chunk in milliseconds since epoch.
+  optional int64 timestamp_ms = 7;
 }
 
 message FlushRequestProto {

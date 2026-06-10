@@ -3,6 +3,9 @@ DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'audio_classification') THEN
         CREATE TYPE AUDIO_CLASSIFICATION AS ENUM (
+            'UNSPECIFIED',
+            'SPEECH',
+            'OTHER',
             'SPEECH_DETECTED',
             'UNCLASSIFIED'
         );

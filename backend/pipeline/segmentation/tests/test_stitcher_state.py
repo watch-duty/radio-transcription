@@ -242,6 +242,10 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         )
         self.assertTrue(flush_action.missing_prior_context)
         self.assertFalse(flush_action.missing_post_context)
+        self.assertEqual(
+            flush_action.audio_classification,
+            1,
+        )
 
     def test_process_speech_segments_avoids_overlap(self) -> None:
         """Verifies that _process_speech_segments avoids overlap by updating actual_start_ms."""
@@ -332,3 +336,48 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
             "Flushing isolated late-arriving audio chunk",
         )
         self.assertTrue(flush_actions[1].missing_post_context)
+
+    def test_stale_last_segment_end_time_from_previous_transmission(
+        self,
+    ) -> None:
+        """Verifies that last_segment_end_time_ms from a previous transmission
+        is ignored when flushing a new non-speech transmission, preventing negative offsets.
+        """
+        # Chunk 1: Speech ending at 5.0s (5000ms).
+        chunk1 = mock_audio_chunk(0, 15000, [(1.0, 5.0)])
+        self._process(chunk1)
+
+        # Process a silent chunk starting at 15000.
+        # This will trigger a significant gap flush of the first speech transmission,
+        # and then initialize a new non-speech transmission starting at 5500ms (5000ms + 500ms post-roll).
+        actions = self.state_machine.process_chunk(
+            mock_audio_chunk(15000, 15000, []), self.ctx
+        )
+        flush_action1 = next(
+            (a for a in actions if isinstance(a, FlushAction)), None
+        )
+        self.assertIsNotNone(flush_action1)
+
+        # Verify that ctx.last_segment_end_time_ms is retained (5000ms)
+        self.assertEqual(self.ctx.last_segment_end_time_ms, 5000)
+        # Verify that ctx.buffer_start_time_ms was set to 5500 (start of the non-speech transmission)
+        self.assertEqual(self.ctx.buffer_start_time_ms, 5500)
+
+        # Now trigger a flush of this new non-speech transmission
+        flush_action = self.state_machine._flush_current_transmission(
+            "test_flush",
+            self.ctx,
+            missing_post_context=False,
+        )
+
+        # Verify that the flushed time range is valid and offsets are >= 0
+        self.assertGreaterEqual(
+            flush_action.speech_time_range.end_ms,
+            flush_action.speech_time_range.start_ms,
+        )
+        self.assertGreaterEqual(flush_action.end_audio_offset_ms, 0)
+        # Specifically, since there is no speech in the current transmission, end_ms should fall back to transmission_start_time_ms (5500)
+        self.assertEqual(
+            flush_action.speech_time_range.end_ms,
+            self.ctx.transmission_start_time_ms,
+        )

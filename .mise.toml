@@ -154,18 +154,14 @@ yarn --cwd frontend/api install
 [tasks."install:env"]
 description = "Initialize local env file from example"
 run = """
-if [ ! -f frontend/transcription-ui/.env.local-dev ]; then
-  echo "Initializing .env.local-dev..."
-  cp frontend/transcription-ui/.env.local-dev.example frontend/transcription-ui/.env.local-dev
-else
-  echo -n ".env.local-dev already exists. Overwrite? (Y/N): "
-  read -r response
-  if [ "$response" = "y" ] || [ "$response" = "Y" ]; then
-    echo "Overwriting .env.local-dev..."
-    cp frontend/transcription-ui/.env.local-dev.example frontend/transcription-ui/.env.local-dev
-  else
-    echo "Skipped."
-  fi
+TARGET="frontend/transcription-ui/.env.local-dev"
+[ ! -f "$TARGET" ] && cp "$TARGET.example" "$TARGET" && echo "Initialized $TARGET" && exit 0
+[ -t 0 ] || { echo "$TARGET already exists. Skipping overwrite in non-interactive environment (run in an interactive terminal to prompt, or delete $TARGET to re-initialize)."; exit 0; }
+
+echo -n "$TARGET already exists. Overwrite? (Y/N): "
+read -r response
+if [ "$response" = "y" ] || [ "$response" = "Y" ]; then
+  cp "$TARGET.example" "$TARGET" && echo "Overwrote $TARGET"
 fi
 """
 

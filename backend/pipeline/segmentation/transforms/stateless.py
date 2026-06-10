@@ -136,6 +136,15 @@ class ParseAndKeyFn(beam.DoFn):
                     if element.attributes
                     else None
                 )
+                start_ms = (
+                    (
+                        chunk_proto.start_timestamp.seconds * MS_PER_SECOND
+                        + chunk_proto.start_timestamp.nanos // NANOS_PER_MS
+                    )
+                    if chunk_proto.HasField("start_timestamp")
+                    and chunk_proto.start_timestamp.seconds > 0
+                    else None
+                )
                 metadata = ChunkMetadata(
                     gcs_uri=chunk_proto.gcs_uri,
                     # For segmented feeds, session_id is typically the call ID set by ingestion.
@@ -148,6 +157,7 @@ class ParseAndKeyFn(beam.DoFn):
                     ),
                     is_continuous=self.is_continuous,
                     traceparent=traceparent,
+                    timestamp_ms=start_ms,
                 )
                 logger.debug(
                     "Parsed ContinuousAudio feed_id=%s gcs_uri=%s duration=%dms",
@@ -319,28 +329,23 @@ class UploadRawSegmentFn(beam.DoFn):
                 request.time_range.end_ms * MICROSECONDS_PER_MS
             )
 
-            start_offset = Duration(
-                seconds=request.start_audio_offset_ms // MS_PER_SECOND
-                if request.start_audio_offset_ms
-                else 0,
-                nanos=(
-                    request.start_audio_offset_ms % MS_PER_SECOND
-                    if request.start_audio_offset_ms
-                    else 0
+            start_offset = Duration()
+            if (
+                request.start_audio_offset_ms is not None
+                and request.start_audio_offset_ms > 0
+            ):
+                start_offset.FromMicroseconds(
+                    int(request.start_audio_offset_ms * MICROSECONDS_PER_MS)
                 )
-                * NANOS_PER_MS,
-            )
-            end_offset = Duration(
-                seconds=request.end_audio_offset_ms // MS_PER_SECOND
-                if request.end_audio_offset_ms
-                else 0,
-                nanos=(
-                    request.end_audio_offset_ms % MS_PER_SECOND
-                    if request.end_audio_offset_ms
-                    else 0
+
+            end_offset = Duration()
+            if (
+                request.end_audio_offset_ms is not None
+                and request.end_audio_offset_ms > 0
+            ):
+                end_offset.FromMicroseconds(
+                    int(request.end_audio_offset_ms * MICROSECONDS_PER_MS)
                 )
-                * NANOS_PER_MS,
-            )
 
             proto = SegmentedAudio(
                 segment_id=request.segment_id,
