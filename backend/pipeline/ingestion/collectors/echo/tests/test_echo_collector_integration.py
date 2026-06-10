@@ -33,10 +33,7 @@ from backend.pipeline.storage.settings import AlloyDBSettings
 from backend.pipeline.storage.sync_connection import connect_db
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
 
-_REPO_ROOT = Path(__file__).resolve().parents[6]
-_SQL_DIR = (
-    _REPO_ROOT / "terraform" / "modules" / "alloydb" / "sql" / "ingestion"
-)
+from backend.pipeline.common.test_schema_helper import sync_apply_test_schema
 
 _FAKE_GCS_PORT = 4443
 _ECHO_BUCKET = "wd-echo-recordings-test"
@@ -93,18 +90,7 @@ class TestEchoCollectorIntegration(unittest.TestCase):
             dbname="postgres",
             autocommit=True,
         ) as conn:
-            for sql_file in sorted(_SQL_DIR.glob("*.sql")):
-                if "pg_cron" in sql_file.name:
-                    continue  # pg_cron extension is production-only (AlloyDB flag)
-                content = sql_file.read_text()
-                if "ALTER TYPE" in content:
-                    lines = [
-                        line
-                        for line in content.splitlines()
-                        if not line.strip().startswith("ALTER TYPE")
-                    ]
-                    content = "\n".join(lines)
-                conn.execute(content.encode())
+            sync_apply_test_schema(conn)
 
         # --- Fake GCS Server ---
         cls.gcs_container = (

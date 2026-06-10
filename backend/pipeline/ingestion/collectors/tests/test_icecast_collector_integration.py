@@ -35,10 +35,7 @@ MOCK_ENV_VARS = {
     "BROADCASTIFY_PASSWORD": "test_pass",
 }
 
-_REPO_ROOT = Path(__file__).resolve().parents[5]
-_SQL_DIR = (
-    _REPO_ROOT / "terraform" / "modules" / "alloydb" / "sql" / "ingestion"
-)
+from backend.pipeline.common.test_schema_helper import async_apply_test_schema
 
 _FAKE_GCS_PORT = 4443
 _TEST_BUCKET = "test-audio-bucket"
@@ -85,18 +82,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 password="postgres",
                 database="postgres",
             )
-            for sql_file in sorted(_SQL_DIR.glob("*.sql")):
-                if "pg_cron" in sql_file.name:
-                    continue  # pg_cron extension is production-only (AlloyDB flag)
-                content = sql_file.read_text()
-                if "ALTER TYPE" in content:
-                    lines = [
-                        line
-                        for line in content.splitlines()
-                        if not line.strip().startswith("ALTER TYPE")
-                    ]
-                    content = "\n".join(lines)
-                await conn.execute(content)
+            await async_apply_test_schema(conn)
             await conn.close()
 
         asyncio.run(_setup_schema())

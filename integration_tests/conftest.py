@@ -21,11 +21,7 @@ import pytest
 from testcontainers.postgres import PostgresContainer
 
 from backend.pipeline.storage.connection import create_pool
-
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-_SQL_DIR = (
-    _REPO_ROOT / "terraform" / "modules" / "alloydb" / "sql" / "ingestion"
-)
+from backend.pipeline.common.test_schema_helper import async_apply_test_schema
 
 
 def _docker_available() -> bool:
@@ -63,21 +59,7 @@ def postgres_container() -> Generator[dict[str, Any]]:
             password="postgres",
             database="postgres",
         )
-        # Apply schema files in order, skipping pg_cron (extension is
-        # production-only; requires alloydb.enable_pg_cron=on database flag).
-        sql_files = sorted(
-            f for f in _SQL_DIR.glob("*.sql") if "pg_cron" not in f.name
-        )
-        for sql_file in sql_files:
-            content = sql_file.read_text()
-            if "ALTER TYPE" in content:
-                lines = [
-                    line
-                    for line in content.splitlines()
-                    if not line.strip().startswith("ALTER TYPE")
-                ]
-                content = "\n".join(lines)
-            await conn.execute(content)
+        await async_apply_test_schema(conn)
         await conn.close()
 
     # Use a fresh event loop for the setup since we're in a session fixture

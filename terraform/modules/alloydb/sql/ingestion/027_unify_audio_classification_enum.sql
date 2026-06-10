@@ -1,3 +1,4 @@
+-- AUTOCOMMIT
 -- Implement unified AudioClassification enum options and migrate historical records.
 
 -- Idempotent type additions: psql (in Cloud Run migration jobs) executes these outside
