@@ -58,6 +58,7 @@ variable "lifecycle_rules" {
       with_state            = optional(string)
       num_newer_versions    = optional(number)
       matches_storage_class = optional(list(string))
+      matches_prefix        = optional(list(string))
     })
   }))
   default = []

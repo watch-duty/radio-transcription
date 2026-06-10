@@ -56,6 +56,9 @@ message TranscribedAudio {
   // The human-readable name of the radio feed as stored in the database.
   string feed_name = 13;
 
+  // The URI of the mono downmixed FLAC file optimized specifically for ephemeral ASR transcription inference.
+  optional string transcription_audio_uri = 16;
+
   reserved 14;
   reserved "external_id";
 }
