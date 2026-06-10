@@ -36,7 +36,7 @@ describe('listFeeds', () => {
         },
       })
     );
-    expect(feeds).toEqual(mockData);
+    expect(feeds).toStrictEqual({ feeds: mockData, total: mockData.length });
   });
 
   it('should loop and fetch all pages when response is paginated ListFeedsResponse object', async () => {
@@ -83,7 +83,10 @@ describe('listFeeds', () => {
       expect.stringContaining('/api/v1/feeds?limit=100&nextToken=token_abc'),
       expect.any(Object)
     );
-    expect(feeds).toEqual([...page1Feeds, ...page2Feeds]);
+    expect(feeds).toStrictEqual({
+      feeds: [...page1Feeds, ...page2Feeds],
+      total: 2,
+    });
   });
 
   it('should throw error if response not ok', async () => {

@@ -188,7 +188,7 @@ export function TranscriptView({
   );
 
   const {
-    data: feeds,
+    data: feedsData,
     error: feedsError,
     isFetching: feedsFetching,
     isSuccess: isFeedsSuccess,
@@ -198,6 +198,8 @@ export function TranscriptView({
     enabled: !!token,
     refetchOnWindowFocus: false,
   });
+
+  const feeds = useMemo(() => feedsData?.feeds || [], [feedsData]);
 
   const { data: activeFeedData } = useQuery({
     queryKey: ['getFeed', token, searchedFeedId],
