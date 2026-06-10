@@ -330,13 +330,19 @@ class UploadRawSegmentFn(beam.DoFn):
             )
 
             start_offset = Duration()
-            if request.start_audio_offset_ms:
+            if (
+                request.start_audio_offset_ms is not None
+                and request.start_audio_offset_ms > 0
+            ):
                 start_offset.FromMicroseconds(
                     int(request.start_audio_offset_ms * MICROSECONDS_PER_MS)
                 )
 
             end_offset = Duration()
-            if request.end_audio_offset_ms:
+            if (
+                request.end_audio_offset_ms is not None
+                and request.end_audio_offset_ms > 0
+            ):
                 end_offset.FromMicroseconds(
                     int(request.end_audio_offset_ms * MICROSECONDS_PER_MS)
                 )

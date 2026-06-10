@@ -92,10 +92,10 @@ function getSourceUrl(
     case SourceType.ECHO:
       return undefined;
     case SourceType.FIRE_NOTIFICATIONS: {
-      const dir = sourceFeedId.startsWith('/')
-        ? sourceFeedId
-        : `/${sourceFeedId}`;
-      return `https://audioplay.textmefires.info/audioplay/folder_play?dir=${dir}`;
+      const cleanSourceId = sourceFeedId.startsWith('/')
+        ? sourceFeedId.slice(1)
+        : sourceFeedId;
+      return `https://audioplay.textmefires.info/audioplay/folder_play?dir=${encodeURIComponent(cleanSourceId)}`;
     }
     default:
       return undefined;

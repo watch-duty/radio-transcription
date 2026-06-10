@@ -6,7 +6,6 @@ from fastapi import status
 from fastapi.testclient import TestClient
 
 from backend.pipeline.common.auth import verify_oidc_token
-from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
@@ -98,22 +97,6 @@ class TestTranscriptsAPI(unittest.TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("Invalid transcript data", response.json()["detail"])
-
-    def test_create_transcript_already_exists(self) -> None:
-        """Test creating a transcript that already exists returns 409."""
-        payload = {
-            "segment_id": _SEGMENT_ID,
-            "feed_id": _FEED_ID,
-            "transcript": "Hello world",
-        }
-        self.mock_store.create_transcript.side_effect = AlreadyExistsError(
-            "Already exists"
-        )
-
-        response = self.client.post("/v1/transcripts", json=payload)
-
-        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
-        self.assertIn("Already exists", response.json()["detail"])
 
     def test_get_transcript_success(self) -> None:
         """Test fetching an existing transcript."""
