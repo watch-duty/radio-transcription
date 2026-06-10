@@ -169,8 +169,23 @@ class AudioStitchingStateMachine:
             )
 
         # Ensure invariants: end time is never before start time
-        padded_end_time_ms = max(ctx.buffer_start_time_ms, padded_end_time_ms)
-        end_ms = max(ctx.buffer_start_time_ms, end_ms)
+        if padded_end_time_ms < ctx.buffer_start_time_ms:
+            logger.warning(
+                "Stitcher invariant violated for feed %s: padded_end_time_ms (%d) is before buffer_start_time_ms (%d). Clamping to start.",
+                ctx.feed_id,
+                padded_end_time_ms,
+                ctx.buffer_start_time_ms,
+            )
+            padded_end_time_ms = ctx.buffer_start_time_ms
+
+        if end_ms < ctx.buffer_start_time_ms:
+            logger.warning(
+                "Stitcher invariant violated for feed %s: end_ms (%d) is before buffer_start_time_ms (%d). Clamping to start.",
+                ctx.feed_id,
+                end_ms,
+                ctx.buffer_start_time_ms,
+            )
+            end_ms = ctx.buffer_start_time_ms
 
         return FlushAction(
             reason=reason,
