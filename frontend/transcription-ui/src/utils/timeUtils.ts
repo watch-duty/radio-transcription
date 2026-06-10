@@ -3,6 +3,17 @@ import en from 'relative-time-format/locale/en';
 
 export const MAX_WINDOW_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 
+// HH:MM (24h). Pass an IANA timeZone to render it in that zone with its
+// abbreviation (e.g. "14:30 GMT+2"); omitted until feeds carry zone info.
+export function formatClockTime(timestamp: number, timeZone?: string): string {
+  return new Date(timestamp).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    ...(timeZone ? { timeZone, timeZoneName: 'short' } : {}),
+  });
+}
+
 RelativeTimeFormat.addLocale(en);
 const rtf = new RelativeTimeFormat('en');
 

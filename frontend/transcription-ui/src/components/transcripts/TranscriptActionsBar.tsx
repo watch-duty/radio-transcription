@@ -14,11 +14,15 @@ import Switch from '@mui/material/Switch';
 import Tooltip from '@mui/material/Tooltip';
 import { useTheme } from '@mui/material/styles';
 
+import { formatClockTime } from '../../utils/timeUtils';
 import { DateTimePicker } from '../common/DateTimePicker';
 import type { AlertFilter } from './TranscriptView';
 
 export interface TranscriptActionsBarProps {
   hasNewerTranscripts: boolean;
+  isTimelinePanned?: boolean;
+  // Timeline's most-recent visible edge while panned (ms), else null.
+  activeWindowTime?: number | null;
   searchedTimestamp: Date | null;
   redactTranscripts: boolean;
   setRedactTranscripts: (redact: boolean) => void;
@@ -34,6 +38,8 @@ const DEFAULT_FILTER_BG_COLOR = '#f9bf90';
 
 export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   hasNewerTranscripts,
+  isTimelinePanned = false,
+  activeWindowTime = null,
   redactTranscripts,
   setRedactTranscripts,
   dateTime,
@@ -95,6 +101,13 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
     badgeContent++;
   }
 
+  // The filter timestamp wins; otherwise reflect where the timeline is panned.
+  const activeLabel = dateTime
+    ? `${dateTime.toLocaleDateString()} ${formatClockTime(dateTime.getTime())}`
+    : activeWindowTime != null
+      ? `${new Date(activeWindowTime).toLocaleDateString()} ${formatClockTime(activeWindowTime)}`
+      : null;
+
   return (
     <Box
       sx={{
@@ -108,7 +121,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
           variant="contained"
           sx={{ textTransform: 'none', gap: 1 }}
           onClick={onClickViewLatest}
-          disabled={!hasNewerTranscripts}
+          disabled={!hasNewerTranscripts && !isTimelinePanned}
         >
           Jump to live
         </Button>
@@ -204,7 +217,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
           sx={
             isDarkTheme
               ? {
-                  backgroundColor: dateTime
+                  backgroundColor: activeLabel
                     ? theme.palette.primary.main
                     : '#f9bf90',
                   color: 'black',
@@ -213,27 +226,26 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
                   },
                 }
               : {
-                  backgroundColor: dateTime
+                  backgroundColor: activeLabel
                     ? APPLIED_FILTER_BG_COLOR
                     : DEFAULT_FILTER_BG_COLOR,
                   color: 'black',
                 }
           }
           label={
-            dateTime ? (
-              <Box>
-                <b>Date/time:</b>{' '}
-                {`${dateTime.toLocaleDateString()} ${dateTime.toLocaleTimeString()}`}
-              </Box>
-            ) : (
-              <Box>
-                <b>Date/time:</b> Viewing live
-              </Box>
-            )
+            <Box>
+              <b>Date/time:</b> {activeLabel ?? 'Viewing live'}
+            </Box>
           }
           variant="filled"
           size="small"
-          onDelete={dateTime ? handleDeleteDateTime : undefined}
+          onDelete={
+            dateTime
+              ? handleDeleteDateTime
+              : activeWindowTime != null
+                ? onClickViewLatest
+                : undefined
+          }
         />
         {alertFilter === 'alerts' && (
           <Chip

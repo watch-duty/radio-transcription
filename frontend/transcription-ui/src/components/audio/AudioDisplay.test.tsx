@@ -13,6 +13,10 @@ import type { Transcript } from '@transcription/common';
 import { getAudioUrl } from '../../utils/audioUtils';
 import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { AudioDisplay } from './AudioDisplay';
+import {
+  __primePeaksCacheForTest,
+  __resetPeaksCacheForTest,
+} from './usePeaksDecodeQueue';
 
 vi.mock('@wavesurfer/react', () => ({
   default: (props: { url: string }) => (
@@ -20,9 +24,21 @@ vi.mock('@wavesurfer/react', () => ({
   ),
 }));
 
+vi.mock('wavesurfer.js', () => ({
+  default: {
+    create: () => ({
+      on: () => {},
+      destroy: () => {},
+      exportPeaks: () => [[]],
+      getDuration: () => 0,
+    }),
+  },
+}));
+
 describe('AudioDisplay', () => {
   afterEach(() => {
     cleanup();
+    __resetPeaksCacheForTest();
   });
 
   it('should render empty state when no transcripts', () => {
@@ -332,6 +348,10 @@ describe('AudioDisplay', () => {
         endAudioOffset: '0',
       },
     ];
+
+    // The player renders from cached peaks; seed the cache so it appears
+    // synchronously (real decoding is unavailable under jsdom).
+    __primePeaksCacheForTest(getAudioUrl(mockTranscripts[0].playbackAudioUri));
 
     render(
       <AudioDisplay

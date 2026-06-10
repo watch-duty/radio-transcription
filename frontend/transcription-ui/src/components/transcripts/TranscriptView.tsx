@@ -113,6 +113,13 @@ export function TranscriptView({
     useState(true);
   const [isTranscriptsPolling, setIsTranscriptsPolling] = useState(false);
 
+  // Whether the audio timeline has been panned away from the live edge, and a
+  // nonce that, when bumped, snaps the timeline back to live.
+  const [isTimelinePanned, setIsTimelinePanned] = useState(false);
+  const [viewLiveNonce, setViewLiveNonce] = useState(0);
+  // The timeline's most-recent visible edge while panned, shown in the chip.
+  const [activeWindowTime, setActiveWindowTime] = useState<number | null>(null);
+
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const hasScrolledToTarget = useRef(false);
 
@@ -656,7 +663,9 @@ export function TranscriptView({
   }, [isTranscriptsSuccess, targetSegmentId, transcripts]);
 
   const handleClipClick = (segmentId: string) => {
-    const index = transcripts.findIndex((t) => t.segmentId === segmentId);
+    const index = transcriptsRef.current.findIndex(
+      (t) => t.segmentId === segmentId
+    );
     if (index !== -1) {
       virtuosoRef.current?.scrollToIndex({
         index,
@@ -666,6 +675,21 @@ export function TranscriptView({
     }
     setHighlightedSegmentId(segmentId);
   };
+
+  // Scroll the transcript list to follow the timeline as the user pans it.
+  // Uses the ref to stay stable and avoid stale closures over `transcripts`.
+  const handleTimelinePan = useCallback((segmentId: string) => {
+    const index = transcriptsRef.current.findIndex(
+      (t) => t.segmentId === segmentId
+    );
+    if (index !== -1) {
+      virtuosoRef.current?.scrollToIndex({
+        index,
+        align: 'center',
+        behavior: 'auto',
+      });
+    }
+  }, []);
 
   const handleTogglePlayPause = () => {
     const targetId = isAudioPlaying
@@ -698,8 +722,9 @@ export function TranscriptView({
 
     // Given that clearing the date effectively jumps to live, we will
     // navigate to the top of the table in case the user is scrolled
-    // down in the table.
+    // down in the table, and snap the audio timeline back to the live edge.
     if (date === null) {
+      setViewLiveNonce((n) => n + 1);
       setTimeout(() => {
         virtuosoRef.current?.scrollToIndex({
           index: 0,
@@ -809,6 +834,10 @@ export function TranscriptView({
         onClipClick={handleClipClick}
         isAudioPlaying={isAudioPlaying}
         onTogglePlayPause={handleTogglePlayPause}
+        onPannedChange={setIsTimelinePanned}
+        onWindowPan={handleTimelinePan}
+        onActiveTimeChange={setActiveWindowTime}
+        viewLiveNonce={viewLiveNonce}
       />
 
       <Box
@@ -822,6 +851,8 @@ export function TranscriptView({
         <TranscriptActionsBar
           searchedTimestamp={searchedTimestamp}
           hasNewerTranscripts={hasNewerTranscripts}
+          isTimelinePanned={isTimelinePanned}
+          activeWindowTime={activeWindowTime}
           redactTranscripts={redactTranscripts}
           setRedactTranscripts={setRedactTranscripts}
           dateTime={searchedTimestamp}

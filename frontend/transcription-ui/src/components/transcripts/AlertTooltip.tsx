@@ -3,6 +3,7 @@ import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 
+import { hasEvaluationAlert } from '../../utils/evaluationUtils';
 import { CustomAlertIcon } from '../common/AlertIcon';
 
 interface AlertTooltipProps {
@@ -18,7 +19,7 @@ export function AlertTooltip({
 }: AlertTooltipProps) {
   const theme = useTheme();
 
-  if (!evaluationDecisions || evaluationDecisions.length === 0) {
+  if (!hasEvaluationAlert(evaluationDecisions)) {
     return null;
   }
 
