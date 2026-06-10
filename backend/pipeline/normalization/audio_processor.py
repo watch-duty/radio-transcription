@@ -5,14 +5,10 @@ into streaming playback M4A and lossless FLAC derivatives using standard ffmpeg.
 It performs ZERO acoustic or volume preprocessing.
 """
 
-import io
 import logging
 import subprocess
 import tempfile
 from pathlib import Path
-
-import numpy as np
-import soundfile as sf
 
 logger = logging.getLogger(__name__)
 
@@ -72,20 +68,46 @@ class AudioProcessor:
                 pass
 
     def transcode_to_mono_flac(self, input_bytes: bytes) -> bytes:
-        """Transcodes input audio bytes to a 1D mono downmixed FLAC using np.mean() specifically for ASR/Gemini evaluation."""
-        samples, sr = sf.read(io.BytesIO(input_bytes), dtype="int16")
-        if samples.ndim > 1:
-            samples = np.mean(samples, axis=1).astype(np.int16)
+        """Transcodes input audio bytes to a 1D mono downmixed FLAC using ffmpeg specifically for ASR/Gemini evaluation."""
+        with tempfile.NamedTemporaryFile(
+            suffix=".flac", delete=False
+        ) as temp_file:
+            temp_filename = temp_file.name
 
-        out_io = io.BytesIO()
-        sf.write(
-            out_io,
-            samples,
-            sr,
-            format="FLAC",
-            subtype="PCM_16",
-        )
-        return out_io.getvalue()
+        try:
+            process = subprocess.run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-i",
+                    "pipe:0",
+                    "-ac",
+                    "1",
+                    "-f",
+                    "flac",
+                    "-compression_level",
+                    FLAC_COMPRESSION_LEVEL,
+                    temp_filename,
+                ],
+                input=input_bytes,
+                capture_output=True,
+                check=False,
+                timeout=DEFAULT_FFMPEG_TIMEOUT_SEC,
+            )
+            if process.returncode != 0:
+                logger.error(
+                    f"ffmpeg error during mono FLAC transcode: {process.stderr.decode()}"
+                )
+                msg = "Failed to transcode to mono FLAC via ffmpeg"
+                raise RuntimeError(msg)
+
+            with open(temp_filename, "rb") as f:
+                return f.read()
+        finally:
+            try:
+                Path(temp_filename).unlink()
+            except OSError:
+                pass
 
     def transcode_to_m4a(self, input_bytes: bytes) -> bytes:
         """Transcodes input audio bytes of any format (e.g., FLAC, WAV, MP3) to M4A (AAC) using ffmpeg."""
