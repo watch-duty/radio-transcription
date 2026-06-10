@@ -111,6 +111,7 @@ export function FeedConfigurationView({
     }
   }, [feedsError, onError]);
 
+  // TODO: https://linear.app/watchduty/issue/GOO-575 - Provide filter tags in backend
   const uniqueTagsForFilter = useMemo<{ key: string; value: string }[]>(() => {
     const seen = new Set<string>();
     const result: { key: string; value: string }[] = [];
