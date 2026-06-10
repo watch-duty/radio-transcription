@@ -16,7 +16,6 @@ from backend.pipeline.schema_types.transcribed_audio_pb2 import (
     TranscribedAudio,
 )
 from backend.pipeline.transcription.processor import (
-    CHIRP_UNINTELLIGIBLE_MARKER,
     TranscriptionEventProcessor,
 )
 from backend.services.audio_segments import models as audio_segments_models
@@ -184,15 +183,16 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         # Run process_event
         processor.process_event(cloud_event)
 
-        # Verify add_audio_segment_annotation was called with error
+        # Verify add_audio_segment_annotation was called with empty string and no errors
         mock_audio_segments_client.add_audio_segment_annotation.assert_called_once_with(
             audio_segment_id="tx-1111",
             annotation_type=audio_segments_models.AnnotationType.TRANSCRIPT,
             data={
-                "text": (CHIRP_UNINTELLIGIBLE_MARKER),
-                "errors": ["Empty transcription from Speech Model"],
+                "text": "",
+                "errors": [],
             },
         )
+        mock_publisher.publish.assert_not_called()
 
     def test_process_event_transcribe_error_silent_drop(self) -> None:
         """Verifies that a permanent exception raised during transcription is caught and silently dropped."""

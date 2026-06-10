@@ -106,12 +106,20 @@ class TranscriptionEventProcessor:
                     duration_ms=duration_ms,
                 )
 
+                # Rationale: On continuous polling feeds (Broadcastify Feeds), silent squelch static hiss
+                # can get peak-normalized by earlier VAD heuristics, causing it to trigger false speech windows.
+                # When the Speech API evaluates this static, it correctly detects no actual words and returns an
+                # empty transcription string (""). Instead of turning this empty string into an artificial
+                # "[UNINTELLIGIBLE]" marker that pollutes downstream evaluation and the UI, we cleanly abort
+                # downstream publish egress and attach a clean empty text annotation to the parent segment row.
                 if not transcript:
                     logger.info(
-                        "Speech API returned empty transcription. Using fallback unintelligible marker."
+                        "Speech API returned empty transcription for segment %s (feed %s). "
+                        "Treating as non-speech squelch static tail and skipping downstream egress.",
+                        segment_id,
+                        feed_id,
                     )
-                    errors.append("Empty transcription from Speech Model")
-                    transcript = CHIRP_UNINTELLIGIBLE_MARKER
+                    return
 
                 # Build TranscribedAudio egress protobuf message
                 out_proto = TranscribedAudio(
