@@ -151,6 +151,9 @@ class BaseTextEvaluator(ABC):
         else:
             return None
 
+        # Span order is unspecified; consumers that need ordering sort
+        # themselves (the transcript highlighter merges spans across all rules,
+        # so it re-sorts regardless).
         spans = [
             TextMatchSpan(
                 start=m.start(),
@@ -160,7 +163,6 @@ class BaseTextEvaluator(ABC):
             for matches in per_keyword_matches
             for m in matches
         ]
-        spans.sort(key=lambda s: (s.start, -s.end))
         return RuleAnnotation(text_match=spans)
 
     def _organize_rules(self, rules: list[models.Rule]) -> OrganizedRules:
