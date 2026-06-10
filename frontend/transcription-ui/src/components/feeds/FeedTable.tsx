@@ -38,7 +38,7 @@ import { MultiSelectFilter } from '../common/MultiSelectFilter';
 
 export interface FeedFilters {
   searchQuery: string;
-  sourceTypes: string[];
+  sourceTypes: SourceType[];
   statuses: string[];
   tags: { key: string; value: string }[];
 }
@@ -161,7 +161,7 @@ const VIRTUOSO_COMPONENTS = {
   FillerRow: VirtuosoFillerRow,
 };
 
-const ALL_SOURCE_TYPES = Object.values(SourceType).map(toSourceTypeString);
+const ALL_SOURCE_TYPES = Object.values(SourceType);
 
 export function FeedTable({
   title = 'Feeds',
@@ -545,6 +545,9 @@ export function FeedTable({
                 onChange={(types) =>
                   onFiltersChange({ ...filters, sourceTypes: types })
                 }
+                getOptionLabel={(option) => toSourceTypeString(option)}
+                renderOptionContent={(option) => toSourceTypeString(option)}
+                renderValueLabel={(option) => toSourceTypeString(option)}
                 size="small"
               />
             </Box>
@@ -568,6 +571,7 @@ export function FeedTable({
                 size="small"
                 groupBy={(tag) => tag.key}
                 getOptionLabel={(tag) => `${tag.key}: ${tag.value}`}
+                getOptionValue={(tag) => `${tag.key}:${tag.value}`}
                 isOptionEqualToValue={(a, b) =>
                   a.key === b.key && a.value === b.value
                 }
