@@ -131,8 +131,8 @@ describe('TranscriptView', () => {
     vi.resetAllMocks();
     mockHandleError.mockClear();
     // Default mock for listTranscripts to prevent errors on mount
-    vi.mocked(listTranscripts).mockResolvedValue({
-      transcripts: [],
+    vi.mocked(listAudioSegments).mockResolvedValue({
+      segments: [],
       nextToken: undefined,
     });
     // Default mock for listFeeds to prevent errors on mount
