@@ -85,6 +85,27 @@ class TestEvaluationService(unittest.TestCase):
             [EvaluationErrorType.ERROR_FEED_ID_MISSING],
         )
 
+    def test_evaluates_sanitizes_negative_or_invalid_durations(self) -> None:
+        """Asserts that negative or sign-mismatched durations are sanitized to 0."""
+        self.mock_evaluator.evaluate.return_value = {
+            "is_flagged": False,
+            "triggered_rules": [],
+        }
+        # Simulate a sign-mismatched duration (e.g. from negative timedelta serialization)
+        self.transcribed_audio.start_audio_offset.seconds = -1
+        self.transcribed_audio.start_audio_offset.nanos = 990000000
+        self.transcribed_audio.end_audio_offset.seconds = 5
+        self.transcribed_audio.end_audio_offset.nanos = -100
+
+        result_proto = self.service.evaluate(self.transcribed_audio)
+
+        self.assertIsNotNone(result_proto)
+        assert result_proto is not None
+        self.assertEqual(result_proto.start_audio_offset.seconds, 0)
+        self.assertEqual(result_proto.start_audio_offset.nanos, 0)
+        self.assertEqual(result_proto.end_audio_offset.seconds, 0)
+        self.assertEqual(result_proto.end_audio_offset.nanos, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
