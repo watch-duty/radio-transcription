@@ -425,8 +425,9 @@ components:
       additionalProperties: false
     AudioClassification:
       enum:
-        - SPEECH_DETECTED
-        - UNCLASSIFIED
+        - UNSPECIFIED
+        - SPEECH
+        - OTHER
       type: string
     AnnotationType:
       enum:

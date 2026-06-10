@@ -22,10 +22,17 @@ from backend.pipeline.schema_types.normalized_audio_pb2 import NormalizedAudio
 from backend.pipeline.schema_types.segmented_audio_pb2 import (
     SegmentedAudio,
 )
+from backend.services.audio_segments.models import AudioClassification
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_FFMPEG_TIMEOUT_SEC = 30
+
+_CLASSIFICATION_MAP = {
+    SegmentedAudio.AUDIO_CLASSIFICATION_UNSPECIFIED: AudioClassification.UNSPECIFIED,
+    SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH: AudioClassification.SPEECH,
+    SegmentedAudio.AUDIO_CLASSIFICATION_OTHER: AudioClassification.OTHER,
+}
 
 
 class NormalizationEventProcessor:
@@ -241,12 +248,10 @@ class NormalizationEventProcessor:
             + segmented_audio.end_audio_offset.nanos // 1000000
         )
 
-        classification_val = (
-            "SPEECH_DETECTED"
-            if segmented_audio.audio_classification
-            == SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH
-            else "UNCLASSIFIED"
-        )
+        classification_val = _CLASSIFICATION_MAP.get(
+            segmented_audio.audio_classification,
+            AudioClassification.UNSPECIFIED,
+        ).value
 
         segment_payload = {
             "id": segment_id,
@@ -262,6 +267,11 @@ class NormalizationEventProcessor:
             "start_audio_offset": start_offset_ms / 1000.0,
             "end_audio_offset": end_offset_ms / 1000.0,
         }
+
+        if segmented_audio.external_audio_segment_id:
+            segment_payload["external_audio_segment_id"] = (
+                segmented_audio.external_audio_segment_id
+            )
 
         logger.info(
             "Saving audio segment %s record to database...",

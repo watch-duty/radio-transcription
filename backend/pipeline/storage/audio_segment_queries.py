@@ -14,6 +14,7 @@ SELECT
     s.start_audio_offset,
     s.end_audio_offset,
     s.playback_audio_uri,
+    s.external_audio_segment_id,
     s.created_at,
     COALESCE(a.annotations, '[]'::json) AS annotations
 FROM audio_segments s
@@ -55,6 +56,7 @@ SELECT
     s.start_audio_offset,
     s.end_audio_offset,
     s.playback_audio_uri,
+    s.external_audio_segment_id,
     s.created_at,
     COALESCE(a.annotations, '[]'::json) AS annotations
 FROM audio_segments s
@@ -103,9 +105,10 @@ INSERT INTO audio_segments (
     canonical_audio_uri,
     start_audio_offset,
     end_audio_offset,
-    playback_audio_uri
+    playback_audio_uri,
+    external_audio_segment_id
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 ON CONFLICT (id) DO UPDATE
 SET id = audio_segments.id
 RETURNING
@@ -121,5 +124,6 @@ RETURNING
     start_audio_offset,
     end_audio_offset,
     playback_audio_uri,
+    external_audio_segment_id,
     created_at
 """

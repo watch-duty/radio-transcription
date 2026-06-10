@@ -34,7 +34,7 @@ _ANNOTATION_ROW = {
 _AUDIO_SEGMENT_ROW = {
     "id": _SEGMENT_ID,
     "feed_id": _FEED_ID,
-    "classification": "SPEECH_DETECTED",
+    "classification": "SPEECH",
     "start_timestamp": datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
     "end_timestamp": datetime.datetime(2026, 1, 1, 0, 1, tzinfo=datetime.UTC),
     "missing_prior_context": False,
@@ -125,7 +125,7 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
         result = await self.store.create_audio_segment(
             segment_id=str(_SEGMENT_ID),
             feed_id=str(_FEED_ID),
-            classification=AudioClassification.SPEECH_DETECTED,
+            classification=AudioClassification.SPEECH,
             start_timestamp=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
             end_timestamp=datetime.datetime(
                 2026, 1, 1, 0, 1, tzinfo=datetime.UTC
@@ -147,7 +147,7 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             audio_segment_queries.CREATE_AUDIO_SEGMENT_SQL,
             _SEGMENT_ID,
             _FEED_ID,
-            AudioClassification.SPEECH_DETECTED,
+            AudioClassification.SPEECH,
             datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
             datetime.datetime(2026, 1, 1, 0, 1, tzinfo=datetime.UTC),
             missing_prior_context,
@@ -157,6 +157,7 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             datetime.timedelta(seconds=5),
             datetime.timedelta(seconds=10),
             None,
+            None,
         )
 
     async def test_create_audio_segment_invalid_segment_id(self) -> None:
@@ -164,7 +165,7 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             await self.store.create_audio_segment(
                 segment_id="invalid-uuid",
                 feed_id=str(_FEED_ID),
-                classification=AudioClassification.SPEECH_DETECTED,
+                classification=AudioClassification.SPEECH,
                 start_timestamp=datetime.datetime(
                     2026, 1, 1, tzinfo=datetime.UTC
                 ),
@@ -182,7 +183,7 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             await self.store.create_audio_segment(
                 segment_id=str(_SEGMENT_ID),
                 feed_id="invalid-uuid",
-                classification=AudioClassification.SPEECH_DETECTED,
+                classification=AudioClassification.SPEECH,
                 start_timestamp=datetime.datetime(
                     2026, 1, 1, tzinfo=datetime.UTC
                 ),
@@ -203,7 +204,7 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             await self.store.create_audio_segment(
                 segment_id=str(_SEGMENT_ID),
                 feed_id=str(_FEED_ID),
-                classification=AudioClassification.SPEECH_DETECTED,
+                classification=AudioClassification.SPEECH,
                 start_timestamp=datetime.datetime(
                     2026, 1, 1, tzinfo=datetime.UTC
                 ),

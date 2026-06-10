@@ -143,11 +143,27 @@ class AudioStitchingStateMachine:
 
         # When flushing due to dropped chunks, we might not have a last_segment_end_time_ms yet
         # if the transmission was very short, so fallback to transmission_start_time_ms.
-        end_ms = (
-            ctx.last_segment_end_time_ms
-            if ctx.last_segment_end_time_ms is not None
-            else ctx.transmission_start_time_ms
+        #
+        # Rationale:
+        # ctx.last_segment_end_time_ms is retained across transmissions in StitcherContext to
+        # measure silence gaps between speech windows. However, if the current transmission window is
+        # completely silent (non-speech), no new speech segments are added to update this timestamp.
+        # To determine the proper end_ms of the current transmission:
+        # 1. If we have speech segments in the current window, the end time is the end of the last speech segment.
+        # 2. If it is a non-speech segment transitioning to speech, last_segment_end_time_ms is explicitly updated
+        #    to the speech onset (which is >= buffer_start_time_ms).
+        # 3. Otherwise, we fall back to transmission_start_time_ms.
+        has_valid_last_segment = (
+            ctx.last_segment_end_time_ms is not None
+            and ctx.buffer_start_time_ms is not None
+            and ctx.last_segment_end_time_ms >= ctx.buffer_start_time_ms
         )
+        if ctx.speech_segments:
+            end_ms = ctx.speech_segments[-1].end_ms
+        elif has_valid_last_segment:
+            end_ms = ctx.last_segment_end_time_ms
+        else:
+            end_ms = ctx.transmission_start_time_ms
         if (
             end_ms is None
             or ctx.transmission_start_time_ms is None
@@ -162,6 +178,27 @@ class AudioStitchingStateMachine:
             padded_end_time_ms = (
                 ctx.buffer_start_time_ms + ctx.buffer_duration_ms
             )
+
+        # Ensure invariants: end time is never before start time
+        def clamp_to_start(time_value: int, variable_name: str) -> int:
+            if (
+                ctx.buffer_start_time_ms is not None
+                and time_value < ctx.buffer_start_time_ms
+            ):
+                logger.warning(
+                    "Stitcher invariant violated for feed %s: %s (%d) is before buffer_start_time_ms (%d). Clamping to start.",
+                    ctx.feed_id,
+                    variable_name,
+                    time_value,
+                    ctx.buffer_start_time_ms,
+                )
+                return ctx.buffer_start_time_ms
+            return time_value
+
+        padded_end_time_ms = clamp_to_start(
+            padded_end_time_ms, "padded_end_time_ms"
+        )
+        end_ms = clamp_to_start(end_ms, "end_ms")
 
         return FlushAction(
             reason=reason,

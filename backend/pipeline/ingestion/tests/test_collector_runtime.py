@@ -70,6 +70,7 @@ _FEED = LeasedFeed(
 _PUBLISH_SESSION_ID_ARG_INDEX = 5
 _PUBLISH_START_TIMESTAMP_ARG_INDEX = 6
 _PUBLISH_SOURCE_TYPE_ARG_INDEX = 8
+_PUBLISH_EXTERNAL_AUDIO_ID_ARG_INDEX = 9
 
 
 class TestFeedFailureContract(unittest.TestCase):
@@ -777,10 +778,11 @@ class TestProcessFeedTimestamps(unittest.IsolatedAsyncioTestCase):
             mock_publish.assert_called_once()
             _, args, _kwargs = mock_publish.mock_calls[0]
 
-            self.assertEqual(len(args), 9)
+            self.assertEqual(len(args), 10)
             self.assertEqual(
                 args[1], rt._collector_settings.continuous_pubsub_topic_path
             )
+            self.assertIsNone(args[_PUBLISH_EXTERNAL_AUDIO_ID_ARG_INDEX])
             self.assertEqual(args[2], str(_FEED["id"]))
             self.assertEqual(args[3], "Test Feed")
             self.assertTrue(args[4].startswith("gs://"))
