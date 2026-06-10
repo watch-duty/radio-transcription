@@ -14,6 +14,7 @@ from google.cloud import storage
 
 from backend.pipeline.common.constants import SAMPLE_RATE_HZ
 from backend.pipeline.segmentation.audio import vad
+from backend.pipeline.segmentation.constants import GCS_DOWNLOAD_TIMEOUT_SEC
 from backend.pipeline.segmentation.datatypes import AudioChunkData
 
 logger = logging.getLogger(__name__)
@@ -80,14 +81,16 @@ class SegmentationAudioProcessor:
         bucket_name = parsed_uri.netloc
         blob_name = parsed_uri.path.lstrip("/")
 
-        blob = self.gcs_client.bucket(bucket_name).get_blob(blob_name)
+        blob = self.gcs_client.bucket(bucket_name).get_blob(
+            blob_name, timeout=GCS_DOWNLOAD_TIMEOUT_SEC
+        )
         if not blob:
             err_msg = f"GCS object not found: {gcs_path}"
             logger.error(err_msg)
             raise FileNotFoundError(err_msg)
 
         in_mem_file = io.BytesIO()
-        blob.download_to_file(in_mem_file)
+        blob.download_to_file(in_mem_file, timeout=GCS_DOWNLOAD_TIMEOUT_SEC)
         in_mem_file.seek(0)
 
         with tempfile.NamedTemporaryFile(
