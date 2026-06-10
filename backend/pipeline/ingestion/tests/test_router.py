@@ -28,11 +28,12 @@ def _make_feed(source_type: SourceType) -> LeasedFeed:
     return LeasedFeed(
         id=uuid.uuid4(),
         name=f"test-{source_type}",
-        external_id="ext-id",
         source_type=source_type,
         last_processed_filename=None,
         last_bookmark_time=None,
         fencing_token=0,
+        failure_count=0,
+        status_reason=None,
         source_feed_id="123",
     )
 

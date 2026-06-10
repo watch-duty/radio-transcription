@@ -20,12 +20,14 @@ if TYPE_CHECKING:
 
     import psycopg
 
+    from backend.pipeline.storage.feed_store import FeedStatusReason
+
 # ---------------------------------------------------------------------------
 # SQL — psycopg v3 uses %s params (not asyncpg's $1)
 # ---------------------------------------------------------------------------
 
 _RESOLVE_ECHO_FEED_SQL = """\
-SELECT f.id, f.name, fp.external_id, f.status, f.failure_count
+SELECT f.id, f.name, f.status, f.failure_count
 FROM feeds f
 JOIN feed_properties fp ON fp.feed_id = f.id
 WHERE fp.source_feed_id = %s
@@ -36,7 +38,12 @@ _HEARTBEAT_SQL = """\
 UPDATE feeds
 SET last_heartbeat = NOW(),
     failure_count = CASE WHEN failure_count > 0 THEN 0 ELSE failure_count END,
-    status = 'active'::feed_status
+    status = 'active'::feed_status,
+    status_reason_updated_at = CASE
+        WHEN status_reason IS NOT NULL THEN NOW()
+        ELSE status_reason_updated_at
+    END,
+    status_reason = NULL
 WHERE id = %s
 """
 
@@ -54,7 +61,10 @@ SET status = CASE WHEN failure_count + 1 >= %s
                             %s * INTERVAL '1 second',
                             %s * INTERVAL '1 second' * POWER(2, failure_count)
                        ) + (RANDOM() * INTERVAL '10 seconds')
-                       ELSE NULL END
+                       ELSE NULL END,
+    quarantine_reason = CASE WHEN failure_count + 1 >= %s THEN COALESCE(%s, quarantine_reason) ELSE quarantine_reason END,
+    status_reason = COALESCE(%s, 'system_unexpected_error'),
+    status_reason_updated_at = NOW()
 WHERE id = %s
 """
 
@@ -92,7 +102,7 @@ class SyncFeedStore:
     def resolve_echo_feed(self, channel_name: str) -> dict[str, Any] | None:
         """Look up a feed by its Echo channel name.
 
-        Returns the feed row ``{id, name, external_id, status, failure_count}`` or
+        Returns the feed row ``{id, name, status, failure_count}`` or
         ``None`` if no feed is registered for *channel_name*.
         """
         with self._connect_db() as conn:
@@ -113,7 +123,13 @@ class SyncFeedStore:
         with self._connect_db() as conn:
             conn.execute(_HEARTBEAT_SQL, (feed_id,))
 
-    def record_failure(self, feed_id: uuid.UUID) -> None:
+    def record_failure(
+        self,
+        feed_id: uuid.UUID,
+        *,
+        reason: str | None = None,
+        status_reason: FeedStatusReason | None = None,
+    ) -> None:
         """Record a processing failure with exponential backoff.
 
         Increments ``failure_count`` and sets ``retry_after`` using the
@@ -121,6 +137,7 @@ class SyncFeedStore:
         plus 0-10 s jitter).  Quarantines the feed when the threshold is
         reached.
         """
+        status_reason_value = status_reason.value if status_reason is not None else None  # fmt: skip
         with self._connect_db() as conn:
             conn.execute(
                 _RECORD_FAILURE_SQL,
@@ -129,6 +146,9 @@ class SyncFeedStore:
                     self._failure_threshold,
                     self._max_backoff_sec,
                     self._base_backoff_sec,
+                    self._failure_threshold,
+                    reason,
+                    status_reason_value,
                     feed_id,
                 ),
             )

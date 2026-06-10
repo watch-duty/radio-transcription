@@ -135,7 +135,6 @@ def parse_payload(entry: Entry) -> dict[str, Any]:
     return {
         **parse_feed_metadata_payload(entry),
         "name": entry["display_name"],
-        "externalId": entry["url"],
         "tags": [
             {"key": key, "value": value} for key, value in entry["tags"].items()
         ],

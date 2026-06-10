@@ -5,13 +5,14 @@ import "google/protobuf/duration.proto";
 // Represents a processed audio transmission, including its metadata, source segment IDs, and the resulting transcript.
 message TranscribedAudio {
 
-  // --- Identifiers & Base Metadata ---
-  
-  // A unique, deterministic identifier for this specific transmission (formatted as a RFC 4122 UUID).
-  string transmission_id = 1;
+  reserved 1;
+  reserved "transmission_id";
 
   // The unique identifier of the radio feed this transmission originated from (formatted as a RFC 4122 UUID).
   string feed_id = 2;
+
+  // A unique, deterministic identifier for this specific segment (formatted as a RFC 4122 UUID).
+  string segment_id = 15;
 
 
   // --- Transcription Content ---
@@ -55,6 +56,9 @@ message TranscribedAudio {
   // The human-readable name of the radio feed as stored in the database.
   string feed_name = 13;
 
-  // The ID used for mapping the feed ID within the application.
-  string external_id = 14;
+  // The URI of the mono downmixed FLAC file optimized specifically for ephemeral ASR transcription inference.
+  optional string transcription_audio_uri = 16;
+
+  reserved 14;
+  reserved "external_id";
 }

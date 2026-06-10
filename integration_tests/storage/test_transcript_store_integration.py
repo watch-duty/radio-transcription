@@ -9,6 +9,9 @@ if TYPE_CHECKING:
 
 import pytest
 
+from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
+    EvaluatedTranscribedAudio,
+)
 from backend.pipeline.storage.transcript_store import TranscriptStore
 from integration_tests.storage.storage_feed_util import create_feed
 
@@ -22,7 +25,7 @@ async def store(db_pool: asyncpg.Pool) -> TranscriptStore:
 
 async def _insert_transcript(
     pool: asyncpg.Pool,
-    transmission_id: uuid.UUID,
+    segment_id: uuid.UUID,
     feed_id: uuid.UUID,
     end_timestamp: datetime.datetime,
     transcript: str = "Test transcript",
@@ -30,10 +33,10 @@ async def _insert_transcript(
     start_timestamp = end_timestamp - datetime.timedelta(seconds=10)
     await pool.execute(
         """
-        INSERT INTO transcripts (transmission_id, feed_id, transcript, start_timestamp, end_timestamp, created_at)
+        INSERT INTO transcripts (segment_id, feed_id, transcript, start_timestamp, end_timestamp, created_at)
         VALUES ($1, $2, $3, $4, $5, NOW())
         """,
-        str(transmission_id),
+        str(segment_id),
         str(feed_id),
         transcript,
         start_timestamp,
@@ -140,3 +143,32 @@ async def test_list_transcripts_time_window(
     assert result.transcripts[0].end_timestamp.ToDatetime() == t2.replace(
         tzinfo=None
     )
+
+
+async def test_create_transcript_idempotent(
+    db_pool: asyncpg.Pool, store: TranscriptStore
+) -> None:
+    feed_id = await create_feed(db_pool)
+    segment_id = uuid.uuid4()
+
+    msg = EvaluatedTranscribedAudio()
+    msg.segment_id = str(segment_id)
+    msg.feed_id = str(feed_id)
+    msg.transcript = "First insertion"
+    msg.start_timestamp.FromDatetime(
+        datetime.datetime(2026, 1, 1, 10, 0, 0, tzinfo=datetime.UTC)
+    )
+    msg.end_timestamp.FromDatetime(
+        datetime.datetime(2026, 1, 1, 10, 0, 10, tzinfo=datetime.UTC)
+    )
+    msg.source_audio_uris.append("gs://bucket/audio1.ogg")
+
+    # First write should succeed
+    res1 = await store.create_transcript(msg)
+    assert res1.segment_id == str(segment_id)
+    assert res1.transcript == "First insertion"
+
+    # Second write with same segment_id should also succeed (idempotent ON CONFLICT)
+    msg.transcript = "Second insertion"
+    res2 = await store.create_transcript(msg)
+    assert res2.segment_id == str(segment_id)

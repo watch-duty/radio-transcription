@@ -9,6 +9,7 @@ if TYPE_CHECKING:
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 
 from backend.pipeline.common.auth import verify_oidc_token
+from backend.pipeline.common.fastapi_tracing import setup_fastapi_tracing
 from backend.pipeline.common.rules.models import Rule, RuleCreate, RuleUpdate
 from backend.pipeline.storage.connection import (
     close_pool,
@@ -36,6 +37,7 @@ app = FastAPI(
     lifespan=lifespan,
     dependencies=[Depends(verify_oidc_token)],
 )
+setup_fastapi_tracing(app, service_name="rules-service")
 
 
 def get_rules_service(request: Request) -> BaseRulesService:

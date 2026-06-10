@@ -4,7 +4,7 @@ services:
     image: gcr.io/google.com/cloudsdktool/cloud-sdk:emulators
     command: gcloud beta emulators pubsub start --host-port=0.0.0.0:8085
     ports:
-      - "8085:8085"
+      - "127.0.0.1:8085:8085"
     networks:
       - pipeline-network
 
@@ -16,7 +16,9 @@ services:
       - rules-management
       - notification
     env_file:
-      - ./local_dev/LOCAL.env
+      - path: ./local_dev/LOCAL.env
+      - path: .env
+        required: false
     networks:
       - pipeline-network
     volumes:
@@ -29,19 +31,21 @@ services:
     depends_on:
       - gcs-emulator
     env_file:
-      - ./local_dev/LOCAL.env
+      - path: ./local_dev/LOCAL.env
+      - path: .env
+        required: false
     networks:
       - pipeline-network
     volumes:
       - ./local_dev/gcs_init.py:/app/gcs_init.py
-      - ./backend/pipeline/normalization/tests/test_data:/app/data
+      - ./backend/pipeline/segmentation/tests/test_data:/app/data
     working_dir: /app
     command: sh -c "pip install google-cloud-storage && python gcs_init.py"
 
   gcs-emulator:
     image: fsouza/fake-gcs-server
     ports:
-      - "4443:4443"
+      - "127.0.0.1:4443:4443"
     command: -scheme http -external-url http://gcs-emulator:4443
     networks:
       - pipeline-network
@@ -53,13 +57,14 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       # Mount migrations read-only at /sql and use an init script that skips
       # pg_cron files (extension is production-only via AlloyDB flag; the
       # postgres:15-alpine image doesn't ship it). See the script for details.
       - ./terraform/modules/alloydb/sql/ingestion:/sql:ro
       - ./local_dev/docker_postgres_init.sh:/docker-entrypoint-initdb.d/00_apply_schema.sh:ro
+      - ./local_dev/test_data.sql:/docker-entrypoint-initdb.d/99_test_data.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -71,18 +76,21 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     networks:
       - pipeline-network
 
   # ----------- Pipeline Services ----------
 
   audio-ingestion:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/audio-ingestion:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/pipeline/ingestion/Dockerfile
     env_file:
-      - ./local_dev/LOCAL.env
+      - path: ./local_dev/LOCAL.env
+      - path: .env
+        required: false
     environment:
       - CONTINUOUS_PUBSUB_TOPIC_PATH=${CONTINUOUS_TOPIC}
       - SEGMENTED_PUBSUB_TOPIC_PATH=${SEGMENTED_TOPIC}
@@ -101,20 +109,53 @@ services:
       - pipeline-network
 
   normalization:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/normalization:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/pipeline/normalization/Dockerfile
-    entrypoint: ["python3", "backend/pipeline/normalization/main.py"]
+    ports:
+      - "8083:8083"
+    env_file:
+      - ./local_dev/LOCAL.env
+    environment:
+      - OUTPUT_TOPIC=projects/local-project/topics/normalized-audio
+      - PROJECT_ID=local-project
+      - AUDIO_CANONICAL_BUCKET=test-canonical-bucket
+    command: ["functions-framework", "--source=backend/pipeline/normalization/main.py", "--target=normalize_claim_check", "--signature-type=cloudevent", "--port=8083"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8083))"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pipeline-network
+    depends_on:
+      pubsub-emulator:
+        condition: service_started
+      pubsub-init:
+        condition: service_completed_successfully
+      gcs-emulator:
+        condition: service_started
+      gcs-init:
+        condition: service_completed_successfully
+
+  segmentation:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/segmentation:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: backend/pipeline/segmentation/Dockerfile
+    entrypoint: ["python3", "backend/pipeline/segmentation/main.py"]
     # DirectRunner doesn't support deduplication, so we need to give an empty field here to disable it.
     command: >
       --continuous_input_subscription projects/$GOOGLE_CLOUD_PROJECT/subscriptions/$CONTINUOUS_AUDIO_SUBSCRIPTION
-      --segmented_input_subscription projects/$GOOGLE_CLOUD_PROJECT/subscriptions/$SEGMENTED_AUDIO_SUBSCRIPTION
-      --output_topic projects/$GOOGLE_CLOUD_PROJECT/topics/normalized-audio
+      --output_topic projects/$GOOGLE_CLOUD_PROJECT/topics/segmented-audio
+      --staging_audio_bucket $AUDIO_STAGING_BUCKET
       --project $GOOGLE_CLOUD_PROJECT
       --id_label ""
-      --canonical_audio_bucket $AUDIO_CANONICAL_BUCKET
     env_file:
-      - ./local_dev/LOCAL.env
+      - path: ./local_dev/LOCAL.env
+      - path: .env
+        required: false
     networks:
       - pipeline-network
     depends_on:
@@ -128,17 +169,19 @@ services:
         condition: service_completed_successfully
 
   transcription:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/transcription:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/pipeline/transcription/Dockerfile
     ports:
-      - "8084:8084"
+      - "127.0.0.1:8084:8084"
     env_file:
-      - ./local_dev/LOCAL.env
+      - path: ./local_dev/LOCAL.env
+      - path: .env
+        required: false
     environment:
       - OUTPUT_TOPIC=projects/local-project/topics/transcription-text-topic
       - PROJECT_ID=local-project
-      - TRANSCRIBER_TYPE=mock
     command: ["functions-framework", "--source=backend/pipeline/transcription/main.py", "--target=transcribe_claim_check", "--signature-type=cloudevent", "--port=8084"]
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8084))"]
@@ -148,16 +191,20 @@ services:
     networks:
       - pipeline-network
     depends_on:
-      - pubsub-emulator
+      pubsub-emulator:
+        condition: service_started
 
   rules-evaluation:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/rules-evaluation:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/pipeline/evaluation/Dockerfile
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     env_file:
-      - ./local_dev/LOCAL.env
+      - path: ./local_dev/LOCAL.env
+      - path: .env
+        required: false
     volumes:
       - ./local_dev/run_evaluation_publish.py:/app/run_evaluation_publish.py
     command: ["functions-framework", "--source=backend/pipeline/evaluation/main.py", "--target=evaluate_transcribed_audio_segment", "--signature-type=cloudevent", "--port=8080"]
@@ -175,13 +222,16 @@ services:
       - postgres
 
   notification:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/notification:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/pipeline/notification/Dockerfile
     ports:
-      - "8081:8081"
+      - "127.0.0.1:8081:8081"
     env_file:
-      - ./local_dev/LOCAL.env
+      - path: ./local_dev/LOCAL.env
+      - path: .env
+        required: false
     environment:
       - REDIS_HOST=redis
     command: ["functions-framework", "--source=backend/pipeline/notification/send_notification.py", "--target=send_notification", "--signature-type=cloudevent", "--port=8081"]
@@ -198,13 +248,16 @@ services:
 
   # ----------- API Management Services ----------
   rules-management:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/rules-management:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/services/rules/Dockerfile
     ports:
-      - "8086:8086"
+      - "127.0.0.1:8086:8086"
     env_file:
-      - ./local_dev/LOCAL.env
+      - path: ./local_dev/LOCAL.env
+      - path: .env
+        required: false
     command: ["uvicorn", "backend.services.rules.main:app", "--host", "0.0.0.0", "--port", "8086"]
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8086))"]
@@ -218,13 +271,16 @@ services:
       - pipeline-network
 
   transcripts-api:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/transcripts-api:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/services/transcripts/Dockerfile
     ports:
-      - "8087:8087"
+      - "127.0.0.1:8087:8087"
     env_file:
-      - ./local_dev/LOCAL.env
+      - path: ./local_dev/LOCAL.env
+      - path: .env
+        required: false
     command: ["uvicorn", "backend.services.transcripts.main:app", "--host", "0.0.0.0", "--port", "8087"]
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8087))"]
@@ -238,13 +294,16 @@ services:
       - pipeline-network
 
   feeds-api:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/feeds-api:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/services/feeds/Dockerfile
     ports:
-      - "8089:8089"
+      - "127.0.0.1:8089:8089"
     env_file:
-      - ./local_dev/LOCAL.env
+      - path: ./local_dev/LOCAL.env
+      - path: .env
+        required: false
     command: ["uvicorn", "backend.services.feeds.main:app", "--host", "0.0.0.0", "--port", "8089"]
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8089))"]
@@ -258,13 +317,16 @@ services:
       - pipeline-network
 
   audio-segments-api:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/audio-segments-api:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/services/audio_segments/Dockerfile
     ports:
-      - "8091:8091"
+      - "127.0.0.1:8091:8091"
     env_file:
-      - ./local_dev/LOCAL.env
+      - path: ./local_dev/LOCAL.env
+      - path: .env
+        required: false
     command: ["uvicorn", "backend.services.audio_segments.main:app", "--host", "0.0.0.0", "--port", "8091"]
     healthcheck:
       test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8091))"]
@@ -281,9 +343,10 @@ services:
   mock-server:
     image: python:3.13-slim
     ports:
-      - "8082:8082"
+      - "127.0.0.1:8082:8082"
     volumes:
       - ./local_dev/mock_server.py:/app/mock_server.py
+      - ./backend/pipeline/segmentation/tests/test_data/test_bcfy.flac:/data/test_bcfy.flac:ro
     working_dir: /app
     command: python -u mock_server.py
     networks:
@@ -292,28 +355,36 @@ services:
   mock-audio-server:
     image: python:3.13-slim
     ports:
-      - "8090:8090"
+      - "127.0.0.1:8090:8090"
     volumes:
       - ./local_dev/mock_audio_server.py:/app/mock_audio_server.py:ro
-      - ./backend/pipeline/normalization/tests/test_data/test_bcfy.flac:/data/test_bcfy.flac:ro
+      - ./local_dev/mock_audio:/data:ro
     working_dir: /app
     env_file:
-      - ./local_dev/LOCAL.env
+      - path: ./local_dev/LOCAL.env
+      - path: .env
+        required: false
     command: python mock_audio_server.py
     networks:
       - pipeline-network
 
+
   frontend-api:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/frontend-api:${TAG:-latest}
     build:
       context: .
       dockerfile: frontend/api/Dockerfile
     ports:
-      - "8088:8080"
+      - "127.0.0.1:8088:8080"
     env_file:
-      - ./local_dev/LOCAL.env
+      - path: ./local_dev/LOCAL.env
+      - path: .env
+        required: false
     environment:
       - TRANSCRIPTS_API_URL=http://transcripts-api:8087/v1/transcripts
       - AUDIO_SEGMENTS_API_URL=http://audio-segments-api:8091/v1/audio_segments
+      - FEEDS_STORE_API_URL=http://feeds-api:8089/v1/feeds
+      - RULES_API_URL=http://rules-management:8086/v1/rules
     networks:
       - pipeline-network
     depends_on:
@@ -355,15 +426,21 @@ services:
         condition: service_started
       normalization:
         condition: service_started
+      segmentation:
+        condition: service_started
       transcription:
         condition: service_started
       audio-ingestion:
         condition: service_started
       mock-audio-server:
         condition: service_started
+      frontend-api:
+        condition: service_started
 
     env_file:
-      - ./local_dev/LOCAL.env
+      - path: ./local_dev/LOCAL.env
+      - path: .env
+        required: false
     environment:
       - UV_PROJECT_ENVIRONMENT=/tmp/.venv
     volumes:

@@ -9,6 +9,7 @@ from google.protobuf import json_format
 from backend.pipeline.common.auth_client import get_id_token
 from backend.pipeline.common.env import is_gcp_env
 from backend.pipeline.common.exceptions import AlreadyExistsError
+from backend.pipeline.common.tracing_utils import get_current_traceparent
 
 if TYPE_CHECKING:
     from backend.pipeline.schema_types import (
@@ -49,8 +50,8 @@ class TranscriptsClient:
         def _raise(msg: str) -> None:
             raise ValueError(msg)
 
-        if not payload.transmission_id:
-            _raise("transmission_id is required")
+        if not payload.segment_id:
+            _raise("segment_id is required")
         if not payload.feed_id:
             _raise("feed_id is required")
         if not payload.transcript:
@@ -64,6 +65,11 @@ class TranscriptsClient:
             always_print_fields_with_no_presence=True,
         )
 
+        headers = {}
+        traceparent = get_current_traceparent()
+        if traceparent:
+            headers["traceparent"] = traceparent
+
         if is_gcp_env():
             token = get_id_token(self.api_url)
             self.session.headers.update({"Authorization": f"Bearer {token}"})
@@ -71,11 +77,13 @@ class TranscriptsClient:
         response = self.session.post(
             f"{self.api_url}/v1/transcripts",
             json=data,
+            headers=headers,
             timeout=10,
         )
+
         try:
             response.raise_for_status()
         except requests.exceptions.HTTPError as e:
             if response.status_code == 409:
-                raise AlreadyExistsError(payload.transmission_id) from e
+                raise AlreadyExistsError(payload.segment_id) from e
             raise

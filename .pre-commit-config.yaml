@@ -5,6 +5,7 @@ repos:
         name: generate protobufs
         entry: mise run generate:protos
         language: system
+        files: ^protos/.*\.proto$
         pass_filenames: false
       - id: ruff-check
         name: ruff check

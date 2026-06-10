@@ -29,11 +29,11 @@ describe('AudioDisplay', () => {
     render(
       <AudioDisplay
         transcripts={[]}
-        currentlyPlayingTransmissionId={null}
+        currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={vi.fn()}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
     expect(screen.getByText('No audio found')).toBeTruthy();
@@ -42,7 +42,7 @@ describe('AudioDisplay', () => {
   it('should render transcripts when provided', () => {
     const mockTranscripts: Transcript[] = [
       {
-        transmissionId: '1',
+        segmentId: '1',
         feedId: 'feed1',
         startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
         endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
@@ -61,11 +61,11 @@ describe('AudioDisplay', () => {
     const { container } = render(
       <AudioDisplay
         transcripts={mockTranscripts}
-        currentlyPlayingTransmissionId={null}
+        currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={vi.fn()}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
 
@@ -79,7 +79,7 @@ describe('AudioDisplay', () => {
   it('should render warning icon when transcript has evaluation decisions', () => {
     const mockTranscripts: Transcript[] = [
       {
-        transmissionId: '1',
+        segmentId: '1',
         feedId: 'feed1',
         startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
         endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
@@ -98,21 +98,21 @@ describe('AudioDisplay', () => {
     render(
       <AudioDisplay
         transcripts={mockTranscripts}
-        currentlyPlayingTransmissionId={null}
+        currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={vi.fn()}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
 
     expect(screen.getByTestId('warning-icon')).toBeTruthy();
   });
 
-  it('should shift window when playing transmission is outside window', async () => {
+  it('should shift window when playing segment is outside window', async () => {
     const mockTranscripts: Transcript[] = [
       {
-        transmissionId: '1',
+        segmentId: '1',
         feedId: 'feed1',
         startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
         endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
@@ -127,7 +127,7 @@ describe('AudioDisplay', () => {
         endAudioOffset: '0',
       },
       {
-        transmissionId: '2',
+        segmentId: '2',
         feedId: 'feed1',
         startTimestamp: new Date('2026-04-20T08:20:00Z').toISOString(),
         endTimestamp: new Date('2026-04-20T08:20:05Z').toISOString(),
@@ -146,11 +146,11 @@ describe('AudioDisplay', () => {
     const { rerender } = render(
       <AudioDisplay
         transcripts={mockTranscripts}
-        currentlyPlayingTransmissionId={null}
+        currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={vi.fn()}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
 
@@ -161,11 +161,11 @@ describe('AudioDisplay', () => {
     rerender(
       <AudioDisplay
         transcripts={mockTranscripts}
-        currentlyPlayingTransmissionId="2"
+        currentlyPlayingSegmentId="2"
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={vi.fn()}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
 
@@ -180,7 +180,7 @@ describe('AudioDisplay', () => {
   it('should reset window when transcripts[0] changes', async () => {
     const mockTranscripts1: Transcript[] = [
       {
-        transmissionId: '1',
+        segmentId: '1',
         feedId: 'feed1',
         startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
         endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
@@ -198,7 +198,7 @@ describe('AudioDisplay', () => {
 
     const mockTranscripts2: Transcript[] = [
       {
-        transmissionId: '2',
+        segmentId: '2',
         feedId: 'feed2',
         startTimestamp: new Date('2026-04-20T10:00:00Z').toISOString(),
         endTimestamp: new Date('2026-04-20T10:00:05Z').toISOString(),
@@ -217,11 +217,11 @@ describe('AudioDisplay', () => {
     const { rerender } = render(
       <AudioDisplay
         transcripts={mockTranscripts1}
-        currentlyPlayingTransmissionId={null}
+        currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={vi.fn()}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
 
@@ -232,11 +232,11 @@ describe('AudioDisplay', () => {
     rerender(
       <AudioDisplay
         transcripts={mockTranscripts2}
-        currentlyPlayingTransmissionId={null}
+        currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={vi.fn()}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
 
@@ -251,7 +251,7 @@ describe('AudioDisplay', () => {
   it('should adjust window duration based on userDuration capped at 15 minutes', async () => {
     const mockTranscripts: Transcript[] = [
       {
-        transmissionId: '1',
+        segmentId: '1',
         feedId: 'feed1',
         startTimestamp: new Date('2026-04-20T09:15:00Z').toISOString(),
         endTimestamp: new Date('2026-04-20T09:15:00Z').toISOString(),
@@ -270,12 +270,12 @@ describe('AudioDisplay', () => {
     const { rerender } = render(
       <AudioDisplay
         transcripts={mockTranscripts}
-        currentlyPlayingTransmissionId={null}
+        currentlyPlayingSegmentId={null}
         userDuration="5"
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={vi.fn()}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
 
@@ -292,12 +292,12 @@ describe('AudioDisplay', () => {
     rerender(
       <AudioDisplay
         transcripts={mockTranscripts}
-        currentlyPlayingTransmissionId={null}
+        currentlyPlayingSegmentId={null}
         userDuration="30"
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={vi.fn()}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
 
@@ -317,7 +317,7 @@ describe('AudioDisplay', () => {
   it('passes playbackAudioUri to WavesurferPlayer (transformed via getAudioUrl)', () => {
     const mockTranscripts: Transcript[] = [
       {
-        transmissionId: '1',
+        segmentId: '1',
         feedId: 'feed1',
         startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
         endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
@@ -336,11 +336,11 @@ describe('AudioDisplay', () => {
     render(
       <AudioDisplay
         transcripts={mockTranscripts}
-        currentlyPlayingTransmissionId={null}
+        currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={vi.fn()}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
 
@@ -358,7 +358,7 @@ describe('AudioDisplay', () => {
       <AudioDisplay
         transcripts={[
           {
-            transmissionId: '1',
+            segmentId: '1',
             feedId: 'feed1',
             startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
             endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
@@ -373,11 +373,11 @@ describe('AudioDisplay', () => {
             endAudioOffset: '0',
           },
         ]}
-        currentlyPlayingTransmissionId={null}
+        currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={mockOnTogglePlayPause}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
 
@@ -392,11 +392,11 @@ describe('AudioDisplay', () => {
     render(
       <AudioDisplay
         transcripts={[]}
-        currentlyPlayingTransmissionId={null}
+        currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={mockOnTogglePlayPause}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
 
@@ -411,21 +411,21 @@ describe('AudioDisplay', () => {
     render(
       <AudioDisplay
         transcripts={[]}
-        currentlyPlayingTransmissionId={null}
+        currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={true}
         onTogglePlayPause={vi.fn()}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
 
     expect(screen.getByLabelText('pause')).toBeTruthy();
   });
 
-  it('should shift window when highlighted transmission is outside window', async () => {
+  it('should shift window when highlighted segment is outside window', async () => {
     const mockTranscripts: Transcript[] = [
       {
-        transmissionId: '1',
+        segmentId: '1',
         feedId: 'feed1',
         startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
         endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
@@ -440,7 +440,7 @@ describe('AudioDisplay', () => {
         endAudioOffset: '0',
       },
       {
-        transmissionId: '2',
+        segmentId: '2',
         feedId: 'feed1',
         startTimestamp: new Date('2026-04-20T08:20:00Z').toISOString(),
         endTimestamp: new Date('2026-04-20T08:20:05Z').toISOString(),
@@ -459,11 +459,11 @@ describe('AudioDisplay', () => {
     const { rerender } = render(
       <AudioDisplay
         transcripts={mockTranscripts}
-        currentlyPlayingTransmissionId={null}
+        currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={vi.fn()}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
 
@@ -474,11 +474,11 @@ describe('AudioDisplay', () => {
     rerender(
       <AudioDisplay
         transcripts={mockTranscripts}
-        currentlyPlayingTransmissionId={null}
+        currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={vi.fn()}
-        highlightedTransmissionId="2"
+        highlightedSegmentId="2"
       />
     );
 

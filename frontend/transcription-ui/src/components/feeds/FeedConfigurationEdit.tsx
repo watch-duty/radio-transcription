@@ -10,11 +10,6 @@ import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
 import CardContent from '@mui/material/CardContent';
 import CircularProgress from '@mui/material/CircularProgress';
-import Dialog from '@mui/material/Dialog';
-import DialogActions from '@mui/material/DialogActions';
-import DialogContent from '@mui/material/DialogContent';
-import DialogContentText from '@mui/material/DialogContentText';
-import DialogTitle from '@mui/material/DialogTitle';
 import Divider from '@mui/material/Divider';
 import FormControl from '@mui/material/FormControl';
 import FormHelperText from '@mui/material/FormHelperText';
@@ -29,34 +24,90 @@ import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
-import type { FeedCreate, FeedUpdate, Tag } from '@transcription/common';
+import type {
+  BackendFeedStatus,
+  FeedCreate,
+  FeedStatus,
+  FeedUpdate,
+  Tag,
+} from '@transcription/common';
 import { SourceType } from '@transcription/common';
+
+import { validateFeedSourceId } from '../../utils/validationUtils';
+import {
+  ConfirmationDialog,
+  type ConfirmationDialogProps,
+} from '../common/ConfirmationDialog';
 
 const SOURCE_TYPE_OPTIONS: {
   value: SourceType;
   label: string;
 }[] = [
   {
-    value: SourceType.BCFY_FEEDS,
-    label: 'Broadcastify Feeds',
-  },
-  {
     value: SourceType.BCFY_CALLS,
     label: 'Broadcastify Calls',
   },
   {
-    value: SourceType.OPENMHZ,
-    label: 'OpenMHZ',
+    value: SourceType.BCFY_FEEDS,
+    label: 'Broadcastify Feeds',
+  },
+  {
+    value: SourceType.FIRE_NOTIFICATIONS,
+    label: 'Fire Notifications',
   },
   {
     value: SourceType.ECHO,
     label: 'Echo',
   },
   {
-    value: SourceType.FIRE_NOTIFICATIONS,
-    label: 'Fire Notifications',
+    value: SourceType.OPENMHZ,
+    label: 'OpenMHZ',
   },
 ];
+
+export const DialogType = {
+  Delete: 'delete',
+  Reset: 'reset',
+  Deactivate: 'deactivate',
+} as const;
+
+export type DialogType = (typeof DialogType)[keyof typeof DialogType];
+
+const DIALOG_CONFIG: Record<
+  DialogType,
+  {
+    title: string;
+    description: string;
+    confirmLabel: string;
+    confirmColor: ConfirmationDialogProps['confirmColor'];
+    showConfirmInput: boolean;
+  }
+> = {
+  [DialogType.Delete]: {
+    title: 'Verify Feed Deletion',
+    description:
+      'Are you sure you want to delete the feed? This will remove the feed and any associated metadata (e.g. transcripts, annotations, etc.). This action is not reversible.',
+    confirmLabel: 'Delete',
+    confirmColor: 'error',
+    showConfirmInput: true,
+  },
+  [DialogType.Reset]: {
+    title: 'Verify Feed Reset',
+    description:
+      'Are you sure you want to reset this feed? This will re-enable the feed processing.',
+    confirmLabel: 'Reset',
+    confirmColor: 'primary',
+    showConfirmInput: false,
+  },
+  [DialogType.Deactivate]: {
+    title: 'Verify Feed Deactivation',
+    description:
+      'Are you sure you want to deactivate this feed? Feed processing will stop until the feed is explicitly reset.',
+    confirmLabel: 'Deactivate',
+    confirmColor: 'error',
+    showConfirmInput: false,
+  },
+};
 
 interface FeedConfigurationEditProps {
   isEditing: boolean;
@@ -64,13 +115,20 @@ interface FeedConfigurationEditProps {
   feedSourceType: SourceType;
   feedSourceId: string;
   feedTags: Tag[];
+  feedStatus?: FeedStatus;
+  feedSubstatus?: BackendFeedStatus;
   setFeedName: (name: string) => void;
   setFeedSourceType: (sourceType: SourceType) => void;
   setFeedSourceId: (sourceFeedId: string) => void;
   setFeedTags: (tags: Tag[]) => void;
   onCreateFeed: (payload: FeedCreate) => Promise<void>;
   onUpdateFeed: (payload: FeedUpdate) => Promise<void>;
+  /** Callback triggered to hard delete the feed. If undefined, "Delete feed" is hidden from the actions menu. */
   onDeleteFeed?: () => Promise<void>;
+  /** Callback triggered to deactivate the feed. If undefined, "Deactivate feed" is hidden from the actions menu. */
+  onDeactivateFeed?: () => Promise<void>;
+  /** Callback triggered to reset/re-enable the feed. If undefined, "Reset feed" is hidden from the actions menu. */
+  onResetFeed?: () => Promise<void>;
   onCancel: () => void;
   isSubmitting: boolean;
 }
@@ -81,6 +139,8 @@ export function FeedConfigurationEdit({
   feedSourceType,
   feedSourceId,
   feedTags,
+  feedStatus,
+  feedSubstatus,
   setFeedName,
   setFeedSourceType,
   setFeedSourceId,
@@ -88,6 +148,8 @@ export function FeedConfigurationEdit({
   onCreateFeed,
   onUpdateFeed,
   onDeleteFeed,
+  onDeactivateFeed,
+  onResetFeed,
   onCancel,
   isSubmitting,
 }: FeedConfigurationEditProps) {
@@ -100,10 +162,10 @@ export function FeedConfigurationEdit({
     Record<string, string>
   >({});
 
-  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [activeDialog, setActiveDialog] = useState<DialogType | null>(null);
+
   const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
   const menuOpen = Boolean(menuAnchorEl);
-  const [confirmFeedSourceId, setConfirmFeedSourceId] = useState('');
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
     setMenuAnchorEl(event.currentTarget);
@@ -115,8 +177,33 @@ export function FeedConfigurationEdit({
 
   const handleDeleteClick = () => {
     handleMenuClose();
-    setConfirmFeedSourceId('');
-    setIsDeleteDialogOpen(true);
+    setActiveDialog(DialogType.Delete);
+  };
+
+  const handleResetClick = () => {
+    handleMenuClose();
+    setActiveDialog(DialogType.Reset);
+  };
+
+  const handleDeactivateClick = () => {
+    handleMenuClose();
+    setActiveDialog(DialogType.Deactivate);
+  };
+
+  const handleDialogClose = () => {
+    setActiveDialog(null);
+  };
+
+  const handleConfirmAction = async () => {
+    const currentDialog = activeDialog;
+    setActiveDialog(null);
+    if (currentDialog === DialogType.Delete && onDeleteFeed) {
+      await onDeleteFeed();
+    } else if (currentDialog === DialogType.Reset && onResetFeed) {
+      await onResetFeed();
+    } else if (currentDialog === DialogType.Deactivate && onDeactivateFeed) {
+      await onDeactivateFeed();
+    }
   };
 
   const handleKeyChange = (val: string) => {
@@ -147,7 +234,7 @@ export function FeedConfigurationEdit({
     setNewTagKey('');
     setNewTagValue('');
     setValidationErrors({});
-    setIsDeleteDialogOpen(false);
+    setActiveDialog(null);
   };
 
   // Tag interactions
@@ -218,8 +305,9 @@ export function FeedConfigurationEdit({
       errors.name = 'Display name is required.';
     }
 
-    if (!feedSourceId.trim()) {
-      errors.sourceFeedId = 'Source feed ID is required.';
+    const sourceIdError = validateFeedSourceId(feedSourceType, feedSourceId);
+    if (sourceIdError) {
+      errors.sourceFeedId = sourceIdError;
     }
 
     // First check the in-progress tag inputs
@@ -289,7 +377,6 @@ export function FeedConfigurationEdit({
       if (isEditing) {
         const payload: FeedUpdate = {
           name: feedName.trim(),
-          externalId: feedSourceId.trim(),
           tags: finalTags,
         };
         await onUpdateFeed(payload);
@@ -298,7 +385,6 @@ export function FeedConfigurationEdit({
           name: feedName.trim(),
           sourceType: feedSourceType,
           sourceFeedId: feedSourceId.trim(),
-          externalId: feedSourceId.trim(),
           tags: finalTags,
         };
         await onCreateFeed(payload);
@@ -309,13 +395,7 @@ export function FeedConfigurationEdit({
     }
   };
 
-  const handleDeleteConfirm = async () => {
-    setConfirmFeedSourceId('');
-    setIsDeleteDialogOpen(false);
-    if (onDeleteFeed) {
-      await onDeleteFeed();
-    }
-  };
+  const dialogConfig = activeDialog ? DIALOG_CONFIG[activeDialog] : null;
 
   return (
     <Card
@@ -636,6 +716,28 @@ export function FeedConfigurationEdit({
                         horizontal: 'right',
                       }}
                     >
+                      {onResetFeed &&
+                        feedStatus &&
+                        feedStatus !== 'active' &&
+                        feedSubstatus &&
+                        feedSubstatus !== 'unclaimed' && (
+                          <MenuItem
+                            onClick={handleResetClick}
+                            disabled={isSubmitting}
+                          >
+                            Reset feed
+                          </MenuItem>
+                        )}
+                      {onDeactivateFeed &&
+                        feedSubstatus &&
+                        feedSubstatus !== 'deactivated' && (
+                          <MenuItem
+                            onClick={handleDeactivateClick}
+                            disabled={isSubmitting}
+                          >
+                            Deactivate feed
+                          </MenuItem>
+                        )}
                       <MenuItem
                         onClick={handleDeleteClick}
                         disabled={isSubmitting}
@@ -652,62 +754,21 @@ export function FeedConfigurationEdit({
         </Box>
       </CardContent>
 
-      <Dialog
-        open={isDeleteDialogOpen}
-        onClose={() => {
-          setConfirmFeedSourceId('');
-          setIsDeleteDialogOpen(false);
-        }}
-        aria-labelledby="delete-feed-dialog-title"
-        aria-describedby="delete-feed-dialog-description"
-      >
-        <DialogTitle id="delete-feed-dialog-title">
-          Verify Feed Deletion
-        </DialogTitle>
-        <DialogContent>
-          <DialogContentText id="delete-feed-dialog-description" sx={{ mb: 2 }}>
-            Are you sure you want to delete the feed, along with associated
-            metadata, transcripts, and annotations?
-          </DialogContentText>
-          <DialogContentText sx={{ mb: 1, fontWeight: 'bold' }}>
-            To confirm, type the Source Feed ID "{feedSourceId}" below:
-          </DialogContentText>
-          <TextField
-            fullWidth
-            size="small"
-            variant="outlined"
-            value={confirmFeedSourceId}
-            onChange={(e) => setConfirmFeedSourceId(e.target.value)}
-            placeholder={feedSourceId}
-            disabled={isSubmitting}
-            slotProps={{
-              htmlInput: { 'data-testid': 'delete-confirm-input' },
-            }}
-          />
-        </DialogContent>
-        <DialogActions>
-          <Button
-            onClick={() => {
-              setConfirmFeedSourceId('');
-              setIsDeleteDialogOpen(false);
-            }}
-            color="primary"
-            disabled={isSubmitting}
-            sx={{ textTransform: 'none' }}
-          >
-            Cancel
-          </Button>
-          <Button
-            onClick={handleDeleteConfirm}
-            color="error"
-            variant="contained"
-            disabled={confirmFeedSourceId !== feedSourceId || isSubmitting}
-            sx={{ textTransform: 'none' }}
-          >
-            Delete
-          </Button>
-        </DialogActions>
-      </Dialog>
+      {dialogConfig && (
+        <ConfirmationDialog
+          open={activeDialog !== null}
+          title={dialogConfig.title}
+          description={dialogConfig.description}
+          confirmLabel={dialogConfig.confirmLabel}
+          confirmColor={dialogConfig.confirmColor}
+          showConfirmInput={dialogConfig.showConfirmInput}
+          confirmInputValue={feedSourceId}
+          confirmInputLabel={`To confirm, type the Source Feed ID "${feedSourceId}" below:`}
+          onClose={handleDialogClose}
+          onConfirm={handleConfirmAction}
+          isSubmitting={isSubmitting}
+        />
+      )}
     </Card>
   );
 }

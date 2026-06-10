@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
@@ -14,13 +15,19 @@ from backend.pipeline.common.exceptions import (
     FeedAlreadyExistsError,
     FeedNameAlreadyExistsError,
 )
+from backend.pipeline.common.fastapi_tracing import setup_fastapi_tracing
 from backend.pipeline.storage.connection import (
     close_pool,
     create_pool_with_retry,
 )
-from backend.pipeline.storage.feed_store import FeedStore
+from backend.pipeline.storage.feed_store import (
+    FeedStatus,
+    FeedStore,
+    SourceType,
+)
+from backend.pipeline.storage.pagination_utils import SortOrder
 
-from .models import Feed, FeedCreate, FeedUpdate
+from .models import Feed, FeedCreate, FeedUpdate, ListFeedsResponse, Tag
 from .service import FeedService
 
 logger = logging.getLogger(__name__)
@@ -43,6 +50,7 @@ app = FastAPI(
     lifespan=lifespan,
     dependencies=[Depends(verify_oidc_token)],
 )
+setup_fastapi_tracing(app, service_name="feeds-service")
 
 
 @app.post(
@@ -126,15 +134,83 @@ async def update_feed(
 
 @app.get(
     "/v1/feeds",
-    response_model=list[Feed],
+    response_model=ListFeedsResponse,
     tags=["feeds"],
 )
 async def list_feeds(
     request: Request,
-) -> list[Feed]:
-    """List all feeds."""
+    limit: int = 100,
+    next_token: str | None = None,
+    order: SortOrder = SortOrder.DESC,
+    source_types: str | None = None,
+    statuses: str | None = None,
+    tags: str | None = None,
+    name: str | None = None,
+) -> ListFeedsResponse:
+    """List all feeds with pagination and optional filters."""
+    source_types_list = None
+    if source_types:
+        try:
+            source_types_list = [
+                SourceType(s.strip())
+                for s in source_types.split(",")
+                if s.strip()
+            ]
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid source_type: {e}",
+            ) from e
+
+    statuses_list = None
+    if statuses:
+        try:
+            statuses_list = [
+                FeedStatus(s.strip()) for s in statuses.split(",") if s.strip()
+            ]
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid status: {e}",
+            ) from e
+
+    tags_list = None
+    if tags:
+        try:
+            tags_data = json.loads(tags)
+        except json.JSONDecodeError as e:
+            err_msg = f"Invalid format for tags: {e}"
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=err_msg,
+            ) from e
+
+        if not isinstance(tags_data, list):
+            err_msg = "Tags must be a JSON list with key, value entries."
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=err_msg,
+            )
+
+        try:
+            tags_list = [Tag.model_validate(t).model_dump() for t in tags_data]
+        except ValueError as e:
+            err_msg = f"Invalid format for tags: {e}"
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=err_msg,
+            ) from e
+
     service: FeedService = request.app.state.feed_service
-    return await service.list_feeds()
+    return await service.list_feeds(
+        limit=limit,
+        next_token=next_token,
+        order=order,
+        source_types=source_types_list,
+        statuses=statuses_list,
+        tags=tags_list,
+        name=name,
+    )
 
 
 @app.post(

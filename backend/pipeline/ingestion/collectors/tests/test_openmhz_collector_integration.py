@@ -25,8 +25,11 @@ from backend.pipeline.ingestion.collectors.openmhz.collector import (
 )
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
+    _require_captured_chunk,
 )
+from backend.pipeline.ingestion.models import FeedFailure
 from backend.pipeline.storage.feed_store import (
+    FeedStatusReason,
     FeedStore,
     LeasedFeed,
     SourceType,
@@ -185,7 +188,6 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         name: str,
         *,
         source_feed_id: str | None = "wmata",
-        external_id: str | None = "ext-wmata",
     ) -> uuid.UUID:
         """Insert an unclaimed openmhz feed, optionally with properties."""
         feed_id = await self.pool.fetchval(
@@ -197,11 +199,10 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         if source_feed_id is not None:
             await self.pool.execute(
                 "INSERT INTO feed_properties"
-                " (feed_id, source_feed_id, external_id, source_type)"
-                " VALUES ($1::uuid, $2, $3, $4)",
+                " (feed_id, source_feed_id, source_type)"
+                " VALUES ($1::uuid, $2, $3)",
                 str(feed_id),
                 source_feed_id,
-                external_id or f"ext-{source_feed_id}",
                 "openmhz",
             )
         return feed_id
@@ -261,12 +262,13 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
         shutdown = asyncio.Event()
         chunks_uploaded = []
-        async for chunk in openmhz_collector(
+        async for event in openmhz_collector(
             feed,
             shutdown,
             "https://api.openmhz.com/",
             _default_resources(),
         ):
+            chunk = _require_captured_chunk(event)
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client,
                 chunk.audio_bytes,
@@ -320,12 +322,13 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         gcs_paths = []
         seq = 0
-        async for chunk in openmhz_collector(
+        async for event in openmhz_collector(
             feed,
             shutdown,
             "https://api.openmhz.com/",
             _default_resources(),
         ):
+            chunk = _require_captured_chunk(event)
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client, chunk.audio_bytes, feed, _TEST_BUCKET, seq
             )
@@ -383,12 +386,13 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         gcs_paths = []
         seq = 0
-        async for chunk in openmhz_collector(
+        async for event in openmhz_collector(
             feed,
             shutdown,
             "https://api.openmhz.com/",
             _default_resources(),
         ):
+            chunk = _require_captured_chunk(event)
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client, chunk.audio_bytes, feed, _TEST_BUCKET, seq
             )
@@ -427,12 +431,13 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
         shutdown = asyncio.Event()
         gcs_paths = []
-        async for chunk in openmhz_collector(
+        async for event in openmhz_collector(
             feed,
             shutdown,
             "https://api.openmhz.com/",
             _default_resources(),
         ):
+            chunk = _require_captured_chunk(event)
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client, chunk.audio_bytes, feed, _TEST_BUCKET, 0
             )
@@ -445,7 +450,7 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
     async def test_missing_source_feed_id_raises_without_side_effects(
         self,
     ) -> None:
-        """Feed without feed_properties -> ValueError, no GCS upload."""
+        """Feed without feed_properties -> typed failure, no GCS upload."""
         # Insert a valid feed
         feed_id = await self._insert_feed("no-id-feed")
         leased = await self.store.acquire_feeds_batch(self.worker_id, _CLAIM)
@@ -460,7 +465,7 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         feed["source_feed_id"] = None
 
         shutdown = asyncio.Event()
-        with self.assertRaises(ValueError) as ctx:
+        with self.assertRaises(FeedFailure) as ctx:
             async for _ in openmhz_collector(
                 feed,
                 shutdown,
@@ -469,6 +474,10 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             ):
                 pass
 
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        )
         self.assertEqual(str(ctx.exception), "missing_source_feed_id")
 
         row = await self._get_feed_row(feed_id)

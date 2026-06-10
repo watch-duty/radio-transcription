@@ -11,7 +11,7 @@ import datetime
 import inspect
 import unittest
 
-from backend.pipeline.ingestion.models import CapturedChunk
+from backend.pipeline.ingestion.models import CapturedChunk, SourceObservation
 from backend.pipeline.ingestion.router import _COLLECTORS
 
 
@@ -24,16 +24,15 @@ class TestCollectorContracts(unittest.TestCase):
     def test_all_registered_collectors_have_correct_return_annotation(
         self,
     ) -> None:
-        """Each collector's return annotation must mention CapturedChunk."""
+        """Each collector returns capture events or a chunk-only specialization."""
         for source_type, (fn, _url_base) in _COLLECTORS.items():
             with self.subTest(source_type=source_type.value):
                 sig = inspect.signature(fn)
                 ret = str(sig.return_annotation)
-                self.assertIn(
-                    "CapturedChunk",
-                    ret,
+                self.assertTrue(
+                    "CaptureEvent" in ret or "CapturedChunk" in ret,
                     f"{getattr(fn, '__name__', fn)} return annotation {ret!r} "
-                    f"does not mention CapturedChunk",
+                    f"does not mention CaptureEvent or CapturedChunk",
                 )
 
 
@@ -68,3 +67,19 @@ class TestCapturedChunkReceiptTime(unittest.TestCase):
         )
         with self.assertRaises(dataclasses.FrozenInstanceError):
             chunk.receipt_time = now  # type: ignore[misc]  # ty: ignore[invalid-assignment]
+
+
+class TestSourceObservation(unittest.TestCase):
+    """SourceObservation is a non-audio capture event."""
+
+    def test_resume_position_defaults_to_none(self) -> None:
+        observation = SourceObservation()
+
+        self.assertIsNone(observation.resume_position)
+
+    def test_is_frozen(self) -> None:
+        now = datetime.datetime.now(datetime.UTC)
+        observation = SourceObservation(resume_position=now)
+
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            observation.resume_position = None  # type: ignore[misc]  # ty: ignore[invalid-assignment]

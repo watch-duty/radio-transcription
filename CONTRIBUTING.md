@@ -1,11 +1,21 @@
 # Contributing
 
+## Quick Start
+
+* Run Backend (and API services) locally: `mise run dev:start`
+* Run Frontend and Backend locally: `mise run dev`
+* Setup environment for Frontend development against GCP backend: `mise run dev:remote:init`
+* Run Frontend and Frontend Proxy API against GCP backend: `mise run dev:remote`
+
+More mise commands can be found in [.mise.toml](/.mise.toml).
+
 ## Pre-requisites
 
 1. Install Mise (`curl https://mise.run | sh` or `brew install mise` - https://mise.jdx.dev/getting-started.html)
 2. Install tools: `mise install`
 3. Optionally activate mise venv: `eval "$(mise activate zsh)"` (see docs above for other options)
 4. Install Docker: `brew install --cask docker`
+5. (Optional) Install Google Cloud SDK (required for hybrid remote development): `brew install --cask google-cloud-sdk`
 
 ## Backend tools
 
@@ -20,7 +30,7 @@ On a high level, this local pipeline runs the following:
 #### Shared infrastructure
 1. Pub/Sub emulator (manages all PubSub topics for each Pub/Sub instance in the pipeline)
 2. GCS emulator (manages all GCS buckets for audio storage in the pipeline)
-3. Mock Audio server (simulates all the supported audio streams for testing e.g. Icecast and API polling)
+3. Mock Audio server (simulates all the supported audio streams for testing e.g. Icecast and API polling). See [documentation/local-dev-mock-audio.md](documentation/local-dev-mock-audio.md) for instructions on adding test audio files.
 
 #### Pipeline
 1. Audio ingestion service (fetches audio from streams and uploads to GCS)
@@ -39,12 +49,40 @@ Integration tests run an automated E2E test on startup.
 > [!NOTE]
 > `local_dev/test_data.sql` is used to seed the database with dummy feeds and rules for local development (`mise dev:start`). It is explicitly ignored in the integration tests (`mise test:e2e`) to ensure tests run in a clean, isolated database environment.
 
-Locally run the full pipeline from E2E:
-```bash
-mise dev:start
-mise dev:log # to see logs for one or all containers
-mise dev:stop # to stop containers & rm volumes
-```
+> [!TIP]
+> **Transcription engine type:** By default, local development uses the `mock` transcriber to save resources. If you want to run with the local Whisper API service, set `TRANSCRIBER_TYPE=local_whisper` in `local_dev/LOCAL.env` before starting the services.
+
+### Running the System Locally
+
+Depending on whether you want to run the environment fully locally or connect to remote GCP dev services, choose one of the options below:
+
+#### Option A: 100% Local Development (No GCP required)
+This option runs the entire pipeline (ingestion, transcription, rules, database, and FE Proxy API) inside local Docker containers, and boots the React UI on your host machine.
+
+1. Start the entire local environment:
+   ```bash
+   mise run dev
+   ```
+   > [!TIP]
+   > Use `mise run dev:add-audio` to quickly mock incoming audio files for specific feeds. See [documentation/local-dev-mock-audio.md](documentation/local-dev-mock-audio.md) for usage instructions.
+
+   *Alternatively, to start the local environment using the local Whisper STT service instead of mock:*
+   1. Set `TRANSCRIBER_TYPE=local_whisper` in `local_dev/LOCAL.env`.
+   2. Start the system:
+      ```bash
+      mise run dev:whisper
+      ```
+2. View container logs:
+   ```bash
+   mise run dev:log
+   ```
+3. Stop the system and clean up volumes:
+   ```bash
+   mise run dev:stop
+   ```
+
+#### Option B: Hybrid Remote Development
+To develop your local frontend code (FE Proxy and/or UI) while connecting directly to dev environment in gcp, see the **Frontend Development with Remote GCP Services** section below.
 
 Send a test payload to the Transcription PubSub (ingested by the Rules Evaluation service) to test the path from the Rules Evaluation service to the Notification service.
 ```bash
@@ -67,6 +105,18 @@ We categorize our non-unit tests into three levels to balance speed and coverage
    * Run in an isolated environment (Docker handles lifecycle): `mise run test:e2e`
    * Run against a running background environment: `mise run test:e2e:local` (Requires you to start the environment first)
 
+> [!TIP]
+> **Testing E2E with Whisper:**
+> By default, E2E tests use the `mock` transcriber. To run E2E tests with the real local Whisper container:
+> 1. Edit `local_dev/LOCAL.env` and set:
+>    ```ini
+>    TRANSCRIBER_TYPE=local_whisper
+>    COMPOSE_PROFILES=local-whisper
+>    ```
+> 2. Run `mise run test:e2e`.
+> 
+> *Note: Running with Whisper locally requires downloading model weights and is CPU/RAM intensive. We do not have baked in GPU support at the moment*
+
 For more details on the architecture and local execution of the pipeline, see the **Pipeline E2E Local Development** section above.
 
 ## Frontend tools
@@ -80,7 +130,7 @@ For more details on the architecture and local execution of the pipeline, see th
 * (Optional) Install Firebase CLI (https://firebase.google.com/docs/cli) for hosting deployments
 
 
-## Frontend Development
+## Frontend Development with Remote GCP Services
 
 When you finish this section, you'll have the proxy API running on `:8080` and the UI on `:5173`, with Google sign-in working and the UI reading from the dev backend services in GCP.
 
@@ -94,9 +144,13 @@ All commands below assume you're running from the top level of the repo.
 
 #### 1a. Install gcloud and sign in
 
-Install the gcloud CLI (https://docs.cloud.google.com/sdk/docs/install-sdk), then:
+Install the gcloud CLI (either via Homebrew on macOS or from the [official installer](https://docs.cloud.google.com/sdk/docs/install-sdk)), then:
 
 ```bash
+# On macOS (optional):
+brew install --cask google-cloud-sdk
+
+# Initialize and log into your Google Account:
 gcloud init                                  # follow prompts; pick the GCP project
 gcloud config set account <your work email>
 gcloud config set project <your project ID>
@@ -152,78 +206,43 @@ gcloud auth application-default login
 
 #### 1e. Install shared frontend dependencies
 
-The `frontend/common` package is consumed by both the API and the UI — build it once before installing either:
+The `frontend/common` package is consumed by both the API and the UI. **Note: This is automatically built and linked under the hood by `mise` tasks when you start the dev server.**
+
+However, if you want to install and build it manually (e.g., to enable IDE type-checking immediately before starting the dev server), run:
 
 ```bash
 yarn --cwd frontend/common install && yarn --cwd frontend/common build
 ```
 
-### 2. Configure and run the proxy API
+### 2. Run the Remote Development Environment
 
-1. Create `frontend/api/.env.local`:
+You can run the frontend locally while connecting directly to the GCP dev environment. All configuration files can be generated automatically.
 
+#### Step 2a: Initialize Environment Configs
+Run the helper initialization task:
 ```bash
-cat <<EOF > frontend/api/.env.local
-ALLOWED_ORIGIN=http://localhost:5173
-TRANSCRIPTS_API_URL=<your URL for transcripts API>/v1/transcripts
-RULES_API_URL=<your URL for rules API>/v1/rules
-FEEDS_STORE_API_URL=<your URL for feeds store API>/v1/feeds
-PROJECT_ID=<your project ID>
-API_PUBLIC_URL=http://localhost:5173
-GOOGLE_AUTH_CLIENT_ID=<your Google Auth client ID>
-GOOGLE_AUTH_CLIENT_SECRET=<your Google Auth client secret>
-EOF
+mise run dev:remote:init
 ```
+This script will:
+* Check that your local Application Default Credentials (ADC) are configured to impersonate the service account. If not, it will output the exact login command for you to run.
+* Fetch all development endpoints from GCP and automatically write/update `frontend/api/.env.local` and `frontend/transcription-ui/.env.dev.local`.
 
-The three `*_API_URL` values point to Cloud Run services in the GCP project. List them with:
-```bash
-gcloud run services list --project=<your project ID>
-```
-Look for services named like `transcripts-api-dev`, `rules-management-dev`, and `feed-store-dev`. **The `/v1/<resource>` path suffix is required** — the proxy appends resource IDs directly to these URLs and will 404 without it.
+#### Step 2b: Launch the local frontend
 
-2. Install package dependencies:
-```bash
-yarn --cwd frontend/api install
-```
+Depending on your dev workflow, run one of the following commands:
 
-3. Run the API (leave this terminal open):
-```bash
-yarn --cwd frontend/api local
-```
+* **To develop both FE Proxy and UI locally (Recommended):**
+  ```bash
+  mise run dev:remote
+  ```
+  This unsets any conflicting local container environment variables, boots the local FE Proxy API at `http://localhost:8080`, boots the local UI at `http://localhost:5173`, and configures the UI to proxy `/api` calls through your local FE Proxy API.
 
-The API listens on `http://localhost:8080`.
+* **To develop the UI only (without running local API):**
+  ```bash
+  mise run dev:remote:ui
+  ```
+  This boots only the UI at `http://localhost:5173` and configures the Vite server to proxy `/api` calls directly to the remote GCP API Gateway (spoofing the origin header to bypass browser CORS checks).
 
-### 3. Configure and run the UI
-
-In a **second terminal**:
-
-1. Create `frontend/transcription-ui/.env.local-dev`. (Vite reserves `.env.local` for itself, so we use `.env.local-dev` instead.)
-
-```bash
-cat <<EOF > frontend/transcription-ui/.env.local-dev
-VITE_GOOGLE_AUTH_CLIENT_ID=<your Google OAuth 2.0 Client ID — same as GOOGLE_AUTH_CLIENT_ID in frontend/api/.env.local>
-VITE_API_BASE_URL=
-VITE_ALERT_ICON_SYMBOL_NAME=local_fire_department
-EOF
-```
-
-**Leave `VITE_API_BASE_URL` empty** to route API calls through your local proxy. Do not copy the placeholder from `.env.example` — it's a non-resolvable hostname that will cause cross-origin errors.
-
-`VITE_GOOGLE_AUTH_CLIENT_ID` must be the **same** OAuth client ID you used in the API's `.env.local`.
-
-2. Install package dependencies:
-```bash
-yarn --cwd frontend/transcription-ui install
-```
-
-3. Run the UI:
-```bash
-yarn --cwd frontend/transcription-ui local
-```
-
-4. Open http://localhost:5173/ in your browser and sign in with Google.
-
-> Env file changes are only picked up at startup — restart `yarn ... local` after editing `.env.local` or `.env.local-dev`.
 
 
 ## Making Changes to Files

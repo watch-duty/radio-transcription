@@ -51,6 +51,11 @@ const VirtuosoTableBody = forwardRef<
 ));
 VirtuosoTableBody.displayName = 'VirtuosoTableBody';
 
+const VirtuosoFillerRow = ({ height }: { height: number }) => (
+  <div style={{ height }} />
+);
+VirtuosoFillerRow.displayName = 'VirtuosoFillerRow';
+
 const VirtuosoTable = forwardRef<HTMLDivElement, ComponentProps<typeof Table>>(
   (props, ref) => (
     <Table
@@ -111,6 +116,7 @@ const VIRTUOSO_COMPONENTS = {
   TableHead: VirtuosoTableHead,
   TableRow: VirtuosoTableRow,
   TableBody: VirtuosoTableBody,
+  FillerRow: VirtuosoFillerRow,
 };
 
 interface FeedConfigurationTableProps {
@@ -282,6 +288,8 @@ export function FeedConfigurationTable({
           <FeedStatusIndicator
             status={feed.status}
             substatus={feed.substatus}
+            statusReason={feed.statusReason}
+            quarantineReason={feed.quarantineReason}
             lastHeartbeat={feed.lastHeartbeat}
           />
         </TableCell>

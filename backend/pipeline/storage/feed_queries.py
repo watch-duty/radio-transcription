@@ -22,6 +22,39 @@ SET last_processed_filename = $1,
 WHERE id = $2 AND worker_id = $3 AND fencing_token = $4
 """
 
+RECORD_SOURCE_OBSERVATION_SQL = """\
+WITH current_state AS (
+    SELECT id, worker_id, status, fencing_token
+    FROM feeds
+    WHERE id = $1
+    FOR UPDATE
+),
+do_update AS (
+    UPDATE feeds
+    SET failure_count = 0,
+        last_bookmark_time = GREATEST(last_bookmark_time, $4),
+        status_reason_updated_at = CASE
+            WHEN status_reason IS NOT NULL THEN NOW()
+            ELSE status_reason_updated_at
+        END,
+        status_reason = NULL
+    FROM current_state
+    WHERE feeds.id = current_state.id
+      AND current_state.worker_id = $2
+      AND current_state.fencing_token = $3
+      AND current_state.status = 'active'::feed_status
+    RETURNING feeds.id
+)
+SELECT
+    current_state.id,
+    current_state.worker_id AS current_worker,
+    current_state.status::text AS current_status,
+    current_state.fencing_token AS current_fencing_token,
+    (do_update.id IS NOT NULL) AS recorded
+FROM current_state
+LEFT JOIN do_update ON current_state.id = do_update.id;
+"""
+
 RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL = """\
 WITH current_state AS (
     SELECT id, worker_id, status, last_heartbeat
@@ -183,11 +216,13 @@ def _build_claim_query(
         f"    WHERE feeds.id = {combined_cte_name}.id\n"
         "    RETURNING feeds.id, feeds.name, feeds.source_type,\n"
         "              feeds.last_processed_filename, feeds.last_bookmark_time,\n"
-        "              feeds.fencing_token\n"
+        "              feeds.fencing_token, feeds.failure_count,\n"
+        "              feeds.status_reason\n"
         ")\n"
         "SELECT leased.id, leased.name, leased.source_type,\n"
         "       leased.last_processed_filename, leased.last_bookmark_time,\n"
-        "       leased.fencing_token, fpi.source_feed_id, fpi.external_id\n"
+        "       leased.fencing_token, leased.failure_count,\n"
+        "       leased.status_reason, fpi.source_feed_id\n"
         "FROM leased\n"
         "JOIN feed_properties fpi ON fpi.feed_id = leased.id\n"
     )
@@ -342,14 +377,14 @@ WITH new_feed AS (
     RETURNING id, name, source_type, status, status_reason,
               status_reason_updated_at, failure_count, worker_id,
               last_heartbeat, last_processed_filename,
-              last_bookmark_time, created_at
+              last_bookmark_time, created_at, quarantine_reason
 ),
 new_props AS (
-    INSERT INTO feed_properties (feed_id, source_feed_id, external_id, source_type, tags)
-    SELECT id, $3, $4, source_type, $5 FROM new_feed
-    RETURNING source_feed_id, external_id, tags
+    INSERT INTO feed_properties (feed_id, source_feed_id, source_type, tags)
+    SELECT id, $3, source_type, $4 FROM new_feed
+    RETURNING source_feed_id, tags
 )
-SELECT nf.*, np.source_feed_id, np.external_id, np.tags
+SELECT nf.*, np.source_feed_id, np.tags
 FROM new_feed nf
 JOIN new_props np ON TRUE;
 """
@@ -358,23 +393,47 @@ GET_FEED_SQL = """\
 SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
-       f.last_bookmark_time, f.created_at,
-       fp.source_feed_id, fp.external_id, fp.tags
+       f.last_bookmark_time, f.created_at, f.quarantine_reason,
+       fp.source_feed_id, fp.tags
 FROM feeds f
 JOIN feed_properties fp ON f.id = fp.feed_id
 WHERE f.id = $1
 """
 
-LIST_FEEDS_SQL = """\
+LIST_FEEDS_DESC_SQL = """\
 SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
-       f.last_bookmark_time, f.created_at,
-       fp.source_feed_id, fp.external_id, fp.tags
+       f.last_bookmark_time, f.created_at, f.quarantine_reason,
+       fp.source_feed_id, fp.tags
 FROM feeds f
 JOIN feed_properties fp ON f.id = fp.feed_id
-ORDER BY f.created_at DESC
+WHERE ($1::timestamptz IS NULL OR f.created_at < $1 OR (f.created_at = $1 AND f.id < $2))
+  AND ($3::text[] IS NULL OR f.source_type = ANY($3))
+  AND ($4::text[] IS NULL OR f.status::text = ANY($4))
+  AND ($5::jsonb IS NULL OR fp.tags @> $5::jsonb)
+  AND ($6::text IS NULL OR f.name ILIKE '%' || $6 || '%')
+ORDER BY f.created_at DESC, f.id DESC
+LIMIT $7
 """
+
+LIST_FEEDS_ASC_SQL = """\
+SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
+       f.status_reason_updated_at, f.failure_count,
+       f.worker_id, f.last_heartbeat, f.last_processed_filename,
+       f.last_bookmark_time, f.created_at, f.quarantine_reason,
+       fp.source_feed_id, fp.tags
+FROM feeds f
+JOIN feed_properties fp ON f.id = fp.feed_id
+WHERE ($1::timestamptz IS NULL OR f.created_at > $1 OR (f.created_at = $1 AND f.id > $2))
+  AND ($3::text[] IS NULL OR f.source_type = ANY($3))
+  AND ($4::text[] IS NULL OR f.status::text = ANY($4))
+  AND ($5::jsonb IS NULL OR fp.tags @> $5::jsonb)
+  AND ($6::text IS NULL OR f.name ILIKE '%' || $6 || '%')
+ORDER BY f.created_at ASC, f.id ASC
+LIMIT $7
+"""
+
 
 DEACTIVATE_FEED_SQL = """\
 UPDATE feeds
@@ -413,9 +472,10 @@ WITH updated AS (
     WHERE id = $1
     RETURNING id, name, source_type, status, failure_count, worker_id,
               status_reason, status_reason_updated_at, last_heartbeat,
-              last_processed_filename, last_bookmark_time, created_at
+              last_processed_filename, last_bookmark_time, created_at,
+              quarantine_reason
 )
-SELECT u.*, fp.source_feed_id, fp.external_id, fp.tags
+SELECT u.*, fp.source_feed_id, fp.tags
 FROM updated u
 JOIN feed_properties fp ON fp.feed_id = u.id
 """
@@ -428,16 +488,26 @@ WITH updated_feed AS (
     RETURNING id, name, source_type, status, status_reason,
               status_reason_updated_at, failure_count, worker_id,
               last_heartbeat, last_processed_filename,
-              last_bookmark_time, created_at
+              last_bookmark_time, created_at, quarantine_reason
 ),
 updated_props AS (
     UPDATE feed_properties
-    SET external_id = $3,
-        tags = $4
+    SET tags = $3
     WHERE feed_id = $1
-    RETURNING source_feed_id, external_id, tags
+    RETURNING source_feed_id, tags
 )
-SELECT uf.*, up.source_feed_id, up.external_id, up.tags
+SELECT uf.*, up.source_feed_id, up.tags
 FROM updated_feed uf
 JOIN updated_props up ON TRUE;
+"""
+
+
+COUNT_FEEDS_SQL = """\
+SELECT COUNT(*)
+FROM feeds f
+JOIN feed_properties fp ON f.id = fp.feed_id
+WHERE ($1::text[] IS NULL OR f.source_type = ANY($1))
+  AND ($2::text[] IS NULL OR f.status::text = ANY($2))
+  AND ($3::jsonb IS NULL OR fp.tags @> $3::jsonb)
+  AND ($4::text IS NULL OR f.name ILIKE '%' || $4 || '%')
 """

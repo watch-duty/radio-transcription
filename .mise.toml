@@ -83,16 +83,7 @@ depends = ["lint:frontend:eslint", "lint:frontend:prettier", "lint:frontend:tsc"
 [tasks."lint:notebooks"]
 description = "Lint notebooks for schema issues and formatting in model/colabs"
 run = """
-for f in $(find model/colabs -name "*.ipynb"); do
-  jq '.cells[] |= (if .cell_type == "markdown" then del(.execution_count) else . end | if .cell_type == "code" and (has("outputs") | not) then .outputs = [] else . end)' "$f" > "$f.tmp"
-  if ! cmp -s "$f" "$f.tmp"; then
-    echo "Notebook needs formatting or schema fixes: $f"
-    rm "$f.tmp"
-    exit 1
-  fi
-  rm "$f.tmp"
-done
-echo "All notebooks have valid schemas and formatting."
+uv run python scripts/notebook_formatter.py
 uv run ruff format --check model/colabs
 """
 
@@ -111,9 +102,7 @@ run = "uv run ruff format"
 [tasks."format:notebooks"]
 description = "Fix schema issues and format notebooks in model/colabs"
 run = """
-for f in $(find model/colabs -name "*.ipynb"); do
-  jq '.cells[] |= (if .cell_type == "markdown" then del(.execution_count) else . end | if .cell_type == "code" and (has("outputs") | not) then .outputs = [] else . end)' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
-done
+uv run python scripts/notebook_formatter.py --write
 uv run ruff format model/colabs
 """
 
@@ -134,34 +123,143 @@ description = "Apply all frontend fixes"
 depends = ["format:frontend:eslint", "format:frontend:prettier"]
 
 # ---------------------------------------------------------------------------- #
-#                              Dev Tasks                                       #
+#                              Developer Tasks                                 #
 # ---------------------------------------------------------------------------- #
 
 [tasks."generate:protos"]
 description = "Generate Python code from Protobuf definitions"
 run = "mkdir -p .betterproto_out && uv run --with grpcio-tools python -m grpc_tools.protoc --proto_path=protos --python_out=backend/pipeline/schema_types --grpc_python_out=backend/pipeline/schema_types --pyi_out=backend/pipeline/schema_types protos/*.proto && uv run --with grpcio-tools --with \"betterproto[compiler]>=2.0.0b6\" python -m grpc_tools.protoc --proto_path=protos --python_betterproto_out=.betterproto_out protos/streaming_state.proto && cp .betterproto_out/streaming/pipeline/state/v1/__init__.py backend/pipeline/schema_types/streaming_state.py && rm -rf .betterproto_out"
 
-[tasks."dev:start"]
-description = "Start the dev pipeline and UI in local Docker containers"
-depends = ["dev:stop"]
+[tasks."build:common"]
+description = "Install, update, and build shared frontend common package"
 run = """
-docker-compose up --build -d
+echo "Installing and building shared frontend common package..."
+yarn --cwd frontend/common install && yarn --cwd frontend/common build
+"""
+
+[tasks."install:ui"]
+description = "Install and update UI dependencies"
+run = """
+echo "Installing UI dependencies..."
+yarn --cwd frontend/transcription-ui install
+"""
+
+[tasks."install:api"]
+description = "Install and update API Proxy dependencies"
+run = """
+echo "Installing API Proxy dependencies..."
+yarn --cwd frontend/api install
+"""
+
+[tasks."install:env"]
+description = "Initialize local env file from example"
+run = """
+if [ ! -f frontend/transcription-ui/.env.local-dev ]; then
+  echo "Initializing .env.local-dev..."
+  cp frontend/transcription-ui/.env.local-dev.example frontend/transcription-ui/.env.local-dev
+else
+  echo -n ".env.local-dev already exists. Overwrite? (Y/N): "
+  read -r response
+  if [ "$response" = "y" ] || [ "$response" = "Y" ]; then
+    echo "Overwriting .env.local-dev..."
+    cp frontend/transcription-ui/.env.local-dev.example frontend/transcription-ui/.env.local-dev
+  else
+    echo "Skipped."
+  fi
+fi
+"""
+
+[tasks."dev:start"]
+description = "Start the transcription pipeline in local Docker containers"
+depends = ["dev:stop", "build:common", "generate:protos", "install:api", "install:env"]
+run = """
+docker-compose --env-file local_dev/LOCAL.env up --build -d
 """
 
 [tasks."dev:stop"]
-description = "Stop all dev containers"
+description = "Stop all Docker containers and release host ports"
 run = """
-docker-compose down -v --remove-orphans
+docker-compose --env-file local_dev/LOCAL.env down -v --remove-orphans
+lsof -t -i :5173 | xargs kill -9 2>/dev/null || true
+lsof -t -i :8080 | xargs kill -9 2>/dev/null || true
 """
 
 [tasks."dev:log"]
-description = "Run the pipeline in local Docker containers"
+description = "Run the transcription pipeline in local Docker containers with logs"
+depends = ["dev:stop", "build:common", "generate:protos", "install:api", "install:env"]
 usage = """
 arg "[service]..." help="Services to log from. Default: all"
 """
 run = """
-docker-compose logs --tail 100 -t -f {{ arg(name="service") }}
+docker-compose --env-file local_dev/LOCAL.env logs --tail 100 -t -f {{ arg(name="service") }}
 """
+
+[tasks.dev]
+description = "Start the entire system (backend (via Docker) and frontend UI hosted locally)"
+depends = ["dev:start", "build:common", "install:ui", "install:env"]
+run = "yarn --cwd frontend/transcription-ui run local"
+
+[tasks."dev:add-audio"]
+description = "Add a test audio file to the mock audio server for a specific source and feed"
+usage = """
+arg "<source>" help="The data source (e.g., broadcastify_calls, fire_notifications)"
+arg "<feed>" help="The feed ID (e.g., 2912, RECORDINGS/SAN-JOSE-DISP)"
+arg "<file>" help="Path to the audio file to add"
+"""
+run = """
+#!/usr/bin/env bash
+set -e
+DEST_DIR="local_dev/mock_audio/{{ arg(name="source") }}/{{ arg(name="feed") }}"
+mkdir -p "$DEST_DIR"
+cp "{{ arg(name="file") }}" "$DEST_DIR/"
+echo "Added $(basename "{{ arg(name="file") }}") to $DEST_DIR/"
+"""
+
+[tasks."dev:whisper:start"]
+description = "Start the transcription pipeline with a local ASR model (Whisper) service in Docker"
+depends = ["dev:stop"]
+run = """
+docker-compose --env-file local_dev/LOCAL.env -f docker-compose.yml -f docker-compose.whisper.yml --profile local-whisper up --build -d
+"""
+
+[tasks."dev:whisper"]
+description = "Start the entire system (transcription pipeline, API services, and frontend UI) with a local ASR model (Whisper)"
+depends = ["dev:whisper:start", "build:common", "install:ui", "install:api", "install:env"]
+run = "yarn --cwd frontend/transcription-ui run local"
+
+[tasks."dev:remote:init"]
+description = "Automatically fetch and configure remote dev environment variables from GCP for running Frontend UI against the dev GCP environment"
+run = """
+export PROJECT_ID=$(gcloud config get-value project)
+gcloud auth application-default login --impersonate-service-account=radio-transcription-api-dev@$PROJECT_ID.iam.gserviceaccount.com
+python3 local_dev/setup_remote_dev.py
+"""
+
+[tasks."dev:remote:ui"]
+description = "Run frontend UI locally and connect to the frontend Proxy API in GCP"
+depends = ["dev:stop", "build:common", "install:ui"]
+run = """
+if [ ! -f frontend/transcription-ui/.env.dev.local ]; then
+  echo "No configuration found. Initializing..."
+  mise run dev:remote:init
+fi
+
+yarn --cwd frontend/transcription-ui dev
+"""
+
+[tasks."dev:remote"]
+description = "Run frontend proxy API and UI locally, and connect to backend in GCP"
+depends = ["dev:stop", "build:common", "install:ui", "install:api"]
+env = { VITE_API_BASE_URL = "", VITE_PROXY_API_TARGET = "http://localhost:8080" }
+run = """
+if [ ! -f frontend/api/.env.local ] || [ ! -f frontend/transcription-ui/.env.dev.local ]; then
+  echo "No configuration found. Initializing..."
+  mise run dev:remote:init
+fi
+
+npx concurrently "yarn --cwd frontend/api local" "yarn --cwd frontend/transcription-ui dev"
+"""
+
 
 # ---------------------------------------------------------------------------- #
 #                              Testing Tasks                                   #
@@ -174,11 +272,11 @@ depends = ["generate:protos"]
 run = "uv run python -m pytest backend/ -q --ignore-glob='**/test_*_integration.py'"
 
 [tasks."test:model"]
-description = "Run model/ common-library unit tests (pytest)"
+description = "Run model package unit tests (pytest)"
 dir = "model"
-# Install [scoring] alongside [dev] so the WER/normalizer/bootstrap goldens
-# (jiwer + nemo_text_processing) actually run instead of skipping silently.
-run = "uv run --extra dev --extra scoring pytest colabs/common/tests/"
+# Install [scoring] and [vertex] alongside [dev] so the WER/normalizer
+# goldens and mocked Vertex helper tests exercise the packaged model code.
+run = "uv run --extra dev --extra scoring --extra vertex pytest tests/"
 
 [tasks."test:component:rules"]
 description = "Run RulesStore component tests"
@@ -200,7 +298,7 @@ run = "uv run pytest integration_tests/storage/"
 description = "Run all E2E tests in Docker Compose"
 run = """
 docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env down -v --remove-orphans
-docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env build
+docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env build integration-tests --with-dependencies
 docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run --rm integration-tests
 """
 

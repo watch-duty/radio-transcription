@@ -24,7 +24,9 @@ from backend.pipeline.common.audio import get_audio_duration
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.gcp_helper import publish_audio_chunk_sync
 from backend.pipeline.common.log_helper import setup_logging
+from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.settings import _require_env
+from backend.pipeline.storage.feed_store import FeedStatusReason
 from backend.pipeline.storage.sync_connection import connect_db
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
 
@@ -50,6 +52,12 @@ DEV_RECORDINGS_BUCKET = os.environ.get("DEV_RECORDINGS_BUCKET")
 setup_logging()
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
+
+_RECORDING_DOWNLOAD_FAILED = "echo_recording_download_failed"
+_DURATION_PROBE_FAILED = "echo_duration_probe_failed"
+_STAGING_UPLOAD_FAILED = "echo_staging_upload_failed"
+_PUBSUB_PUBLISH_FAILED = "echo_pubsub_publish_failed"
+_HEARTBEAT_WRITE_FAILED = "echo_heartbeat_write_failed"
 
 # ---------------------------------------------------------------------------
 # Global state (persisted across warm invocations)
@@ -126,6 +134,8 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
         )
         return
 
+    failure: failure_classification.FailureClassification | None = None
+
     try:
         # Download MP3.  A NotFound means the object was deleted between the
         # OBJECT_FINALIZE event and our download — not the feed's fault.
@@ -134,9 +144,16 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
         except NotFound:
             logger.warning("Object deleted before download, skipping: %s", name)
             return
+        except Exception:
+            failure = _pipeline_failure(_RECORDING_DOWNLOAD_FAILED)
+            raise
 
         # Calculate duration of audio bytes using shared helper
-        duration_ms = get_audio_duration(mp3_bytes)
+        try:
+            duration_ms = get_audio_duration(mp3_bytes)
+        except Exception:
+            failure = _pipeline_failure(_DURATION_PROBE_FAILED)
+            raise
 
         # RTL-Airband appends the filename timestamp when opening a split
         # transmission file; GCS timeCreated is only upload finalization time.
@@ -177,33 +194,54 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
                 logger.info(
                     "MP3 already exists, skipping upload: %s", staging_uri
                 )
+            except Exception:
+                failure = _pipeline_failure(_STAGING_UPLOAD_FAILED)
+                raise
 
         # Publish AudioChunk with deterministic session_id for dedup.
         feed_id_str = str(feed["id"])
         session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, staging_uri))
-        publisher = pubsub_client.get_publisher()
 
-        publish_audio_chunk_sync(
-            publisher,
-            SEGMENTED_PUBSUB_TOPIC_PATH,
-            feed_id_str,
-            feed["name"],
-            feed["external_id"],
-            staging_uri,
-            session_id,
-            start_ts,
-            duration_ms=duration_ms,
-            source_type="echo",
-        )
+        try:
+            publisher = pubsub_client.get_publisher()
+            publish_audio_chunk_sync(
+                publisher,
+                SEGMENTED_PUBSUB_TOPIC_PATH,
+                feed_id_str,
+                feed["name"],
+                staging_uri,
+                session_id,
+                start_ts,
+                duration_ms=duration_ms,
+                source_type="echo",
+            )
+        except Exception:
+            failure = _pipeline_failure(_PUBSUB_PUBLISH_FAILED)
+            raise
 
         # Unconditional heartbeat — also resets failure_count if recovering.
-        feed_store.record_heartbeat(feed["id"])
+        try:
+            feed_store.record_heartbeat(feed["id"])
+        except Exception:
+            failure = _pipeline_failure(_HEARTBEAT_WRITE_FAILED)
+            raise
 
         _mirror_to_dev_best_effort(bucket, name)
 
-    except Exception:
+    except Exception as exc:
+        classification = (
+            failure
+            or failure_classification.FailureClassification(
+                FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
+                _unexpected_failure_reason(exc),
+            )
+        )
         try:
-            feed_store.record_failure(feed["id"])
+            feed_store.record_failure(
+                feed["id"],
+                reason=classification.reason,
+                status_reason=classification.status_reason,
+            )
         except Exception:
             logger.exception("Failed to record failure for feed %s", feed["id"])
         raise
@@ -212,6 +250,20 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+def _pipeline_failure(
+    reason: str,
+) -> failure_classification.FailureClassification:
+    return failure_classification.FailureClassification(
+        FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        reason,
+    )
+
+
+def _unexpected_failure_reason(exc: Exception) -> str:
+    reason = str(exc)
+    return reason[:200] if reason else type(exc).__name__
+
+
 def _mirror_to_dev_best_effort(bucket: str, name: str) -> None:
     """Copy the source MP3 into the dev recordings bucket, best-effort.
 

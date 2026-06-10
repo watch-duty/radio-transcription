@@ -3,29 +3,29 @@ import PlayArrowIcon from '@mui/icons-material/PlayCircleFilledOutlined';
 import IconButton from '@mui/material/IconButton';
 
 export interface AudioPlayerProps {
-  audioUri?: string;
-  transmissionId: string;
-  onToggleAudio: (transmissionId: string, audioUri: string) => void;
+  audioUri: string;
+  segmentId: string;
+  onToggleAudio: (segmentId: string, audioUri: string) => void;
   isAudioPlaying: boolean;
-  currentlyPlayingTransmissionId: string | null;
+  currentlyPlayingSegmentId: string | null;
 }
 
 function AudioPlayer({
   audioUri,
-  transmissionId,
+  segmentId,
   onToggleAudio,
   isAudioPlaying,
-  currentlyPlayingTransmissionId,
+  currentlyPlayingSegmentId,
 }: AudioPlayerProps) {
   const showPauseIcon =
-    isAudioPlaying && transmissionId === currentlyPlayingTransmissionId;
+    isAudioPlaying && segmentId === currentlyPlayingSegmentId;
 
   return (
     <IconButton
       onClick={(e) => {
         e.stopPropagation();
         if (audioUri) {
-          onToggleAudio(transmissionId, audioUri);
+          onToggleAudio(segmentId, audioUri);
         }
       }}
       color="primary"

@@ -26,8 +26,11 @@ from backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector impor
 )
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
+    _require_captured_chunk,
 )
+from backend.pipeline.ingestion.models import FeedFailure
 from backend.pipeline.storage.feed_store import (
+    FeedStatusReason,
     FeedStore,
     LeasedFeed,
     SourceType,
@@ -169,11 +172,10 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         if source_feed_id is not None:
             await self.pool.execute(
                 "INSERT INTO feed_properties"
-                " (feed_id, source_feed_id, external_id, source_type)"
-                " VALUES ($1::uuid, $2, $3, $4)",
+                " (feed_id, source_feed_id, source_type)"
+                " VALUES ($1::uuid, $2, $3)",
                 str(feed_id),
                 source_feed_id,
-                f"ext-{source_feed_id}",
                 "bcfy_calls",
             )
         return feed_id
@@ -249,19 +251,20 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                     ],
                     "lastPos": 1005,
                 }
-            return None  # triggers shutdown via empty response
+            return None
 
         mock_fetch.side_effect = _fetch_side_effect
         mock_sleep.return_value = False
 
         shutdown = asyncio.Event()
         chunks_uploaded = []
-        async for chunk in capture_bcfy_calls(
+        async for event in capture_bcfy_calls(
             feed,
             shutdown,
             "http://api.example.com/",
             _default_resources(),
         ):
+            chunk = _require_captured_chunk(event)
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs,
                 chunk.audio_bytes,
@@ -342,12 +345,13 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         gcs_paths = []
         seq = 0
-        async for chunk in capture_bcfy_calls(
+        async for event in capture_bcfy_calls(
             feed,
             shutdown,
             "http://api.example.com/",
             _default_resources(),
         ):
+            chunk = _require_captured_chunk(event)
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs, chunk.audio_bytes, feed, _TEST_BUCKET, seq
             )
@@ -416,12 +420,13 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
         shutdown = asyncio.Event()
         chunks = []
-        async for chunk in capture_bcfy_calls(
+        async for event in capture_bcfy_calls(
             feed,
             shutdown,
             "http://api.example.com/",
             _default_resources(),
         ):
+            chunk = _require_captured_chunk(event)
             chunks.append(chunk)
             if len(chunks) == 2:
                 shutdown.set()
@@ -434,7 +439,7 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
     async def test_missing_source_feed_id_raises_without_side_effects(
         self,
     ) -> None:
-        """Feed without source_feed_id -> ValueError, no GCS/DB writes."""
+        """Feed without source_feed_id -> typed failure, no GCS/DB writes."""
         # Insert a valid feed
         feed_id = await self._insert_feed("no-id-feed")
         leased = await self.store.acquire_feeds_batch(self.worker_id, _CLAIM)
@@ -449,7 +454,7 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         feed["source_feed_id"] = None
 
         shutdown = asyncio.Event()
-        with self.assertRaises(ValueError) as ctx:
+        with self.assertRaises(FeedFailure) as ctx:
             async for _ in capture_bcfy_calls(
                 feed,
                 shutdown,
@@ -458,6 +463,10 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             ):
                 pass
 
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        )
         self.assertEqual(str(ctx.exception), "missing_source_feed_id")
 
         row = await self._get_feed_row(feed_id)
