@@ -1,6 +1,4 @@
 // @vitest-environment jsdom
-import React from 'react';
-
 import { jwtDecode } from 'jwt-decode';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
