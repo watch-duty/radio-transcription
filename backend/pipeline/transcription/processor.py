@@ -230,6 +230,18 @@ class TranscriptionEventProcessor:
                 "Successfully added transcript annotation for segment %s",
                 segment_id,
             )
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 429:
+                logger.warning(
+                    "Transient failure adding transcript annotation for segment %s: parent segment not ready or storage lag. Retrying via Pub/Sub backoff...",
+                    segment_id,
+                )
+                raise
+            logger.exception(
+                "Failed to add transcript annotation for segment %s: %s",
+                segment_id,
+                e,
+            )
         except Exception as write_err:
             logger.exception(
                 "Failed to add transcript annotation for segment %s: %s",

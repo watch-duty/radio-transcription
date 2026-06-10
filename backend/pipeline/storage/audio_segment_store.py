@@ -11,6 +11,7 @@ from pydantic import TypeAdapter
 if TYPE_CHECKING:
     import datetime
 
+from backend.pipeline.common.exceptions import NotFoundError
 from backend.pipeline.storage import audio_segment_queries
 from backend.pipeline.storage.pagination_utils import (
     SortOrder,
@@ -88,12 +89,12 @@ class AudioSegmentStore:
                 data_json,
             )
         except asyncpg.exceptions.ForeignKeyViolationError as e:
-            msg = f"Audio segment {segment_id} does not exist."
-            raise ValueError(msg) from e
+            res_type = "AudioSegment"
+            raise NotFoundError(res_type, segment_id) from e
 
         if row is None:
-            msg = f"Unable to add annotation for segment {segment_id}."
-            raise ValueError(msg)
+            res_type = "AudioSegment"
+            raise NotFoundError(res_type, segment_id)
 
         return annotation_adapter.validate_python(
             self._prepare_annotation(dict(row))

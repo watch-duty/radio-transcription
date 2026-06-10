@@ -86,7 +86,9 @@ LIMIT $7
 
 ADD_ANNOTATION_SQL = """
 INSERT INTO annotations (audio_segment_id, type, data)
-VALUES ($1, $2, $3)
+SELECT $1, $2, $3
+FROM audio_segments
+WHERE id = $1
 ON CONFLICT (audio_segment_id, type) DO UPDATE
 SET audio_segment_id = annotations.audio_segment_id
 RETURNING audio_segment_id, type, data, created_at, updated_at

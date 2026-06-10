@@ -30,3 +30,12 @@ class FeedNameAlreadyExistsError(Exception):
 
 class NonRetryableError(Exception):
     """Exception raised for non-retryable errors that should not trigger a message retry."""
+
+
+class NotFoundError(Exception):
+    """Raised when a requested resource is not found."""
+
+    def __init__(self, resource_type: str, resource_id: str) -> None:
+        self.resource_type = resource_type
+        self.resource_id = resource_id
+        super().__init__(f"{resource_type} '{resource_id}' not found")

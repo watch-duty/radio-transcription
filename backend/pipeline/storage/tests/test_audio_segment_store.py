@@ -6,6 +6,7 @@ import uuid
 
 import asyncpg
 
+from backend.pipeline.common.exceptions import NotFoundError
 from backend.pipeline.storage import audio_segment_queries
 from backend.pipeline.storage.audio_segment_store import AudioSegmentStore
 from backend.pipeline.storage.tests.connection_util import make_mock_pool
@@ -108,14 +109,22 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Invalid segment_id UUID", str(cm.exception))
 
     async def test_add_annotation_segment_not_found(self) -> None:
-        self.pool.fetchrow.side_effect = (
-            asyncpg.exceptions.ForeignKeyViolationError()
-        )
-        with self.assertRaises(ValueError) as cm:
+        self.pool.fetchrow.return_value = None
+        with self.assertRaises(NotFoundError) as cm:
             await self.store.add_annotation(
                 str(_SEGMENT_ID), AnnotationType.TRANSCRIPT, {"text": "hello"}
             )
-        self.assertIn("does not exist", str(cm.exception))
+        self.assertIn("not found", str(cm.exception))
+
+    async def test_add_annotation_segment_not_found_foreign_key(self) -> None:
+        self.pool.fetchrow.side_effect = (
+            asyncpg.exceptions.ForeignKeyViolationError()
+        )
+        with self.assertRaises(NotFoundError) as cm:
+            await self.store.add_annotation(
+                str(_SEGMENT_ID), AnnotationType.TRANSCRIPT, {"text": "hello"}
+            )
+        self.assertIn("not found", str(cm.exception))
 
     async def test_create_audio_segment_success(self) -> None:
         new_row = _AUDIO_SEGMENT_ROW.copy()

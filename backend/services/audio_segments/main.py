@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Annotated
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 
 from backend.pipeline.common.auth import verify_oidc_token
+from backend.pipeline.common.exceptions import NotFoundError
 from backend.pipeline.common.fastapi_tracing import setup_fastapi_tracing
 from backend.pipeline.storage.audio_segment_store import (
     AudioSegmentStore,
@@ -124,6 +125,11 @@ async def add_annotation(
     service: AudioSegmentService = request.app.state.audio_segment_service
     try:
         return await service.add_annotation(audio_segment_id, annotation)
+    except NotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=str(e),
+        )
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

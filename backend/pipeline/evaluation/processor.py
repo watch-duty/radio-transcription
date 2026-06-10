@@ -4,6 +4,8 @@ import base64
 import logging
 from typing import TYPE_CHECKING
 
+import requests
+
 from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.common.tracing_utils import (
     get_current_traceparent,
@@ -135,6 +137,18 @@ class EvaluationEventProcessor:
                         "Successfully added evaluation annotation for segment %s",
                         new_audio.segment_id,
                     )
+                except requests.exceptions.HTTPError as e:
+                    if e.response is not None and e.response.status_code == 429:
+                        logger.warning(
+                            "Transient failure adding evaluation annotation for segment %s: parent segment not ready or storage lag. Retrying via Pub/Sub backoff...",
+                            new_audio.segment_id,
+                        )
+                        raise
+                        logger.exception(
+                            "Failed to add evaluation annotation for segment %s: %s",
+                            new_audio.segment_id,
+                            e,
+                        )
                 except Exception as e:
                     logger.exception(
                         "Failed to add evaluation annotation for segment %s: %s",
