@@ -92,7 +92,7 @@ class GeminiTranscriber(base.Transcriber):
             f"from GCS URI: {uri}" if uri else "from in-memory bytes",
         )
 
-        # TODO: Add in audio format conversion  # noqa: TD003
+        # TODO(http://linear.app/watchduty/issue/GOO-580/extend-gemini-transcriber-to-support-context-and-masking): Support context and masking
         parts = []
         if uri:
             parts.append(
@@ -123,10 +123,9 @@ class GeminiTranscriber(base.Transcriber):
             else None,
         )
 
-        # TODO: Add in a retry policy  # noqa: TD003
-
+        # TODO(https://linear.app/watchduty/issue/GOO-579/add-retry-policy-for-gemini-transcriber): Add in retry policy
         response = self.client.models.generate_content(
-            # TODO: Use fine tuned model # noqa: TD003
+            # TODO(https://linear.app/watchduty/issue/GOO-584/update-gemini-31-flash-lite-to-use-fine-tuned-model): Use fine tuned model
             model=self.config.model,
             contents=contents,
             config=generation_config,
