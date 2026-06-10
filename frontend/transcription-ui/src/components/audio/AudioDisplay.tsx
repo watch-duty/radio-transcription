@@ -1,12 +1,11 @@
 import React, {
-  startTransition,
+  useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from 'react';
-
-import { motion, useMotionValue } from 'framer-motion';
 
 import PauseIcon from '@mui/icons-material/PauseCircleFilledOutlined';
 import PlayArrowIcon from '@mui/icons-material/PlayCircleFilledOutlined';
@@ -16,7 +15,6 @@ import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import { type Theme, useTheme } from '@mui/material/styles';
 import type { Transcript } from '@transcription/common';
-import { useDrag } from '@use-gesture/react';
 import WavesurferPlayer from '@wavesurfer/react';
 
 import { getAudioUrl } from '../../utils/audioUtils';
@@ -24,7 +22,14 @@ import { hasEvaluationAlert } from '../../utils/evaluationUtils';
 import { formatClockTime } from '../../utils/timeUtils';
 import { CustomAlertIcon } from '../common/AlertIcon';
 import { TimelineMiniMap } from './TimelineMiniMap';
-import { type TranscriptTime, getWindowDurationMs } from './timelineMath';
+import {
+  type TranscriptTime,
+  clamp,
+  getWindowDurationMs,
+  msToPct,
+  scrollPosToMs,
+  windowEndToScrollLeft,
+} from './timelineMath';
 import { usePeaksDecodeQueue } from './usePeaksDecodeQueue';
 
 interface AudioDisplayProps {
@@ -44,31 +49,38 @@ interface AudioDisplayProps {
 }
 
 const LIVE_EDGE_EPS_MS = 1000;
-// Movement before a press becomes a pan, so taps still click a clip.
-const DRAG_THRESHOLD_PX = 5;
 // Cap clips warmed per hover so a wide window doesn't flood the decode queue.
 const MAX_PREFETCH_PER_HOVER = 16;
+// Idle after a scroll before we mount waveforms for the settled viewport.
+const SETTLE_MS = 140;
+// Most waveforms mounted at once (viewport + margin), bounding canvas/decode cost.
+const MAX_MOUNTED = 48;
+
+interface ClipGeom {
+  id: string;
+  url: string;
+  startMs: number;
+  endMs: number;
+  left: number;
+  width: number;
+  isAudioPlaying: boolean;
+  isHighlighted: boolean;
+  hasAlert: boolean;
+}
 
 interface TimelineClipProps {
-  clip: {
-    id: string;
-    url: string;
-    left: number;
-    width: number;
-    isAudioPlaying: boolean;
-    isHighlighted: boolean;
-    hasAlert: boolean;
+  clip: ClipGeom & {
     peaks?: (Float32Array | number[])[];
     duration?: number;
   };
   onClipClick: (segmentId: string) => void;
   isDarkTheme: boolean;
   theme: Theme;
+  // Only mounted clips draw a waveform; the rest stay cheap placeholder divs.
+  mount: boolean;
   // False during scrub; churning players thrashes loads → blank waveforms.
   showWaveform: boolean;
 }
-
-type ClipData = TimelineClipProps['clip'];
 
 const TimelineClip = React.memo(
   ({
@@ -76,10 +88,10 @@ const TimelineClip = React.memo(
     onClipClick,
     isDarkTheme,
     theme,
+    mount,
     showWaveform,
   }: TimelineClipProps) => {
-    // Placeholder until peaks are cached (and while panning).
-    const renderWaveform = showWaveform && !!clip.peaks;
+    const renderWaveform = mount && showWaveform && !!clip.peaks;
     return (
       <Box
         onClick={() => onClipClick(clip.id)}
@@ -88,6 +100,10 @@ const TimelineClip = React.memo(
           left: `${clip.left}%`,
           width: `${clip.width}%`,
           height: '100%',
+          // Skip layout/paint for the many off-screen placeholders; never for a
+          // mounted clip, so WaveSurfer can measure its width at mount.
+          contentVisibility: mount ? 'visible' : 'auto',
+          containIntrinsicSize: 'auto 60px',
           bgcolor:
             clip.isAudioPlaying || clip.isHighlighted
               ? isDarkTheme
@@ -148,12 +164,76 @@ const TimelineClip = React.memo(
       prevProps.clip.hasAlert === nextProps.clip.hasAlert &&
       prevProps.clip.peaks === nextProps.clip.peaks &&
       prevProps.clip.duration === nextProps.clip.duration &&
+      prevProps.mount === nextProps.mount &&
       prevProps.isDarkTheme === nextProps.isDarkTheme &&
       prevProps.theme === nextProps.theme &&
       prevProps.showWaveform === nextProps.showWaveform
     );
   }
 );
+
+const sameSet = (set: Set<string>, ids: string[]) =>
+  set.size === ids.length && ids.every((id) => set.has(id));
+
+interface AlertIconLayerProps {
+  clips: ClipGeom[];
+  widthPct: number;
+  onClipClick: (segmentId: string) => void;
+}
+
+// Alert-icon layer. The forwarded ref's element is translated imperatively to
+// track scroll, so this is never re-rendered per scroll frame; memoized so it
+// only rebuilds when the alert set or width changes. The static outer box clips
+// icons to the left/right/bottom while the negative top inset leaves the lifted
+// glyphs uncropped; the clip must live here, not on the translated child.
+const AlertIconLayer = React.memo(
+  React.forwardRef<HTMLDivElement, AlertIconLayerProps>(
+    ({ clips, widthPct, onClipClick }, ref) => (
+      <Box
+        sx={{
+          position: 'absolute',
+          inset: 0,
+          clipPath: 'inset(-9999px 0px 0px 0px)',
+          pointerEvents: 'none',
+        }}
+      >
+        <Box
+          ref={ref}
+          sx={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            height: '100%',
+            width: `${widthPct}%`,
+            willChange: 'transform',
+          }}
+        >
+          {clips.map((clip) => (
+            <CustomAlertIcon
+              key={`alert-${clip.id}`}
+              color="warning"
+              fontSize="medium"
+              data-testid="warning-icon"
+              onClick={() => onClipClick(clip.id)}
+              sx={{
+                position: 'absolute',
+                // Centered over the audio start, lifted above the clip.
+                left: `${clip.left}%`,
+                transform: 'translateX(-11px)',
+                top: -25,
+                zIndex: 1,
+                borderRadius: '50%',
+                cursor: 'pointer',
+                pointerEvents: 'auto',
+              }}
+            />
+          ))}
+        </Box>
+      </Box>
+    )
+  )
+);
+AlertIconLayer.displayName = 'AlertIconLayer';
 
 export function AudioDisplay({
   transcripts,
@@ -173,34 +253,30 @@ export function AudioDisplay({
 
   const { enqueueDecode, getPeaks } = usePeaksDecodeQueue();
 
+  // Derived from scrollLeft on every scroll; drives the mini-map and labels.
   const [windowEndTime, setWindowEndTime] = useState<number | null>(null);
-  const [isPanned, setIsPanned] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
   const [isScrubbing, setIsScrubbing] = useState(false);
-  // WaveSurfer measures width at mount, so mounting mid-navigation gives blank waves.
-  const [waveformsReady, setWaveformsReady] = useState(true);
-  // Waveforms snapshotted at pan-start, rendered (translated) until the pan ends.
-  const [frozenClips, setFrozenClips] = useState<ClipData[]>([]);
-  // Off-render translate (px) for the frozen waveforms while panning.
-  const waveX = useMotionValue(0);
-
-  const [prevFirstTranscriptId, setPrevFirstTranscriptId] = useState<
-    string | null
-  >(null);
-  const [prevPlayingId, setPrevPlayingId] = useState<string | null>(null);
-  const [prevHighlightedId, setPrevHighlightedId] = useState<string | null>(
-    null
+  // Clips currently allowed to draw a waveform (the settled viewport set).
+  const [mountedIds, setMountedIds] = useState<Set<string>>(
+    () => new Set<string>()
   );
-  const [prevUserDuration, setPrevUserDuration] = useState<string | null>(
-    userDuration ?? null
-  );
-  const [prevViewLiveNonce, setPrevViewLiveNonce] = useState<
-    number | undefined
-  >(viewLiveNonce);
 
-  const containerRef = useRef<HTMLDivElement>(null);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  // Alert-icon layer; translated imperatively to track scroll without a render.
+  const iconLayerRef = useRef<HTMLDivElement>(null);
+  // The window end-time to keep pinned at the right edge across data growth;
+  // null means "follow the live edge".
+  const anchorEndTimeRef = useRef<number | null>(null);
+  // The scrollLeft we last set ourselves; the matching scroll event is ours, not
+  // the user's. Compared against the actual position rather than timed, so it
+  // can't race the scroll event. Consumed once.
+  const expectedScrollLeftRef = useRef<number | null>(null);
+  const rafScrollRef = useRef(0);
+  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Dedupe so a pan doesn't re-scroll the list to the same index each frame.
   const lastPannedSegmentRef = useRef<string | null>(null);
+  const prevNonceRef = useRef(viewLiveNonce);
+  const prevHighlightRef = useRef(highlightedSegmentId);
 
   const windowDurationMs = useMemo(
     () => getWindowDurationMs(userDuration),
@@ -220,8 +296,7 @@ export function AudioDisplay({
     [transcripts]
   );
 
-  // rangeStartMs = strip's left edge; maxEnd = live edge (same value the waveform
-  // window uses for its right edge, so the overview matches it when not scrolled).
+  // rangeStartMs = strip's left edge (oldest); maxEnd = live edge (newest).
   const { minEnd, maxEnd, rangeStartMs } = useMemo(() => {
     if (transcriptTimes.length === 0) {
       return {
@@ -242,65 +317,332 @@ export function AudioDisplay({
     };
   }, [transcriptTimes, windowDurationMs]);
 
-  const firstTranscript = transcripts[0];
-  const firstTranscriptId = firstTranscript?.segmentId || null;
-  const firstTranscriptEndTimestamp = firstTranscript?.endTimestamp || null;
+  // Panned = the window's right edge sits before the live edge.
+  const isPanned =
+    windowEndTime != null &&
+    maxEnd != null &&
+    windowEndTime < maxEnd - LIVE_EDGE_EPS_MS;
 
-  // Reset to the live edge when "Jump to live" is clicked or the feed changes.
-  if (viewLiveNonce !== prevViewLiveNonce) {
-    setPrevViewLiveNonce(viewLiveNonce);
-    setWindowEndTime(null);
-    setIsPanned(false);
-  }
+  const rangeTotalMs =
+    rangeStartMs != null && maxEnd != null
+      ? Math.max(maxEnd - rangeStartMs, 1)
+      : 0;
+  // Inner element spans the whole range: one viewport width = one window.
+  const innerWidthPct =
+    rangeTotalMs > 0
+      ? Math.max((rangeTotalMs / windowDurationMs) * 100, 100)
+      : 100;
 
-  // Follow live as new transcripts arrive, unless the user has panned away.
-  if (firstTranscriptId !== prevFirstTranscriptId) {
-    setPrevFirstTranscriptId(firstTranscriptId);
-    if (!isPanned) {
-      setWindowEndTime(
-        firstTranscriptEndTimestamp
-          ? new Date(firstTranscriptEndTimestamp).getTime()
-          : null
-      );
-      setPrevPlayingId(null); // Force re-check of bounds
+  // Absolute positions across the full range; geometry only, so peak decodes
+  // don't rebuild it. Sorted ascending for the settled-viewport scan.
+  const clipsAsc = useMemo(() => {
+    if (rangeStartMs == null || rangeTotalMs <= 0) return [] as ClipGeom[];
+    return transcriptTimes
+      .map((t) => ({
+        id: t.id,
+        url: t.url,
+        startMs: t.startMs,
+        endMs: t.endMs,
+        left: msToPct(t.startMs, rangeStartMs, rangeTotalMs),
+        width: Math.max(((t.endMs - t.startMs) / rangeTotalMs) * 100, 0),
+        isAudioPlaying: t.id === currentlyPlayingSegmentId,
+        isHighlighted: t.id === highlightedSegmentId,
+        hasAlert: t.hasAlert,
+      }))
+      .sort((a, b) => a.startMs - b.startMs);
+  }, [
+    transcriptTimes,
+    rangeStartMs,
+    rangeTotalMs,
+    currentlyPlayingSegmentId,
+    highlightedSegmentId,
+  ]);
+
+  // Only alerted clips get an icon; memoized so the icon layer doesn't rebuild
+  // on every scroll-driven render.
+  const alertClips = useMemo(
+    () => clipsAsc.filter((c) => c.hasAlert),
+    [clipsAsc]
+  );
+
+  // Latest values for imperative handlers (scroll, settle) without stale
+  // closures. Synced in a layout effect below (writing refs during render is
+  // disallowed), kept ahead of the scroll effects so they read fresh values.
+  const stateRef = useRef({
+    rangeStartMs,
+    rangeTotalMs,
+    minEnd,
+    maxEnd,
+    windowDurationMs,
+    transcriptTimes,
+    isPanned,
+  });
+  const clipsAscRef = useRef(clipsAsc);
+  const enqueueDecodeRef = useRef(enqueueDecode);
+  const onWindowPanRef = useRef(onWindowPan);
+
+  useLayoutEffect(() => {
+    stateRef.current = {
+      rangeStartMs,
+      rangeTotalMs,
+      minEnd,
+      maxEnd,
+      windowDurationMs,
+      transcriptTimes,
+      isPanned,
+    };
+    clipsAscRef.current = clipsAsc;
+    enqueueDecodeRef.current = enqueueDecode;
+    onWindowPanRef.current = onWindowPan;
+  });
+
+  const syncIconLayer = useCallback((scrollLeft: number) => {
+    if (iconLayerRef.current) {
+      iconLayerRef.current.style.transform = `translateX(${-scrollLeft}px)`;
     }
-  }
+  }, []);
 
-  const playingId = currentlyPlayingSegmentId || null;
+  const findRepresentativeSegmentId = useCallback(
+    (end: number): string | null => {
+      const times = stateRef.current.transcriptTimes;
+      for (const t of times) {
+        if (t.startMs <= end) return t.id;
+      }
+      return times[times.length - 1]?.id ?? null;
+    },
+    []
+  );
 
-  if (
-    playingId !== prevPlayingId ||
-    highlightedSegmentId !== prevHighlightedId ||
-    (userDuration ?? null) !== prevUserDuration
-  ) {
-    const highlightChanged = highlightedSegmentId !== prevHighlightedId;
-    setPrevPlayingId(playingId);
-    setPrevHighlightedId(highlightedSegmentId);
-    setPrevUserDuration(userDuration ?? null);
-
-    // While panned, only explicit highlight changes recenter (not playback).
-    const allowShift = !isPanned || highlightChanged;
-    const targetId = highlightedSegmentId || playingId;
-    if (allowShift && targetId) {
-      const target = transcriptTimes.find((t) => t.id === targetId);
-      if (target) {
-        const currentEndTime = windowEndTime || maxEnd || 0;
-        const currentStartTime = currentEndTime - windowDurationMs;
-
-        if (
-          target.startMs < currentStartTime ||
-          target.endMs > currentEndTime
-        ) {
-          let newEndTime = target.startMs + windowDurationMs / 2;
-          if (minEnd != null && maxEnd != null) {
-            newEndTime = Math.min(maxEnd, Math.max(minEnd, newEndTime));
-            setWindowEndTime(newEndTime);
-            setIsPanned(newEndTime < maxEnd - LIVE_EDGE_EPS_MS);
-          }
+  // Pick the clips inside the settled viewport (+ margin) and mount their
+  // waveforms; warm their peaks. Runs on settle, not per scroll frame.
+  const computeMounted = useCallback(() => {
+    const el = scrollerRef.current;
+    const { rangeStartMs, rangeTotalMs } = stateRef.current;
+    const clips = clipsAscRef.current;
+    if (
+      !el ||
+      rangeStartMs == null ||
+      rangeTotalMs <= 0 ||
+      el.scrollWidth <= 0
+    ) {
+      setMountedIds((prev) => (prev.size === 0 ? prev : new Set<string>()));
+      return;
+    }
+    const startT =
+      rangeStartMs + (el.scrollLeft / el.scrollWidth) * rangeTotalMs;
+    const endT =
+      rangeStartMs +
+      ((el.scrollLeft + el.clientWidth) / el.scrollWidth) * rangeTotalMs;
+    const margin = (endT - startT) * 0.5;
+    const lo = startT - margin;
+    const hi = endT + margin;
+    const inView: ClipGeom[] = [];
+    for (const c of clips) {
+      if (c.startMs > hi) break;
+      if (c.endMs > lo) inView.push(c);
+    }
+    // Decode every clip in view+margin, even past the mount cap, so an on-screen
+    // clip beyond the cap still loads its peaks (it just renders as a placeholder
+    // until it falls inside the mounted run).
+    if (inView.length > 0) {
+      enqueueDecodeRef.current(
+        inView.map((c) => c.url),
+        true
+      );
+    }
+    // Mount a contiguous run centered on the viewport (clips are start-sorted),
+    // bounding live canvases without scattering the mounted set across the strip.
+    let toMount = inView;
+    if (inView.length > MAX_MOUNTED) {
+      const center = (startT + endT) / 2;
+      let nearest = 0;
+      let best = Infinity;
+      for (let i = 0; i < inView.length; i++) {
+        const d = Math.abs((inView[i].startMs + inView[i].endMs) / 2 - center);
+        if (d < best) {
+          best = d;
+          nearest = i;
         }
       }
+      const start = clamp(
+        nearest - Math.floor(MAX_MOUNTED / 2),
+        0,
+        inView.length - MAX_MOUNTED
+      );
+      toMount = inView.slice(start, start + MAX_MOUNTED);
     }
-  }
+    const ids = toMount.map((c) => c.id);
+    setMountedIds((prev) => (sameSet(prev, ids) ? prev : new Set(ids)));
+  }, []);
+
+  const scheduleMounted = useCallback(() => {
+    if (settleTimerRef.current) clearTimeout(settleTimerRef.current);
+    settleTimerRef.current = setTimeout(() => {
+      settleTimerRef.current = null;
+      computeMounted();
+    }, SETTLE_MS);
+  }, [computeMounted]);
+
+  // Record the end-time to hold at the right edge; null (follow live) once the
+  // end reaches the live edge, so live-follow is never poisoned by a stale anchor.
+  const setAnchor = useCallback((end: number) => {
+    const { maxEnd } = stateRef.current;
+    anchorEndTimeRef.current =
+      maxEnd != null && end >= maxEnd - LIVE_EDGE_EPS_MS ? null : end;
+  }, []);
+
+  // Scroll the window so `end` sits at the right edge (programmatic move).
+  const scrollToWindowEnd = useCallback(
+    (end: number) => {
+      const el = scrollerRef.current;
+      const { rangeStartMs, rangeTotalMs } = stateRef.current;
+      if (!el || rangeStartMs == null || rangeTotalMs <= 0) return;
+      const maxScroll = el.scrollWidth - el.clientWidth;
+      const target = clamp(
+        windowEndToScrollLeft(
+          end,
+          rangeStartMs,
+          rangeTotalMs,
+          el.scrollWidth,
+          el.clientWidth
+        ),
+        0,
+        maxScroll
+      );
+      // Only a real position change emits a scroll event; flag it so the handler
+      // ignores our own move. If nothing changes, no event comes, so don't flag.
+      if (Math.abs(target - el.scrollLeft) > 0.5) {
+        expectedScrollLeftRef.current = target;
+        el.scrollLeft = target;
+      }
+      syncIconLayer(target);
+      setWindowEndTime(end);
+      scheduleMounted();
+    },
+    [scheduleMounted, syncIconLayer]
+  );
+
+  // Move the window to a chosen end-time (mini-map scrub, highlight recenter):
+  // remember it as the anchor and scroll there.
+  const goToWindowEnd = useCallback(
+    (end: number) => {
+      const { minEnd, maxEnd } = stateRef.current;
+      if (minEnd == null || maxEnd == null) return;
+      const clamped = clamp(end, minEnd, maxEnd);
+      setAnchor(clamped);
+      scrollToWindowEnd(clamped);
+    },
+    [scrollToWindowEnd, setAnchor]
+  );
+
+  const handleScroll = useCallback(() => {
+    if (rafScrollRef.current) return;
+    rafScrollRef.current = requestAnimationFrame(() => {
+      rafScrollRef.current = 0;
+      const el = scrollerRef.current;
+      const { rangeStartMs, rangeTotalMs } = stateRef.current;
+      if (
+        !el ||
+        rangeStartMs == null ||
+        rangeTotalMs <= 0 ||
+        el.scrollWidth <= 0
+      )
+        return;
+      syncIconLayer(el.scrollLeft);
+      // Our own programmatic scroll? Identify by the position we set, consumed
+      // once, so it can't be mistaken for a user pan.
+      const expected = expectedScrollLeftRef.current;
+      expectedScrollLeftRef.current = null;
+      if (expected !== null && Math.abs(el.scrollLeft - expected) <= 1.5) {
+        scheduleMounted();
+        return;
+      }
+      const end = scrollPosToMs(
+        el.scrollLeft + el.clientWidth,
+        rangeStartMs,
+        rangeTotalMs,
+        el.scrollWidth
+      );
+      setWindowEndTime(end);
+      setAnchor(end);
+      const segId = findRepresentativeSegmentId(end);
+      if (segId && segId !== lastPannedSegmentRef.current) {
+        lastPannedSegmentRef.current = segId;
+        onWindowPanRef.current?.(segId);
+      }
+      scheduleMounted();
+    });
+  }, [findRepresentativeSegmentId, scheduleMounted, setAnchor, syncIconLayer]);
+
+  // Keep the right edge pinned across data growth and zoom: follow the live edge
+  // when not panned; otherwise hold the anchored end-time steady (so paging in
+  // older history doesn't shift the viewport). "Jump to live" resets the anchor.
+  useLayoutEffect(() => {
+    const { maxEnd, isPanned } = stateRef.current;
+    let target: number | null;
+    if (prevNonceRef.current !== viewLiveNonce) {
+      prevNonceRef.current = viewLiveNonce;
+      anchorEndTimeRef.current = null;
+      target = maxEnd;
+    } else {
+      target = isPanned ? (anchorEndTimeRef.current ?? maxEnd) : maxEnd;
+    }
+    if (target != null) {
+      scrollToWindowEnd(target);
+    } else {
+      scheduleMounted();
+    }
+  }, [
+    rangeStartMs,
+    rangeTotalMs,
+    maxEnd,
+    windowDurationMs,
+    viewLiveNonce,
+    scrollToWindowEnd,
+    scheduleMounted,
+  ]);
+
+  // Recenter on the highlighted (or playing) clip when it leaves the window.
+  // While panned, only an explicit highlight change recenters (not playback).
+  useLayoutEffect(() => {
+    const s = stateRef.current;
+    const highlightChanged = highlightedSegmentId !== prevHighlightRef.current;
+    prevHighlightRef.current = highlightedSegmentId;
+    if (s.minEnd == null || s.maxEnd == null) return;
+    const allowShift = !s.isPanned || highlightChanged;
+    const targetId = highlightedSegmentId || currentlyPlayingSegmentId;
+    if (!allowShift || !targetId) return;
+    const target = s.transcriptTimes.find((t) => t.id === targetId);
+    if (!target) return;
+    const currentEnd = anchorEndTimeRef.current ?? s.maxEnd;
+    const currentStart = currentEnd - s.windowDurationMs;
+    if (target.startMs < currentStart || target.endMs > currentEnd) {
+      goToWindowEnd(target.startMs + s.windowDurationMs / 2);
+    }
+  }, [highlightedSegmentId, currentlyPlayingSegmentId, goToWindowEnd]);
+
+  // Mouse wheel pans horizontally (a plain wheel has no horizontal axis).
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (el.scrollWidth <= el.clientWidth) return;
+      const delta =
+        Math.abs(e.deltaX) >= Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+      if (delta === 0) return;
+      el.scrollLeft += delta;
+      e.preventDefault();
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (rafScrollRef.current) cancelAnimationFrame(rafScrollRef.current);
+      if (settleTimerRef.current) clearTimeout(settleTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     onPannedChange?.(isPanned);
@@ -310,124 +652,6 @@ export function AudioDisplay({
   useEffect(() => {
     lastPannedSegmentRef.current = null;
   }, [viewLiveNonce]);
-
-  const findRepresentativeSegmentId = (end: number): string | null => {
-    for (const t of transcriptTimes) {
-      if (t.startMs <= end) return t.id;
-    }
-    return transcriptTimes[transcriptTimes.length - 1]?.id ?? null;
-  };
-
-  // Clamp a target window end to the pannable range, or null if bounds are unknown.
-  const clampWindowEnd = (nextEnd: number): number | null =>
-    minEnd == null || maxEnd == null
-      ? null
-      : Math.min(maxEnd, Math.max(minEnd, nextEnd));
-
-  // Commit the window: chip state + list scroll. Drives the mini-map, labels,
-  // and list — not the waveforms.
-  const commitWindowEnd = (end: number) => {
-    setWindowEndTime(end);
-    setIsPanned(maxEnd != null && end < maxEnd - LIVE_EDGE_EPS_MS);
-    const segmentId = findRepresentativeSegmentId(end);
-    if (segmentId && segmentId !== lastPannedSegmentRef.current) {
-      lastPannedSegmentRef.current = segmentId;
-      onWindowPan?.(segmentId);
-    }
-  };
-
-  // A settled move (tap, scrub, pan release): commit now and remount waveforms
-  // so clips entering the window render at their final width.
-  const applyWindowEnd = (nextEnd: number) => {
-    const end = clampWindowEnd(nextEnd);
-    if (end == null) return;
-    commitWindowEnd(end);
-    setWaveformsReady(false);
-  };
-
-  // Geometry only — stable across decodes so peak attachment doesn't rebuild it.
-  const { startTime, visibleClips } = useMemo(() => {
-    if (transcriptTimes.length === 0) {
-      return { startTime: 0, visibleClips: [] };
-    }
-    const mostRecentTime = windowEndTime || transcriptTimes[0].endMs;
-    const startTime = mostRecentTime - windowDurationMs;
-    const windowEnd = startTime + windowDurationMs;
-    const visibleClips = transcriptTimes
-      .filter((t) => t.startMs < windowEnd && t.endMs > startTime)
-      .map((t) => {
-        const visibleStart = Math.max(t.startMs, startTime);
-        const visibleEnd = Math.min(t.endMs, windowEnd);
-        return {
-          id: t.id,
-          url: t.url,
-          left: ((visibleStart - startTime) / windowDurationMs) * 100,
-          width: ((visibleEnd - visibleStart) / windowDurationMs) * 100,
-          isAudioPlaying: t.id === currentlyPlayingSegmentId,
-          isHighlighted: t.id === highlightedSegmentId,
-          hasAlert: t.hasAlert,
-        };
-      });
-    return { startTime, visibleClips };
-  }, [
-    transcriptTimes,
-    currentlyPlayingSegmentId,
-    highlightedSegmentId,
-    windowEndTime,
-    windowDurationMs,
-  ]);
-
-  const clips = visibleClips.map((c) => {
-    const cached = getPeaks(c.url);
-    return { ...c, peaks: cached?.peaks, duration: cached?.duration };
-  });
-
-  // While panning, show the frozen snapshot (translated) rather than the live
-  // window, so the waveforms slide instead of re-rendering each frame.
-  const displayClips = isDragging ? frozenClips : clips;
-
-  const isInteracting = isDragging || isScrubbing;
-
-  // Drag the strip to pan the window. use-gesture owns pointer capture, the
-  // tap-vs-drag threshold, and event batching; memo holds the window end at
-  // gesture start so mid-drag re-renders don't shift the anchor.
-  const bindPan = useDrag(
-    ({ first, last, tap, movement: [mx], memo }) => {
-      if (tap || transcripts.length === 0 || minEnd == null || maxEnd == null) {
-        return memo;
-      }
-      const width = containerRef.current?.clientWidth ?? 0;
-      if (!width) return memo;
-      const startEnd: number = memo ?? windowEndTime ?? maxEnd;
-
-      if (first) {
-        // Snapshot the drawn waveforms; we slide these until the pan ends.
-        setFrozenClips(clips);
-        setIsDragging(true);
-      }
-
-      // Dragging right moves the window back in time (reveals earlier clips).
-      const deltaMs = (mx / width) * windowDurationMs;
-      const end = clampWindowEnd(startEnd - deltaMs);
-      if (end == null) return startEnd;
-
-      if (last) {
-        // Settle: commit + remount waveforms now, then drop the snapshot.
-        commitWindowEnd(end);
-        setWaveformsReady(false);
-        setFrozenClips([]);
-        setIsDragging(false);
-        waveX.set(0);
-      } else {
-        // Slide the frozen waveforms (urgent), but let the mini-map, labels, and
-        // list catch up as a transition so they don't block the gesture.
-        waveX.set(((startEnd - end) / windowDurationMs) * width);
-        startTransition(() => commitWindowEnd(end));
-      }
-      return startEnd;
-    },
-    { filterTaps: true, threshold: DRAG_THRESHOLD_PX }
-  );
 
   // Warm the cache for the window centered on a hovered overview position.
   const prefetchWindowAt = (center: number) => {
@@ -442,20 +666,6 @@ export function AudioDisplay({
     enqueueDecode(urls, false);
   };
 
-  // Mount waveforms a frame after interaction stops, once clips have final width.
-  useEffect(() => {
-    if (waveformsReady || isInteracting) return;
-    const frame = requestAnimationFrame(() => setWaveformsReady(true));
-    return () => cancelAnimationFrame(frame);
-  }, [waveformsReady, isInteracting]);
-
-  // Decode peaks for the visible window first (enqueueDecode skips cached URLs).
-  useEffect(() => {
-    if (isInteracting) return;
-    const urls = visibleClips.map((c) => c.url);
-    if (urls.length > 0) enqueueDecode(urls, true);
-  }, [visibleClips, isInteracting, enqueueDecode]);
-
   // Report the active window edge (debounced) so the parent can show the time.
   useEffect(() => {
     const id = setTimeout(() => {
@@ -465,6 +675,8 @@ export function AudioDisplay({
     }, 120);
     return () => clearTimeout(id);
   }, [isPanned, windowEndTime, onActiveTimeChange]);
+
+  const labelStart = (windowEndTime ?? maxEnd ?? 0) - windowDurationMs;
 
   return (
     <Box
@@ -484,93 +696,84 @@ export function AudioDisplay({
         </IconButton>
       </Box>
       <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
+        {/* Paper keeps overflow visible so lifted alert icons aren't clipped;
+            the inner scroller owns the horizontal clip + native scrolling. */}
         <Paper
-          ref={containerRef}
           variant="outlined"
-          {...bindPan()}
           sx={{
             width: '100%',
             height: '60px',
             bgcolor: 'action.hover',
             position: 'relative',
-            touchAction: 'none',
+            overflow: 'visible',
             userSelect: 'none',
-            cursor:
-              transcripts.length === 0
-                ? 'default'
-                : isDragging
-                  ? 'grabbing'
-                  : 'grab',
           }}
         >
-          {/* Static clip box: stays fixed to the Paper bounds so waveforms
-              sliding past an edge are clipped. The transform lives on the inner
-              layer — applying it here would translate the clip region too. */}
           <Box
+            ref={scrollerRef}
+            onScroll={handleScroll}
             sx={{
               position: 'absolute',
               inset: 0,
-              overflow: 'hidden',
+              overflowX: 'auto',
+              overflowY: 'hidden',
               borderRadius: 'inherit',
+              touchAction: 'pan-x',
+              WebkitOverflowScrolling: 'touch',
+              // The mini-map shows scroll position, so hide the scrollbar.
+              scrollbarWidth: 'none',
+              '&::-webkit-scrollbar': { display: 'none' },
             }}
           >
-            {/* Plain motion.div: the motion value must drive `style`, not sx. */}
-            <motion.div
-              style={{
-                position: 'absolute',
-                inset: 0,
-                x: waveX,
+            <Box
+              sx={{
+                position: 'relative',
+                height: '100%',
+                width: `${innerWidthPct}%`,
               }}
             >
-              {displayClips.map((clip) => (
-                <TimelineClip
-                  key={clip.id}
-                  clip={clip}
-                  onClipClick={onClipClick}
-                  isDarkTheme={isDarkTheme}
-                  theme={theme}
-                  showWaveform={waveformsReady && !isScrubbing}
-                />
-              ))}
-            </motion.div>
-          </Box>
-          {/* Icons ride the same translate and snapshot as the frozen
-              waveforms, so they slide in lockstep during a pan instead of
-              lagging the deferred window commit. Outside the clip box so the
-              lifted icons aren't clipped at the top edge; the wrapper is
-              click-through so clips below stay tappable. */}
-          <motion.div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              pointerEvents: 'none',
-              x: waveX,
-            }}
-          >
-            {displayClips.map(
-              (clip) =>
-                clip.hasAlert && (
-                  <CustomAlertIcon
-                    key={`alert-${clip.id}`}
-                    color="warning"
-                    fontSize="medium"
-                    data-testid="warning-icon"
-                    onClick={() => onClipClick(clip.id)}
-                    sx={{
-                      position: 'absolute',
-                      // Centered over the audio start, lifted above the clip.
-                      left: `${clip.left}%`,
-                      transform: 'translateX(-11px)',
-                      top: -25,
-                      zIndex: 1,
-                      borderRadius: '50%',
-                      cursor: 'pointer',
-                      pointerEvents: 'auto',
+              {clipsAsc.map((clip) => {
+                const mount = mountedIds.has(clip.id);
+                // Only mounted clips need peaks; skip the per-clip object spread
+                // for the (many) placeholders to avoid allocating across the range.
+                if (!mount) {
+                  return (
+                    <TimelineClip
+                      key={clip.id}
+                      clip={clip}
+                      onClipClick={onClipClick}
+                      isDarkTheme={isDarkTheme}
+                      theme={theme}
+                      mount={false}
+                      showWaveform={!isScrubbing}
+                    />
+                  );
+                }
+                const cached = getPeaks(clip.url);
+                return (
+                  <TimelineClip
+                    key={clip.id}
+                    clip={{
+                      ...clip,
+                      peaks: cached?.peaks,
+                      duration: cached?.duration,
                     }}
+                    onClipClick={onClipClick}
+                    isDarkTheme={isDarkTheme}
+                    theme={theme}
+                    mount
+                    showWaveform={!isScrubbing}
                   />
-                )
-            )}
-          </motion.div>
+                );
+              })}
+            </Box>
+          </Box>
+          <AlertIconLayer
+            ref={iconLayerRef}
+            clips={alertClips}
+            widthPct={innerWidthPct}
+            onClipClick={onClipClick}
+          />
           {transcripts.length === 0 && (
             <Box
               sx={{
@@ -599,7 +802,7 @@ export function AudioDisplay({
         >
           {Array.from({ length: 4 }).map((_, i) => (
             <Typography key={i} variant="caption" color="text.secondary">
-              {formatClockTime(startTime + (i / 3) * windowDurationMs)}
+              {formatClockTime(labelStart + (i / 3) * windowDurationMs)}
             </Typography>
           ))}
         </Box>
@@ -611,7 +814,7 @@ export function AudioDisplay({
           windowDurationMs={windowDurationMs}
           isDarkTheme={isDarkTheme}
           onScrubToCenter={(center) =>
-            applyWindowEnd(center + windowDurationMs / 2)
+            goToWindowEnd(center + windowDurationMs / 2)
           }
           onScrubbingChange={setIsScrubbing}
           onPrefetchWindow={prefetchWindowAt}

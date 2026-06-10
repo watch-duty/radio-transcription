@@ -7,8 +7,10 @@ import { useGesture } from '@use-gesture/react';
 import { formatClockTime } from '../../utils/timeUtils';
 import {
   type TranscriptTime,
+  clamp,
   computeClusters,
   computeGridLineTimes,
+  msToPct,
 } from './timelineMath';
 
 // Thinnest a mark/tick may render so 1-2s clips stay visible.
@@ -64,8 +66,7 @@ export function TimelineMiniMap({
     return computeGridLineTimes(rangeStartMs, maxEnd, rangeTotalMs);
   }, [showMiniMap, rangeStartMs, maxEnd, rangeTotalMs]);
 
-  const pctOf = (ms: number) =>
-    ((ms - (rangeStartMs ?? 0)) / rangeTotalMs) * 100;
+  const pctOf = (ms: number) => msToPct(ms, rangeStartMs ?? 0, rangeTotalMs);
 
   const centerMsAtClientX = useCallback(
     (clientX: number): number | null => {
@@ -73,10 +74,7 @@ export function TimelineMiniMap({
       if (!el || rangeStartMs == null || rangeTotalMs <= 0) return null;
       const rect = el.getBoundingClientRect();
       if (!rect.width) return null;
-      const fraction = Math.min(
-        1,
-        Math.max(0, (clientX - rect.left) / rect.width)
-      );
+      const fraction = clamp((clientX - rect.left) / rect.width, 0, 1);
       return rangeStartMs + fraction * rangeTotalMs;
     },
     [rangeStartMs, rangeTotalMs]
@@ -116,82 +114,92 @@ export function TimelineMiniMap({
 
   return (
     <>
+      {/* Wrapper lets the viewport rectangle overflow the strip's height; the
+          strip itself clips ticks to its rounded border. */}
       <Box
-        ref={miniMapRef}
-        {...bind()}
-        aria-label="timeline overview"
         sx={{
           position: 'relative',
-          height: '16px',
           mt: 0.5,
-          borderRadius: 1,
-          border: 1,
-          borderColor: 'divider',
-          bgcolor: 'action.hover',
-          cursor: 'pointer',
-          touchAction: 'none',
-          userSelect: 'none',
-          // Clip the viewport rectangle and ticks to the rounded border.
-          overflow: 'hidden',
           // Keep the row's space reserved so the UI doesn't jump.
           visibility: showMiniMap ? 'visible' : 'hidden',
         }}
       >
-        {showMiniMap &&
-          gridLineTimes.map((t) => (
-            <Box
-              key={`grid-${t}`}
-              sx={{
-                position: 'absolute',
-                top: 0,
-                bottom: 0,
-                width: '1px',
-                bgcolor: 'divider',
-                pointerEvents: 'none',
-                left: `${pctOf(t)}%`,
-              }}
-            />
-          ))}
-        {showMiniMap &&
-          clusters.map((cluster, i) => (
-            <Box
-              key={i}
-              sx={{
-                position: 'absolute',
-                top: '50%',
-                transform: 'translateY(-50%)',
-                height: '8px',
-                borderRadius: '2px',
-                bgcolor: 'text.secondary',
-                pointerEvents: 'none',
-                left: `${pctOf(cluster.startMs)}%`,
-                width: `${Math.max(pctOf(cluster.endMs) - pctOf(cluster.startMs), 0.5)}%`,
-                minWidth: `${MIN_OVERVIEW_MARK_PX}px`,
-              }}
-            />
-          ))}
-        {showMiniMap &&
-          ruleMatchTimes.map((t, i) => (
-            <Box
-              key={`match-${i}`}
-              sx={{
-                position: 'absolute',
-                top: '1px',
-                bottom: '1px',
-                width: `${MIN_OVERVIEW_MARK_PX}px`,
-                bgcolor: 'warning.main',
-                pointerEvents: 'none',
-                left: `${pctOf(t)}%`,
-                transform: 'translateX(-50%)',
-              }}
-            />
-          ))}
+        <Box
+          ref={miniMapRef}
+          {...bind()}
+          aria-label="timeline overview"
+          sx={{
+            position: 'relative',
+            height: '16px',
+            borderRadius: 1,
+            border: 1,
+            borderColor: 'divider',
+            bgcolor: 'action.hover',
+            cursor: 'pointer',
+            touchAction: 'none',
+            userSelect: 'none',
+            // Clip the ticks to the rounded border.
+            overflow: 'hidden',
+          }}
+        >
+          {showMiniMap &&
+            gridLineTimes.map((t) => (
+              <Box
+                key={`grid-${t}`}
+                sx={{
+                  position: 'absolute',
+                  top: 0,
+                  bottom: 0,
+                  width: '1px',
+                  bgcolor: 'divider',
+                  pointerEvents: 'none',
+                  left: `${pctOf(t)}%`,
+                }}
+              />
+            ))}
+          {showMiniMap &&
+            clusters.map((cluster, i) => (
+              <Box
+                key={i}
+                sx={{
+                  position: 'absolute',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  height: '8px',
+                  borderRadius: '2px',
+                  bgcolor: 'text.secondary',
+                  pointerEvents: 'none',
+                  left: `${pctOf(cluster.startMs)}%`,
+                  width: `${Math.max(pctOf(cluster.endMs) - pctOf(cluster.startMs), 0.5)}%`,
+                  minWidth: `${MIN_OVERVIEW_MARK_PX}px`,
+                }}
+              />
+            ))}
+          {showMiniMap &&
+            ruleMatchTimes.map((t, i) => (
+              <Box
+                key={`match-${i}`}
+                sx={{
+                  position: 'absolute',
+                  top: '1px',
+                  bottom: '1px',
+                  width: `${MIN_OVERVIEW_MARK_PX}px`,
+                  bgcolor: 'warning.main',
+                  pointerEvents: 'none',
+                  left: `${pctOf(t)}%`,
+                  transform: 'translateX(-50%)',
+                }}
+              />
+            ))}
+        </Box>
+        {/* Viewport rectangle lives outside the clipped strip and stands a few
+            px taller than it, so the current window reads at a glance. */}
         {showMiniMap && maxEnd != null && (
           <Box
             sx={{
               position: 'absolute',
-              top: 0,
-              bottom: 0,
+              top: '-3px',
+              bottom: '-3px',
               pointerEvents: 'none',
               border: 2,
               borderColor: 'primary.main',
@@ -200,7 +208,7 @@ export function TimelineMiniMap({
               bgcolor: isDarkTheme
                 ? 'rgba(144, 202, 249, 0.16)'
                 : 'rgba(25, 118, 210, 0.12)',
-              left: `${Math.min(Math.max(pctOf((windowEndTime ?? maxEnd) - windowDurationMs), 0), 100)}%`,
+              left: `${clamp(pctOf((windowEndTime ?? maxEnd) - windowDurationMs), 0, 100)}%`,
               width: `${Math.min((windowDurationMs / rangeTotalMs) * 100, 100)}%`,
             }}
           />

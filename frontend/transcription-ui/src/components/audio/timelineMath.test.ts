@@ -3,10 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import {
   type TranscriptTime,
+  clamp,
   computeClusters,
   computeGridLineTimes,
   getWindowDurationMs,
+  msToPct,
   pickGridIntervalMs,
+  scrollPosToMs,
+  windowEndToScrollLeft,
 } from './timelineMath';
 
 const MINUTE = 60 * 1000;
@@ -30,6 +34,62 @@ describe('getWindowDurationMs', () => {
   it('doubles the user duration (minutes) and caps at the max window', () => {
     expect(getWindowDurationMs('5')).toBe(5 * 2 * MINUTE);
     expect(getWindowDurationMs('60')).toBe(MAX_WINDOW_DURATION_MS);
+  });
+});
+
+describe('clamp', () => {
+  it('constrains to the range', () => {
+    expect(clamp(5, 0, 10)).toBe(5);
+    expect(clamp(-1, 0, 10)).toBe(0);
+    expect(clamp(11, 0, 10)).toBe(10);
+  });
+});
+
+describe('msToPct', () => {
+  it('projects a timestamp to a percentage of the range', () => {
+    expect(msToPct(0, 0, 1000)).toBe(0);
+    expect(msToPct(250, 0, 1000)).toBe(25);
+    expect(msToPct(1000, 0, 1000)).toBe(100);
+  });
+});
+
+describe('scroll <-> window-end conversions', () => {
+  // 1000px viewport over a 5000px-wide strip spanning a 5000ms range.
+  const rangeStartMs = 0;
+  const rangeTotalMs = 5000;
+  const scrollWidth = 5000;
+  const clientWidth = 1000;
+
+  it('maps the right edge of the viewport to a timestamp', () => {
+    // Scrolled fully right: right edge = end of range.
+    expect(
+      scrollPosToMs(4000 + clientWidth, rangeStartMs, rangeTotalMs, scrollWidth)
+    ).toBe(5000);
+    // Scrolled fully left: right edge = one window in.
+    expect(
+      scrollPosToMs(0 + clientWidth, rangeStartMs, rangeTotalMs, scrollWidth)
+    ).toBe(1000);
+  });
+
+  it('inverts back to the scrollLeft that places an end at the right edge', () => {
+    expect(
+      windowEndToScrollLeft(
+        5000,
+        rangeStartMs,
+        rangeTotalMs,
+        scrollWidth,
+        clientWidth
+      )
+    ).toBe(4000);
+    expect(
+      windowEndToScrollLeft(
+        1000,
+        rangeStartMs,
+        rangeTotalMs,
+        scrollWidth,
+        clientWidth
+      )
+    ).toBe(0);
   });
 });
 

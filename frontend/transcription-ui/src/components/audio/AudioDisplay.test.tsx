@@ -1,5 +1,13 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 
 import {
   cleanup,
@@ -36,6 +44,40 @@ vi.mock('wavesurfer.js', () => ({
 }));
 
 describe('AudioDisplay', () => {
+  // jsdom reports 0 for layout metrics and ignores scrollLeft writes. Give the
+  // scroller a viewport (1000) narrower than its content (5000) and a settable
+  // scrollLeft so programmatic scrolling and the settled-viewport scan run for
+  // real instead of bailing out or collapsing to a single full-range window.
+  beforeAll(() => {
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      get() {
+        return 1000;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, 'scrollWidth', {
+      configurable: true,
+      get() {
+        return 5000;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, 'scrollLeft', {
+      configurable: true,
+      get(this: { __scrollLeft?: number }) {
+        return this.__scrollLeft ?? 0;
+      },
+      set(this: { __scrollLeft?: number }, v: number) {
+        this.__scrollLeft = v;
+      },
+    });
+  });
+
+  afterAll(() => {
+    delete (HTMLElement.prototype as { clientWidth?: number }).clientWidth;
+    delete (HTMLElement.prototype as { scrollWidth?: number }).scrollWidth;
+    delete (HTMLElement.prototype as { scrollLeft?: number }).scrollLeft;
+  });
+
   afterEach(() => {
     cleanup();
     __resetPeaksCacheForTest();
@@ -330,7 +372,7 @@ describe('AudioDisplay', () => {
     });
   });
 
-  it('passes playbackAudioUri to WavesurferPlayer (transformed via getAudioUrl)', () => {
+  it('passes playbackAudioUri to WavesurferPlayer (transformed via getAudioUrl)', async () => {
     const mockTranscripts: Transcript[] = [
       {
         segmentId: '1',
@@ -364,7 +406,8 @@ describe('AudioDisplay', () => {
       />
     );
 
-    const wavesurfer = screen.getByTestId('wavesurfer-player');
+    // Waveforms mount lazily once the viewport settles after the initial scroll.
+    const wavesurfer = await screen.findByTestId('wavesurfer-player');
     expect(wavesurfer).toBeTruthy();
     expect(wavesurfer.getAttribute('data-url')).toBe(
       getAudioUrl(mockTranscripts[0].playbackAudioUri)
@@ -507,6 +550,55 @@ describe('AudioDisplay', () => {
         .getAllByText(/\d{2}:\d{2}/)
         .map((el) => el.textContent);
       expect(labelsAfter).not.toEqual(labelsBefore);
+    });
+  });
+
+  it('mounts waveforms only for clips in the settled viewport, not the whole range', async () => {
+    // Range spans an hour; with a 10-min window (userDuration "5") the content is
+    // ~6 viewports wide, so only the live-edge clip is in view after follow-live.
+    const mk = (id: string, hhmm: string, uri: string): Transcript => ({
+      segmentId: id,
+      feedId: 'feed1',
+      startTimestamp: new Date(`2026-04-20T${hhmm}:00Z`).toISOString(),
+      endTimestamp: new Date(`2026-04-20T${hhmm}:05Z`).toISOString(),
+      transcript: id,
+      canonicalAudioUri: `${uri}.flac`,
+      playbackAudioUri: uri,
+      evaluationDecisions: [],
+      missingPriorContext: false,
+      missingPostContext: false,
+      sourceAudioUris: [],
+      startAudioOffset: '0',
+      endAudioOffset: '0',
+    });
+    const mockTranscripts: Transcript[] = [
+      mk('live', '10:00', 'live.m4a'),
+      mk('mid', '09:30', 'mid.m4a'),
+      mk('old', '09:00', 'old.m4a'),
+    ];
+    // Prime peaks for every clip so any mounted clip would render a waveform.
+    mockTranscripts.forEach((t) =>
+      __primePeaksCacheForTest(getAudioUrl(t.playbackAudioUri))
+    );
+
+    render(
+      <AudioDisplay
+        transcripts={mockTranscripts}
+        currentlyPlayingSegmentId={null}
+        userDuration="5"
+        onClipClick={vi.fn()}
+        isAudioPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        highlightedSegmentId={null}
+      />
+    );
+
+    // Only the live-edge clip is in the settled viewport; the off-screen clips
+    // stay placeholders even though their peaks are cached.
+    await waitFor(() => {
+      const players = screen.getAllByTestId('wavesurfer-player');
+      expect(players).toHaveLength(1);
+      expect(players[0].getAttribute('data-url')).toBe(getAudioUrl('live.m4a'));
     });
   });
 });

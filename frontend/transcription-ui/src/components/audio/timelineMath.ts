@@ -34,6 +34,45 @@ const NICE_INTERVALS_MS = [
 ];
 const GRID_TARGET_COUNT = 5;
 
+// Constrain a value to [min, max].
+export function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+// Project a timestamp to its percentage position across the range.
+export function msToPct(
+  ms: number,
+  rangeStartMs: number,
+  rangeTotalMs: number
+): number {
+  return ((ms - rangeStartMs) / rangeTotalMs) * 100;
+}
+
+// Map a horizontal scroll offset (px) to the timestamp under it. The inner
+// element is `scrollWidthPx` wide and spans the whole range, so position is a
+// straight proportion. Pass `scrollLeft + clientWidth` for the right edge.
+export function scrollPosToMs(
+  posPx: number,
+  rangeStartMs: number,
+  rangeTotalMs: number,
+  scrollWidthPx: number
+): number {
+  return rangeStartMs + (posPx / scrollWidthPx) * rangeTotalMs;
+}
+
+// Inverse of scrollPosToMs for the window's right edge: the scrollLeft that puts
+// `end` at the viewport's right edge. Caller clamps to [0, scrollWidth-client].
+export function windowEndToScrollLeft(
+  end: number,
+  rangeStartMs: number,
+  rangeTotalMs: number,
+  scrollWidthPx: number,
+  clientWidthPx: number
+): number {
+  const frac = (end - rangeStartMs) / rangeTotalMs;
+  return frac * scrollWidthPx - clientWidthPx;
+}
+
 // The visible window: half the user's clip length, capped to the max window.
 export function getWindowDurationMs(userDuration?: string | null): number {
   if (!userDuration) return MAX_WINDOW_DURATION_MS;
