@@ -59,6 +59,7 @@ interface AudioSegmentBackend {
   start_audio_offset: string | null;
   end_audio_offset: string | null;
   playback_audio_uri: string | null;
+  external_audio_segment_id: string | null;
   created_at: string;
   annotations?: AnnotationBackend[];
 }
@@ -87,6 +88,7 @@ function convertAudioSegmentBackend(
     startAudioOffset: response.start_audio_offset ?? undefined,
     endAudioOffset: response.end_audio_offset ?? undefined,
     playbackAudioUri: response.playback_audio_uri ?? undefined,
+    externalAudioSegmentId: response.external_audio_segment_id ?? undefined,
     createdAt: response.created_at,
     annotations: (response.annotations || []).map(convertAnnotationBackend),
   };
