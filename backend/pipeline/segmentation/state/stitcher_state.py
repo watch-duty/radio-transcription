@@ -148,19 +148,21 @@ class AudioStitchingStateMachine:
         # ctx.last_segment_end_time_ms is retained across transmissions in StitcherContext to
         # measure silence gaps between speech windows. However, if the current transmission window is
         # completely silent (non-speech), no new speech segments are added to update this timestamp.
-        # Falling back to it would use a stale end time from the previous transmission (which is in the past).
-        # This results in negative speech offsets (end_ms - ctx.buffer_start_time_ms < 0) and causes
-        # downstream Protobuf JSON serialization failures. We only use last_segment_end_time_ms if it
-        # is part of the current transmission window (i.e., >= buffer_start_time_ms).
-        end_ms = (
-            ctx.last_segment_end_time_ms
-            if (
-                ctx.last_segment_end_time_ms is not None
-                and ctx.buffer_start_time_ms is not None
-                and ctx.last_segment_end_time_ms >= ctx.buffer_start_time_ms
-            )
-            else ctx.transmission_start_time_ms
-        )
+        # To determine the proper end_ms of the current transmission:
+        # 1. If we have speech segments in the current window, the end time is the end of the last speech segment.
+        # 2. If it is a non-speech segment transitioning to speech, last_segment_end_time_ms is explicitly updated
+        #    to the speech onset (which is >= buffer_start_time_ms).
+        # 3. Otherwise, we fall back to transmission_start_time_ms.
+        if ctx.speech_segments:
+            end_ms = ctx.speech_segments[-1].end_ms
+        elif (
+            ctx.last_segment_end_time_ms is not None
+            and ctx.buffer_start_time_ms is not None
+            and ctx.last_segment_end_time_ms >= ctx.buffer_start_time_ms
+        ):
+            end_ms = ctx.last_segment_end_time_ms
+        else:
+            end_ms = ctx.transmission_start_time_ms
         if (
             end_ms is None
             or ctx.transmission_start_time_ms is None
