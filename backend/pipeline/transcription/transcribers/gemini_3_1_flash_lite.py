@@ -12,7 +12,7 @@ from backend.pipeline.transcription.transcribers import base
 from model.src.common.gemini import prompts as gemini_prompts
 from model.src.common.gemini import vertex as gemini_vertex
 
-DEFAULT_GEMINI_LOCATION = "us-central1"
+DEFAULT_GEMINI_LOCATION = "global"
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
 
 logger = get_task_logger(
