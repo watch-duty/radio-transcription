@@ -12,6 +12,12 @@ from typing import (
 import betterproto
 
 
+class FlushRequestProtoAudioClassification(betterproto.Enum):
+    AUDIO_CLASSIFICATION_UNSPECIFIED = 0
+    AUDIO_CLASSIFICATION_SPEECH = 1
+    AUDIO_CLASSIFICATION_NO_SPEECH = 2
+
+
 @dataclass(eq=False, repr=False)
 class TimeRangeProto(betterproto.Message):
     """Nested domain dependencies"""
@@ -46,6 +52,9 @@ class ChunkMetadataProto(betterproto.Message):
         5, optional=True, group="_traceparent"
     )
     is_continuous: bool = betterproto.bool_field(6)
+    timestamp_ms: Optional[int] = betterproto.int64_field(
+        7, optional=True, group="_timestamp_ms"
+    )
 
 
 @dataclass(eq=False, repr=False)
@@ -55,7 +64,6 @@ class FlushRequestProto(betterproto.Message):
     session_id: str = betterproto.string_field(3)
     contributing_audio_uris: List[str] = betterproto.string_field(4)
     time_range: "TimeRangeProto" = betterproto.message_field(5)
-    transmission_id: str = betterproto.string_field(6)
     feed_metadata: "FeedMetadataProto" = betterproto.message_field(7)
     sample_rate: int = betterproto.int32_field(8)
     missing_prior_context: bool = betterproto.bool_field(9)
@@ -70,6 +78,10 @@ class FlushRequestProto(betterproto.Message):
     traceparent: Optional[str] = betterproto.string_field(
         14, optional=True, group="_traceparent"
     )
+    audio_classification: "FlushRequestProtoAudioClassification" = (
+        betterproto.enum_field(15)
+    )
+    segment_id: str = betterproto.string_field(16)
 
 
 @dataclass(eq=False, repr=False)

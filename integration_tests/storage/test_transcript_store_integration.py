@@ -22,7 +22,7 @@ async def store(db_pool: asyncpg.Pool) -> TranscriptStore:
 
 async def _insert_transcript(
     pool: asyncpg.Pool,
-    transmission_id: uuid.UUID,
+    segment_id: uuid.UUID,
     feed_id: uuid.UUID,
     end_timestamp: datetime.datetime,
     transcript: str = "Test transcript",
@@ -30,10 +30,10 @@ async def _insert_transcript(
     start_timestamp = end_timestamp - datetime.timedelta(seconds=10)
     await pool.execute(
         """
-        INSERT INTO transcripts (transmission_id, feed_id, transcript, start_timestamp, end_timestamp, created_at)
+        INSERT INTO transcripts (segment_id, feed_id, transcript, start_timestamp, end_timestamp, created_at)
         VALUES ($1, $2, $3, $4, $5, NOW())
         """,
-        str(transmission_id),
+        str(segment_id),
         str(feed_id),
         transcript,
         start_timestamp,

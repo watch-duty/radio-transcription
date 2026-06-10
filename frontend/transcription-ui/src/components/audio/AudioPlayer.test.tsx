@@ -9,10 +9,10 @@ describe('AudioPlayer', () => {
   const mockOnToggleAudio = vi.fn();
   const defaultProps = {
     audioUri: 'gs://bucket/audio.mp3',
-    transmissionId: '123',
+    segmentId: '123',
     onToggleAudio: mockOnToggleAudio,
     isAudioPlaying: false,
-    currentlyPlayingTransmissionId: null,
+    currentlyPlayingSegmentId: null,
   };
 
   beforeEach(() => {
@@ -40,33 +40,33 @@ describe('AudioPlayer', () => {
     );
   });
 
-  it('renders pause button when playing this transmission', () => {
+  it('renders pause button when playing this segment', () => {
     render(
       <AudioPlayer
         {...defaultProps}
-        currentlyPlayingTransmissionId="123"
+        currentlyPlayingSegmentId="123"
         isAudioPlaying={true}
       />
     );
     expect(screen.getByLabelText('pause')).toBeTruthy();
   });
 
-  it('renders play button when playing another transmission', () => {
+  it('renders play button when playing another segment', () => {
     render(
       <AudioPlayer
         {...defaultProps}
-        currentlyPlayingTransmissionId="456"
+        currentlyPlayingSegmentId="456"
         isAudioPlaying={true}
       />
     );
     expect(screen.getByLabelText('play')).toBeTruthy();
   });
 
-  it('renders play button when not playing even if currentlyPlayingTransmissionId matches', () => {
+  it('renders play button when not playing even if currentlyPlayingSegmentId matches', () => {
     render(
       <AudioPlayer
         {...defaultProps}
-        currentlyPlayingTransmissionId="123"
+        currentlyPlayingSegmentId="123"
         isAudioPlaying={false}
       />
     );

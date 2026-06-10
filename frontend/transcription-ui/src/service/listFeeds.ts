@@ -45,7 +45,10 @@ export async function listFeedsPage(
     },
   }).then((resp) => {
     if (Array.isArray(resp)) {
-      return { feeds: resp };
+      return {
+        feeds: resp,
+        total: resp.length,
+      };
     } else {
       return resp;
     }

@@ -195,6 +195,23 @@ class CollectorSettings:
         ),
     )
 
+    # Retry: Pub/Sub publish
+    pubsub_publish_max_retries: int = field(
+        default_factory=lambda: int(
+            os.environ.get("PUBSUB_PUBLISH_MAX_RETRIES", "2"),
+        ),
+    )
+    pubsub_publish_retry_base_delay_sec: float = field(
+        default_factory=lambda: float(
+            os.environ.get("PUBSUB_PUBLISH_RETRY_BASE_DELAY_SEC", "0.5"),
+        ),
+    )
+    pubsub_publish_retry_max_delay_sec: float = field(
+        default_factory=lambda: float(
+            os.environ.get("PUBSUB_PUBLISH_RETRY_MAX_DELAY_SEC", "4.0"),
+        ),
+    )
+
     # Health check (GET /healthz). HEALTH_CHECK_PORT exists for local-dev and
     # test flexibility only. DO NOT override this in production: the docker
     # -p mapping (cloud_config.yaml.tftpl) and google_compute_health_check

@@ -10,7 +10,7 @@ components:
       properties:
         feedId:
           type: string
-        transmissionId:
+        segmentId:
           type: string
         transcript:
           type: string
@@ -40,7 +40,7 @@ components:
           type: array
       required:
         - feedId
-        - transmissionId
+        - segmentId
         - transcript
         - startTimestamp
         - endTimestamp
@@ -277,6 +277,18 @@ components:
         - value
       type: object
       additionalProperties: false
+    BackendFeedStatusReason:
+      type: string
+      enum:
+        - unknown
+        - source_offline
+        - source_unreachable
+        - source_rate_limited
+        - system_authentication_failed
+        - system_configuration_invalid
+        - system_collector_error
+        - system_pipeline_error
+        - system_unexpected_error
     SourceType:
       enum:
         - bcfy_feeds
@@ -309,6 +321,10 @@ components:
           items:
             $ref: "#/components/schemas/Tag"
           type: array
+        quarantineReason:
+          type: string
+        statusReason:
+          $ref: "#/components/schemas/BackendFeedStatusReason"
       required:
         - name
         - sourceType
@@ -325,8 +341,12 @@ components:
           type: array
         nextToken:
           type: string
+        total:
+          type: number
+          format: double
       required:
         - feeds
+        - total
       type: object
       additionalProperties: false
     ListFeedsQueryParams:

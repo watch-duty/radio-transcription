@@ -32,6 +32,8 @@ def _make_feed(source_type: SourceType) -> LeasedFeed:
         last_processed_filename=None,
         last_bookmark_time=None,
         fencing_token=0,
+        failure_count=0,
+        status_reason=None,
         source_feed_id="123",
     )
 

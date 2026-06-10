@@ -94,7 +94,8 @@ async def _get_feed_diagnostics(
     row = await pool.fetchrow(
         "SELECT status, failure_count, worker_id, fencing_token,"
         " retry_after, quarantine_reason, status_reason,"
-        " status_reason_updated_at, last_processed_filename"
+        " status_reason_updated_at, last_processed_filename,"
+        " last_bookmark_time"
         " FROM feeds WHERE id = $1::uuid",
         str(feed_id),
     )
@@ -761,6 +762,114 @@ async def test_progress_update_succeeds_for_deactivated_owned_feed(
     assert row["worker_id"] == worker
     assert row["status_reason"] is None
     assert row["status_reason_updated_at"] > old_reason_ts
+
+
+# -- Tests: record_source_observation ----------------------------------
+
+
+async def test_postgresql_greatest_ignores_null_bookmark_arguments(
+    db_pool: asyncpg.Pool,
+) -> None:
+    """AlloyDB/PostgreSQL GREATEST keeps the non-NULL timestamp argument."""
+    bookmark = datetime.datetime(2026, 6, 8, 12, 0, tzinfo=datetime.UTC)
+
+    row = await db_pool.fetchrow(
+        """
+        SELECT
+            GREATEST(
+                NULL::TIMESTAMP WITH TIME ZONE,
+                NULL::TIMESTAMP WITH TIME ZONE
+            ) AS both_null,
+            GREATEST(
+                $1::TIMESTAMP WITH TIME ZONE,
+                NULL::TIMESTAMP WITH TIME ZONE
+            ) AS left_value,
+            GREATEST(
+                NULL::TIMESTAMP WITH TIME ZONE,
+                $1::TIMESTAMP WITH TIME ZONE
+            ) AS right_value
+        """,
+        bookmark,
+    )
+
+    assert row["both_null"] is None
+    assert row["left_value"] == bookmark
+    assert row["right_value"] == bookmark
+
+
+@pytest.mark.parametrize(
+    ("existing_bookmark", "resume_position", "expected_bookmark"),
+    [
+        pytest.param(None, None, None, id="both-null"),
+        pytest.param(
+            None,
+            datetime.datetime(2026, 6, 8, 12, 0, tzinfo=datetime.UTC),
+            datetime.datetime(2026, 6, 8, 12, 0, tzinfo=datetime.UTC),
+            id="existing-null",
+        ),
+        pytest.param(
+            datetime.datetime(2026, 6, 8, 12, 0, tzinfo=datetime.UTC),
+            None,
+            datetime.datetime(2026, 6, 8, 12, 0, tzinfo=datetime.UTC),
+            id="resume-null",
+        ),
+        pytest.param(
+            datetime.datetime(2026, 6, 8, 12, 0, tzinfo=datetime.UTC),
+            datetime.datetime(2026, 6, 8, 11, 59, tzinfo=datetime.UTC),
+            datetime.datetime(2026, 6, 8, 12, 0, tzinfo=datetime.UTC),
+            id="resume-older",
+        ),
+        pytest.param(
+            datetime.datetime(2026, 6, 8, 12, 0, tzinfo=datetime.UTC),
+            datetime.datetime(2026, 6, 8, 12, 1, tzinfo=datetime.UTC),
+            datetime.datetime(2026, 6, 8, 12, 1, tzinfo=datetime.UTC),
+            id="resume-newer",
+        ),
+    ],
+)
+async def test_source_observation_updates_bookmark_monotonically(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+    existing_bookmark: datetime.datetime | None,
+    resume_position: datetime.datetime | None,
+    expected_bookmark: datetime.datetime | None,
+) -> None:
+    """Observation writes clear stale failure state without rewinding bookmark."""
+    worker = uuid.uuid4()
+    old_reason_ts = datetime.datetime(2026, 6, 8, 10, 0, tzinfo=datetime.UTC)
+    feed_id = await _insert_feed(
+        db_pool,
+        f"Observation Bookmark {uuid.uuid4()}",
+        status="active",
+        worker_id=worker,
+        last_heartbeat_age_seconds=10,
+        failure_count=2,
+    )
+    await db_pool.execute(
+        "UPDATE feeds SET last_bookmark_time = $1,"
+        " status_reason = $2,"
+        " status_reason_updated_at = $3"
+        " WHERE id = $4",
+        existing_bookmark,
+        FeedStatusReason.SOURCE_UNREACHABLE.value,
+        old_reason_ts,
+        feed_id,
+    )
+
+    result = await store.record_source_observation(
+        feed_id,
+        worker,
+        0,
+        resume_position,
+    )
+
+    assert result["recorded"] is True
+    row = await _get_feed_diagnostics(db_pool, feed_id)
+    assert row["status"] == "active"
+    assert row["failure_count"] == 0
+    assert row["status_reason"] is None
+    assert row["status_reason_updated_at"] > old_reason_ts
+    assert row["last_bookmark_time"] == expected_bookmark
 
 
 # -- Tests: report_feed_failure ---------------------------------------
@@ -1777,13 +1886,13 @@ async def test_delete_feed_succeeds(
     feed_id = await _insert_feed(db_pool, "Hard Delete Test Feed")
 
     # 2. Insert a transcript for the feed
-    transmission_id = uuid.uuid4()
+    segment_id = uuid.uuid4()
     await db_pool.execute(
         """
-        INSERT INTO transcripts (transmission_id, feed_id, transcript, start_timestamp, end_timestamp, created_at)
+        INSERT INTO transcripts (segment_id, feed_id, transcript, start_timestamp, end_timestamp, created_at)
         VALUES ($1, $2, $3, NOW() - INTERVAL '10 seconds', NOW(), NOW())
         """,
-        str(transmission_id),
+        str(segment_id),
         str(feed_id),
         "Test transcript to be deleted",
     )

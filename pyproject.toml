@@ -18,6 +18,7 @@ dependencies = [
     "rules-service",
     "transcripts-service",
     "normalization-pipeline",
+    "segmentation-pipeline",
     "transcription-function",
     "evaluation-function",
     "notification-function",
@@ -225,27 +226,6 @@ known-first-party = ["backend", "local_dev"]
   "S113",   # requests.* require timeout=
   "T201",   # `print()` found
 ]
-# model/scripts/sft/ — SFT pipeline scripts (QUAL-01: full lint compliance deferred to v2).
-# Relaxed rule set matching model/data_sources/ conventions; TC/FBT/EM/PLC/PLR
-# are suppressed because scripts/ uses lazy imports, boolean kwargs, and
-# non-top-level imports by design. INP001 suppressed (no __init__.py at scripts/sft/).
-"model/scripts/**.py" = [
-  "ANN001",  # Missing type annotation for function argument
-  "ANN201",  # Missing return type annotation for public function
-  "ANN202",  # Missing return type annotation for private function
-  "EM101",   # Exception must not use string literal
-  "EM102",   # Exception must not use f-string literal
-  "FBT001",  # Boolean-typed positional argument in function definition
-  "FBT002",  # Boolean default positional argument in function definition
-  "INP001",  # File is part of an implicit namespace package
-  "PLC0415", # import should be at top-level (lazy imports by design)
-  "PLR0912", # Too many branches
-  "PLR0915", # Too many statements
-  "TC002",   # Move third-party import into type-checking block
-  "TC003",   # Move stdlib import into type-checking block
-  "TRY003",  # Avoid specifying long messages outside the exception class
-  "UP028",   # Replace yield-in-for with yield from
-]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -261,6 +241,7 @@ pythonVersion = "3.13"
 members = [
     "backend/pipeline/common",
     "backend/pipeline/normalization",
+    "backend/pipeline/segmentation",
     "backend/pipeline/transcription",
     "backend/pipeline/evaluation",
     "backend/pipeline/notification",
@@ -277,6 +258,7 @@ feeds-service = { workspace = true }
 rules-service = { workspace = true }
 transcripts-service = { workspace = true }
 normalization-pipeline = { workspace = true }
+segmentation-pipeline = { workspace = true }
 transcription-function = { workspace = true }
 evaluation-function = { workspace = true }
 notification-function = { workspace = true }

@@ -1,12 +1,17 @@
 import type {
   BackendFeedStatus,
+  BackendFeedStatusReason,
   Feed,
   FeedCreate,
   FeedUpdate,
   ListFeedsResponse,
   Tag,
 } from '@transcription/common';
-import { SourceType, convertFeedStatusBackend } from '@transcription/common';
+import {
+  SourceType,
+  convertFeedStatusBackend,
+  convertFeedStatusReason,
+} from '@transcription/common';
 import {
   Body,
   Controller,
@@ -38,6 +43,8 @@ interface FeedBackend extends BaseFeedBackend {
   status: BackendFeedStatus;
   last_heartbeat: string | null;
   tags?: Tag[];
+  quarantine_reason: string | null;
+  status_reason: BackendFeedStatusReason | null;
 }
 
 interface FeedCreateBackend extends BaseFeedBackend {
@@ -67,6 +74,7 @@ export class ListFeedsQueryParams {
 interface ListFeedsBackendResponse {
   feeds: FeedBackend[];
   next_token?: string;
+  total: number;
 }
 
 function getSourceUrl(
@@ -133,6 +141,8 @@ function convertFeedBackend(response: FeedBackend): Feed {
     substatus: response.status,
     lastHeartbeat: response.last_heartbeat ?? undefined,
     tags: response.tags,
+    quarantineReason: response.quarantine_reason ?? undefined,
+    statusReason: convertFeedStatusReason(response.status_reason),
   };
 }
 
@@ -201,6 +211,7 @@ export class FeedsController extends Controller {
         : {
             feeds: data.feeds.map(convertFeedBackend),
             nextToken: data.next_token,
+            total: data.total,
           };
     } catch (error: unknown) {
       const { status, message } = handleBackendError(error, 'fetching feeds');
