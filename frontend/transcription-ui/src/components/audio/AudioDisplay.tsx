@@ -252,7 +252,7 @@ export function AudioDisplay({
           width,
           isAudioPlaying: t.id === currentlyPlayingSegmentId,
           isHighlighted: t.id === highlightedSegmentId,
-          hasAlert: evaluationAnnotation !== null,
+          hasAlert: !!evaluationAnnotation && evaluationAnnotation.decisions.length > 0,
         };
       });
 

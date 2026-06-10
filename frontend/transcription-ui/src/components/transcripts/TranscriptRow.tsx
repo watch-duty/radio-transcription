@@ -86,6 +86,11 @@ export function TranscriptRow({
   const transcriptAnnotation = findTranscriptAnnotationData(
     transcript.annotations
   );
+  
+  if (!transcriptAnnotation) {
+    return null;
+  }
+
   return (
     <Fragment>
       {showHeader && (
