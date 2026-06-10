@@ -1,6 +1,6 @@
 import type * as express from 'express';
 
-import * as jwt from 'jsonwebtoken';
+import * as jose from 'jose';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { expressAuthentication } from './authentication.js';
@@ -12,11 +12,13 @@ const { mockState } = vi.hoisted(() => ({
 }));
 
 vi.mock('./config.js', () => ({
-  getAdminEmails: vi.fn(() => Promise.resolve(mockState.adminEmails)),
+  checkIsAdmin: vi.fn((email: string) =>
+    Promise.resolve(mockState.adminEmails.includes(email.toLowerCase()))
+  ),
 }));
 
-vi.mock('jsonwebtoken', () => ({
-  decode: vi.fn(),
+vi.mock('jose', () => ({
+  decodeJwt: vi.fn(),
 }));
 
 describe('expressAuthentication', () => {
@@ -65,7 +67,7 @@ describe('expressAuthentication', () => {
       },
     } as unknown as express.Request;
 
-    vi.mocked(jwt.decode).mockReturnValueOnce(null);
+    vi.mocked(jose.decodeJwt).mockReturnValueOnce(null as any);
 
     await expect(
       expressAuthentication(mockReq, 'google_id_token')
@@ -87,7 +89,7 @@ describe('expressAuthentication', () => {
       iss: 'https://accounts.google.com',
     };
 
-    vi.mocked(jwt.decode).mockReturnValueOnce(decodedPayload);
+    vi.mocked(jose.decodeJwt).mockReturnValueOnce(decodedPayload as any);
 
     const user = await expressAuthentication(mockReq, 'google_id_token');
 
@@ -112,7 +114,7 @@ describe('expressAuthentication', () => {
       iss: 'https://accounts.google.com',
     };
 
-    vi.mocked(jwt.decode).mockReturnValueOnce(decodedPayload);
+    vi.mocked(jose.decodeJwt).mockReturnValueOnce(decodedPayload as any);
 
     const user = await expressAuthentication(mockReq, 'google_id_token');
 
@@ -136,7 +138,7 @@ describe('expressAuthentication', () => {
       iss: 'https://accounts.google.com',
     };
 
-    vi.mocked(jwt.decode).mockReturnValueOnce(decodedPayload);
+    vi.mocked(jose.decodeJwt).mockReturnValueOnce(decodedPayload as any);
 
     const user = await expressAuthentication(mockReq, 'google_id_token');
 

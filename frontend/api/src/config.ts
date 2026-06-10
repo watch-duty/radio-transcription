@@ -1,4 +1,5 @@
-import * as fs from 'fs';
+import axios from 'axios';
+import { GoogleAuth } from 'google-auth-library';
 
 /**
  * Environment variables for the API. Keeping this in a centralized file to
@@ -62,40 +63,87 @@ export const GOOGLE_AUTH_CLIENT_ID = googleClientId;
 export const GOOGLE_AUTH_CLIENT_SECRET = googleClientSecret;
 export const AUTH_BACKEND = process.env.AUTH_BACKEND || 'google';
 
-// Keep track of cached emails, last fetch timestamp, and default TTL (10 seconds)
-let cachedAdminEmails: string[] | null = null;
-let lastCacheFetch = 0;
-const CACHE_TTL_MS = 15000; // 15 seconds
+export const WORKSPACE_ADMIN_GROUP_EMAIL = process.env.WORKSPACE_ADMIN_GROUP_EMAIL;
+export const WORKSPACE_ADMIN_EMAIL = process.env.WORKSPACE_ADMIN_EMAIL;
 
-export async function getAdminEmails(): Promise<string[]> {
+// Cache structure for user admin status
+const adminCache = new Map<string, { isAdmin: boolean; expiresAt: number }>();
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes cache TTL
+
+export async function checkIsAdmin(email: string): Promise<boolean> {
+  const normalizedEmail = email.trim().toLowerCase();
   const now = Date.now();
-  if (cachedAdminEmails && now - lastCacheFetch < CACHE_TTL_MS) {
-    return cachedAdminEmails;
+
+  // Check cache first
+  const cached = adminCache.get(normalizedEmail);
+  if (cached && cached.expiresAt > now) {
+    return cached.isAdmin;
   }
 
-  const adminEmailsPath = process.env.ADMIN_EMAILS_PATH;
-  if (adminEmailsPath) {
-    try {
-      if (fs.existsSync(adminEmailsPath)) {
-        const content = await fs.promises.readFile(adminEmailsPath, 'utf8');
-        const emails = content
-          .split(',')
-          .map((email) => email.trim().toLowerCase())
-          .filter((email) => email.length > 0);
+  if (!WORKSPACE_ADMIN_GROUP_EMAIL) {
+    console.warn(
+      'WORKSPACE_ADMIN_GROUP_EMAIL environment variable is not set. Defaulting to granting admin access to all authenticated users.'
+    );
+    return true;
+  }
 
-        cachedAdminEmails = emails;
-        lastCacheFetch = now;
-        return emails;
-      }
-    } catch (err) {
-      console.error(
-        `Error reading admin emails secret file at ${adminEmailsPath}:`,
-        err
-      );
+  if (!WORKSPACE_ADMIN_EMAIL) {
+    console.error(
+      'WORKSPACE_ADMIN_EMAIL environment variable is not set, but WORKSPACE_ADMIN_GROUP_EMAIL is configured. Cannot perform group membership lookup.'
+    );
+    return false;
+  }
+
+  try {
+    const auth = new GoogleAuth({
+      scopes: ['https://www.googleapis.com/auth/admin.directory.group.member.readonly'],
+      clientOptions: {
+        subject: WORKSPACE_ADMIN_EMAIL, // Impersonate the workspace admin
+      },
+    });
+
+    const client = await auth.getClient();
+    const tokenResponse = await client.getAccessToken();
+    const token = tokenResponse.token;
+
+    if (!token) {
+      throw new Error('Failed to obtain Google OAuth token');
     }
-  }
 
-  lastCacheFetch = now;
-  // If no file was found, return an empty list.
-  return [];
+    const url = `https://admin.googleapis.com/admin/directory/v1/groups/${encodeURIComponent(
+      WORKSPACE_ADMIN_GROUP_EMAIL
+    )}/hasMember/${encodeURIComponent(normalizedEmail)}`;
+
+    const response = await axios.get(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    const isAdmin = !!response.data.isMember;
+
+    // Save in cache
+    adminCache.set(normalizedEmail, {
+      isAdmin,
+      expiresAt: Date.now() + CACHE_TTL_MS,
+    });
+
+    return isAdmin;
+  } catch (error: any) {
+    // Note: the hasMember API returns 404 if the user is not found or not a member.
+    if (error.response && error.response.status === 404) {
+      adminCache.set(normalizedEmail, {
+        isAdmin: false,
+        expiresAt: Date.now() + CACHE_TTL_MS,
+      });
+      return false;
+    }
+
+    console.error(
+      `Error querying Google Directory API for ${normalizedEmail}:`,
+      error.message || error
+    );
+
+    // Fail closed, or fallback to expired cache entry if available
+    return cached ? cached.isAdmin : false;
+  }
 }
+

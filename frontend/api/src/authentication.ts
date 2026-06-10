@@ -2,7 +2,7 @@ import * as express from 'express';
 
 import * as jose from 'jose';
 
-import { getAdminEmails } from './config.js';
+import { checkIsAdmin } from './config.js';
 
 export interface GoogleUser {
   email: string;
@@ -41,11 +41,7 @@ export async function expressAuthentication(
     }
 
     if (decoded.email) {
-      const adminEmails = await getAdminEmails();
-      // An empty adminEmails list means everyone is an admin
-      decoded.isAdmin =
-        adminEmails.length === 0 ||
-        adminEmails.includes(decoded.email.toLowerCase());
+      decoded.isAdmin = await checkIsAdmin(decoded.email);
     } else {
       decoded.isAdmin = false;
     }
