@@ -5,12 +5,8 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from cloudevents.http.event import CloudEvent
-from google.protobuf.duration_pb2 import (
-    Duration,  # type: ignore[unresolved-import]
-)
-from google.protobuf.timestamp_pb2 import (
-    Timestamp,  # type: ignore[unresolved-import]
-)
+from google.protobuf.duration_pb2 import Duration  # type: ignore
+from google.protobuf.timestamp_pb2 import Timestamp  # type: ignore
 
 from backend.pipeline.normalization.processor import (
     NormalizationEventProcessor,
