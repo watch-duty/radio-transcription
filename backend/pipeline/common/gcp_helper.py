@@ -223,6 +223,7 @@ def publish_audio_chunk_sync(
     start_timestamp: datetime.datetime,
     duration_ms: int,
     source_type: str | None = None,
+    external_audio_segment_id: str | None = None,
 ) -> str:
     """Publish an AudioChunk to Pub/Sub and return the message ID.
 
@@ -246,6 +247,8 @@ def publish_audio_chunk_sync(
                 milliseconds=duration_ms
             )
             s_msg.end_timestamp.FromDatetime(end_ts)
+            if external_audio_segment_id is not None:
+                s_msg.external_audio_segment_id = external_audio_segment_id
             serialized_data = s_msg.SerializeToString()
         else:
             c_msg = ContinuousAudio(
@@ -313,6 +316,7 @@ async def publish_audio_chunk(
     start_timestamp: datetime.datetime,
     duration_ms: int,
     source_type: str | None = None,
+    external_audio_segment_id: str | None = None,
 ) -> str:
     """Asynchronously publish an AudioChunk to Pub/Sub.
 
@@ -337,6 +341,8 @@ async def publish_audio_chunk(
                 milliseconds=duration_ms
             )
             s_msg.end_timestamp.FromDatetime(end_ts)
+            if external_audio_segment_id is not None:
+                s_msg.external_audio_segment_id = external_audio_segment_id
             serialized_data = s_msg.SerializeToString()
         else:
             c_msg = ContinuousAudio(
