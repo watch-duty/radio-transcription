@@ -255,6 +255,12 @@ class StitcherEngine:
                 )
                 self.stale_flushes.inc()
 
+                audio_classification = (
+                    datatypes.AudioClassification.AUDIO_CLASSIFICATION_SPEECH
+                    if curr_ctx.speech_segments
+                    else datatypes.AudioClassification.AUDIO_CLASSIFICATION_OTHER
+                )
+
                 yield (
                     feed_id,
                     datatypes.FlushRequest(
@@ -275,6 +281,7 @@ class StitcherEngine:
                         sample_rate=curr_ctx.sample_rate
                         or common_constants.SAMPLE_RATE_HZ,
                         traceparent=curr_ctx.traceparent,
+                        audio_classification=audio_classification,
                     ),
                 )
             except Exception as e:
