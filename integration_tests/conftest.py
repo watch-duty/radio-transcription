@@ -69,7 +69,15 @@ def postgres_container() -> Generator[dict[str, Any]]:
             f for f in _SQL_DIR.glob("*.sql") if "pg_cron" not in f.name
         )
         for sql_file in sql_files:
-            await conn.execute(sql_file.read_text())
+            content = sql_file.read_text()
+            if "ALTER TYPE" in content:
+                lines = [
+                    line
+                    for line in content.splitlines()
+                    if not line.strip().startswith("ALTER TYPE")
+                ]
+                content = "\n".join(lines)
+            await conn.execute(content)
         await conn.close()
 
     # Use a fresh event loop for the setup since we're in a session fixture

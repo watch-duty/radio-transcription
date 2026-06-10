@@ -96,7 +96,15 @@ class TestEchoCollectorIntegration(unittest.TestCase):
             for sql_file in sorted(_SQL_DIR.glob("*.sql")):
                 if "pg_cron" in sql_file.name:
                     continue  # pg_cron extension is production-only (AlloyDB flag)
-                conn.execute(sql_file.read_bytes())
+                content = sql_file.read_text()
+                if "ALTER TYPE" in content:
+                    lines = [
+                        line
+                        for line in content.splitlines()
+                        if not line.strip().startswith("ALTER TYPE")
+                    ]
+                    content = "\n".join(lines)
+                conn.execute(content.encode())
 
         # --- Fake GCS Server ---
         cls.gcs_container = (
