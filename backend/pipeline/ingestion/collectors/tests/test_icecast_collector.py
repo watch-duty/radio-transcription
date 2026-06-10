@@ -4,7 +4,7 @@ import os
 import unittest
 import uuid
 from pathlib import Path
-from typing import cast
+from typing import Any, Self, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
@@ -12,8 +12,12 @@ from backend.pipeline.ingestion.collectors.icecast import icecast_collector
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
 )
-from backend.pipeline.ingestion.models import CapturedChunk
-from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
+from backend.pipeline.ingestion.models import CapturedChunk, FeedFailure
+from backend.pipeline.storage.feed_store import (
+    FeedStatusReason,
+    LeasedFeed,
+    SourceType,
+)
 
 MOCK_ENV_VARS = {
     "BROADCASTIFY_USERNAME": "test_user",
@@ -28,11 +32,12 @@ def _make_feed(name: str, source_feed_id: str | None) -> LeasedFeed:
     return LeasedFeed(
         id=TEST_FEED_ID,
         name=name,
-        external_id="ext-id",
         source_type=SourceType.BCFY_FEEDS,
         last_processed_filename=None,
         last_bookmark_time=None,
         fencing_token=1,
+        failure_count=0,
+        status_reason=None,
         source_feed_id=source_feed_id,
     )
 
@@ -46,6 +51,47 @@ def _make_stderr_reader(
         reader.feed_data(line)
     reader.feed_eof()
     return reader
+
+
+class _StreamProbeResponse:
+    """Async context manager returning an HTTP status for stream probes."""
+
+    def __init__(self, status: int, reason: str = "") -> None:
+        self.status = status
+        self.reason = reason
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: object,
+    ) -> bool:
+        del exc_type, exc, traceback
+        return False
+
+
+def _resources_with_probe_status(
+    status: int,
+    *,
+    reason: str = "",
+):
+    resources = _default_resources()
+    session = cast("Any", resources.http_session)
+    session.get = MagicMock(return_value=_StreamProbeResponse(status, reason))
+    return resources
+
+
+def _assert_collector_failure(
+    testcase: unittest.TestCase,
+    exc: FeedFailure,
+    status_reason: FeedStatusReason,
+    reason: str,
+) -> None:
+    testcase.assertIs(exc.status_reason, status_reason)
+    testcase.assertEqual(str(exc), reason)
 
 
 def _make_process_factory(
@@ -171,6 +217,27 @@ class TestCreateFfmpegProcess(unittest.IsolatedAsyncioTestCase):
             "stderr must be PIPE, not DEVNULL — ffmpeg error context is lost otherwise",
         )
 
+    @patch(
+        "asyncio.create_subprocess_exec",
+        new_callable=AsyncMock,
+    )
+    async def test_reconnects_on_retryable_http_statuses(
+        self, mock_exec: AsyncMock
+    ) -> None:
+        """Ffmpeg should absorb transient HTTP failures before surfacing them."""
+        mock_exec.return_value = AsyncMock()
+
+        await icecast_collector._create_ffmpeg_process(
+            "http://example.com/stream.mp3",
+            "/tmp/chunk_%06d.flac",  # noqa: S108
+            "Authorization: Basic dGVzdDp0ZXN0\r\n",
+        )
+
+        args = mock_exec.call_args.args
+        self.assertIn("-reconnect_on_http_error", args)
+        value_index = args.index("-reconnect_on_http_error") + 1
+        self.assertEqual(args[value_index], "429,500,502,503,504")
+
 
 class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
     """Tests for the public capture_icecast_stream API."""
@@ -210,7 +277,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             feed,
             shutdown_event,
             url_base="https://mock.example.com/",
-            resources=_default_resources(),
+            resources=_resources_with_probe_status(200, reason="OK"),
         )
         chunks = await _collect_chunks(gen)
 
@@ -246,7 +313,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             feed,
             shutdown_event,
             url_base="https://mock.example.com/",
-            resources=_default_resources(),
+            resources=_resources_with_probe_status(200, reason="OK"),
         )
 
         # Give it time to start and yield first chunk if available
@@ -258,14 +325,13 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(gen.__anext__(), timeout=1.0)
 
     async def test_invalid_input_missing_source_feed_id(self) -> None:
-        """Test invalid input: feed missing source_feed_id raises ValueError."""
+        """Test invalid input: feed missing source_feed_id raises typed failure."""
         # Arrange
         feed = cast(
             "LeasedFeed",
             {
                 "id": uuid.uuid4(),
                 "name": "incomplete-feed",
-                "external_id": "ext-id",
                 "source_type": "icecast",
                 "last_processed_filename": None,
                 "last_bookmark_time": None,
@@ -280,15 +346,45 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             url_base="https://mock.example.com/",
             resources=_default_resources(),
         )
-        with self.assertRaises(ValueError) as context:
+        with self.assertRaises(FeedFailure) as context:
             await gen.__anext__()
 
-        self.assertEqual(str(context.exception), "missing_source_feed_id")
+        _assert_collector_failure(
+            self,
+            context.exception,
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            "missing_source_feed_id",
+        )
+
+    @patch.dict(os.environ, {}, clear=True)
+    async def test_missing_auth_env_raises_typed_configuration_failure(
+        self,
+    ) -> None:
+        """Missing Broadcastify stream credentials is a system config issue."""
+        feed = _make_feed("missing-auth", "123")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_resources_with_probe_status(200, reason="OK"),
+        )
+
+        with self.assertRaises(FeedFailure) as context:
+            await gen.__anext__()
+
+        _assert_collector_failure(
+            self,
+            context.exception,
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            "missing_broadcastify_credentials",
+        )
 
     async def test_invalid_input_none_source_feed_id_raises_value_error(
         self,
     ) -> None:
-        """Test invalid input: feed with None source_feed_id raises ValueError."""
+        """Test invalid input: feed with None source_feed_id raises typed failure."""
         # Arrange
         feed = _make_feed("none-stream-feed", None)
         shutdown_event = asyncio.Event()
@@ -300,10 +396,15 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             url_base="https://mock.example.com/",
             resources=_default_resources(),
         )
-        with self.assertRaises(ValueError) as context:
+        with self.assertRaises(FeedFailure) as context:
             await gen.__anext__()
 
-        self.assertEqual(str(context.exception), "missing_source_feed_id")
+        _assert_collector_failure(
+            self,
+            context.exception,
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            "missing_source_feed_id",
+        )
         formatted = _formatted_error_calls(self.mock_logger)
         self.assertIn(str(TEST_FEED_ID), formatted)
         self.assertIn("none-stream-feed", formatted)
@@ -311,7 +412,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_input_empty_string_source_feed_id_raises_value_error(
         self,
     ) -> None:
-        """Test invalid input: feed with empty source_feed_id raises ValueError."""
+        """Test invalid input: feed with empty source_feed_id raises typed failure."""
         # Arrange
         feed = _make_feed("empty-stream-feed", "")
         shutdown_event = asyncio.Event()
@@ -323,10 +424,15 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             url_base="https://mock.example.com/",
             resources=_default_resources(),
         )
-        with self.assertRaises(ValueError) as context:
+        with self.assertRaises(FeedFailure) as context:
             await gen.__anext__()
 
-        self.assertEqual(str(context.exception), "missing_source_feed_id")
+        _assert_collector_failure(
+            self,
+            context.exception,
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            "missing_source_feed_id",
+        )
         self.assertIn(
             str(TEST_FEED_ID), _formatted_error_calls(self.mock_logger)
         )
@@ -384,10 +490,15 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             url_base="https://mock.example.com/",
             resources=_default_resources(),
         )
-        with self.assertRaises(RuntimeError) as context:
+        with self.assertRaises(FeedFailure) as context:
             await asyncio.wait_for(gen.__anext__(), timeout=1.0)
 
-        self.assertEqual(str(context.exception), "ffmpeg_exit_1")
+        _assert_collector_failure(
+            self,
+            context.exception,
+            FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+            "stream_http_403",
+        )
         formatted = _formatted_error_calls(self.mock_logger)
         self.assertIn("ffmpeg exited with code 1", formatted)
         self.assertIn(str(TEST_FEED_ID), formatted)
@@ -399,10 +510,10 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
-    async def test_ffmpeg_error_exit_code_no_stderr(
+    async def test_ffmpeg_error_exit_code_no_stderr_probes_available_stream(
         self, mock_create_ffmpeg: AsyncMock
     ) -> None:
-        """Test: ffmpeg non-zero exit with empty stderr shows fallback text in log."""
+        """Ambiguous ffmpeg exit with probe success is a collector error."""
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=7778,
             wait_delay=0.0,
@@ -416,15 +527,196 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             feed,
             shutdown_event,
             url_base="https://mock.example.com/",
-            resources=_default_resources(),
+            resources=_resources_with_probe_status(200, reason="OK"),
         )
-        with self.assertRaises(RuntimeError) as context:
+        with self.assertRaises(FeedFailure) as context:
             await asyncio.wait_for(gen.__anext__(), timeout=1.0)
 
-        self.assertEqual(str(context.exception), "ffmpeg_exit_8")
+        _assert_collector_failure(
+            self,
+            context.exception,
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            "ffmpeg_exit_8",
+        )
         formatted = _formatted_error_calls(self.mock_logger)
         self.assertIn("ffmpeg exited with code 8", formatted)
         self.assertIn("(no stderr captured)", formatted)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_ffmpeg_error_exit_code_http_404_source_offline(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Ffmpeg HTTP error 404 maps to source_offline."""
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=7780,
+            wait_delay=0.0,
+            wait_result=8,
+            stderr_lines=[b"HTTP error 404 Not Found\n"],
+        )
+
+        feed = _make_feed("offline-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_default_resources(),
+        )
+        with self.assertRaises(FeedFailure) as context:
+            await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+
+        _assert_collector_failure(
+            self,
+            context.exception,
+            FeedStatusReason.SOURCE_OFFLINE,
+            "stream_http_404",
+        )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_ffmpeg_error_exit_code_http_429_rate_limited(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Ffmpeg HTTP error 429 maps to source_rate_limited."""
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=7781,
+            wait_delay=0.0,
+            wait_result=8,
+            stderr_lines=[b"HTTP error 429 Too Many Requests\n"],
+        )
+
+        feed = _make_feed("rate-limited-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_default_resources(),
+        )
+        with self.assertRaises(FeedFailure) as context:
+            await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+
+        _assert_collector_failure(
+            self,
+            context.exception,
+            FeedStatusReason.SOURCE_RATE_LIMITED,
+            "stream_http_429",
+        )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_ffmpeg_http_status_survives_retry_log_flood(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Classification keeps HTTP status evidence outside the log tail."""
+        retry_noise = [
+            f"retry log line {index}\n".encode()
+            for index in range(icecast_collector.STDERR_TAIL_LINES + 5)
+        ]
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=7784,
+            wait_delay=0.0,
+            wait_result=8,
+            stderr_lines=[
+                b"HTTP error 429 Too Many Requests\n",
+                *retry_noise,
+            ],
+        )
+
+        feed = _make_feed("rate-limited-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_resources_with_probe_status(200, reason="OK"),
+        )
+        with self.assertRaises(FeedFailure) as context:
+            await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+
+        _assert_collector_failure(
+            self,
+            context.exception,
+            FeedStatusReason.SOURCE_RATE_LIMITED,
+            "stream_http_429",
+        )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_ffmpeg_error_exit_code_http_503_unreachable(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Ffmpeg HTTP error 503 maps to source_unreachable."""
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=7782,
+            wait_delay=0.0,
+            wait_result=8,
+            stderr_lines=[b"Server returned 503 Service Unavailable\n"],
+        )
+
+        feed = _make_feed("unreachable-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_resources_with_probe_status(200, reason="OK"),
+        )
+        with self.assertRaises(FeedFailure) as context:
+            await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+
+        _assert_collector_failure(
+            self,
+            context.exception,
+            FeedStatusReason.SOURCE_UNREACHABLE,
+            "stream_http_503",
+        )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_ffmpeg_error_exit_code_probe_inconclusive_fallback(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Ambiguous ffmpeg exit with unmapped probe status keeps raw exit reason."""
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=7783,
+            wait_delay=0.0,
+            wait_result=8,
+        )
+
+        feed = _make_feed("teapot-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_resources_with_probe_status(418, reason="Teapot"),
+        )
+        with self.assertRaises(FeedFailure) as context:
+            await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+
+        _assert_collector_failure(
+            self,
+            context.exception,
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            "ffmpeg_exit_8",
+        )
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
@@ -454,12 +746,17 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             feed,
             shutdown_event,
             url_base="https://mock.example.com/",
-            resources=_default_resources(),
+            resources=_resources_with_probe_status(200, reason="OK"),
         )
-        with self.assertRaises(RuntimeError) as context:
+        with self.assertRaises(FeedFailure) as context:
             await asyncio.wait_for(gen.__anext__(), timeout=1.0)
 
-        self.assertEqual(str(context.exception), "ffmpeg_signal_9")
+        _assert_collector_failure(
+            self,
+            context.exception,
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            "ffmpeg_signal_9",
+        )
         formatted = _formatted_error_calls(self.mock_logger)
         self.assertIn("ffmpeg exited with code -9", formatted)
 
@@ -499,10 +796,10 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
-    async def test_read_timeout_includes_stderr(
+    async def test_read_timeout_probe_404_source_offline(
         self, mock_create_ffmpeg: AsyncMock
     ) -> None:
-        """Test: read timeout raises a categorical tag and logs stderr context."""
+        """Ambiguous timeout with probe 404 maps to source_offline."""
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=8888,
             wait_delay=1.0,  # longer than READ_TIMEOUT_SEC (0.1s) but short enough for cleanup
@@ -517,12 +814,17 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             feed,
             shutdown_event,
             url_base="https://mock.example.com/",
-            resources=_default_resources(),
+            resources=_resources_with_probe_status(404, reason="Not Found"),
         )
-        with self.assertRaises(RuntimeError) as context:
+        with self.assertRaises(FeedFailure) as context:
             await asyncio.wait_for(gen.__anext__(), timeout=2.0)
 
-        self.assertEqual(str(context.exception), "capture_timeout")
+        _assert_collector_failure(
+            self,
+            context.exception,
+            FeedStatusReason.SOURCE_OFFLINE,
+            "stream_http_404",
+        )
         formatted = _formatted_error_calls(self.mock_logger)
         self.assertIn("no finalized segment within", formatted)
         self.assertIn("Connection timed out", formatted)

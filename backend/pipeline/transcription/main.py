@@ -14,14 +14,14 @@ from google.cloud import pubsub_v1
 from backend.pipeline.common.clients import audio_segments_client
 from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
-from backend.pipeline.normalization.common.enums import TranscriberType
+from backend.pipeline.transcription.enums import TranscriberType
 from backend.pipeline.transcription.processor import TranscriptionEventProcessor
 from backend.pipeline.transcription.transcribers.base import Transcriber
 from backend.pipeline.transcription.transcribers.factory import get_transcriber
 
 # Setup Logging and Tracing
 setup_logging()
-setup_tracing(use_batch=False)
+setup_tracing(service_name="transcription-service", use_batch=False)
 logger = logging.getLogger(__name__)
 
 

@@ -3,7 +3,7 @@ import React from 'react';
 import { MemoryRouter } from 'react-router';
 import { VirtuosoMockContext } from 'react-virtuoso';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   cleanup,
@@ -15,15 +15,32 @@ import {
 import type { Feed } from '@transcription/common';
 import { SourceType } from '@transcription/common';
 
-import { FeedTable } from './FeedTable';
+import { type FeedFilters, FeedTable } from './FeedTable';
 
-const renderFeedTable = (props: React.ComponentProps<typeof FeedTable>) => {
+const defaultFilters: FeedFilters = {
+  searchQuery: '',
+  sourceTypes: [],
+  statuses: [],
+  tags: [],
+};
+
+const renderFeedTable = (
+  props: Partial<React.ComponentProps<typeof FeedTable>> = {}
+) => {
+  const finalProps = {
+    feeds: [],
+    isLoading: false,
+    filters: defaultFilters,
+    onFiltersChange: vi.fn(),
+    ...props,
+  };
+
   return render(
     <MemoryRouter>
       <VirtuosoMockContext.Provider
         value={{ viewportHeight: 1000, itemHeight: 100 }}
       >
-        <FeedTable {...props} />
+        <FeedTable {...finalProps} />
       </VirtuosoMockContext.Provider>
     </MemoryRouter>
   );
@@ -114,24 +131,42 @@ describe('FeedTable', () => {
     expect(screen.getByRole('progressbar')).toBeTruthy();
   });
 
-  it('filters feeds by search bar input (name match)', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false });
+  it('triggers onFiltersChange with name match search input', () => {
+    const onFiltersChangeMock = vi.fn();
+    renderFeedTable({
+      feeds: mockFeeds,
+      isLoading: false,
+      onFiltersChange: onFiltersChangeMock,
+    });
 
     const searchInput = screen.getByPlaceholderText(/Search feeds\.\.\./i);
     fireEvent.change(searchInput, { target: { value: 'bravo' } });
 
-    expect(screen.getByText('Bravo Scanner')).toBeTruthy();
-    expect(screen.queryByText('Alpha Radio')).toBeNull();
+    expect(onFiltersChangeMock).toHaveBeenCalledWith({
+      searchQuery: 'bravo',
+      sourceTypes: [],
+      statuses: [],
+      tags: [],
+    });
   });
 
-  it('filters feeds by search bar input (tag match)', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false });
+  it('triggers onFiltersChange with tag match search input', () => {
+    const onFiltersChangeMock = vi.fn();
+    renderFeedTable({
+      feeds: mockFeeds,
+      isLoading: false,
+      onFiltersChange: onFiltersChangeMock,
+    });
 
     const searchInput = screen.getByPlaceholderText(/Search feeds\.\.\./i);
     fireEvent.change(searchInput, { target: { value: 'marin' } });
 
-    expect(screen.getByText('Alpha Radio')).toBeTruthy();
-    expect(screen.queryByText('Bravo Scanner')).toBeNull();
+    expect(onFiltersChangeMock).toHaveBeenCalledWith({
+      searchQuery: 'marin',
+      sourceTypes: [],
+      statuses: [],
+      tags: [],
+    });
   });
 
   it('sorts feeds by name clicking the header sort label', () => {
@@ -182,7 +217,12 @@ describe('FeedTable', () => {
         <VirtuosoMockContext.Provider
           value={{ viewportHeight: 1000, itemHeight: 100 }}
         >
-          <FeedTable feeds={refreshedFeeds} isLoading={false} />
+          <FeedTable
+            feeds={refreshedFeeds}
+            isLoading={false}
+            filters={defaultFilters}
+            onFiltersChange={vi.fn()}
+          />
         </VirtuosoMockContext.Provider>
       </MemoryRouter>
     );
@@ -239,8 +279,13 @@ describe('FeedTable', () => {
     }
   });
 
-  it('displays grouped tags and applies tag filtering', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false });
+  it('displays grouped tags and triggers onFiltersChange on selection', () => {
+    const onFiltersChangeMock = vi.fn();
+    renderFeedTable({
+      feeds: mockFeeds,
+      isLoading: false,
+      onFiltersChange: onFiltersChangeMock,
+    });
 
     const tagsInput = screen.getByLabelText('Tags');
     fireEvent.focus(tagsInput);
@@ -258,33 +303,21 @@ describe('FeedTable', () => {
 
     fireEvent.click(countyOption);
 
-    expect(screen.getByText('Alpha Radio')).toBeTruthy();
-    expect(screen.queryByText('Bravo Scanner')).toBeNull();
-
-    expect(screen.getByText('Showing 1 of 2 feeds')).toBeTruthy();
-
-    fireEvent.click(agencyOption);
-
-    expect(screen.getByText('Alpha Radio')).toBeTruthy();
-    expect(screen.queryByText('Bravo Scanner')).toBeNull();
-
-    fireEvent.click(countyOption);
-
-    expect(screen.getByText('Alpha Radio')).toBeTruthy();
-    expect(screen.queryByText('Bravo Scanner')).toBeNull();
-
-    const clearButton = within(tagsInput.parentElement!).getByRole('button', {
-      name: 'Clear',
+    expect(onFiltersChangeMock).toHaveBeenCalledWith({
+      searchQuery: '',
+      sourceTypes: [],
+      statuses: [],
+      tags: [{ key: 'County', value: 'Marin' }],
     });
-    fireEvent.click(clearButton);
-
-    expect(screen.getByText('Alpha Radio')).toBeTruthy();
-    expect(screen.getByText('Bravo Scanner')).toBeTruthy();
-    expect(screen.queryByText('Showing 1 of 2 feeds')).toBeNull();
   });
 
-  it('filters feeds by status', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false });
+  it('triggers onFiltersChange when status filter is updated', () => {
+    const onFiltersChangeMock = vi.fn();
+    renderFeedTable({
+      feeds: mockFeeds,
+      isLoading: false,
+      onFiltersChange: onFiltersChangeMock,
+    });
 
     const statusInput = screen.getByLabelText('Status');
     fireEvent.focus(statusInput);
@@ -293,12 +326,21 @@ describe('FeedTable', () => {
     const activeOption = screen.getByRole('option', { name: 'Active' });
     fireEvent.click(activeOption);
 
-    expect(screen.getByText('Alpha Radio')).toBeTruthy();
-    expect(screen.queryByText('Bravo Scanner')).toBeNull();
+    expect(onFiltersChangeMock).toHaveBeenCalledWith({
+      searchQuery: '',
+      sourceTypes: [],
+      statuses: ['Active'],
+      tags: [],
+    });
   });
 
-  it('filters feeds by source type', () => {
-    renderFeedTable({ feeds: mockFeeds, isLoading: false });
+  it('triggers onFiltersChange when source type filter is updated', () => {
+    const onFiltersChangeMock = vi.fn();
+    renderFeedTable({
+      feeds: mockFeeds,
+      isLoading: false,
+      onFiltersChange: onFiltersChangeMock,
+    });
 
     const sourceTypesInput = screen.getByLabelText('Source Type');
     fireEvent.focus(sourceTypesInput);
@@ -307,8 +349,12 @@ describe('FeedTable', () => {
     const bcfyOption = screen.getByRole('option', { name: 'bcfy_feeds' });
     fireEvent.click(bcfyOption);
 
-    expect(screen.getByText('Alpha Radio')).toBeTruthy();
-    expect(screen.queryByText('Bravo Scanner')).toBeNull();
+    expect(onFiltersChangeMock).toHaveBeenCalledWith({
+      searchQuery: '',
+      sourceTypes: ['bcfy_feeds'],
+      statuses: [],
+      tags: [],
+    });
   });
 
   it('does not duplicate group headers for tags in the dropdown', () => {
@@ -353,5 +399,24 @@ describe('FeedTable', () => {
     // There should be exactly one 'County' group header
     const countyHeaders = within(listbox).getAllByText('County');
     expect(countyHeaders).toHaveLength(1);
+  });
+
+  it('calls onFiltersChange when filters are updated', () => {
+    const onFiltersChangeMock = vi.fn();
+    renderFeedTable({
+      feeds: mockFeeds,
+      isLoading: false,
+      onFiltersChange: onFiltersChangeMock,
+    });
+
+    const searchInput = screen.getByPlaceholderText(/Search feeds\.\.\./i);
+    fireEvent.change(searchInput, { target: { value: 'bravo' } });
+
+    expect(onFiltersChangeMock).toHaveBeenLastCalledWith({
+      searchQuery: 'bravo',
+      sourceTypes: [],
+      statuses: [],
+      tags: [],
+    });
   });
 });

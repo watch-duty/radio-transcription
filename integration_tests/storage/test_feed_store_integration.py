@@ -15,6 +15,7 @@ from backend.pipeline.common.exceptions import (
     FeedNameAlreadyExistsError,
 )
 from backend.pipeline.storage.feed_store import (
+    FeedStatus,
     FeedStatusReason,
     FeedStore,
     SourceType,
@@ -41,7 +42,6 @@ async def _insert_feed(
     worker_id: uuid.UUID | None = None,
     last_heartbeat_age_seconds: int | None = None,
     source_feed_id: str | None = None,
-    external_id: str = "ext_default",
 ) -> uuid.UUID:
     """Insert a feed row and its properties row."""
     heartbeat_expr = "NULL"
@@ -67,11 +67,10 @@ async def _insert_feed(
         source_feed_id = f"src_{uuid.uuid4().hex[:8]}"
 
     await pool.execute(
-        "INSERT INTO feed_properties (feed_id, source_feed_id, external_id, source_type) "
-        "VALUES ($1::uuid, $2, $3, $4)",
+        "INSERT INTO feed_properties (feed_id, source_feed_id, source_type) "
+        "VALUES ($1::uuid, $2, $3)",
         str(feed_id),
         source_feed_id,
-        external_id,
         source_type,
     )
 
@@ -95,7 +94,8 @@ async def _get_feed_diagnostics(
     row = await pool.fetchrow(
         "SELECT status, failure_count, worker_id, fencing_token,"
         " retry_after, quarantine_reason, status_reason,"
-        " status_reason_updated_at, last_processed_filename"
+        " status_reason_updated_at, last_processed_filename,"
+        " last_bookmark_time"
         " FROM feeds WHERE id = $1::uuid",
         str(feed_id),
     )
@@ -762,6 +762,114 @@ async def test_progress_update_succeeds_for_deactivated_owned_feed(
     assert row["worker_id"] == worker
     assert row["status_reason"] is None
     assert row["status_reason_updated_at"] > old_reason_ts
+
+
+# -- Tests: record_source_observation ----------------------------------
+
+
+async def test_postgresql_greatest_ignores_null_bookmark_arguments(
+    db_pool: asyncpg.Pool,
+) -> None:
+    """AlloyDB/PostgreSQL GREATEST keeps the non-NULL timestamp argument."""
+    bookmark = datetime.datetime(2026, 6, 8, 12, 0, tzinfo=datetime.UTC)
+
+    row = await db_pool.fetchrow(
+        """
+        SELECT
+            GREATEST(
+                NULL::TIMESTAMP WITH TIME ZONE,
+                NULL::TIMESTAMP WITH TIME ZONE
+            ) AS both_null,
+            GREATEST(
+                $1::TIMESTAMP WITH TIME ZONE,
+                NULL::TIMESTAMP WITH TIME ZONE
+            ) AS left_value,
+            GREATEST(
+                NULL::TIMESTAMP WITH TIME ZONE,
+                $1::TIMESTAMP WITH TIME ZONE
+            ) AS right_value
+        """,
+        bookmark,
+    )
+
+    assert row["both_null"] is None
+    assert row["left_value"] == bookmark
+    assert row["right_value"] == bookmark
+
+
+@pytest.mark.parametrize(
+    ("existing_bookmark", "resume_position", "expected_bookmark"),
+    [
+        pytest.param(None, None, None, id="both-null"),
+        pytest.param(
+            None,
+            datetime.datetime(2026, 6, 8, 12, 0, tzinfo=datetime.UTC),
+            datetime.datetime(2026, 6, 8, 12, 0, tzinfo=datetime.UTC),
+            id="existing-null",
+        ),
+        pytest.param(
+            datetime.datetime(2026, 6, 8, 12, 0, tzinfo=datetime.UTC),
+            None,
+            datetime.datetime(2026, 6, 8, 12, 0, tzinfo=datetime.UTC),
+            id="resume-null",
+        ),
+        pytest.param(
+            datetime.datetime(2026, 6, 8, 12, 0, tzinfo=datetime.UTC),
+            datetime.datetime(2026, 6, 8, 11, 59, tzinfo=datetime.UTC),
+            datetime.datetime(2026, 6, 8, 12, 0, tzinfo=datetime.UTC),
+            id="resume-older",
+        ),
+        pytest.param(
+            datetime.datetime(2026, 6, 8, 12, 0, tzinfo=datetime.UTC),
+            datetime.datetime(2026, 6, 8, 12, 1, tzinfo=datetime.UTC),
+            datetime.datetime(2026, 6, 8, 12, 1, tzinfo=datetime.UTC),
+            id="resume-newer",
+        ),
+    ],
+)
+async def test_source_observation_updates_bookmark_monotonically(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+    existing_bookmark: datetime.datetime | None,
+    resume_position: datetime.datetime | None,
+    expected_bookmark: datetime.datetime | None,
+) -> None:
+    """Observation writes clear stale failure state without rewinding bookmark."""
+    worker = uuid.uuid4()
+    old_reason_ts = datetime.datetime(2026, 6, 8, 10, 0, tzinfo=datetime.UTC)
+    feed_id = await _insert_feed(
+        db_pool,
+        f"Observation Bookmark {uuid.uuid4()}",
+        status="active",
+        worker_id=worker,
+        last_heartbeat_age_seconds=10,
+        failure_count=2,
+    )
+    await db_pool.execute(
+        "UPDATE feeds SET last_bookmark_time = $1,"
+        " status_reason = $2,"
+        " status_reason_updated_at = $3"
+        " WHERE id = $4",
+        existing_bookmark,
+        FeedStatusReason.SOURCE_UNREACHABLE.value,
+        old_reason_ts,
+        feed_id,
+    )
+
+    result = await store.record_source_observation(
+        feed_id,
+        worker,
+        0,
+        resume_position,
+    )
+
+    assert result["recorded"] is True
+    row = await _get_feed_diagnostics(db_pool, feed_id)
+    assert row["status"] == "active"
+    assert row["failure_count"] == 0
+    assert row["status_reason"] is None
+    assert row["status_reason_updated_at"] > old_reason_ts
+    assert row["last_bookmark_time"] == expected_bookmark
 
 
 # -- Tests: report_feed_failure ---------------------------------------
@@ -1502,18 +1610,16 @@ async def test_create_feed_succeeds(
         name="New Integration Feed",
         source_type="bcfy_feeds",
         source_feed_id="src_123",
-        external_id="ext_123",
     )
 
     assert feed is not None
     assert feed["name"] == "New Integration Feed"
     assert feed["source_type"] == SourceType.BCFY_FEEDS
     assert feed["source_feed_id"] == "src_123"
-    assert feed["external_id"] == "ext_123"
 
     # Verify in DB
     row = await db_pool.fetchrow(
-        "SELECT f.name, fp.source_feed_id, fp.external_id "
+        "SELECT f.name, fp.source_feed_id "
         "FROM feeds f "
         "JOIN feed_properties fp ON f.id = fp.feed_id "
         "WHERE f.id = $1",
@@ -1522,7 +1628,6 @@ async def test_create_feed_succeeds(
     assert row is not None
     assert row["name"] == "New Integration Feed"
     assert row["source_feed_id"] == "src_123"
-    assert row["external_id"] == "ext_123"
 
 
 async def test_create_feed_already_exists(
@@ -1533,7 +1638,6 @@ async def test_create_feed_already_exists(
         name="New Integration Feed",
         source_type="bcfy_feeds",
         source_feed_id="src_123",
-        external_id="ext_123",
     )
 
     with pytest.raises(FeedAlreadyExistsError) as cm:
@@ -1541,7 +1645,6 @@ async def test_create_feed_already_exists(
             name="Another Feed Name",
             source_type="bcfy_feeds",
             source_feed_id="src_123",
-            external_id="ext_456",
         )
 
     assert (
@@ -1558,23 +1661,20 @@ async def test_update_feed_succeeds(
         name="Original Name",
         source_type="bcfy_feeds",
         source_feed_id="src_123",
-        external_id="ext_123",
     )
 
     updated_feed = await store.update_feed(
         feed_id=feed["id"],
         name="Updated Name",
-        external_id="ext_456",
     )
 
     assert updated_feed is not None
     assert updated_feed["name"] == "Updated Name"
     assert updated_feed["source_feed_id"] == "src_123"
-    assert updated_feed["external_id"] == "ext_456"
 
     # Verify in DB
     row = await db_pool.fetchrow(
-        "SELECT f.name, fp.source_feed_id, fp.external_id "
+        "SELECT f.name, fp.source_feed_id "
         "FROM feeds f "
         "JOIN feed_properties fp ON f.id = fp.feed_id "
         "WHERE f.id = $1",
@@ -1583,7 +1683,6 @@ async def test_update_feed_succeeds(
     assert row is not None
     assert row["name"] == "Updated Name"
     assert row["source_feed_id"] == "src_123"
-    assert row["external_id"] == "ext_456"
 
 
 async def test_update_feed_already_exists(
@@ -1594,21 +1693,18 @@ async def test_update_feed_already_exists(
         name="Existing Feed",
         source_type="bcfy_feeds",
         source_feed_id="src_456",
-        external_id="ext_456",
     )
 
     feed = await store.create_feed(
         name="Original Name",
         source_type="bcfy_feeds",
         source_feed_id="src_123",
-        external_id="ext_123",
     )
 
     with pytest.raises(FeedNameAlreadyExistsError):
         await store.update_feed(
             feed_id=feed["id"],
             name="Existing Feed",
-            external_id="ext_123",
         )
 
 
@@ -1623,7 +1719,6 @@ async def test_get_feed_returns_feed(
         db_pool,
         "Get Feed Test",
         source_feed_id="src_get",
-        external_id="ext_get",
     )
 
     feed = await store.get_feed(feed_id)
@@ -1632,7 +1727,6 @@ async def test_get_feed_returns_feed(
     assert feed["id"] == feed_id
     assert feed["name"] == "Get Feed Test"
     assert feed["source_feed_id"] == "src_get"
-    assert feed["external_id"] == "ext_get"
 
 
 async def test_get_feed_returns_none_if_not_found(store: FeedStore) -> None:
@@ -1648,12 +1742,8 @@ async def test_list_feeds_returns_all_feeds_ordered_desc(
     db_pool: asyncpg.Pool, store: FeedStore
 ) -> None:
     """list_feeds retrieves all feeds ordered by created_at DESC."""
-    feed_id_a = await _insert_feed(
-        db_pool, "Feed A", source_feed_id="src_a", external_id="ext_a"
-    )
-    feed_id_b = await _insert_feed(
-        db_pool, "Feed B", source_feed_id="src_b", external_id="ext_b"
-    )
+    feed_id_a = await _insert_feed(db_pool, "Feed A", source_feed_id="src_a")
+    feed_id_b = await _insert_feed(db_pool, "Feed B", source_feed_id="src_b")
 
     result = await store.list_feeds()
 
@@ -1662,11 +1752,9 @@ async def test_list_feeds_returns_all_feeds_ordered_desc(
     # The most recently created should be first
     assert feeds[0]["id"] == feed_id_b
     assert feeds[0]["source_feed_id"] == "src_b"
-    assert feeds[0]["external_id"] == "ext_b"
 
     assert feeds[1]["id"] == feed_id_a
     assert feeds[1]["source_feed_id"] == "src_a"
-    assert feeds[1]["external_id"] == "ext_a"
 
     assert result.next_token is None
 
@@ -1675,13 +1763,9 @@ async def test_list_feeds_limit_and_pagination(
     db_pool: asyncpg.Pool, store: FeedStore
 ) -> None:
     """list_feeds supports limit and next_token keyset pagination."""
-    feed_id_a = await _insert_feed(
-        db_pool, "Feed A", source_feed_id="src_a", external_id="ext_a"
-    )
+    feed_id_a = await _insert_feed(db_pool, "Feed A", source_feed_id="src_a")
     await asyncio.sleep(0.01)  # Ensure distinct created_at timestamps
-    feed_id_b = await _insert_feed(
-        db_pool, "Feed B", source_feed_id="src_b", external_id="ext_b"
-    )
+    feed_id_b = await _insert_feed(db_pool, "Feed B", source_feed_id="src_b")
 
     # Page 1
     page1 = await store.list_feeds(limit=1)
@@ -1708,17 +1792,23 @@ async def test_list_feeds_filter_by_source_type(
     )
 
     # Filter by bcfy_feeds
-    bcfy_result = await store.list_feeds(source_types=["bcfy_feeds"])
+    bcfy_result = await store.list_feeds(
+        source_types=[SourceType.BCFY_FEEDS],
+    )
     assert len(bcfy_result.feeds) == 1
     assert bcfy_result.feeds[0]["id"] == feed_id_a
 
     # Filter by openmhz
-    openmhz_result = await store.list_feeds(source_types=["openmhz"])
+    openmhz_result = await store.list_feeds(
+        source_types=[SourceType.OPENMHZ],
+    )
     assert len(openmhz_result.feeds) == 1
     assert openmhz_result.feeds[0]["id"] == feed_id_b
 
     # Filter by both
-    both_result = await store.list_feeds(source_types=["bcfy_feeds", "openmhz"])
+    both_result = await store.list_feeds(
+        source_types=[SourceType.BCFY_FEEDS, SourceType.OPENMHZ],
+    )
     assert len(both_result.feeds) == 2
 
 
@@ -1737,12 +1827,14 @@ async def test_list_feeds_filter_by_status(
     feed_id_b = await _insert_feed(db_pool, "Feed B", source_feed_id="src_b")
 
     # Filter by active status
-    active_result = await store.list_feeds(statuses=["active"])
+    active_result = await store.list_feeds(statuses=[FeedStatus.ACTIVE])
     assert len(active_result.feeds) == 1
     assert active_result.feeds[0]["id"] == feed_id_a
 
     # Filter by unclaimed status
-    unclaimed_result = await store.list_feeds(statuses=["unclaimed"])
+    unclaimed_result = await store.list_feeds(
+        statuses=[FeedStatus.UNCLAIMED],
+    )
     assert len(unclaimed_result.feeds) == 1
     assert unclaimed_result.feeds[0]["id"] == feed_id_b
 
@@ -1753,14 +1845,12 @@ async def test_list_feeds_filter_by_tags(store: FeedStore) -> None:
         name="Feed A",
         source_type="bcfy_feeds",
         source_feed_id="src_a",
-        external_id="ext_a",
         tags=[{"key": "region", "value": "West"}],
     )
     feed_b = await store.create_feed(
         name="Feed B",
         source_type="bcfy_feeds",
         source_feed_id="src_b",
-        external_id="ext_b",
         tags=[{"key": "region", "value": "East"}],
     )
 
@@ -1796,13 +1886,13 @@ async def test_delete_feed_succeeds(
     feed_id = await _insert_feed(db_pool, "Hard Delete Test Feed")
 
     # 2. Insert a transcript for the feed
-    transmission_id = uuid.uuid4()
+    segment_id = uuid.uuid4()
     await db_pool.execute(
         """
-        INSERT INTO transcripts (transmission_id, feed_id, transcript, start_timestamp, end_timestamp, created_at)
+        INSERT INTO transcripts (segment_id, feed_id, transcript, start_timestamp, end_timestamp, created_at)
         VALUES ($1, $2, $3, NOW() - INTERVAL '10 seconds', NOW(), NOW())
         """,
-        str(transmission_id),
+        str(segment_id),
         str(feed_id),
         "Test transcript to be deleted",
     )

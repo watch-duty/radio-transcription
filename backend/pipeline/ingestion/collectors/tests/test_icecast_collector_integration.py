@@ -20,7 +20,9 @@ from backend.pipeline.ingestion.collectors.icecast import icecast_collector
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
 )
+from backend.pipeline.ingestion.models import FeedFailure
 from backend.pipeline.storage.feed_store import (
+    FeedStatusReason,
     FeedStore,
     LeasedFeed,
     SourceType,
@@ -155,7 +157,6 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         name: str,
         *,
         source_feed_id: str | None = "123",
-        external_id: str | None = "external-123",
     ) -> uuid.UUID:
         """Insert an unclaimed feed row, optionally with feed properties."""
         feed_id = await self.pool.fetchval(
@@ -166,11 +167,10 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         )
         if source_feed_id is not None:
             await self.pool.execute(
-                "INSERT INTO feed_properties (feed_id, source_feed_id, external_id)"
-                " VALUES ($1::uuid, $2, $3)",
+                "INSERT INTO feed_properties (feed_id, source_feed_id)"
+                " VALUES ($1::uuid, $2)",
                 str(feed_id),
                 source_feed_id,
-                external_id,
             )
         return feed_id
 
@@ -439,20 +439,33 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         )
 
         shutdown = asyncio.Event()
-        with self.assertRaises(RuntimeError) as ctx:
-            async for _chunk in icecast_collector.capture_icecast_stream(
-                feed,
-                shutdown,
-                url_base="https://mock.example.com/",
-                resources=_default_resources(),
-            ):
-                pass  # Should not yield any chunks
+        with patch(
+            "backend.pipeline.ingestion.collectors.icecast.icecast_collector._probe_stream_once",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            with self.assertRaises(FeedFailure) as ctx:
+                async for _chunk in icecast_collector.capture_icecast_stream(
+                    feed,
+                    shutdown,
+                    url_base="https://mock.example.com/",
+                    resources=_default_resources(),
+                ):
+                    pass  # Should not yield any chunks
 
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        )
         self.assertEqual(str(ctx.exception), "ffmpeg_exit_1")
 
         # Simulate what CollectorRuntime._process_feed does on exception
         await self.store.report_feed_failure(
-            feed["id"], self.worker_id, feed["fencing_token"]
+            feed["id"],
+            self.worker_id,
+            feed["fencing_token"],
+            reason=str(ctx.exception),
+            status_reason=ctx.exception.status_reason,
         )
 
         # Assert: feed transitioned to 'failing'
@@ -506,7 +519,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
     async def test_missing_source_feed_id_raises_without_side_effects(
         self,
     ) -> None:
-        """Feed without icecast properties -> ValueError, no GCS upload."""
+        """Feed without icecast properties -> typed failure, no GCS upload."""
         # Insert a valid feed
         feed_id = await self._insert_feed("no-url-feed")
         leased = await self.store.acquire_feeds_batch(self.worker_id, _CLAIM)
@@ -521,7 +534,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         feed["source_feed_id"] = None
 
         shutdown = asyncio.Event()
-        with self.assertRaises(ValueError) as ctx:
+        with self.assertRaises(FeedFailure) as ctx:
             async for _chunk in icecast_collector.capture_icecast_stream(
                 feed,
                 shutdown,
@@ -530,6 +543,10 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             ):
                 pass
 
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        )
         self.assertEqual(str(ctx.exception), "missing_source_feed_id")
 
         # Assert: DB state unchanged (still active, no bookmark)

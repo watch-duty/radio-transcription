@@ -6,6 +6,7 @@ import { RulesController } from './rulesController.js';
 
 // Mock the config module
 vi.mock('../config.js', () => ({
+  AUTH_BACKEND: 'google',
   RULES_API_URL: 'http://rules-api.example.com',
 }));
 

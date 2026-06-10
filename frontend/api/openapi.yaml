@@ -10,7 +10,7 @@ components:
       properties:
         feedId:
           type: string
-        transmissionId:
+        segmentId:
           type: string
         transcript:
           type: string
@@ -40,7 +40,7 @@ components:
           type: array
       required:
         - feedId
-        - transmissionId
+        - segmentId
         - transcript
         - startTimestamp
         - endTimestamp
@@ -277,6 +277,18 @@ components:
         - value
       type: object
       additionalProperties: false
+    BackendFeedStatusReason:
+      type: string
+      enum:
+        - unknown
+        - source_offline
+        - source_unreachable
+        - source_rate_limited
+        - system_authentication_failed
+        - system_configuration_invalid
+        - system_collector_error
+        - system_pipeline_error
+        - system_unexpected_error
     SourceType:
       enum:
         - bcfy_feeds
@@ -295,8 +307,6 @@ components:
           type: string
         sourceFeedId:
           type: string
-        externalId:
-          type: string
         sourceUrl:
           type: string
         archiveUrl:
@@ -311,12 +321,56 @@ components:
           items:
             $ref: "#/components/schemas/Tag"
           type: array
+        quarantineReason:
+          type: string
+        statusReason:
+          $ref: "#/components/schemas/BackendFeedStatusReason"
       required:
         - name
         - sourceType
         - id
         - status
         - substatus
+      type: object
+      additionalProperties: false
+    ListFeedsResponse:
+      properties:
+        feeds:
+          items:
+            $ref: "#/components/schemas/Feed"
+          type: array
+        nextToken:
+          type: string
+        total:
+          type: number
+          format: double
+      required:
+        - feeds
+        - total
+      type: object
+      additionalProperties: false
+    ListFeedsQueryParams:
+      properties:
+        limit:
+          type: integer
+          format: int32
+        nextToken:
+          type: string
+        order:
+          type: string
+          enum:
+            - asc
+            - desc
+        sourceTypes:
+          type: string
+        statuses:
+          type: string
+        tags:
+          items:
+            type: string
+          type: array
+        name:
+          type: string
       type: object
       additionalProperties: false
     FeedCreate:
@@ -327,8 +381,6 @@ components:
           $ref: "#/components/schemas/SourceType"
         sourceFeedId:
           type: string
-        externalId:
-          type: string
         tags:
           items:
             $ref: "#/components/schemas/Tag"
@@ -337,14 +389,11 @@ components:
         - name
         - sourceType
         - sourceFeedId
-        - externalId
       type: object
       additionalProperties: false
     FeedUpdate:
       properties:
         name:
-          type: string
-        externalId:
           type: string
         tags:
           items:
@@ -352,7 +401,6 @@ components:
           type: array
       required:
         - name
-        - externalId
       type: object
       additionalProperties: false
     OpenApiSpec:
@@ -931,9 +979,11 @@ paths:
           content:
             application/json:
               schema:
-                items:
-                  $ref: "#/components/schemas/Feed"
-                type: array
+                anyOf:
+                  - $ref: "#/components/schemas/ListFeedsResponse"
+                  - items:
+                      $ref: "#/components/schemas/Feed"
+                    type: array
         "401":
           description: Unauthorized
           content:
@@ -971,7 +1021,48 @@ paths:
         - Feeds
       security:
         - google_id_token: []
-      parameters: []
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          schema:
+            format: int32
+            type: integer
+        - in: query
+          name: nextToken
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: order
+          required: false
+          schema:
+            type: string
+            enum:
+              - asc
+              - desc
+        - in: query
+          name: sourceTypes
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: statuses
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: tags
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+        - in: query
+          name: name
+          required: false
+          schema:
+            type: string
       x-google-backend: radio-transcription-api
     post:
       operationId: CreateFeed

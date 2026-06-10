@@ -1,11 +1,11 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 import { Box } from '@mui/material';
 import { useQuery } from '@tanstack/react-query';
 
 import { useAuth } from '../../context/AuthContext';
 import { listFeeds } from '../../service/listFeeds';
-import { FeedTable } from './FeedTable';
+import { type FeedFilters, FeedTable } from './FeedTable';
 
 interface FeedSearchViewProps {
   title: string;
@@ -14,20 +14,63 @@ interface FeedSearchViewProps {
 }
 
 const FEED_REFETCH_INTERVAL_MS = 15000; // 15 seconds
+const QUERY_DEBOUNCE_TIME_MS = 300;
 
 export function FeedSearchView({ title, onError }: FeedSearchViewProps) {
   const { token } = useAuth();
+
+  const [filters, setFilters] = useState<FeedFilters>({
+    searchQuery: '',
+    sourceTypes: [],
+    statuses: [],
+    tags: [],
+  });
+
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState(
+    filters.searchQuery
+  );
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearchQuery(filters.searchQuery);
+    }, QUERY_DEBOUNCE_TIME_MS);
+    return () => clearTimeout(handler);
+  }, [filters.searchQuery]);
 
   const {
     data: feeds,
     error: feedsError,
     isLoading: feedsLoading,
   } = useQuery({
-    queryKey: ['listFeeds', token],
-    queryFn: () => listFeeds(token!),
+    queryKey: [
+      'listFeeds',
+      token,
+      debouncedSearchQuery,
+      filters.sourceTypes,
+      filters.sourceTypes.length,
+      filters.statuses,
+      filters.statuses.length,
+      filters.tags,
+      filters.tags.length,
+    ],
+    queryFn: () =>
+      listFeeds(token!, {
+        name: debouncedSearchQuery || undefined,
+        sourceTypes:
+          filters.sourceTypes.length > 0 ? filters.sourceTypes : undefined,
+        statuses: filters.statuses.length > 0 ? filters.statuses : undefined,
+        tags: filters.tags.length > 0 ? filters.tags : undefined,
+      }),
     enabled: !!token,
     refetchOnWindowFocus: false,
     refetchInterval: FEED_REFETCH_INTERVAL_MS,
+  });
+
+  const { data: allFeeds = [] } = useQuery({
+    queryKey: ['listFeeds', token, '', [], 0, [], 0, [], 0],
+    queryFn: () => listFeeds(token!, {}),
+    enabled: !!token,
+    refetchOnWindowFocus: false,
   });
 
   useEffect(() => {
@@ -46,7 +89,14 @@ export function FeedSearchView({ title, onError }: FeedSearchViewProps) {
         height: 'calc(100vh - 100px)',
       }}
     >
-      <FeedTable title={title} feeds={feeds ?? []} isLoading={feedsLoading} />
+      <FeedTable
+        title={title}
+        feeds={feeds ?? []}
+        allFeeds={allFeeds}
+        isLoading={feedsLoading}
+        filters={filters}
+        onFiltersChange={setFilters}
+      />
     </Box>
   );
 }

@@ -44,13 +44,13 @@ class EvaluationService:
             The evaluated payload or None if processing was skipped.
         """
         try:
-            transmission_id = new_audio.transmission_id
-            logger.info("Processing transmission ID: %s", transmission_id)
+            segment_id = new_audio.segment_id
+            logger.info("Processing transmission ID: %s", segment_id)
 
             if not new_audio.transcript.strip():
                 logger.info(
                     "No transcript for ID: %s. Skipping evaluation.",
-                    transmission_id,
+                    segment_id,
                 )
                 return None
 
@@ -61,7 +61,7 @@ class EvaluationService:
 
             logger.info(
                 "Decision for ID: %s is: %s",
-                transmission_id,
+                segment_id,
                 evaluation_result.get("is_flagged"),
             )
 
@@ -70,14 +70,14 @@ class EvaluationService:
             if errors:
                 logger.warning(
                     "Evaluation encountered errors for transmission %s: %s",
-                    transmission_id,
+                    segment_id,
                     [str(e) for e in errors],
                 )
 
             # 4. Create Evaluation Result Payload
             evaluated_payload = evaluated_pb2.EvaluatedTranscribedAudio(
                 feed_id=new_audio.feed_id,
-                transmission_id=new_audio.transmission_id,
+                segment_id=new_audio.segment_id,
                 source_audio_uris=new_audio.source_audio_uris,
                 transcript=new_audio.transcript,
                 missing_prior_context=new_audio.missing_prior_context,
@@ -89,7 +89,6 @@ class EvaluationService:
                 canonical_audio_uri=new_audio.canonical_audio_uri,
                 playback_audio_uri=new_audio.playback_audio_uri,
                 feed_name=new_audio.feed_name,
-                external_id=new_audio.external_id,
             )
             evaluated_payload.start_timestamp.CopyFrom(
                 new_audio.start_timestamp

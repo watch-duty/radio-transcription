@@ -4,10 +4,16 @@ import logging
 import uuid
 from typing import TYPE_CHECKING
 
-from .models import Feed, FeedCreate, FeedUpdate
+from backend.pipeline.storage.pagination_utils import SortOrder
+
+from .models import Feed, FeedCreate, FeedUpdate, ListFeedsResponse
 
 if TYPE_CHECKING:
-    from backend.pipeline.storage.feed_store import FeedStore
+    from backend.pipeline.storage.feed_store import (
+        FeedStatus,
+        FeedStore,
+        SourceType,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +30,6 @@ class FeedService:
             name=feed_in.name,
             source_type=feed_in.source_type,
             source_feed_id=feed_in.source_feed_id,
-            external_id=feed_in.external_id,
             tags=[t.model_dump() for t in feed_in.tags]
             if feed_in.tags
             else None,
@@ -43,7 +48,6 @@ class FeedService:
         store_feed = await self._store.update_feed(
             feed_id=uid,
             name=feed_in.name,
-            external_id=feed_in.external_id,
             tags=[t.model_dump() for t in feed_in.tags]
             if feed_in.tags
             else None,
@@ -64,10 +68,32 @@ class FeedService:
             return None
         return Feed.model_validate(store_feed)
 
-    async def list_feeds(self) -> list[Feed]:
+    async def list_feeds(
+        self,
+        *,
+        limit: int = 100,
+        next_token: str | None = None,
+        order: SortOrder = SortOrder.DESC,
+        source_types: list[SourceType] | None = None,
+        statuses: list[FeedStatus] | None = None,
+        tags: list[dict[str, str]] | None = None,
+        name: str | None = None,
+    ) -> ListFeedsResponse:
         """Lists all feeds."""
-        store_feeds = await self._store.list_feeds()
-        return [Feed.model_validate(f) for f in store_feeds.feeds]
+        store_feeds = await self._store.list_feeds(
+            limit=limit,
+            next_token=next_token,
+            order=order,
+            source_types=source_types,
+            statuses=statuses,
+            tags=tags,
+            name=name,
+        )
+        return ListFeedsResponse(
+            feeds=[Feed.model_validate(f) for f in store_feeds.feeds],
+            next_token=store_feeds.next_token,
+            total=store_feeds.total,
+        )
 
     async def deactivate_feed(self, feed_id: str) -> bool:
         """Deactivates a feed by ID."""

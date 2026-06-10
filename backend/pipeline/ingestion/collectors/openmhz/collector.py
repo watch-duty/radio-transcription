@@ -10,13 +10,29 @@ from typing import TYPE_CHECKING
 
 from curl_cffi.requests import AsyncSession
 
+from backend.pipeline.ingestion.collectors.failure_classification import (
+    ItemBatchOutcome,
+    ItemFailure,
+    collector_failure,
+    missing_source_feed_id_failure,
+)
+from backend.pipeline.ingestion.collectors.failure_classifiers import (
+    http_status,
+)
 from backend.pipeline.ingestion.collectors.openmhz._ws_transport import (
     websocket_transport,
 )
-from backend.pipeline.ingestion.models import CapturedChunk, CaptureResources
+from backend.pipeline.ingestion.models import (
+    CapturedChunk,
+    CaptureEvent,
+    CaptureResources,
+    FeedFailure,
+    SourceObservation,
+)
 from backend.pipeline.ingestion.slo_contract import (
     EVENT_TYPE_CALL_DOWNLOAD_FAILED,
 )
+from backend.pipeline.storage.feed_store import FeedStatusReason
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -29,6 +45,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 MAX_RECONNECT_FAILURES = 10
+MAX_ITEM_DOWNLOAD_FAILURES = 10
 _DOWNLOAD_MAX_RETRIES = 3
 _DOWNLOAD_BACKOFF_BASE_SEC = 1.0
 _RECONNECT_BACKOFF_BASE_SEC = 1.0
@@ -39,8 +56,10 @@ def _get_transport(name: str) -> TransportFactory:
     """Resolve transport by name. Reads module attributes at call time."""
     if name == "websocket":
         return websocket_transport
-    msg = f"Unknown OPENMHZ_TRANSPORT: {name!r}"
-    raise ValueError(msg)
+    raise collector_failure(
+        FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        "invalid_openmhz_transport",
+    )
 
 
 async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
@@ -57,14 +76,17 @@ async def _download_m4a(
     session: AsyncSession,
     url: str,
     shutdown: asyncio.Event,
-) -> bytes | None:
+) -> bytes | ItemFailure | None:
     """Download m4a from Wasabi S3 with retries.
 
-    Returns audio bytes on success, ``None`` on failure.
+    Returns audio bytes on success, a classified item failure for terminal
+    HTTP evidence, or ``None`` for unclassified/shutdown failures.
     """
+    last_status: int | None = None
     for attempt in range(_DOWNLOAD_MAX_RETRIES):
         try:
             resp = await session.get(url, timeout=30.0)
+            last_status = resp.status_code
             if resp.status_code == 200:
                 return resp.content
             if 400 <= resp.status_code < 500:
@@ -73,7 +95,13 @@ async def _download_m4a(
                     resp.status_code,
                     url,
                 )
-                return None
+                classification = http_status.classify_http_status(
+                    resp.status_code,
+                    reason_prefix="item_http",
+                )
+                if classification is None:
+                    return None
+                return ItemFailure.from_classification(classification)
             logger.warning(
                 "Download %d (attempt %d/%d): url=%s",
                 resp.status_code,
@@ -96,18 +124,29 @@ async def _download_m4a(
                 return None
 
     logger.warning("Download failed after retries: url=%s", url)
-    return None
+    if last_status is not None:
+        classification = http_status.classify_http_status(
+            last_status,
+            reason_prefix="item_http",
+        )
+        if classification is not None:
+            return ItemFailure.from_classification(classification)
+    return ItemFailure(
+        FeedStatusReason.SOURCE_UNREACHABLE,
+        "item_download_failed",
+    )
 
 
-async def openmhz_collector(
+async def openmhz_collector(  # noqa: PLR0912, PLR0915
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
     url_base: str,
     _resources: CaptureResources,
-) -> AsyncIterator[CapturedChunk]:
+) -> AsyncIterator[CaptureEvent]:
     """Capture OpenMHZ call recordings via WebSocket.
 
-    Yields :class:`CapturedChunk` for each call received.
+    Yields :class:`CapturedChunk` for each call received. A dirty leased feed
+    also yields :class:`SourceObservation` after a successful connection.
 
     Args:
         feed: Leased feed containing source_feed_id.
@@ -118,9 +157,8 @@ async def openmhz_collector(
             session).
 
     Raises:
-        ValueError: If ``source_feed_id`` is missing from the feed.
-        RuntimeError: After ``MAX_RECONNECT_FAILURES`` consecutive
-            transport failures.
+        FeedFailure: If source configuration is invalid or persistent OpenMHz
+            source failures prevent capture.
     """
     source_feed_id = feed.get("source_feed_id")
     if not source_feed_id:
@@ -129,35 +167,67 @@ async def openmhz_collector(
             feed["id"],
             feed["name"],
         )
-        msg = "missing_source_feed_id"
-        raise ValueError(msg)
+        raise missing_source_feed_id_failure()
 
     short_name = source_feed_id.strip()
     transport_name = os.getenv("OPENMHZ_TRANSPORT", "websocket")
     transport_factory = _get_transport(transport_name)
 
     consecutive_ws_failures = 0
+    # OpenMHz streams item events continuously, so there is no natural API page
+    # or poll batch. Use a bounded failure window and reset it once the
+    # WebSocket connection is successfully established.
+    item_outcome = ItemBatchOutcome()
+    item_failure_count = 0
     download_session = AsyncSession()
 
     try:
         while not shutdown_event.is_set():
             connection_session_id = str(uuid.uuid4())
             try:
+                pending_item_failure: ItemFailure | None = None
                 async with transport_factory(
                     short_name, url_base, shutdown_event
                 ) as events:
+                    consecutive_ws_failures = 0
+                    if (
+                        feed["failure_count"] > 0
+                        or feed["status_reason"] is not None
+                    ):
+                        yield SourceObservation()
                     async for call in events:
                         # SLO: receipt_time stamp — OpenMHZ WS event arrived
                         receipt_time = datetime.datetime.now(datetime.UTC)
-                        consecutive_ws_failures = 0
 
                         if call.length_sec == 0:
                             continue
 
-                        m4a_bytes = await _download_m4a(
+                        download_result = await _download_m4a(
                             download_session, call.url, shutdown_event
                         )
-                        if m4a_bytes is None:
+                        if isinstance(download_result, ItemFailure):
+                            item_outcome.record_attempt()
+                            item_outcome.record_failure(download_result)
+                            item_failure_count += 1
+                            if not shutdown_event.is_set():
+                                # SLO: call_download_failed emit — OpenMHZ _download_m4a returned a classified failure
+                                logger.warning(
+                                    "Call download failed",
+                                    extra={
+                                        "json_fields": {
+                                            "event_type": EVENT_TYPE_CALL_DOWNLOAD_FAILED,
+                                            "feed_id": str(feed["id"]),
+                                            "source_type": feed["source_type"],
+                                        },
+                                    },
+                                )
+                            if item_failure_count >= MAX_ITEM_DOWNLOAD_FAILURES:
+                                promoted = item_outcome.promoted_failure()
+                                if promoted is not None:
+                                    pending_item_failure = promoted
+                                    break
+                            continue
+                        if download_result is None:
                             if not shutdown_event.is_set():
                                 # SLO: call_download_failed emit — OpenMHZ _download_m4a returned None
                                 logger.warning(
@@ -171,6 +241,7 @@ async def openmhz_collector(
                                     },
                                 )
                             continue
+                        m4a_bytes = download_result
 
                         logger.debug(
                             "Audio ready: short_name=%s call_id=%s "
@@ -187,6 +258,15 @@ async def openmhz_collector(
                             session_id=connection_session_id,
                             receipt_time=receipt_time,
                         )
+                        item_outcome = ItemBatchOutcome()
+                        item_failure_count = 0
+                if pending_item_failure is not None:
+                    raise collector_failure(  # noqa: TRY301 -- promotion happens after leaving the transport loop.
+                        pending_item_failure.status_reason,
+                        pending_item_failure.reason,
+                    )
+            except FeedFailure:
+                raise
             except Exception:
                 logger.warning(
                     "Transport error: short_name=%s",
@@ -205,8 +285,10 @@ async def openmhz_collector(
                     short_name,
                     consecutive_ws_failures,
                 )
-                msg = "reconnect_exhausted"
-                raise RuntimeError(msg)
+                raise collector_failure(
+                    FeedStatusReason.SOURCE_UNREACHABLE,
+                    "source_unreachable",
+                )
 
             backoff = min(
                 _RECONNECT_BACKOFF_CAP_SEC,

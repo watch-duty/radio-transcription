@@ -7,6 +7,7 @@ import { FeedsController } from './feedsController.js';
 
 // Mock the config module
 vi.mock('../config.js', () => ({
+  AUTH_BACKEND: 'google',
   FEEDS_STORE_API_URL: 'http://feeds-api.example.com',
 }));
 
@@ -34,7 +35,6 @@ describe('FeedsController', () => {
     name: 'Test Feed',
     source_type: 'openmhz',
     source_feed_id: 'src_123',
-    external_id: 'ext_123',
     status: 'active',
     substatus: 'active',
     last_heartbeat: '2024-01-01T00:00:00Z',
@@ -45,7 +45,6 @@ describe('FeedsController', () => {
     name: 'Test Feed',
     sourceType: 'openmhz',
     sourceFeedId: 'src_123',
-    externalId: 'ext_123',
     sourceUrl: 'https://openmhz.com/system/src_123',
     archiveUrl: undefined,
     status: 'active',
@@ -98,6 +97,52 @@ describe('FeedsController', () => {
       const controller = new FeedsController();
 
       await expect(controller.listFeeds()).rejects.toThrow(/Network Error/);
+    });
+
+    it('should return converted feeds when backend returns object response', async () => {
+      mockRequest.mockResolvedValueOnce({
+        data: {
+          feeds: [mockBackendFeed],
+          next_token: 'token_123',
+          total: 10,
+        },
+      });
+
+      const controller = new FeedsController();
+      const result = await controller.listFeeds();
+
+      expect(result).toEqual({
+        feeds: [expectedFrontendFeed],
+        nextToken: 'token_123',
+        total: 10,
+      });
+      expect(mockRequest).toHaveBeenCalledWith({
+        url: 'http://feeds-api.example.com',
+        method: 'GET',
+      });
+    });
+
+    it('should pass query parameters to backend on request', async () => {
+      mockRequest.mockResolvedValueOnce({ data: [mockBackendFeed] });
+
+      const controller = new FeedsController();
+      const query = {
+        limit: 10,
+        nextToken: 'token_abc',
+        order: 'asc' as const,
+        sourceTypes: `${SourceType.OPENMHZ},${SourceType.ECHO}`,
+        statuses: 'active',
+        tags: [
+          '{ "key": "region", "value": "West" }',
+          '{ "key": "county", "value": "Fulton" }',
+        ],
+      };
+      await controller.listFeeds(query);
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        url: 'http://feeds-api.example.com?limit=10&next_token=token_abc&order=asc&source_types=openmhz%2Cecho&statuses=active&tags=%7B+%22key%22%3A+%22region%22%2C+%22value%22%3A+%22West%22+%7D&tags=%7B+%22key%22%3A+%22county%22%2C+%22value%22%3A+%22Fulton%22+%7D',
+        method: 'GET',
+      });
     });
   });
 
@@ -152,7 +197,6 @@ describe('FeedsController', () => {
         name: 'Test Feed',
         sourceType: SourceType.OPENMHZ,
         sourceFeedId: 'src_123',
-        externalId: 'ext_123',
       };
       const result = await controller.createFeed(mockAdminRequest, payload);
 
@@ -164,7 +208,6 @@ describe('FeedsController', () => {
           name: 'Test Feed',
           source_type: 'openmhz',
           source_feed_id: 'src_123',
-          external_id: 'ext_123',
         },
       });
     });
@@ -181,7 +224,6 @@ describe('FeedsController', () => {
         name: 'Test Feed',
         sourceType: SourceType.OPENMHZ,
         sourceFeedId: 'src_123',
-        externalId: 'ext_123',
         tags: [{ key: 'county', value: 'Fulton' }],
       };
       const result = await controller.createFeed(mockAdminRequest, payload);
@@ -197,7 +239,6 @@ describe('FeedsController', () => {
           name: 'Test Feed',
           source_type: 'openmhz',
           source_feed_id: 'src_123',
-          external_id: 'ext_123',
           tags: [{ key: 'county', value: 'Fulton' }],
         },
       });
@@ -224,7 +265,6 @@ describe('FeedsController', () => {
       const controller = new FeedsController();
       const payload = {
         name: 'Updated Feed',
-        externalId: 'ext_123',
       };
       const result = await controller.updateFeed(
         mockAdminRequest,
@@ -238,7 +278,6 @@ describe('FeedsController', () => {
         method: 'PUT',
         data: {
           name: 'Updated Feed',
-          external_id: 'ext_123',
           tags: undefined,
         },
       });
@@ -255,7 +294,6 @@ describe('FeedsController', () => {
       const controller = new FeedsController();
       const payload = {
         name: 'Updated Feed',
-        externalId: 'ext_123',
         tags: [{ key: 'county', value: 'Fulton' }],
       };
       const result = await controller.updateFeed(
@@ -274,7 +312,6 @@ describe('FeedsController', () => {
         method: 'PUT',
         data: {
           name: 'Updated Feed',
-          external_id: 'ext_123',
           tags: [{ key: 'county', value: 'Fulton' }],
         },
       });
@@ -301,7 +338,6 @@ describe('FeedsController', () => {
       const controller = new FeedsController();
       const payload = {
         name: 'Updated Feed',
-        externalId: 'ext_123',
       };
       await expect(
         controller.updateFeed(mockAdminRequest, 'feed_123', payload)
@@ -318,7 +354,6 @@ describe('FeedsController', () => {
       const controller = new FeedsController();
       const payload = {
         name: 'Updated Feed',
-        externalId: 'ext_123',
       };
       await expect(
         controller.updateFeed(mockAdminRequest, 'feed_123', payload)
@@ -491,7 +526,9 @@ describe('FeedsController', () => {
         ],
       });
       const controller = new FeedsController();
-      const [feed] = await controller.listFeeds();
+      const result = await controller.listFeeds();
+      const feeds = Array.isArray(result) ? result : result.feeds;
+      const [feed] = feeds;
       return feed.sourceUrl;
     }
 
@@ -520,12 +557,24 @@ describe('FeedsController', () => {
       expect(url).toBeUndefined();
     });
 
-    it('fire_notifications produces undefined', async () => {
+    it('fire_notifications produces the audioplay URL', async () => {
       const url = await listFeedsWithSourceType(
         'fire_notifications',
-        'some-id'
+        'RECORDINGS/WA-SPOKANE-DISP'
       );
-      expect(url).toBeUndefined();
+      expect(url).toBe(
+        'https://audioplay.textmefires.info/audioplay/folder_play?dir=RECORDINGS%2FWA-SPOKANE-DISP'
+      );
+    });
+
+    it('fire_notifications with leading slash produces the audioplay URL', async () => {
+      const url = await listFeedsWithSourceType(
+        'fire_notifications',
+        '/RECORDINGS/WA-SPOKANE-DISP'
+      );
+      expect(url).toBe(
+        'https://audioplay.textmefires.info/audioplay/folder_play?dir=RECORDINGS%2FWA-SPOKANE-DISP'
+      );
     });
 
     it('produces undefined when sourceFeedId is absent', async () => {
@@ -558,7 +607,9 @@ describe('FeedsController', () => {
         ],
       });
       const controller = new FeedsController();
-      const [feed] = await controller.listFeeds();
+      const result = await controller.listFeeds();
+      const feeds = Array.isArray(result) ? result : result.feeds;
+      const [feed] = feeds;
       return feed.archiveUrl;
     }
 
@@ -582,9 +633,24 @@ describe('FeedsController', () => {
       expect(url).toBeUndefined();
     });
 
-    it('fire_notifications produces undefined', async () => {
-      const url = await listFeedsArchiveUrl('fire_notifications', 'some-id');
-      expect(url).toBeUndefined();
+    it('fire_notifications produces the archive URL', async () => {
+      const url = await listFeedsArchiveUrl(
+        'fire_notifications',
+        'RECORDINGS/WA-SPOKANE-DISP'
+      );
+      expect(url).toBe(
+        'https://audioplay.textmefires.info/audioplay/folder_play?dir=RECORDINGS%2FWA-SPOKANE-DISP%2FArchive'
+      );
+    });
+
+    it('fire_notifications with leading slash produces the archive URL', async () => {
+      const url = await listFeedsArchiveUrl(
+        'fire_notifications',
+        '/RECORDINGS/WA-SPOKANE-DISP'
+      );
+      expect(url).toBe(
+        'https://audioplay.textmefires.info/audioplay/folder_play?dir=RECORDINGS%2FWA-SPOKANE-DISP%2FArchive'
+      );
     });
 
     it('produces undefined when sourceFeedId is absent', async () => {
@@ -614,7 +680,9 @@ describe('FeedsController', () => {
         });
 
         const controller = new FeedsController();
-        const [feed] = await controller.listFeeds();
+        const result = await controller.listFeeds();
+        const feeds = Array.isArray(result) ? result : result.feeds;
+        const [feed] = feeds;
 
         expect(feed.status).toBe(expected);
       });

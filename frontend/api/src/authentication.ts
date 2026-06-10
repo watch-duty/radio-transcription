@@ -1,6 +1,6 @@
 import * as express from 'express';
 
-import * as jwt from 'jsonwebtoken';
+import * as jose from 'jose';
 
 import { getAdminEmails } from './config.js';
 
@@ -34,7 +34,7 @@ export async function expressAuthentication(
       );
     }
     // API Gateway already verified the signature at this point
-    const decoded = jwt.decode(token) as GoogleUser | null;
+    const decoded = jose.decodeJwt<GoogleUser>(token);
 
     if (!decoded) {
       return Promise.reject(new Error('Invalid JWT token'));

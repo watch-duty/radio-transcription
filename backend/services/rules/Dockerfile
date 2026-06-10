@@ -4,6 +4,8 @@ FROM python:3.13-slim
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV UV_COMPILE_BYTECODE=1
+ENV UV_LINK_MODE=copy
 ENV WORKDIR=/app
 ENV PYTHONPATH=/app
 ENV PORT=8080
@@ -18,7 +20,8 @@ ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
 COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml backend/services/*/pyproject.toml ./
-RUN uv sync --frozen --no-dev --package rules-service
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --package rules-service
 
 # 4. Copy necessary application source code
 COPY backend/__init__.py ./backend/__init__.py

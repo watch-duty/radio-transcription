@@ -1,13 +1,14 @@
 import datetime
+from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class Transcript(BaseModel):
     """Transcript type used by the Transcript API."""
 
     feed_id: str
-    transmission_id: str
+    segment_id: str
     transcript: str
     start_timestamp: datetime.datetime | None = None
     end_timestamp: datetime.datetime | None = None
@@ -20,6 +21,16 @@ class Transcript(BaseModel):
     evaluation_decisions: list[str] = []
     playback_audio_uri: str | None = None
     evaluation_errors: list[str] = []
+    errors: list[str] = []
+
+    @model_validator(mode="before")
+    @classmethod
+    def _sync_errors(cls, values: Any) -> Any:
+        if isinstance(values, dict):
+            errs = values.get("errors") or values.get("evaluation_errors") or []
+            values["errors"] = errs
+            values["evaluation_errors"] = errs
+        return values
 
 
 class ListTranscriptsResponse(BaseModel):

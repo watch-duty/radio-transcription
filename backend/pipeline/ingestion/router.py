@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from backend.pipeline.ingestion.models import (
-        CapturedChunk,
+        CaptureEvent,
         CaptureResources,
         CollectorFn,
     )
@@ -37,7 +37,10 @@ OPENMHZ_URL_BASE = "https://api.openmhz.com/"
 FIRE_NOTIFICATIONS_URL_BASE = os.environ.get("FIRE_NOTIFICATIONS_URL_BASE", "")
 
 # Typed registry: ty/mypy checks each value matches CollectorFn.
-# Adding a new collector = 1 import + 1 dict entry.
+# Adding a new VM collector is deliberately not just this dict: update
+# SourceType, source_type seed data, _DEFAULT_CAPS, topic routing, and tests.
+# main.py enforces _COLLECTORS == _DEFAULT_CAPS at startup so a new type does
+# not silently remain unclaimed or get claimed without a route.
 _COLLECTORS: dict[SourceType, tuple[CollectorFn, str]] = {
     SourceType.BCFY_FEEDS: (
         icecast_collector.capture_icecast_stream,
@@ -81,7 +84,7 @@ def route_capturer(
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
     resources: CaptureResources,
-) -> AsyncIterator[CapturedChunk]:
+) -> AsyncIterator[CaptureEvent]:
     """Routes the feed to the appropriate capture function."""
     source_type = feed["source_type"]
     entry = _COLLECTORS.get(source_type)

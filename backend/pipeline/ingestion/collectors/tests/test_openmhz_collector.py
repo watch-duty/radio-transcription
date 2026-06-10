@@ -11,24 +11,36 @@ from unittest.mock import AsyncMock, MagicMock, patch
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+from backend.pipeline.ingestion.collectors.failure_classification import (
+    ItemFailure,
+)
 from backend.pipeline.ingestion.collectors.openmhz._types import CallEvent
 from backend.pipeline.ingestion.collectors.openmhz.collector import (
+    MAX_ITEM_DOWNLOAD_FAILURES,
     MAX_RECONNECT_FAILURES,
+    _download_m4a,
     openmhz_collector,
 )
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
+    _require_captured_chunk,
 )
-from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
+from backend.pipeline.ingestion.models import FeedFailure, SourceObservation
+from backend.pipeline.storage.feed_store import (
+    FeedStatusReason,
+    LeasedFeed,
+    SourceType,
+)
 
 _TEST_FEED = LeasedFeed(
     id=uuid.UUID("12345678-1234-5678-1234-567812345678"),
     name="test-openmhz-wmata",
-    external_id="ext-id",
     source_type=SourceType.OPENMHZ,
     last_processed_filename=None,
     last_bookmark_time=None,
     fencing_token=1,
+    failure_count=0,
+    status_reason=None,
     source_feed_id="wmata",
 )
 
@@ -67,7 +79,116 @@ async def _mock_transport(
 _COL_MOD = "backend.pipeline.ingestion.collectors.openmhz.collector"
 
 
+def _require_item_failure(value: ItemFailure | bytes | None) -> ItemFailure:
+    """Return a typed item failure for tests that intentionally expect one."""
+    if not isinstance(value, ItemFailure):
+        msg = f"Expected ItemFailure, got {value!r}"
+        raise TypeError(msg)
+    return value
+
+
+class TestDownloadM4a(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.session = MagicMock()
+        self.shutdown = asyncio.Event()
+
+    async def test_terminal_4xx_statuses_return_item_failures(self) -> None:
+        cases = {
+            401: FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+            403: FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+            404: FeedStatusReason.SOURCE_UNREACHABLE,
+            429: FeedStatusReason.SOURCE_RATE_LIMITED,
+        }
+        for status, reason in cases.items():
+            with self.subTest(status=status):
+                resp = MagicMock(status_code=status)
+                self.session.get = AsyncMock(return_value=resp)
+
+                result = await _download_m4a(
+                    self.session,
+                    "https://media2.openmhz.com/test.m4a",
+                    self.shutdown,
+                )
+
+                failure = _require_item_failure(result)
+                self.assertIs(failure.status_reason, reason)
+                self.assertEqual(failure.reason, f"item_http_{status}")
+
+    @patch(f"{_COL_MOD}._sleep_or_shutdown", new_callable=AsyncMock)
+    async def test_retry_exhausted_5xx_returns_item_failure(
+        self,
+        mock_sleep: AsyncMock,
+    ) -> None:
+        mock_sleep.return_value = False
+        resp = MagicMock(status_code=503)
+        self.session.get = AsyncMock(return_value=resp)
+
+        result = await _download_m4a(
+            self.session,
+            "https://media2.openmhz.com/test.m4a",
+            self.shutdown,
+        )
+
+        failure = _require_item_failure(result)
+        self.assertIs(
+            failure.status_reason,
+            FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+        self.assertEqual(failure.reason, "item_http_503")
+        self.assertEqual(self.session.get.call_count, 3)
+
+    @patch(f"{_COL_MOD}._sleep_or_shutdown", new_callable=AsyncMock)
+    async def test_network_errors_exhausted_return_item_failure(
+        self,
+        mock_sleep: AsyncMock,
+    ) -> None:
+        mock_sleep.return_value = False
+        self.session.get = AsyncMock(side_effect=TimeoutError)
+
+        result = await _download_m4a(
+            self.session,
+            "https://media2.openmhz.com/test.m4a",
+            self.shutdown,
+        )
+
+        failure = _require_item_failure(result)
+        self.assertIs(
+            failure.status_reason,
+            FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+        self.assertEqual(failure.reason, "item_download_failed")
+        self.assertEqual(self.session.get.call_count, 3)
+
+
 class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
+    @patch(f"{_COL_MOD}.websocket_transport")
+    async def test_dirty_feed_yields_observation_on_successful_connection(
+        self,
+        mock_transport: MagicMock,
+    ) -> None:
+        feed = cast(
+            "LeasedFeed",
+            {
+                **_TEST_FEED,
+                "failure_count": 1,
+                "status_reason": FeedStatusReason.SOURCE_UNREACHABLE,
+            },
+        )
+        mock_transport.side_effect = lambda *a, **kw: _mock_transport([])
+
+        shutdown = asyncio.Event()
+        events = []
+        async for event in openmhz_collector(
+            feed,
+            shutdown,
+            "https://api.openmhz.com/",
+            _default_resources(),
+        ):
+            events.append(event)
+            shutdown.set()
+
+        self.assertEqual(events, [SourceObservation()])
+
     @patch(f"{_COL_MOD}.websocket_transport")
     @patch(f"{_COL_MOD}._download_m4a")
     async def test_yields_flac_and_call_time(
@@ -87,7 +208,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             "https://api.openmhz.com/",
             _default_resources(),
         ):
-            results.append(chunk)
+            results.append(_require_captured_chunk(chunk))
             shutdown.set()
 
         self.assertEqual(len(results), 1)
@@ -150,21 +271,22 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(mock_download.call_count, 2)
 
-    async def test_raises_value_error_for_missing_source_feed_id(
+    async def test_raises_typed_failure_for_missing_source_feed_id(
         self,
     ) -> None:
         feed = LeasedFeed(
             id=uuid.uuid4(),
             name="no-id",
-            external_id="ext-id",
             source_type=SourceType.OPENMHZ,
             last_processed_filename=None,
             last_bookmark_time=None,
             fencing_token=1,
+            failure_count=0,
+            status_reason=None,
             source_feed_id=None,
         )
         shutdown = asyncio.Event()
-        with self.assertRaises(ValueError) as ctx:
+        with self.assertRaises(FeedFailure) as ctx:
             async for _ in openmhz_collector(
                 feed,
                 shutdown,
@@ -173,7 +295,32 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             ):
                 pass
 
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        )
         self.assertEqual(str(ctx.exception), "missing_source_feed_id")
+
+    @patch.dict("os.environ", {"OPENMHZ_TRANSPORT": "bogus"})
+    async def test_invalid_transport_raises_typed_configuration_failure(
+        self,
+    ) -> None:
+        shutdown = asyncio.Event()
+
+        with self.assertRaises(FeedFailure) as ctx:
+            async for _ in openmhz_collector(
+                _TEST_FEED,
+                shutdown,
+                "https://api.openmhz.com/",
+                _default_resources(),
+            ):
+                pass
+
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        )
+        self.assertEqual(str(ctx.exception), "invalid_openmhz_transport")
 
     @patch(f"{_COL_MOD}.websocket_transport")
     @patch(f"{_COL_MOD}._sleep_or_shutdown", new_callable=AsyncMock)
@@ -190,7 +337,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         mock_sleep.return_value = False
 
         shutdown = asyncio.Event()
-        with self.assertRaises(RuntimeError) as ctx:
+        with self.assertRaises(FeedFailure) as ctx:
             async for _ in openmhz_collector(
                 _TEST_FEED,
                 shutdown,
@@ -198,10 +345,48 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
                 _default_resources(),
             ):
                 pass
-        self.assertEqual(str(ctx.exception), "reconnect_exhausted")
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+        self.assertEqual(str(ctx.exception), "source_unreachable")
 
         # The Nth failure raises before sleeping, so N-1 sleeps
         self.assertEqual(mock_sleep.call_count, MAX_RECONNECT_FAILURES - 1)
+
+    @patch(f"{_COL_MOD}.websocket_transport")
+    @patch(f"{_COL_MOD}._download_m4a")
+    async def test_item_download_failure_threshold_raises_typed_failure(
+        self,
+        mock_download: AsyncMock,
+        mock_transport: MagicMock,
+    ) -> None:
+        calls = [
+            _make_call(call_id=f"bad-{i}")
+            for i in range(MAX_ITEM_DOWNLOAD_FAILURES)
+        ]
+        mock_transport.side_effect = lambda *a, **kw: _mock_transport(calls)
+        mock_download.return_value = ItemFailure(
+            FeedStatusReason.SOURCE_UNREACHABLE,
+            "item_http_503",
+        )
+
+        shutdown = asyncio.Event()
+        with self.assertRaises(FeedFailure) as ctx:
+            async for _ in openmhz_collector(
+                _TEST_FEED,
+                shutdown,
+                "https://api.openmhz.com/",
+                _default_resources(),
+            ):
+                pass
+
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+        self.assertEqual(str(ctx.exception), "item_http_503")
+        self.assertEqual(mock_download.call_count, MAX_ITEM_DOWNLOAD_FAILURES)
 
     @patch(f"{_COL_MOD}.websocket_transport")
     @patch(f"{_COL_MOD}._download_m4a")
@@ -223,7 +408,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             "https://api.openmhz.com/",
             _default_resources(),
         ):
-            results.append(chunk)
+            results.append(_require_captured_chunk(chunk))
             if len(results) == 2:
                 shutdown.set()
 
@@ -275,7 +460,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             "https://api.openmhz.com/",
             _default_resources(),
         ):
-            results.append(chunk)
+            results.append(_require_captured_chunk(chunk))
             if len(results) == 2:
                 shutdown.set()
 
@@ -315,7 +500,7 @@ class TestOpenmhzReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
             "https://api.openmhz.com/",
             _default_resources(),
         ):
-            results.append(chunk)
+            results.append(_require_captured_chunk(chunk))
             shutdown.set()
 
         self.assertEqual(len(results), 1)

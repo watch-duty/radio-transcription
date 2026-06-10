@@ -4,6 +4,7 @@ import { TranscriptsController } from './transcriptsController.js';
 
 // Mock the config module to inject the value without touching process.env
 vi.mock('../config.js', () => ({
+  AUTH_BACKEND: 'google',
   TRANSCRIPTS_API_URL: 'http://api.example.com',
 }));
 
@@ -32,7 +33,7 @@ describe('listTranscripts', () => {
       transcripts: [
         {
           feed_id: 'test',
-          transmission_id: '1',
+          segment_id: '1',
           transcript: 'hello',
           start_timestamp: '1',
           end_timestamp: '2',
@@ -52,7 +53,7 @@ describe('listTranscripts', () => {
       transcripts: [
         {
           feedId: 'test',
-          transmissionId: '1',
+          segmentId: '1',
           transcript: 'hello',
           startTimestamp: '1',
           endTimestamp: '2',

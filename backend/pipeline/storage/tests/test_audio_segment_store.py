@@ -123,6 +123,7 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
         self.pool.fetchrow.return_value = new_row
 
         result = await self.store.create_audio_segment(
+            segment_id=str(_SEGMENT_ID),
             feed_id=str(_FEED_ID),
             classification=AudioClassification.SPEECH_DETECTED,
             start_timestamp=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
@@ -144,7 +145,7 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
         missing_post_context = False
         self.pool.fetchrow.assert_called_once_with(
             audio_segment_queries.CREATE_AUDIO_SEGMENT_SQL,
-            IsUUID(),
+            _SEGMENT_ID,
             _FEED_ID,
             AudioClassification.SPEECH_DETECTED,
             datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
@@ -158,9 +159,28 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             None,
         )
 
+    async def test_create_audio_segment_invalid_segment_id(self) -> None:
+        with self.assertRaises(ValueError) as cm:
+            await self.store.create_audio_segment(
+                segment_id="invalid-uuid",
+                feed_id=str(_FEED_ID),
+                classification=AudioClassification.SPEECH_DETECTED,
+                start_timestamp=datetime.datetime(
+                    2026, 1, 1, tzinfo=datetime.UTC
+                ),
+                end_timestamp=datetime.datetime(
+                    2026, 1, 1, 0, 1, tzinfo=datetime.UTC
+                ),
+                source_audio_uris=["gs://bucket/audio1.ogg"],
+                missing_prior_context=False,
+                missing_post_context=False,
+            )
+        self.assertIn("Invalid segment_id UUID", str(cm.exception))
+
     async def test_create_audio_segment_invalid_feed_id(self) -> None:
         with self.assertRaises(ValueError) as cm:
             await self.store.create_audio_segment(
+                segment_id=str(_SEGMENT_ID),
                 feed_id="invalid-uuid",
                 classification=AudioClassification.SPEECH_DETECTED,
                 start_timestamp=datetime.datetime(
@@ -174,6 +194,27 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
                 missing_post_context=False,
             )
         self.assertIn("Invalid feed_id UUID", str(cm.exception))
+
+    async def test_create_audio_segment_foreign_key_violation(self) -> None:
+        self.pool.fetchrow.side_effect = (
+            asyncpg.exceptions.ForeignKeyViolationError()
+        )
+        with self.assertRaises(ValueError) as cm:
+            await self.store.create_audio_segment(
+                segment_id=str(_SEGMENT_ID),
+                feed_id=str(_FEED_ID),
+                classification=AudioClassification.SPEECH_DETECTED,
+                start_timestamp=datetime.datetime(
+                    2026, 1, 1, tzinfo=datetime.UTC
+                ),
+                end_timestamp=datetime.datetime(
+                    2026, 1, 1, 0, 1, tzinfo=datetime.UTC
+                ),
+                source_audio_uris=["gs://bucket/audio1.ogg"],
+                missing_prior_context=False,
+                missing_post_context=False,
+            )
+        self.assertIn("does not exist", str(cm.exception))
 
     async def test_list_audio_segments(self) -> None:
         result = await self.store.list_audio_segments()

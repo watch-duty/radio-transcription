@@ -8,6 +8,7 @@ import base64
 import logging
 
 import grpc
+import requests
 from cloudevents.http.event import CloudEvent
 from google.api_core.exceptions import GoogleAPICallError
 from google.cloud import pubsub_v1
@@ -17,7 +18,10 @@ from backend.pipeline.common.constants import (
     MS_PER_SECOND,
     NANOS_PER_MS,
 )
-from backend.pipeline.common.tracing_utils import with_tracer_context
+from backend.pipeline.common.tracing_utils import (
+    get_current_traceparent,
+    with_tracer_context,
+)
 from backend.pipeline.schema_types.normalized_audio_pb2 import (
     NormalizedAudio,
 )
@@ -64,7 +68,7 @@ class TranscriptionEventProcessor:
         ):
             errors = []
             transcript = ""
-            transmission_id = ""
+            segment_id = ""
             raw_data = pubsub_message.get("data", "")
             if not raw_data:
                 logger.error("Bad Request: Missing Pub/Sub data payload")
@@ -74,22 +78,31 @@ class TranscriptionEventProcessor:
             claim = self._parse_claim(raw_data)
 
             feed_id = claim.feed_id
-            transmission_id = claim.transmission_id
+            segment_id = claim.segment_id
 
             logger.info(
                 "Received claim for transmission %s (feed %s, uri: %s)",
-                transmission_id,
+                segment_id,
                 feed_id,
                 claim.canonical_audio_uri,
             )
+
+            if claim.audio_classification == claim.AUDIO_CLASSIFICATION_OTHER:
+                logger.info(
+                    "Skipping transcription for non-speech segment %s (feed %s)",
+                    segment_id,
+                    feed_id,
+                )
+                return
 
             try:
                 # Determine audio duration from start and end timestamps
                 duration_ms = self._get_duration_ms(claim)
 
-                # Retrieve active transcriber and run Speech API
+                # Retrieve active transcriber and run Speech API on ephemeral mono FLAC link
                 transcript = self.transcriber.transcribe(
-                    uri=claim.canonical_audio_uri,
+                    uri=claim.transcription_audio_uri
+                    or claim.canonical_audio_uri,
                     duration_ms=duration_ms,
                 )
 
@@ -102,7 +115,7 @@ class TranscriptionEventProcessor:
 
                 # Build TranscribedAudio egress protobuf message
                 out_proto = TranscribedAudio(
-                    transmission_id=claim.transmission_id,
+                    segment_id=claim.segment_id,
                     feed_id=claim.feed_id,
                     transcript=transcript,
                     start_timestamp=claim.start_timestamp,
@@ -115,7 +128,7 @@ class TranscriptionEventProcessor:
                     canonical_audio_uri=claim.canonical_audio_uri,
                     playback_audio_uri=claim.playback_audio_uri,
                     feed_name=claim.feed_name,
-                    external_id=claim.external_id,
+                    transcription_audio_uri=claim.transcription_audio_uri,
                 )
 
                 # Egress to final output topic, strictly ordered by feed_id
@@ -125,8 +138,9 @@ class TranscriptionEventProcessor:
                 )
 
                 attrs: dict[str, str] = {}
-                if traceparent:
-                    attrs["traceparent"] = traceparent
+                current_tp = get_current_traceparent() or traceparent
+                if current_tp:
+                    attrs["traceparent"] = current_tp
 
                 future = self.publisher.publish(
                     topic=topic_path,
@@ -138,7 +152,7 @@ class TranscriptionEventProcessor:
                 logger.info(
                     "Successfully transcribed and published egress message %s for transmission %s (feed %s)",
                     message_id,
-                    transmission_id,
+                    segment_id,
                     feed_id,
                 )
             except Exception as e:
@@ -146,7 +160,7 @@ class TranscriptionEventProcessor:
                     logger.warning(
                         "Transient failure processing transcription claim for transmission %s (feed %s): %s. "
                         "Retrying...",
-                        transmission_id,
+                        segment_id,
                         feed_id,
                         e,
                     )
@@ -156,15 +170,15 @@ class TranscriptionEventProcessor:
                 logger.exception(
                     "Permanent failure processing transcription claim for transmission %s (feed %s): %s. "
                     "Acknowledging message without retry.",
-                    transmission_id,
+                    segment_id,
                     feed_id,
                     e,
                 )
                 errors.append(f"Permanent Failure: {e}")
             finally:
-                if transmission_id:
+                if segment_id:
                     self._write_transcript_annotation(
-                        transmission_id,
+                        segment_id,
                         transcript or "",
                         errors,
                     )
@@ -194,7 +208,7 @@ class TranscriptionEventProcessor:
             return claim
 
     def _write_transcript_annotation(
-        self, transmission_id: str, transcript: str, errors: list[str]
+        self, segment_id: str, transcript: str, errors: list[str]
     ) -> None:
         """Writes transcript annotation to audio segments API."""
         if self.audio_segments_client is None:
@@ -206,7 +220,7 @@ class TranscriptionEventProcessor:
                 "errors": errors,
             }
             self.audio_segments_client.add_audio_segment_annotation(
-                audio_segment_id=transmission_id,
+                audio_segment_id=segment_id,
                 annotation_type=(
                     audio_segments_models.AnnotationType.TRANSCRIPT
                 ),
@@ -214,23 +228,24 @@ class TranscriptionEventProcessor:
             )
             logger.info(
                 "Successfully added transcript annotation for segment %s",
-                transmission_id,
+                segment_id,
             )
         except Exception as write_err:
             logger.exception(
                 "Failed to add transcript annotation for segment %s: %s",
-                transmission_id,
+                segment_id,
                 write_err,
             )
 
 
 def _is_transient_exception(e: Exception) -> bool:
     """Determines if an exception is transient and should be retried."""
+    is_transient = False
     match e:
         case GoogleAPICallError() if e.code in (429, 409) or (
             e.code and e.code >= 500
         ):
-            return True
+            is_transient = True
         case grpc.Call():
             try:
                 match e.code():
@@ -241,11 +256,18 @@ def _is_transient_exception(e: Exception) -> bool:
                         | grpc.StatusCode.INTERNAL
                         | grpc.StatusCode.ABORTED
                     ):
-                        return True
+                        is_transient = True
             except (AttributeError, TypeError, ValueError):
                 pass
-            return False
         case ConnectionError() | TimeoutError():
-            return True
-        case _:
-            return False
+            is_transient = True
+        case (
+            requests.exceptions.Timeout()
+            | requests.exceptions.ConnectionError()
+        ):
+            is_transient = True
+        case requests.exceptions.HTTPError() if e.response is not None and (
+            e.response.status_code == 429 or e.response.status_code >= 500
+        ):
+            is_transient = True
+    return is_transient

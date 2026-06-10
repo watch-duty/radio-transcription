@@ -10,9 +10,11 @@ from typing import cast
 from unittest import mock
 
 import asyncpg
+import yaml
 
 from backend.pipeline.storage import feed_queries
 from backend.pipeline.storage.feed_store import (
+    FeedStatus,
     FeedStatusReason,
     FeedStore,
     HeartbeatResult,
@@ -31,11 +33,12 @@ _STATUS_REASON_UPDATED_AT = datetime.datetime(
 _LEASE_ROW = {
     "id": _FEED_ID,
     "name": "My Feed",
-    "external_id": "ext-id",
     "source_type": "bcfy_feeds",
     "last_processed_filename": None,
     "last_bookmark_time": None,
     "fencing_token": 1,
+    "failure_count": 0,
+    "status_reason": None,
     "source_feed_id": "123",
 }
 
@@ -48,6 +51,7 @@ def _full_feed_row(**overrides: object) -> dict[str, object]:
         "status": "unclaimed",
         "status_reason": None,
         "status_reason_updated_at": None,
+        "quarantine_reason": None,
         "failure_count": 0,
         "worker_id": None,
         "last_heartbeat": None,
@@ -55,7 +59,6 @@ def _full_feed_row(**overrides: object) -> dict[str, object]:
         "last_bookmark_time": None,
         "created_at": datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
         "source_feed_id": "123",
-        "external_id": "ext_123",
         "tags": None,
     }
     row.update(overrides)
@@ -134,6 +137,34 @@ class TestFeedStatusReason(unittest.TestCase):
             },
         )
 
+    def test_matches_openapi_spec(self) -> None:
+        current_file = pathlib.Path(__file__).resolve()
+        repo_root = current_file.parents[4]
+        openapi_path = repo_root / "frontend" / "api" / "openapi.yaml"
+        self.assertTrue(
+            openapi_path.exists(),
+            f"Could not find openapi.yaml at {openapi_path}",
+        )
+
+        with openapi_path.open("r") as f:
+            spec = yaml.safe_load(f)
+
+        schemas = spec.get("components", {}).get("schemas", {})
+        backend_reasons = schemas.get("BackendFeedStatusReason", {}).get(
+            "enum", []
+        )
+
+        python_reasons = {reason.value for reason in FeedStatusReason}
+        expected_openapi_reasons = python_reasons | {"unknown"}
+
+        self.assertEqual(
+            set(backend_reasons),
+            expected_openapi_reasons,
+            "The status reasons in backend.pipeline.storage.feed_store.FeedStatusReason "
+            "do not match BackendFeedStatusReason in frontend/api/openapi.yaml. "
+            "Please run `yarn generate-spec` in frontend/api to sync the spec after updating TypeScript types.",
+        )
+
     def test_reason_values_encode_source_or_system_ownership(self) -> None:
         prefixes = {
             reason.value.split("_", 1)[0] for reason in FeedStatusReason
@@ -145,6 +176,64 @@ class TestFeedStatusReason(unittest.TestCase):
                 reason.value,
             )
         self.assertEqual(prefixes, {"source", "system"})
+
+
+class TestSourceType(unittest.TestCase):
+    """Contract tests for SourceType enum."""
+
+    def test_matches_openapi_spec(self) -> None:
+        current_file = pathlib.Path(__file__).resolve()
+        repo_root = current_file.parents[4]
+        openapi_path = repo_root / "frontend" / "api" / "openapi.yaml"
+        self.assertTrue(
+            openapi_path.exists(),
+            f"Could not find openapi.yaml at {openapi_path}",
+        )
+
+        with openapi_path.open("r") as f:
+            spec = yaml.safe_load(f)
+
+        schemas = spec.get("components", {}).get("schemas", {})
+        openapi_sources = schemas.get("SourceType", {}).get("enum", [])
+
+        python_sources = {source.value for source in SourceType}
+
+        self.assertEqual(
+            set(openapi_sources),
+            python_sources,
+            "The sources in backend.pipeline.storage.feed_store.SourceType "
+            "do not match SourceType in frontend/api/openapi.yaml. "
+            "Please run `yarn generate-spec` in frontend/api to sync the spec after updating TypeScript types.",
+        )
+
+
+class TestFeedStatus(unittest.TestCase):
+    """Contract tests for FeedStatus enum."""
+
+    def test_matches_openapi_spec(self) -> None:
+        current_file = pathlib.Path(__file__).resolve()
+        repo_root = current_file.parents[4]
+        openapi_path = repo_root / "frontend" / "api" / "openapi.yaml"
+        self.assertTrue(
+            openapi_path.exists(),
+            f"Could not find openapi.yaml at {openapi_path}",
+        )
+
+        with openapi_path.open("r") as f:
+            spec = yaml.safe_load(f)
+
+        schemas = spec.get("components", {}).get("schemas", {})
+        openapi_statuses = schemas.get("BackendFeedStatus", {}).get("enum", [])
+
+        python_statuses = {status.value for status in FeedStatus}
+
+        self.assertEqual(
+            set(openapi_statuses),
+            python_statuses,
+            "The status values in backend.pipeline.storage.feed_store.FeedStatus "
+            "do not match BackendFeedStatus in frontend/api/openapi.yaml. "
+            "Please run `yarn generate-spec` in frontend/api to sync the spec after updating TypeScript types.",
+        )
 
 
 class TestStatusReasonRowMapping(unittest.TestCase):
@@ -213,14 +302,28 @@ class TestStatusReasonLifecycleIsolation(unittest.TestCase):
             feed_queries.RELEASE_FEEDS_BATCH_SQL,
             feed_queries.COUNT_HELD_BY_TYPE_SQL,
             feed_queries.DEACTIVATE_FEED_SQL,
+        ]
+
+        for sql in lifecycle_sql:
+            self.assertNotIn("status_reason", _sql_without_comments(sql))
+
+    def test_claim_sql_projects_failure_state_without_mutating_it(
+        self,
+    ) -> None:
+        claim_sql = [
             feed_queries.build_acquire_feeds_batch_sql([SourceType.BCFY_FEEDS]),
             feed_queries.build_acquire_feeds_recovery_sql(
                 [SourceType.BCFY_FEEDS]
             ),
         ]
 
-        for sql in lifecycle_sql:
-            self.assertNotIn("status_reason", _sql_without_comments(sql))
+        for sql in claim_sql:
+            stripped = _sql_without_comments(sql)
+            self.assertIn("feeds.failure_count", stripped)
+            self.assertIn("feeds.status_reason", stripped)
+            self.assertIn("leased.failure_count", stripped)
+            self.assertIn("leased.status_reason", stripped)
+            self.assertNotIn("status_reason =", stripped)
 
 
 class TestWorkerOwnedLifecycleGuards(unittest.TestCase):
@@ -315,6 +418,27 @@ class TestStatusReasonClearSql(unittest.TestCase):
         )
         self.assertIn("status = 'unclaimed'::feed_status", sql)
 
+    def test_record_source_observation_sql_clears_stale_reason_when_active(
+        self,
+    ) -> None:
+        sql = _sql_without_comments(feed_queries.RECORD_SOURCE_OBSERVATION_SQL)
+
+        self.assertIn("failure_count = 0", sql)
+        self.assertIn(
+            "last_bookmark_time = GREATEST(last_bookmark_time, $4)",
+            sql,
+        )
+        self.assertIn("status_reason = NULL", sql)
+        self.assertIn("current_state.worker_id = $2", sql)
+        self.assertIn("current_state.fencing_token = $3", sql)
+        self.assertIn("current_state.status = 'active'::feed_status", sql)
+        self.assertIn("current_state.worker_id AS current_worker", sql)
+        self.assertIn("current_state.status::text AS current_status", sql)
+        self.assertIn(
+            "current_state.fencing_token AS current_fencing_token",
+            sql,
+        )
+
 
 class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.update_feed_progress."""
@@ -384,6 +508,70 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             args[1:],
             (gcs_path, _FEED_ID, _WORKER_ID, 1, last_bookmark_time),
+        )
+
+
+class TestRecordSourceObservation(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.record_source_observation."""
+
+    async def test_returns_diagnostic_result_when_row_exists(self) -> None:
+        """Diagnostic row identifies whether the source observation was recorded."""
+        resume_position = datetime.datetime(2026, 6, 8, tzinfo=datetime.UTC)
+        pool = make_mock_pool(
+            fetchrow_result={
+                "id": _FEED_ID,
+                "current_worker": _WORKER_ID,
+                "current_status": "active",
+                "current_fencing_token": 1,
+                "recorded": True,
+            },
+        )
+        store = FeedStore(pool)
+
+        result = await store.record_source_observation(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            resume_position,
+        )
+
+        self.assertEqual(
+            result,
+            {
+                "id": _FEED_ID,
+                "current_worker": _WORKER_ID,
+                "current_status": "active",
+                "current_fencing_token": 1,
+                "recorded": True,
+            },
+        )
+        args = pool.fetchrow.call_args[0]
+        self.assertEqual(
+            args[1:],
+            (_FEED_ID, _WORKER_ID, 1, resume_position),
+        )
+
+    async def test_returns_missing_diagnostic_when_row_absent(self) -> None:
+        """Missing feed rows are returned as a non-recorded diagnostic result."""
+        pool = make_mock_pool(fetchrow_result=None)
+        store = FeedStore(pool)
+
+        result = await store.record_source_observation(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            None,
+        )
+
+        self.assertEqual(
+            result,
+            {
+                "id": _FEED_ID,
+                "current_worker": None,
+                "current_status": None,
+                "current_fencing_token": None,
+                "recorded": False,
+            },
         )
 
 
@@ -647,21 +835,23 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
             {
                 "id": _FEED_ID,
                 "name": "Feed A",
-                "external_id": "ext-id",
                 "source_type": "bcfy_feeds",
                 "last_processed_filename": None,
                 "last_bookmark_time": None,
                 "fencing_token": 1,
+                "failure_count": 0,
+                "status_reason": None,
                 "source_feed_id": "123",
             },
             {
                 "id": _FEED_ID_B,
                 "name": "Feed B",
-                "external_id": "ext-id",
                 "source_type": "bcfy_feeds",
                 "last_processed_filename": "gs://bucket/path",
                 "last_bookmark_time": None,
                 "fencing_token": 1,
+                "failure_count": 2,
+                "status_reason": "source_unreachable",
                 "source_feed_id": None,
             },
         ]
@@ -913,11 +1103,13 @@ class TestBuildAcquireFeedsBatchSql(unittest.TestCase):
             "    WHERE feeds.id = claimed.id\n"
             "    RETURNING feeds.id, feeds.name, feeds.source_type,\n"
             "              feeds.last_processed_filename, feeds.last_bookmark_time,\n"
-            "              feeds.fencing_token\n"
+            "              feeds.fencing_token, feeds.failure_count,\n"
+            "              feeds.status_reason\n"
             ")\n"
             "SELECT leased.id, leased.name, leased.source_type,\n"
             "       leased.last_processed_filename, leased.last_bookmark_time,\n"
-            "       leased.fencing_token, fpi.source_feed_id, fpi.external_id\n"
+            "       leased.fencing_token, leased.failure_count,\n"
+            "       leased.status_reason, fpi.source_feed_id\n"
             "FROM leased\n"
             "JOIN feed_properties fpi ON fpi.feed_id = leased.id\n"
         )
@@ -1006,6 +1198,8 @@ class TestRowToLeasedFeed(unittest.TestCase):
         self.assertEqual(result["name"], "My Feed")
         self.assertEqual(result["source_type"], SourceType.BCFY_FEEDS)
         self.assertEqual(result["fencing_token"], 1)
+        self.assertEqual(result["failure_count"], 0)
+        self.assertIsNone(result["status_reason"])
 
     def test_invalid_source_type_raises(self) -> None:
         bad_row = {**_LEASE_ROW, "source_type": "not_a_real_type"}
@@ -1305,9 +1499,7 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
         pool = make_mock_pool(fetchrow_result=row)
         store = FeedStore(pool)
 
-        result = await store.create_feed(
-            "New Feed", "bcfy_feeds", "123", "ext_123"
-        )
+        result = await store.create_feed("New Feed", "bcfy_feeds", "123")
 
         self.assertEqual(result["id"], _FEED_ID)
         self.assertEqual(result["name"], "New Feed")
@@ -1324,12 +1516,12 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
 
         tags = [{"key": "env", "value": "prod"}]
         result = await store.create_feed(
-            "New Feed", "bcfy_feeds", "123", "ext_123", tags=tags
+            "New Feed", "bcfy_feeds", "123", tags=tags
         )
 
         self.assertEqual(result["tags"], tags)
         args = pool.fetchrow.call_args[0]
-        self.assertEqual(args[5], json.dumps(tags))
+        self.assertEqual(args[4], json.dumps(tags))
 
     async def test_create_feed_invalid_tags(self) -> None:
         """CheckViolationError is raised when DB constraint fails for invalid tags."""
@@ -1341,9 +1533,7 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
 
         tags = [{"invalid": "shape"}]
         with self.assertRaises(asyncpg.CheckViolationError):
-            await store.create_feed(
-                "New Feed", "bcfy_feeds", "123", "ext_123", tags=tags
-            )
+            await store.create_feed("New Feed", "bcfy_feeds", "123", tags=tags)
 
     async def test_raises_value_error_on_failure(self) -> None:
         """ValueError is raised if the DB returns no row."""
@@ -1351,7 +1541,7 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         with self.assertRaises(ValueError):
-            await store.create_feed("New Feed", "bcfy_feeds", "123", "ext_123")
+            await store.create_feed("New Feed", "bcfy_feeds", "123")
 
     async def test_create_feed_invalid_source_type(self) -> None:
         """ValueError is raised when an invalid source type is passed."""
@@ -1363,7 +1553,6 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
                 name="Test Feed",
                 source_type="invalid_type",
                 source_feed_id="src_123",
-                external_id="ext_123",
             )
         self.assertIn("Invalid source type", str(cm.exception))
 
@@ -1421,7 +1610,6 @@ class TestListFeeds(unittest.IsolatedAsyncioTestCase):
                 ),
                 created_at=datetime.datetime(2026, 4, 9, tzinfo=datetime.UTC),
                 source_feed_id="456",
-                external_id="ext_456",
             ),
         ]
         pool = make_mock_pool(fetch_result=rows)
@@ -1470,20 +1658,88 @@ class TestListFeeds(unittest.IsolatedAsyncioTestCase):
 
     async def test_list_feeds_decodes_and_uses_cursor(self) -> None:
         """The next_token parameter is decoded and forwarded as SQL parameters."""
-        pool = make_mock_pool(fetch_result=[])
+        row = _full_feed_row(name="Feed Cursor")
+        pool = make_mock_pool(fetch_result=[row])
         store = FeedStore(pool)
 
         # Generate a token representing a cursor
         cursor_ts = datetime.datetime(2024, 1, 1, 12, 0, 0)
         token = encode_cursor(cursor_ts, _FEED_ID)
 
-        await store.list_feeds(limit=10, next_token=token)
+        result = await store.list_feeds(limit=10, next_token=token)
 
         args = pool.fetch.call_args[0]
-        # Parameters should be (query, cursor_ts, cursor_uid, source_types, statuses, tags_json, limit + 1)
+        # Parameters should be (query, cursor_ts, cursor_uid, source_types, statuses, tags_json, name, limit + 1)
         self.assertEqual(args[1], cursor_ts)
         self.assertEqual(args[2], _FEED_ID)
-        self.assertEqual(args[6], 11)
+        self.assertEqual(args[6], None)
+        self.assertEqual(args[7], 11)
+        self.assertEqual(len(result.feeds), 1)
+        self.assertEqual(result.feeds[0]["name"], "Feed Cursor")
+
+    async def test_list_feeds_with_name_filter(self) -> None:
+        """The name parameter is forwarded to the query, and the matching feed is returned."""
+        row = _full_feed_row(name="My Feed")
+        pool = make_mock_pool(fetch_result=[row])
+        store = FeedStore(pool)
+
+        result = await store.list_feeds(name="My Feed")
+
+        args = pool.fetch.call_args[0]
+        self.assertEqual(args[6], "My Feed")
+        self.assertEqual(len(result.feeds), 1)
+        self.assertEqual(result.feeds[0]["name"], "My Feed")
+
+    async def test_list_feeds_with_source_types_filter(self) -> None:
+        """The source_types parameter is forwarded to the query, and the matching feed is returned."""
+        row = _full_feed_row(name="Feed B", source_type="openmhz")
+        pool = make_mock_pool(fetch_result=[row])
+        store = FeedStore(pool)
+
+        result = await store.list_feeds(source_types=[SourceType.OPENMHZ])
+
+        args = pool.fetch.call_args[0]
+        self.assertEqual(args[3], [SourceType.OPENMHZ])
+        self.assertEqual(len(result.feeds), 1)
+        self.assertEqual(result.feeds[0]["source_type"], SourceType.OPENMHZ)
+
+    async def test_list_feeds_with_statuses_filter(self) -> None:
+        """The statuses parameter is forwarded to the query, and the matching feed is returned."""
+        row = _full_feed_row(name="Feed C", status="active")
+        pool = make_mock_pool(fetch_result=[row])
+        store = FeedStore(pool)
+
+        result = await store.list_feeds(statuses=[FeedStatus.ACTIVE])
+
+        args = pool.fetch.call_args[0]
+        self.assertEqual(args[4], [FeedStatus.ACTIVE])
+        self.assertEqual(len(result.feeds), 1)
+        self.assertEqual(result.feeds[0]["status"], FeedStatus.ACTIVE)
+
+    async def test_list_feeds_with_tags_filter(self) -> None:
+        """The tags parameter is JSON serialized, forwarded to the query, and returned."""
+        tags = [{"key": "region", "value": "West"}]
+        row = _full_feed_row(name="Feed D", tags=json.dumps(tags))
+        pool = make_mock_pool(fetch_result=[row])
+        store = FeedStore(pool)
+
+        result = await store.list_feeds(tags=tags)
+
+        args = pool.fetch.call_args[0]
+        self.assertEqual(args[5], json.dumps(tags))
+        self.assertEqual(len(result.feeds), 1)
+        self.assertEqual(result.feeds[0]["tags"], tags)
+
+    async def test_list_feeds_returns_total_count(self) -> None:
+        """The total filtered count is fetched and returned."""
+        row = _full_feed_row(name="Feed E")
+        pool = make_mock_pool(fetch_result=[row], fetchval_result=42)
+        store = FeedStore(pool)
+
+        result = await store.list_feeds()
+
+        self.assertEqual(result.total, 42)
+        self.assertEqual(pool.fetchval.call_count, 1)
 
 
 class TestDeactivateFeed(unittest.IsolatedAsyncioTestCase):

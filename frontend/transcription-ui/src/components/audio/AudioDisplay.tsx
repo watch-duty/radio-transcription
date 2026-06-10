@@ -16,9 +16,9 @@ import { CustomAlertIcon } from '../common/AlertIcon';
 
 interface AudioDisplayProps {
   transcripts: Transcript[];
-  currentlyPlayingTransmissionId: string | null;
-  highlightedTransmissionId: string | null;
-  onClipClick: (transmissionId: string) => void;
+  currentlyPlayingSegmentId: string | null;
+  highlightedSegmentId: string | null;
+  onClipClick: (segmentId: string) => void;
   userDuration?: string | null;
   isAudioPlaying: boolean;
   onTogglePlayPause: () => void;
@@ -43,7 +43,7 @@ interface TimelineClipProps {
     isHighlighted: boolean;
     hasAlert: boolean;
   };
-  onClipClick: (transmissionId: string) => void;
+  onClipClick: (segmentId: string) => void;
   isDarkTheme: boolean;
   theme: Theme;
 }
@@ -125,8 +125,8 @@ const TimelineClip = React.memo(
 
 export function AudioDisplay({
   transcripts,
-  currentlyPlayingTransmissionId,
-  highlightedTransmissionId,
+  currentlyPlayingSegmentId,
+  highlightedSegmentId,
   onClipClick,
   userDuration,
   isAudioPlaying,
@@ -157,7 +157,7 @@ export function AudioDisplay({
   }, [userDuration]);
 
   const firstTranscript = transcripts[0];
-  const firstTranscriptId = firstTranscript?.transmissionId || null;
+  const firstTranscriptId = firstTranscript?.segmentId || null;
   const firstTranscriptEndTimestamp = firstTranscript?.endTimestamp || null;
 
   // Reset windowEndTime when first transcript changes
@@ -171,22 +171,22 @@ export function AudioDisplay({
     setPrevPlayingId(null); // Force re-check of bounds
   }
 
-  const playingId = currentlyPlayingTransmissionId || null;
+  const playingId = currentlyPlayingSegmentId || null;
 
   // Shift windowEndTime when playing or highlighted transcript goes out of bounds
   if (
     playingId !== prevPlayingId ||
-    highlightedTransmissionId !== prevHighlightedId ||
+    highlightedSegmentId !== prevHighlightedId ||
     (userDuration ?? null) !== prevUserDuration
   ) {
     setPrevPlayingId(playingId);
-    setPrevHighlightedId(highlightedTransmissionId);
+    setPrevHighlightedId(highlightedSegmentId);
     setPrevUserDuration(userDuration ?? null);
 
-    const targetId = highlightedTransmissionId || playingId;
+    const targetId = highlightedSegmentId || playingId;
     if (targetId) {
       const targetTranscript = transcripts.find(
-        (t) => t.transmissionId === targetId
+        (t) => t.segmentId === targetId
       );
       if (targetTranscript) {
         const tStart = new Date(targetTranscript.startTimestamp).getTime();
@@ -244,12 +244,12 @@ export function AudioDisplay({
         const url = getAudioUrl(t.playbackAudioUri);
 
         return {
-          id: t.transmissionId,
+          id: t.segmentId,
           url,
           left,
           width,
-          isAudioPlaying: t.transmissionId === currentlyPlayingTransmissionId,
-          isHighlighted: t.transmissionId === highlightedTransmissionId,
+          isAudioPlaying: t.segmentId === currentlyPlayingSegmentId,
+          isHighlighted: t.segmentId === highlightedSegmentId,
           hasAlert: t.evaluationDecisions && t.evaluationDecisions.length > 0,
         };
       });
@@ -257,8 +257,8 @@ export function AudioDisplay({
     return { startTime, windowDuration, clips };
   }, [
     transcripts,
-    currentlyPlayingTransmissionId,
-    highlightedTransmissionId,
+    currentlyPlayingSegmentId,
+    highlightedSegmentId,
     windowEndTime,
     windowDurationMs,
   ]);
@@ -326,11 +326,12 @@ export function AudioDisplay({
             visibility: transcripts.length > 0 ? 'visible' : 'hidden',
           }}
         >
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Typography key={i} variant="caption" color="text.secondary">
-              {formatTime(startTime + (i / 3) * windowDuration)}
-            </Typography>
-          ))}
+          {formatTime &&
+            Array.from({ length: 4 }).map((_, i) => (
+              <Typography key={i} variant="caption" color="text.secondary">
+                {formatTime(startTime + (i / 3) * windowDuration)}
+              </Typography>
+            ))}
         </Box>
       </Box>
     </Box>

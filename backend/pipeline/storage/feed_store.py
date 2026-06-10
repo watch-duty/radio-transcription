@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import enum
 import json
 import logging
@@ -14,6 +15,7 @@ from backend.pipeline.common.exceptions import (
     FeedNameAlreadyExistsError,
 )
 from backend.pipeline.storage.feed_queries import (
+    COUNT_FEEDS_SQL,
     COUNT_HELD_BY_TYPE_SQL,
     CREATE_FEED_SQL,
     DEACTIVATE_FEED_SQL,
@@ -21,6 +23,7 @@ from backend.pipeline.storage.feed_queries import (
     GET_FEED_SQL,
     LIST_FEEDS_ASC_SQL,
     LIST_FEEDS_DESC_SQL,
+    RECORD_SOURCE_OBSERVATION_SQL,
     RELEASE_FEED_SQL,
     RELEASE_FEEDS_BATCH_SQL,
     RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
@@ -113,12 +116,23 @@ class LeasedFeed(TypedDict):
 
     id: uuid.UUID
     name: str
-    external_id: str
     source_type: SourceType
     last_processed_filename: str | None
     last_bookmark_time: datetime.datetime | None
     fencing_token: int
+    failure_count: int
+    status_reason: FeedStatusReason | None
     source_feed_id: str | None
+
+
+class SourceObservationResult(TypedDict):
+    """Diagnostic result for recording a non-audio source observation."""
+
+    id: uuid.UUID
+    current_worker: uuid.UUID | None
+    current_status: str | None
+    current_fencing_token: int | None
+    recorded: bool
 
 
 class HeartbeatResult(TypedDict):
@@ -139,6 +153,7 @@ class Feed(TypedDict):
     status: FeedStatus
     status_reason: FeedStatusReason | None
     status_reason_updated_at: datetime.datetime | None
+    quarantine_reason: str | None
     failure_count: int
     worker_id: uuid.UUID | None
     last_heartbeat: datetime.datetime | None
@@ -146,7 +161,6 @@ class Feed(TypedDict):
     last_bookmark_time: datetime.datetime | None
     created_at: datetime.datetime
     source_feed_id: str | None
-    external_id: str | None
     tags: list[dict[str, str]] | None
 
 
@@ -154,6 +168,7 @@ class Feed(TypedDict):
 class PaginatedFeeds:
     feeds: list[Feed]
     next_token: str | None
+    total: int
 
 
 class FeedStore:
@@ -237,6 +252,7 @@ class FeedStore:
             status=status,
             status_reason=status_reason,
             status_reason_updated_at=row["status_reason_updated_at"],
+            quarantine_reason=row["quarantine_reason"],
             failure_count=row["failure_count"],
             worker_id=row["worker_id"],
             last_heartbeat=row["last_heartbeat"],
@@ -244,9 +260,23 @@ class FeedStore:
             last_bookmark_time=row["last_bookmark_time"],
             created_at=row["created_at"],
             source_feed_id=row["source_feed_id"],
-            external_id=row["external_id"],
             tags=tags,
         )
+
+    @staticmethod
+    def _parse_status_reason(
+        raw: str | None,
+        *,
+        feed_id: object,
+    ) -> FeedStatusReason | None:
+        """Parse nullable status-reason text from database rows."""
+        if raw is None:
+            return None
+        try:
+            return FeedStatusReason(raw)
+        except ValueError as e:
+            msg = f"Unknown status reason {raw!r} for feed {feed_id}"
+            raise ValueError(msg) from e
 
     def _row_to_leased_feed(self, row: asyncpg.Record) -> LeasedFeed:
         """Convert a claim/lease-path row to a LeasedFeed dict.
@@ -265,11 +295,15 @@ class FeedStore:
         return LeasedFeed(
             id=row["id"],
             name=row["name"],
-            external_id=row["external_id"],
             source_type=source_type,
             last_processed_filename=row["last_processed_filename"],
             last_bookmark_time=row["last_bookmark_time"],
             fencing_token=row["fencing_token"],
+            failure_count=row["failure_count"],
+            status_reason=self._parse_status_reason(
+                row["status_reason"],
+                feed_id=row["id"],
+            ),
             source_feed_id=row["source_feed_id"],
         )
 
@@ -310,6 +344,42 @@ class FeedStore:
             last_bookmark_time,
         )
         return result == "UPDATE 1"
+
+    async def record_source_observation(
+        self,
+        feed_id: uuid.UUID,
+        worker_id: uuid.UUID,
+        fencing_token: int,
+        resume_position: datetime.datetime | None,
+    ) -> SourceObservationResult:
+        """Record a non-audio source success through a fenced diagnostic path.
+
+        This clears stale failure state for an active leased feed without
+        claiming audio progress. If *resume_position* is provided, it advances
+        the source cursor in ``last_bookmark_time``.
+        """
+        row = await self._pool.fetchrow(
+            RECORD_SOURCE_OBSERVATION_SQL,
+            feed_id,
+            worker_id,
+            fencing_token,
+            resume_position,
+        )
+        if row is None:
+            return SourceObservationResult(
+                id=feed_id,
+                current_worker=None,
+                current_status=None,
+                current_fencing_token=None,
+                recorded=False,
+            )
+        return SourceObservationResult(
+            id=row["id"],
+            current_worker=row["current_worker"],
+            current_status=row["current_status"],
+            current_fencing_token=row["current_fencing_token"],
+            recorded=row["recorded"],
+        )
 
     async def renew_heartbeats_batch_diagnostic(
         self,
@@ -644,7 +714,6 @@ class FeedStore:
         name: str,
         source_type: str | SourceType,
         source_feed_id: str,
-        external_id: str,
         tags: list[dict[str, str]] | None = None,
     ) -> Feed:
         """Create a new feed record.
@@ -654,9 +723,6 @@ class FeedStore:
         """
         if not source_feed_id:
             msg = "source_feed_id cannot be empty"
-            raise ValueError(msg)
-        if not external_id:
-            msg = "external_id cannot be empty"
             raise ValueError(msg)
 
         # Validate SourceType
@@ -676,7 +742,6 @@ class FeedStore:
                 name,
                 source_type_str,
                 source_feed_id,
-                external_id,
                 json.dumps(tags or []),
             )
         except asyncpg.exceptions.UniqueViolationError as e:
@@ -708,7 +773,6 @@ class FeedStore:
         self,
         feed_id: uuid.UUID,
         name: str,
-        external_id: str,
         tags: list[dict[str, str]] | None = None,
     ) -> Feed | None:
         """Update an existing feed record.
@@ -716,16 +780,11 @@ class FeedStore:
         Updates the feed in the `feeds` table and its corresponding
         properties in the `feed_properties` table.
         """
-        if not external_id:
-            msg = "external_id cannot be empty"
-            raise ValueError(msg)
-
         try:
             row = await self._pool.fetchrow(
                 UPDATE_FEED_SQL,
                 feed_id,
                 name,
-                external_id,
                 json.dumps(tags or []),
             )
         except asyncpg.exceptions.UniqueViolationError as e:
@@ -766,13 +825,15 @@ class FeedStore:
         limit: int = 100,
         next_token: str | None = None,
         order: SortOrder = SortOrder.DESC,
-        source_types: list[str] | None = None,
-        statuses: list[str] | None = None,
+        source_types: list[SourceType] | None = None,
+        statuses: list[FeedStatus] | None = None,
         tags: list[dict[str, str]] | None = None,
+        name: str | None = None,
     ) -> PaginatedFeeds:
         """List all feeds with keyset pagination and optional filters.
 
-        Retrieves feeds ordered by creation time, using timestamp+ID-based keyset pagination.
+        Retrieves feeds ordered by creation time, using timestamp+ID-based
+        keyset pagination.
         """
         cursor_ts = None
         cursor_uid = None
@@ -786,22 +847,32 @@ class FeedStore:
         if tags:
             tags_json = json.dumps(tags)
 
-        rows = await self._pool.fetch(
+        rows_task = self._pool.fetch(
             query,
             cursor_ts,
             cursor_uid,
             source_types,
             statuses,
             tags_json,
+            name,
             limit + 1,
         )
+        total_task = self._pool.fetchval(
+            COUNT_FEEDS_SQL,
+            source_types,
+            statuses,
+            tags_json,
+            name,
+        )
+
+        rows, total = await asyncio.gather(rows_task, total_task)
 
         rows, new_next_token = get_paginated_results(
             rows, limit, "created_at", "id"
         )
 
         feeds = [self._row_to_feed(row) for row in rows]
-        return PaginatedFeeds(feeds, new_next_token)
+        return PaginatedFeeds(feeds, new_next_token, total)
 
     async def deactivate_feed(self, feed_id: uuid.UUID) -> bool:
         """Deactivate a feed by ID.

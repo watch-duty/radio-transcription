@@ -7,7 +7,7 @@ Two invariants protected here:
    (Icecast, OpenMHZ, bcfy_calls). A PR that adds a 4th or removes one
    fails this test, forcing a conscious update to the SLO spec.
 
-2. Exactly 2 ``# SLO: call_download_failed emit`` markers and exactly 1
+2. Exactly 5 ``# SLO: call_download_failed emit`` markers and exactly 1
    ``# SLO: chunk_ingested emit`` marker exist under
    ``backend/pipeline/ingestion/`` (excluding tests). Zero
    ``call_download_failed`` emits are allowed in icecast or echo.
@@ -26,7 +26,7 @@ _STAMP_MARKER_RE = re.compile(r"# SLO: receipt_time stamp")
 _CALL_DL_FAILED_EMIT_RE = re.compile(r"# SLO: call_download_failed emit")
 _CHUNK_INGESTED_EMIT_RE = re.compile(r"# SLO: chunk_ingested emit")
 _EXPECTED_STAMP_COUNT = 3
-_EXPECTED_CALL_DL_FAILED_EMIT_COUNT = 2
+_EXPECTED_CALL_DL_FAILED_EMIT_COUNT = 5
 _EXPECTED_CHUNK_INGESTED_EMIT_COUNT = 1
 
 
@@ -64,10 +64,11 @@ class TestReceiptTimeStampMarkerCount(unittest.TestCase):
 class TestEmitMarkerCount(unittest.TestCase):
     """Phase 2: emit-site invariant (D-18 + chunk_ingested single site).
 
-    Enforces exactly 2 `# SLO: call_download_failed emit` markers (one in
-    OpenMHZ, one in bcfy_calls) and exactly 1 `# SLO: chunk_ingested emit`
-    marker (inline in collector_runtime._process_feed). A new collector that
-    adds a 3rd call_download_failed emit must consciously update
+    Enforces exactly 5 `# SLO: call_download_failed emit` markers (two in
+    OpenMHZ, two in Fire Notifications, one in bcfy_calls) and exactly 1
+    `# SLO: chunk_ingested emit` marker (inline in
+    collector_runtime._process_feed). A new collector that adds another
+    call_download_failed emit must consciously update
     _EXPECTED_CALL_DL_FAILED_EMIT_COUNT or face this test.
 
     Also asserts ZERO call_download_failed markers in bcfy_feeds/icecast
@@ -94,7 +95,7 @@ class TestEmitMarkerCount(unittest.TestCase):
                 count += len(matches)
         return count, found
 
-    def test_exactly_two_call_download_failed_emit_markers(self) -> None:
+    def test_exactly_three_call_download_failed_emit_markers(self) -> None:
         count, found_files = self._count_matches(
             _CALL_DL_FAILED_EMIT_RE, _INGESTION_DIR
         )
@@ -126,8 +127,7 @@ class TestEmitMarkerCount(unittest.TestCase):
                 f"{_INGESTION_DIR.relative_to(_REPO_ROOT)} (excluding tests/), "
                 f"found {count}. Files: {found_files}. "
                 "The emit lives in collector_runtime._process_feed strictly "
-                "after retry_with_lease_check(update_feed_progress) returns "
-                "ok=True (02-CONTEXT.md D-11 + LOG-01 SC#1)."
+                "after the fenced bookmark and Pub/Sub publish both succeed."
             ),
         )
 

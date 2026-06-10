@@ -1,110 +1,152 @@
-# Watch Duty Radio Transcription Gemini SFT Pipeline
+# Watch Duty Gemini SFT CLI
 
-A re-runnable pipeline for Gemini supervised fine-tuning (Gemini SFT) of
-Watch Duty's emergency-radio transcription model on Vertex AI.
-
-## Subcommands
-
-```
-python pipeline.py build   Build Gemini SFT JSONL from registered datasets
-python pipeline.py tune    Submit Vertex AI Gemini SFT tuning job (--confirm required; ~$90-290/run)
-python pipeline.py eval    Batch-infer and score a Gemini model on the held-out manifest
-python pipeline.py all     build -> tune -> eval in one Gemini SFT invocation
-```
+Gemini supervised fine-tuning is exposed as the packaged `gemini-sft` command
+from the `radio-transcription-model` distribution under `model/`.
 
 ## Runtime
 
-Default local runtime is the repo's lightweight ASR experiment Docker service.
-It mounts the repo at `/workspace` and bootstraps the local `common` package as
-`/workspace/model[scoring,vertex]` on container startup, so the Gemini SFT CLI can
-run without a separate local pip install.
-
-From the repo root:
+The recommended operator runtime is the lightweight ASR Docker service. It
+mounts the repo at `/workspace` and installs `/workspace/model[scoring,vertex]`
+in editable mode on container startup, so notebooks and CLI workflows see live
+package changes.
 
 ```bash
 docker compose -f asr-eval-docker-compose.yml run --rm notebooks-cpu \
-  bash -lc 'cd /workspace/model/scripts/sft && python pipeline.py --help'
+  bash -lc 'gemini-sft --help'
 ```
 
-Use `notebooks-cpu` for Gemini SFT CLI work. The paid tune/eval jobs run remotely on
-Vertex AI, so no local GPU is required. The `notebooks` service remains available for
-GPU-backed notebook workflows that need it.
-
-## Local Installation Fallback
-
-From this directory (`model/scripts/sft/`):
+Local fallback from the repo root:
 
 ```bash
-pip install -e "../../.[scoring,vertex]"
+python3 -m pip install -e "model[scoring,vertex]"
+gemini-sft --help
 ```
 
-Or using uv:
+## Commands
 
 ```bash
-uv pip install -e "../../.[scoring,vertex]"
+gemini-sft prepare --config /path/to/run.toml
+gemini-sft tune --config /path/to/run.toml --confirm
+gemini-sft eval --config /path/to/run.toml
 ```
 
-## Usage
+`prepare` builds Gemini model-input JSONL, copies canonical manifests into the
+run prefix, and runs preflight checks. `tune` submits or resumes the paid Vertex
+SFT job. `eval` runs batch inference and writes WER/CER/keyword summaries.
 
-```bash
-# Build Gemini SFT JSONL for the echo dataset
-python pipeline.py build --datasets echo --round-id 2026-06-01-echo
+There is no compatibility wrapper for the previous script entrypoint.
 
-# Submit a Vertex AI Gemini SFT tuning job (requires --confirm)
-python pipeline.py tune --round-id 2026-06-01-echo \
-  --base-model gemini-2.5-flash --confirm
+## Run Config
 
-# Run evaluation on the tuned Gemini model
-python pipeline.py eval --round-id 2026-06-01-echo
+Real run configs are external inputs and should not be committed. Commit only
+placeholder examples.
 
-# Full Gemini SFT pipeline: build -> tune -> eval
-python pipeline.py all --datasets echo --round-id 2026-06-01-echo \
-  --base-model gemini-2.5-flash --confirm
+`round_id` names the GCS run prefix `gs://<bucket>/sft/runs/<round_id>/`.
+Use a new `round_id` for each experiment; the CLI treats an existing prefix as
+owned by that run and will not overwrite it as a fresh run. `round_id` must be
+a single portable path component: letters, numbers, `.`, `_`, and `-` only.
+
+```toml
+round_id = "YYYY-MM-DD-short-description"
+dataset = "dataset-version-name"
+train_manifest_uri = "gs://your-bucket/path/manifests/canonical/train.jsonl"
+validation_manifest_uri = "gs://your-bucket/path/manifests/canonical/validation.jsonl"
+eval_manifest_uri = "gs://your-bucket/path/manifests/canonical/eval.jsonl"
+
+[gcp]
+project = "your-gcp-project"
+bucket = "your-gcs-bucket"
+location = "us-central1"
+
+[sft]
+base_model = "gemini-3.1-flash-lite"
+epoch_count = 6
+adapter_size = "SIXTEEN"
+learning_rate_multiplier = 1.0
+
+[prompts]
+# Optional inline overrides only.
+# system = "..."
+# user = "..."
 ```
 
-## Datasets
+Supported adapter sizes are `ONE`, `TWO`, `FOUR`, `EIGHT`, and `SIXTEEN`.
+Prompt overrides are inline-only. Local prompt files are intentionally rejected
+because the resolved prompt text is copied into `config.json` for reproducible
+resume/eval runs.
 
-The Gemini SFT pipeline is **Echo-only** - it fine-tunes Gemini on Watch Duty's
-proprietary emergency-radio data. The `datasets.toml` registry registers one dataset
-via the `gcs_manifest` adapter:
+## Data Split Contract
 
-| Name   | Adapter      | License          | Notes |
-|--------|--------------|------------------|-------|
-| `echo` | gcs_manifest | Proprietary (WD) | `train_manifest_uri` requires the Phase 4 cluster-split script |
+The input manifests are canonical row-per-segment JSONL, not Gemini SFT JSONL.
+`prepare` stores those canonical manifests under the run prefix, then derives
+Gemini model-input JSONL only for train and validation.
 
-Note: The Echo `train_manifest_uri` in `datasets.toml` is a placeholder — it must be
-populated after the cluster-split script runs (Phase 4 prerequisite, DESIGN.md #14).
+`validation_manifest_uri` is wired into the Vertex tuning job as the validation
+dataset. `eval_manifest_uri` is held out for reporting and is converted to
+batch-inference requests during `eval`, not during `prepare`.
 
-(The earlier HuggingFace ATC augmentation datasets — atcosim / uwb_atcc / atco2 — and the
-`hf_dataset` adapter were removed to keep the pipeline Echo-only.)
-
-## Cost
-
-- `tune` requires `--confirm` to prevent accidental paid runs.
-- The `$90-290/run` planning ballpark came from the Gemini 2.5 Flash supervised fine-tuning
-  rate: training tokens = dataset tokens x epochs, priced at $5 per 1M training tokens
-  at the time of the estimate. That implies roughly 18-58M billable training tokens for
-  the planned Echo run.
-- Recompute before running with the current
-  [Vertex AI pricing](https://cloud.google.com/vertex-ai/generative-ai/pricing), because
-  Gemini SFT prices vary by model and can change after the README is committed.
-- The `--confirm` gate displays an estimated cost before proceeding.
+`prepare` rejects train/validation and train/eval audio URI overlap. Validation
+and eval may intentionally point at the same manifest for runs where the Vertex
+validation set is also the final reporting set; only training audio must stay
+out of both. `prepare` also runs preflight checks against both train and
+validation Gemini JSONL because malformed validation rows can fail the paid
+Vertex job just like malformed training rows.
 
 ## Records
 
-Per-run records are written to `results/<round-id>/`:
+Authoritative records are written to:
 
-- `config.json` — parameters, dataset URIs, job name, tuned model endpoint
-- `wer_summary.{md,json}` — evaluation metrics (base WER, tuned WER, delta, bootstrap CI)
-- `results/ledger.md` — one-row-per-run summary table
+```text
+gs://<bucket>/sft/runs/<round-id>/
+  run_config.toml
+  config.json
+  status.json
+  manifests/canonical/train.jsonl
+  manifests/canonical/validation.jsonl
+  manifests/canonical/eval.jsonl
+  model_inputs/gemini/train.jsonl
+  model_inputs/gemini/validation.jsonl
+  preflight/report.json
+  tuning/status.json
+  evals/README.txt
+```
 
-Built training JSONL files are NOT git-committed (D-16 governance — they contain proprietary
-Watch Duty Echo transcripts).
+After `eval`, the same prefix also contains batch inference inputs and outputs.
+The tuned paths are present only when eval runs against a tuned endpoint:
+
+```text
+evals/base/input.jsonl
+evals/base/output/
+evals/tuned/input.jsonl
+evals/tuned/output/
+```
+
+Local `results/<round-id>/` files are a mirror/cache only. `config.json` in GCS
+is the durable state machine: if it contains `job_name`, `tune` reattaches to
+that Vertex tuning job instead of submitting another one. Evaluation summaries
+include GCS batch-output paths so WER can be recalculated from raw inference
+results.
+
+## Evaluation Semantics
+
+`eval` can run base-only when `--base-only` is passed or when `config.json` has
+no tuned endpoint. Missing Vertex batch predictions are scored as empty
+hypotheses, which makes them count as full deletions instead of removing those
+segments from the denominator.
+
+Base-model batch inference uses `[gcp].location`. If the tuned endpoint stored
+in `config.json` is a full Vertex resource name, tuned batch inference uses the
+endpoint's own resource location, for example `locations/us`.
 
 ## Prompt Parity
 
-`prompts.py` re-exports `PIPELINE_SYSTEM_PROMPT` / `PIPELINE_USER_PROMPT` from
-`common.prompts` (`GEMINI_TRANSCRIBE_*`) — the single canonical source it shares with
-`model/colabs/gemini_transcribe_audio.ipynb` and the `eval` stage's request builder
-(`common.vertex.build_request`). A drift-guard test asserts both sides import from
-`common`, so the prompt and inference setup can't silently diverge.
+Gemini prompts live in `common.gemini.prompts`. Gemini request construction,
+Vertex tuning, batch inference, and batch-output parsing live in
+`common.gemini.vertex`. Drift-guard tests enforce that the SFT workflow and
+maintained Gemini eval notebook import the same helpers.
+
+## Verification
+
+Unit tests mock GCS and Vertex boundaries. They must not submit paid Vertex
+tuning jobs, run Vertex batch inference, execute notebooks, or run end-to-end
+evals.

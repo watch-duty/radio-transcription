@@ -3,11 +3,14 @@
 Exposes get_transcriber using standard statically-typed imports from sibling modules.
 """
 
-from backend.pipeline.normalization.common.enums import TranscriberType
+from backend.pipeline.transcription.enums import TranscriberType
 from backend.pipeline.transcription.transcribers.base import Transcriber
 from backend.pipeline.transcription.transcribers.chirp import (
     ChirpConfig,
     GoogleChirpV3Transcriber,
+)
+from backend.pipeline.transcription.transcribers.local_api import (
+    LocalApiTranscriber,
 )
 from backend.pipeline.transcription.transcribers.mock import (
     MockConfig,
@@ -39,5 +42,7 @@ def get_transcriber(
         )
     if transcriber_type == TranscriberType.MOCK:
         return MockTranscriber(MockConfig.from_json(config_json))
+    if transcriber_type == TranscriberType.LOCAL_WHISPER:
+        return LocalApiTranscriber()
     msg = f"Unknown transcriber type: {transcriber_type}"
     raise ValueError(msg)

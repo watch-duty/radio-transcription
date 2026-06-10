@@ -21,11 +21,10 @@ class TestEvaluationService(unittest.TestCase):
         )
 
         self.transcribed_audio = transcribed_pb2.TranscribedAudio()
-        self.transcribed_audio.transmission_id = "12345"
+        self.transcribed_audio.segment_id = "12345"
         self.transcribed_audio.transcript = "There is a fire"
         self.transcribed_audio.feed_id = "1234"
         self.transcribed_audio.feed_name = "Central Fire"
-        self.transcribed_audio.external_id = "ext-id"
         self.transcribed_audio.source_audio_uris.append("chunk_1")
         self.transcribed_audio.start_timestamp.seconds = 1234567890
         self.transcribed_audio.start_timestamp.nanos = 0
@@ -47,8 +46,8 @@ class TestEvaluationService(unittest.TestCase):
         self.assertIsNotNone(result_proto)
         assert result_proto is not None
         self.assertEqual(result_proto.feed_name, "Central Fire")
-        self.assertEqual(result_proto.external_id, "ext-id")
-        self.assertEqual(result_proto.transmission_id, "12345")
+
+        self.assertEqual(result_proto.segment_id, "12345")
         self.assertEqual(result_proto.transcript, "There is a fire")
         self.assertEqual(
             list(result_proto.evaluation_decisions), ["basic_fire_terms"]
@@ -66,7 +65,7 @@ class TestEvaluationService(unittest.TestCase):
         self.mock_evaluator.evaluate.assert_called()
         self.assertIsNotNone(result_proto)
         assert result_proto is not None
-        self.assertEqual(result_proto.transmission_id, "12345")
+        self.assertEqual(result_proto.segment_id, "12345")
         self.assertEqual(len(result_proto.evaluation_decisions), 0)
 
     def test_return_payload_on_proto_error(self) -> None:

@@ -1,7 +1,7 @@
 import io
 import json
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 import urllib3
 from urllib3.response import HTTPResponse
@@ -134,10 +134,11 @@ class TestRemoteTextEvaluator(unittest.TestCase):
 
         text = "This is a test message."
         result = self.remote_evaluator.evaluate(text, feed_id="test_feed")
-
         self.assertTrue(result["is_flagged"])
         self.assertIn("test_rule_1", result["triggered_rules"])
-        mock_get.assert_called_with(f"{self.api_url}/v1/rules", timeout=10)
+        mock_get.assert_called_with(
+            f"{self.api_url}/v1/rules", headers=ANY, timeout=10
+        )
 
         # Verify Authorization header was set
         self.assertEqual(

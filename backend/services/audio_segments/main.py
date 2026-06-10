@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Annotated
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 
 from backend.pipeline.common.auth import verify_oidc_token
+from backend.pipeline.common.fastapi_tracing import setup_fastapi_tracing
 from backend.pipeline.storage.audio_segment_store import (
     AudioSegmentStore,
     SortOrder,
@@ -49,6 +50,7 @@ app = FastAPI(
     lifespan=lifespan,
     dependencies=[Depends(verify_oidc_token)],
 )
+setup_fastapi_tracing(app, service_name="audio-segments-service")
 
 
 @app.get(
