@@ -43,6 +43,7 @@ describe('listAudioSegments', () => {
           start_audio_offset: 'PT5S',
           end_audio_offset: 'PT10S',
           playback_audio_uri: 'https://example.com/playback.mp3',
+          external_audio_segment_id: 'test-external-id',
           created_at: '2026-01-01T10:02:00Z',
           annotations: [
             {
@@ -75,6 +76,7 @@ describe('listAudioSegments', () => {
           startAudioOffset: 'PT5S',
           endAudioOffset: 'PT10S',
           playbackAudioUri: 'https://example.com/playback.mp3',
+          externalAudioSegmentId: 'test-external-id',
           createdAt: '2026-01-01T10:02:00Z',
           annotations: [
             {

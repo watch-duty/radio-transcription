@@ -37,6 +37,7 @@ export interface AudioSegment {
   startAudioOffset?: string;
   endAudioOffset?: string;
   playbackAudioUri?: string;
+  externalAudioSegmentId?: string;
   createdAt: string;
   annotations: Annotation[];
 }

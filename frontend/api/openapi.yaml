@@ -505,6 +505,8 @@ components:
           type: string
         playbackAudioUri:
           type: string
+        externalAudioSegmentId:
+          type: string
         createdAt:
           type: string
         annotations:
