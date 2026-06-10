@@ -190,26 +190,39 @@ def send_notification(cloud_event: CloudEvent) -> None:
         deduplication = container.get_deduplication()
         if not deduplication.process_notification(notification_id):
             message = f"Duplicate segment_id detected, skipping notification with ID: {notification_id}"
-            logger.warning(message)
+            logger.info(message)
             return
 
-        # Fetch tags from feeds API
-        feeds_client = container.get_feeds_client()
-        tags = feeds_client.get_feed_tags(evaluated_transcribed_audio.feed_id)
-
-        # Convert the EvaluatedTranscribedAudio into an AlertNotifcation
-        alert_notification = convert_to_notification(
-            evaluated_transcribed_audio,
-            tags,
-            container.app_url,
-        )
-
-        # Send a POST request to the endpoint
         try:
-            request_handler = container.get_request_handler()
-            request_handler.send_notification(alert_notification)
-        except NonRetryableError:
-            logger.exception(
-                "Failed to send notification for audio segment (segment_id: %s) due to client (4xx) error. Message will not be retried.",
-                notification_id,
+            # Fetch tags from feeds API
+            feeds_client = container.get_feeds_client()
+            tags = feeds_client.get_feed_tags(
+                evaluated_transcribed_audio.feed_id
             )
+
+            # Convert the EvaluatedTranscribedAudio into an AlertNotifcation
+            alert_notification = convert_to_notification(
+                evaluated_transcribed_audio,
+                tags,
+                container.app_url,
+            )
+
+            # Send a POST request to the endpoint
+            try:
+                request_handler = container.get_request_handler()
+                request_handler.send_notification(alert_notification)
+            except NonRetryableError:
+                logger.exception(
+                    "Failed to send notification for audio segment (segment_id: %s) due to client (4xx) error. Message will not be retried.",
+                    notification_id,
+                )
+        except Exception:
+            try:
+                deduplication.clear_notification(notification_id)
+            except Exception as e:
+                logger.exception(
+                    "Failed to clear deduplication key for segment_id: %s: %s",
+                    notification_id,
+                    e,
+                )
+            raise

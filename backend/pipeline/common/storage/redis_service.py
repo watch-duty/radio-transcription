@@ -50,3 +50,9 @@ class RedisService(CacheProvider):
         or False if does.
         """
         return bool(self.client.set(key, value, nx=True, ex=ttl))
+
+    def delete(self, key: str) -> bool:
+        """
+        Delete a key from the Redis instance. Returns True if deleted, False otherwise.
+        """
+        return bool(self.client.delete(key))
