@@ -1,5 +1,7 @@
 import logging
 
+from google.protobuf.duration_pb2 import Duration  # type: ignore
+
 from backend.pipeline.evaluation.rules_evaluation import evaluator
 from backend.pipeline.schema_types import (
     evaluated_transcribed_audio_pb2 as evaluated_pb2,
@@ -9,6 +11,18 @@ from backend.pipeline.schema_types import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_duration(duration: Duration) -> None:
+    """Safeguards protobuf Duration from sign mismatch or negative offsets."""
+    if (
+        duration.seconds < 0
+        or duration.nanos < 0
+        or (duration.seconds > 0 and duration.nanos < 0)
+        or (duration.seconds < 0 and duration.nanos > 0)
+    ):
+        duration.seconds = 0
+        duration.nanos = 0
 
 
 class EvaluationService:
@@ -44,6 +58,10 @@ class EvaluationService:
             The evaluated payload or None if processing was skipped.
         """
         try:
+            # Safeguard offset durations against sign mismatches (e.g. from negative timedeltas)
+            _sanitize_duration(new_audio.start_audio_offset)
+            _sanitize_duration(new_audio.end_audio_offset)
+
             segment_id = new_audio.segment_id
             logger.info("Processing transmission ID: %s", segment_id)
 
