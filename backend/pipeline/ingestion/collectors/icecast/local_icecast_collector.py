@@ -47,11 +47,12 @@ async def run_local_capture() -> None:
     feed: LeasedFeed = {
         "id": uuid.uuid4(),
         "name": "local-icecast-test",
-        "external_id": "ext-id",
         "source_type": SourceType.BCFY_FEEDS,
         "last_processed_filename": None,
         "last_bookmark_time": None,
         "fencing_token": 0,
+        "failure_count": 0,
+        "status_reason": None,
         "source_feed_id": source_feed_id,
     }
     shutdown_event = asyncio.Event()

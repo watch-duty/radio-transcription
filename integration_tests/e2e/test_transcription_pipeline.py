@@ -5,7 +5,7 @@ import uuid
 
 from google.cloud import pubsub_v1
 
-from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
+from backend.pipeline.schema_types.continuous_audio_pb2 import ContinuousAudio
 from integration_tests.feed_utils import create_test_bcfy_feed  # noqa: F401
 from integration_tests.test_utils import verify_transcript_in_db
 
@@ -18,9 +18,9 @@ def _publish_and_verify(
     feed_name: str,
     audio_filename: str,
 ) -> bool:
-    # Construct AudioChunk message
+    # Construct ContinuousAudio message
     staging_bucket = os.environ["AUDIO_STAGING_BUCKET"]
-    chunk = AudioChunk(
+    chunk = ContinuousAudio(
         feed_id=feed_id,
         session_id=str(uuid.uuid4()),
         gcs_uri=f"gs://{staging_bucket}/{audio_filename}",

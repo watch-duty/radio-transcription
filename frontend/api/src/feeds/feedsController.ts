@@ -1,13 +1,17 @@
 import type {
   BackendFeedStatus,
+  BackendFeedStatusReason,
   Feed,
   FeedCreate,
-  FeedStatus,
   FeedUpdate,
   ListFeedsResponse,
   Tag,
 } from '@transcription/common';
-import { SourceType } from '@transcription/common';
+import {
+  SourceType,
+  convertFeedStatusBackend,
+  convertFeedStatusReason,
+} from '@transcription/common';
 import {
   Body,
   Controller,
@@ -36,21 +40,20 @@ interface BaseFeedBackend {
 interface FeedBackend extends BaseFeedBackend {
   id: string;
   source_feed_id: string;
-  external_id: string;
   status: BackendFeedStatus;
   last_heartbeat: string | null;
   tags?: Tag[];
+  quarantine_reason: string | null;
+  status_reason: BackendFeedStatusReason | null;
 }
 
 interface FeedCreateBackend extends BaseFeedBackend {
   source_feed_id: string;
-  external_id: string;
   tags?: Tag[];
 }
 
 interface FeedUpdateBackend {
   name: string;
-  external_id: string;
   tags?: Tag[];
 }
 
@@ -65,11 +68,13 @@ export class ListFeedsQueryParams {
   statuses?: string;
   // Tag strings must be in the format of {"key": "<val>", "value": "<val>"}
   tags?: string[];
+  name?: string;
 }
 
 interface ListFeedsBackendResponse {
   feeds: FeedBackend[];
   next_token?: string;
+  total: number;
 }
 
 function getSourceUrl(
@@ -87,10 +92,10 @@ function getSourceUrl(
     case SourceType.ECHO:
       return undefined;
     case SourceType.FIRE_NOTIFICATIONS: {
-      const dir = sourceFeedId.startsWith('/')
-        ? sourceFeedId
-        : `/${sourceFeedId}`;
-      return `https://audioplay.textmefires.info/audioplay/folder_play?dir=${dir}`;
+      const cleanSourceId = sourceFeedId.startsWith('/')
+        ? sourceFeedId.slice(1)
+        : sourceFeedId;
+      return `https://audioplay.textmefires.info/audioplay/folder_play?dir=${encodeURIComponent(cleanSourceId)}`;
     }
     default:
       return undefined;
@@ -124,32 +129,20 @@ function getArchiveUrl(
   }
 }
 
-function convertFeedStatusBackend(status: BackendFeedStatus): FeedStatus {
-  switch (status) {
-    case 'active':
-      return 'active';
-    case 'quarantined':
-    case 'failing':
-      return 'error';
-    case 'deactivated':
-    default:
-      return 'inactive';
-  }
-}
-
 function convertFeedBackend(response: FeedBackend): Feed {
   return {
     id: response.id,
     name: response.name,
     sourceType: response.source_type,
     sourceFeedId: response.source_feed_id,
-    externalId: response.external_id,
     sourceUrl: getSourceUrl(response.source_type, response.source_feed_id),
     archiveUrl: getArchiveUrl(response.source_type, response.source_feed_id),
     status: convertFeedStatusBackend(response.status),
     substatus: response.status,
     lastHeartbeat: response.last_heartbeat ?? undefined,
     tags: response.tags,
+    quarantineReason: response.quarantine_reason ?? undefined,
+    statusReason: convertFeedStatusReason(response.status_reason),
   };
 }
 
@@ -158,7 +151,6 @@ function convertFeedCreate(create: FeedCreate): FeedCreateBackend {
     name: create.name,
     source_type: create.sourceType,
     source_feed_id: create.sourceFeedId,
-    external_id: create.externalId,
     tags: create.tags,
   };
 }
@@ -166,7 +158,6 @@ function convertFeedCreate(create: FeedCreate): FeedCreateBackend {
 function convertFeedUpdate(update: FeedUpdate): FeedUpdateBackend {
   return {
     name: update.name,
-    external_id: update.externalId,
     tags: update.tags,
   };
 }
@@ -200,6 +191,9 @@ export class FeedsController extends Controller {
           queryParams.append('tags', tag);
         }
       }
+      if (query?.name) {
+        queryParams.append('name', query.name);
+      }
 
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       const response = await client.request<
@@ -217,6 +211,7 @@ export class FeedsController extends Controller {
         : {
             feeds: data.feeds.map(convertFeedBackend),
             nextToken: data.next_token,
+            total: data.total,
           };
     } catch (error: unknown) {
       const { status, message } = handleBackendError(error, 'fetching feeds');

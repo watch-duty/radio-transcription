@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import datetime  # noqa: TC003
 import uuid  # noqa: TC003
+from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from backend.pipeline.storage.feed_store import (  # noqa: TC001
     FeedStatus,
+    FeedStatusReason,
     SourceType,
 )
 
@@ -26,22 +28,53 @@ class Tag(BaseModel):
 class FeedBase(BaseModel):
     name: str
     source_type: SourceType
-
-
-class FeedCreate(FeedBase):
-    # ID for each given data source.
-    # For Broadcastify Feeds, it would be the last part of
-    # https://partner.broadcastify.com/<FEED_ID>.
-    # For Echo, it would be the first part of
-    # <CHANNEL_NAME>/20260406/Santa_Clara_Co_Fire_Disp_20260406_102306.mp3.
-    source_feed_id: str
-    external_id: str
     tags: list[Tag] | None = None
+
+
+class BcfyFeedsCreate(FeedBase):
+    source_type: Literal[SourceType.BCFY_FEEDS]
+    # Broadcastify feed ID (e.g., "12345")
+    source_feed_id: str = Field(pattern=r"^\d+$")
+
+
+class BcfyCallsCreate(FeedBase):
+    source_type: Literal[SourceType.BCFY_CALLS]
+    # Broadcastify Calls ID: sid-talkgroup (e.g., "123-456")
+    source_feed_id: str = Field(pattern=r"^\d+-\d+$")
+
+
+class EchoCreate(FeedBase):
+    source_type: Literal[SourceType.ECHO]
+    # Echo feed ID (e.g., "feed-123_abc")
+    source_feed_id: str = Field(pattern=r"^[a-zA-Z0-9_-]+$")
+
+
+class FireNotificationsCreate(FeedBase):
+    source_type: Literal[SourceType.FIRE_NOTIFICATIONS]
+    # Fire notification feed ID (e.g., "FIRE/DEPT-1(A)_B")
+    source_feed_id: str = Field(pattern=r"^[A-Z0-9_\-/()]+$")
+
+
+class OpenMhzCreate(FeedBase):
+    source_type: Literal[SourceType.OPENMHZ]
+    # OpenMHZ feed ID (e.g., "open_mhz_456")
+    source_feed_id: str = Field(pattern=r"^\w+$")
+
+
+FeedCreate = Annotated[
+    Union[
+        BcfyFeedsCreate,
+        BcfyCallsCreate,
+        EchoCreate,
+        FireNotificationsCreate,
+        OpenMhzCreate,
+    ],
+    Field(discriminator="source_type"),
+]
 
 
 class FeedUpdate(BaseModel):
     name: str
-    external_id: str
     tags: list[Tag] | None = None
 
     model_config = ConfigDict(extra="forbid")
@@ -50,10 +83,10 @@ class FeedUpdate(BaseModel):
 class Feed(FeedBase):
     id: uuid.UUID
     source_feed_id: str
-    external_id: str
     status: FeedStatus
     last_heartbeat: datetime.datetime | None
-    tags: list[Tag] | None = None
+    quarantine_reason: str | None = None
+    status_reason: FeedStatusReason | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -61,3 +94,4 @@ class Feed(FeedBase):
 class ListFeedsResponse(BaseModel):
     feeds: list[Feed]
     next_token: str | None = None
+    total: int

@@ -10,7 +10,8 @@ message TimeRangeProto {
 
 message FeedMetadataProto {
   string feed_name = 1;
-  string external_id = 2;
+  reserved 2;
+  reserved "external_id";
 }
 
 message BufferedChunkProto {
@@ -27,6 +28,8 @@ message ChunkMetadataProto {
   FeedMetadataProto feed_metadata = 4;
   optional string traceparent = 5;
   bool is_continuous = 6;
+  // True recording event timestamp of the incoming audio chunk in milliseconds since epoch.
+  optional int64 timestamp_ms = 7;
 }
 
 message FlushRequestProto {
@@ -35,7 +38,8 @@ message FlushRequestProto {
   string session_id = 3;
   repeated string contributing_audio_uris = 4;
   TimeRangeProto time_range = 5;
-  string transmission_id = 6;
+  reserved 6;
+  reserved "transmission_id";
   FeedMetadataProto feed_metadata = 7;
   int32 sample_rate = 8;
   bool missing_prior_context = 9;
@@ -44,6 +48,13 @@ message FlushRequestProto {
   optional int64 end_audio_offset_ms = 12;
   repeated TimeRangeProto speech_segments = 13;
   optional string traceparent = 14;
+  enum AudioClassification {
+    AUDIO_CLASSIFICATION_UNSPECIFIED = 0;
+    AUDIO_CLASSIFICATION_SPEECH = 1;
+    AUDIO_CLASSIFICATION_NO_SPEECH = 2;
+  }
+  AudioClassification audio_classification = 15;
+  string segment_id = 16;
 }
 
 // Persistent State Checkpoints

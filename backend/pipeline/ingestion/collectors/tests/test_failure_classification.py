@@ -5,12 +5,13 @@ from __future__ import annotations
 import unittest
 
 from backend.pipeline.ingestion.collectors.failure_classification import (
+    FailureClassification,
     ItemBatchOutcome,
     ItemFailure,
     collector_failure,
     missing_source_feed_id_failure,
 )
-from backend.pipeline.ingestion.models import CollectorFailure
+from backend.pipeline.ingestion.models import FeedFailure
 from backend.pipeline.storage.feed_store import FeedStatusReason
 
 
@@ -24,6 +25,32 @@ def _require_item_failure(value: ItemFailure | None) -> ItemFailure:
 
 class TestItemBatchOutcome(unittest.TestCase):
     """Shared item-failure promotion rules."""
+
+    def test_failure_classification_preserves_fields(self) -> None:
+        classification = FailureClassification(
+            FeedStatusReason.SOURCE_UNREACHABLE,
+            "download_failed",
+        )
+
+        self.assertIs(
+            classification.status_reason,
+            FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+        self.assertEqual(classification.reason, "download_failed")
+
+    def test_item_failure_from_classification_copies_fields(self) -> None:
+        classification = FailureClassification(
+            FeedStatusReason.SOURCE_UNREACHABLE,
+            "download_failed",
+        )
+
+        failure = ItemFailure.from_classification(classification)
+
+        self.assertIs(
+            failure.status_reason,
+            FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+        self.assertEqual(failure.reason, "download_failed")
 
     def test_item_failure_preserves_status_reason_and_reason(self) -> None:
         failure = ItemFailure(
@@ -122,7 +149,7 @@ class TestItemBatchOutcome(unittest.TestCase):
             "source_unreachable",
         )
 
-        self.assertIsInstance(result, CollectorFailure)
+        self.assertIsInstance(result, FeedFailure)
         self.assertIs(
             result.status_reason,
             FeedStatusReason.SOURCE_UNREACHABLE,
@@ -132,7 +159,7 @@ class TestItemBatchOutcome(unittest.TestCase):
     def test_missing_source_feed_id_failure(self) -> None:
         result = missing_source_feed_id_failure()
 
-        self.assertIsInstance(result, CollectorFailure)
+        self.assertIsInstance(result, FeedFailure)
         self.assertIs(
             result.status_reason,
             FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,

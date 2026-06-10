@@ -8,8 +8,11 @@ message AlertNotification {
   // The unique identifier of the radio feed this transmission originated from (formatted as a RFC 4122 UUID).
   string feed_id = 1;
 
-  // A unique, deterministic identifier for this specific transmission (formatted as a RFC 4122 UUID).
-  string transmission_id = 2;
+  reserved 2;
+  reserved "transmission_id";
+
+  // A unique, deterministic identifier for this specific segment (formatted as a RFC 4122 UUID).
+  string segment_id = 19;
 
 
   // --- Content ---
@@ -60,8 +63,8 @@ message AlertNotification {
   // The human-readable name of the radio feed as stored in the database.
   string feed_name = 15;
 
-  // The ID used to map the feed ID within the application.
-  string external_id = 16;
+  reserved 16;
+  reserved "external_id";
 
   message Tag {
     string key = 1;

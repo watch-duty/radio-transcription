@@ -4,11 +4,9 @@
 class AlreadyExistsError(Exception):
     """Raised when a resource already exists."""
 
-    def __init__(self, transmission_id: str) -> None:
-        self.transmission_id = transmission_id
-        super().__init__(
-            f"Transcript for transmission {transmission_id} already exists"
-        )
+    def __init__(self, segment_id: str) -> None:
+        self.segment_id = segment_id
+        super().__init__(f"Transcript for segment {segment_id} already exists")
 
 
 class FeedAlreadyExistsError(Exception):
@@ -28,3 +26,7 @@ class FeedNameAlreadyExistsError(Exception):
     def __init__(self, name: str) -> None:
         self.name = name
         super().__init__(f"Feed with name '{name}' already exists")
+
+
+class NonRetryableError(Exception):
+    """Exception raised for non-retryable errors that should not trigger a message retry."""

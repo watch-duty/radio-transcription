@@ -25,7 +25,7 @@
     "@react-oauth/google": "^0.13.4",
     "@tanstack/react-query": "^5.99.0",
     "@toolpad/core": "^0.16.0",
-    "@transcription/common": "file:../common",
+    "@transcription/common": "link:../common",
     "@wavesurfer/react": "^1.0.12",
     "date-fns": "^4.1.0",
     "howler": "^2.2.4",

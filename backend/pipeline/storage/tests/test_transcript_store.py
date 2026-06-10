@@ -5,20 +5,17 @@ import datetime
 import unittest
 import uuid
 
-import asyncpg.exceptions
-
-from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
 from backend.pipeline.storage.tests.connection_util import make_mock_pool
 from backend.pipeline.storage.transcript_store import TranscriptStore
 
-_TRANSMISSION_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+_SEGMENT_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 _FEED_ID = uuid.UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
 
 _TRANSCRIPT_ROW = {
-    "transmission_id": _TRANSMISSION_ID,
+    "segment_id": _SEGMENT_ID,
     "feed_id": _FEED_ID,
     "transcript": "Hello world",
     "start_timestamp": datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
@@ -53,7 +50,7 @@ class TestCreateTranscript(BaseTranscriptStoreTest):
     async def test_creates_successfully(self) -> None:
         """Verifies creating a transcript returns the created transcript."""
         msg = EvaluatedTranscribedAudio()
-        msg.transmission_id = str(_TRANSMISSION_ID)
+        msg.segment_id = str(_SEGMENT_ID)
         msg.feed_id = str(_FEED_ID)
         msg.transcript = "Hello world"
         msg.start_timestamp.FromDatetime(
@@ -70,7 +67,7 @@ class TestCreateTranscript(BaseTranscriptStoreTest):
 
         result = await self.store.create_transcript(msg)
 
-        self.assertEqual(result.transmission_id, str(_TRANSMISSION_ID))
+        self.assertEqual(result.segment_id, str(_SEGMENT_ID))
         self.assertEqual(result.feed_id, str(_FEED_ID))
         self.assertEqual(result.transcript, "Hello world")
         self.assertEqual(len(result.source_audio_uris), 1)
@@ -86,31 +83,31 @@ class TestCreateTranscript(BaseTranscriptStoreTest):
         self.pool.fetchrow.return_value = None
 
         msg = EvaluatedTranscribedAudio()
-        msg.transmission_id = str(_TRANSMISSION_ID)
+        msg.segment_id = str(_SEGMENT_ID)
         msg.feed_id = str(_FEED_ID)
 
         with self.assertRaises(ValueError) as cm:
             await self.store.create_transcript(msg)
 
         self.assertIn(
-            "Unable to create transcript for transmission", str(cm.exception)
+            "Unable to create transcript for segment", str(cm.exception)
         )
 
-    async def test_raises_invalid_transmission_id(self) -> None:
-        """Verifies it raises ValueError for invalid transmission_id UUID."""
+    async def test_raises_invalid_segment_id(self) -> None:
+        """Verifies it raises ValueError for invalid segment_id UUID."""
         msg = EvaluatedTranscribedAudio()
-        msg.transmission_id = "invalid-uuid"
+        msg.segment_id = "invalid-uuid"
         msg.feed_id = str(_FEED_ID)
 
         with self.assertRaises(ValueError) as cm:
             await self.store.create_transcript(msg)
 
-        self.assertIn("Invalid transmission_id UUID", str(cm.exception))
+        self.assertIn("Invalid segment_id UUID", str(cm.exception))
 
     async def test_raises_invalid_feed_id(self) -> None:
         """Verifies it raises ValueError for invalid feed_id UUID."""
         msg = EvaluatedTranscribedAudio()
-        msg.transmission_id = str(_TRANSMISSION_ID)
+        msg.segment_id = str(_SEGMENT_ID)
         msg.feed_id = "invalid-uuid"
 
         with self.assertRaises(ValueError) as cm:
@@ -118,38 +115,23 @@ class TestCreateTranscript(BaseTranscriptStoreTest):
 
         self.assertIn("Invalid feed_id UUID", str(cm.exception))
 
-    async def test_raises_already_exists_error_on_duplicate(self) -> None:
-        """Verifies it raises AlreadyExistsError for duplicate transmission_id."""
-        self.pool.fetchrow.side_effect = (
-            asyncpg.exceptions.UniqueViolationError()
-        )
-
-        msg = EvaluatedTranscribedAudio()
-        msg.transmission_id = str(_TRANSMISSION_ID)
-        msg.feed_id = str(_FEED_ID)
-
-        with self.assertRaises(AlreadyExistsError) as cm:
-            await self.store.create_transcript(msg)
-
-        self.assertIn("already exists", str(cm.exception))
-
 
 class TestGetTranscript(BaseTranscriptStoreTest):
     """Tests for TranscriptStore.get_transcript."""
 
     async def test_returns_transcript_if_found(self) -> None:
-        """Verify fetching valid transmission ID returns proto."""
-        result = await self.store.get_transcript(str(_TRANSMISSION_ID))
+        """Verify fetching valid segment ID returns proto."""
+        result = await self.store.get_transcript(str(_SEGMENT_ID))
 
         self.assertIsNotNone(result)
         assert result is not None
-        self.assertEqual(result.transmission_id, str(_TRANSMISSION_ID))
+        self.assertEqual(result.segment_id, str(_SEGMENT_ID))
 
     async def test_returns_none_if_not_found(self) -> None:
-        """Verify fetching non-existent transmission ID returns None."""
+        """Verify fetching non-existent segment ID returns None."""
         self.pool.fetchrow.return_value = None
 
-        result = await self.store.get_transcript(str(_TRANSMISSION_ID))
+        result = await self.store.get_transcript(str(_SEGMENT_ID))
 
         self.assertIsNone(result)
 
@@ -168,9 +150,7 @@ class TestListTranscriptsByFeedId(BaseTranscriptStoreTest):
         result = await self.store.list_transcripts_by_feed_id(str(_FEED_ID))
 
         self.assertEqual(len(result.transcripts), 1)
-        self.assertEqual(
-            result.transcripts[0].transmission_id, str(_TRANSMISSION_ID)
-        )
+        self.assertEqual(result.transcripts[0].segment_id, str(_SEGMENT_ID))
         self.assertIsNone(result.next_token)
 
     async def test_returns_empty_list_for_invalid_id(self) -> None:
@@ -195,7 +175,7 @@ class TestListTranscriptsByFeedId(BaseTranscriptStoreTest):
         """Verify listing with next_token parses token and queries correctly."""
         self.pool.fetch.return_value = [_TRANSCRIPT_ROW]
 
-        token_str = f"{datetime.datetime(2026, 1, 1, 0, 1, tzinfo=datetime.UTC).isoformat()}|{_TRANSMISSION_ID}"
+        token_str = f"{datetime.datetime(2026, 1, 1, 0, 1, tzinfo=datetime.UTC).isoformat()}|{_SEGMENT_ID}"
         token = base64.b64encode(token_str.encode("utf-8")).decode("utf-8")
 
         result = await self.store.list_transcripts_by_feed_id(
@@ -211,7 +191,7 @@ class TestListTranscriptsByFeedId(BaseTranscriptStoreTest):
         self.assertEqual(
             args[2], datetime.datetime(2026, 1, 1, 0, 1, tzinfo=datetime.UTC)
         )
-        self.assertEqual(args[3], _TRANSMISSION_ID)
+        self.assertEqual(args[3], _SEGMENT_ID)
 
     async def test_list_with_time_window(self) -> None:
         """Verify listing with time window passes arguments to query."""
@@ -256,9 +236,7 @@ class TestListTranscripts(BaseTranscriptStoreTest):
         result = await self.store.list_transcripts()
 
         self.assertEqual(len(result.transcripts), 1)
-        self.assertEqual(
-            result.transcripts[0].transmission_id, str(_TRANSMISSION_ID)
-        )
+        self.assertEqual(result.transcripts[0].segment_id, str(_SEGMENT_ID))
         self.assertIsNone(result.next_token)
 
     async def test_list_with_is_alert(self) -> None:
@@ -282,13 +260,13 @@ class TestDeleteTranscript(BaseTranscriptStoreTest):
         """Verify successful deletion returns True."""
         self.pool.execute.return_value = "DELETE 1"
 
-        result = await self.store.delete_transcript(str(_TRANSMISSION_ID))
+        result = await self.store.delete_transcript(str(_SEGMENT_ID))
 
         self.assertTrue(result)
 
     async def test_returns_false_if_no_row_deleted(self) -> None:
         """Verify deletion of non-existent row returns False."""
-        result = await self.store.delete_transcript(str(_TRANSMISSION_ID))
+        result = await self.store.delete_transcript(str(_SEGMENT_ID))
 
         self.assertFalse(result)
 

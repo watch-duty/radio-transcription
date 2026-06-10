@@ -91,7 +91,9 @@ def setup_tracing(
         # Resolve service metadata from environment if not explicitly provided
         if service_name is None:
             service_name = (
-                os.environ.get("K_SERVICE")
+                os.environ.get("DATAFLOW_JOB_NAME")
+                or os.environ.get("JOB_NAME")
+                or os.environ.get("K_SERVICE")
                 or os.environ.get("FUNCTION_TARGET")
                 or "unknown_service"
             )

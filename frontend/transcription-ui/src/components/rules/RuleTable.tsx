@@ -168,7 +168,7 @@ export function RuleTable({
     }));
   };
 
-  const formatConditionsSummary = useCallback(
+  const getConditionsSearchText = useCallback(
     (conditions: RuleConditions): string => {
       if (conditions.evaluationType === 'KEYWORD_MATCH') {
         const caseStr = conditions.caseSensitive ? ' (case-sensitive)' : '';
@@ -199,7 +199,7 @@ export function RuleTable({
         const nameMatches = rule.ruleName.toLowerCase().includes(query);
         const descMatches =
           rule.description?.toLowerCase().includes(query) ?? false;
-        const conditionMatches = formatConditionsSummary(rule.conditions)
+        const conditionMatches = getConditionsSearchText(rule.conditions)
           .toLowerCase()
           .includes(query);
         return nameMatches || descMatches || conditionMatches;
@@ -239,7 +239,7 @@ export function RuleTable({
     appliedScopes,
     appliedStatuses,
     sortConfig,
-    formatConditionsSummary,
+    getConditionsSearchText,
   ]);
 
   const gridTemplateColumns = allowEdit
@@ -494,11 +494,11 @@ export function RuleTable({
                   <RuleRow
                     rule={rule}
                     feedMap={feedMap}
+                    ruleMap={ruleMap}
                     editingRuleId={editingRuleId}
                     allowEdit={allowEdit}
                     onEditRule={onEditRule}
                     isSubmitting={isSubmitting}
-                    formatConditionsSummary={formatConditionsSummary}
                   />
                 </VirtuosoTableRow>
               ))}
@@ -517,11 +517,11 @@ export function RuleTable({
             <RuleRow
               rule={rule}
               feedMap={feedMap}
+              ruleMap={ruleMap}
               editingRuleId={editingRuleId}
               allowEdit={allowEdit}
               onEditRule={onEditRule}
               isSubmitting={isSubmitting}
-              formatConditionsSummary={formatConditionsSummary}
             />
           )}
         />

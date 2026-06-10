@@ -25,13 +25,14 @@ class TestRequestHandler(TestCase):
 
     @mock.patch("backend.pipeline.notification.request_handler.PoolManager")
     def test_success(self, mock_pool_manager: mock.Mock) -> None:
+        self.handler = RequestHandler(self.mock_logger)
         mock_http = mock_pool_manager.return_value
         mock_response = mock.MagicMock()
         mock_response.status = 200
         mock_response.data = b'{"success": true}'
         mock_http.request.return_value = mock_response
 
-        notification = AlertNotification(transmission_id="123")
+        notification = AlertNotification(segment_id="123")
         self.handler.send_notification(notification)
 
         mock_pool_manager.assert_called_once_with(
@@ -41,11 +42,11 @@ class TestRequestHandler(TestCase):
             "POST",
             "https://api.example.com/mock",
             body=(
-                '{"transmissionId": "123", "feedId": "", "transcript": "", '
+                '{"segmentId": "123", "feedId": "", "transcript": "", '
                 '"missingPriorContext": false, "missingPostContext": false, '
                 '"sourceAudioUris": [], "canonicalAudioUri": "", '
                 '"evaluationDecisions": [], "playbackAudioUri": "", '
-                '"appUrl": "", "feedName": "", "externalId": "", "tags": [], '
+                '"appUrl": "", "feedName": "", "tags": [], '
                 '"evaluationErrors": []}'
             ),
             headers={
@@ -56,6 +57,7 @@ class TestRequestHandler(TestCase):
 
     @mock.patch("backend.pipeline.notification.request_handler.PoolManager")
     def test_max_retry_error(self, mock_pool_manager: mock.Mock) -> None:
+        self.handler = RequestHandler(self.mock_logger)
         mock_http = mock_pool_manager.return_value
         mock_http.request.side_effect = [
             MaxRetryError(
@@ -65,7 +67,7 @@ class TestRequestHandler(TestCase):
             ),
         ]
 
-        notification = AlertNotification(transmission_id="123")
+        notification = AlertNotification(segment_id="123")
 
         with self.assertRaises(MaxRetryError):
             self.handler.send_notification(notification)

@@ -19,8 +19,10 @@ import type {
 import { SourceType } from '@transcription/common';
 
 import { createFeed } from '../../service/createFeed';
+import { deactivateFeed } from '../../service/deactivateFeed';
 import { deleteFeed } from '../../service/deleteFeed';
 import { listFeeds } from '../../service/listFeeds';
+import { resetFeed } from '../../service/resetFeed';
 import { updateFeed } from '../../service/updateFeed';
 import { renderWithQueryClient } from '../../test/testUtils';
 import FeedConfigurationView from './FeedConfigurationView';
@@ -42,6 +44,14 @@ vi.mock('../../service/deleteFeed', () => ({
   deleteFeed: vi.fn(),
 }));
 
+vi.mock('../../service/deactivateFeed', () => ({
+  deactivateFeed: vi.fn(),
+}));
+
+vi.mock('../../service/resetFeed', () => ({
+  resetFeed: vi.fn(),
+}));
+
 // Mock AuthContext
 vi.mock('../../context/AuthContext', () => ({
   useAuth: () => ({ token: 'fake-jwt-token-xyz' }),
@@ -57,7 +67,6 @@ describe('FeedConfigurationView', () => {
       name: 'Marin Fire Dispatch',
       sourceType: SourceType.BCFY_FEEDS,
       sourceFeedId: '33156',
-      externalId: 'ca-mrn-fire',
       status: 'active',
       substatus: 'active',
       tags: [{ key: 'county', value: 'Marin' }],
@@ -67,7 +76,6 @@ describe('FeedConfigurationView', () => {
       name: 'Sonoma Sheriff dispatch',
       sourceType: SourceType.OPENMHZ,
       sourceFeedId: 'sonoma-county',
-      externalId: 'ca-snm-sheriff',
       status: 'inactive',
       substatus: 'deactivated',
       tags: [{ key: 'county', value: 'Sonoma' }],
@@ -80,8 +88,17 @@ describe('FeedConfigurationView', () => {
     mockOnError.mockClear();
 
     // Default mock for listing feeds
-    vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
+    vi.mocked(listFeeds).mockImplementation((_, params) => {
+      let filtered = mockFeeds;
+      if (params?.name) {
+        const q = params.name.toLowerCase();
+        filtered = filtered.filter((f) => f.name.toLowerCase().includes(q));
+      }
+      return Promise.resolve(filtered);
+    });
     vi.mocked(deleteFeed).mockResolvedValue(undefined);
+    vi.mocked(deactivateFeed).mockResolvedValue(undefined);
+    vi.mocked(resetFeed).mockResolvedValue({} as Feed);
 
     // Mock window.scrollTo since JSDOM does not implement it
     window.scrollTo = vi.fn();
@@ -208,7 +225,6 @@ describe('FeedConfigurationView', () => {
       name: 'Napa Ambulance Dispatch',
       sourceType: SourceType.BCFY_CALLS,
       sourceFeedId: '9988-77',
-      externalId: 'ca-nap-amb',
       status: 'active' as FeedStatus,
       substatus: 'active' as BackendFeedStatus,
     };
@@ -255,7 +271,6 @@ describe('FeedConfigurationView', () => {
           name: 'Napa Ambulance Dispatch',
           sourceType: SourceType.BCFY_CALLS,
           sourceFeedId: '9988-77',
-          externalId: '9988-77',
           tags: [],
         },
         'fake-jwt-token-xyz'
@@ -276,7 +291,6 @@ describe('FeedConfigurationView', () => {
     const mockUpdatedFeed = {
       ...mockFeeds[0],
       name: 'Marin Unified Fire Dispatch',
-      externalId: 'ca-mrn-fire-v2',
       tags: [
         { key: 'county', value: 'Marin' },
         { key: 'region', value: 'West' },
@@ -386,7 +400,6 @@ describe('FeedConfigurationView', () => {
         'feed-1',
         {
           name: 'Marin Unified Fire Dispatch',
-          externalId: '33156',
           tags: [{ key: 'county', value: 'Marin' }],
         },
         'fake-jwt-token-xyz'
@@ -420,8 +433,10 @@ describe('FeedConfigurationView', () => {
     fireEvent.change(filterInput, { target: { value: 'sonoma' } });
 
     // Sonoma Sheriff matches, Marin Fire is hidden
-    expect(screen.getByText('Sonoma Sheriff dispatch')).toBeInTheDocument();
-    expect(screen.queryByText('Marin Fire Dispatch')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Sonoma Sheriff dispatch')).toBeInTheDocument();
+      expect(screen.queryByText('Marin Fire Dispatch')).not.toBeInTheDocument();
+    });
   });
 
   it('automatically adds the tag if Tag Key and Tag Value are filled in and the form is submitted without clicking the Add button', async () => {
@@ -430,7 +445,6 @@ describe('FeedConfigurationView', () => {
       name: 'Napa Ambulance Dispatch',
       sourceType: SourceType.BCFY_CALLS,
       sourceFeedId: '9988-77',
-      externalId: 'ca-nap-amb',
       status: 'active' as FeedStatus,
       substatus: 'active' as BackendFeedStatus,
     };
@@ -481,7 +495,6 @@ describe('FeedConfigurationView', () => {
           name: 'Napa Ambulance Dispatch',
           sourceType: SourceType.BCFY_CALLS,
           sourceFeedId: '9988-77',
-          externalId: '9988-77',
           tags: [{ key: 'county', value: 'Napa' }],
         },
         'fake-jwt-token-xyz'
@@ -626,7 +639,7 @@ describe('FeedConfigurationView', () => {
     expect(screen.getByText('Verify Feed Deletion')).toBeInTheDocument();
     expect(
       screen.getByText(
-        'Are you sure you want to delete the feed, along with associated metadata, transcripts, and annotations?'
+        'Are you sure you want to delete the feed? This will remove the feed and any associated metadata (e.g. transcripts, annotations, etc.). This action is not reversible.'
       )
     ).toBeInTheDocument();
 
@@ -635,7 +648,9 @@ describe('FeedConfigurationView', () => {
     });
     expect(confirmDeleteBtn).toBeDisabled();
 
-    const confirmInput = screen.getByTestId('delete-confirm-input');
+    const confirmInput = screen.getByLabelText(
+      'To confirm, type the Source Feed ID "33156" below:'
+    );
 
     // Type incorrect ID
     fireEvent.change(confirmInput, { target: { value: 'wrong-id-xyz' } });
@@ -706,5 +721,198 @@ describe('FeedConfigurationView', () => {
     });
 
     expect(deleteFeed).not.toHaveBeenCalled();
+  });
+
+  it('should show Deactivate feed menu item if feed is not deactivated, and call deactivateFeed API on confirm', async () => {
+    vi.mocked(deactivateFeed).mockResolvedValue(undefined);
+
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Marin Fire Dispatch')).toBeInTheDocument();
+    });
+
+    // Click Edit to enter edit mode (substatus is active, which is not deactivated)
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Marin Fire Dispatch',
+    });
+    fireEvent.click(editBtn);
+
+    const editFormCard = screen.getByTestId('feed-config-card');
+    const kebabBtn = within(editFormCard).getByRole('button', {
+      name: /feed actions/i,
+    });
+    expect(kebabBtn).toBeInTheDocument();
+
+    // Open kebab menu
+    fireEvent.click(kebabBtn);
+
+    // Menu option "Deactivate feed" should be visible Since substatus is NOT deactivated
+    const deactivateMenuItem = screen.getByRole('menuitem', {
+      name: /Deactivate feed/i,
+    });
+    expect(deactivateMenuItem).toBeInTheDocument();
+
+    // Click Deactivate
+    fireEvent.click(deactivateMenuItem);
+
+    // Verify confirmation dialog shows
+    expect(screen.getByText('Verify Feed Deactivation')).toBeInTheDocument();
+
+    const confirmDeactivateBtn = screen.getByRole('button', {
+      name: 'Deactivate',
+    });
+    fireEvent.click(confirmDeactivateBtn);
+
+    await waitFor(() => {
+      expect(deactivateFeed).toHaveBeenCalledTimes(1);
+      expect(deactivateFeed).toHaveBeenCalledWith(
+        'feed-1',
+        'fake-jwt-token-xyz'
+      );
+      expect(mockTriggerSnackbar).toHaveBeenCalledWith(
+        'Feed deactivated successfully!'
+      );
+      expect(screen.getByText('Register New Feed')).toBeInTheDocument();
+    });
+  });
+
+  it('should not show Deactivate feed menu item if feed is deactivated', async () => {
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Sonoma Sheriff dispatch')).toBeInTheDocument();
+    });
+
+    // Sonoma Sheriff dispatch has substatus: deactivated
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Sonoma Sheriff dispatch',
+    });
+    fireEvent.click(editBtn);
+
+    const editFormCard = screen.getByTestId('feed-config-card');
+    const kebabBtn = within(editFormCard).getByRole('button', {
+      name: /feed actions/i,
+    });
+    fireEvent.click(kebabBtn);
+
+    // "Deactivate feed" should not be rendered if deactivated
+    expect(
+      screen.queryByRole('menuitem', { name: /Deactivate feed/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it('should show Reset feed menu item if feed status is not active, and call resetFeed API on confirm', async () => {
+    const mockResetResult: Feed = {
+      id: 'feed-2',
+      name: 'Sonoma Sheriff dispatch',
+      sourceType: SourceType.OPENMHZ,
+      sourceFeedId: 'sonoma-county',
+      status: 'inactive',
+      substatus: 'unclaimed',
+      tags: [{ key: 'county', value: 'Sonoma' }],
+    };
+    vi.mocked(resetFeed).mockResolvedValue(mockResetResult);
+
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Sonoma Sheriff dispatch')).toBeInTheDocument();
+    });
+
+    // Click Edit for Sonoma Sheriff dispatch (status inactive)
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Sonoma Sheriff dispatch',
+    });
+    fireEvent.click(editBtn);
+
+    const editFormCard = screen.getByTestId('feed-config-card');
+    const kebabBtn = within(editFormCard).getByRole('button', {
+      name: /feed actions/i,
+    });
+    fireEvent.click(kebabBtn);
+
+    // "Reset feed" should show since status is inactive (not active)
+    const resetMenuItem = screen.getByRole('menuitem', {
+      name: /Reset feed/i,
+    });
+    expect(resetMenuItem).toBeInTheDocument();
+
+    fireEvent.click(resetMenuItem);
+
+    expect(screen.getByText('Verify Feed Reset')).toBeInTheDocument();
+
+    const confirmResetBtn = screen.getByRole('button', {
+      name: 'Reset',
+    });
+    fireEvent.click(confirmResetBtn);
+
+    await waitFor(() => {
+      expect(resetFeed).toHaveBeenCalledTimes(1);
+      expect(resetFeed).toHaveBeenCalledWith('feed-2', 'fake-jwt-token-xyz');
+      expect(mockTriggerSnackbar).toHaveBeenCalledWith(
+        'Feed "Sonoma Sheriff dispatch" reset successfully!'
+      );
+      expect(screen.getByText('Register New Feed')).toBeInTheDocument();
+    });
+  });
+
+  it('should not show Reset feed menu item if feed status is active', async () => {
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Marin Fire Dispatch')).toBeInTheDocument();
+    });
+
+    // Marin Fire Dispatch status is active
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Marin Fire Dispatch',
+    });
+    fireEvent.click(editBtn);
+
+    const editFormCard = screen.getByTestId('feed-config-card');
+    const kebabBtn = within(editFormCard).getByRole('button', {
+      name: /feed actions/i,
+    });
+    fireEvent.click(kebabBtn);
+
+    // "Reset feed" must not show since status is active
+    expect(
+      screen.queryByRole('menuitem', { name: /Reset feed/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it('should not show Reset feed menu item if feed substatus is unclaimed', async () => {
+    const unclaimedFeed: Feed = {
+      id: 'feed-3',
+      name: 'Oakland Fire Dispatch',
+      sourceType: SourceType.BCFY_FEEDS,
+      sourceFeedId: '44556',
+      status: 'inactive',
+      substatus: 'unclaimed',
+      tags: [],
+    };
+    vi.mocked(listFeeds).mockResolvedValue([...mockFeeds, unclaimedFeed]);
+
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Oakland Fire Dispatch')).toBeInTheDocument();
+    });
+
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Oakland Fire Dispatch',
+    });
+    fireEvent.click(editBtn);
+
+    const editFormCard = screen.getByTestId('feed-config-card');
+    const kebabBtn = within(editFormCard).getByRole('button', {
+      name: /feed actions/i,
+    });
+    fireEvent.click(kebabBtn);
+
+    expect(
+      screen.queryByRole('menuitem', { name: /Reset feed/i })
+    ).not.toBeInTheDocument();
   });
 });

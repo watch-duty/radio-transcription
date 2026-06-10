@@ -12,7 +12,7 @@ from backend.pipeline.ingestion.collectors.icecast import icecast_collector
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
 )
-from backend.pipeline.ingestion.models import CapturedChunk, CollectorFailure
+from backend.pipeline.ingestion.models import CapturedChunk, FeedFailure
 from backend.pipeline.storage.feed_store import (
     FeedStatusReason,
     LeasedFeed,
@@ -32,11 +32,12 @@ def _make_feed(name: str, source_feed_id: str | None) -> LeasedFeed:
     return LeasedFeed(
         id=TEST_FEED_ID,
         name=name,
-        external_id="ext-id",
         source_type=SourceType.BCFY_FEEDS,
         last_processed_filename=None,
         last_bookmark_time=None,
         fencing_token=1,
+        failure_count=0,
+        status_reason=None,
         source_feed_id=source_feed_id,
     )
 
@@ -85,7 +86,7 @@ def _resources_with_probe_status(
 
 def _assert_collector_failure(
     testcase: unittest.TestCase,
-    exc: CollectorFailure,
+    exc: FeedFailure,
     status_reason: FeedStatusReason,
     reason: str,
 ) -> None:
@@ -331,7 +332,6 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             {
                 "id": uuid.uuid4(),
                 "name": "incomplete-feed",
-                "external_id": "ext-id",
                 "source_type": "icecast",
                 "last_processed_filename": None,
                 "last_bookmark_time": None,
@@ -346,7 +346,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             url_base="https://mock.example.com/",
             resources=_default_resources(),
         )
-        with self.assertRaises(CollectorFailure) as context:
+        with self.assertRaises(FeedFailure) as context:
             await gen.__anext__()
 
         _assert_collector_failure(
@@ -371,7 +371,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             resources=_resources_with_probe_status(200, reason="OK"),
         )
 
-        with self.assertRaises(CollectorFailure) as context:
+        with self.assertRaises(FeedFailure) as context:
             await gen.__anext__()
 
         _assert_collector_failure(
@@ -396,7 +396,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             url_base="https://mock.example.com/",
             resources=_default_resources(),
         )
-        with self.assertRaises(CollectorFailure) as context:
+        with self.assertRaises(FeedFailure) as context:
             await gen.__anext__()
 
         _assert_collector_failure(
@@ -424,7 +424,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             url_base="https://mock.example.com/",
             resources=_default_resources(),
         )
-        with self.assertRaises(CollectorFailure) as context:
+        with self.assertRaises(FeedFailure) as context:
             await gen.__anext__()
 
         _assert_collector_failure(
@@ -490,7 +490,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             url_base="https://mock.example.com/",
             resources=_default_resources(),
         )
-        with self.assertRaises(CollectorFailure) as context:
+        with self.assertRaises(FeedFailure) as context:
             await asyncio.wait_for(gen.__anext__(), timeout=1.0)
 
         _assert_collector_failure(
@@ -529,7 +529,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             url_base="https://mock.example.com/",
             resources=_resources_with_probe_status(200, reason="OK"),
         )
-        with self.assertRaises(CollectorFailure) as context:
+        with self.assertRaises(FeedFailure) as context:
             await asyncio.wait_for(gen.__anext__(), timeout=1.0)
 
         _assert_collector_failure(
@@ -566,7 +566,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             url_base="https://mock.example.com/",
             resources=_default_resources(),
         )
-        with self.assertRaises(CollectorFailure) as context:
+        with self.assertRaises(FeedFailure) as context:
             await asyncio.wait_for(gen.__anext__(), timeout=1.0)
 
         _assert_collector_failure(
@@ -600,7 +600,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             url_base="https://mock.example.com/",
             resources=_default_resources(),
         )
-        with self.assertRaises(CollectorFailure) as context:
+        with self.assertRaises(FeedFailure) as context:
             await asyncio.wait_for(gen.__anext__(), timeout=1.0)
 
         _assert_collector_failure(
@@ -641,7 +641,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             url_base="https://mock.example.com/",
             resources=_resources_with_probe_status(200, reason="OK"),
         )
-        with self.assertRaises(CollectorFailure) as context:
+        with self.assertRaises(FeedFailure) as context:
             await asyncio.wait_for(gen.__anext__(), timeout=1.0)
 
         _assert_collector_failure(
@@ -675,7 +675,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             url_base="https://mock.example.com/",
             resources=_resources_with_probe_status(200, reason="OK"),
         )
-        with self.assertRaises(CollectorFailure) as context:
+        with self.assertRaises(FeedFailure) as context:
             await asyncio.wait_for(gen.__anext__(), timeout=1.0)
 
         _assert_collector_failure(
@@ -708,7 +708,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             url_base="https://mock.example.com/",
             resources=_resources_with_probe_status(418, reason="Teapot"),
         )
-        with self.assertRaises(CollectorFailure) as context:
+        with self.assertRaises(FeedFailure) as context:
             await asyncio.wait_for(gen.__anext__(), timeout=1.0)
 
         _assert_collector_failure(
@@ -748,7 +748,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             url_base="https://mock.example.com/",
             resources=_resources_with_probe_status(200, reason="OK"),
         )
-        with self.assertRaises(CollectorFailure) as context:
+        with self.assertRaises(FeedFailure) as context:
             await asyncio.wait_for(gen.__anext__(), timeout=1.0)
 
         _assert_collector_failure(
@@ -816,7 +816,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             url_base="https://mock.example.com/",
             resources=_resources_with_probe_status(404, reason="Not Found"),
         )
-        with self.assertRaises(CollectorFailure) as context:
+        with self.assertRaises(FeedFailure) as context:
             await asyncio.wait_for(gen.__anext__(), timeout=2.0)
 
         _assert_collector_failure(

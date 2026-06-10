@@ -13,11 +13,28 @@ from zoneinfo import ZoneInfo
 from curl_cffi.requests import AsyncSession
 
 from backend.pipeline.common.audio import get_audio_duration
-from backend.pipeline.ingestion.models import AudioMimeType, CapturedChunk
+from backend.pipeline.ingestion.collectors import failure_classification
+from backend.pipeline.ingestion.collectors.failure_classification import (
+    ItemBatchOutcome,
+    ItemFailure,
+    collector_failure,
+    missing_source_feed_id_failure,
+)
+from backend.pipeline.ingestion.collectors.failure_classifiers import (
+    http_status,
+)
+from backend.pipeline.ingestion.models import (
+    AudioMimeType,
+    CapturedChunk,
+    CaptureEvent,
+    FeedFailure,
+    SourceObservation,
+)
 from backend.pipeline.ingestion.settings import _require_env
 from backend.pipeline.ingestion.slo_contract import (
     EVENT_TYPE_CALL_DOWNLOAD_FAILED,
 )
+from backend.pipeline.storage import feed_store
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -31,6 +48,33 @@ _DOWNLOAD_MAX_RETRIES = 3
 _DOWNLOAD_BACKOFF_BASE_SEC = 1.0
 _POLL_INTERVAL_SEC = 30.0
 _MAX_CONSECUTIVE_FAILURES = 10
+
+# The poll/list endpoint is configuration-owned: terminal 4xx responses usually
+# mean our channel/path/auth setup is wrong. Per-MP3 download URLs use the
+# default item policy instead because one stale object should not blame the feed.
+_FN_POLL_HTTP_POLICY = http_status.HTTPStatusPolicy(
+    exact=http_status.DEFAULT_HTTP_STATUS_POLICY.exact,
+    default_4xx=(feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID),
+    default_5xx=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+    default_other_failure=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+)
+
+
+def _classify_poll_status(
+    status: int,
+) -> failure_classification.FailureClassification:
+    """Classify a terminal Fire Notifications poll status."""
+    classification = http_status.classify_http_status(
+        status,
+        reason_prefix="fn_api_http",
+        policy=_FN_POLL_HTTP_POLICY,
+    )
+    if classification is not None:
+        return classification
+    return failure_classification.FailureClassification(
+        feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+        "source_unreachable",
+    )
 
 
 def _build_auth_headers() -> dict[str, str]:
@@ -56,14 +100,16 @@ async def _download_audio(
     session: AsyncSession,
     url: str,
     shutdown: asyncio.Event,
-) -> bytes | None:
+) -> bytes | ItemFailure | None:
     """Download audio file from S3 with retries."""
     # Note: We use a manual retry loop instead of 'tenacity' to easily
     # interrupt the backoff sleep when the shutdown event is set,
     # matching the pattern in bcfy_calls_collector.py.
+    last_status: int | None = None
     for attempt in range(_DOWNLOAD_MAX_RETRIES):
         try:
             resp = await session.get(url, timeout=30.0)
+            last_status = resp.status_code
             if resp.status_code == 200:
                 return resp.content
             if 400 <= resp.status_code < 500:
@@ -72,7 +118,13 @@ async def _download_audio(
                     resp.status_code,
                     url,
                 )
-                return None
+                classification = http_status.classify_http_status(
+                    resp.status_code,
+                    reason_prefix="item_http",
+                )
+                if classification is None:
+                    return None
+                return ItemFailure.from_classification(classification)
             logger.warning(
                 "Download %d (attempt %d/%d): url=%s",
                 resp.status_code,
@@ -95,7 +147,17 @@ async def _download_audio(
                 return None
 
     logger.warning("Download failed after retries: url=%s", url)
-    return None
+    if last_status is not None:
+        classification = http_status.classify_http_status(
+            last_status,
+            reason_prefix="item_http",
+        )
+        if classification is not None:
+            return ItemFailure.from_classification(classification)
+    return ItemFailure(
+        feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+        "item_download_failed",
+    )
 
 
 def _get_channel_timezone(channel_key: str) -> ZoneInfo:
@@ -145,6 +207,7 @@ async def _process_file_list(
     processed_uuids: collections.deque[str],
     source_feed_id: str,
     s3_base_url: str,
+    outcome: ItemBatchOutcome,
 ) -> AsyncIterator[CapturedChunk]:
     """Filter, sort and process audio files, yielding CapturedChunks."""
     # Filter for files and sort by name to process chronologically
@@ -155,6 +218,9 @@ async def _process_file_list(
     ]
     audio_files.sort(key=lambda x: x.get("name", ""))
 
+    # A Fire Notifications file-list response is the observation boundary:
+    # all eligible attempted MP3s failing is meaningful, but isolated stale or
+    # corrupt files should not mark the feed unhealthy.
     for f in audio_files:
         if shutdown_event.is_set():
             break
@@ -182,9 +248,27 @@ async def _process_file_list(
         s3_url = f"{s3_base_url.rstrip('/')}/{file_uuid}.mp3"
         receipt_time = datetime.datetime.now(datetime.UTC)
 
-        mp3_bytes = await _download_audio(session, s3_url, shutdown_event)
-        if mp3_bytes is None:
+        outcome.record_attempt()
+        audio_result = await _download_audio(session, s3_url, shutdown_event)
+        if isinstance(audio_result, ItemFailure):
+            outcome.record_failure(audio_result)
             if not shutdown_event.is_set():
+                # SLO: call_download_failed emit — Fire Notifications _download_audio returned a classified failure
+                logger.warning(
+                    "FN Audio download classified failure: %s",
+                    audio_result.reason,
+                    extra={
+                        "json_fields": {
+                            "event_type": EVENT_TYPE_CALL_DOWNLOAD_FAILED,
+                            "feed_id": str(feed["id"]),
+                            "source_type": feed["source_type"],
+                        },
+                    },
+                )
+            continue
+        if audio_result is None:
+            if not shutdown_event.is_set():
+                # SLO: call_download_failed emit — Fire Notifications _download_audio returned None
                 logger.warning(
                     "FN Audio download failed",
                     extra={
@@ -196,6 +280,7 @@ async def _process_file_list(
                     },
                 )
             continue
+        mp3_bytes = audio_result
 
         try:
             # to_thread: get_audio_duration shells out to ffprobe — keep it off the event loop.
@@ -205,6 +290,12 @@ async def _process_file_list(
                 "Failed to compute duration for uuid=%s",
                 file_uuid,
                 exc_info=True,
+            )
+            outcome.record_failure(
+                ItemFailure(
+                    feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                    "duration_probe_failed",
+                )
             )
             continue
 
@@ -229,20 +320,38 @@ async def _process_file_list(
         # Only mark as processed after a successful yield, confirming
         # the chunk was handed off to the pipeline.
         processed_uuids.append(file_uuid)
+        outcome.record_chunk_produced()
+
+    promoted = outcome.promoted_failure()
+    if promoted is not None:
+        raise collector_failure(promoted.status_reason, promoted.reason)
 
 
-async def fire_notifications_collector(
+async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
     url_base: str,
     _resources: CaptureResources,
-) -> AsyncIterator[CapturedChunk]:
+) -> AsyncIterator[CaptureEvent]:
     """Capture Fire Notifications audio via HTTP Polling.
 
-    Yields :class:`CapturedChunk` for each new MP3 file found.
+    Yields :class:`CapturedChunk` for each new MP3 file found, and
+    :class:`SourceObservation` for successful empty/skipped-only file listings.
     """
-    s3_base_url = _require_env("FIRE_NOTIFICATIONS_S3_BASE")
-    headers = _build_auth_headers()
+    try:
+        s3_base_url = _require_env("FIRE_NOTIFICATIONS_S3_BASE")
+    except ValueError as e:
+        raise collector_failure(
+            feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            "missing_fire_notifications_s3_base",
+        ) from e
+    try:
+        headers = _build_auth_headers()
+    except ValueError as e:
+        raise collector_failure(
+            feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            "missing_fire_notifications_auth_config",
+        ) from e
 
     source_feed_id = feed.get("source_feed_id")
     if not source_feed_id:
@@ -251,8 +360,7 @@ async def fire_notifications_collector(
             feed["id"],
             feed["name"],
         )
-        msg = "missing_source_feed_id"
-        raise ValueError(msg)
+        raise missing_source_feed_id_failure()
 
     # source_feed_id is e.g. RECORDINGS/SAN-JOSE-DISP
     # Ensure no double slashes if url_base ends with /
@@ -264,6 +372,10 @@ async def fire_notifications_collector(
     # We use a deque with maxlen to prevent unbounded memory growth.
     processed_uuids: collections.deque[str] = collections.deque(maxlen=1000)
     consecutive_failures = 0
+    last_poll_failure = failure_classification.FailureClassification(
+        feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+        "source_unreachable",
+    )
     connection_session_id = str(uuid.uuid4())
 
     session = AsyncSession()
@@ -281,23 +393,44 @@ async def fire_notifications_collector(
                     data = resp.json()
                     files = data.get("files", [])
 
-                    async for chunk in _process_file_list(
-                        files,
-                        session,
-                        shutdown_event,
-                        connection_session_id,
-                        feed,
-                        processed_uuids,
-                        source_feed_id,
-                        s3_base_url,
-                    ):
-                        yield chunk
+                    if files == []:
+                        yield SourceObservation()
+                    else:
+                        outcome = ItemBatchOutcome()
+                        async for chunk in _process_file_list(
+                            files,
+                            session,
+                            shutdown_event,
+                            connection_session_id,
+                            feed,
+                            processed_uuids,
+                            source_feed_id,
+                            s3_base_url,
+                            outcome,
+                        ):
+                            yield chunk
+                        is_skipped_only_listing_while_running = (
+                            outcome.attempted_count == 0
+                            and not outcome.chunk_produced
+                            and not shutdown_event.is_set()
+                        )
+                        if is_skipped_only_listing_while_running:
+                            yield SourceObservation()
                     poll_ok = True
                 else:
+                    last_poll_failure = _classify_poll_status(resp.status_code)
                     logger.warning(
                         "FN API returned %d: %s", resp.status_code, poll_url
                     )
+            except FeedFailure:
+                raise
             except Exception:
+                last_poll_failure = (
+                    failure_classification.FailureClassification(
+                        feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+                        "source_unreachable",
+                    )
+                )
                 logger.warning(
                     "FN API poll error: %s",
                     poll_url,
@@ -309,8 +442,10 @@ async def fire_notifications_collector(
             else:
                 consecutive_failures += 1
                 if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
-                    msg = "source_unreachable"
-                    raise RuntimeError(msg)
+                    raise collector_failure(
+                        last_poll_failure.status_reason,
+                        last_poll_failure.reason,
+                    )
 
             # Sleep before next poll, with a small jitter
             jitter = random.uniform(0, 5.0)  # noqa: S311

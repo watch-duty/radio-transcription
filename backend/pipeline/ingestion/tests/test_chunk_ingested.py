@@ -31,6 +31,7 @@ from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
 from backend.pipeline.ingestion.collector_runtime import CollectorRuntime
 from backend.pipeline.ingestion.models import CapturedChunk, CaptureResources
 from backend.pipeline.storage.feed_store import (
+    FeedStatusReason,
     LeasedFeed,
     SourceType,
 )
@@ -42,11 +43,12 @@ _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 _FEED = LeasedFeed(
     id=_FEED_ID,
     name="Test Feed",
-    external_id="ext-id",
     source_type=SourceType.BCFY_FEEDS,
     last_processed_filename=None,
     last_bookmark_time=None,
     fencing_token=1,
+    failure_count=0,
+    status_reason=None,
     source_feed_id="123",
 )
 
@@ -84,6 +86,9 @@ def _make_settings(**overrides: object) -> mock.MagicMock:
         "bookmark_max_retries": 2,
         "bookmark_retry_base_delay_sec": 0.5,
         "bookmark_retry_max_delay_sec": 4.0,
+        "pubsub_publish_max_retries": 2,
+        "pubsub_publish_retry_base_delay_sec": 0.5,
+        "pubsub_publish_retry_max_delay_sec": 4.0,
         "health_check_port": 8080,
         "health_check_startup_grace_sec": 120.0,
     }
@@ -280,6 +285,42 @@ class TestChunkIngestedEmit(unittest.IsolatedAsyncioTestCase):
 
         # bookmark_ok=False -> fence-violation branch takes over BEFORE
         # the emit block is reached.
+        self.assertEqual(records, [])
+
+    async def test_no_emit_when_publish_fails_after_bookmark(self) -> None:
+        """Post-bookmark publish failure records failure and skips emit."""
+        chunk = _make_chunk(datetime.datetime.now(datetime.UTC))
+        rt = _build_runtime_for_one_chunk(chunk, bookmark_ok=True)
+        store = cast("Any", rt._store)
+        store.report_feed_failure.return_value = "failing"
+
+        with (
+            _mock_upload_audio(),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime."
+                "gcp_helper.publish_audio_chunk",
+                mock.AsyncMock(side_effect=RuntimeError("pubsub boom")),
+            ),
+            self.assertLogs(
+                "backend.pipeline.ingestion.collector_runtime",
+                level=logging.INFO,
+            ) as cm,
+        ):
+            await rt._process_feed(_FEED)
+
+        store.update_feed_progress.assert_awaited_once()
+        store.report_feed_failure.assert_awaited_once()
+        kwargs = store.report_feed_failure.await_args.kwargs
+        self.assertEqual(kwargs["reason"], "pubsub_publish_failed")
+        self.assertIs(
+            kwargs["status_reason"],
+            FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        )
+        records = [
+            record
+            for record in cm.records
+            if record.getMessage() == "Chunk ingested"
+        ]
         self.assertEqual(records, [])
 
 

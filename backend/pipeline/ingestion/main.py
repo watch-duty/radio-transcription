@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from backend.pipeline.common.log_helper import setup_logging
+from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.ingestion.collector_runtime import CollectorRuntime
 from backend.pipeline.ingestion.router import (
     resolve_topic_path,
@@ -19,6 +20,7 @@ def main() -> None:
     blocks until graceful shutdown completes.
     """
     setup_logging()
+    setup_tracing(service_name="ingestion-service", is_ingestion=True)
     settings = CollectorSettings()
 
     # Verify topic paths for all supported source types at startup

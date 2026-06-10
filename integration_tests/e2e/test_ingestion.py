@@ -38,7 +38,7 @@ def test_ingestion_echo(test_echo_feed: tuple[str, str]) -> None:
     audio_bytes = b"dummy mp3 audio"
     try:
         with open(
-            "/app/backend/pipeline/normalization/tests/test_data/test_bcfy.flac",
+            "/app/backend/pipeline/segmentation/tests/test_data/test_bcfy.flac",
             "rb",
         ) as f:
             audio_bytes = f.read()

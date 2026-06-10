@@ -579,8 +579,9 @@
   resolved "https://registry.yarnpkg.com/@standard-schema/spec/-/spec-1.1.0.tgz#a79b55dbaf8604812f52d140b2c9ab41bc150bb8"
   integrity sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==
 
-"@transcription/common@file:../common":
-  version "1.0.0"
+"@transcription/common@link:../common":
+  version "0.0.0"
+  uid ""
 
 "@trivago/prettier-plugin-sort-imports@^6.0.2":
   version "6.0.2"

@@ -58,6 +58,7 @@ class AudioSegmentService:
     ) -> AudioSegment:
         """Saves a single audio segment using the store."""
         return await self._store.create_audio_segment(
+            segment_id=segment.id,
             feed_id=segment.feed_id,
             classification=segment.classification,
             start_timestamp=segment.start_timestamp,

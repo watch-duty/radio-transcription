@@ -10,7 +10,7 @@ components:
       properties:
         feedId:
           type: string
-        transmissionId:
+        segmentId:
           type: string
         transcript:
           type: string
@@ -40,7 +40,7 @@ components:
           type: array
       required:
         - feedId
-        - transmissionId
+        - segmentId
         - transcript
         - startTimestamp
         - endTimestamp
@@ -277,6 +277,18 @@ components:
         - value
       type: object
       additionalProperties: false
+    BackendFeedStatusReason:
+      type: string
+      enum:
+        - unknown
+        - source_offline
+        - source_unreachable
+        - source_rate_limited
+        - system_authentication_failed
+        - system_configuration_invalid
+        - system_collector_error
+        - system_pipeline_error
+        - system_unexpected_error
     SourceType:
       enum:
         - bcfy_feeds
@@ -295,8 +307,6 @@ components:
           type: string
         sourceFeedId:
           type: string
-        externalId:
-          type: string
         sourceUrl:
           type: string
         archiveUrl:
@@ -311,6 +321,10 @@ components:
           items:
             $ref: "#/components/schemas/Tag"
           type: array
+        quarantineReason:
+          type: string
+        statusReason:
+          $ref: "#/components/schemas/BackendFeedStatusReason"
       required:
         - name
         - sourceType
@@ -327,8 +341,12 @@ components:
           type: array
         nextToken:
           type: string
+        total:
+          type: number
+          format: double
       required:
         - feeds
+        - total
       type: object
       additionalProperties: false
     ListFeedsQueryParams:
@@ -351,6 +369,8 @@ components:
           items:
             type: string
           type: array
+        name:
+          type: string
       type: object
       additionalProperties: false
     FeedCreate:
@@ -361,8 +381,6 @@ components:
           $ref: "#/components/schemas/SourceType"
         sourceFeedId:
           type: string
-        externalId:
-          type: string
         tags:
           items:
             $ref: "#/components/schemas/Tag"
@@ -371,14 +389,11 @@ components:
         - name
         - sourceType
         - sourceFeedId
-        - externalId
       type: object
       additionalProperties: false
     FeedUpdate:
       properties:
         name:
-          type: string
-        externalId:
           type: string
         tags:
           items:
@@ -386,7 +401,6 @@ components:
           type: array
       required:
         - name
-        - externalId
       type: object
       additionalProperties: false
     OpenApiSpec:
@@ -1044,6 +1058,11 @@ paths:
             type: array
             items:
               type: string
+        - in: query
+          name: name
+          required: false
+          schema:
+            type: string
       x-google-backend: radio-transcription-api
     post:
       operationId: CreateFeed

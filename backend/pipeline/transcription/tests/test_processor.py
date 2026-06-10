@@ -40,7 +40,7 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
 
         # Build dummy claim proto
         claim = NormalizedAudio(
-            transmission_id="tx-1111",
+            segment_id="tx-1111",
             feed_id="feed-2222",
             missing_prior_context=False,
             missing_post_context=False,
@@ -48,7 +48,6 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             canonical_audio_uri="gs://bucket/normalized.flac",
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
-            external_id="ext-1234",
             start_timestamp={"seconds": 1000, "nanos": 1000000},
             end_timestamp={"seconds": 1005, "nanos": 2000000},
             start_audio_offset={"seconds": 0, "nanos": 0},
@@ -105,7 +104,7 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         out_proto = TranscribedAudio()
         out_proto.ParseFromString(call_args.kwargs["data"])
         self.assertEqual(out_proto.transcript, "Hello world")
-        self.assertEqual(out_proto.transmission_id, "tx-1111")
+        self.assertEqual(out_proto.segment_id, "tx-1111")
         self.assertEqual(out_proto.feed_name, "Test Feed")
         self.assertEqual(
             out_proto.canonical_audio_uri, "gs://bucket/normalized.flac"
@@ -142,7 +141,7 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
 
         # Build dummy claim proto
         claim = NormalizedAudio(
-            transmission_id="tx-1111",
+            segment_id="tx-1111",
             feed_id="feed-2222",
             missing_prior_context=False,
             missing_post_context=False,
@@ -150,7 +149,6 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             canonical_audio_uri="gs://bucket/normalized.flac",
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
-            external_id="ext-1234",
             start_timestamp={"seconds": 1000, "nanos": 1000000},
             end_timestamp={"seconds": 1005, "nanos": 2000000},
         )
@@ -210,13 +208,12 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         mock_audio_segments_client = MagicMock()
 
         claim = NormalizedAudio(
-            transmission_id="tx-1111",
+            segment_id="tx-1111",
             feed_id="feed-2222",
             source_audio_uris=["gs://bucket/raw1.flac"],
             canonical_audio_uri="gs://bucket/normalized.flac",
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
-            external_id="ext-1234",
             start_timestamp={"seconds": 1000, "nanos": 0},
             end_timestamp={"seconds": 1005, "nanos": 0},
         )
@@ -279,13 +276,12 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         mock_audio_segments_client = MagicMock()
 
         claim = NormalizedAudio(
-            transmission_id="tx-1111",
+            segment_id="tx-1111",
             feed_id="feed-2222",
             source_audio_uris=["gs://bucket/raw1.flac"],
             canonical_audio_uri="gs://bucket/normalized.flac",
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
-            external_id="ext-1234",
             start_timestamp={"seconds": 1000, "nanos": 0},
             end_timestamp={"seconds": 1005, "nanos": 0},
         )
@@ -340,13 +336,12 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         mock_audio_segments_client = MagicMock()
 
         claim = NormalizedAudio(
-            transmission_id="tx-1111",
+            segment_id="tx-1111",
             feed_id="feed-2222",
             source_audio_uris=["gs://bucket/raw1.flac"],
             canonical_audio_uri="gs://bucket/normalized.flac",
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
-            external_id="ext-1234",
             start_timestamp={"seconds": 1000, "nanos": 0},
             end_timestamp={"seconds": 1065, "nanos": 0},
         )
@@ -405,13 +400,12 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         mock_audio_segments_client = MagicMock()
 
         claim = NormalizedAudio(
-            transmission_id="tx-1111",
+            segment_id="tx-1111",
             feed_id="feed-2222",
             source_audio_uris=["gs://bucket/raw1.flac"],
             canonical_audio_uri="gs://bucket/normalized.flac",
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
-            external_id="ext-1234",
             start_timestamp={"seconds": 1000, "nanos": 0},
             end_timestamp={"seconds": 1005, "nanos": 0},
         )
@@ -465,13 +459,12 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         mock_audio_segments_client = MagicMock()
 
         claim = NormalizedAudio(
-            transmission_id="tx-1111",
+            segment_id="tx-1111",
             feed_id="feed-2222",
             source_audio_uris=["gs://bucket/raw1.flac"],
             canonical_audio_uri="gs://bucket/normalized.flac",
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
-            external_id="ext-1234",
             start_timestamp={"seconds": 1000, "nanos": 0},
             end_timestamp={"seconds": 1005, "nanos": 0},
         )
@@ -524,13 +517,12 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         mock_audio_segments_client = MagicMock()
 
         claim = NormalizedAudio(
-            transmission_id="tx-1111",
+            segment_id="tx-1111",
             feed_id="feed-2222",
             source_audio_uris=["gs://bucket/raw1.flac"],
             canonical_audio_uri="gs://bucket/normalized.flac",
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
-            external_id="ext-1234",
             start_timestamp={"seconds": 1000, "nanos": 0},
             end_timestamp={"seconds": 1005, "nanos": 0},
         )
@@ -582,13 +574,12 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         mock_audio_segments_client = MagicMock()
 
         claim = NormalizedAudio(
-            transmission_id="tx-1111",
+            segment_id="tx-1111",
             feed_id="feed-2222",
             source_audio_uris=["gs://bucket/raw1.flac"],
             canonical_audio_uri="gs://bucket/normalized.flac",
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
-            external_id="ext-1234",
             start_timestamp={"seconds": 1000, "nanos": 0},
             end_timestamp={"seconds": 1005, "nanos": 0},
         )
@@ -644,13 +635,12 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         mock_audio_segments_client = MagicMock()
 
         claim = NormalizedAudio(
-            transmission_id="tx-1111",
+            segment_id="tx-1111",
             feed_id="feed-2222",
             source_audio_uris=["gs://bucket/raw1.flac"],
             canonical_audio_uri="gs://bucket/normalized.flac",
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
-            external_id="ext-1234",
             start_timestamp={"seconds": 1000, "nanos": 0},
             end_timestamp={"seconds": 1005, "nanos": 0},
         )
@@ -706,13 +696,12 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         mock_audio_segments_client = MagicMock()
 
         claim = NormalizedAudio(
-            transmission_id="tx-1111",
+            segment_id="tx-1111",
             feed_id="feed-2222",
             source_audio_uris=["gs://bucket/raw1.flac"],
             canonical_audio_uri="gs://bucket/normalized.flac",
             playback_audio_uri="gs://bucket/normalized.m4a",
             feed_name="Test Feed",
-            external_id="ext-1234",
             start_timestamp={"seconds": 1000, "nanos": 0},
             end_timestamp={"seconds": 1005, "nanos": 0},
         )

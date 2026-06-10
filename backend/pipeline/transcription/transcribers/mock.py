@@ -1,6 +1,6 @@
 """Mock transcriber implementation for offline/local testing."""
 
-from backend.pipeline.normalization.common.utils import ConfigBase
+from backend.pipeline.common.utils import ConfigBase
 from backend.pipeline.transcription.transcribers.base import Transcriber
 
 

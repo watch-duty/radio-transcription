@@ -13,7 +13,8 @@ from yarl import URL
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
-from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
+from backend.pipeline.schema_types.continuous_audio_pb2 import ContinuousAudio
+from backend.pipeline.schema_types.segmented_audio_pb2 import SegmentedAudio
 from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
 
 _DUMMY_REQUEST_INFO = aiohttp.RequestInfo(
@@ -30,11 +31,12 @@ def _make_feed(
     return LeasedFeed(
         id=uuid.UUID(int=feed_id),
         name=f"test-{source_type}-{feed_id}",
-        external_id="ext-id",
         source_type=source_type,
         last_processed_filename=None,
         last_bookmark_time=None,
         fencing_token=fencing_token,
+        failure_count=0,
+        status_reason=None,
         source_feed_id=None,
     )
 
@@ -410,7 +412,6 @@ class TestPublishAudioChunkSync(unittest.TestCase):
             topic_path="projects/test/topics/audio",
             feed_id="feed-42",
             feed_name="Central Fire",
-            external_id="ext-id",
             gcs_uri="gs://bucket/audio.flac",
             session_id="test-session-1",
             start_timestamp=mock_now,
@@ -426,16 +427,15 @@ class TestPublishAudioChunkSync(unittest.TestCase):
 
         self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
 
-        chunk = AudioChunk()
+        chunk = SegmentedAudio()
         chunk.ParseFromString(publish_args[1])
-        self.assertEqual(chunk.gcs_uri, "gs://bucket/audio.flac")
+        self.assertEqual(chunk.raw_audio_uri, "gs://bucket/audio.flac")
         self.assertEqual(chunk.feed_id, "feed-42")
         self.assertTrue(chunk.HasField("start_timestamp"))
         self.assertEqual(
             chunk.start_timestamp.seconds, int(mock_now.timestamp())
         )
         self.assertEqual(chunk.feed_name, "Central Fire")
-        self.assertEqual(chunk.external_id, "ext-id")
 
     def test_omits_source_type_when_none(self) -> None:
         mock_future = MagicMock()
@@ -448,7 +448,6 @@ class TestPublishAudioChunkSync(unittest.TestCase):
             topic_path="projects/test/topics/audio",
             feed_id="feed-1",
             feed_name="Central Fire",
-            external_id="ext-id",
             gcs_uri="gs://bucket/audio.flac",
             session_id="sess-1",
             start_timestamp=datetime.datetime(
@@ -481,7 +480,6 @@ class TestPublishAudioChunkSync(unittest.TestCase):
                 topic_path="projects/test/topics/audio",
                 feed_id="feed-1",
                 feed_name="Central Fire",
-                external_id="ext-id",
                 gcs_uri="gs://bucket/audio.flac",
                 session_id="sess-1",
                 start_timestamp=datetime.datetime(
@@ -495,6 +493,73 @@ class TestPublishAudioChunkSync(unittest.TestCase):
             publish_kwargs.get("traceparent"),
             "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
         )
+
+    def test_paused_ordering_key_calls_resume_publish_sync(self) -> None:
+        """PublishToPausedOrderingKeyException triggers resume_publish and retries publish in sync publish."""
+        mock_now = datetime.datetime(2026, 4, 25, 12, 0, tzinfo=datetime.UTC)
+        mock_fail_future = MagicMock()
+        mock_fail_future.result.side_effect = (
+            PublishToPausedOrderingKeyException("feed-42")
+        )
+        mock_retry_future = MagicMock()
+        mock_retry_future.result.return_value = "retry-success"
+
+        _, mock_publisher = _make_pubsub_client()
+        mock_publisher.publish.side_effect = [
+            mock_fail_future,
+            mock_retry_future,
+        ]
+
+        result = gcp_helper.publish_audio_chunk_sync(
+            mock_publisher,
+            topic_path="projects/test/topics/audio",
+            feed_id="feed-42",
+            feed_name="Central Fire",
+            gcs_uri="gs://bucket/audio.flac",
+            session_id="test-session-1",
+            start_timestamp=mock_now,
+            duration_ms=15000,
+        )
+
+        self.assertEqual(result, "retry-success")
+        self.assertEqual(mock_publisher.publish.call_count, 2)
+        mock_publisher.resume_publish.assert_called_once_with(
+            "projects/test/topics/audio",
+            ordering_key="feed-42",
+        )
+
+    def test_resume_publish_failure_sync(self) -> None:
+        """RuntimeError or ValueError from resume_publish skips retry and propagates the PausedOrderingKey exception."""
+        mock_now = datetime.datetime(2026, 4, 25, 12, 0, tzinfo=datetime.UTC)
+
+        for resume_exc in (
+            RuntimeError("publisher stopped"),
+            ValueError("unseen key"),
+        ):
+            with self.subTest(resume_exc=type(resume_exc).__name__):
+                mock_fail_future = MagicMock()
+                mock_fail_future.result.side_effect = (
+                    PublishToPausedOrderingKeyException("feed-42")
+                )
+
+                _, mock_publisher = _make_pubsub_client()
+                mock_publisher.publish.side_effect = [mock_fail_future]
+                mock_publisher.resume_publish.side_effect = resume_exc
+
+                with self.assertRaises(PublishToPausedOrderingKeyException):
+                    gcp_helper.publish_audio_chunk_sync(
+                        mock_publisher,
+                        topic_path="projects/test/topics/audio",
+                        feed_id="feed-42",
+                        feed_name="Central Fire",
+                        gcs_uri="gs://bucket/audio.flac",
+                        session_id="test-session-1",
+                        start_timestamp=mock_now,
+                        duration_ms=15000,
+                    )
+
+                mock_publisher.resume_publish.assert_called_once()
+                self.assertEqual(mock_publisher.publish.call_count, 1)
 
 
 class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
@@ -523,7 +588,6 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
                 topic_path="projects/test/topics/audio",
                 feed_id="feed-42",
                 feed_name="Central Fire",
-                external_id="ext-id",
                 gcs_uri="gs://bucket/audio.flac",
                 session_id="test-session-1",
                 start_timestamp=mock_now,
@@ -550,7 +614,6 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
             topic_path="projects/test/topics/audio",
             feed_id="feed-42",
             feed_name="Central Fire",
-            external_id="ext-id",
             gcs_uri="gs://bucket/audio.flac",
             session_id="test-session-1",
             start_timestamp=mock_now,
@@ -560,41 +623,43 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, "message-123")
         mock_publisher.publish.assert_called_once()
         publish_args, publish_kwargs = mock_publisher.publish.call_args
-        chunk = AudioChunk()
+        chunk = ContinuousAudio()
         chunk.ParseFromString(publish_args[1])
         self.assertEqual(chunk.feed_name, "Central Fire")
-        self.assertEqual(chunk.external_id, "ext-id")
         self.assertEqual(publish_kwargs["ordering_key"], "feed-42")
 
     async def test_paused_ordering_key_calls_resume_publish(self) -> None:
-        """PublishToPausedOrderingKeyException triggers resume_publish before propagating raw."""
+        """PublishToPausedOrderingKeyException triggers resume_publish and retries publish once."""
         mock_pubsub_client, mock_publisher = _make_pubsub_client()
         mock_now = datetime.datetime(2026, 4, 25, 12, 0, tzinfo=datetime.UTC)
 
-        fut = concurrent.futures.Future()
-        fut.set_exception(PublishToPausedOrderingKeyException("feed-42"))
-        mock_publisher.publish.return_value = fut
+        fut_fail = concurrent.futures.Future()
+        fut_fail.set_exception(PublishToPausedOrderingKeyException("feed-42"))
+        fut_retry = concurrent.futures.Future()
+        fut_retry.set_result("retry-success")
 
-        with self.assertRaises(PublishToPausedOrderingKeyException):
-            await gcp_helper.publish_audio_chunk(
-                mock_pubsub_client,
-                topic_path="projects/test/topics/audio",
-                feed_id="feed-42",
-                feed_name="Central Fire",
-                external_id="ext-id",
-                gcs_uri="gs://bucket/audio.flac",
-                session_id="test-session-1",
-                start_timestamp=mock_now,
-                duration_ms=15000,
-            )
+        mock_publisher.publish.side_effect = [fut_fail, fut_retry]
 
+        result = await gcp_helper.publish_audio_chunk(
+            mock_pubsub_client,
+            topic_path="projects/test/topics/audio",
+            feed_id="feed-42",
+            feed_name="Central Fire",
+            gcs_uri="gs://bucket/audio.flac",
+            session_id="test-session-1",
+            start_timestamp=mock_now,
+            duration_ms=15000,
+        )
+
+        self.assertEqual(result, "retry-success")
+        self.assertEqual(mock_publisher.publish.call_count, 2)
         mock_publisher.resume_publish.assert_called_once_with(
             "projects/test/topics/audio",
             ordering_key="feed-42",
         )
 
-    async def test_resume_publish_failure_swallowed(self) -> None:
-        """RuntimeError or ValueError from resume_publish is swallowed; the original PausedOrderingKey exception still propagates."""
+    async def test_resume_publish_failure(self) -> None:
+        """RuntimeError or ValueError from resume_publish skips retry and propagates the PausedOrderingKey exception."""
         mock_now = datetime.datetime(2026, 4, 25, 12, 0, tzinfo=datetime.UTC)
 
         for resume_exc in (
@@ -603,11 +668,12 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(resume_exc=type(resume_exc).__name__):
                 mock_pubsub_client, mock_publisher = _make_pubsub_client()
-                fut = concurrent.futures.Future()
-                fut.set_exception(
+                fut_fail = concurrent.futures.Future()
+                fut_fail.set_exception(
                     PublishToPausedOrderingKeyException("feed-42")
                 )
-                mock_publisher.publish.return_value = fut
+
+                mock_publisher.publish.side_effect = [fut_fail]
                 mock_publisher.resume_publish.side_effect = resume_exc
 
                 with self.assertRaises(PublishToPausedOrderingKeyException):
@@ -616,7 +682,6 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
                         topic_path="projects/test/topics/audio",
                         feed_id="feed-42",
                         feed_name="Central Fire",
-                        external_id="ext-id",
                         gcs_uri="gs://bucket/audio.flac",
                         session_id="test-session-1",
                         start_timestamp=mock_now,
@@ -624,6 +689,7 @@ class TestPublishAudioChunk(unittest.IsolatedAsyncioTestCase):
                     )
 
                 mock_publisher.resume_publish.assert_called_once()
+                self.assertEqual(mock_publisher.publish.call_count, 1)
 
 
 class TestParseGcsUri(unittest.TestCase):
