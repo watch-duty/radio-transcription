@@ -1902,7 +1902,7 @@ async def test_delete_feed_succeeds(
     await db_pool.execute(
         """
         INSERT INTO audio_segments (id, feed_id, classification, start_timestamp, end_timestamp, created_at)
-        VALUES ($1, $2, 'SPEECH_DETECTED', NOW() - INTERVAL '10 seconds', NOW(), NOW())
+        VALUES ($1, $2, 'SPEECH', NOW() - INTERVAL '10 seconds', NOW(), NOW())
         """,
         str(segment_id),
         str(feed_id),

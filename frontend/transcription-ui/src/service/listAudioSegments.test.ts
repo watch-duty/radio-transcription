@@ -16,7 +16,7 @@ describe('listAudioSegments', () => {
         {
           id: 'segment-1',
           feedId: 'feed123',
-          classification: 'SPEECH_DETECTED',
+          classification: 'SPEECH',
           startTimestamp: '2026-04-10T12:00:00Z',
           endTimestamp: '2026-04-10T12:01:00Z',
           missingPriorContext: false,

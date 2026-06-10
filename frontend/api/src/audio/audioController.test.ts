@@ -33,7 +33,7 @@ describe('listAudioSegments', () => {
         {
           id: 'segment-1',
           feed_id: 'feed-1',
-          classification: 'SPEECH_DETECTED',
+          classification: 'SPEECH',
           start_timestamp: '2026-01-01T10:00:00Z',
           end_timestamp: '2026-01-01T10:01:00Z',
           missing_prior_context: false,
@@ -66,7 +66,7 @@ describe('listAudioSegments', () => {
         {
           id: 'segment-1',
           feedId: 'feed-1',
-          classification: 'SPEECH_DETECTED',
+          classification: 'SPEECH',
           startTimestamp: '2026-01-01T10:00:00Z',
           endTimestamp: '2026-01-01T10:01:00Z',
           missingPriorContext: false,
