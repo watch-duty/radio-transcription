@@ -13,7 +13,7 @@ from backend.pipeline.schema_types import (
 logger = logging.getLogger(__name__)
 
 
-def _sanitize_duration(duration: Duration) -> None:
+def _sanitize_duration(duration: Duration, context: str = "") -> None:
     """Safeguards protobuf Duration from sign mismatch or negative offsets."""
     if (
         duration.seconds < 0
@@ -21,6 +21,12 @@ def _sanitize_duration(duration: Duration) -> None:
         or (duration.seconds > 0 and duration.nanos < 0)
         or (duration.seconds < 0 and duration.nanos > 0)
     ):
+        logger.warning(
+            "Sanitizing invalid or sign-mismatched Duration%s: seconds=%d, nanos=%d",
+            f" ({context})" if context else "",
+            duration.seconds,
+            duration.nanos,
+        )
         duration.seconds = 0
         duration.nanos = 0
 
@@ -58,11 +64,17 @@ class EvaluationService:
             The evaluated payload or None if processing was skipped.
         """
         try:
-            # Safeguard offset durations against sign mismatches (e.g. from negative timedeltas)
-            _sanitize_duration(new_audio.start_audio_offset)
-            _sanitize_duration(new_audio.end_audio_offset)
-
             segment_id = new_audio.segment_id
+            # Safeguard offset durations against sign mismatches (e.g. from negative timedeltas)
+            _sanitize_duration(
+                new_audio.start_audio_offset,
+                f"start_audio_offset for segment {segment_id}",
+            )
+            _sanitize_duration(
+                new_audio.end_audio_offset,
+                f"end_audio_offset for segment {segment_id}",
+            )
+
             logger.info("Processing transmission ID: %s", segment_id)
 
             if not new_audio.transcript.strip():

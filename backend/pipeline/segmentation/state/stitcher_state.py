@@ -143,9 +143,14 @@ class AudioStitchingStateMachine:
 
         # When flushing due to dropped chunks, we might not have a last_segment_end_time_ms yet
         # if the transmission was very short, so fallback to transmission_start_time_ms.
+        # Also, ensure last_segment_end_time_ms is not stale from a previous transmission.
         end_ms = (
             ctx.last_segment_end_time_ms
-            if ctx.last_segment_end_time_ms is not None
+            if (
+                ctx.last_segment_end_time_ms is not None
+                and ctx.buffer_start_time_ms is not None
+                and ctx.last_segment_end_time_ms >= ctx.buffer_start_time_ms
+            )
             else ctx.transmission_start_time_ms
         )
         if (
@@ -165,7 +170,7 @@ class AudioStitchingStateMachine:
 
         # Ensure invariants: end time is never before start time
         padded_end_time_ms = max(ctx.buffer_start_time_ms, padded_end_time_ms)
-        end_ms = max(ctx.transmission_start_time_ms, end_ms)
+        end_ms = max(ctx.buffer_start_time_ms, end_ms)
 
         return FlushAction(
             reason=reason,
