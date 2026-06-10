@@ -101,6 +101,7 @@ class AudioSegmentStore:
 
     async def create_audio_segment(
         self,
+        segment_id: str,
         feed_id: str,
         classification: AudioClassification,
         start_timestamp: datetime.datetime,
@@ -116,27 +117,36 @@ class AudioSegmentStore:
     ) -> AudioSegment:
         """Create a new audio segment."""
         try:
+            segment_uuid = uuid.UUID(segment_id)
+        except ValueError as e:
+            msg = f"Invalid segment_id UUID: {segment_id}"
+            raise ValueError(msg) from e
+
+        try:
             feed_uuid = uuid.UUID(feed_id)
         except ValueError as e:
             msg = f"Invalid feed_id UUID: {feed_id}"
             raise ValueError(msg) from e
 
-        segment_id = uuid.uuid4()
-        row = await self._pool.fetchrow(
-            audio_segment_queries.CREATE_AUDIO_SEGMENT_SQL,
-            segment_id,
-            feed_uuid,
-            classification,
-            start_timestamp,
-            end_timestamp,
-            missing_prior_context,
-            missing_post_context,
-            source_audio_uris,
-            canonical_audio_uri,
-            start_audio_offset,
-            end_audio_offset,
-            playback_audio_uri,
-        )
+        try:
+            row = await self._pool.fetchrow(
+                audio_segment_queries.CREATE_AUDIO_SEGMENT_SQL,
+                segment_uuid,
+                feed_uuid,
+                classification,
+                start_timestamp,
+                end_timestamp,
+                missing_prior_context,
+                missing_post_context,
+                source_audio_uris,
+                canonical_audio_uri,
+                start_audio_offset,
+                end_audio_offset,
+                playback_audio_uri,
+            )
+        except asyncpg.exceptions.ForeignKeyViolationError as e:
+            msg = f"Feed {feed_id} does not exist."
+            raise ValueError(msg) from e
 
         if row is None:
             msg = "Unable to create audio segment."
