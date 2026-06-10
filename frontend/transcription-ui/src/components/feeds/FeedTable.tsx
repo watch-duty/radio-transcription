@@ -32,6 +32,7 @@ import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { type Feed, SourceType } from '@transcription/common';
 
+import { toSourceTypeString } from '../../utils/textUtils';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 import { MultiSelectFilter } from '../common/MultiSelectFilter';
 
@@ -160,7 +161,7 @@ const VIRTUOSO_COMPONENTS = {
   FillerRow: VirtuosoFillerRow,
 };
 
-const ALL_SOURCE_TYPES = Object.values(SourceType);
+const ALL_SOURCE_TYPES = Object.values(SourceType).map(toSourceTypeString);
 
 export function FeedTable({
   title = 'Feeds',
@@ -303,7 +304,11 @@ export function FeedTable({
           role="cell"
           sx={{ borderBottom: 'none', minWidth: 0 }}
         >
-          <Chip label={feed.sourceType} size="small" variant="outlined" />
+          <Chip
+            label={toSourceTypeString(feed.sourceType)}
+            size="small"
+            variant="outlined"
+          />
         </TableCell>
 
         <TableCell
