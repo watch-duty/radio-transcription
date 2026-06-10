@@ -14,6 +14,7 @@ from model.src.common.gemini import vertex as gemini_vertex
 
 DEFAULT_GEMINI_LOCATION = "global"
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
+_VALID_FINISH_REASONS = {"STOP", "MAX_TOKENS", "Stop", "MaxTokens"}
 
 logger = get_task_logger(
     __name__, {"system": "transcription", "component": "gemini"}
@@ -138,42 +139,49 @@ class GeminiTranscriber(base.Transcriber):
         response: types.GenerateContentResponse,
     ) -> str | None:
         """Extracts transcript text from Gemini GenerateContentResponse."""
-        transcript = None
         try:
-            if response.candidates:
-                candidate = response.candidates[0]
-                finish_reason = getattr(candidate, "finish_reason", None)
-                reason_str = (
-                    getattr(finish_reason, "name", str(finish_reason))
-                    if finish_reason
-                    else None
-                )
-
-                valid_reasons = ("STOP", "MAX_TOKENS", "Stop", "MaxTokens")
-                if reason_str is None or reason_str in valid_reasons:
-                    if candidate.content and candidate.content.parts:
-                        text_val = response.text
-                        if text_val is not None:
-                            transcript = text_val.strip()
-                    else:
-                        logger.warning(
-                            "Gemini response candidate had no content/parts."
-                        )
-                else:
-                    logger.warning(
-                        f"Gemini response finished with reason: {reason_str}"
-                    )
-            else:
+            if not response.candidates:
                 logger.warning("Gemini response returned no candidates.")
-        except Exception as e:
-            logger.warning(f"Failed to extract text from Gemini response: {e}")
+                return None
 
-        if transcript == "[UNINTELLIGIBLE]" or not transcript:
+            candidate = response.candidates[0]
+            finish_reason = getattr(candidate, "finish_reason", None)
+            reason_str = (
+                getattr(finish_reason, "name", str(finish_reason))
+                if finish_reason
+                else None
+            )
+
+            is_valid_reason = (
+                reason_str is None or reason_str in _VALID_FINISH_REASONS
+            )
+            if not is_valid_reason:
+                logger.warning(
+                    f"Gemini response finished with reason: {reason_str}"
+                )
+                return None
+
+            has_parts = bool(candidate.content and candidate.content.parts)
+            if not has_parts:
+                logger.warning(
+                    "Gemini response candidate had no content/parts."
+                )
+                return None
+
+            transcript = None
+            if response.text:
+                transcript = response.text.strip()
+
             if transcript == "[UNINTELLIGIBLE]":
                 logger.info(
                     "Transcription returned [UNINTELLIGIBLE] "
                     "(no discernable speech)."
                 )
+                return None
+        except Exception as e:
+            logger.exception(
+                f"Failed to extract text from Gemini response: {e}"
+            )
             return None
-
-        return transcript
+        else:
+            return transcript
