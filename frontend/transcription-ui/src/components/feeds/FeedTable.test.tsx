@@ -32,6 +32,7 @@ const renderFeedTable = (
     isLoading: false,
     filters: defaultFilters,
     onFiltersChange: vi.fn(),
+    feedTotal: 0,
     ...props,
   };
 
@@ -222,6 +223,7 @@ describe('FeedTable', () => {
             isLoading={false}
             filters={defaultFilters}
             onFiltersChange={vi.fn()}
+            feedTotal={1}
           />
         </VirtuosoMockContext.Provider>
       </MemoryRouter>
