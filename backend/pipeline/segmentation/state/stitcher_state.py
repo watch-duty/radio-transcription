@@ -163,6 +163,10 @@ class AudioStitchingStateMachine:
                 ctx.buffer_start_time_ms + ctx.buffer_duration_ms
             )
 
+        # Ensure invariants: end time is never before start time
+        padded_end_time_ms = max(ctx.buffer_start_time_ms, padded_end_time_ms)
+        end_ms = max(ctx.transmission_start_time_ms, end_ms)
+
         return FlushAction(
             reason=reason,
             feed_id=ctx.feed_id,
