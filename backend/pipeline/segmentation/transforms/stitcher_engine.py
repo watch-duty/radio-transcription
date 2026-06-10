@@ -265,9 +265,16 @@ class StitcherEngine:
                         time_range=time_range,
                         missing_prior_context=curr_ctx.missing_prior_context,
                         missing_post_context=True,
-                        start_audio_offset_ms=curr_ctx.start_audio_offset_ms,
-                        end_audio_offset_ms=end_time_ms
-                        - curr_ctx.buffer_start_time_ms,
+                        start_audio_offset_ms=max(
+                            0, curr_ctx.start_audio_offset_ms or 0
+                        ),
+                        end_audio_offset_ms=max(
+                            0,
+                            min(
+                                curr_ctx.buffer_duration_ms,
+                                end_time_ms - curr_ctx.buffer_start_time_ms,
+                            ),
+                        ),
                         speech_segments=curr_ctx.speech_segments,
                         segment_id=segment_id,
                         feed_metadata=curr_ctx.feed_metadata,
