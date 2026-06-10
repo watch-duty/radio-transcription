@@ -306,6 +306,7 @@ class AudioStitchingStateMachine:
                             clear_state=False,
                             isolated_audio_buffer=isolated_audio_buffer.copy(),
                             traceparent=action.traceparent,
+                            audio_classification=action.audio_classification,
                         )
                     )
                 case DropAction():
