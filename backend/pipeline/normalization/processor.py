@@ -268,6 +268,11 @@ class NormalizationEventProcessor:
             "end_audio_offset": end_offset_ms / 1000.0,
         }
 
+        if segmented_audio.external_audio_segment_id:
+            segment_payload["external_audio_segment_id"] = (
+                segmented_audio.external_audio_segment_id
+            )
+
         logger.info(
             "Saving audio segment %s record to database...",
             segment_id,

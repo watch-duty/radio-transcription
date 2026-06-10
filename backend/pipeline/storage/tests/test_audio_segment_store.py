@@ -157,6 +157,7 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             datetime.timedelta(seconds=5),
             datetime.timedelta(seconds=10),
             None,
+            None,
         )
 
     async def test_create_audio_segment_invalid_segment_id(self) -> None:

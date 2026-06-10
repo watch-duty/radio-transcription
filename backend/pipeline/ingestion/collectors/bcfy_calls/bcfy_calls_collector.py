@@ -644,6 +644,7 @@ async def _create_chunk_from_call(
             receipt_time=receipt_time,
             mime_type=mime_type,
             resume_position=resume_position,
+            external_audio_segment_id=audio_url,
         )
     )
 
