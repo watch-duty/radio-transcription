@@ -38,7 +38,6 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
       <FeedSearchView
         title="Select feed"
         condensed={true}
-        selectedFeed={searchedFeed}
         onFeedSelect={onSelectFeed}
         triggerSnackbar={triggerSnackbar}
         onError={onError}

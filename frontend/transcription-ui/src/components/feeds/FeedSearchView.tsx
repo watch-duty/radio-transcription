@@ -21,7 +21,6 @@ interface FeedSearchViewProps {
   triggerSnackbar: (message: string) => void;
   onError: (error: Error, titleMessage?: string) => void;
   condensed?: boolean;
-  selectedFeed?: Feed | null;
   onFeedSelect?: (feedId: string) => void;
 }
 
@@ -30,7 +29,6 @@ const QUERY_DEBOUNCE_TIME_MS = 300;
 
 interface CondensedFeedSearchResultsProps {
   feeds: Feed[];
-  selectedFeed: Feed | null;
   filters: FeedFilters;
   onFiltersChange: (filters: FeedFilters) => void;
   feedsLoading: boolean;
@@ -40,29 +38,12 @@ interface CondensedFeedSearchResultsProps {
 
 function CondensedFeedSearchResults({
   feeds,
-  selectedFeed,
   filters,
   onFiltersChange,
   feedsLoading,
   onFeedSelect,
 }: CondensedFeedSearchResultsProps) {
-  const [localInputValue, setLocalInputValue] = useState(
-    selectedFeed?.name || ''
-  );
-  const [isFocused, setIsFocused] = useState(false);
-  const [prevSelectedFeedId, setPrevSelectedFeedId] = useState<
-    string | undefined
-  >(selectedFeed?.id);
-
-  // Sync search input state with selectedFeed prop changes.
-  // We use React's recommended render-phase state adjustment pattern instead of useEffect
-  // to avoid double renders and visual flashes of stale values.
-  // We compare feed IDs (primitive string) to prevent background query refetches from
-  // changing object references and wiping out active user typing.
-  if (selectedFeed?.id !== prevSelectedFeedId) {
-    setPrevSelectedFeedId(selectedFeed?.id);
-    setLocalInputValue(selectedFeed?.name || '');
-  }
+  const [inputValue, setInputValue] = useState('');
 
   return (
     <Box sx={{ width: '50%', textAlign: 'left' }}>
@@ -73,24 +54,19 @@ function CondensedFeedSearchResults({
         filterOptions={(x) => x}
         getOptionLabel={(option) => option.name}
         size="small"
-        value={selectedFeed}
-        inputValue={localInputValue}
+        value={null}
+        inputValue={inputValue}
         onChange={(_, option) => {
           if (option && onFeedSelect) {
             onFeedSelect(option.id);
+            setInputValue('');
+            onFiltersChange({ ...filters, searchQuery: '' });
           }
         }}
-        onInputChange={(_, newInputValue, reason) => {
-          if (reason === 'reset' && isFocused) {
-            return;
-          }
-          setLocalInputValue(newInputValue);
-          if (reason === 'input' || reason === 'clear') {
-            onFiltersChange({ ...filters, searchQuery: newInputValue });
-          }
+        onInputChange={(_, newInputValue) => {
+          setInputValue(newInputValue);
+          onFiltersChange({ ...filters, searchQuery: newInputValue });
         }}
-        onFocus={() => setIsFocused(true)}
-        onBlur={() => setIsFocused(false)}
         loading={feedsLoading}
         loadingText={
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -228,7 +204,6 @@ export function FeedSearchView({
   title,
   onError,
   condensed = false,
-  selectedFeed = null,
   onFeedSelect,
 }: FeedSearchViewProps) {
   const { token } = useAuth();
@@ -326,7 +301,6 @@ export function FeedSearchView({
     return (
       <CondensedFeedSearchResults
         feeds={sortedFeedsForAutocomplete}
-        selectedFeed={selectedFeed}
         filters={filters}
         onFiltersChange={setFilters}
         feedsLoading={feedsLoading}
