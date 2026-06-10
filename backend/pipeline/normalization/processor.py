@@ -241,11 +241,13 @@ class NormalizationEventProcessor:
             + segmented_audio.end_audio_offset.nanos // 1000000
         )
 
-        classification_val = (
-            "SPEECH_DETECTED"
-            if segmented_audio.audio_classification
-            == SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH
-            else "UNCLASSIFIED"
+        classification_map = {
+            SegmentedAudio.AUDIO_CLASSIFICATION_UNSPECIFIED: "UNSPECIFIED",
+            SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH: "SPEECH",
+            SegmentedAudio.AUDIO_CLASSIFICATION_OTHER: "OTHER",
+        }
+        classification_val = classification_map.get(
+            segmented_audio.audio_classification, "UNSPECIFIED"
         )
 
         segment_payload = {
