@@ -269,3 +269,14 @@ uv run pre-commit run --all-files
 If there is a workflow that is failing, and for the life of you, you cannot figure out why, you can open an SSH session into the workflow. Rerun the job by triggering a manual workflow.
 ![Manual workflow trigger instructions](manual_workflow_trigger.png)
 Note that this is only available on workflows that have it configured. If you want to configure it for a new workflow, you'll need open a new PR and merge the configuration into main before the option is available for you.
+
+### Tracing Ingestion Sources (`external_audio_segment_id`)
+
+When debugging transcription issues, audio segmentation bugs, or verifying ingestion sources, you can inspect the `external_audio_segment_id` column in the database or the equivalent field in API payloads. 
+
+Depending on the ingestion source, this field contains different formats:
+
+* **Echo**: The GCS bucket and object path (e.g. `bucket-name/channel-location/YYYYMMDD/filename.mp3`).
+* **Broadcastify Calls**: The full source audio URL (e.g. `https://calls.broadcastify.com/.../123456.mp3`).
+* **Fire Notifications**: A composite identifier containing the S3 storage UUID and the original human-readable filename (e.g. `c1465213-2998-4ed7-a6a2-bf16ebf67265|SAN-JOSE-DISP 2026-06-09 18-38-41.mp3`).
+* **Broadcastify Feeds**: Not applicable (omitted/null).
