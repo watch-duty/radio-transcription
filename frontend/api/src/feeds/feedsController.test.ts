@@ -476,7 +476,7 @@ describe('FeedsController', () => {
         'RECORDINGS/WA-SPOKANE-DISP'
       );
       expect(url).toBe(
-        'https://audioplay.textmefires.info/audioplay/folder_play?dir=/RECORDINGS/WA-SPOKANE-DISP'
+        'https://audioplay.textmefires.info/audioplay/folder_play?dir=RECORDINGS%2FWA-SPOKANE-DISP'
       );
     });
 
@@ -486,7 +486,7 @@ describe('FeedsController', () => {
         '/RECORDINGS/WA-SPOKANE-DISP'
       );
       expect(url).toBe(
-        'https://audioplay.textmefires.info/audioplay/folder_play?dir=/RECORDINGS/WA-SPOKANE-DISP'
+        'https://audioplay.textmefires.info/audioplay/folder_play?dir=RECORDINGS%2FWA-SPOKANE-DISP'
       );
     });
 
