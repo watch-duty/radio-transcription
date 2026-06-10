@@ -11,7 +11,6 @@ import os
 import shutil
 import unittest
 from functools import partial
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
@@ -27,13 +26,12 @@ from testcontainers.core.container import DockerContainer
 from testcontainers.core.wait_strategies import LogMessageWaitStrategy
 from testcontainers.postgres import PostgresContainer
 
+from backend.pipeline.common.test_schema_helper import sync_apply_test_schema
 from backend.pipeline.ingestion.collectors.echo import main as echo_main
 from backend.pipeline.schema_types.segmented_audio_pb2 import SegmentedAudio
 from backend.pipeline.storage.settings import AlloyDBSettings
 from backend.pipeline.storage.sync_connection import connect_db
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
-
-from backend.pipeline.common.test_schema_helper import sync_apply_test_schema
 
 _FAKE_GCS_PORT = 4443
 _ECHO_BUCKET = "wd-echo-recordings-test"

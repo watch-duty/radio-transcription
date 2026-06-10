@@ -6,7 +6,6 @@ import datetime
 import os
 import unittest
 import uuid
-from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
@@ -19,6 +18,7 @@ from testcontainers.postgres import PostgresContainer
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client
+from backend.pipeline.common.test_schema_helper import async_apply_test_schema
 from backend.pipeline.ingestion.collectors.openmhz._types import CallEvent
 from backend.pipeline.ingestion.collectors.openmhz.collector import (
     openmhz_collector,
@@ -39,8 +39,6 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 _CLAIM: dict[SourceType, int] = {SourceType.OPENMHZ: 1}
-
-from backend.pipeline.common.test_schema_helper import async_apply_test_schema
 
 _FAKE_GCS_PORT = 4443
 _TEST_BUCKET = "test-audio-bucket"

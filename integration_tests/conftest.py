@@ -9,7 +9,6 @@ cause collisions between concurrent test runs. Always use `uuid.uuid4()` for uni
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -20,8 +19,8 @@ import docker
 import pytest
 from testcontainers.postgres import PostgresContainer
 
-from backend.pipeline.storage.connection import create_pool
 from backend.pipeline.common.test_schema_helper import async_apply_test_schema
+from backend.pipeline.storage.connection import create_pool
 
 
 def _docker_available() -> bool:

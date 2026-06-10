@@ -6,7 +6,9 @@ from pathlib import Path
 from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_SQL_DIR = _REPO_ROOT / "terraform" / "modules" / "alloydb" / "sql" / "ingestion"
+_SQL_DIR = (
+    _REPO_ROOT / "terraform" / "modules" / "alloydb" / "sql" / "ingestion"
+)
 
 
 async def async_apply_test_schema(conn: Any) -> None:

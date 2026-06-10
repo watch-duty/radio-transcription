@@ -18,6 +18,7 @@ from testcontainers.postgres import PostgresContainer
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client
+from backend.pipeline.common.test_schema_helper import async_apply_test_schema
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     bcfy_calls_collector,
 )
@@ -37,8 +38,6 @@ from backend.pipeline.storage.feed_store import (
 )
 
 _CLAIM: dict[SourceType, int] = {SourceType.BCFY_CALLS: 1}
-
-from backend.pipeline.common.test_schema_helper import async_apply_test_schema
 
 _FAKE_GCS_PORT = 4443
 _TEST_BUCKET = "test-audio-bucket"
