@@ -1,6 +1,7 @@
 """Publishes test messages and verifies the end-to-end Rules Evaluation flow."""
 
 import base64
+import datetime
 import os
 import time
 import uuid
@@ -21,6 +22,9 @@ TRANSCRIPTION_TOPIC = os.environ.get(
 MOCK_SERVER_HOST = os.environ.get("MOCK_SERVER_HOST", "localhost:8082")
 TRANSCRIPTS_API_HOST = os.environ.get("TRANSCRIPTS_API_HOST", "localhost:8087")
 FEEDS_API_HOST = os.environ.get("FEEDS_API_HOST", "localhost:8089")
+AUDIO_SEGMENTS_API_HOST = os.environ.get(
+    "AUDIO_SEGMENTS_API_HOST", "localhost:8091"
+)
 
 
 def create_test_rule(test_keyword: str) -> None:
@@ -44,6 +48,24 @@ def create_test_rule(test_keyword: str) -> None:
 
     rule_id = response.json().get("rule_id", "")
     assert rule_id != "", "Rule ID not returned by API"
+
+
+def create_test_audio_segment(segment_id: str, feed_id: str) -> None:
+    """Creates an audio segment row in storage to serve as the foreign key parent for annotations."""
+    now = datetime.datetime.now(datetime.UTC)
+    payload = {
+        "id": segment_id,
+        "feed_id": feed_id,
+        "classification": "SPEECH",
+        "start_timestamp": now.isoformat(),
+        "end_timestamp": now.isoformat(),
+        "missing_prior_context": False,
+        "missing_post_context": False,
+        "source_audio_uris": ["chunk1", "chunk2"],
+    }
+    url = f"http://{AUDIO_SEGMENTS_API_HOST}/v1/audio_segments"
+    response = requests.post(url, json=payload, timeout=10)
+    response.raise_for_status()
 
 
 def publish_test_message(
@@ -85,6 +107,7 @@ def test_rules_creation_evaluation_publish(
 
     create_test_rule(unique_keyword)
     feed_id, _ = test_bcfy_feed
+    create_test_audio_segment(unique_trans_id, feed_id)
     publish_test_message(unique_trans_id, unique_transcript, feed_id)
 
     def transcript_and_notification_received() -> bool:
