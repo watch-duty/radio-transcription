@@ -153,6 +153,8 @@ const TimelineClip = React.memo(
       </Box>
     );
   },
+  // Field comparator: the parent passes a fresh clip object each scroll-driven
+  // render, so identity checks would re-render every placeholder across the range.
   (prevProps, nextProps) => {
     return (
       prevProps.clip.id === nextProps.clip.id &&
@@ -659,6 +661,21 @@ export function AudioDisplay({
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
   }, []);
+
+  // The inner strip is sized as a percentage of the scroller, so a container
+  // resize shifts which clips sit at a given scrollLeft. Re-pin the window's
+  // right edge to its anchored end-time (which also re-runs the mount scan).
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      const { isPanned, maxEnd } = stateRef.current;
+      const target = isPanned ? (anchorEndTimeRef.current ?? maxEnd) : maxEnd;
+      if (target != null) scrollToWindowEnd(target);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [scrollToWindowEnd]);
 
   useEffect(() => {
     return () => {

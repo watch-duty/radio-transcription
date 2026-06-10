@@ -103,6 +103,8 @@ export function usePeaksDecodeQueue(): PeaksDecodeQueue {
   useSyncExternalStore(subscribeCache, getCacheVersion);
 
   const queueRef = useRef<string[]>([]);
+  // Mirrors queueRef's contents for O(1) dedup on enqueue.
+  const queuedRef = useRef<Set<string>>(new Set());
   const activeRef = useRef(0);
   const inFlightRef = useRef<Set<string>>(new Set());
   // Latest pump, so async completion re-pumps without the callback self-referencing.
@@ -114,7 +116,9 @@ export function usePeaksDecodeQueue(): PeaksDecodeQueue {
       queueRef.current.length > 0
     ) {
       const url = queueRef.current.shift();
-      if (!url || peaksCache.has(url) || inFlightRef.current.has(url)) {
+      if (!url) continue;
+      queuedRef.current.delete(url);
+      if (peaksCache.has(url) || inFlightRef.current.has(url)) {
         continue;
       }
       inFlightRef.current.add(url);
@@ -137,10 +141,11 @@ export function usePeaksDecodeQueue(): PeaksDecodeQueue {
         if (
           peaksCache.has(url) ||
           inFlightRef.current.has(url) ||
-          queueRef.current.includes(url)
+          queuedRef.current.has(url)
         ) {
           continue;
         }
+        queuedRef.current.add(url);
         if (priority) queueRef.current.unshift(url);
         else queueRef.current.push(url);
         added += 1;
