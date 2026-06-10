@@ -15,7 +15,7 @@ import betterproto
 class FlushRequestProtoAudioClassification(betterproto.Enum):
     AUDIO_CLASSIFICATION_UNSPECIFIED = 0
     AUDIO_CLASSIFICATION_SPEECH = 1
-    AUDIO_CLASSIFICATION_NO_SPEECH = 2
+    AUDIO_CLASSIFICATION_OTHER = 2
 
 
 @dataclass(eq=False, repr=False)
