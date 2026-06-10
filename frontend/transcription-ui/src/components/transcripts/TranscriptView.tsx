@@ -766,10 +766,8 @@ export function TranscriptView({
       }}
     >
       <FeedHeader
-        feeds={feeds || []}
         searchedFeed={searchedFeed}
         onSelectFeed={handleFeedSelect}
-        feedsLoading={feedsFetching}
         sourceUrl={sourceUrl}
         archiveUrl={archiveUrl}
         status={activeFeedData?.status ?? searchedFeed?.status}
@@ -777,6 +775,7 @@ export function TranscriptView({
           activeFeedData?.lastHeartbeat ?? searchedFeed?.lastHeartbeat
         }
         triggerSnackbar={triggerSnackbar}
+        onError={onError}
       />
 
       <Box
