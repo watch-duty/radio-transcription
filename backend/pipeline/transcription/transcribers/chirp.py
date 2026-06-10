@@ -202,7 +202,7 @@ class GoogleChirpV3Transcriber(Transcriber):
 
         transcript = " ".join(chunks).strip()
 
-        if not transcript:
+        if transcript in ("[UNINTELLIGIBLE]", "[BACKGROUND]", ""):
             logger.info(
                 "Transcription returned [UNINTELLIGIBLE] only or was completely empty (no discernable speech)."
             )

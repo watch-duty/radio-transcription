@@ -80,7 +80,7 @@ class TestTranscribers(unittest.TestCase):
                 audio_data=dummy_audio, duration_ms=2500
             )
 
-            self.assertEqual(transcript, CHIRP_UNINTELLIGIBLE_MARKER)
+            self.assertIsNone(transcript)
 
     def test_google_chirp_transcriber_passes_retry_policy(self) -> None:
         """Verifies that the GoogleChirpV3Transcriber passes a native Retry policy to the SpeechClient."""
