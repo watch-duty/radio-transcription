@@ -101,7 +101,7 @@ export function FeedConfigurationView({
     refetchOnWindowFocus: false,
   });
 
-  const feeds = feedsData?.feeds ?? [];
+  const feeds = useMemo(() => feedsData?.feeds ?? [], [feedsData]);
   const feedTotal = feedsData?.total ?? 0;
 
   useEffect(() => {
@@ -120,7 +120,7 @@ export function FeedConfigurationView({
     enabled: !!token,
     refetchOnWindowFocus: false,
   });
-  
+
   const allFeeds = allFeedData.feeds;
 
   // TODO: https://linear.app/watchduty/issue/GOO-575 - Provide filter tags in backend

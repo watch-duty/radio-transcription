@@ -130,7 +130,6 @@ function VirtuosoTableRow(
         ...(isSelected && {
           bgcolor: 'action.selected',
           borderLeftColor: 'warning.main',
-          borderLeftWidth: '4px',
         }),
         ...rest.sx,
       }}

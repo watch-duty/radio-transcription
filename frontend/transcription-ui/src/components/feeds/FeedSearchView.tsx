@@ -252,7 +252,7 @@ export function FeedSearchView({
   }, [filters.searchQuery]);
 
   const {
-    data: feedData,
+    data: feedsData,
     error: feedsError,
     isLoading: feedsLoading,
   } = useQuery({
@@ -280,17 +280,8 @@ export function FeedSearchView({
     refetchInterval: FEED_REFETCH_INTERVAL_MS,
   });
 
-  const feeds = feedData?.feeds ?? [];
-  const feedTotal = feedData?.total ?? 0;
-
-  const { data: allFeedData = { feeds: [], total: 0 } } = useQuery({
-    queryKey: ['listFeeds', token, '', [], 0, [], 0, [], 0],
-    queryFn: () => listFeeds(token!, {}),
-    enabled: !!token && !condensed,
-    refetchOnWindowFocus: false,
-  });
-
-  const allFeeds = allFeedData.feeds;
+  const feeds = useMemo(() => feedsData?.feeds ?? [], [feedsData]);
+  const feedTotal = feedsData?.total ?? 0;
 
   useEffect(() => {
     if (feedsError) {
@@ -298,10 +289,21 @@ export function FeedSearchView({
     }
   }, [feedsError, onError]);
 
+  // TODO: https://linear.app/watchduty/issue/GOO-575 - Remove allFeeds once the tags are computed in the backend
+  const { data: allFeedData = { feeds: [], total: 0 } } = useQuery({
+    queryKey: ['listFeeds', token, '', [], 0, [], 0, [], 0],
+    queryFn: () => listFeeds(token!, {}),
+    enabled: !!token && !condensed,
+    refetchOnWindowFocus: false,
+  });
+
+  const allFeeds = useMemo(() => allFeedData?.feeds ?? [], [allFeedData]);
+
+  // TODO: https://linear.app/watchduty/issue/GOO-575 - Provide filter tags in backend
   const tags = useMemo<{ key: string; value: string }[]>(() => {
     const seen = new Set<string>();
     const uniqueTags: { key: string; value: string }[] = [];
-    const sourceFeeds = allFeeds.length > 0 ? allFeeds : feeds;
+    const sourceFeeds = allFeeds || [];
     sourceFeeds.forEach((feed) => {
       feed.tags?.forEach((tag) => {
         const identifier = `${tag.key}:${tag.value}`;
@@ -314,7 +316,7 @@ export function FeedSearchView({
     return uniqueTags.sort(
       (a, b) => a.key.localeCompare(b.key) || a.value.localeCompare(b.value)
     );
-  }, [feeds, allFeeds]);
+  }, [allFeeds]);
 
   const sortedFeedsForAutocomplete = useMemo(() => {
     return [...(feeds ?? [])].sort((a, b) => a.name.localeCompare(b.name));
