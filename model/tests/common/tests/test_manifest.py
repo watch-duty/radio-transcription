@@ -13,6 +13,7 @@ import unittest
 from pathlib import Path
 
 from common.manifest import (
+    is_scoreable_manifest_entry,
     load_manifest,
     merge_predictions_to_manifest,
     rows_from_manifest,
@@ -308,3 +309,18 @@ class TestRowsFromManifestNullSafe(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].offset, 0.0)
         self.assertEqual(rows[0].duration, 0.0)
+
+
+class TestScoreableManifestEntry(unittest.TestCase):
+    def test_requires_audio_filepath_and_non_empty_text(self) -> None:
+        self.assertTrue(
+            is_scoreable_manifest_entry(
+                {"audio_filepath": "gs://b/a.flac", "text": "hello"}
+            )
+        )
+        self.assertFalse(
+            is_scoreable_manifest_entry(
+                {"audio_filepath": "gs://b/a.flac", "text": ""}
+            )
+        )
+        self.assertFalse(is_scoreable_manifest_entry({"text": "hello"}))

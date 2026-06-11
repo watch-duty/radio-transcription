@@ -25,7 +25,7 @@ from common.inference_manifest import (
     model_family_slug_from_model_id,
     upload_inference_manifest,
 )
-from common.manifest import rows_from_manifest
+from common.manifest import is_scoreable_manifest_entry, rows_from_manifest
 from common.scoring import (
     bootstrap_paired,
     build_normalizer,
@@ -245,12 +245,8 @@ class PredictionMap(dict[str, str]):
 
 
 def _scored_source_rows(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    # Keep this predicate in lockstep with rows_from_manifest. JiWER rejects
-    # empty reference strings, so empty text rows are not scoreable here.
     return [
-        dict(entry)
-        for entry in entries
-        if entry.get("audio_filepath") and entry.get("text")
+        dict(entry) for entry in entries if is_scoreable_manifest_entry(entry)
     ]
 
 

@@ -3,6 +3,7 @@
 Exports:
   CanonicalRow                  — frozen dataclass, the single per-segment contract
   DatasetAdapter                — structural Protocol any adapter must satisfy
+  is_scoreable_manifest_entry   — shared predicate for rows eligible for scoring
   rows_from_manifest            — convert raw manifest dicts to typed CanonicalRow instances
   load_manifest                 — load a JSON array or JSONL manifest from local disk
   merge_predictions_to_manifest — offset-tolerant merge of model predictions onto GT rows
@@ -17,7 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Mapping
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,11 @@ class DatasetAdapter(Protocol):
     def iter_rows(self) -> Iterator[CanonicalRow]: ...
 
 
+def is_scoreable_manifest_entry(entry: Mapping[str, Any]) -> bool:
+    """Return whether a raw manifest entry can enter JiWER scoring."""
+    return bool(entry.get("audio_filepath") and entry.get("text"))
+
+
 def rows_from_manifest(manifest: list[dict[str, Any]]) -> list[CanonicalRow]:
     """Convert raw manifest dicts to typed CanonicalRow instances.
 
@@ -62,13 +68,15 @@ def rows_from_manifest(manifest: list[dict[str, Any]]) -> list[CanonicalRow]:
     for i, entry in enumerate(manifest):
         audio_filepath: str | None = entry.get("audio_filepath")
         text: str | None = entry.get("text")
-        if not audio_filepath:
-            logger.warning(f"Skipping manifest row {i}: missing audio_filepath")
-            continue
-        if not text:
-            logger.warning(
-                f"Skipping manifest row {i}: missing text ({audio_filepath!r})"
-            )
+        if not is_scoreable_manifest_entry(entry):
+            if not audio_filepath:
+                logger.warning(
+                    f"Skipping manifest row {i}: missing audio_filepath"
+                )
+            else:
+                logger.warning(
+                    f"Skipping manifest row {i}: missing text ({audio_filepath!r})"
+                )
             continue
         offset: float = float(entry.get("offset") or 0.0)
         duration: float = float(entry.get("duration") or 0.0)
