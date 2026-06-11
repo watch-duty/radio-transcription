@@ -69,5 +69,7 @@ message NormalizedAudio {
   // The URI of the mono downmixed FLAC file optimized specifically for ephemeral ASR transcription inference.
   optional string transcription_audio_uri = 16;
 
+  // The exact UTC timestamp when this chunk was first ingested into the system.
+  google.protobuf.Timestamp ingested_at = 17;
 }
 

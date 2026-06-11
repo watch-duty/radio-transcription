@@ -308,6 +308,7 @@ class NormalizationEventProcessor:
                 segmented_audio.audio_classification
             ),
             transcription_audio_uri=transcription_audio_uri,
+            ingested_at=segmented_audio.ingested_at,
         )
 
         topic_name = self.output_topic.split("/")[-1]

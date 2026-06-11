@@ -260,6 +260,7 @@ def process_ordering(
         chunk_duration_ms=metadata.duration_ms,
         traceparent=metadata.traceparent,
         max_emit=MAX_CHUNKS_PER_WINDMILL_BUNDLE,
+        ingested_at_ms=metadata.ingested_at_ms,
     )
 
     if was_late:

@@ -163,6 +163,10 @@ def convert_to_notification(
         start_audio_offset=evaluated_transcribed_audio.start_audio_offset,
         end_audio_offset=evaluated_transcribed_audio.end_audio_offset,
     )
+    if evaluated_transcribed_audio.HasField("ingested_at"):
+        notification.ingested_at.CopyFrom(
+            evaluated_transcribed_audio.ingested_at
+        )
 
     if tags:
         for tag in tags:

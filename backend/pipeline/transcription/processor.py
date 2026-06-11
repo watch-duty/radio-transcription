@@ -129,6 +129,7 @@ class TranscriptionEventProcessor:
                     playback_audio_uri=claim.playback_audio_uri,
                     feed_name=claim.feed_name,
                     transcription_audio_uri=claim.transcription_audio_uri,
+                    ingested_at=claim.ingested_at,
                 )
 
                 # Egress to final output topic, strictly ordered by feed_id
