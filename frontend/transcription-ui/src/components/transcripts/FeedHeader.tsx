@@ -9,6 +9,7 @@ import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import type { Feed, FeedStatus } from '@transcription/common';
 
+import { toSourceTypeString } from '../../utils/textUtils';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 import FeedSearchView from '../feeds/FeedSearchView';
 
@@ -77,7 +78,10 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
             >
               {searchedFeed.name}
             </Typography>
-            <Chip label={searchedFeed.sourceType} size="small" />
+            <Chip
+              label={toSourceTypeString(searchedFeed.sourceType)}
+              size="small"
+            />
             <FeedStatusIndicator
               status={status}
               substatus={searchedFeed.substatus}
