@@ -13,13 +13,14 @@ import type {
 } from '@tanstack/react-query';
 import type { AudioSegment } from '@transcription/common';
 
+import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
 import { getRelativeTimeString } from '../../utils/timeUtils';
 import TranscriptRow from './TranscriptRow';
 import type { ListAudioSegmentsData } from './TranscriptView';
 
 export interface TranscriptDisplayProps {
   ref?: React.Ref<VirtuosoHandle>;
-  transcripts: AudioSegment[];
+  transcripts: RenderableAudioSegment[];
   groupCounts: number[];
   groupTitles: string[];
   setIsViewAtTopOfTranscripts: (atTop: boolean) => void;
@@ -180,7 +181,13 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
               currentlyPlayingSegmentId={currentlyPlayingSegmentId}
               triggerSnackbar={triggerSnackbar}
               showHeader={false}
-              isHighlighted={transcript.id === highlightedSegmentId}
+              isHighlighted={
+                transcript.id === highlightedSegmentId ||
+                (transcript.isSilenceBundle &&
+                  transcript.bundledSegmentIds?.includes(
+                    highlightedSegmentId ?? ''
+                  ))
+              }
               redactTranscripts={redactTranscripts}
               onRowClick={onRowClick}
             />

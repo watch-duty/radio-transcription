@@ -8,21 +8,19 @@ import ListItem from '@mui/material/ListItem';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
-import {
-  AudioClassification,
-  type AudioSegment,
-  type TranscriptAnnotationData,
-} from '@transcription/common';
+import { type TranscriptAnnotationData } from '@transcription/common';
 
+import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
 import {
   findEvaluationAnnotationData,
   findTranscriptAnnotationData,
 } from '../../utils/annotationUtils';
+import { formatDuration } from '../../utils/timeUtils';
 import AudioPlayer from '../audio/AudioPlayer';
 import AlertTooltip from './AlertTooltip';
 
 interface TranscriptRowProps {
-  transcript: AudioSegment;
+  transcript: RenderableAudioSegment;
   index: number;
   totalTranscripts: number;
   ruleIdToNameMap: Map<string, string>;
@@ -55,9 +53,15 @@ export function TranscriptRow({
   const theme = useTheme();
   const currentDate = new Date(transcript.startTimestamp);
 
+  const isSilence = !!transcript.isSilenceBundle;
+
   function renderTranscriptionText(
     transcriptAnnotation: TranscriptAnnotationData | null
   ): string {
+    if (isSilence) {
+      return 'No transcription';
+    }
+
     if (!transcriptAnnotation) {
       return 'Waiting for transcription';
     }
@@ -69,21 +73,19 @@ export function TranscriptRow({
     return transcriptAnnotation.text;
   }
 
-  // Only show speech-detected audio segments in the transcript list
-  if (transcript.classification !== AudioClassification.SPEECH) {
-    return null;
-  }
-
-  const evaluationAnnotation = findEvaluationAnnotationData(
-    transcript.annotations
-  );
   const transcriptAnnotation = findTranscriptAnnotationData(
     transcript.annotations
   );
 
-  if (!transcriptAnnotation) {
-    return null;
-  }
+  const hasErrors = transcriptAnnotation
+    ? transcriptAnnotation.errors.length > 0
+    : false;
+  const isWaiting = !isSilence && !transcriptAnnotation;
+  const isPlaceholder = isSilence || isWaiting || hasErrors;
+
+  const evaluationAnnotation = findEvaluationAnnotationData(
+    transcript.annotations
+  );
 
   return (
     <Fragment>
@@ -147,7 +149,9 @@ export function TranscriptRow({
           }}
         >
           <AlertTooltip
-            evaluationDecisions={evaluationAnnotation?.decisions ?? []}
+            evaluationDecisions={
+              isSilence ? [] : (evaluationAnnotation?.decisions ?? [])
+            }
             ruleIdToNameMap={ruleIdToNameMap}
             rulesLoading={rulesLoading}
           />
@@ -174,12 +178,11 @@ export function TranscriptRow({
             color="text.secondary"
             sx={{ opacity: 0.8 }}
           >
-            {Math.round(
+            {formatDuration(
               (new Date(transcript.endTimestamp).getTime() -
                 new Date(transcript.startTimestamp).getTime()) /
                 1000
-            )}{' '}
-            sec
+            )}
           </Typography>
         </Box>
         <AudioPlayer
@@ -187,39 +190,52 @@ export function TranscriptRow({
           segmentId={transcript.id}
           onToggleAudio={onToggleAudio}
           isAudioPlaying={isAudioPlaying}
-          currentlyPlayingSegmentId={currentlyPlayingSegmentId}
+          currentlyPlayingSegmentId={
+            currentlyPlayingSegmentId === transcript.id ||
+            (transcript.isSilenceBundle &&
+              currentlyPlayingSegmentId &&
+              transcript.bundledSegmentIds?.includes(currentlyPlayingSegmentId))
+              ? transcript.id
+              : currentlyPlayingSegmentId
+          }
         />
         <Typography
-          variant="body1"
+          variant={isSilence ? 'caption' : 'body1'}
+          color={isPlaceholder ? 'text.secondary' : 'text.primary'}
           sx={{
             flexGrow: 1,
             whiteSpace: 'pre-wrap',
             transition: 'filter 0.3s ease, opacity 0.3s ease',
             filter: redactTranscripts ? 'blur(6px)' : 'none',
             opacity: redactTranscripts ? 0.6 : 1,
+            fontStyle: isSilence || isWaiting ? 'italic' : 'normal',
           }}
         >
           {renderTranscriptionText(transcriptAnnotation)}
         </Typography>
         <Box sx={{ display: 'flex', gap: 1, flexShrink: 0 }}>
           <Tooltip title="Copy transcript">
-            <IconButton
-              size="small"
-              aria-label="copy transcript"
-              onClick={(e) => {
-                if (transcriptAnnotation?.text) {
-                  e.stopPropagation();
-                  navigator.clipboard.writeText(transcriptAnnotation.text);
-                  triggerSnackbar('Transcript copied');
+            <span>
+              <IconButton
+                size="small"
+                aria-label="copy transcript"
+                onClick={(e) => {
+                  if (transcriptAnnotation?.text) {
+                    e.stopPropagation();
+                    navigator.clipboard.writeText(transcriptAnnotation.text);
+                    triggerSnackbar('Transcript copied');
+                  }
+                }}
+                sx={{ cursor: 'copy' }}
+                disabled={
+                  isSilence ||
+                  !transcriptAnnotation ||
+                  transcriptAnnotation.errors.length > 0
                 }
-              }}
-              sx={{ cursor: 'copy' }}
-              disabled={
-                !transcriptAnnotation || transcriptAnnotation.errors.length > 0
-              }
-            >
-              <ContentCopyIcon fontSize="small" />
-            </IconButton>
+              >
+                <ContentCopyIcon fontSize="small" />
+              </IconButton>
+            </span>
           </Tooltip>
           <Tooltip title="Copy transcript deep link">
             <IconButton

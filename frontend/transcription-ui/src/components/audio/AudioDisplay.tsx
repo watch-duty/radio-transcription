@@ -141,6 +141,8 @@ export function AudioDisplay({
   const [prevFirstTranscriptId, setPrevFirstTranscriptId] = useState<
     string | null
   >(null);
+  const [prevFirstTranscriptEndTimestamp, setPrevFirstTranscriptEndTimestamp] =
+    useState<string | null>(null);
   const [prevPlayingId, setPrevPlayingId] = useState<string | null>(null);
   const [prevHighlightedId, setPrevHighlightedId] = useState<string | null>(
     null
@@ -161,14 +163,29 @@ export function AudioDisplay({
   const firstTranscriptId = firstTranscript?.id || null;
   const firstTranscriptEndTimestamp = firstTranscript?.endTimestamp || null;
 
-  // Reset windowEndTime when first transcript changes
-  if (firstTranscriptId !== prevFirstTranscriptId) {
+  // Reset/update windowEndTime when first transcript or its endTimestamp changes
+  if (
+    firstTranscriptId !== prevFirstTranscriptId ||
+    firstTranscriptEndTimestamp !== prevFirstTranscriptEndTimestamp
+  ) {
+    const wasAlignedToHead =
+      !prevFirstTranscriptId ||
+      !windowEndTime ||
+      (prevFirstTranscriptEndTimestamp &&
+        Math.abs(
+          windowEndTime - new Date(prevFirstTranscriptEndTimestamp).getTime()
+        ) < 1000);
+
     setPrevFirstTranscriptId(firstTranscriptId);
-    setWindowEndTime(
-      firstTranscriptEndTimestamp
-        ? new Date(firstTranscriptEndTimestamp).getTime()
-        : null
-    );
+    setPrevFirstTranscriptEndTimestamp(firstTranscriptEndTimestamp);
+
+    if (wasAlignedToHead) {
+      setWindowEndTime(
+        firstTranscriptEndTimestamp
+          ? new Date(firstTranscriptEndTimestamp).getTime()
+          : null
+      );
+    }
     setPrevPlayingId(null); // Force re-check of bounds
   }
 

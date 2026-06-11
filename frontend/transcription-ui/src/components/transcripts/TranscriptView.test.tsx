@@ -16,6 +16,7 @@ import {
   SourceType,
 } from '@transcription/common';
 
+import { consolidateAudioSegments } from '../../hooks/useConsolidatedAudioSegments';
 import { getFeed } from '../../service/getFeed';
 import { listAudioSegments } from '../../service/listAudioSegments';
 import { listFeeds } from '../../service/listFeeds';
@@ -1046,6 +1047,61 @@ describe('TranscriptView', () => {
         'desc',
         undefined
       );
+    });
+  });
+
+  describe('consolidateAudioSegments', () => {
+    it('correctly consolidates consecutive silence segments and sorts the newest to the top', () => {
+      const speech1: AudioSegment = {
+        id: 'speech-1',
+        feedId: 'feed-123',
+        classification: AudioClassification.SPEECH,
+        startTimestamp: '2026-04-10T12:00:00Z',
+        endTimestamp: '2026-04-10T12:00:05Z',
+        createdAt: '2026-04-10T12:00:00Z',
+        annotations: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+      };
+
+      const silence1: AudioSegment = {
+        id: 'silence-1',
+        feedId: 'feed-123',
+        classification: AudioClassification.OTHER,
+        startTimestamp: '2026-04-10T12:00:05Z',
+        endTimestamp: '2026-04-10T12:00:10Z',
+        createdAt: '2026-04-10T12:00:05Z',
+        annotations: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+      };
+
+      const silence2: AudioSegment = {
+        id: 'silence-2',
+        feedId: 'feed-123',
+        classification: AudioClassification.OTHER,
+        startTimestamp: '2026-04-10T12:00:10Z',
+        endTimestamp: '2026-04-10T12:00:15Z',
+        createdAt: '2026-04-10T12:00:10Z',
+        annotations: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+      };
+
+      const result = consolidateAudioSegments([speech1, silence1, silence2]);
+      expect(result).toHaveLength(2);
+
+      // Silence bundle should be at the top (newest startTimestamp)
+      expect(result[0].isSilenceBundle).toBe(true);
+      expect(result[0].startTimestamp).toBe('2026-04-10T12:00:05Z');
+      expect(result[0].endTimestamp).toBe('2026-04-10T12:00:15Z');
+      expect(result[0].bundledSegmentIds).toEqual(['silence-1', 'silence-2']);
+
+      // Speech should be next
+      expect(result[1].id).toBe('speech-1');
     });
   });
 });

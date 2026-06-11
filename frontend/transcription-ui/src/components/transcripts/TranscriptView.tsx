@@ -17,9 +17,10 @@ import {
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
-import { type AudioSegment } from '@transcription/common';
+import { AudioClassification, type AudioSegment } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
+import { useConsolidatedAudioSegments } from '../../hooks/useConsolidatedAudioSegments';
 import { getFeed } from '../../service/getFeed';
 import { listAudioSegments } from '../../service/listAudioSegments';
 import { listFeeds } from '../../service/listFeeds';
@@ -354,23 +355,25 @@ export function TranscriptView({
       ? transcriptsDataUpdatedAt
       : null;
 
-  const transcripts = useMemo(() => {
-    const allTranscripts =
+  const rawAudioSegments = useMemo(() => {
+    const allSegments =
       listTranscriptsResponse?.pages.flatMap((page) => page.segments) ?? [];
     const seenIds = new Set<string>();
-    const uniqueTranscripts = allTranscripts.filter((transcript) => {
-      if (seenIds.has(transcript.id)) {
+    const uniqueSegments = allSegments.filter((segment) => {
+      if (seenIds.has(segment.id)) {
         return false;
       }
-      seenIds.add(transcript.id);
+      seenIds.add(segment.id);
       return true;
     });
-    return uniqueTranscripts.sort(
+    return uniqueSegments.sort(
       (a, b) =>
         new Date(b.startTimestamp).getTime() -
         new Date(a.startTimestamp).getTime()
     );
   }, [listTranscriptsResponse]);
+
+  const transcripts = useConsolidatedAudioSegments(rawAudioSegments);
 
   // Keep the ref in sync with the transcripts so that audio lifecycle callbacks can access the latest list.
   useEffect(() => {
@@ -382,19 +385,61 @@ export function TranscriptView({
   useEffect(() => {
     if (!playbackEndedForId) return;
 
+    // 1. First check if the ended segment was part of a silence bundle, and if there is a next newer segment in that same bundle!
+    const parentBundle = transcripts.find(
+      (t) =>
+        t.isSilenceBundle && t.bundledSegmentIds?.includes(playbackEndedForId)
+    );
+
+    if (parentBundle && parentBundle.bundledSegmentIds) {
+      const endedIdx =
+        parentBundle.bundledSegmentIds.indexOf(playbackEndedForId);
+      if (
+        endedIdx !== -1 &&
+        endedIdx < parentBundle.bundledSegmentIds.length - 1
+      ) {
+        const nextSegmentId = parentBundle.bundledSegmentIds[endedIdx + 1];
+        const nextSegment = rawAudioSegments.find(
+          (s) => s.id === nextSegmentId
+        );
+        if (nextSegment && nextSegment.playbackAudioUri) {
+          toggleAudio(nextSegment.id, nextSegment.playbackAudioUri);
+          setPlaybackEndedForId(null);
+          return;
+        }
+      }
+    }
+
+    // 2. If it was a Speech segment, or the last segment in a silence bundle, advance to the next newer transcript row
     const currentIndex = transcripts.findIndex(
-      (t) => t.id === playbackEndedForId
+      (t) =>
+        t.id === playbackEndedForId ||
+        t.bundledSegmentIds?.includes(playbackEndedForId)
     );
 
     if (currentIndex > 0) {
       const nextTranscript = transcripts[currentIndex - 1];
       if (nextTranscript.playbackAudioUri) {
+        // If the next transcript is a silence bundle, play its first segment
+        if (
+          nextTranscript.isSilenceBundle &&
+          nextTranscript.bundledSegmentIds &&
+          nextTranscript.bundledSegmentIds.length > 0
+        ) {
+          const firstId = nextTranscript.bundledSegmentIds[0];
+          const firstSegment = rawAudioSegments.find((s) => s.id === firstId);
+          if (firstSegment && firstSegment.playbackAudioUri) {
+            toggleAudio(firstSegment.id, firstSegment.playbackAudioUri);
+            setPlaybackEndedForId(null);
+            return;
+          }
+        }
         toggleAudio(nextTranscript.id, nextTranscript.playbackAudioUri);
       }
     }
 
     setPlaybackEndedForId(null);
-  }, [playbackEndedForId, transcripts, toggleAudio]);
+  }, [playbackEndedForId, transcripts, rawAudioSegments, toggleAudio]);
 
   // This is used to group transcripts by date and display them in the UI.
   // groupCounts is an array of numbers representing the number of transcripts in each group.
@@ -434,7 +479,7 @@ export function TranscriptView({
 
   // The timestamp of the newest transcript currently loaded in the UI.
   // Used as a reference point when polling for newly arriving transcripts.
-  const newestTimestamp = transcripts[0]?.startTimestamp;
+  const newestTimestamp = rawAudioSegments[0]?.startTimestamp;
 
   /**
    * Fetches transcripts that have arrived after the current newest loaded transcript.
@@ -505,25 +550,50 @@ export function TranscriptView({
         (oldData) => {
           if (!oldData) return oldData;
 
-          // Filter out duplicates to prevent rendering issues if a transcript
-          // was caught in both the initial fetch and the poll.
+          const newTranscriptsMap = new Map(
+            newTranscripts.map((t) => [t.id, t])
+          );
+
+          const updatedPages = oldData.pages.map((page) => {
+            let pageSegmentsChanged = false;
+            const updatedSegments = page.segments.map((existingSegment) => {
+              const newSegment = newTranscriptsMap.get(existingSegment.id);
+              if (newSegment) {
+                pageSegmentsChanged = true;
+                return newSegment;
+              }
+              return existingSegment;
+            });
+
+            return pageSegmentsChanged
+              ? { ...page, segments: updatedSegments }
+              : page;
+          });
+
           const existingIds = new Set(
             oldData.pages.flatMap((p) => p.segments.map((t) => t.id))
           );
-          const filteredNew = newTranscripts.filter(
+          const brandNewSegments = newTranscripts.filter(
             (t) => !existingIds.has(t.id)
           );
 
-          if (filteredNew.length === 0) return oldData;
-          updatedTranscripts = filteredNew;
+          if (brandNewSegments.length === 0) {
+            const pagesChanged = updatedPages.some(
+              (p, idx) => p !== oldData.pages[idx]
+            );
+            if (!pagesChanged) return oldData;
+            return { ...oldData, pages: updatedPages };
+          }
 
-          // Prepend the new transcripts to the first (newest) page of the query cache.
-          const newPages = [...oldData.pages];
-          newPages[0] = {
-            ...newPages[0],
-            segments: [...filteredNew, ...newPages[0].segments],
+          updatedTranscripts = brandNewSegments;
+
+          const finalPages = [...updatedPages];
+          finalPages[0] = {
+            ...finalPages[0],
+            segments: [...brandNewSegments, ...finalPages[0].segments],
           };
-          return { ...oldData, pages: newPages };
+
+          return { ...oldData, pages: finalPages };
         }
       );
       return updatedTranscripts;
@@ -564,18 +634,24 @@ export function TranscriptView({
           return;
         }
 
-        // Display snackbar indicator that new transcripts were received
-        const message =
-          cachedTranscripts.length === 1
-            ? 'New transcript received'
-            : `${cachedTranscripts.length} new transcripts received`;
-        triggerSnackbar(message);
+        const cachedSpeechTranscripts = cachedTranscripts.filter(
+          (t) => t.classification === AudioClassification.SPEECH
+        );
 
-        // Update the new message count if the user is not viewing the screen
-        if (!document.hasFocus()) {
-          setNewMessageCount(
-            (prevCount) => prevCount + cachedTranscripts.length
-          );
+        if (cachedSpeechTranscripts.length > 0) {
+          // Display snackbar indicator that new transcripts were received
+          const message =
+            cachedSpeechTranscripts.length === 1
+              ? 'New transcript received'
+              : `${cachedSpeechTranscripts.length} new transcripts received`;
+          triggerSnackbar(message);
+
+          // Update the new message count if the user is not viewing the screen
+          if (!document.hasFocus()) {
+            setNewMessageCount(
+              (prevCount) => prevCount + cachedSpeechTranscripts.length
+            );
+          }
         }
 
         // Trigger the new audio to play if no audio is currently playing
@@ -642,7 +718,11 @@ export function TranscriptView({
       transcripts.length > 0 &&
       !hasScrolledToTarget.current
     ) {
-      const index = transcripts.findIndex((t) => t.id === targetSegmentId);
+      const index = transcripts.findIndex(
+        (t) =>
+          t.id === targetSegmentId ||
+          t.bundledSegmentIds?.includes(targetSegmentId)
+      );
       if (index !== -1) {
         const timer = setTimeout(() => {
           virtuosoRef.current?.scrollToIndex({
@@ -658,7 +738,9 @@ export function TranscriptView({
   }, [isTranscriptsSuccess, targetSegmentId, transcripts]);
 
   const handleClipClick = (segmentId: string) => {
-    const index = transcripts.findIndex((t) => t.id === segmentId);
+    const index = transcripts.findIndex(
+      (t) => t.id === segmentId || t.bundledSegmentIds?.includes(segmentId)
+    );
     if (index !== -1) {
       virtuosoRef.current?.scrollToIndex({
         index,
@@ -675,7 +757,15 @@ export function TranscriptView({
       : highlightedSegmentId || currentlyPlayingSegmentId || transcripts[0]?.id;
     if (!targetId) return;
 
-    const transcript = transcripts.find((t) => t.id === targetId);
+    const specificSegment = rawAudioSegments.find((s) => s.id === targetId);
+    if (specificSegment && specificSegment.playbackAudioUri) {
+      toggleAudio(specificSegment.id, specificSegment.playbackAudioUri);
+      return;
+    }
+
+    const transcript = transcripts.find(
+      (t) => t.id === targetId || t.bundledSegmentIds?.includes(targetId)
+    );
     if (transcript && transcript.playbackAudioUri) {
       toggleAudio(transcript.id, transcript.playbackAudioUri);
     }
@@ -802,7 +892,7 @@ export function TranscriptView({
       </Box>
 
       <AudioDisplay
-        transcripts={transcripts}
+        transcripts={rawAudioSegments}
         currentlyPlayingSegmentId={currentlyPlayingSegmentId}
         highlightedSegmentId={highlightedSegmentId}
         onClipClick={handleClipClick}
