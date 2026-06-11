@@ -36,7 +36,7 @@ describe('TranscriptDisplay', () => {
     {
       id: 'tx-1',
       feedId: 'feed123',
-      classification: AudioClassification.SPEECH_DETECTED,
+      classification: AudioClassification.SPEECH,
       startTimestamp: '2026-04-10T12:00:00Z',
       endTimestamp: '2026-04-10T12:00:05Z',
       canonicalAudioUri: 'gs://audio.flac',

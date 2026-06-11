@@ -36,7 +36,7 @@ function makeMockAudioSegment(
   return {
     id,
     feedId,
-    classification: AudioClassification.SPEECH_DETECTED,
+    classification: AudioClassification.SPEECH,
     startTimestamp,
     endTimestamp,
     canonicalAudioUri: 'gs://bucket/audio.flac',

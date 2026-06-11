@@ -70,13 +70,7 @@ export function TranscriptRow({
   }
 
   // Only show speech-detected audio segments in the transcript list
-  if (transcript.classification !== AudioClassification.SPEECH_DETECTED) {
-    console.warn(
-      'Skipping audio segment',
-      transcript.id,
-      'classification',
-      transcript.classification
-    );
+  if (transcript.classification !== AudioClassification.SPEECH) {
     return null;
   }
 
@@ -86,7 +80,7 @@ export function TranscriptRow({
   const transcriptAnnotation = findTranscriptAnnotationData(
     transcript.annotations
   );
-  
+
   if (!transcriptAnnotation) {
     return null;
   }

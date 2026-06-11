@@ -29,7 +29,7 @@ vi.mock('../audio/AudioPlayer', () => ({
 const mockTranscript: AudioSegment = {
   id: 'tx-123',
   feedId: 'feed-123',
-  classification: AudioClassification.SPEECH_DETECTED,
+  classification: AudioClassification.SPEECH,
   startTimestamp: '2026-04-15T16:00:00Z',
   endTimestamp: '2026-04-15T16:00:05Z',
   canonicalAudioUri: 'https://watchduty.example/audio.flac',
