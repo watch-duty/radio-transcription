@@ -1982,9 +1982,9 @@ class DlqTaggingTest(unittest.TestCase):
                 fn.process(
                     element=("test-feed", metadata_1),
                     timestamp=Timestamp(10),
-                    transmission_buffer_state=mock_state_buffer,  # type: ignore
-                    transmission_context_state=mock_state_context,  # type: ignore
-                    last_start_ms_state=mock_last_start_ms,  # type: ignore
+                    transmission_buffer_state=mock_state_buffer,
+                    transmission_context_state=mock_state_context,
+                    last_start_ms_state=mock_last_start_ms,
                     out_of_order_timer=MagicMock(),
                     stale_timer_event=MagicMock(),
                     stale_timer_proc=MagicMock(),
@@ -2035,9 +2035,9 @@ class DlqTaggingTest(unittest.TestCase):
                 fn.process(
                     element=("test-feed", metadata_2),
                     timestamp=Timestamp(10.1),
-                    transmission_buffer_state=mock_state_buffer,  # type: ignore
-                    transmission_context_state=mock_state_context,  # type: ignore
-                    last_start_ms_state=mock_last_start_ms,  # type: ignore
+                    transmission_buffer_state=mock_state_buffer,
+                    transmission_context_state=mock_state_context,
+                    last_start_ms_state=mock_last_start_ms,
                     out_of_order_timer=MagicMock(),
                     stale_timer_event=MagicMock(),
                     stale_timer_proc=MagicMock(),
@@ -2097,9 +2097,9 @@ class DlqTaggingTest(unittest.TestCase):
                 fn.process(
                     element=("test-feed", metadata_backfill),
                     timestamp=Timestamp(10),
-                    transmission_buffer_state=mock_state_buffer,  # type: ignore
-                    transmission_context_state=mock_state_context,  # type: ignore
-                    last_start_ms_state=mock_last_start_ms,  # type: ignore
+                    transmission_buffer_state=mock_state_buffer,
+                    transmission_context_state=mock_state_context,
+                    last_start_ms_state=mock_last_start_ms,
                     out_of_order_timer=MagicMock(),
                     stale_timer_event=MagicMock(),
                     stale_timer_proc=MagicMock(),
@@ -2164,9 +2164,9 @@ class DlqTaggingTest(unittest.TestCase):
                 fn_segmented.process(
                     element=("test-feed", metadata_segmented),
                     timestamp=Timestamp(10.2),
-                    transmission_buffer_state=mock_state_buffer_seg,  # type: ignore
-                    transmission_context_state=mock_state_context_seg,  # type: ignore
-                    last_start_ms_state=mock_last_start_ms_seg,  # type: ignore
+                    transmission_buffer_state=mock_state_buffer_seg,
+                    transmission_context_state=mock_state_context_seg,
+                    last_start_ms_state=mock_last_start_ms_seg,
                     out_of_order_timer=MagicMock(),
                     stale_timer_event=MagicMock(),
                     stale_timer_proc=MagicMock(),

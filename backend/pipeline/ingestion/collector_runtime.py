@@ -20,6 +20,7 @@ from opentelemetry import trace
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
+from backend.pipeline.common.log_helper import setup_asyncio_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.ingestion import (
     health_server,
@@ -197,6 +198,7 @@ class CollectorRuntime:
     async def _main(self) -> None:
         """Top-level async entry: setup, run leasing loop, then shutdown."""
         self._loop = asyncio.get_running_loop()
+        setup_asyncio_logging(self._loop)
         self._shutdown = asyncio.Event()
         self._lease_lost = asyncio.Event()
 
