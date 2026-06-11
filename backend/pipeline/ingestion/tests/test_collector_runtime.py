@@ -778,7 +778,7 @@ class TestProcessFeedTimestamps(unittest.IsolatedAsyncioTestCase):
             mock_publish.assert_called_once()
             _, args, _kwargs = mock_publish.mock_calls[0]
 
-            self.assertEqual(len(args), 10)
+            self.assertEqual(len(args), 11)
             self.assertEqual(
                 args[1], rt._collector_settings.continuous_pubsub_topic_path
             )

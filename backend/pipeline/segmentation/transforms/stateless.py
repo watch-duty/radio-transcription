@@ -372,7 +372,10 @@ class UploadRawSegmentFn(beam.DoFn):
                 raw_audio_uri=gcs_uri,
             )
 
-            if getattr(request, "ingested_at_ms", None) and request.ingested_at_ms > 0:
+            if (
+                getattr(request, "ingested_at_ms", None)
+                and request.ingested_at_ms > 0
+            ):
                 proto.ingested_at.FromDatetime(
                     datetime.datetime.fromtimestamp(
                         request.ingested_at_ms / MS_PER_SECOND, tz=datetime.UTC

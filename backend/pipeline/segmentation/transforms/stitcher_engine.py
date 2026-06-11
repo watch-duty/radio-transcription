@@ -532,7 +532,8 @@ class StitcherEngine:
                     or curr_context.traceparent
                     or get_current_traceparent(),
                     prior_audio_tail=curr_context.prior_audio_tail,
-                    ingested_at_ms=getattr(curr_context, "ingested_at_ms", None) or getattr(chunk, "ingested_at_ms", None),
+                    ingested_at_ms=getattr(curr_context, "ingested_at_ms", None)
+                    or getattr(chunk, "ingested_at_ms", None),
                 )
 
                 actions = state_machine.process_chunk(payload.chunk_data, ctx)

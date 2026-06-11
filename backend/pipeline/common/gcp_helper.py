@@ -213,7 +213,7 @@ async def download_audio(gcs_client: GcsClient, gcs_uri: str) -> bytes:
 # -----------------------------------------------------------------------------
 
 
-def publish_audio_chunk_sync(
+def publish_audio_chunk_sync(  # noqa: PLR0912
     publisher: pubsub_v1.PublisherClient,
     topic_path: str,
     feed_id: str,
@@ -311,7 +311,7 @@ def publish_audio_chunk_sync(
         raise RuntimeError(msg)
 
 
-async def publish_audio_chunk(
+async def publish_audio_chunk(  # noqa: PLR0912
     pubsub_client: PubSubClient,
     topic_path: str,
     feed_id: str,

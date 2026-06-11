@@ -72,7 +72,11 @@ class SequenceBuffer:
 
         if abs(difference) <= epsilon_ms:
             # HAPPY PATH: The chunk matches our mathematical expectation exactly.
-            to_emit.append(BufferedChunk(current_ts_ms, gcs_uri, traceparent, ingested_at_ms))
+            to_emit.append(
+                BufferedChunk(
+                    current_ts_ms, gcs_uri, traceparent, ingested_at_ms
+                )
+            )
             # Advance the expected timestamp. Use provided duration if available (for varying lengths),
             # otherwise fallback to fixed config duration.
             duration = (
@@ -101,7 +105,11 @@ class SequenceBuffer:
             logger.info(
                 f"Yielding late chunk at {current_ts_ms} (expected {expected_next_ts}) for isolated transcription."
             )
-            to_emit.append(BufferedChunk(current_ts_ms, gcs_uri, traceparent, ingested_at_ms))
+            to_emit.append(
+                BufferedChunk(
+                    current_ts_ms, gcs_uri, traceparent, ingested_at_ms
+                )
+            )
         else:
             # FUTURE PATH: The difference > epsilon_ms, meaning this chunk arrived before
             # its predecessor. We store it in state, parking it until the missing chunk arrives.
@@ -113,7 +121,9 @@ class SequenceBuffer:
             heapq.heappush(
                 heap,
                 ComparableChunk(
-                    BufferedChunk(current_ts_ms, gcs_uri, traceparent, ingested_at_ms)
+                    BufferedChunk(
+                        current_ts_ms, gcs_uri, traceparent, ingested_at_ms
+                    )
                 ),
             )
             buffer_elements[:] = [item.chunk for item in heap]
