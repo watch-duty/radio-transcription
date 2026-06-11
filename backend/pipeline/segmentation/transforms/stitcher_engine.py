@@ -347,6 +347,11 @@ class StitcherEngine:
                 f"[Flush] Emitting segment {segment_id} with {len(processed_uris)} chunks"
             )
 
+            # In backfill/catch-up mode (e.g., pipeline recovering from maintenance or outage),
+            # we skip overlap validations and avoid updating `last_start_ms_state`.
+            # This prevents older backlogged audio timestamps from corrupting the sequence tracking
+            # of the active mainline stream, which would otherwise trigger false overlap warnings
+            # and redundant segment outputs once the pipeline catches up to real-time.
             if action.clear_state and not is_backfill:
                 current_start_ms = action.time_range.start_ms
                 last_start_ms = last_start_ms_state.read()

@@ -485,7 +485,12 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
                     stale_timer_event, stale_timer_proc, self.stitch_config
                 )
 
-                # Determine is_backfill mode based on element lateness
+                # Determine is_backfill mode based on element lateness.
+                # In this context, "backfill" refers to catch-up processing when the pipeline
+                # comes back online after an outage, maintenance, or deployment.
+                # If a chunk's event time lags significantly behind current processing time,
+                # it is flagged as backfill so downstream logic skips overlap validation and state updates.
+                # This prevents older catch-up timestamps from corrupting mainline sequence tracking.
                 lateness = (
                     time.time() * common_constants.MS_PER_SECOND - current_ts_ms
                 )
@@ -899,7 +904,12 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
                     stale_timer_event, stale_timer_proc, self.stitch_config
                 )
 
-                # Determine is_backfill mode based on element lateness
+                # Determine is_backfill mode based on element lateness.
+                # In this context, "backfill" refers to catch-up processing when the pipeline
+                # comes back online after an outage, maintenance, or deployment.
+                # If a chunk's event time lags significantly behind current processing time,
+                # it is flagged as backfill so downstream logic skips overlap validation and state updates.
+                # This prevents older catch-up timestamps from corrupting mainline sequence tracking.
                 lateness = (
                     time.time() * common_constants.MS_PER_SECOND - current_ts_ms
                 )
