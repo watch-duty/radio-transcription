@@ -142,7 +142,7 @@ class EvaluationService:
                 total_latency_ms = int((current_time - ingested_at_dt).total_seconds() * 1000)
                 
                 logger.info(
-                    "End-to-end latency calculated",
+                    f"End-to-end latency calculated. ingestion_to_transcription_e2e_latency: {total_latency_ms}ms",
                     extra={
                         "ingestion_to_transcription_e2e_latency": total_latency_ms,
                         "segment_id": new_audio.segment_id,
