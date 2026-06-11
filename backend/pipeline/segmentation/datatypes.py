@@ -112,7 +112,6 @@ class StitcherContext:
     speech_segments: list[TimeRange] = field(default_factory=list)
     traceparent: str | None = None
     prior_audio_tail: bytes | None = None
-    ingested_at_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -203,7 +202,6 @@ class FlushAction(StateMachineAction):
     speech_segments: list[TimeRange] = field(default_factory=list)
     traceparent: str | None = None
     audio_classification: int = 0
-    ingested_at_ms: int | None = None
 
 
 @dataclass(frozen=True)

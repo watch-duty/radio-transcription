@@ -93,8 +93,6 @@ def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
 
 def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR0912, PLR0915
     """Core handler — fully synchronous."""
-    ingested_at = datetime.now(tz=UTC)
-
     if gcs_client is None or pubsub_client is None or feed_store is None:
         msg = (
             "Clients not initialized — handle_notification must be called first"
@@ -217,7 +215,6 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
                 duration_ms=duration_ms,
                 source_type="echo",
                 external_audio_segment_id=f"{bucket}/{name}",
-                ingested_at=ingested_at,
             )
         except Exception:
             failure = _pipeline_failure(_PUBSUB_PUBLISH_FAILED)

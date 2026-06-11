@@ -3,6 +3,7 @@ import logging
 
 from google.protobuf.duration_pb2 import Duration  # type: ignore
 
+from backend.pipeline.common.tracing_utils import get_current_traceparent
 from backend.pipeline.evaluation.rules_evaluation import evaluator
 from backend.pipeline.schema_types import (
     evaluated_transcribed_audio_pb2 as evaluated_pb2,
@@ -132,26 +133,20 @@ class EvaluationService:
                 new_audio.end_audio_offset
             )
 
-            if new_audio.HasField("ingested_at"):
-                evaluated_payload.ingested_at.CopyFrom(new_audio.ingested_at)
-
-                # Calculate True End-to-End Latency
-                current_time = datetime.datetime.now(tz=datetime.UTC)
-                ingested_at_dt = new_audio.ingested_at.ToDatetime().replace(
-                    tzinfo=datetime.UTC
-                )
-                total_latency_ms = int(
-                    (current_time - ingested_at_dt).total_seconds() * 1000
-                )
-
-                logger.info(
-                    f"End-to-end latency calculated. ingestion_to_transcription_e2e_latency: {total_latency_ms}ms",
-                    extra={
-                        "ingestion_to_transcription_e2e_latency": total_latency_ms,
-                        "segment_id": new_audio.segment_id,
-                        "feed_id": new_audio.feed_id,
-                    },
-                )
+            logger.info(
+                "evaluation_completed",
+                extra={
+                    "structured_event": True,
+                    "event_type": "evaluation_completed",
+                    "event_time_ms": int(
+                        datetime.datetime.now(datetime.UTC).timestamp() * 1000
+                    ),
+                    "feed_id": new_audio.feed_id,
+                    "segment_id": new_audio.segment_id,
+                    "source_audio_uris": list(new_audio.source_audio_uris),
+                    "trace_id": get_current_traceparent(),
+                },
+            )
 
         except Exception:
             logger.exception("Error processing new audio message")

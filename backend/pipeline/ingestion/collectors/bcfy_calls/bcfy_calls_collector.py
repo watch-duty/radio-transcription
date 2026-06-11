@@ -645,7 +645,6 @@ async def _create_chunk_from_call(
             mime_type=mime_type,
             resume_position=resume_position,
             external_audio_segment_id=audio_url,
-            ingested_at=datetime.datetime.now(tz=datetime.UTC),
         )
     )
 

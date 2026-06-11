@@ -21,7 +21,10 @@ from opentelemetry import trace
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.common.log_helper import setup_asyncio_logging
-from backend.pipeline.common.tracing_utils import setup_tracing
+from backend.pipeline.common.tracing_utils import (
+    get_current_traceparent,
+    setup_tracing,
+)
 from backend.pipeline.ingestion import (
     health_server,
     quarantine_telemetry,
@@ -867,7 +870,6 @@ class CollectorRuntime:
                 duration_ms,
                 feed["source_type"],
                 captured_chunk.external_audio_segment_id,
-                captured_chunk.ingested_at,
                 lease_lost=self._lease_lost,
                 shutdown=self._shutdown,
                 max_retries=settings.pubsub_publish_max_retries,
@@ -894,6 +896,32 @@ class CollectorRuntime:
             "Published message %s for feed %s",
             message_id,
             feed["name"],
+        )
+
+        logger.info(
+            "raw_audio_ingested",
+            extra={
+                "structured_event": True,
+                "event_type": "raw_audio_ingested",
+                "event_time_ms": int(
+                    datetime.datetime.now(datetime.UTC).timestamp() * 1000
+                ),
+                "feed_id": str(feed["id"]),
+                "session_id": captured_chunk.session_id,
+                "trace_id": get_current_traceparent(),
+                "raw_audio_uri": gcs_uri,
+                "source_type": feed["source_type"],
+                "external_segment_id": captured_chunk.external_audio_segment_id,
+                "chunk_start": captured_chunk.chunk_start_time.isoformat()
+                if captured_chunk.chunk_start_time
+                else None,
+                "chunk_end": (
+                    captured_chunk.chunk_start_time
+                    + datetime.timedelta(milliseconds=duration_ms)
+                ).isoformat()
+                if captured_chunk.chunk_start_time
+                else None,
+            },
         )
 
         # SLO: chunk_ingested emit -- strictly after publish success.

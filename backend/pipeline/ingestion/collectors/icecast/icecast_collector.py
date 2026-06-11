@@ -344,7 +344,6 @@ async def capture_icecast_stream(  # noqa: PLR0912, PLR0915
                             chunk_end_time=chunk_end_time,
                             session_id=session_id,
                             receipt_time=receipt_time,
-                            ingested_at=datetime.datetime.now(tz=datetime.UTC),
                         )
 
                         last_activity_time = time.monotonic()

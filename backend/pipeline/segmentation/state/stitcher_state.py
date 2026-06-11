@@ -224,7 +224,6 @@ class AudioStitchingStateMachine:
             speech_segments=ctx.speech_segments.copy(),
             traceparent=ctx.traceparent,
             audio_classification=audio_classification,
-            ingested_at_ms=ctx.ingested_at_ms,
         )
 
     def _process_late_chunk_independently(
@@ -308,7 +307,6 @@ class AudioStitchingStateMachine:
                             isolated_audio_buffer=isolated_audio_buffer.copy(),
                             traceparent=action.traceparent,
                             audio_classification=action.audio_classification,
-                            ingested_at_ms=action.ingested_at_ms,
                         )
                     )
                 case DropAction():

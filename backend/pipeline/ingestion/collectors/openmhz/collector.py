@@ -257,7 +257,6 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                             + datetime.timedelta(seconds=call.length_sec),
                             session_id=connection_session_id,
                             receipt_time=receipt_time,
-                            ingested_at=datetime.datetime.now(tz=datetime.UTC),
                         )
                         item_outcome = ItemBatchOutcome()
                         item_failure_count = 0

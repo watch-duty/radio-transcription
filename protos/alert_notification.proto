@@ -77,6 +77,4 @@ message AlertNotification {
   // The list of errors encountered during evaluation.
   repeated string evaluation_errors = 18;
 
-  // The exact UTC timestamp when this chunk was first ingested into the system.
-  google.protobuf.Timestamp ingested_at = 20;
 }

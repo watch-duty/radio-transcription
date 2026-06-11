@@ -66,6 +66,4 @@ message SegmentedAudio {
   // - Broadcastify Feeds: Not applicable (omitted).
   optional string external_audio_segment_id = 14;
 
-  // The exact UTC timestamp when this chunk was first ingested into the system.
-  google.protobuf.Timestamp ingested_at = 15;
 }

@@ -213,7 +213,7 @@ async def download_audio(gcs_client: GcsClient, gcs_uri: str) -> bytes:
 # -----------------------------------------------------------------------------
 
 
-def publish_audio_chunk_sync(  # noqa: PLR0912
+def publish_audio_chunk_sync(
     publisher: pubsub_v1.PublisherClient,
     topic_path: str,
     feed_id: str,
@@ -224,7 +224,6 @@ def publish_audio_chunk_sync(  # noqa: PLR0912
     duration_ms: int,
     source_type: str | None = None,
     external_audio_segment_id: str | None = None,
-    ingested_at: datetime.datetime | None = None,
 ) -> str:
     """Publish an AudioChunk to Pub/Sub and return the message ID.
 
@@ -250,8 +249,7 @@ def publish_audio_chunk_sync(  # noqa: PLR0912
             s_msg.end_timestamp.FromDatetime(end_ts)
             if external_audio_segment_id is not None:
                 s_msg.external_audio_segment_id = external_audio_segment_id
-            if ingested_at is not None:
-                s_msg.ingested_at.FromDatetime(ingested_at)
+
             serialized_data = s_msg.SerializeToString()
         else:
             c_msg = ContinuousAudio(
@@ -263,8 +261,7 @@ def publish_audio_chunk_sync(  # noqa: PLR0912
             if session_id is not None:
                 c_msg.session_id = session_id
             c_msg.start_timestamp.FromDatetime(start_timestamp)
-            if ingested_at is not None:
-                c_msg.ingested_at.FromDatetime(ingested_at)
+
             serialized_data = c_msg.SerializeToString()
 
         attrs: dict[str, str] = {
@@ -311,7 +308,7 @@ def publish_audio_chunk_sync(  # noqa: PLR0912
         raise RuntimeError(msg)
 
 
-async def publish_audio_chunk(  # noqa: PLR0912
+async def publish_audio_chunk(
     pubsub_client: PubSubClient,
     topic_path: str,
     feed_id: str,
@@ -322,7 +319,6 @@ async def publish_audio_chunk(  # noqa: PLR0912
     duration_ms: int,
     source_type: str | None = None,
     external_audio_segment_id: str | None = None,
-    ingested_at: datetime.datetime | None = None,
 ) -> str:
     """Asynchronously publish an AudioChunk to Pub/Sub.
 
@@ -349,8 +345,7 @@ async def publish_audio_chunk(  # noqa: PLR0912
             s_msg.end_timestamp.FromDatetime(end_ts)
             if external_audio_segment_id is not None:
                 s_msg.external_audio_segment_id = external_audio_segment_id
-            if ingested_at is not None:
-                s_msg.ingested_at.FromDatetime(ingested_at)
+
             serialized_data = s_msg.SerializeToString()
         else:
             c_msg = ContinuousAudio(
@@ -362,8 +357,7 @@ async def publish_audio_chunk(  # noqa: PLR0912
             if session_id is not None:
                 c_msg.session_id = session_id
             c_msg.start_timestamp.FromDatetime(start_timestamp)
-            if ingested_at is not None:
-                c_msg.ingested_at.FromDatetime(ingested_at)
+
             serialized_data = c_msg.SerializeToString()
 
         attrs: dict[str, str] = {

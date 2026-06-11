@@ -145,15 +145,7 @@ class ParseAndKeyFn(beam.DoFn):
                     and chunk_proto.start_timestamp.seconds > 0
                     else None
                 )
-                ingested_at_ms = (
-                    (
-                        chunk_proto.ingested_at.seconds * MS_PER_SECOND
-                        + chunk_proto.ingested_at.nanos // NANOS_PER_MS
-                    )
-                    if chunk_proto.HasField("ingested_at")
-                    and chunk_proto.ingested_at.seconds > 0
-                    else None
-                )
+
                 metadata = ChunkMetadata(
                     gcs_uri=chunk_proto.gcs_uri,
                     # For segmented feeds, session_id is typically the call ID set by ingestion.
@@ -167,7 +159,6 @@ class ParseAndKeyFn(beam.DoFn):
                     is_continuous=self.is_continuous,
                     traceparent=traceparent,
                     timestamp_ms=start_ms,
-                    ingested_at_ms=ingested_at_ms,
                 )
                 logger.debug(
                     "Parsed ContinuousAudio feed_id=%s gcs_uri=%s duration=%dms",
@@ -371,16 +362,6 @@ class UploadRawSegmentFn(beam.DoFn):
                 audio_classification=request.audio_classification,
                 raw_audio_uri=gcs_uri,
             )
-
-            if (
-                getattr(request, "ingested_at_ms", None)
-                and request.ingested_at_ms > 0
-            ):
-                proto.ingested_at.FromDatetime(
-                    datetime.datetime.fromtimestamp(
-                        request.ingested_at_ms / MS_PER_SECOND, tz=datetime.UTC
-                    )
-                )
 
             attrs: dict[str, str] = {}
             if request.traceparent:

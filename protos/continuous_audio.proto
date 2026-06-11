@@ -26,7 +26,5 @@ message ContinuousAudio {
   reserved 6, 8;
   reserved "external_id";
 
-  // The exact UTC timestamp when this chunk was first ingested into the system.
   // Used for tracking end-to-end pipeline latency.
-  google.protobuf.Timestamp ingested_at = 9;
 }
