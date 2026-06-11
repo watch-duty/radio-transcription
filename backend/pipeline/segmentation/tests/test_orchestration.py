@@ -14,8 +14,8 @@ def test_pipeline_topology_typehints() -> None:
         flags=[
             "--project",
             "test-project",
-            "--continuous_input_subscription",
-            "projects/test-project/subscriptions/continuous-in",
+            "--input_subscription",
+            "projects/test-project/subscriptions/audio-in",
             "--output_topic",
             "projects/test-project/topics/out",
             "--dlq_topic",
@@ -40,15 +40,15 @@ def test_pipeline_invalid_timeout() -> None:
         flags=[
             "--project",
             "test-project",
-            "--continuous_input_subscription",
-            "projects/test-project/subscriptions/continuous-in",
+            "--input_subscription",
+            "projects/test-project/subscriptions/audio-in",
             "--output_topic",
             "projects/test-project/topics/out",
             "--dlq_topic",
             "projects/test-project/topics/dlq",
             "--staging_audio_bucket",
             "test-staging-bucket",
-            "--continuous_out_of_order_timeout_ms",
+            "--out_of_order_timeout_ms",
             "80000",
             "--stale_timeout_ms",
             "70000",
@@ -57,7 +57,7 @@ def test_pipeline_invalid_timeout() -> None:
 
     with pytest.raises(
         ValueError,
-        match=r"stale_timeout_ms .* must be strictly greater than .* out_of_order_timeout_ms",
+        match=r"stale_timeout_ms .* must be strictly greater than out_of_order_timeout_ms",
     ):
         get_pipeline(options)
 

@@ -336,8 +336,8 @@ def _evaluate_is_backfill(current_ts_ms: int, threshold_ms: int) -> bool:
 
 @beam.typehints.with_input_types(tuple[str, datatypes.ChunkMetadata])
 @beam.typehints.with_output_types(tuple[str, datatypes.FlushRequest])
-class OrderedContinuousStitchAudioFn(beam.DoFn):
-    """Stateful Apache Beam DoFn orchestrating out-of-order and stale windowing for continuous feeds.
+class OrderedStitchAudioFn(beam.DoFn):
+    """Stateful Apache Beam DoFn orchestrating out-of-order and stale windowing for audio feeds.
 
     Delegates core audio segment calculations to stitcher_engine.StitcherEngine.
     """

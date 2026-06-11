@@ -71,21 +71,21 @@ class StitcherEngine:
         self.vad_config = vad_config
 
         # Incoming chunk counters
-        self.continuous_chunks_received = Metrics.counter(
-            self.__class__, "continuous_chunks_received"
+        self.chunks_received = Metrics.counter(
+            self.__class__, "chunks_received"
         )
 
         # VAD evaluated chunk counters
-        self.continuous_vad_speech_chunks = Metrics.counter(
-            self.__class__, "continuous_vad_speech_chunks"
+        self.vad_speech_chunks = Metrics.counter(
+            self.__class__, "vad_speech_chunks"
         )
-        self.continuous_vad_silence_chunks = Metrics.counter(
-            self.__class__, "continuous_vad_silence_chunks"
+        self.vad_silence_chunks = Metrics.counter(
+            self.__class__, "vad_silence_chunks"
         )
 
         # Total speech utterances/segments count
-        self.continuous_speech_segments_count = Metrics.counter(
-            self.__class__, "continuous_speech_segments_count"
+        self.speech_segments_count = Metrics.counter(
+            self.__class__, "speech_segments_count"
         )
 
         # Pipeline health & flushes
@@ -390,14 +390,12 @@ class StitcherEngine:
         self, chunk_data: datatypes.AudioChunkData
     ) -> None:
         """Records VAD evaluation outcomes and chunk volume."""
-        self.continuous_chunks_received.inc()
+        self.chunks_received.inc()
         if chunk_data.speech_segments:
-            self.continuous_vad_speech_chunks.inc()
-            self.continuous_speech_segments_count.inc(
-                len(chunk_data.speech_segments)
-            )
+            self.vad_speech_chunks.inc()
+            self.speech_segments_count.inc(len(chunk_data.speech_segments))
         else:
-            self.continuous_vad_silence_chunks.inc()
+            self.vad_silence_chunks.inc()
 
     def _process_single_stitch_chunk(
         self,

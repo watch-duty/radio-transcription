@@ -19,10 +19,11 @@ class SegmentationOptions(PipelineOptions):
     def _add_argparse_args(cls, parser: argparse.ArgumentParser) -> None:
         """Registers pipeline CLI parameters to enable interactive flag passing via Dataflow."""
         parser.add_argument(
+            "--input_subscription",
             "--continuous_input_subscription",
             type=str,
             required=True,
-            help="Pub/Sub ordered subscription for continuous feeds (e.g. BCFY_FEEDS).",
+            help="Pub/Sub ordered subscription for audio feeds.",
         )
 
         parser.add_argument(
@@ -64,10 +65,11 @@ class SegmentationOptions(PipelineOptions):
             help="Milliseconds before an incomplete transmission is flushed.",
         )
         parser.add_argument(
+            "--out_of_order_timeout_ms",
             "--continuous_out_of_order_timeout_ms",
             type=int,
             default=None,
-            help=f"Milliseconds to wait for missing chunks before accepting a logical gap for continuous feeds. Default: {DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS}ms.",
+            help=f"Milliseconds to wait for missing chunks before accepting a logical gap for audio feeds. Default: {DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS}ms.",
         )
 
         parser.add_argument(

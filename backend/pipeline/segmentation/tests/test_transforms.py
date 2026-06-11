@@ -42,7 +42,7 @@ from backend.pipeline.segmentation.datatypes import (
 )
 from backend.pipeline.segmentation.transforms.stateful import (
     SHARED_RESOURCE_HANDLE,
-    OrderedContinuousStitchAudioFn,
+    OrderedStitchAudioFn,
 )
 from backend.pipeline.segmentation.transforms.stateless import (
     ParseAndKeyFn,
@@ -316,10 +316,10 @@ class OrderedStitchAudioTest(unittest.TestCase):
         mock_audio_processor: MagicMock,
         mock_with_tracer_context: MagicMock,
     ) -> None:
-        """Verifies that OrderedContinuousStitchAudioFn.process calls with_tracer_context."""
+        """Verifies that OrderedStitchAudioFn.process calls with_tracer_context."""
         order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
         stitch_config = get_test_stitch_config()
-        fn = OrderedContinuousStitchAudioFn(
+        fn = OrderedStitchAudioFn(
             order_config=order_config, stitch_config=stitch_config
         )
         fn.setup()
@@ -375,7 +375,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
         """Verifies that handle_gap_timeout calls with_tracer_context."""
         order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
         stitch_config = get_test_stitch_config()
-        fn = OrderedContinuousStitchAudioFn(
+        fn = OrderedStitchAudioFn(
             order_config=order_config, stitch_config=stitch_config
         )
         fn.setup()
@@ -435,7 +435,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
             significant_gap_ms=500, stale_timeout_ms=60000
         )
 
-        fn = OrderedContinuousStitchAudioFn(
+        fn = OrderedStitchAudioFn(
             order_config=order_config, stitch_config=stitch_config
         )
         fn.audio_processor = mock_processor_inst  # Inject mock
@@ -533,7 +533,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
     def test_ordered_stitch_audio_flushes_on_stale_timer(
         self, mock_audio_processor: MagicMock
     ) -> None:
-        """Verifies that OrderedContinuousStitchAudioFn flushes buffered audio when the stale timer fires."""
+        """Verifies that OrderedStitchAudioFn flushes buffered audio when the stale timer fires."""
         mock_processor_inst = mock_audio_processor.return_value
 
         chunk_data = AudioChunkData(
@@ -588,7 +588,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 p
                 | test_stream
                 | beam.ParDo(
-                    OrderedContinuousStitchAudioFn(
+                    OrderedStitchAudioFn(
                         order_config=order_config, stitch_config=stitch_config
                     )
                 )
@@ -610,7 +610,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
     def test_ordered_stitch_audio_handles_out_of_order_chunks(
         self, mock_audio_processor: MagicMock
     ) -> None:
-        """Verifies that OrderedContinuousStitchAudioFn buffers out-of-order chunks and emits them in order."""
+        """Verifies that OrderedStitchAudioFn buffers out-of-order chunks and emits them in order."""
         mock_processor_inst = mock_audio_processor.return_value
 
         def download_side_effect(gcs_uri, timestamp_ms, *args, **kwargs):
@@ -708,7 +708,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 p
                 | test_stream
                 | beam.ParDo(
-                    OrderedContinuousStitchAudioFn(
+                    OrderedStitchAudioFn(
                         order_config=order_config, stitch_config=stitch_config
                     )
                 )
@@ -736,7 +736,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
             assert_that(results, assert_results)
 
 
-class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
+class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
     @patch(
         "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
     )
@@ -759,7 +759,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         stitch_config = get_test_stitch_config(
             significant_gap_ms=800, stale_timeout_ms=75000
         )
-        fn = OrderedContinuousStitchAudioFn(
+        fn = OrderedStitchAudioFn(
             order_config=order_config, stitch_config=stitch_config
         )
         fn.setup()
@@ -874,7 +874,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         stitch_config = get_test_stitch_config(
             significant_gap_ms=800, stale_timeout_ms=75000
         )
-        fn = OrderedContinuousStitchAudioFn(
+        fn = OrderedStitchAudioFn(
             order_config=order_config, stitch_config=stitch_config
         )
         fn.setup()
@@ -966,7 +966,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         stitch_config = get_test_stitch_config(
             significant_gap_ms=800, stale_timeout_ms=75000
         )
-        fn = OrderedContinuousStitchAudioFn(
+        fn = OrderedStitchAudioFn(
             order_config=order_config, stitch_config=stitch_config
         )
         fn.setup()
@@ -1072,7 +1072,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         stitch_config = get_test_stitch_config(
             max_transmission_duration_ms=60000,
         )
-        fn = OrderedContinuousStitchAudioFn(
+        fn = OrderedStitchAudioFn(
             order_config=order_config, stitch_config=stitch_config
         )
         fn.setup()
@@ -1173,7 +1173,7 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
             significant_gap_ms=3000,
             max_transmission_duration_ms=60000,
         )
-        fn = OrderedContinuousStitchAudioFn(
+        fn = OrderedStitchAudioFn(
             order_config=order_config, stitch_config=stitch_config
         )
         fn.setup()
@@ -1308,7 +1308,7 @@ class DlqTaggingTest(unittest.TestCase):
         """Verifies that _yield_tagged_outputs converts a raw DLQ tuple into a TaggedOutput."""
         order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
         stitch_config = get_test_stitch_config()
-        fn = OrderedContinuousStitchAudioFn(
+        fn = OrderedStitchAudioFn(
             order_config=order_config, stitch_config=stitch_config
         )
 
@@ -1327,7 +1327,7 @@ class DlqTaggingTest(unittest.TestCase):
         """Verifies that _yield_tagged_outputs leaves main FlushRequest tuples unchanged."""
         order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
         stitch_config = get_test_stitch_config()
-        fn = OrderedContinuousStitchAudioFn(
+        fn = OrderedStitchAudioFn(
             order_config=order_config, stitch_config=stitch_config
         )
 
@@ -1342,7 +1342,7 @@ class DlqTaggingTest(unittest.TestCase):
         """Verifies that _yield_tagged_outputs handles a mix of DLQ and main outputs."""
         order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
         stitch_config = get_test_stitch_config()
-        fn = OrderedContinuousStitchAudioFn(
+        fn = OrderedStitchAudioFn(
             order_config=order_config, stitch_config=stitch_config
         )
 
@@ -1392,7 +1392,7 @@ class DlqTaggingTest(unittest.TestCase):
         mock_processor_inst.download_audio_and_detect.return_value = chunk_data
 
         fn, mock_state_context, mock_state_buffer, mock_last_start_ms = (
-            self._make_fn_and_states(OrderedContinuousStitchAudioFn)
+            self._make_fn_and_states(OrderedStitchAudioFn)
         )
         fn.setup()
 
@@ -1462,7 +1462,7 @@ class DlqTaggingTest(unittest.TestCase):
         mock_processor_inst.download_audio_and_detect.return_value = chunk_data
 
         fn, mock_state_context, mock_state_buffer, mock_last_start_ms = (
-            self._make_fn_and_states(OrderedContinuousStitchAudioFn)
+            self._make_fn_and_states(OrderedStitchAudioFn)
         )
         fn.setup()
 
@@ -1536,7 +1536,7 @@ class DlqTaggingTest(unittest.TestCase):
         ]
 
         fn, mock_state_context, mock_state_buffer, mock_last_start_ms = (
-            self._make_fn_and_states(OrderedContinuousStitchAudioFn)
+            self._make_fn_and_states(OrderedStitchAudioFn)
         )
         fn.setup()
 
@@ -1642,7 +1642,7 @@ class DlqTaggingTest(unittest.TestCase):
 
         # Create fn and states
         fn, mock_state_context, mock_state_buffer, mock_last_start_ms = (
-            self._make_fn_and_states(OrderedContinuousStitchAudioFn)
+            self._make_fn_and_states(OrderedStitchAudioFn)
         )
         # Override config to ensure max_transmission_duration_ms=5000
         fn.stitch_config = stitch_config

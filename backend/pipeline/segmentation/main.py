@@ -24,8 +24,8 @@ def main() -> None:
     options = pipeline_options.view_as(SegmentationOptions)
 
     logger.info(
-        "Starting segmentation pipeline: continuous_input=%s, output=%s",
-        options.continuous_input_subscription,
+        "Starting segmentation pipeline: input_subscription=%s, output=%s",
+        options.input_subscription,
         options.output_topic,
     )
 
