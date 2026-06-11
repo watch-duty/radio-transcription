@@ -6,7 +6,13 @@ import { VirtuosoMockContext } from 'react-virtuoso';
 import { Howl } from 'howler';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  cleanup,
+  fireEvent,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import {
   AnnotationType,
   AudioClassification,
@@ -1047,6 +1053,90 @@ describe('TranscriptView', () => {
         'desc',
         undefined
       );
+    });
+  });
+
+  it('advances playback to the next silence segment inside a silence bundle when the current one finishes', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let lastHowlOptions: any = null;
+    const initSpy = vi
+      .spyOn(Howl.prototype, 'init')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .mockImplementation(function (this: any, o: any) {
+        lastHowlOptions = o;
+        this._sounds = [];
+        return this;
+      });
+
+    const playSpy = vi
+      .spyOn(Howl.prototype, 'play')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .mockImplementation(function (this: any) {
+        if (lastHowlOptions?.onplay) {
+          lastHowlOptions.onplay();
+        }
+        return this;
+      });
+
+    const mockSilence1 = {
+      id: 'silence-1',
+      feedId: 'feed123',
+      classification: AudioClassification.OTHER,
+      startTimestamp: '2026-04-10T12:00:00Z',
+      endTimestamp: '2026-04-10T12:00:05Z',
+      playbackAudioUri: 'gs://bucket/silence-1.m4a',
+      missingPriorContext: false,
+      missingPostContext: false,
+      sourceAudioUris: [],
+      annotations: [],
+      createdAt: '2026-04-10T12:00:00Z',
+    };
+
+    const mockSilence2 = {
+      id: 'silence-2',
+      feedId: 'feed123',
+      classification: AudioClassification.OTHER,
+      startTimestamp: '2026-04-10T12:00:05Z',
+      endTimestamp: '2026-04-10T12:00:10Z',
+      playbackAudioUri: 'gs://bucket/silence-2.m4a',
+      missingPriorContext: false,
+      missingPostContext: false,
+      sourceAudioUris: [],
+      annotations: [],
+      createdAt: '2026-04-10T12:00:05Z',
+    };
+
+    vi.mocked(listAudioSegments).mockResolvedValue({
+      segments: [mockSilence1, mockSilence2],
+      nextToken: undefined,
+    });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('[No speech detected]')).toBeTruthy();
+    });
+
+    const playButton = screen.getAllByLabelText('play')[1];
+    fireEvent.click(playButton);
+
+    expect(initSpy).toHaveBeenCalled();
+    expect(lastHowlOptions.src).toEqual([
+      expect.stringContaining('silence-1.m4a'),
+    ]);
+    expect(playSpy).toHaveBeenCalled();
+
+    act(() => {
+      lastHowlOptions.onend();
+    });
+
+    await waitFor(() => {
+      expect(lastHowlOptions.src).toEqual([
+        expect.stringContaining('silence-2.m4a'),
+      ]);
     });
   });
 

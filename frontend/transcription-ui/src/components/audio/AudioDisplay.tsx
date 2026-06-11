@@ -227,15 +227,16 @@ export function AudioDisplay({
         const tStart = new Date(targetTranscript.startTimestamp).getTime();
         const tEnd = new Date(targetTranscript.endTimestamp).getTime();
 
-        const currentEndTime =
-          windowEndTime ||
-          (firstTranscript
-            ? new Date(firstTranscript.endTimestamp).getTime()
-            : 0);
+        const newestEnd = firstTranscript
+          ? new Date(firstTranscript.endTimestamp).getTime()
+          : 0;
+
+        const currentEndTime = windowEndTime || newestEnd;
         const currentStartTime = currentEndTime - windowDurationMs;
 
         if (tStart < currentStartTime || tEnd > currentEndTime) {
-          const newEndTime = tStart + windowDurationMs / 2;
+          const preferredEndTime = tStart + windowDurationMs / 2;
+          const newEndTime = Math.min(preferredEndTime, newestEnd);
           setWindowEndTime(newEndTime);
         }
       }
