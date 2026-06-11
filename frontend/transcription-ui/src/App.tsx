@@ -1,7 +1,7 @@
 import { Suspense, lazy, useCallback, useState } from 'react';
 import { Route, Routes } from 'react-router';
 
-import { jwtDecode } from 'jwt-decode';
+import { decodeJwt } from 'jose';
 
 import {
   CssBaseline,
@@ -71,7 +71,7 @@ function App() {
 
   const handleError = useCallback(
     (error: Error, titleMessage?: string) => {
-      const decodedToken = token && jwtDecode(token);
+      const decodedToken = token && decodeJwt(token);
       const isExpired =
         decodedToken &&
         decodedToken.exp &&
