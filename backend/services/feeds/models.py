@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from backend.pipeline.storage.feed_store import (  # noqa: TC001
     FeedStatus,
+    FeedStatusReason,
     SourceType,
 )
 
@@ -84,6 +85,8 @@ class Feed(FeedBase):
     source_feed_id: str
     status: FeedStatus
     last_heartbeat: datetime.datetime | None
+    quarantine_reason: str | None = None
+    status_reason: FeedStatusReason | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -91,3 +94,4 @@ class Feed(FeedBase):
 class ListFeedsResponse(BaseModel):
     feeds: list[Feed]
     next_token: str | None = None
+    total: int

@@ -14,6 +14,8 @@ import aiohttp
 import asyncpg
 import uvloop
 from aiohttp import web
+from google.api_core import exceptions as google_exceptions
+from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
 from opentelemetry import trace
 
 from backend.pipeline.common import gcp_helper
@@ -27,8 +29,10 @@ from backend.pipeline.ingestion.health_server import HealthState
 from backend.pipeline.ingestion.models import (
     AudioMimeType,
     CapturedChunk,
+    CaptureEvent,
     CaptureResources,
     FeedFailure,
+    SourceObservation,
 )
 from backend.pipeline.ingestion.retry import (
     LeaseExpiredError,
@@ -56,7 +60,7 @@ FeedID = uuid.UUID
 # See CollectorFn in models.py for the 4-arg raw collector signature.
 CaptureFn = Callable[
     [LeasedFeed, asyncio.Event, CaptureResources],
-    AsyncIterator[CapturedChunk],
+    AsyncIterator[CaptureEvent],
 ]
 logger = logging.getLogger(__name__)
 
@@ -101,7 +105,7 @@ class CollectorRuntime:
     interruptibility is moot at that point.
 
     Args:
-        capture_fn: Async generator factory ``(feed, shutdown_event) -> AsyncIterator[CapturedChunk]``.
+        capture_fn: Async generator factory ``(feed, shutdown_event) -> AsyncIterator[CaptureEvent]``.
         settings: Runtime configuration. Defaults to ``CollectorSettings()``.
 
     """
@@ -125,10 +129,9 @@ class CollectorRuntime:
         # every usage site.  Accessing before _main() is a programming error.
         # asyncio.Event must be created inside a running event loop.
         self._shutdown: asyncio.Event = None  # type: ignore # set in _main()
-        # Monotonic (set-only, never cleared) signal: once the lease is flagged
-        # as uncertain it stays flagged.  Prevents a race where a successful
-        # heartbeat clears a set() from a failed heartbeat, allowing retry
-        # loops to continue when they should be aborting.
+        # Monotonic (set-only, never cleared) signal: once this process has
+        # confirmed lease loss, retry loops must stop permanently for this
+        # runtime epoch.
         self._lease_lost: asyncio.Event = None  # type: ignore # set in _main()
         self._data_pool: asyncpg.Pool = None  # type: ignore # set in _main()
         # Dedicated 1-connection pool for heartbeat (control-plane / data-plane
@@ -767,7 +770,7 @@ class CollectorRuntime:
         chunk_extension: str,
         chunk_content_type: str,
     ) -> None:
-        """Run post-capture upload, publish, bookmark, and SLO logging."""
+        """Run post-capture upload, bookmark, publish, and SLO logging."""
         settings = self._collector_settings
         try:
             gcs_uri = await retry_with_lease_check(
@@ -803,29 +806,6 @@ class CollectorRuntime:
             ).total_seconds()
             * 1000
         )
-        try:
-            message_id = await gcp_helper.publish_audio_chunk(
-                self._pubsub_client,
-                topic_path,
-                str(feed["id"]),
-                feed["name"],
-                gcs_uri,
-                start_timestamp=captured_chunk.chunk_start_time,
-                session_id=captured_chunk.session_id,
-                source_type=feed["source_type"],
-                duration_ms=duration_ms,
-            )
-        except (asyncio.CancelledError, LeaseExpiredError):
-            raise
-        except Exception as exc:
-            raise _PipelineFailure(_PIPELINE_PUBSUB_PUBLISH_FAILED) from exc
-
-        logger.info(
-            "Published message %s for feed %s",
-            message_id,
-            feed["name"],
-        )
-
         try:
             ok = await retry_with_lease_check(
                 self._store.update_feed_progress,
@@ -865,13 +845,55 @@ class CollectorRuntime:
                 "Fence violation on bookmark for feed %s -- terminating",
                 feed["name"],
             )
+            self._lease_lost.set()
             # logging.shutdown() flushes background logging threads
             # (e.g. Cloud Logging's CloudLoggingHandler) that os._exit
             # would bypass.
             logging.shutdown()
             os._exit(1)
 
-        # SLO: chunk_ingested emit -- strictly-after-bookmark-ok
+        try:
+            message_id = await retry_with_lease_check(
+                gcp_helper.publish_audio_chunk,
+                self._pubsub_client,
+                topic_path,
+                str(feed["id"]),
+                feed["name"],
+                gcs_uri,
+                captured_chunk.session_id,
+                captured_chunk.chunk_start_time,
+                duration_ms,
+                feed["source_type"],
+                captured_chunk.external_audio_segment_id,
+                lease_lost=self._lease_lost,
+                shutdown=self._shutdown,
+                max_retries=settings.pubsub_publish_max_retries,
+                base_delay_sec=settings.pubsub_publish_retry_base_delay_sec,
+                max_delay_sec=settings.pubsub_publish_retry_max_delay_sec,
+                retryable=(
+                    google_exceptions.Aborted,
+                    google_exceptions.DeadlineExceeded,
+                    google_exceptions.InternalServerError,
+                    google_exceptions.ResourceExhausted,
+                    google_exceptions.ServiceUnavailable,
+                    google_exceptions.Unknown,
+                    google_exceptions.Cancelled,
+                    pubsub_exceptions.PublishToPausedOrderingKeyException,
+                ),
+                operation_name="Pub/Sub publish",
+            )
+        except (asyncio.CancelledError, LeaseExpiredError):
+            raise
+        except Exception as exc:
+            raise _PipelineFailure(_PIPELINE_PUBSUB_PUBLISH_FAILED) from exc
+
+        logger.info(
+            "Published message %s for feed %s",
+            message_id,
+            feed["name"],
+        )
+
+        # SLO: chunk_ingested emit -- strictly after publish success.
         chunk_ingested_payload: dict[str, object] = {
             "event_type": EVENT_TYPE_CHUNK_INGESTED,
             "feed_id": str(feed["id"]),
@@ -947,7 +969,112 @@ class CollectorRuntime:
             # absent from _releasing_feeds but the task is not yet .done().
             self._releasing_feeds.discard(feed["id"])
 
-    async def _process_feed(self, feed: LeasedFeed) -> None:  # noqa: PLR0912, PLR0915
+    @staticmethod
+    def _leased_feed_has_failure_state(feed: LeasedFeed) -> bool:
+        """Return whether a leased feed carries persisted failure state."""
+        return feed["failure_count"] > 0 or feed["status_reason"] is not None
+
+    @staticmethod
+    def _advance_local_bookmark(
+        feed: LeasedFeed,
+        resume_position: datetime.datetime | None,
+    ) -> None:
+        """Keep the local lease copy monotonic with observation SQL."""
+        if resume_position is None:
+            return
+        current_bookmark = feed["last_bookmark_time"]
+        if current_bookmark is None or resume_position > current_bookmark:
+            feed["last_bookmark_time"] = resume_position
+
+    async def _process_source_observation(
+        self,
+        feed: LeasedFeed,
+        observation: SourceObservation,
+        worker_id: uuid.UUID,
+        fencing_token: int,
+    ) -> bool:
+        """Record a non-audio source success when persisted state is dirty.
+
+        Returns ``True`` when processing may continue, ``False`` when the task
+        should stop because the row is no longer owned by this active lease.
+        """
+        if not self._leased_feed_has_failure_state(feed):
+            return True
+
+        try:
+            result = await retry_with_lease_check(
+                self._store.record_source_observation,
+                feed["id"],
+                worker_id,
+                fencing_token,
+                observation.resume_position,
+                lease_lost=self._lease_lost,
+                shutdown=self._shutdown,
+                max_retries=self._collector_settings.bookmark_max_retries,
+                base_delay_sec=(
+                    self._collector_settings.bookmark_retry_base_delay_sec
+                ),
+                max_delay_sec=(
+                    self._collector_settings.bookmark_retry_max_delay_sec
+                ),
+                retryable=(
+                    asyncpg.PostgresConnectionError,
+                    asyncpg.InterfaceError,
+                    OSError,
+                ),
+                operation_name="source observation write",
+            )
+        except (asyncio.CancelledError, LeaseExpiredError):
+            raise
+        except Exception:
+            logger.exception(
+                "Failed to record source observation for feed %s",
+                feed["name"],
+            )
+            return True
+
+        if result["recorded"]:
+            feed["failure_count"] = 0
+            feed["status_reason"] = None
+            self._advance_local_bookmark(feed, observation.resume_position)
+            return True
+
+        current_status = result["current_status"]
+        current_worker = result["current_worker"]
+        current_fencing_token = result["current_fencing_token"]
+        if current_status == "active" and (
+            current_worker != worker_id
+            or current_fencing_token != fencing_token
+        ):
+            logger.critical(
+                "Fence violation on source observation for feed %s -- terminating",
+                feed["name"],
+            )
+            logging.shutdown()
+            os._exit(1)
+
+        logger.info(
+            "Source observation ignored because feed is no longer active "
+            "under this lease",
+            extra={
+                "json_fields": {
+                    "feed_id": str(feed["id"]),
+                    "current_status": current_status,
+                    "current_worker": (
+                        str(current_worker)
+                        if current_worker is not None
+                        else None
+                    ),
+                    "current_fencing_token": current_fencing_token,
+                },
+            },
+        )
+        return False
+
+    async def _process_feed(  # noqa: PLR0911, PLR0912, PLR0915
+        self,
+        feed: LeasedFeed,
+    ) -> None:
         """
         Run the capture-upload-bookmark pipeline for a single feed.
 
@@ -989,18 +1116,32 @@ class CollectorRuntime:
             raise ValueError(msg)
 
         try:
-            async for captured_chunk in self._capture_fn(
+            async for capture_event in self._capture_fn(
                 feed,
                 self._shutdown,
                 self._capture_resources,
             ):
-                if not isinstance(captured_chunk, CapturedChunk):
+                if isinstance(capture_event, SourceObservation):
+                    should_continue = await self._process_source_observation(
+                        feed,
+                        capture_event,
+                        worker_id,
+                        fencing_token,
+                    )
+                    if not should_continue:
+                        return
+                    if self._shutdown.is_set():
+                        return
+                    continue
+
+                if not isinstance(capture_event, CapturedChunk):
                     msg = (
                         f"Collector yielded "
-                        f"{type(captured_chunk).__name__}, "
-                        f"expected CapturedChunk"
+                        f"{type(capture_event).__name__}, "
+                        f"expected CapturedChunk or SourceObservation"
                     )
                     raise TypeError(msg)  # noqa: TRY301
+                captured_chunk = capture_event
                 tracer = trace.get_tracer(__name__)
                 with tracer.start_as_current_span("process_captured_chunk"):
                     chunk_extension = extension
@@ -1054,11 +1195,8 @@ class CollectorRuntime:
             return
 
         except LeaseExpiredError:
-            # Lease validity is uncertain (heartbeat DB error or fence
-            # violation).  Do NOT attempt report_feed_failure -- the DB
-            # connection that feeds it may be unreachable, causing this
-            # coroutine to hang.  The 60s abandonment window is the
-            # safety net; another worker will re-lease the feed.
+            # Confirmed lease loss. Do NOT attempt report_feed_failure:
+            # fenced ownership is gone, so another worker owns recovery.
             logger.warning(
                 "Lease lost for feed %s -- aborting without DB write",
                 feed["name"],
@@ -1158,14 +1296,10 @@ class CollectorRuntime:
                 logging.shutdown()  # flush before os._exit bypasses handlers
                 os._exit(1)
             except Exception:
-                # Transient DB error — log and retry. Don't kill: mass
-                # os._exit(1) across the MIG during a DB outage would cause
-                # a thundering herd cold-start on recovery.
+                # Transient DB error -- log and retry. A failed renewal
+                # attempt does not prove confirmed lease loss; fenced writes
+                # and heartbeat diagnostics remain authoritative.
                 logger.exception("Heartbeat renewal error")
-                # Signal retry loops that lease validity is uncertain.
-                # Must use call_soon_threadsafe from the OS thread since
-                # asyncio.Event.set() is not thread-safe.
-                self._loop.call_soon_threadsafe(self._lease_lost.set)
 
             # Advance ticker. If cycle took longer than one interval, the next
             # sleep_time clamps to 0 — fires immediately to catch up.

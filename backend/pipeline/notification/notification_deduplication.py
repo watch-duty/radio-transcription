@@ -22,3 +22,9 @@ class NotificationDeduplication:
         return self.cache.set_if_not_exists(
             notification_id, now, TTL_IN_SECONDS
         )
+
+    def clear_notification(self, notification_id: str) -> bool:
+        """
+        Clears the notification_id from the cache so that it can be processed again.
+        """
+        return self.cache.delete(notification_id)

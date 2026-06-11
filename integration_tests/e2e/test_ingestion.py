@@ -12,7 +12,7 @@ from integration_tests.feed_utils import (
     create_test_polling_feed,  # noqa: F401
 )
 from integration_tests.test_utils import (
-    verify_transcript_in_db,
+    verify_audio_segments_via_api,
 )
 
 logger = logging.getLogger(__name__)
@@ -21,13 +21,27 @@ logger = logging.getLogger(__name__)
 def test_ingestion_integration(test_bcfy_feed: tuple[str, str]) -> None:
     """Tests that audio ingestion service picks up the test feed and results in a transcript."""
     feed_id, _ = test_bcfy_feed
-    verify_transcript_in_db(feed_id)
+
+    # Broadcastify feeds are continuous audio streams, so they should NOT have an external ID
+    verify_audio_segments_via_api(
+        feed_id, lambda s: s.get("external_audio_segment_id") is None
+    )
 
 
 def test_ingestion_api_polling(test_polling_feed: tuple[str, str]) -> None:
     """Tests that audio ingestion service picks up a feed from API polling and results in a transcript."""
     feed_id, _ = test_polling_feed
-    verify_transcript_in_db(feed_id)
+
+    # Broadcastify calls should have an external ID representing the full audio URL
+    verify_audio_segments_via_api(
+        feed_id,
+        lambda s: (
+            isinstance(ext_id := s.get("external_audio_segment_id"), str)
+            and ext_id.startswith(
+                "http://mock-audio-server:8090/broadcastify_calls/2912/"
+            )
+        ),
+    )
 
 
 def test_ingestion_echo(test_echo_feed: tuple[str, str]) -> None:
@@ -38,7 +52,7 @@ def test_ingestion_echo(test_echo_feed: tuple[str, str]) -> None:
     audio_bytes = b"dummy mp3 audio"
     try:
         with open(
-            "/app/backend/pipeline/normalization/tests/test_data/test_bcfy.flac",
+            "/app/backend/pipeline/segmentation/tests/test_data/test_bcfy.flac",
             "rb",
         ) as f:
             audio_bytes = f.read()
@@ -68,4 +82,11 @@ def test_ingestion_echo(test_echo_feed: tuple[str, str]) -> None:
         # Simulate new audio available event trigger on Echo
         echo_main.handle_notification(event)
 
-    verify_transcript_in_db(feed_id)
+    # Verify external ID propagation
+    verify_audio_segments_via_api(
+        feed_id,
+        lambda s: (
+            s.get("external_audio_segment_id")
+            == f"{source_bucket_name}/{gcs_path}"
+        ),
+    )

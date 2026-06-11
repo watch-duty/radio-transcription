@@ -6,7 +6,6 @@ import datetime
 import os
 import unittest
 import uuid
-from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
@@ -19,12 +18,14 @@ from testcontainers.postgres import PostgresContainer
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client
+from backend.pipeline.common.test_schema_helper import async_apply_test_schema
 from backend.pipeline.ingestion.collectors.openmhz._types import CallEvent
 from backend.pipeline.ingestion.collectors.openmhz.collector import (
     openmhz_collector,
 )
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
+    _require_captured_chunk,
 )
 from backend.pipeline.ingestion.models import FeedFailure
 from backend.pipeline.storage.feed_store import (
@@ -38,11 +39,6 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 _CLAIM: dict[SourceType, int] = {SourceType.OPENMHZ: 1}
-
-_REPO_ROOT = Path(__file__).resolve().parents[5]
-_SQL_DIR = (
-    _REPO_ROOT / "terraform" / "modules" / "alloydb" / "sql" / "ingestion"
-)
 
 _FAKE_GCS_PORT = 4443
 _TEST_BUCKET = "test-audio-bucket"
@@ -124,10 +120,7 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 password="postgres",
                 database="postgres",
             )
-            for sql_file in sorted(_SQL_DIR.glob("*.sql")):
-                if "pg_cron" in sql_file.name:
-                    continue  # pg_cron extension is production-only (AlloyDB flag)
-                await conn.execute(sql_file.read_text())
+            await async_apply_test_schema(conn)
             await conn.close()
 
         asyncio.run(_setup_schema())
@@ -261,12 +254,13 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
         shutdown = asyncio.Event()
         chunks_uploaded = []
-        async for chunk in openmhz_collector(
+        async for event in openmhz_collector(
             feed,
             shutdown,
             "https://api.openmhz.com/",
             _default_resources(),
         ):
+            chunk = _require_captured_chunk(event)
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client,
                 chunk.audio_bytes,
@@ -320,12 +314,13 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         gcs_paths = []
         seq = 0
-        async for chunk in openmhz_collector(
+        async for event in openmhz_collector(
             feed,
             shutdown,
             "https://api.openmhz.com/",
             _default_resources(),
         ):
+            chunk = _require_captured_chunk(event)
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client, chunk.audio_bytes, feed, _TEST_BUCKET, seq
             )
@@ -383,12 +378,13 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         gcs_paths = []
         seq = 0
-        async for chunk in openmhz_collector(
+        async for event in openmhz_collector(
             feed,
             shutdown,
             "https://api.openmhz.com/",
             _default_resources(),
         ):
+            chunk = _require_captured_chunk(event)
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client, chunk.audio_bytes, feed, _TEST_BUCKET, seq
             )
@@ -427,12 +423,13 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
         shutdown = asyncio.Event()
         gcs_paths = []
-        async for chunk in openmhz_collector(
+        async for event in openmhz_collector(
             feed,
             shutdown,
             "https://api.openmhz.com/",
             _default_resources(),
         ):
+            chunk = _require_captured_chunk(event)
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs_client, chunk.audio_bytes, feed, _TEST_BUCKET, 0
             )

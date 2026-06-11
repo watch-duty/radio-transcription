@@ -19,14 +19,14 @@ interface TranscriptRowProps {
   totalTranscripts: number;
   ruleIdToNameMap: Map<string, string>;
   rulesLoading: boolean;
-  onToggleAudio: (transmissionId: string, audioUri: string) => void;
+  onToggleAudio: (segmentId: string, audioUri: string) => void;
   isAudioPlaying: boolean;
-  currentlyPlayingTransmissionId: string | null;
+  currentlyPlayingSegmentId: string | null;
   triggerSnackbar: (message: string) => void;
   showHeader: boolean;
   isHighlighted?: boolean;
   redactTranscripts?: boolean;
-  onRowClick: (transmissionId: string) => void;
+  onRowClick: (segmentId: string) => void;
 }
 
 export function TranscriptRow({
@@ -37,7 +37,7 @@ export function TranscriptRow({
   rulesLoading,
   onToggleAudio,
   isAudioPlaying,
-  currentlyPlayingTransmissionId,
+  currentlyPlayingSegmentId,
   triggerSnackbar,
   showHeader,
   isHighlighted = false,
@@ -84,7 +84,7 @@ export function TranscriptRow({
         </ListItem>
       )}
       <ListItem
-        id={`transcript-${transcript.transmissionId}`}
+        id={`transcript-${transcript.segmentId}`}
         divider={index < totalTranscripts - 1}
         className="compactTable"
         sx={{
@@ -98,7 +98,7 @@ export function TranscriptRow({
             bgcolor: isHighlighted ? 'action.selected' : 'action.hover',
           },
         }}
-        onClick={() => onRowClick(transcript.transmissionId)}
+        onClick={() => onRowClick(transcript.segmentId)}
       >
         <Box
           sx={{
@@ -146,10 +146,10 @@ export function TranscriptRow({
         </Box>
         <AudioPlayer
           audioUri={transcript.playbackAudioUri}
-          transmissionId={transcript.transmissionId}
+          segmentId={transcript.segmentId}
           onToggleAudio={onToggleAudio}
           isAudioPlaying={isAudioPlaying}
-          currentlyPlayingTransmissionId={currentlyPlayingTransmissionId}
+          currentlyPlayingSegmentId={currentlyPlayingSegmentId}
         />
         <Typography
           variant="body1"
@@ -188,10 +188,7 @@ export function TranscriptRow({
                   window.location.origin + window.location.pathname
                 );
                 url.searchParams.set('feedId', transcript.feedId);
-                url.searchParams.set(
-                  'transmissionId',
-                  transcript.transmissionId
-                );
+                url.searchParams.set('segmentId', transcript.segmentId);
                 url.searchParams.set(
                   'timestamp',
                   new Date(transcript.startTimestamp).getTime().toString()

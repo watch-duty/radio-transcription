@@ -26,7 +26,9 @@ from backend.pipeline.ingestion.collectors.failure_classifiers import (
 from backend.pipeline.ingestion.models import (
     AudioMimeType,
     CapturedChunk,
+    CaptureEvent,
     FeedFailure,
+    SourceObservation,
 )
 from backend.pipeline.ingestion.settings import _require_env
 from backend.pipeline.ingestion.slo_contract import (
@@ -205,6 +207,7 @@ async def _process_file_list(
     processed_uuids: collections.deque[str],
     source_feed_id: str,
     s3_base_url: str,
+    outcome: ItemBatchOutcome,
 ) -> AsyncIterator[CapturedChunk]:
     """Filter, sort and process audio files, yielding CapturedChunks."""
     # Filter for files and sort by name to process chronologically
@@ -218,8 +221,6 @@ async def _process_file_list(
     # A Fire Notifications file-list response is the observation boundary:
     # all eligible attempted MP3s failing is meaningful, but isolated stale or
     # corrupt files should not mark the feed unhealthy.
-    outcome = ItemBatchOutcome()
-
     for f in audio_files:
         if shutdown_event.is_set():
             break
@@ -315,6 +316,7 @@ async def _process_file_list(
             receipt_time=receipt_time,
             mime_type=AudioMimeType.MPEG,
             resume_position=end_time,
+            external_audio_segment_id=f"{file_uuid}|{filename}",
         )
         # Only mark as processed after a successful yield, confirming
         # the chunk was handed off to the pipeline.
@@ -331,10 +333,11 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
     shutdown_event: asyncio.Event,
     url_base: str,
     _resources: CaptureResources,
-) -> AsyncIterator[CapturedChunk]:
+) -> AsyncIterator[CaptureEvent]:
     """Capture Fire Notifications audio via HTTP Polling.
 
-    Yields :class:`CapturedChunk` for each new MP3 file found.
+    Yields :class:`CapturedChunk` for each new MP3 file found, and
+    :class:`SourceObservation` for successful empty/skipped-only file listings.
     """
     try:
         s3_base_url = _require_env("FIRE_NOTIFICATIONS_S3_BASE")
@@ -391,17 +394,29 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
                     data = resp.json()
                     files = data.get("files", [])
 
-                    async for chunk in _process_file_list(
-                        files,
-                        session,
-                        shutdown_event,
-                        connection_session_id,
-                        feed,
-                        processed_uuids,
-                        source_feed_id,
-                        s3_base_url,
-                    ):
-                        yield chunk
+                    if files == []:
+                        yield SourceObservation()
+                    else:
+                        outcome = ItemBatchOutcome()
+                        async for chunk in _process_file_list(
+                            files,
+                            session,
+                            shutdown_event,
+                            connection_session_id,
+                            feed,
+                            processed_uuids,
+                            source_feed_id,
+                            s3_base_url,
+                            outcome,
+                        ):
+                            yield chunk
+                        is_skipped_only_listing_while_running = (
+                            outcome.attempted_count == 0
+                            and not outcome.chunk_produced
+                            and not shutdown_event.is_set()
+                        )
+                        if is_skipped_only_listing_while_running:
+                            yield SourceObservation()
                     poll_ok = True
                 else:
                     last_poll_failure = _classify_poll_status(resp.status_code)

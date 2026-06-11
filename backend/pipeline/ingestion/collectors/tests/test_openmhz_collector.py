@@ -23,8 +23,9 @@ from backend.pipeline.ingestion.collectors.openmhz.collector import (
 )
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
+    _require_captured_chunk,
 )
-from backend.pipeline.ingestion.models import FeedFailure
+from backend.pipeline.ingestion.models import FeedFailure, SourceObservation
 from backend.pipeline.storage.feed_store import (
     FeedStatusReason,
     LeasedFeed,
@@ -38,6 +39,8 @@ _TEST_FEED = LeasedFeed(
     last_processed_filename=None,
     last_bookmark_time=None,
     fencing_token=1,
+    failure_count=0,
+    status_reason=None,
     source_feed_id="wmata",
 )
 
@@ -159,6 +162,34 @@ class TestDownloadM4a(unittest.IsolatedAsyncioTestCase):
 
 class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
     @patch(f"{_COL_MOD}.websocket_transport")
+    async def test_dirty_feed_yields_observation_on_successful_connection(
+        self,
+        mock_transport: MagicMock,
+    ) -> None:
+        feed = cast(
+            "LeasedFeed",
+            {
+                **_TEST_FEED,
+                "failure_count": 1,
+                "status_reason": FeedStatusReason.SOURCE_UNREACHABLE,
+            },
+        )
+        mock_transport.side_effect = lambda *a, **kw: _mock_transport([])
+
+        shutdown = asyncio.Event()
+        events = []
+        async for event in openmhz_collector(
+            feed,
+            shutdown,
+            "https://api.openmhz.com/",
+            _default_resources(),
+        ):
+            events.append(event)
+            shutdown.set()
+
+        self.assertEqual(events, [SourceObservation()])
+
+    @patch(f"{_COL_MOD}.websocket_transport")
     @patch(f"{_COL_MOD}._download_m4a")
     async def test_yields_flac_and_call_time(
         self,
@@ -177,7 +208,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             "https://api.openmhz.com/",
             _default_resources(),
         ):
-            results.append(chunk)
+            results.append(_require_captured_chunk(chunk))
             shutdown.set()
 
         self.assertEqual(len(results), 1)
@@ -250,6 +281,8 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             last_processed_filename=None,
             last_bookmark_time=None,
             fencing_token=1,
+            failure_count=0,
+            status_reason=None,
             source_feed_id=None,
         )
         shutdown = asyncio.Event()
@@ -375,7 +408,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             "https://api.openmhz.com/",
             _default_resources(),
         ):
-            results.append(chunk)
+            results.append(_require_captured_chunk(chunk))
             if len(results) == 2:
                 shutdown.set()
 
@@ -427,7 +460,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             "https://api.openmhz.com/",
             _default_resources(),
         ):
-            results.append(chunk)
+            results.append(_require_captured_chunk(chunk))
             if len(results) == 2:
                 shutdown.set()
 
@@ -467,7 +500,7 @@ class TestOpenmhzReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
             "https://api.openmhz.com/",
             _default_resources(),
         ):
-            results.append(chunk)
+            results.append(_require_captured_chunk(chunk))
             shutdown.set()
 
         self.assertEqual(len(results), 1)

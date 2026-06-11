@@ -18,6 +18,7 @@ from testcontainers.postgres import PostgresContainer
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client
+from backend.pipeline.common.test_schema_helper import async_apply_test_schema
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     bcfy_calls_collector,
 )
@@ -26,6 +27,7 @@ from backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector impor
 )
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
+    _require_captured_chunk,
 )
 from backend.pipeline.ingestion.models import FeedFailure
 from backend.pipeline.storage.feed_store import (
@@ -36,11 +38,6 @@ from backend.pipeline.storage.feed_store import (
 )
 
 _CLAIM: dict[SourceType, int] = {SourceType.BCFY_CALLS: 1}
-
-_REPO_ROOT = __import__("pathlib").Path(__file__).resolve().parents[5]
-_SQL_DIR = (
-    _REPO_ROOT / "terraform" / "modules" / "alloydb" / "sql" / "ingestion"
-)
 
 _FAKE_GCS_PORT = 4443
 _TEST_BUCKET = "test-audio-bucket"
@@ -97,10 +94,7 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 password="postgres",
                 database="postgres",
             )
-            for sql_file in sorted(_SQL_DIR.glob("*.sql")):
-                if "pg_cron" in sql_file.name:
-                    continue  # pg_cron extension is production-only (AlloyDB flag)
-                await conn.execute(sql_file.read_text())
+            await async_apply_test_schema(conn)
             await conn.close()
 
         asyncio.run(_setup_schema())
@@ -257,12 +251,13 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
         shutdown = asyncio.Event()
         chunks_uploaded = []
-        async for chunk in capture_bcfy_calls(
+        async for event in capture_bcfy_calls(
             feed,
             shutdown,
             "http://api.example.com/",
             _default_resources(),
         ):
+            chunk = _require_captured_chunk(event)
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs,
                 chunk.audio_bytes,
@@ -343,12 +338,13 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
         gcs_paths = []
         seq = 0
-        async for chunk in capture_bcfy_calls(
+        async for event in capture_bcfy_calls(
             feed,
             shutdown,
             "http://api.example.com/",
             _default_resources(),
         ):
+            chunk = _require_captured_chunk(event)
             gcs_path = await gcp_helper.upload_staged_audio(
                 self.gcs, chunk.audio_bytes, feed, _TEST_BUCKET, seq
             )
@@ -417,12 +413,13 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
         shutdown = asyncio.Event()
         chunks = []
-        async for chunk in capture_bcfy_calls(
+        async for event in capture_bcfy_calls(
             feed,
             shutdown,
             "http://api.example.com/",
             _default_resources(),
         ):
+            chunk = _require_captured_chunk(event)
             chunks.append(chunk)
             if len(chunks) == 2:
                 shutdown.set()

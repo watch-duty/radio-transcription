@@ -38,7 +38,7 @@ services:
       - pipeline-network
     volumes:
       - ./local_dev/gcs_init.py:/app/gcs_init.py
-      - ./backend/pipeline/normalization/tests/test_data:/app/data
+      - ./backend/pipeline/segmentation/tests/test_data:/app/data
     working_dir: /app
     command: sh -c "pip install google-cloud-storage && python gcs_init.py"
 
@@ -83,6 +83,7 @@ services:
   # ----------- Pipeline Services ----------
 
   audio-ingestion:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/audio-ingestion:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/pipeline/ingestion/Dockerfile
@@ -108,18 +109,49 @@ services:
       - pipeline-network
 
   normalization:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/normalization:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/pipeline/normalization/Dockerfile
-    entrypoint: ["python3", "backend/pipeline/normalization/main.py"]
+    ports:
+      - "8083:8083"
+    env_file:
+      - ./local_dev/LOCAL.env
+    environment:
+      - OUTPUT_TOPIC=projects/local-project/topics/normalized-audio
+      - PROJECT_ID=local-project
+      - AUDIO_CANONICAL_BUCKET=test-canonical-bucket
+    command: ["functions-framework", "--source=backend/pipeline/normalization/main.py", "--target=normalize_claim_check", "--signature-type=cloudevent", "--port=8083"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8083))"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - pipeline-network
+    depends_on:
+      pubsub-emulator:
+        condition: service_started
+      pubsub-init:
+        condition: service_completed_successfully
+      gcs-emulator:
+        condition: service_started
+      gcs-init:
+        condition: service_completed_successfully
+
+  segmentation:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/segmentation:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: backend/pipeline/segmentation/Dockerfile
+    entrypoint: ["python3", "backend/pipeline/segmentation/main.py"]
     # DirectRunner doesn't support deduplication, so we need to give an empty field here to disable it.
     command: >
       --continuous_input_subscription projects/$GOOGLE_CLOUD_PROJECT/subscriptions/$CONTINUOUS_AUDIO_SUBSCRIPTION
-      --segmented_input_subscription projects/$GOOGLE_CLOUD_PROJECT/subscriptions/$SEGMENTED_AUDIO_SUBSCRIPTION
-      --output_topic projects/$GOOGLE_CLOUD_PROJECT/topics/normalized-audio
+      --output_topic projects/$GOOGLE_CLOUD_PROJECT/topics/segmented-audio
+      --staging_audio_bucket $AUDIO_STAGING_BUCKET
       --project $GOOGLE_CLOUD_PROJECT
       --id_label ""
-      --canonical_audio_bucket $AUDIO_CANONICAL_BUCKET
     env_file:
       - path: ./local_dev/LOCAL.env
       - path: .env
@@ -137,6 +169,7 @@ services:
         condition: service_completed_successfully
 
   transcription:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/transcription:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/pipeline/transcription/Dockerfile
@@ -162,6 +195,7 @@ services:
         condition: service_started
 
   rules-evaluation:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/rules-evaluation:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/pipeline/evaluation/Dockerfile
@@ -188,6 +222,7 @@ services:
       - postgres
 
   notification:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/notification:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/pipeline/notification/Dockerfile
@@ -213,6 +248,7 @@ services:
 
   # ----------- API Management Services ----------
   rules-management:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/rules-management:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/services/rules/Dockerfile
@@ -235,6 +271,7 @@ services:
       - pipeline-network
 
   transcripts-api:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/transcripts-api:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/services/transcripts/Dockerfile
@@ -257,6 +294,7 @@ services:
       - pipeline-network
 
   feeds-api:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/feeds-api:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/services/feeds/Dockerfile
@@ -279,6 +317,7 @@ services:
       - pipeline-network
 
   audio-segments-api:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/audio-segments-api:${TAG:-latest}
     build:
       context: .
       dockerfile: backend/services/audio_segments/Dockerfile
@@ -307,7 +346,7 @@ services:
       - "127.0.0.1:8082:8082"
     volumes:
       - ./local_dev/mock_server.py:/app/mock_server.py
-      - ./backend/pipeline/normalization/tests/test_data/test_bcfy.flac:/data/test_bcfy.flac:ro
+      - ./backend/pipeline/segmentation/tests/test_data/test_bcfy.flac:/data/test_bcfy.flac:ro
     working_dir: /app
     command: python -u mock_server.py
     networks:
@@ -331,6 +370,7 @@ services:
 
 
   frontend-api:
+    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/frontend-api:${TAG:-latest}
     build:
       context: .
       dockerfile: frontend/api/Dockerfile
@@ -385,6 +425,8 @@ services:
       gcs-emulator:
         condition: service_started
       normalization:
+        condition: service_started
+      segmentation:
         condition: service_started
       transcription:
         condition: service_started

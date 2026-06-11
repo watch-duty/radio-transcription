@@ -68,7 +68,7 @@ describe('TranscriptView', () => {
   const mockTranscripts = [
     {
       feedId: 'feed123',
-      transmissionId: '1',
+      segmentId: '1',
       transcript: 'Hello',
       canonicalAudioUri: 'gs:://foo.flac',
       playbackAudioUri: 'gs:://foo.m4a',
@@ -86,16 +86,24 @@ describe('TranscriptView', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mockHandleError.mockClear();
+    // Default mock for listTranscripts to prevent errors on mount
+    vi.mocked(listTranscripts).mockResolvedValue({
+      transcripts: [],
+      nextToken: undefined,
+    });
     // Default mock for listFeeds to prevent errors on mount
-    vi.mocked(listFeeds).mockResolvedValue([
-      {
-        id: 'feed123',
-        name: 'Feed 123',
-        sourceType: SourceType.BCFY_FEEDS,
-        status: 'active' as FeedStatus,
-        substatus: 'active' as BackendFeedStatus,
-      },
-    ]);
+    vi.mocked(listFeeds).mockResolvedValue({
+      feeds: [
+        {
+          id: 'feed123',
+          name: 'Feed 123',
+          sourceType: SourceType.BCFY_FEEDS,
+          status: 'active' as FeedStatus,
+          substatus: 'active' as BackendFeedStatus,
+        },
+      ],
+      total: 1,
+    });
     // Default mock for getFeed
     vi.mocked(getFeed).mockResolvedValue({
       id: 'feed123',
@@ -134,7 +142,7 @@ describe('TranscriptView', () => {
     const mockTranscripts = [
       {
         feedId: 'feed123',
-        transmissionId: '1',
+        segmentId: '1',
         transcript: 'Hello',
         canonicalAudioUri: 'gs:://foo.flac',
         playbackAudioUri: 'gs:://foo.m4a',
@@ -167,7 +175,7 @@ describe('TranscriptView', () => {
     const mockUnsortedTranscripts = [
       {
         feedId: 'feed123',
-        transmissionId: '1',
+        segmentId: '1',
         transcript: 'Oldest',
         canonicalAudioUri: 'gs:://foo.flac',
         playbackAudioUri: 'gs:://foo.m4a',
@@ -182,7 +190,7 @@ describe('TranscriptView', () => {
       },
       {
         feedId: 'feed123',
-        transmissionId: '3',
+        segmentId: '3',
         transcript: 'Newest',
         canonicalAudioUri: 'gs:://foo.flac',
         playbackAudioUri: 'gs:://foo.m4a',
@@ -197,7 +205,7 @@ describe('TranscriptView', () => {
       },
       {
         feedId: 'feed123',
-        transmissionId: '2',
+        segmentId: '2',
         transcript: 'Middle',
         canonicalAudioUri: 'gs:://foo.flac',
         playbackAudioUri: 'gs:://foo.m4a',
@@ -264,16 +272,18 @@ describe('TranscriptView', () => {
   });
 
   it('loads feeds on mount', async () => {
-    const mockFeeds = [
-      {
-        id: 'feed1',
-        name: 'Feed 1',
-        sourceType: SourceType.BCFY_FEEDS,
-        status: 'active' as FeedStatus,
-        substatus: 'active' as BackendFeedStatus,
-      },
-    ];
-    vi.mocked(listFeeds).mockResolvedValueOnce(mockFeeds);
+    vi.mocked(listFeeds).mockResolvedValueOnce({
+      feeds: [
+        {
+          id: 'feed1',
+          name: 'Feed 1',
+          sourceType: SourceType.BCFY_FEEDS,
+          status: 'active' as FeedStatus,
+          substatus: 'active' as BackendFeedStatus,
+        },
+      ],
+      total: 1,
+    });
 
     renderTranscriptView(
       <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
@@ -281,7 +291,7 @@ describe('TranscriptView', () => {
     );
 
     await waitFor(() => {
-      expect(listFeeds).toHaveBeenCalledTimes(1);
+      expect(listFeeds).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -318,18 +328,20 @@ describe('TranscriptView', () => {
   });
 
   it('displays source and archive links for the active feed', async () => {
-    const mockFeeds = [
-      {
-        id: 'feed123',
-        name: 'Feed 123',
-        sourceType: SourceType.BCFY_FEEDS,
-        status: 'active' as FeedStatus,
-        substatus: 'active' as BackendFeedStatus,
-        sourceUrl: 'https://partner.broadcastify.com/12345',
-        archiveUrl: 'https://www.broadcastify.com/archives/feed/12345',
-      },
-    ];
-    vi.mocked(listFeeds).mockResolvedValue(mockFeeds);
+    vi.mocked(listFeeds).mockResolvedValue({
+      feeds: [
+        {
+          id: 'feed123',
+          name: 'Feed 123',
+          sourceType: SourceType.BCFY_FEEDS,
+          status: 'active' as FeedStatus,
+          substatus: 'active' as BackendFeedStatus,
+          sourceUrl: 'https://partner.broadcastify.com/12345',
+          archiveUrl: 'https://www.broadcastify.com/archives/feed/12345',
+        },
+      ],
+      total: 1,
+    });
     vi.mocked(listTranscripts).mockResolvedValueOnce({
       transcripts: mockTranscripts,
       nextToken: undefined,
@@ -346,11 +358,11 @@ describe('TranscriptView', () => {
     });
   });
 
-  it('scrolls to highlighted transcript when transmissionId is in search params', async () => {
+  it('scrolls to highlighted transcript when segmentId is in search params', async () => {
     const mockTranscripts = [
       {
         feedId: 'feed123',
-        transmissionId: 'target-id',
+        segmentId: 'target-id',
         transcript: 'Hello target',
         canonicalAudioUri: 'gs:://foo.flac',
         playbackAudioUri: 'gs:://foo.m4a',
@@ -372,7 +384,7 @@ describe('TranscriptView', () => {
 
     renderTranscriptView(
       <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
-      { initialEntries: ['/?feedId=feed123&transmissionId=target-id'] }
+      { initialEntries: ['/?feedId=feed123&segmentId=target-id'] }
     );
 
     // Wait for the transcript to be rendered
@@ -385,7 +397,7 @@ describe('TranscriptView', () => {
     const initialTranscripts = [
       {
         feedId: 'feed123',
-        transmissionId: '1',
+        segmentId: '1',
         transcript: 'Transcript 1',
         canonicalAudioUri: 'gs:://foo.flac',
         playbackAudioUri: 'gs:://foo.m4a',
@@ -450,7 +462,7 @@ describe('TranscriptView', () => {
     const initialTranscripts = [
       {
         feedId: 'feed123',
-        transmissionId: '1',
+        segmentId: '1',
         transcript: 'Transcript 1',
         canonicalAudioUri: 'gs:://foo.flac',
         playbackAudioUri: 'gs:://foo.m4a',
@@ -509,7 +521,7 @@ describe('TranscriptView', () => {
     const initialTranscripts = [
       {
         feedId: 'feed123',
-        transmissionId: '1',
+        segmentId: '1',
         transcript: 'Transcript 1 (Alert)',
         canonicalAudioUri: 'gs:://foo.flac',
         playbackAudioUri: 'gs:://foo.m4a',
@@ -602,7 +614,7 @@ describe('TranscriptView', () => {
     const initialTranscripts = [
       {
         feedId: 'feed123',
-        transmissionId: '1',
+        segmentId: '1',
         transcript: 'Transcript 1',
         canonicalAudioUri: 'gs:://foo.flac',
         playbackAudioUri: 'gs:://foo.m4a',
@@ -620,7 +632,7 @@ describe('TranscriptView', () => {
     const newerTranscripts = [
       {
         feedId: 'feed123',
-        transmissionId: '2',
+        segmentId: '2',
         transcript: 'Newer Transcript',
         canonicalAudioUri: 'gs:://foo.flac',
         playbackAudioUri: 'gs:://foo.m4a',
@@ -750,7 +762,7 @@ describe('TranscriptView', () => {
     const initialTranscripts = [
       {
         feedId: 'feed123',
-        transmissionId: '1',
+        segmentId: '1',
         transcript: 'Transcript 1',
         canonicalAudioUri: 'gs:://foo.flac',
         playbackAudioUri: 'gs:://foo.m4a',
@@ -768,7 +780,7 @@ describe('TranscriptView', () => {
     const newerTranscripts = [
       {
         feedId: 'feed123',
-        transmissionId: '2',
+        segmentId: '2',
         transcript: 'Newer Transcript 1',
         canonicalAudioUri: 'gs:://foo.flac',
         playbackAudioUri: 'gs:://foo.m4a',
@@ -829,7 +841,7 @@ describe('TranscriptView', () => {
     const initialTranscripts = [
       {
         feedId: 'feed123',
-        transmissionId: '1',
+        segmentId: '1',
         transcript: 'Transcript 1',
         canonicalAudioUri: 'gs:://foo.flac',
         playbackAudioUri: 'gs:://foo.m4a',
@@ -847,7 +859,7 @@ describe('TranscriptView', () => {
     const newerTranscripts = [
       {
         feedId: 'feed123',
-        transmissionId: '2',
+        segmentId: '2',
         transcript: 'Newer Transcript 1',
         canonicalAudioUri: 'gs:://foo.flac',
         playbackAudioUri: 'gs:://foo.m4a',
@@ -960,7 +972,7 @@ describe('TranscriptView', () => {
     const initialTranscripts = [
       {
         feedId: 'feed123',
-        transmissionId: '1',
+        segmentId: '1',
         transcript: 'Transcript 1',
         canonicalAudioUri: 'gs:://foo.flac',
         playbackAudioUri: 'gs:://foo.m4a',
@@ -1032,7 +1044,7 @@ describe('TranscriptView', () => {
     const initialTranscripts = [
       {
         feedId: 'feed123',
-        transmissionId: '1',
+        segmentId: '1',
         transcript: 'Transcript 1',
         canonicalAudioUri: 'gs:://foo.flac',
         playbackAudioUri: 'gs:://foo.m4a',

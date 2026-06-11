@@ -181,6 +181,12 @@ class CapturedChunk:
             feed's resume cursor. ``None`` → the runtime falls back to
             ``chunk_end_time``. Set by cursor-paginated collectors (bcfy_calls);
             ``None`` for stream/push collectors.
+        external_audio_segment_id: Optional external ID for tracking the source segment.
+            Represents:
+            - Echo: GCS bucket and object path (e.g. "bucket-name/channel-location/YYYYMMDD/filename.mp3").
+            - Broadcastify Calls: Full source audio URL (e.g. "https://calls.broadcastify.com/.../123456.mp3").
+            - Fire Notifications: Composite S3 file UUID and human-readable filename (e.g. "c1465213-2998-4ed7-a6a2-bf16ebf67265|SAN-JOSE-DISP 2026-06-09 18-38-41.mp3").
+            - Broadcastify Feeds: Not applicable (omitted).
     """
 
     audio_bytes: bytes
@@ -190,6 +196,29 @@ class CapturedChunk:
     receipt_time: datetime.datetime | None = None
     mime_type: AudioMimeType | None = None
     resume_position: datetime.datetime | None = None
+    external_audio_segment_id: str | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class SourceObservation:
+    """A non-audio source success observed by a capture function.
+
+    Use this when a collector successfully reaches the source and confirms
+    there is no audio item to emit. The runtime may use it to clear stale
+    failure state, but it must never upload, publish, or treat it as audio
+    progress.
+
+    Attributes:
+        resume_position: Optional source-specific cursor for the successful
+            observation. For Broadcastify Calls this is the API ``lastPos``.
+            ``None`` means the observation should not advance the persisted
+            bookmark.
+    """
+
+    resume_position: datetime.datetime | None = None
+
+
+type CaptureEvent = CapturedChunk | SourceObservation
 
 
 @dataclasses.dataclass(frozen=True, kw_only=True)
@@ -218,8 +247,8 @@ class CaptureResources:
 
 if TYPE_CHECKING:
     # 4-arg collector: (feed, shutdown_event, url_base, resources)
-    # -> AsyncIterator[CapturedChunk]
+    # -> AsyncIterator[CaptureEvent]
     CollectorFn = Callable[
         [LeasedFeed, asyncio.Event, str, CaptureResources],
-        AsyncIterator[CapturedChunk],
+        AsyncIterator[CaptureEvent],
     ]

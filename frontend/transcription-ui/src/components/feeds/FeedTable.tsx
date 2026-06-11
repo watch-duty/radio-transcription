@@ -3,6 +3,8 @@ import type { ComponentProps, HTMLAttributes } from 'react';
 import { Link as RouterLink } from 'react-router';
 import { TableVirtuoso } from 'react-virtuoso';
 
+import pluralize from 'pluralize';
+
 import ClearIcon from '@mui/icons-material/Clear';
 import EditIcon from '@mui/icons-material/Edit';
 import SearchIcon from '@mui/icons-material/Search';
@@ -43,8 +45,9 @@ export interface FeedFilters {
 export interface FeedTableProps {
   title?: string;
   feeds: Feed[];
-  allFeeds?: Feed[];
+  tags: { key: string; value: string }[];
   isLoading: boolean;
+  feedTotal: number;
   allowEdit?: boolean;
   editingFeedId?: string;
   onEditFeed?: (feed: Feed) => void;
@@ -162,8 +165,9 @@ const ALL_SOURCE_TYPES = Object.values(SourceType);
 export function FeedTable({
   title = 'Feeds',
   feeds,
-  allFeeds,
+  tags,
   isLoading,
+  feedTotal,
   allowEdit = false,
   editingFeedId,
   onEditFeed,
@@ -178,25 +182,6 @@ export function FeedTable({
     column: 'name',
     direction: 'asc',
   });
-
-  // Calculate unique tags across all feeds
-  const tags = useMemo<{ key: string; value: string }[]>(() => {
-    const seen = new Set<string>();
-    const uniqueTags: { key: string; value: string }[] = [];
-    const sourceFeeds = allFeeds || feeds;
-    sourceFeeds.forEach((feed) => {
-      feed.tags?.forEach((tag) => {
-        const identifier = `${tag.key}:${tag.value}`;
-        if (!seen.has(identifier)) {
-          seen.add(identifier);
-          uniqueTags.push({ key: tag.key, value: tag.value });
-        }
-      });
-    });
-    return uniqueTags.sort(
-      (a, b) => a.key.localeCompare(b.key) || a.value.localeCompare(b.value)
-    );
-  }, [feeds, allFeeds]);
 
   const handleRequestSort = (property: 'name' | 'type' | 'status') => {
     setSortConfig((prev) => ({
@@ -329,6 +314,8 @@ export function FeedTable({
           <FeedStatusIndicator
             status={feed.status}
             substatus={feed.substatus}
+            statusReason={feed.statusReason}
+            quarantineReason={feed.quarantineReason}
             lastHeartbeat={feed.lastHeartbeat}
           />
         </TableCell>
@@ -480,20 +467,13 @@ export function FeedTable({
               {title}
             </Typography>
           </Box>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            {sortFeeds.length !== feeds.length && (
-              <Typography variant="body2" color="text.secondary">
-                Showing {sortFeeds.length} of {feeds.length} feeds
-              </Typography>
-            )}
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ fontWeight: 500 }}
-            >
-              {feeds.length} Feeds
-            </Typography>
-          </Box>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ fontWeight: 500 }}
+          >
+            {!isLoading && `${feedTotal} ${pluralize('Feed', feedTotal)}`}
+          </Typography>
         </Box>
 
         <Box
@@ -552,7 +532,7 @@ export function FeedTable({
             }}
           >
             <TuneIcon color="action" fontSize="small" />
-            <Box sx={{ flexGrow: 1, minWidth: 120, maxWidth: { sm: 200 } }}>
+            <Box sx={{ flexGrow: 1 }}>
               <MultiSelectFilter
                 label="Source Type"
                 options={ALL_SOURCE_TYPES}
@@ -563,7 +543,7 @@ export function FeedTable({
                 size="small"
               />
             </Box>
-            <Box sx={{ flexGrow: 1, minWidth: 120, maxWidth: { sm: 160 } }}>
+            <Box sx={{ flexGrow: 1 }}>
               <MultiSelectFilter
                 label="Status"
                 options={['Active', 'Inactive', 'Error']}
@@ -574,7 +554,7 @@ export function FeedTable({
                 size="small"
               />
             </Box>
-            <Box sx={{ flexGrow: 1, minWidth: 120, maxWidth: { sm: 200 } }}>
+            <Box sx={{ flexGrow: 1 }}>
               <MultiSelectFilter
                 label="Tags"
                 options={tags}

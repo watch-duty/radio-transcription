@@ -45,7 +45,10 @@ export async function listFeedsPage(
     },
   }).then((resp) => {
     if (Array.isArray(resp)) {
-      return { feeds: resp };
+      return {
+        feeds: resp,
+        total: resp.length,
+      };
     } else {
       return resp;
     }
@@ -58,7 +61,7 @@ export async function listFeedsPage(
 export async function listFeeds(
   token: string,
   params?: Omit<ListFeedsParams, 'limit' | 'nextToken'>
-): Promise<Feed[]> {
+): Promise<Omit<ListFeedsResponse, 'nextToken'>> {
   let allFeeds: Feed[] = [];
   let nextToken: string | undefined = undefined;
   do {
@@ -70,5 +73,8 @@ export async function listFeeds(
     allFeeds = allFeeds.concat(response.feeds);
     nextToken = response.nextToken;
   } while (nextToken);
-  return allFeeds;
+  return {
+    feeds: allFeeds,
+    total: allFeeds.length,
+  };
 }

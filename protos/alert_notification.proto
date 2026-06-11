@@ -8,8 +8,11 @@ message AlertNotification {
   // The unique identifier of the radio feed this transmission originated from (formatted as a RFC 4122 UUID).
   string feed_id = 1;
 
-  // A unique, deterministic identifier for this specific transmission (formatted as a RFC 4122 UUID).
-  string transmission_id = 2;
+  reserved 2;
+  reserved "transmission_id";
+
+  // A unique, deterministic identifier for this specific segment (formatted as a RFC 4122 UUID).
+  string segment_id = 19;
 
 
   // --- Content ---

@@ -20,8 +20,13 @@ from backend.pipeline.ingestion.collectors.failure_classification import (
 )
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
+    _require_captured_chunk,
 )
-from backend.pipeline.ingestion.models import AudioMimeType, FeedFailure
+from backend.pipeline.ingestion.models import (
+    AudioMimeType,
+    FeedFailure,
+    SourceObservation,
+)
 from backend.pipeline.storage.feed_store import (
     FeedStatusReason,
     LeasedFeed,
@@ -709,6 +714,29 @@ class TestExtractCallsFromResponse(unittest.TestCase):
         self.assertEqual(res, calls)
 
 
+class TestLastPosToResumePosition(unittest.TestCase):
+    def test_none_last_pos_returns_none_without_warning(self) -> None:
+        with self.assertNoLogs(
+            "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector",
+            level="WARNING",
+        ):
+            result = bcfy_calls_collector._last_pos_to_resume_position(
+                {"calls": [], "lastPos": None}
+            )
+
+        self.assertIsNone(result)
+
+    def test_float_string_last_pos_is_accepted(self) -> None:
+        result = bcfy_calls_collector._last_pos_to_resume_position(
+            {"calls": [], "lastPos": "1700000010.0"}
+        )
+
+        self.assertEqual(
+            result,
+            datetime.datetime.fromtimestamp(1_700_000_010, datetime.UTC),
+        )
+
+
 class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.session = MagicMock()
@@ -991,6 +1019,8 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
                 2026, 1, 1, tzinfo=datetime.UTC
             ),
             "fencing_token": 1,
+            "failure_count": 0,
+            "status_reason": None,
             "source_feed_id": "sid123",
         }
         self.leased_feed = cast("LeasedFeed", self.feed)
@@ -1062,7 +1092,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         mock_fetch.side_effect = fetch_side_effect
         mock_sleep.return_value = False
 
-        chunks = [
+        events = [
             c
             async for c in bcfy_calls_collector.capture_bcfy_calls(
                 self.leased_feed,
@@ -1071,8 +1101,16 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
                 _default_resources(),
             )
         ]
+        chunks = [
+            e
+            for e in events
+            if isinstance(e, bcfy_calls_collector.CapturedChunk)
+        ]
+        observations = [e for e in events if isinstance(e, SourceObservation)]
 
         self.assertEqual(len(chunks), 1)
+        self.assertEqual(len(observations), 1)
+        self.assertIsNone(observations[0].resume_position)
         chunk = chunks[0]
         self.assertEqual(chunk.audio_bytes, b"flac")
         self.assertEqual(chunk.chunk_start_time.timestamp(), 1000)
@@ -1088,6 +1126,146 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             first_params["pos"], int(last_bookmark_time.timestamp())
         )
         self.assertEqual(second_params["pos"], 9999)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_empty_success_yields_source_observation(
+        self, mock_sleep: AsyncMock, mock_fetch: AsyncMock, mock_jwt: MagicMock
+    ) -> None:
+        mock_jwt.return_value = "token"
+
+        async def _fetch_then_stop(*args, **kwargs):
+            self.shutdown.set()
+            return _fetch_payload({"calls": [], "lastPos": 1_700_000_010})
+
+        mock_fetch.side_effect = _fetch_then_stop
+        mock_sleep.return_value = True
+
+        events = [
+            e
+            async for e in bcfy_calls_collector.capture_bcfy_calls(
+                self.leased_feed,
+                self.shutdown,
+                self.url_base,
+                _default_resources(),
+            )
+        ]
+
+        self.assertEqual(
+            events,
+            [
+                SourceObservation(
+                    resume_position=datetime.datetime.fromtimestamp(
+                        1_700_000_010,
+                        datetime.UTC,
+                    )
+                )
+            ],
+        )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._fetch_calls",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._download_audio",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        new_callable=AsyncMock,
+    )
+    async def test_all_seen_calls_yield_source_observation(
+        self,
+        mock_sleep: AsyncMock,
+        mock_dl: AsyncMock,
+        mock_fetch: AsyncMock,
+        mock_jwt: MagicMock,
+    ) -> None:
+        mock_jwt.return_value = "token"
+        mock_dl.return_value = b"flac"
+        mock_fetch.side_effect = [
+            _fetch_payload(
+                {
+                    "calls": [
+                        {
+                            "url": "http://dup",
+                            "ts": 1_700_000_000,
+                            "start_ts": 1_700_000_000,
+                            "end_ts": 1_700_000_005,
+                        }
+                    ],
+                    "lastPos": 1_700_000_005,
+                }
+            ),
+            _fetch_payload(
+                {
+                    "calls": [
+                        {
+                            "url": "http://dup",
+                            "ts": 1_700_000_000,
+                            "start_ts": 1_700_000_000,
+                            "end_ts": 1_700_000_005,
+                        }
+                    ],
+                    "lastPos": 1_700_000_010,
+                }
+            ),
+        ]
+
+        sleep_calls = 0
+
+        async def sleep_side_effect(*args, **kwargs) -> bool:
+            nonlocal sleep_calls
+            sleep_calls += 1
+            if sleep_calls >= 2:
+                self.shutdown.set()
+            return True
+
+        mock_sleep.side_effect = sleep_side_effect
+
+        events = [
+            e
+            async for e in bcfy_calls_collector.capture_bcfy_calls(
+                self.leased_feed,
+                self.shutdown,
+                self.url_base,
+                _default_resources(),
+            )
+        ]
+
+        chunks = [
+            e
+            for e in events
+            if isinstance(e, bcfy_calls_collector.CapturedChunk)
+        ]
+        observations = [e for e in events if isinstance(e, SourceObservation)]
+
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(
+            observations,
+            [
+                SourceObservation(
+                    resume_position=datetime.datetime.fromtimestamp(
+                        1_700_000_010,
+                        datetime.UTC,
+                    )
+                )
+            ],
+        )
+        mock_dl.assert_awaited_once()
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
@@ -1140,7 +1318,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         ) as mock_datetime:
             mock_datetime.now.return_value = fixed_now
             chunks = [
-                c
+                _require_captured_chunk(c)
                 async for c in bcfy_calls_collector.capture_bcfy_calls(
                     self.leased_feed,
                     self.shutdown,
@@ -1197,7 +1375,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         mock_sleep.side_effect = sleep_side_effect
 
         chunks = [
-            c
+            _require_captured_chunk(c)
             async for c in bcfy_calls_collector.capture_bcfy_calls(
                 self.leased_feed,
                 self.shutdown,
@@ -1314,7 +1492,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
 
         mock_sleep.side_effect = sleep_side_effect
 
-        chunks = [
+        events = [
             c
             async for c in bcfy_calls_collector.capture_bcfy_calls(
                 self.leased_feed,
@@ -1324,7 +1502,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             )
         ]
 
-        self.assertEqual(len(chunks), 0)
+        self.assertEqual(events, [SourceObservation()])
         self.assertEqual(mock_jwt.call_count, 2)
         self.assertEqual(mock_fetch.call_count, 2)
 
@@ -1409,7 +1587,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         mock_fetch.side_effect = _fetch_side_effect
         mock_sleep.return_value = False
 
-        chunks = [
+        events = [
             c
             async for c in bcfy_calls_collector.capture_bcfy_calls(
                 self.leased_feed,
@@ -1419,7 +1597,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             )
         ]
 
-        self.assertEqual(chunks, [])
+        self.assertEqual(events, [SourceObservation()])
         self.assertEqual(mock_jwt.call_count, 2)
         self.assertEqual(mock_fetch.call_count, 1)
         headers = mock_fetch.call_args_list[0][0][2]
@@ -1869,7 +2047,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         mock_fetch.side_effect = fetch_side_effect
         mock_sleep.return_value = False
 
-        chunks = [
+        events = [
             c
             async for c in bcfy_calls_collector.capture_bcfy_calls(
                 self.leased_feed,
@@ -1877,6 +2055,11 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
                 self.url_base,
                 _default_resources(),
             )
+        ]
+        chunks = [
+            e
+            for e in events
+            if isinstance(e, bcfy_calls_collector.CapturedChunk)
         ]
 
         self.assertEqual(len(chunks), 2)
@@ -1943,6 +2126,8 @@ class TestCaptureBcfyCallsReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
             last_processed_filename=None,
             last_bookmark_time=None,
             fencing_token=1,
+            failure_count=0,
+            status_reason=None,
             source_feed_id="sid",
         )
         shutdown = asyncio.Event()
@@ -1954,7 +2139,7 @@ class TestCaptureBcfyCallsReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
             "https://api.example/",
             _default_resources(),
         ):
-            results.append(chunk)
+            results.append(_require_captured_chunk(chunk))
             shutdown.set()
 
         self.assertEqual(len(results), 1)
@@ -1974,6 +2159,8 @@ class TestBcfyCallsCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
             "last_processed_filename": None,
             "last_bookmark_time": None,
             "fencing_token": 1,
+            "failure_count": 0,
+            "status_reason": None,
             "source_feed_id": "sid",
         }
         self.leased_feed = cast("LeasedFeed", self.feed)
@@ -2228,6 +2415,8 @@ class TestBcfyCallsHttp01(unittest.IsolatedAsyncioTestCase):
             "last_processed_filename": None,
             "last_bookmark_time": None,
             "fencing_token": 1,
+            "failure_count": 0,
+            "status_reason": None,
             "source_feed_id": "sid",
         }
         self.leased_feed = cast("LeasedFeed", self.feed)
@@ -2420,6 +2609,8 @@ class TestCaptureBcfyCallsResumePosition(unittest.IsolatedAsyncioTestCase):
             "last_processed_filename": None,
             "last_bookmark_time": None,
             "fencing_token": 1,
+            "failure_count": 0,
+            "status_reason": None,
             "source_feed_id": "sid123",
         }
         self.url_base = "http://base"
@@ -2584,7 +2775,7 @@ class TestCaptureBcfyCallsResumePosition(unittest.IsolatedAsyncioTestCase):
         mock_fetch.side_effect = lease1_fetch
         mock_sleep.return_value = False
 
-        lease1_chunks = [
+        lease1_events = [
             c
             async for c in bcfy_calls_collector.capture_bcfy_calls(
                 cast("LeasedFeed", self.feed),
@@ -2592,6 +2783,11 @@ class TestCaptureBcfyCallsResumePosition(unittest.IsolatedAsyncioTestCase):
                 self.url_base,
                 _default_resources(),
             )
+        ]
+        lease1_chunks = [
+            e
+            for e in lease1_events
+            if isinstance(e, bcfy_calls_collector.CapturedChunk)
         ]
 
         self.assertEqual(len(lease1_chunks), 3)
@@ -2616,7 +2812,7 @@ class TestCaptureBcfyCallsResumePosition(unittest.IsolatedAsyncioTestCase):
 
         mock_fetch.side_effect = lease2_fetch
 
-        lease2_chunks = [
+        lease2_events = [
             c
             async for c in bcfy_calls_collector.capture_bcfy_calls(
                 cast("LeasedFeed", self.feed),
@@ -2624,6 +2820,11 @@ class TestCaptureBcfyCallsResumePosition(unittest.IsolatedAsyncioTestCase):
                 self.url_base,
                 _default_resources(),
             )
+        ]
+        lease2_chunks = [
+            e
+            for e in lease2_events
+            if isinstance(e, bcfy_calls_collector.CapturedChunk)
         ]
 
         # Lease 2 issued `pos` = the persisted `ts` and got an empty page.

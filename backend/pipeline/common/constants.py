@@ -11,6 +11,7 @@ M4A_BITRATE = "32k"
 
 # Google Cloud shared constants
 GCS_METADATA_SIZE_LIMIT = 8 * 1024  # 8 KiB in bytes
+GCS_DOWNLOAD_TIMEOUT_SEC = 30
 
 # Time Conversion shared constants
 MS_PER_SECOND = 1000
