@@ -337,9 +337,18 @@ def _evaluate_is_backfill(current_ts_ms: int, threshold_ms: int) -> bool:
 @beam.typehints.with_input_types(tuple[str, datatypes.ChunkMetadata])
 @beam.typehints.with_output_types(tuple[str, datatypes.FlushRequest])
 class OrderedStitchAudioFn(beam.DoFn):
-    """Stateful Apache Beam DoFn orchestrating out-of-order and stale windowing for audio feeds.
+    """Stateful Apache Beam DoFn orchestrating out-of-order and stale windowing for continuous audio feeds.
 
-    Delegates core audio segment calculations to stitcher_engine.StitcherEngine.
+    Key Implementation Rationale (see ARCHITECTURE.md for full exhaustive documentation):
+    1. Bounded Windmill Bundles (Self-Chaining): When unrolling massive catch-up/backfill backlogs,
+       emissions are clamped to 500 chunks and a timer is re-armed at `timestamp` (current watermark)
+       to open fresh worker bundles, avoiding Windmill 300-second commit lease expiry ("poison pills").
+    2. Business Logic Invariant Protection: `_evaluate_is_backfill` suppresses application-level sequence
+       state overwrites and overlap log spam when historical catch-up slices are redriven.
+    3. Dual Stale Timers: Maintains both Event Time (`WATERMARK`) and wall-clock Processing Time (`REAL_TIME`)
+       timers to guarantee transmission flush recovery even if a physical radio stream goes silent/offline.
+
+    Delegates core audio segment calculations to entirely decoupled `stitcher_engine.StitcherEngine`.
     """
 
     # --- State Specs ---
