@@ -36,7 +36,9 @@ class TestLogging(TestCase):
                 setup_logging()
                 mock_cloud_logging.Client.assert_called_once()
                 mock_client_inst.setup_logging.assert_called_once()
-                mock_exporter.assert_called_once_with(project_id="test-project")
+                mock_exporter.assert_called_once_with(
+                    project_id="test-project", client=mock.ANY
+                )
                 mock_set_provider.assert_called_once()
 
                 # Second call should do nothing (idempotency due to cache)

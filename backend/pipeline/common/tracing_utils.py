@@ -3,9 +3,15 @@
 import logging
 import os
 import threading
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 
+from google.api_core import grpc_helpers
+from google.cloud.trace_v2 import TraceServiceClient
+from google.cloud.trace_v2.services.trace_service.transports.grpc import (
+    TraceServiceGrpcTransport,
+)
 from opentelemetry.context import Context
 from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
 from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor, TracerProvider
@@ -86,7 +92,22 @@ def setup_tracing(
             msg = "GOOGLE_CLOUD_PROJECT environment variable must be set in GCP environment."
             raise ValueError(msg)
         provider = TracerProvider()
-        exporter = CloudTraceSpanExporter(project_id=project_id)
+
+        # Create an isolated gRPC channel for Cloud Trace with a unique channel ID
+        # to prevent gRPC subchannel connection sharing with Cloud Logging or other
+        # GCP client libraries communicating across *.googleapis.com VIPs.
+        channel = grpc_helpers.create_channel(
+            "cloudtrace.googleapis.com:443",
+            default_scopes=TraceServiceGrpcTransport.AUTH_SCOPES,
+            options=[
+                ("grpc.max_send_message_length", -1),
+                ("grpc.max_receive_message_length", -1),
+                ("grpc.channel_id", str(uuid.uuid4())),
+            ],
+        )
+        transport = TraceServiceGrpcTransport(channel=channel)
+        client = TraceServiceClient(transport=transport)
+        exporter = CloudTraceSpanExporter(project_id=project_id, client=client)
 
         # Resolve service metadata from environment if not explicitly provided
         if service_name is None:
