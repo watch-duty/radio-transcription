@@ -12,6 +12,7 @@ from common.gemini.prompts import (
     GEMINI_TRANSCRIBE_SYSTEM_PROMPT,
     GEMINI_TRANSCRIBE_USER_PROMPT,
 )
+from common.inference_manifest import validate_inference_dataset_slug
 
 ADAPTER_SIZES: Final = frozenset({"ONE", "TWO", "FOUR", "EIGHT", "SIXTEEN"})
 ROUND_ID_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -52,6 +53,7 @@ class RunConfig:
     raw_toml: str
     round_id: str
     dataset: str
+    inference_dataset_slug: str
     train_manifest_uri: str
     validation_manifest_uri: str
     eval_manifest_uri: str
@@ -71,6 +73,7 @@ class RunConfig:
         return {
             "round_id": self.round_id,
             "dataset": self.dataset,
+            "inference_dataset_slug": self.inference_dataset_slug,
             "train_manifest_uri": self.train_manifest_uri,
             "validation_manifest_uri": self.validation_manifest_uri,
             "eval_manifest_uri": self.eval_manifest_uri,
@@ -110,6 +113,9 @@ def load_run_config(path: str | Path) -> RunConfig:
 
     round_id = _required_round_id(data, "round_id")
     dataset = _required_str(data, "dataset")
+    inference_dataset_slug = _required_inference_dataset_slug(
+        data, "inference_dataset_slug"
+    )
     train_manifest_uri = _required_gcs_uri(data, "train_manifest_uri")
     validation_manifest_uri = _required_gcs_uri(data, "validation_manifest_uri")
     eval_manifest_uri = _required_gcs_uri(data, "eval_manifest_uri")
@@ -152,6 +158,7 @@ def load_run_config(path: str | Path) -> RunConfig:
         raw_toml=raw_toml,
         round_id=round_id,
         dataset=dataset,
+        inference_dataset_slug=inference_dataset_slug,
         train_manifest_uri=train_manifest_uri,
         validation_manifest_uri=validation_manifest_uri,
         eval_manifest_uri=eval_manifest_uri,
@@ -228,6 +235,17 @@ def _required_gcs_uri(data: dict[str, Any], key: str) -> str:
         msg = f"{key} must be a gs:// URI"
         raise RunConfigError(msg)
     return value
+
+
+def _required_inference_dataset_slug(
+    data: dict[str, Any], key: str
+) -> str:
+    value = _required_str(data, key)
+    try:
+        return validate_inference_dataset_slug(value)
+    except ValueError as exc:
+        msg = f"{key} must be a safe relative path: {exc}"
+        raise RunConfigError(msg) from exc
 
 
 def _required_bucket(data: dict[str, Any], key: str) -> str:

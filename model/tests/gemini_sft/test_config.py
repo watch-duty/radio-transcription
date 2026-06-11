@@ -24,6 +24,7 @@ class TestRunConfig(unittest.TestCase):
         values = {
             "round_id": '"round"',
             "dataset": '"wd-internal"',
+            "inference_dataset_slug": '"echo/eval"',
             "train_manifest_uri": '"gs://source/manifests/train.jsonl"',
             "validation_manifest_uri": '"gs://source/manifests/validation.jsonl"',
             "eval_manifest_uri": '"gs://source/manifests/eval.jsonl"',
@@ -40,6 +41,7 @@ class TestRunConfig(unittest.TestCase):
         return f"""
 round_id = {values["round_id"]}
 dataset = {values["dataset"]}
+inference_dataset_slug = {values["inference_dataset_slug"]}
 train_manifest_uri = {values["train_manifest_uri"]}
 validation_manifest_uri = {values["validation_manifest_uri"]}
 eval_manifest_uri = {values["eval_manifest_uri"]}
@@ -64,6 +66,7 @@ learning_rate_multiplier = {values["learning_rate_multiplier"]}
 
         self.assertEqual(cfg.round_id, "round")
         self.assertEqual(cfg.dataset, "wd-internal")
+        self.assertEqual(cfg.inference_dataset_slug, "echo/eval")
         self.assertEqual(cfg.paths.gcs_prefix, "gs://bucket/sft/runs/round")
         self.assertEqual(
             cfg.paths.gemini_validation_uri,
@@ -71,6 +74,7 @@ learning_rate_multiplier = {values["learning_rate_multiplier"]}
         )
         record = cfg.to_record_dict()
         self.assertEqual(record["dataset"], "wd-internal")
+        self.assertEqual(record["inference_dataset_slug"], "echo/eval")
         self.assertEqual(record["gemini_train_uri"], cfg.paths.gemini_train_uri)
         self.assertEqual(
             record["gemini_validation_uri"], cfg.paths.gemini_validation_uri
@@ -89,6 +93,32 @@ learning_rate_multiplier = {values["learning_rate_multiplier"]}
 
         with self.assertRaisesRegex(RunConfigError, "validation_manifest_uri"):
             load_run_config(self._write_config(body))
+
+    def test_missing_inference_dataset_slug_raises(self) -> None:
+        body = self._valid_toml(inference_dataset_slug='""')
+
+        with self.assertRaisesRegex(
+            RunConfigError, "inference_dataset_slug"
+        ):
+            load_run_config(self._write_config(body))
+
+    def test_inference_dataset_slug_rejects_unsafe_path_segments(
+        self,
+    ) -> None:
+        for slug in (
+            "../echo",
+            "/echo/eval",
+            "echo/eval/",
+            "echo//eval",
+            "echo\\eval",
+        ):
+            with self.subTest(slug=slug):
+                body = self._valid_toml(inference_dataset_slug=f"'{slug}'")
+
+                with self.assertRaisesRegex(
+                    RunConfigError, "inference_dataset_slug"
+                ):
+                    load_run_config(self._write_config(body))
 
     def test_round_id_must_be_safe_single_path_component(self) -> None:
         for round_id in (
