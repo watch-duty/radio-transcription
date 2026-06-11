@@ -62,3 +62,37 @@ class TestLogging(TestCase):
             # Second call should do nothing (idempotency)
             setup_logging()
             mock_basic_config.assert_called_once()
+
+    def test_structured_exception_hooks(self) -> None:
+        import asyncio  # noqa: PLC0415, F401
+        import sys  # noqa: PLC0415
+        import threading  # noqa: PLC0415
+
+        with mock.patch(
+            "backend.pipeline.common.log_helper.is_gcp_env",
+            return_value=False,
+        ):
+            setup_logging()
+
+        # Test sys.excepthook
+        with mock.patch("logging.getLogger") as mock_get_logger:
+            mock_logger = mock.Mock()
+            mock_get_logger.return_value = mock_logger
+            exc = ValueError("test")
+            sys.excepthook(type(exc), exc, None)
+            mock_get_logger.assert_called_with("unhandled_exception")
+            mock_logger.critical.assert_called_once()
+
+        # Test threading.excepthook
+        with mock.patch("logging.getLogger") as mock_get_logger:
+            mock_logger = mock.Mock()
+            mock_get_logger.return_value = mock_logger
+            exc = ValueError("thread test")
+            mock_thread = mock.Mock()
+            mock_thread.name = "bg_thread"
+            hook_args = threading.ExceptHookArgs(
+                (type(exc), exc, None, mock_thread),
+            )
+            threading.excepthook(hook_args)
+            mock_get_logger.assert_called_with("unhandled_exception.bg_thread")
+            mock_logger.critical.assert_called_once()

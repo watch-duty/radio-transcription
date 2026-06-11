@@ -406,7 +406,7 @@ export function RuleTable({
             }}
           >
             <TuneIcon color="action" fontSize="small" />
-            <Box sx={{ flexGrow: 1, minWidth: 120, maxWidth: { sm: 200 } }}>
+            <Box sx={{ flexGrow: 1 }}>
               <MultiSelectFilter
                 label="Scope"
                 options={['GLOBAL', 'FEED_SPECIFIC']}
@@ -415,7 +415,7 @@ export function RuleTable({
                 size="small"
               />
             </Box>
-            <Box sx={{ flexGrow: 1, minWidth: 120, maxWidth: { sm: 160 } }}>
+            <Box sx={{ flexGrow: 1 }}>
               <MultiSelectFilter
                 label="Status"
                 options={['Active', 'Inactive']}

@@ -314,6 +314,26 @@ def process_ordering(
     return elements_to_emit, curr_context, session_changed
 
 
+def _evaluate_is_backfill(current_ts_ms: int, threshold_ms: int) -> bool:
+    """Determines if a chunk is being processed in backfill/catch-up mode.
+
+    In this context, "backfill" refers to catch-up processing when the pipeline
+    comes back online after an outage, maintenance, or deployment. If a chunk's
+    event time lags significantly behind current wall-clock processing time, it is
+    flagged as backfill so downstream logic skips overlap validation and state updates.
+    This prevents older catch-up timestamps from corrupting mainline sequence tracking.
+
+    Args:
+        current_ts_ms: The event timestamp of the incoming audio chunk in milliseconds.
+        threshold_ms: Lateness threshold (in ms) beyond which a chunk is considered backfill.
+
+    Returns:
+        True if the chunk lateness meets or exceeds the backfill threshold.
+    """
+    lateness = time.time() * common_constants.MS_PER_SECOND - current_ts_ms
+    return lateness >= threshold_ms
+
+
 @beam.typehints.with_input_types(tuple[str, datatypes.ChunkMetadata])
 @beam.typehints.with_output_types(tuple[str, datatypes.FlushRequest])
 class OrderedContinuousStitchAudioFn(beam.DoFn):
@@ -485,13 +505,9 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
                     stale_timer_event, stale_timer_proc, self.stitch_config
                 )
 
-                # Determine is_backfill mode based on element lateness
-                lateness = (
-                    time.time() * common_constants.MS_PER_SECOND - current_ts_ms
-                )
-                is_backfill = (
-                    lateness
-                    >= self.stitch_config.backfill_lateness_threshold_ms
+                is_backfill = _evaluate_is_backfill(
+                    current_ts_ms,
+                    self.stitch_config.backfill_lateness_threshold_ms,
                 )
 
                 for chunk in elements_to_emit:
@@ -899,13 +915,9 @@ class OrderedSegmentedStitchAudioFn(beam.DoFn):
                     stale_timer_event, stale_timer_proc, self.stitch_config
                 )
 
-                # Determine is_backfill mode based on element lateness
-                lateness = (
-                    time.time() * common_constants.MS_PER_SECOND - current_ts_ms
-                )
-                is_backfill = (
-                    lateness
-                    >= self.stitch_config.backfill_lateness_threshold_ms
+                is_backfill = _evaluate_is_backfill(
+                    current_ts_ms,
+                    self.stitch_config.backfill_lateness_threshold_ms,
                 )
 
                 for chunk in elements_to_emit:
