@@ -147,16 +147,6 @@ function App() {
       mode: prefersDarkMode ? 'dark' : 'light',
     },
     components: {
-      MuiListItem: {
-        styleOverrides: {
-          root: {
-            '&.compactTable': {
-              paddingTop: '6px',
-              paddingBottom: '6px',
-            },
-          },
-        },
-      },
       MuiBadge: {
         styleOverrides: {
           badge: ({ ownerState, theme }) => ({

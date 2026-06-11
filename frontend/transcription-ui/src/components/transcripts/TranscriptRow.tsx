@@ -33,6 +33,7 @@ interface TranscriptRowProps {
   isHighlighted?: boolean;
   redactTranscripts?: boolean;
   onRowClick: (segmentId: string) => void;
+  isCurrentSilence?: boolean;
 }
 
 export function TranscriptRow({
@@ -49,6 +50,7 @@ export function TranscriptRow({
   isHighlighted = false,
   redactTranscripts = false,
   onRowClick,
+  isCurrentSilence = false,
 }: TranscriptRowProps) {
   const theme = useTheme();
   const currentDate = new Date(transcript.startTimestamp);
@@ -59,15 +61,15 @@ export function TranscriptRow({
     transcriptAnnotation: TranscriptAnnotationData | null
   ): string {
     if (isSilence) {
-      return 'No transcription';
+      return '[No speech detected]';
     }
 
     if (!transcriptAnnotation) {
-      return 'Waiting for transcription';
+      return '[Waiting on transcript]';
     }
 
     if (transcriptAnnotation.errors.length > 0) {
-      return 'Transcription unavailable';
+      return '[Transcription failed]';
     }
 
     return transcriptAnnotation.text;
@@ -86,6 +88,23 @@ export function TranscriptRow({
   const evaluationAnnotation = findEvaluationAnnotationData(
     transcript.annotations
   );
+
+  const isCurrentlyPlaying =
+    isAudioPlaying &&
+    (currentlyPlayingSegmentId === transcript.id ||
+      (transcript.isSilenceBundle &&
+        currentlyPlayingSegmentId &&
+        transcript.bundledSegmentIds?.includes(currentlyPlayingSegmentId)));
+
+  const getBorderColor = () => {
+    if (isSilence) {
+      return theme.palette.grey[200];
+    }
+    if (isCurrentlyPlaying) {
+      return theme.palette.primary.main;
+    }
+    return theme.palette.primary.light;
+  };
 
   return (
     <Fragment>
@@ -126,7 +145,6 @@ export function TranscriptRow({
       <ListItem
         id={`transcript-${transcript.id}`}
         divider={index < totalTranscripts - 1}
-        className="compactTable"
         sx={{
           display: 'flex',
           alignItems: 'center',
@@ -134,6 +152,9 @@ export function TranscriptRow({
           bgcolor: isHighlighted ? 'action.selected' : 'inherit',
           scrollMarginTop: theme.spacing(5),
           cursor: 'pointer',
+          borderLeft: `5px solid ${getBorderColor()}`,
+          pt: isSilence ? '0px !important' : undefined,
+          pb: isSilence ? '0px !important' : undefined,
           '&:hover': {
             bgcolor: isHighlighted ? 'action.selected' : 'action.hover',
           },
@@ -161,29 +182,37 @@ export function TranscriptRow({
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'flex-end',
-            minWidth: 'max-content',
+            width: 90,
+            flexShrink: 0,
           }}
         >
-          <Typography variant="caption" color="text.secondary">
-            {currentDate.toLocaleTimeString([], {
-              hour: '2-digit',
-              minute: '2-digit',
-              second: '2-digit',
-              timeZoneName: 'short',
-              hour12: false,
-            })}
-          </Typography>
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            sx={{ opacity: 0.8 }}
-          >
-            {formatDuration(
-              (new Date(transcript.endTimestamp).getTime() -
-                new Date(transcript.startTimestamp).getTime()) /
-                1000
-            )}
-          </Typography>
+          {!isSilence && (
+            <Typography variant="caption" color="text.secondary">
+              {currentDate.toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                timeZoneName: 'short',
+                hour12: false,
+              })}
+            </Typography>
+          )}
+          {(!isSilence || !isCurrentSilence) && (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{
+                opacity: 0.8,
+                fontStyle: isSilence ? 'italic' : 'normal',
+              }}
+            >
+              {formatDuration(
+                (new Date(transcript.endTimestamp).getTime() -
+                  new Date(transcript.startTimestamp).getTime()) /
+                  1000
+              )}
+            </Typography>
+          )}
         </Box>
         <AudioPlayer
           audioUri={transcript.playbackAudioUri ?? ''}
@@ -191,52 +220,55 @@ export function TranscriptRow({
           onToggleAudio={onToggleAudio}
           isAudioPlaying={isAudioPlaying}
           currentlyPlayingSegmentId={
-            currentlyPlayingSegmentId === transcript.id ||
-            (transcript.isSilenceBundle &&
-              currentlyPlayingSegmentId &&
-              transcript.bundledSegmentIds?.includes(currentlyPlayingSegmentId))
-              ? transcript.id
-              : currentlyPlayingSegmentId
+            isCurrentlyPlaying ? transcript.id : currentlyPlayingSegmentId
           }
         />
         <Typography
           variant={isSilence ? 'caption' : 'body1'}
-          color={isPlaceholder ? 'text.secondary' : 'text.primary'}
+          color={
+            hasErrors
+              ? 'error.main'
+              : isPlaceholder
+                ? 'text.secondary'
+                : 'text.primary'
+          }
           sx={{
             flexGrow: 1,
             whiteSpace: 'pre-wrap',
             transition: 'filter 0.3s ease, opacity 0.3s ease',
             filter: redactTranscripts ? 'blur(6px)' : 'none',
             opacity: redactTranscripts ? 0.6 : 1,
-            fontStyle: isSilence || isWaiting ? 'italic' : 'normal',
+            fontStyle:
+              isSilence || isWaiting || hasErrors ? 'italic' : 'normal',
           }}
         >
           {renderTranscriptionText(transcriptAnnotation)}
         </Typography>
         <Box sx={{ display: 'flex', gap: 1, flexShrink: 0 }}>
-          <Tooltip title="Copy transcript">
-            <span>
-              <IconButton
-                size="small"
-                aria-label="copy transcript"
-                onClick={(e) => {
-                  if (transcriptAnnotation?.text) {
-                    e.stopPropagation();
-                    navigator.clipboard.writeText(transcriptAnnotation.text);
-                    triggerSnackbar('Transcript copied');
+          {!isSilence && (
+            <Tooltip title="Copy transcript">
+              <span>
+                <IconButton
+                  size="small"
+                  aria-label="copy transcript"
+                  onClick={(e) => {
+                    if (transcriptAnnotation?.text) {
+                      e.stopPropagation();
+                      navigator.clipboard.writeText(transcriptAnnotation.text);
+                      triggerSnackbar('Transcript copied');
+                    }
+                  }}
+                  sx={{ cursor: 'copy' }}
+                  disabled={
+                    !transcriptAnnotation ||
+                    transcriptAnnotation.errors.length > 0
                   }
-                }}
-                sx={{ cursor: 'copy' }}
-                disabled={
-                  isSilence ||
-                  !transcriptAnnotation ||
-                  transcriptAnnotation.errors.length > 0
-                }
-              >
-                <ContentCopyIcon fontSize="small" />
-              </IconButton>
-            </span>
-          </Tooltip>
+                >
+                  <ContentCopyIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+          )}
           <Tooltip title="Copy transcript deep link">
             <IconButton
               size="small"

@@ -8,6 +8,7 @@ export interface AudioPlayerProps {
   onToggleAudio: (segmentId: string, audioUri: string) => void;
   isAudioPlaying: boolean;
   currentlyPlayingSegmentId: string | null;
+  size?: 'small' | 'medium';
 }
 
 function AudioPlayer({
@@ -16,6 +17,7 @@ function AudioPlayer({
   onToggleAudio,
   isAudioPlaying,
   currentlyPlayingSegmentId,
+  size = 'medium',
 }: AudioPlayerProps) {
   const showPauseIcon =
     isAudioPlaying && segmentId === currentlyPlayingSegmentId;
@@ -31,8 +33,13 @@ function AudioPlayer({
       color="primary"
       aria-label={showPauseIcon ? 'pause' : 'play'}
       disabled={!audioUri}
+      size={size}
     >
-      {showPauseIcon ? <PauseIcon /> : <PlayArrowIcon />}
+      {showPauseIcon ? (
+        <PauseIcon fontSize={size === 'small' ? 'small' : 'inherit'} />
+      ) : (
+        <PlayArrowIcon fontSize={size === 'small' ? 'small' : 'inherit'} />
+      )}
     </IconButton>
   );
 }

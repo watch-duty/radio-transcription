@@ -11,40 +11,34 @@ export function consolidateAudioSegments(
   segments: AudioSegment[]
 ): RenderableAudioSegment[] {
   // Sort chronologically (ascending) to group consecutive segments in time order
-  const sorted = [...segments].sort(
+  const chronologicalSegments = [...segments].sort(
     (a, b) =>
       new Date(a.startTimestamp).getTime() -
       new Date(b.startTimestamp).getTime()
   );
 
   const consolidated: RenderableAudioSegment[] = [];
-  let currentBundle: RenderableAudioSegment | null = null;
+  let activeSilenceBundle: RenderableAudioSegment | null = null;
 
-  for (const segment of sorted) {
+  for (const segment of chronologicalSegments) {
     const isSpeech = segment.classification === AudioClassification.SPEECH;
 
     if (isSpeech) {
-      if (currentBundle) {
-        consolidated.push(currentBundle);
-        currentBundle = null;
+      if (activeSilenceBundle) {
+        consolidated.push(activeSilenceBundle);
+        activeSilenceBundle = null;
       }
       consolidated.push({ ...segment });
     } else {
-      if (!currentBundle) {
-        currentBundle = {
-          ...segment,
-          isSilenceBundle: true,
-          bundledSegmentIds: [segment.id],
-        };
-      } else {
-        currentBundle.endTimestamp = segment.endTimestamp;
-        currentBundle.bundledSegmentIds?.push(segment.id);
-      }
+      activeSilenceBundle = extendOrCreateSilenceBundle(
+        activeSilenceBundle,
+        segment
+      );
     }
   }
 
-  if (currentBundle) {
-    consolidated.push(currentBundle);
+  if (activeSilenceBundle) {
+    consolidated.push(activeSilenceBundle);
   }
 
   // Return sorted descending (newest at the top)
@@ -52,6 +46,24 @@ export function consolidateAudioSegments(
     (a, b) =>
       new Date(b.endTimestamp).getTime() - new Date(a.endTimestamp).getTime()
   );
+}
+
+function extendOrCreateSilenceBundle(
+  activeBundle: RenderableAudioSegment | null,
+  segment: AudioSegment
+): RenderableAudioSegment {
+  if (!activeBundle) {
+    return {
+      ...segment,
+      isSilenceBundle: true,
+      bundledSegmentIds: [segment.id],
+    };
+  }
+  return {
+    ...activeBundle,
+    endTimestamp: segment.endTimestamp,
+    bundledSegmentIds: [...(activeBundle.bundledSegmentIds || []), segment.id],
+  };
 }
 
 /**

@@ -13,10 +13,10 @@ import type {
 } from '@tanstack/react-query';
 import type { AudioSegment } from '@transcription/common';
 
+import type { ListAudioSegmentsData } from '../../hooks/useAudioSegments';
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
 import { getRelativeTimeString } from '../../utils/timeUtils';
 import TranscriptRow from './TranscriptRow';
-import type { ListAudioSegmentsData } from './TranscriptView';
 
 export interface TranscriptDisplayProps {
   ref?: React.Ref<VirtuosoHandle>;
@@ -190,6 +190,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
               }
               redactTranscripts={redactTranscripts}
               onRowClick={onRowClick}
+              isCurrentSilence={index === 0 && !hasNewerTranscripts}
             />
           );
         }}

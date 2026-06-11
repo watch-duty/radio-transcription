@@ -10,19 +10,16 @@ import CircularProgress from '@mui/material/CircularProgress';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
-import {
-  type InfiniteData,
-  type QueryKey,
-  useInfiniteQuery,
-  useQuery,
-  useQueryClient,
-} from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { AudioClassification, type AudioSegment } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
+import {
+  type AlertFilter,
+  useAudioSegments,
+} from '../../hooks/useAudioSegments';
 import { useConsolidatedAudioSegments } from '../../hooks/useConsolidatedAudioSegments';
 import { getFeed } from '../../service/getFeed';
-import { listAudioSegments } from '../../service/listAudioSegments';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { getAudioUrl } from '../../utils/audioUtils';
@@ -37,19 +34,7 @@ interface TranscriptViewProps {
   onError: (error: Error, titleMessage?: string) => void;
 }
 
-export type ListAudioSegmentsPage = {
-  nextToken?: string;
-  order: 'asc' | 'desc';
-};
-
-export type ListAudioSegmentsData = {
-  segments: AudioSegment[];
-} & ListAudioSegmentsPage;
-
-export type AlertFilter = 'all' | 'alerts';
-
 const DEFAULT_REFRESH_INTERVAL = 10000;
-const MAX_TRANSCRIPTS_POLLING_ITERATIONS = 10;
 const FEED_POLLING_INTERVAL_MS = 15000; // 15 seconds
 
 export function TranscriptView({
@@ -58,8 +43,6 @@ export function TranscriptView({
 }: TranscriptViewProps) {
   const theme = useTheme();
   const { token } = useAuth();
-
-  const queryClient = useQueryClient();
 
   const [searchParams, setSearchParams] = useSearchParams();
   const targetFeedId = searchParams.get('feedId');
@@ -251,127 +234,33 @@ export function TranscriptView({
   }, []);
 
   const {
-    data: listTranscriptsResponse,
-    fetchNextPage: fetchOlderTranscripts,
-    hasNextPage: hasOlderTranscripts,
-    fetchPreviousPage: fetchNewerTranscripts,
-    hasPreviousPage: hasNewerTranscripts,
-    isFetchingNextPage: isFetchingOlderTranscripts,
-    isFetchingPreviousPage: isFetchingNewerTranscripts,
-    error: transcriptsError,
-    isLoading: isTranscriptsInitialLoading, // isLoading is the first load, which we use to show the main loading spinner
-    isFetching: isTranscriptsFetching, // isFetching is any load, which we use to show that we're loading additional data
-    isSuccess: isTranscriptsSuccess,
-    dataUpdatedAt: transcriptsDataUpdatedAt,
-  } = useInfiniteQuery<
-    ListAudioSegmentsData,
-    Error,
-    InfiniteData<ListAudioSegmentsData>,
-    QueryKey,
-    ListAudioSegmentsPage
-  >({
-    queryKey: [
-      'listAudioSegments',
-      token,
-      searchedFeedId,
-      searchedTimestamp,
-      alertFilter,
-    ],
-    queryFn: async ({ pageParam }) => {
-      const { nextToken, order } = pageParam;
-
-      // We only fetch the timestamp on the initial load. On subsequent loads,
-      // the cursor-based positioning of the database in nextToken handles the rest.
-      const originalTimestampMs =
-        !nextToken && searchedTimestamp
-          ? searchedTimestamp.getTime()
-          : undefined;
-
-      const response = await listAudioSegments(
-        searchedFeedId,
-        token ?? '',
-        /*limit=*/ undefined,
-        nextToken,
-        /*startTime=*/ order === 'asc' ? originalTimestampMs : undefined,
-        /*endTime=*/ order === 'desc' ? originalTimestampMs : undefined,
-        order,
-        alertFilter === 'alerts' ? true : undefined
-      );
-
-      // The API returns transcripts in ascending order, meaning that the first transcript in
-      // the list is the oldest in time. However, in order to display them in the proper
-      // order (newest in time at the top), we need to reverse the transcripts.
-      if (order === 'asc' && response.segments) {
-        response.segments.reverse();
-      }
-
-      return { ...response, order };
-    },
-    initialPageParam: {
-      order: searchedTimestamp ? 'asc' : 'desc',
-    },
-    // Note: TanStack Query automatically manages the bidirectional pagination state for us.
-    // - `getNextPageParam` is always passed the LAST page in the cache (oldest) to continue scanning backward.
-    // - `getPreviousPageParam` is always passed the FIRST page in the cache (newest) to continue scanning forward.
-    // Because each page stores its own `nextToken` and `order`, the framework naturally isolates the
-    // forward and backward pagination bookmarks without us needing to maintain separate local state for them.
-    getNextPageParam: (lastPage) => {
-      // 1. If we are already fetching older transcripts ('desc'), continue scanning backward.
-      if (lastPage.order === 'desc') {
-        return lastPage.nextToken
-          ? { order: 'desc', nextToken: lastPage.nextToken }
-          : undefined;
-      }
-      // 2. If the initial load was 'asc' (searching from a timestamp), and the user scrolls down
-      // to load older transcripts, we start fetching them in 'desc' order starting from the searched timestamp.
-      return searchedTimestamp
-        ? { order: 'desc', nextToken: undefined }
-        : undefined;
-    },
-    getPreviousPageParam: (firstPage) => {
-      // 1. If no timestamp was searched, we are at the "live" head. No newer transcripts exist.
-      if (!searchedTimestamp) return undefined;
-      // 2. If we are fetching newer transcripts ('asc') and hit the end, stop.
-      if (firstPage.order === 'asc') {
-        return firstPage.nextToken
-          ? { order: 'asc', nextToken: firstPage.nextToken }
-          : undefined;
-      }
-      // 3. If we are in a descending page load, we cannot fetch newer transcripts directly from it.
-      return undefined;
-    },
-    enabled: !!token && !!searchedFeedId && isFeedsSuccess,
-    refetchOnWindowFocus: false,
+    rawAudioSegments,
+    newestTimestamp,
+    loadOlderTranscripts: fetchOlderTranscripts,
+    loadNewerTranscripts: fetchNewerTranscripts,
+    hasOlderTranscripts,
+    hasNewerTranscripts,
+    isTranscriptsSuccess,
+    transcriptsError,
+    transcriptsDataUpdatedAt,
+    isFetchingNewerTranscripts,
+    isFetchingOlderTranscripts,
+    pollNewerTranscripts,
+    updateCacheWithNewTranscripts,
+    isLoading: isTranscriptsInitialLoading,
+    isFetching: isTranscriptsFetching,
+  } = useAudioSegments({
+    token,
+    searchedFeedId,
+    searchedTimestamp,
+    alertFilter,
+    isFeedsSuccess,
   });
-
-  useEffect(() => {
-    if (transcriptsError) {
-      onError(transcriptsError, 'Loading transcripts');
-    }
-  }, [transcriptsError, onError]);
 
   const transcriptsLastUpdated =
     transcriptsDataUpdatedAt && transcriptsDataUpdatedAt > 0
       ? transcriptsDataUpdatedAt
       : null;
-
-  const rawAudioSegments = useMemo(() => {
-    const allSegments =
-      listTranscriptsResponse?.pages.flatMap((page) => page.segments) ?? [];
-    const seenIds = new Set<string>();
-    const uniqueSegments = allSegments.filter((segment) => {
-      if (seenIds.has(segment.id)) {
-        return false;
-      }
-      seenIds.add(segment.id);
-      return true;
-    });
-    return uniqueSegments.sort(
-      (a, b) =>
-        new Date(b.startTimestamp).getTime() -
-        new Date(a.startTimestamp).getTime()
-    );
-  }, [listTranscriptsResponse]);
 
   const transcripts = useConsolidatedAudioSegments(rawAudioSegments);
 
@@ -476,130 +365,6 @@ export function TranscriptView({
 
     return { groupCounts: counts, groupTitles: titles };
   }, [transcripts]);
-
-  // The timestamp of the newest transcript currently loaded in the UI.
-  // Used as a reference point when polling for newly arriving transcripts.
-  const newestTimestamp = rawAudioSegments[0]?.startTimestamp;
-
-  /**
-   * Fetches transcripts that have arrived after the current newest loaded transcript.
-   * Used by both the automatic background polling and the manual "Refresh" button.
-   * Handles pagination in case there are multiple pages of new transcripts.
-   */
-  const pollNewerTranscripts = useCallback(async () => {
-    if (!newestTimestamp || !searchedFeedId || !token) return [];
-
-    const allNewTranscripts: AudioSegment[] = [];
-    let currentNextToken: string | undefined = undefined;
-    let hasMore = true;
-    let iterations = 0;
-
-    try {
-      // Fetch all pages of new transcripts moving forward in time.
-      while (hasMore) {
-        if (iterations > MAX_TRANSCRIPTS_POLLING_ITERATIONS) {
-          console.warn(
-            'pollNewerTranscripts has more than 10 pages of new transcripts. This is unexpected. If this message continues, please report a bug.'
-          );
-        }
-
-        iterations++;
-        const response = await listAudioSegments(
-          searchedFeedId,
-          token,
-          /*limit=*/ undefined,
-          currentNextToken,
-          // Query for transcripts with a start time greater than our current newest
-          /*startTime=*/ new Date(newestTimestamp).getTime(),
-          /*endTime=*/ undefined,
-          /*order=*/ 'asc',
-          alertFilter === 'alerts' ? true : undefined
-        );
-
-        if (response.segments && response.segments.length > 0) {
-          allNewTranscripts.push(...response.segments);
-        }
-
-        currentNextToken = response.nextToken;
-        hasMore = !!currentNextToken;
-      }
-    } catch (error) {
-      console.error('Error polling for new transcripts:', error);
-    }
-
-    // Reverse the array so the newest transcripts are at index 0 for prepending
-    return allNewTranscripts.reverse();
-  }, [newestTimestamp, searchedFeedId, token, alertFilter]);
-
-  /**
-   * Merges newly polled transcripts into the top of the infinite query cache.
-   * This updates the active view without triggering a full refetch of all loaded pages.
-   */
-  const updateCacheWithNewTranscripts = useCallback(
-    (newTranscripts: AudioSegment[]): AudioSegment[] => {
-      if (!token) return [];
-      let updatedTranscripts: AudioSegment[] = [];
-      queryClient.setQueryData<InfiniteData<ListAudioSegmentsData>>(
-        [
-          'listAudioSegments',
-          token,
-          searchedFeedId,
-          searchedTimestamp,
-          alertFilter,
-        ],
-        (oldData) => {
-          if (!oldData) return oldData;
-
-          const newTranscriptsMap = new Map(
-            newTranscripts.map((t) => [t.id, t])
-          );
-
-          const updatedPages = oldData.pages.map((page) => {
-            let pageSegmentsChanged = false;
-            const updatedSegments = page.segments.map((existingSegment) => {
-              const newSegment = newTranscriptsMap.get(existingSegment.id);
-              if (newSegment) {
-                pageSegmentsChanged = true;
-                return newSegment;
-              }
-              return existingSegment;
-            });
-
-            return pageSegmentsChanged
-              ? { ...page, segments: updatedSegments }
-              : page;
-          });
-
-          const existingIds = new Set(
-            oldData.pages.flatMap((p) => p.segments.map((t) => t.id))
-          );
-          const brandNewSegments = newTranscripts.filter(
-            (t) => !existingIds.has(t.id)
-          );
-
-          if (brandNewSegments.length === 0) {
-            const pagesChanged = updatedPages.some(
-              (p, idx) => p !== oldData.pages[idx]
-            );
-            if (!pagesChanged) return oldData;
-            return { ...oldData, pages: updatedPages };
-          }
-
-          updatedTranscripts = brandNewSegments;
-
-          const finalPages = [...updatedPages];
-          finalPages[0] = {
-            ...finalPages[0],
-            segments: [...brandNewSegments, ...finalPages[0].segments],
-          };
-
-          return { ...oldData, pages: finalPages };
-        }
-      );
-      return updatedTranscripts;
-    },
-    [token, searchedFeedId, searchedTimestamp, alertFilter, queryClient]
-  );
 
   /**
    * Background polling effect.

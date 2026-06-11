@@ -124,6 +124,27 @@ const TimelineClip = React.memo(
   }
 );
 
+/**
+ * Determines whether the timeline window was aligned to the previous live head.
+ *
+ * If it was aligned to the head (or if there is no previous state/window bounds),
+ * the viewport should automatically advance forward to show newly arriving segments.
+ * If the user has scrolled back in time, we should keep the viewport anchored at their scroll position.
+ */
+function isViewportAlignedToHead(
+  windowEndTime: number | null,
+  prevFirstTranscriptEndTimestamp: string | null,
+  isInitialLoad: boolean
+): boolean {
+  if (isInitialLoad || !windowEndTime || !prevFirstTranscriptEndTimestamp) {
+    return true;
+  }
+  const prevHeadTime = new Date(prevFirstTranscriptEndTimestamp).getTime();
+  const timeDifferenceMs = Math.abs(windowEndTime - prevHeadTime);
+  // Allow a 1-second tolerance for floating point rounding in time conversions
+  return timeDifferenceMs < 1000;
+}
+
 export function AudioDisplay({
   transcripts,
   currentlyPlayingSegmentId,
@@ -168,13 +189,11 @@ export function AudioDisplay({
     firstTranscriptId !== prevFirstTranscriptId ||
     firstTranscriptEndTimestamp !== prevFirstTranscriptEndTimestamp
   ) {
-    const wasAlignedToHead =
-      !prevFirstTranscriptId ||
-      !windowEndTime ||
-      (prevFirstTranscriptEndTimestamp &&
-        Math.abs(
-          windowEndTime - new Date(prevFirstTranscriptEndTimestamp).getTime()
-        ) < 1000);
+    const wasAlignedToHead = isViewportAlignedToHead(
+      windowEndTime,
+      prevFirstTranscriptEndTimestamp,
+      !prevFirstTranscriptId
+    );
 
     setPrevFirstTranscriptId(firstTranscriptId);
     setPrevFirstTranscriptEndTimestamp(firstTranscriptEndTimestamp);
