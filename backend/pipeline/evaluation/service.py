@@ -1,6 +1,6 @@
 import logging
 
-from google.protobuf.duration_pb2 import Duration  # type: ignore
+from google.protobuf.duration_pb2 import Duration
 
 from backend.pipeline.evaluation.rules_evaluation import evaluator
 from backend.pipeline.schema_types import (

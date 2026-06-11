@@ -522,13 +522,20 @@ class AudioStitchingStateMachine:
         actions: list[StateMachineAction],
         file_start_ms: int,
         global_start_ms: int,
-        audio_append_cursor_ms: int | None,
+        active_file_cursor_ms: int,
         *,
         is_significant_gap: bool,
         is_max_duration_exceeded: bool,
-    ) -> int | None:
+    ) -> int:
+        """Evaluates whether an active transmission must be forcefully flushed mid-stream.
+
+        Under the Continuous Audio Retention policy, significant silence gaps are already captured
+        and flushed as OTHER segments prior to calling this method. However, this method remains
+        critical for enforcing maximum transmission duration splits (is_max_duration_exceeded)
+        during excessively long, continuous speech utterances.
+        """
         if not (is_significant_gap or is_max_duration_exceeded):
-            return audio_append_cursor_ms
+            return active_file_cursor_ms
 
         if is_significant_gap:
             reason = "Significant gap detected"
@@ -543,19 +550,19 @@ class AudioStitchingStateMachine:
                 ctx.last_segment_end_time_ms + DEFAULT_VAD_POST_ROLL_MS
             ) - file_start_ms
             append_end = min(target_post_roll_end, global_start_ms)
-            append_start = audio_append_cursor_ms or 0
 
-            if 0 <= append_start < append_end:
+            if active_file_cursor_ms < append_end:
                 actions.append(
                     AppendBufferAction(
                         audio_buffer=chunk_data.audio[
-                            append_start
+                            active_file_cursor_ms
                             * (chunk_data.sample_rate // 1000) : append_end
                             * (chunk_data.sample_rate // 1000)
                         ]
                     )
                 )
-                ctx.buffer_duration_ms += append_end - append_start
+                ctx.buffer_duration_ms += append_end - active_file_cursor_ms
+                active_file_cursor_ms = append_end
 
             actions.append(
                 self._flush_current_transmission(
@@ -566,7 +573,7 @@ class AudioStitchingStateMachine:
             ctx.missing_prior_context = is_max_duration_exceeded
 
         self._reset_transmission_context(ctx)
-        return None
+        return active_file_cursor_ms
 
     def _pre_split_excessive_speech_segments(
         self, speech_segments: list[TimeRange]
@@ -589,121 +596,283 @@ class AudioStitchingStateMachine:
                 )
         return processed_segments
 
+    def _flush_active_non_speech_transmission(
+        self,
+        chunk_data: AudioChunkData,
+        ctx: StitcherContext,
+        first_speech_start_rel_ms: int,
+        samples_per_ms: int,
+    ) -> list[StateMachineAction]:
+        """Flushes an open non-speech transmission from a previous chunk up to the new speech onset."""
+        actions: list[StateMachineAction] = []
+        if first_speech_start_rel_ms > 0:
+            actions.append(
+                AppendBufferAction(
+                    audio_buffer=chunk_data.audio[
+                        0 : first_speech_start_rel_ms * samples_per_ms
+                    ]
+                )
+            )
+            ctx.buffer_duration_ms += first_speech_start_rel_ms
+
+        ctx.last_segment_end_time_ms = (
+            chunk_data.start_ms + first_speech_start_rel_ms
+        )
+        if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
+            ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
+
+        actions.append(
+            self._flush_current_transmission(
+                reason="Speech onset: ending active non-speech segment",
+                ctx=ctx,
+                audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_OTHER,
+            )
+        )
+        self._reset_transmission_context(ctx)
+        ctx.missing_prior_context = False
+        return actions
+
+    def _capture_intra_chunk_silence(
+        self,
+        chunk_data: AudioChunkData,
+        ctx: StitcherContext,
+        current_file_cursor_ms: int,
+        speech_start_rel_ms: int,
+        samples_per_ms: int,
+    ) -> list[StateMachineAction]:
+        """Captures and flushes pure silence intervals between consecutive speech utterances within a chunk."""
+        actions: list[StateMachineAction] = []
+        file_start_ms = chunk_data.start_ms
+
+        silence_start_rel_ms = current_file_cursor_ms
+        if ctx.last_segment_end_time_ms is not None:
+            silence_start_rel_ms = max(
+                silence_start_rel_ms,
+                ctx.last_segment_end_time_ms - file_start_ms,
+            )
+
+        if silence_start_rel_ms >= speech_start_rel_ms:
+            return actions
+
+        silence_duration_ms = speech_start_rel_ms - silence_start_rel_ms
+        silence_samples = chunk_data.audio[
+            silence_start_rel_ms * samples_per_ms : speech_start_rel_ms
+            * samples_per_ms
+        ]
+
+        # If we had an active SPEECH transmission, flush it first
+        if ctx.transmission_start_time_ms is not None and ctx.speech_segments:
+            actions.append(
+                self._flush_current_transmission(
+                    reason="Silence onset: ending active speech segment",
+                    ctx=ctx,
+                    audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH,
+                )
+            )
+            self._reset_transmission_context(ctx)
+            ctx.missing_prior_context = False
+
+        # Buffer and flush this pure silence gap
+        ctx.transmission_start_time_ms = file_start_ms + silence_start_rel_ms
+        ctx.buffer_start_time_ms = file_start_ms + silence_start_rel_ms
+        ctx.start_audio_offset_ms = silence_start_rel_ms
+        ctx.buffer_duration_ms = silence_duration_ms
+        if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
+            ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
+
+        actions.append(AppendBufferAction(audio_buffer=silence_samples))
+        ctx.last_segment_end_time_ms = file_start_ms + speech_start_rel_ms
+
+        actions.append(
+            self._flush_current_transmission(
+                reason="Speech onset: ending active non-speech segment",
+                ctx=ctx,
+                audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_OTHER,
+            )
+        )
+        self._reset_transmission_context(ctx)
+        ctx.missing_prior_context = False
+        return actions
+
+    def _process_single_speech_utterance(
+        self,
+        chunk_data: AudioChunkData,
+        ctx: StitcherContext,
+        segment: TimeRange,
+        samples_per_ms: int,
+    ) -> list[StateMachineAction]:
+        """Executes overlap validation, mid-stream severing, and appends a single speech utterance to buffer."""
+        actions: list[StateMachineAction] = []
+        file_start_ms = chunk_data.start_ms
+        actual_start_ms = segment.start_ms
+        if ctx.last_segment_end_time_ms is not None:
+            actual_start_ms = max(
+                actual_start_ms,
+                ctx.last_segment_end_time_ms - file_start_ms,
+            )
+
+        global_start_ms = actual_start_ms
+        global_end_ms = segment.end_ms
+
+        if global_start_ms >= global_end_ms:
+            return actions
+
+        is_significant_gap = (
+            ctx.last_segment_end_time_ms is not None
+            and (
+                (file_start_ms + global_start_ms) - ctx.last_segment_end_time_ms
+            )
+            >= self.config.significant_gap_ms
+        )
+
+        is_max_duration_exceeded = (
+            ctx.transmission_start_time_ms is not None
+            and (
+                (file_start_ms + global_start_ms)
+                - ctx.transmission_start_time_ms
+            )
+            >= self.config.max_transmission_duration_ms
+        )
+
+        _ = self._evaluate_mid_stream_flush(
+            ctx=ctx,
+            chunk_data=chunk_data,
+            actions=actions,
+            file_start_ms=file_start_ms,
+            global_start_ms=global_start_ms,
+            active_file_cursor_ms=0,
+            is_significant_gap=is_significant_gap,
+            is_max_duration_exceeded=is_max_duration_exceeded,
+        )
+
+        if ctx.transmission_start_time_ms is None:
+            ctx.transmission_start_time_ms = file_start_ms + global_start_ms
+            ctx.start_audio_offset_ms = max(0, global_start_ms)
+            ctx.buffer_start_time_ms = file_start_ms + max(0, global_start_ms)
+
+        speech_samples = chunk_data.audio[
+            global_start_ms * samples_per_ms : global_end_ms * samples_per_ms
+        ]
+        if len(speech_samples) > 0:
+            actions.append(AppendBufferAction(audio_buffer=speech_samples))
+            ctx.buffer_duration_ms += global_end_ms - global_start_ms
+
+        if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
+            ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
+        ctx.last_segment_end_time_ms = file_start_ms + global_end_ms
+        ctx.speech_segments.append(
+            TimeRange(
+                start_ms=file_start_ms + global_start_ms,
+                end_ms=file_start_ms + global_end_ms,
+            )
+        )
+        return actions
+
+    def _capture_trailing_chunk_silence(
+        self,
+        chunk_data: AudioChunkData,
+        ctx: StitcherContext,
+        current_file_cursor_ms: int,
+        samples_per_ms: int,
+    ) -> list[StateMachineAction]:
+        """Initiates a non-speech transmission window for pure silence at the trailing end of a chunk."""
+        actions: list[StateMachineAction] = []
+        silence_duration_ms = chunk_data.duration_ms - current_file_cursor_ms
+        silence_samples = chunk_data.audio[
+            current_file_cursor_ms * samples_per_ms : chunk_data.duration_ms
+            * samples_per_ms
+        ]
+
+        # If we had an active SPEECH transmission, flush it first
+        if ctx.transmission_start_time_ms is not None and ctx.speech_segments:
+            actions.append(
+                self._flush_current_transmission(
+                    reason="Chunk boundary: ending active speech segment before trailing silence",
+                    ctx=ctx,
+                    audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH,
+                )
+            )
+            self._reset_transmission_context(ctx)
+            ctx.missing_prior_context = False
+
+        # Start active NON_SPEECH transmission for trailing silence
+        if ctx.transmission_start_time_ms is None:
+            ctx.transmission_start_time_ms = (
+                chunk_data.start_ms + current_file_cursor_ms
+            )
+            ctx.buffer_start_time_ms = (
+                chunk_data.start_ms + current_file_cursor_ms
+            )
+            ctx.start_audio_offset_ms = current_file_cursor_ms
+            ctx.buffer_duration_ms = 0
+            if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
+                ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
+
+        actions.append(AppendBufferAction(audio_buffer=silence_samples))
+        ctx.buffer_duration_ms += silence_duration_ms
+        ctx.last_segment_end_time_ms = (
+            chunk_data.start_ms + chunk_data.duration_ms
+        )
+        return actions
+
     def _process_speech_segments(
         self, chunk_data: AudioChunkData, ctx: StitcherContext
     ) -> list[StateMachineAction]:
-        """Evaluates consecutive speech data, updating length counters and triggering mid-stream flushes."""
+        """Evaluates consecutive speech data and exhaustive non-speech padding to guarantee 100% audio retention."""
         actions: list[StateMachineAction] = []
-        file_start_ms = chunk_data.start_ms
-        audio_append_cursor_ms: int | None = None
+        current_file_cursor_ms = 0
+        samples_per_ms = chunk_data.sample_rate // 1000
 
         processed_segments = self._pre_split_excessive_speech_segments(
             chunk_data.speech_segments
         )
 
-        # Check if we have an active NON_SPEECH transmission
+        # 0. Handle any existing non-speech transmission from a previous chunk
         is_non_speech_active = (
             ctx.transmission_start_time_ms is not None
             and not ctx.speech_segments
         )
 
         if is_non_speech_active:
-            # Flush the non-speech transmission up to the start of the first speech segment
             first_speech_start_rel_ms = processed_segments[0].start_ms
-            if first_speech_start_rel_ms > 0:
-                actions.append(
-                    AppendBufferAction(
-                        audio_buffer=chunk_data.audio[
-                            0 : first_speech_start_rel_ms
-                            * (chunk_data.sample_rate // 1000)
-                        ]
-                    )
-                )
-                ctx.buffer_duration_ms += first_speech_start_rel_ms
-
-            ctx.last_segment_end_time_ms = (
-                file_start_ms + first_speech_start_rel_ms
+            new_actions = self._flush_active_non_speech_transmission(
+                chunk_data, ctx, first_speech_start_rel_ms, samples_per_ms
             )
-            if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
-                ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
+            actions.extend(new_actions)
+            current_file_cursor_ms = first_speech_start_rel_ms
 
-            actions.append(
-                self._flush_current_transmission(
-                    "Speech onset: ending active non-speech segment",
-                    ctx,
-                    audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_OTHER,
-                )
-            )
-            self._reset_transmission_context(ctx)
-            ctx.missing_prior_context = False
-
+        # 1. Process each speech segment
         for segment in processed_segments:
-            # Calculate where to start to avoid overlap
-            actual_start_ms = segment.start_ms
-            if ctx.last_segment_end_time_ms is not None:
-                actual_start_ms = max(
-                    actual_start_ms,
-                    ctx.last_segment_end_time_ms - file_start_ms,
+            speech_start_rel_ms = segment.start_ms
+
+            if (
+                speech_start_rel_ms > current_file_cursor_ms
+                and ctx.last_segment_end_time_ms is not None
+            ):
+                new_actions = self._capture_intra_chunk_silence(
+                    chunk_data,
+                    ctx,
+                    current_file_cursor_ms,
+                    speech_start_rel_ms,
+                    samples_per_ms,
                 )
+                actions.extend(new_actions)
 
-            global_start_ms = actual_start_ms
-            global_end_ms = segment.end_ms
-
-            if global_start_ms >= global_end_ms:
-                continue
-
-            # 1. Check if the gap between the last speech segment and this new one
-            # exceeds the threshold for flushing.
-            is_significant_gap = (
-                ctx.last_segment_end_time_ms is not None
-                and (
-                    (file_start_ms + global_start_ms)
-                    - ctx.last_segment_end_time_ms
-                )
-                >= self.config.significant_gap_ms
+            new_actions = self._process_single_speech_utterance(
+                chunk_data, ctx, segment, samples_per_ms
             )
+            actions.extend(new_actions)
+            current_file_cursor_ms = max(current_file_cursor_ms, segment.end_ms)
 
-            # 2. Check if appending this chunk would exceed the maximum allowed
-            # duration for a single transmission.
-            is_max_duration_exceeded = (
-                ctx.transmission_start_time_ms is not None
-                and (
-                    (file_start_ms + global_start_ms)
-                    - ctx.transmission_start_time_ms
-                )
-                >= self.config.max_transmission_duration_ms
+        # 2. Capture trailing non-speech audio at the end of the file ONLY if we have an active established stream
+        if (
+            current_file_cursor_ms < chunk_data.duration_ms
+            and ctx.last_segment_end_time_ms is not None
+        ):
+            new_actions = self._capture_trailing_chunk_silence(
+                chunk_data, ctx, current_file_cursor_ms, samples_per_ms
             )
-
-            audio_append_cursor_ms = self._evaluate_mid_stream_flush(
-                ctx=ctx,
-                chunk_data=chunk_data,
-                actions=actions,
-                file_start_ms=file_start_ms,
-                global_start_ms=global_start_ms,
-                audio_append_cursor_ms=audio_append_cursor_ms,
-                is_significant_gap=is_significant_gap,
-                is_max_duration_exceeded=is_max_duration_exceeded,
-            )
-
-            audio_append_cursor_ms = self._append_speech_audio_to_buffer(
-                chunk_data=chunk_data,
-                ctx=ctx,
-                file_start_ms=file_start_ms,
-                global_start_ms=global_start_ms,
-                global_end_ms=global_end_ms,
-                audio_append_cursor_ms=audio_append_cursor_ms,
-                actions=actions,
-            )
-
-            if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
-                ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
-            ctx.last_segment_end_time_ms = file_start_ms + global_end_ms
-            ctx.speech_segments.append(
-                TimeRange(
-                    start_ms=file_start_ms + global_start_ms,
-                    end_ms=file_start_ms + global_end_ms,
-                )
-            )
+            actions.extend(new_actions)
 
         actions.append(UpdateStateAction())
         if ctx.last_segment_end_time_ms is not None:

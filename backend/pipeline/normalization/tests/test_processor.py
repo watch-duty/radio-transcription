@@ -5,8 +5,8 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from cloudevents.http.event import CloudEvent
-from google.protobuf.duration_pb2 import Duration  # type: ignore
-from google.protobuf.timestamp_pb2 import Timestamp  # type: ignore
+from google.protobuf.duration_pb2 import Duration
+from google.protobuf.timestamp_pb2 import Timestamp
 
 from backend.pipeline.common.constants import GCS_DOWNLOAD_TIMEOUT_SEC
 from backend.pipeline.normalization.processor import (
