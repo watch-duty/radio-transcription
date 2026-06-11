@@ -392,6 +392,66 @@ class VoiceActivityDetector:
 
         return True
 
+    def _is_tone_segment(self, sig: np.ndarray) -> bool:
+        """Analyzes a candidate audio segment to determine if it is primarily an alert or paging tone."""
+        frame_len = 1024
+        hop_len = 512
+        if len(sig) < frame_len:
+            return False
+
+        num_frames = 1 + (len(sig) - frame_len) // hop_len
+        shape = (num_frames, frame_len)
+        strides = (sig.strides[0] * hop_len, sig.strides[0])
+        frames = np.lib.stride_tricks.as_strided(
+            sig, shape=shape, strides=strides
+        )
+
+        window = 0.5 * (
+            1.0 - np.cos(2 * np.pi * np.arange(frame_len) / frame_len)
+        )
+        windowed = frames * window.astype(np.float32)
+        specs = np.abs(np.fft.rfft(windowed, axis=-1)) ** 2
+
+        frame_powers = np.sum(specs, axis=-1)
+        max_power = np.max(frame_powers)
+        if max_power < 1e-10:
+            return False
+
+        active_indices = np.where(frame_powers >= 0.01 * max_power)[0]
+        if len(active_indices) == 0:
+            return False
+
+        tone_frames = 0
+        for idx in active_indices:
+            spec = specs[idx]
+            total_p = frame_powers[idx]
+
+            # Strongest peak
+            k1 = int(np.argmax(spec))
+            low1 = max(0, k1 - 3)
+            high1 = min(len(spec), k1 + 4)
+            p1 = float(np.sum(spec[low1:high1]))
+
+            # Second strongest peak outside first neighborhood
+            spec_rem = spec.copy()
+            spec_rem[low1:high1] = 0.0
+            k2 = int(np.argmax(spec_rem))
+            low2 = max(0, k2 - 3)
+            high2 = min(len(spec), k2 + 4)
+            p2 = float(np.sum(spec[low2:high2]))
+
+            # Third strongest peak outside first two neighborhoods
+            spec_rem[low2:high2] = 0.0
+            k3 = int(np.argmax(spec_rem))
+            low3 = max(0, k3 - 3)
+            high3 = min(len(spec), k3 + 4)
+            p3 = float(np.sum(spec[low3:high3]))
+
+            if (p1 + p2 + p3) / total_p > 0.85:
+                tone_frames += 1
+
+        return (tone_frames / len(active_indices)) >= 0.75
+
     def _filter_noise_segments(
         self,
         shifted_segments: list[tuple[float, float]],
@@ -406,7 +466,14 @@ class VoiceActivityDetector:
             end_idx = int((end + vad_offset_sec) * TARGET_SAMPLE_RATE)
             seg_signal = vad_input[start_idx:end_idx]
             if self._is_speech_segment(seg_signal, chunk_size):
-                filtered_segments.append((start, end))
+                if self._is_tone_segment(seg_signal):
+                    logger.debug(
+                        "Rejected VAD segment at (%.2f, %.2f) as an alert/paging tone.",
+                        start,
+                        end,
+                    )
+                else:
+                    filtered_segments.append((start, end))
         return filtered_segments
 
     def _extract_vad_frames(
