@@ -545,9 +545,9 @@ export function FeedTable({
                 onChange={(types) =>
                   onFiltersChange({ ...filters, sourceTypes: types })
                 }
-                getOptionLabel={(option) => toSourceTypeString(option)}
-                renderOptionContent={(option) => toSourceTypeString(option)}
-                renderValueLabel={(option) => toSourceTypeString(option)}
+                getOptionLabel={toSourceTypeString}
+                renderOptionContent={toSourceTypeString}
+                renderValueLabel={toSourceTypeString}
                 size="small"
               />
             </Box>
