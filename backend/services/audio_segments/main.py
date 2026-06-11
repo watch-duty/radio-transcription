@@ -79,7 +79,7 @@ async def list_audio_segments(
             start_time=start_time,
             end_time=end_time,
             order=order,
-            has_alert=is_alert,
+            is_alert=is_alert,
         )
     except ValueError as e:
         raise HTTPException(

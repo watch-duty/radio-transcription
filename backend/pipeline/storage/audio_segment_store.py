@@ -165,7 +165,7 @@ class AudioSegmentStore:
         end_time: datetime.datetime | None = None,
         order: SortOrder = SortOrder.DESC,
         *,
-        has_alert: bool | None = None,
+        is_alert: bool | None = None,
     ) -> PaginatedAudioSegments:
         """List all audio segments bundled with their annotations."""
         feed_uuids = None
@@ -195,7 +195,7 @@ class AudioSegmentStore:
             cursor_uid,
             start_time,
             end_time,
-            has_alert,
+            is_alert,
             limit + 1,
         )
 

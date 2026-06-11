@@ -109,7 +109,7 @@ async def test_segments(
     )
 
     # Segment 5: Has alert (transcript and evaluation with decisions)
-    segment_has_alert = await store.create_audio_segment(
+    segment_is_alert = await store.create_audio_segment(
         segment_id=str(uuid.uuid4()),
         feed_id=str(feed_id),
         classification=AudioClassification.SPEECH,
@@ -120,12 +120,12 @@ async def test_segments(
         missing_post_context=False,
     )
     await store.add_annotation(
-        segment_id=segment_has_alert.id,
+        segment_id=segment_is_alert.id,
         annotation_type=AnnotationType.EVALUATION,
         data={"decisions": ["rule-2"], "errors": []},
     )
     await store.add_annotation(
-        segment_id=segment_has_alert.id,
+        segment_id=segment_is_alert.id,
         annotation_type=AnnotationType.TRANSCRIPT,
         data={"text": "s5 transcript", "errors": []},
     )
@@ -136,7 +136,7 @@ async def test_segments(
         "segment_no_transcript": segment_no_transcript,
         "segment_no_evaluation": segment_no_evaluation,
         "segment_no_annotation": segment_no_annotation,
-        "segment_has_alert": segment_has_alert,
+        "segment_is_alert": segment_is_alert,
     }
 
 
@@ -224,10 +224,10 @@ async def test_add_annotation(
 
 
 class TestListAudioSegmentsFilters:
-    async def test_has_alert_true(
+    async def test_is_alert_true(
         self, store: AudioSegmentStore, test_segments: dict
     ) -> None:
-        res = await store.list_audio_segments(has_alert=True)
+        res = await store.list_audio_segments(is_alert=True)
         assert len(res.segments) == 2
 
         expected_no_trans = test_segments["segment_no_transcript"].model_dump()
@@ -239,22 +239,22 @@ class TestListAudioSegmentsFilters:
             }
         ]
 
-        expected_has_alert = test_segments["segment_has_alert"].model_dump()
-        expected_has_alert["annotations"] = [
+        expected_is_alert = test_segments["segment_is_alert"].model_dump()
+        expected_is_alert["annotations"] = [
             {
-                "audio_segment_id": test_segments["segment_has_alert"].id,
+                "audio_segment_id": test_segments["segment_is_alert"].id,
                 "type": AnnotationType.EVALUATION,
                 "data": {"decisions": ["rule-2"], "errors": []},
             },
             {
-                "audio_segment_id": test_segments["segment_has_alert"].id,
+                "audio_segment_id": test_segments["segment_is_alert"].id,
                 "type": AnnotationType.TRANSCRIPT,
                 "data": {"text": "s5 transcript", "errors": []},
             },
         ]
 
-        # list_audio_segments defaults to DESC order, so segment_has_alert comes first.
-        expected_segments = [expected_has_alert, expected_no_trans]
+        # list_audio_segments defaults to DESC order, so segment_is_alert comes first.
+        expected_segments = [expected_is_alert, expected_no_trans]
         actual_segments = [s.model_dump() for s in res.segments]
 
         diff = DeepDiff(
@@ -268,7 +268,7 @@ class TestListAudioSegmentsFilters:
     async def test_has_no_alert(
         self, store: AudioSegmentStore, test_segments: dict
     ) -> None:
-        res = await store.list_audio_segments(has_alert=False)
+        res = await store.list_audio_segments(is_alert=False)
         assert len(res.segments) == 3
 
         expected_no_alert = test_segments["segment_no_alert"].model_dump()
@@ -317,10 +317,10 @@ class TestListAudioSegmentsFilters:
         )
         assert not diff, f"Difference found:\n{diff.pretty()}"
 
-    async def test_has_alert_unset(
+    async def test_is_alert_unset(
         self, store: AudioSegmentStore, test_segments: dict
     ) -> None:
-        res = await store.list_audio_segments(has_alert=None)
+        res = await store.list_audio_segments(is_alert=None)
         assert len(res.segments) == 5
 
     async def test_start_time_filter(
@@ -334,7 +334,7 @@ class TestListAudioSegmentsFilters:
         assert test_segments["segment_no_transcript"].id in ids
         assert test_segments["segment_no_evaluation"].id in ids
         assert test_segments["segment_no_annotation"].id in ids
-        assert test_segments["segment_has_alert"].id in ids
+        assert test_segments["segment_is_alert"].id in ids
 
     async def test_end_time_filter(
         self, store: AudioSegmentStore, test_segments: dict
@@ -357,7 +357,7 @@ class TestListAudioSegmentsFilters:
         assert res.segments[1].id == test_segments["segment_no_transcript"].id
         assert res.segments[2].id == test_segments["segment_no_evaluation"].id
         assert res.segments[3].id == test_segments["segment_no_annotation"].id
-        assert res.segments[4].id == test_segments["segment_has_alert"].id
+        assert res.segments[4].id == test_segments["segment_is_alert"].id
 
     async def test_next_token(
         self, store: AudioSegmentStore, test_segments: dict
@@ -366,7 +366,7 @@ class TestListAudioSegmentsFilters:
         res1 = await store.list_audio_segments(limit=2)
         assert len(res1.segments) == 2
         assert res1.next_token is not None
-        assert res1.segments[0].id == test_segments["segment_has_alert"].id
+        assert res1.segments[0].id == test_segments["segment_is_alert"].id
         assert res1.segments[1].id == test_segments["segment_no_annotation"].id
 
         # Page 2: limit=2

@@ -79,7 +79,7 @@ class TestAudioSegmentsAPI(unittest.TestCase):
             start_time=None,
             end_time=None,
             order=SortOrder.DESC,
-            has_alert=None,
+            is_alert=None,
         )
 
     def test_list_audio_segments_with_filters(self) -> None:
@@ -111,7 +111,7 @@ class TestAudioSegmentsAPI(unittest.TestCase):
             start_time=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
             end_time=datetime.datetime(2026, 1, 1, 1, tzinfo=datetime.UTC),
             order=SortOrder.ASC,
-            has_alert=True,
+            is_alert=True,
         )
 
     def test_create_audio_segment_success(self) -> None:
