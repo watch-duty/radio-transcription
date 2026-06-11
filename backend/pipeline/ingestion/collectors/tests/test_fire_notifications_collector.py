@@ -584,6 +584,16 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         cases = [
             (
+                400,
+                FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+                "fn_api_http_400",
+            ),
+            (
+                401,
+                FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+                "fn_api_http_401",
+            ),
+            (
                 403,
                 FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
                 "fn_api_http_403",
