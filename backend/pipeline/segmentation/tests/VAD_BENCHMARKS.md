@@ -13,6 +13,7 @@ This document tracks the frame-based F1 accuracy benchmarks across our VAD integ
 | **`test_dispatch_sku.flac`** | 0.85 | 0.888 | **0.888** | **PASSED** | SKU dispatch with heavy background static interference. |
 | **`test_middlebury.mp3`** | 0.85 | 0.947 | **0.889** | **PASSED** | Middlebury baseline audio (quiet segments). |
 | **`test_quiet_speech_loud_transient.mp3`** | 0.60 | 0.000 | **0.662** | **PASSED** | Quiet speech followed by a loud transient click. |
+| **`test_tone_only.flac`** | 1.00 | 0.000 | **1.000** | **PASSED** | Broadcastify two-tone paging audio (100% rejected as non-speech). |
 
 ---
 
