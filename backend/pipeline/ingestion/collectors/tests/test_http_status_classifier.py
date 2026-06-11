@@ -67,7 +67,7 @@ class TestHTTPStatusClassifier(unittest.TestCase):
     def test_default_terminal_statuses_map_to_source_unreachable(
         self,
     ) -> None:
-        for status in (404, 408, 500, 503, 799):
+        for status in (408, 500, 502, 503, 504, 599):
             with self.subTest(status=status):
                 classification = _require_classification(
                     http_status.classify_http_status(
@@ -83,6 +83,16 @@ class TestHTTPStatusClassifier(unittest.TestCase):
                 self.assertEqual(
                     classification.reason,
                     f"item_http_{status}",
+                )
+
+    def test_ambiguous_and_nonstandard_statuses_return_none(self) -> None:
+        for status in (400, 404, 409, 410, 423, 425, 426, 600, 799, 999):
+            with self.subTest(status=status):
+                self.assertIsNone(
+                    http_status.classify_http_status(
+                        status,
+                        reason_prefix="item_http",
+                    )
                 )
 
     def test_exact_override_beats_family_default(self) -> None:
