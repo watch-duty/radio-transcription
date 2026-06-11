@@ -306,6 +306,7 @@ class NormalizationEventProcessor:
             feed_name=segmented_audio.feed_name,
             audio_classification=SegmentedAudio.AudioClassification.Name(
                 segmented_audio.audio_classification
+            ),
             transcription_audio_uri=transcription_audio_uri,
             ingested_at=segmented_audio.ingested_at,
         )
