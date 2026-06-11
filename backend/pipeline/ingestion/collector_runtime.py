@@ -901,26 +901,28 @@ class CollectorRuntime:
         logger.info(
             "raw_audio_ingested",
             extra={
-                "structured_event": True,
-                "event_type": "raw_audio_ingested",
-                "event_time_ms": int(
-                    datetime.datetime.now(datetime.UTC).timestamp() * 1000
-                ),
-                "feed_id": str(feed["id"]),
-                "session_id": captured_chunk.session_id,
-                "trace_id": get_current_traceparent(),
-                "raw_audio_uri": gcs_uri,
-                "source_type": feed["source_type"],
-                "external_segment_id": captured_chunk.external_audio_segment_id,
-                "chunk_start": captured_chunk.chunk_start_time.isoformat()
-                if captured_chunk.chunk_start_time
-                else None,
-                "chunk_end": (
-                    captured_chunk.chunk_start_time
-                    + datetime.timedelta(milliseconds=duration_ms)
-                ).isoformat()
-                if captured_chunk.chunk_start_time
-                else None,
+                "json_fields": {
+                    "structured_event": True,
+                    "event_type": "raw_audio_ingested",
+                    "event_time_ms": int(
+                        datetime.datetime.now(datetime.UTC).timestamp() * 1000
+                    ),
+                    "feed_id": str(feed["id"]),
+                    "session_id": captured_chunk.session_id,
+                    "trace_id": get_current_traceparent(),
+                    "raw_audio_uri": gcs_uri,
+                    "source_type": feed["source_type"],
+                    "external_segment_id": captured_chunk.external_audio_segment_id,
+                    "chunk_start": captured_chunk.chunk_start_time.isoformat()
+                    if captured_chunk.chunk_start_time
+                    else None,
+                    "chunk_end": (
+                        captured_chunk.chunk_start_time
+                        + datetime.timedelta(milliseconds=duration_ms)
+                    ).isoformat()
+                    if captured_chunk.chunk_start_time
+                    else None,
+                }
             },
         )
 

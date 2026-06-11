@@ -249,7 +249,6 @@ def publish_audio_chunk_sync(
             s_msg.end_timestamp.FromDatetime(end_ts)
             if external_audio_segment_id is not None:
                 s_msg.external_audio_segment_id = external_audio_segment_id
-
             serialized_data = s_msg.SerializeToString()
         else:
             c_msg = ContinuousAudio(
@@ -261,7 +260,6 @@ def publish_audio_chunk_sync(
             if session_id is not None:
                 c_msg.session_id = session_id
             c_msg.start_timestamp.FromDatetime(start_timestamp)
-
             serialized_data = c_msg.SerializeToString()
 
         attrs: dict[str, str] = {
@@ -345,7 +343,6 @@ async def publish_audio_chunk(
             s_msg.end_timestamp.FromDatetime(end_ts)
             if external_audio_segment_id is not None:
                 s_msg.external_audio_segment_id = external_audio_segment_id
-
             serialized_data = s_msg.SerializeToString()
         else:
             c_msg = ContinuousAudio(
@@ -357,7 +354,6 @@ async def publish_audio_chunk(
             if session_id is not None:
                 c_msg.session_id = session_id
             c_msg.start_timestamp.FromDatetime(start_timestamp)
-
             serialized_data = c_msg.SerializeToString()
 
         attrs: dict[str, str] = {

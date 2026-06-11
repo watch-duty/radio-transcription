@@ -136,15 +136,20 @@ class EvaluationService:
             logger.info(
                 "evaluation_completed",
                 extra={
-                    "structured_event": True,
-                    "event_type": "evaluation_completed",
-                    "event_time_ms": int(
-                        datetime.datetime.now(datetime.UTC).timestamp() * 1000
-                    ),
-                    "feed_id": new_audio.feed_id,
-                    "segment_id": new_audio.segment_id,
-                    "source_audio_uris": list(new_audio.source_audio_uris),
-                    "trace_id": get_current_traceparent(),
+                    "json_fields": {
+                        "structured_event": True,
+                        "event_type": "evaluation_completed",
+                        "event_time_ms": int(
+                            datetime.datetime.now(datetime.UTC).timestamp() * 1000
+                        ),
+                        "feed_id": new_audio.feed_id,
+                        "segment_id": new_audio.segment_id,
+                        # Log source_audio_uris so Log Analytics can unnest and join them
+                        # against the raw_audio_ingested events to find the earliest ingestion
+                        # timestamp, enabling true end-to-end latency calculation for fan-in segments.
+                        "source_audio_uris": list(new_audio.source_audio_uris),
+                        "trace_id": get_current_traceparent(),
+                    }
                 },
             )
 
