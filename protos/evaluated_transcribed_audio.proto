@@ -66,4 +66,7 @@ message EvaluatedTranscribedAudio {
   // Reserved old enum field for backward compatibility in Pub/Sub schemas
   reserved 14, 16;
   reserved "external_id";
+
+  // The exact UTC timestamp when this chunk was first ingested into the system.
+  google.protobuf.Timestamp ingested_at = 20;
 }

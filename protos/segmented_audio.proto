@@ -65,4 +65,7 @@ message SegmentedAudio {
   // - Fire Notifications: Composite S3 file UUID and human-readable filename (e.g. "c1465213-2998-4ed7-a6a2-bf16ebf67265|SAN-JOSE-DISP 2026-06-09 18-38-41.mp3").
   // - Broadcastify Feeds: Not applicable (omitted).
   optional string external_audio_segment_id = 14;
+
+  // The exact UTC timestamp when this chunk was first ingested into the system.
+  google.protobuf.Timestamp ingested_at = 15;
 }

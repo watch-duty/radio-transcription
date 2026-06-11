@@ -867,6 +867,7 @@ class CollectorRuntime:
                 duration_ms,
                 feed["source_type"],
                 captured_chunk.external_audio_segment_id,
+                captured_chunk.ingested_at,
                 lease_lost=self._lease_lost,
                 shutdown=self._shutdown,
                 max_retries=settings.pubsub_publish_max_retries,

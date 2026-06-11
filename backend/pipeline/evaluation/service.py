@@ -1,4 +1,6 @@
+import datetime
 import logging
+
 
 from google.protobuf.duration_pb2 import Duration  # type: ignore
 
@@ -130,6 +132,23 @@ class EvaluationService:
             evaluated_payload.end_audio_offset.CopyFrom(
                 new_audio.end_audio_offset
             )
+
+            if new_audio.HasField("ingested_at"):
+                evaluated_payload.ingested_at.CopyFrom(new_audio.ingested_at)
+                
+                # Calculate True End-to-End Latency
+                current_time = datetime.datetime.now(tz=datetime.UTC)
+                ingested_at_dt = new_audio.ingested_at.ToDatetime().replace(tzinfo=datetime.UTC)
+                total_latency_ms = int((current_time - ingested_at_dt).total_seconds() * 1000)
+                
+                logger.info(
+                    "End-to-end latency calculated",
+                    extra={
+                        "e2e_latency_ms": total_latency_ms,
+                        "segment_id": new_audio.segment_id,
+                        "feed_id": new_audio.feed_id,
+                    }
+                )
 
         except Exception:
             logger.exception("Error processing new audio message")

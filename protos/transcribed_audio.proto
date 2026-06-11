@@ -61,4 +61,7 @@ message TranscribedAudio {
 
   reserved 14;
   reserved "external_id";
+
+  // The exact UTC timestamp when this chunk was first ingested into the system.
+  google.protobuf.Timestamp ingested_at = 17;
 }

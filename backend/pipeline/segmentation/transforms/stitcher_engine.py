@@ -390,6 +390,7 @@ class StitcherEngine:
                     audio_classification=datatypes.AudioClassification(
                         action.audio_classification
                     ),
+                    ingested_at_ms=action.ingested_at_ms,
                 ),
             )
 
@@ -531,6 +532,7 @@ class StitcherEngine:
                     or curr_context.traceparent
                     or get_current_traceparent(),
                     prior_audio_tail=curr_context.prior_audio_tail,
+                    ingested_at_ms=getattr(curr_context, "ingested_at_ms", None) or getattr(chunk, "ingested_at_ms", None),
                 )
 
                 actions = state_machine.process_chunk(payload.chunk_data, ctx)
@@ -679,6 +681,7 @@ class StitcherEngine:
                             speech_segments=ctx.speech_segments,
                             prior_audio_tail=prior_tail,
                             sample_rate=chunk_data.sample_rate,
+                            ingested_at_ms=ctx.ingested_at_ms,
                         )
                 case datatypes.ScheduleStaleTimerAction():
                     timer_manager.schedule(
