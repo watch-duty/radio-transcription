@@ -1,5 +1,6 @@
 """Tests for the StitchAudioFn, TranscribeAudioFn, and related transformations."""
 
+import logging as std_logging
 import unittest
 from collections.abc import Callable
 from typing import Any
@@ -30,6 +31,7 @@ from backend.pipeline.segmentation.constants import (
 from backend.pipeline.segmentation.datatypes import (
     ActiveStitchingState,
     AudioChunkData,
+    AudioClassification,
     BufferedChunk,
     ChunkMetadata,
     FeedMetadata,
@@ -992,6 +994,99 @@ class OrderedContinuousStitchSpeechSegmentsTest(unittest.TestCase):
         self.assertEqual(
             get_duration_ms(flush_request.speech_segments[0]), 3000
         )
+        self.assertEqual(
+            flush_request.audio_classification,
+            AudioClassification.AUDIO_CLASSIFICATION_SPEECH,
+        )
+        self.assertIsNone(mock_state_context.read())
+
+    @patch(
+        "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
+    )
+    def test_stale_flush_classification_without_speech_segments(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that a stale flush on a transmission with no speech segments yields AUDIO_CLASSIFICATION_OTHER."""
+        mock_processor_inst = mock_audio_processor.return_value
+        chunk_data = AudioChunkData(
+            start_ms=100000,
+            audio=np.zeros(16000 * 5, dtype=np.int16),
+            speech_segments=[],
+            gcs_uri="gs://bucket/chunk1.flac",
+            duration_ms=5000,
+            sample_rate=16000,
+        )
+        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        stitch_config = get_test_stitch_config(
+            significant_gap_ms=800, stale_timeout_ms=75000
+        )
+        fn = OrderedContinuousStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn.setup()
+
+        class MockValueState:
+            def __init__(self, initial=None) -> None:
+                self.val = initial
+
+            def read(self):
+                return self.val
+
+            def write(self, val):
+                self.val = val
+
+            def clear(self):
+                self.val = None
+
+        class MockBagState:
+            def __init__(self) -> None:
+                self.items = []
+
+            def read(self):
+                return self.items
+
+            def add(self, item):
+                self.items.append(item)
+
+            def clear(self):
+                self.items = []
+
+        mock_state_context = MockValueState(
+            ActiveStitchingState(
+                session_id="session-1",
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
+                stale_start_time_ms=100000,
+                buffer_start_time_ms=100000,
+                buffer_duration_ms=5000,
+                last_end_time_ms=105000,
+            )
+        )
+        mock_state_buffer = MockBagState()
+        mock_state_buffer.add(np.zeros(16000 * 5, dtype=np.int16))
+        mock_last_start_ms = MockValueState(None)
+
+        # Trigger stale flush and verify NO_SPEECH classification
+        outputs = list(
+            fn.handle_stale_transmission_event(
+                key="test-feed",
+                transmission_buffer=mock_state_buffer,  # type: ignore
+                transmission_context=mock_state_context,  # type: ignore
+                last_start_ms_state=mock_last_start_ms,  # type: ignore
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        self.assertEqual(len(outputs), 1)
+        feed_id, flush_request = outputs[0]
+        self.assertEqual(feed_id, "test-feed")
+        self.assertEqual(len(flush_request.speech_segments), 0)
+        self.assertEqual(
+            flush_request.audio_classification,
+            AudioClassification.AUDIO_CLASSIFICATION_OTHER,
+        )
         self.assertIsNone(mock_state_context.read())
 
     @patch(
@@ -1819,3 +1914,266 @@ class DlqTaggingTest(unittest.TestCase):
         self.assertIsNotNone(saved_context_2)
         self.assertEqual(saved_context_2.session_id, "session-2")
         self.assertEqual(saved_context_2.traceparent, "traceparent-2")
+
+    @patch(
+        "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
+    )
+    def test_overlap_check_and_state_updates_conditioned_on_backfill_and_clear_state(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that:
+        1. Mainline real-time flushes (clear_state=True, is_backfill=False) execute the overlap check
+           and write to last_start_ms_state.
+        2. Backfill flushes (is_backfill=True) skip the overlap check and do not write to last_start_ms_state.
+        3. Non-mainline flushes (clear_state=False) skip the overlap check and do not write to last_start_ms_state.
+        """
+        mock_processor_inst = mock_audio_processor.return_value
+
+        # --- Case 1: Mainline Real-Time (clear_state=True, is_backfill=False) ---
+        chunk_data_1 = AudioChunkData(
+            start_ms=10000,
+            audio=np.zeros(16000 * 6, dtype=np.int16),
+            speech_segments=[TimeRange(0, 6000)],
+            gcs_uri="gs://bucket/chunk1.flac",
+            duration_ms=6000,
+            sample_rate=16000,
+        )
+        mock_processor_inst.download_audio_and_detect.return_value = (
+            chunk_data_1
+        )
+
+        # Use max_transmission_duration_ms = 5000 to force split/flush
+        stitch_config = get_test_stitch_config(
+            max_transmission_duration_ms=5000
+        )
+
+        # Create fn and states
+        fn, mock_state_context, mock_state_buffer, mock_last_start_ms = (
+            self._make_fn_and_states(OrderedContinuousStitchAudioFn)
+        )
+        # Override config to ensure max_transmission_duration_ms=5000
+        fn.stitch_config = stitch_config
+        fn.setup()
+
+        # Ensure last_start_ms starts empty
+        mock_last_start_ms.write(None)
+
+        # Mock logger to verify warning
+        mock_logger = MagicMock(spec=std_logging.Logger)
+
+        metadata_1 = ChunkMetadata(
+            gcs_uri="gs://bucket/chunk1.flac",
+            session_id="session-realtime",
+            duration_ms=6000,
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
+        )
+
+        with (
+            patch(
+                "backend.pipeline.segmentation.transforms.stitcher_engine._get_task_logger",
+                return_value=mock_logger,
+            ),
+            patch(
+                "backend.pipeline.segmentation.transforms.stateful.time.time",
+                return_value=10.0,
+            ),
+        ):  # Current time = 10s. Timestamp = 10s. Lateness = 0ms.
+            list(
+                fn.process(
+                    element=("test-feed", metadata_1),
+                    timestamp=Timestamp(10),
+                    transmission_buffer_state=mock_state_buffer,  # type: ignore
+                    transmission_context_state=mock_state_context,  # type: ignore
+                    last_start_ms_state=mock_last_start_ms,  # type: ignore
+                    out_of_order_timer=MagicMock(),
+                    stale_timer_event=MagicMock(),
+                    stale_timer_proc=MagicMock(),
+                )
+            )
+
+        # Verify last_start_ms was written with chunk start_ms (10000)
+        self.assertEqual(mock_last_start_ms.read(), 10000)
+        # Warning log should not be called since there is no previous start time
+        mock_logger.warning.assert_not_called()
+
+        # Let's trigger a second realtime flush with overlapping start time to verify warning is triggered
+        chunk_data_2 = AudioChunkData(
+            start_ms=10050,  # Overlaps with 10000 (diff < 100ms)
+            audio=np.zeros(16000 * 6, dtype=np.int16),
+            speech_segments=[TimeRange(0, 6000)],
+            gcs_uri="gs://bucket/chunk2.flac",
+            duration_ms=6000,
+            sample_rate=16000,
+        )
+        mock_processor_inst.download_audio_and_detect.return_value = (
+            chunk_data_2
+        )
+        mock_state_context.write(
+            ActiveStitchingState(
+                session_id="session-realtime",
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
+            )
+        )
+        metadata_2 = ChunkMetadata(
+            gcs_uri="gs://bucket/chunk2.flac",
+            session_id="session-realtime",
+            duration_ms=6000,
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
+        )
+
+        with (
+            patch(
+                "backend.pipeline.segmentation.transforms.stitcher_engine._get_task_logger",
+                return_value=mock_logger,
+            ),
+            patch(
+                "backend.pipeline.segmentation.transforms.stateful.time.time",
+                return_value=10.1,
+            ),
+        ):  # Lateness = 0
+            list(
+                fn.process(
+                    element=("test-feed", metadata_2),
+                    timestamp=Timestamp(10.1),
+                    transmission_buffer_state=mock_state_buffer,  # type: ignore
+                    transmission_context_state=mock_state_context,  # type: ignore
+                    last_start_ms_state=mock_last_start_ms,  # type: ignore
+                    out_of_order_timer=MagicMock(),
+                    stale_timer_event=MagicMock(),
+                    stale_timer_proc=MagicMock(),
+                )
+            )
+
+        # Warning should be logged
+        self.assertTrue(
+            any(
+                "Potential growing/overlapping transmission detected!"
+                in args[0]
+                for args, kwargs in mock_logger.warning.call_args_list
+            )
+        )
+        # last_start_ms was updated to 10050
+        self.assertEqual(mock_last_start_ms.read(), 10050)
+
+        # --- Case 2: Backfill (is_backfill=True) ---
+        mock_logger.reset_mock()
+        mock_last_start_ms.write(10050)  # Reset state back to 10050
+
+        chunk_data_backfill = AudioChunkData(
+            start_ms=10070,  # Overlaps with 10050
+            audio=np.zeros(16000 * 6, dtype=np.int16),
+            speech_segments=[TimeRange(0, 6000)],
+            gcs_uri="gs://bucket/chunk3.flac",
+            duration_ms=6000,
+            sample_rate=16000,
+        )
+        mock_processor_inst.download_audio_and_detect.return_value = (
+            chunk_data_backfill
+        )
+        mock_state_context.write(
+            ActiveStitchingState(
+                session_id="session-backfill",
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
+            )
+        )
+        metadata_backfill = ChunkMetadata(
+            gcs_uri="gs://bucket/chunk3.flac",
+            session_id="session-backfill",
+            duration_ms=6000,
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
+        )
+
+        with (
+            patch(
+                "backend.pipeline.segmentation.transforms.stitcher_engine._get_task_logger",
+                return_value=mock_logger,
+            ),
+            patch(
+                "backend.pipeline.segmentation.transforms.stateful.time.time",
+                return_value=10000.0,
+            ),
+        ):  # Current time is 10000.0. Timestamp is 10. Lateness = 9990s (backfill)
+            list(
+                fn.process(
+                    element=("test-feed", metadata_backfill),
+                    timestamp=Timestamp(10),
+                    transmission_buffer_state=mock_state_buffer,  # type: ignore
+                    transmission_context_state=mock_state_context,  # type: ignore
+                    last_start_ms_state=mock_last_start_ms,  # type: ignore
+                    out_of_order_timer=MagicMock(),
+                    stale_timer_event=MagicMock(),
+                    stale_timer_proc=MagicMock(),
+                )
+            )
+
+        # Overlap check should NOT run (no warnings logged)
+        mock_logger.warning.assert_not_called()
+        # last_start_ms state should NOT be written (remains 10050, not updated to 10070)
+        self.assertEqual(mock_last_start_ms.read(), 10050)
+
+        # --- Case 3: Non-mainline Flush (clear_state=False) ---
+        mock_logger.reset_mock()
+
+        # Create fn and states for segmented stitch
+        (
+            fn_segmented,
+            mock_state_context_seg,
+            mock_state_buffer_seg,
+            mock_last_start_ms_seg,
+        ) = self._make_fn_and_states(OrderedSegmentedStitchAudioFn)
+        fn_segmented.stitch_config = stitch_config
+        fn_segmented.setup()
+
+        mock_last_start_ms_seg.write(10050)
+
+        chunk_data_segmented = AudioChunkData(
+            start_ms=10070,  # Overlaps with 10050
+            audio=np.zeros(16000 * 3, dtype=np.int16),
+            speech_segments=[TimeRange(0, 3000)],
+            gcs_uri="gs://bucket/chunk4.flac",
+            duration_ms=3000,
+            sample_rate=16000,
+        )
+        mock_processor_inst.download_audio_and_detect.return_value = (
+            chunk_data_segmented
+        )
+        mock_state_context_seg.write(
+            ActiveStitchingState(
+                session_id="session-segmented",
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
+            )
+        )
+        metadata_segmented = ChunkMetadata(
+            gcs_uri="gs://bucket/chunk4.flac",
+            session_id="session-segmented",
+            duration_ms=3000,
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
+        )
+
+        with (
+            patch(
+                "backend.pipeline.segmentation.transforms.stitcher_engine._get_task_logger",
+                return_value=mock_logger,
+            ),
+            patch(
+                "backend.pipeline.segmentation.transforms.stateful.time.time",
+                return_value=10.2,
+            ),
+        ):  # Lateness = 0, so NOT backfill
+            list(
+                fn_segmented.process(
+                    element=("test-feed", metadata_segmented),
+                    timestamp=Timestamp(10.2),
+                    transmission_buffer_state=mock_state_buffer_seg,  # type: ignore
+                    transmission_context_state=mock_state_context_seg,  # type: ignore
+                    last_start_ms_state=mock_last_start_ms_seg,  # type: ignore
+                    out_of_order_timer=MagicMock(),
+                    stale_timer_event=MagicMock(),
+                    stale_timer_proc=MagicMock(),
+                )
+            )
+
+        # Overlap check should NOT run (no warnings logged)
+        mock_logger.warning.assert_not_called()
+        # last_start_ms state should NOT be written (remains 10050)
+        self.assertEqual(mock_last_start_ms_seg.read(), 10050)

@@ -32,12 +32,13 @@ import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { type Feed, SourceType } from '@transcription/common';
 
+import { toSourceTypeString } from '../../utils/textUtils';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 import { MultiSelectFilter } from '../common/MultiSelectFilter';
 
 export interface FeedFilters {
   searchQuery: string;
-  sourceTypes: string[];
+  sourceTypes: SourceType[];
   statuses: string[];
   tags: { key: string; value: string }[];
 }
@@ -303,7 +304,11 @@ export function FeedTable({
           role="cell"
           sx={{ borderBottom: 'none', minWidth: 0 }}
         >
-          <Chip label={feed.sourceType} size="small" variant="outlined" />
+          <Chip
+            label={toSourceTypeString(feed.sourceType)}
+            size="small"
+            variant="outlined"
+          />
         </TableCell>
 
         <TableCell
@@ -532,7 +537,7 @@ export function FeedTable({
             }}
           >
             <TuneIcon color="action" fontSize="small" />
-            <Box sx={{ flexGrow: 1, minWidth: 120, maxWidth: { sm: 200 } }}>
+            <Box sx={{ flexGrow: 1 }}>
               <MultiSelectFilter
                 label="Source Type"
                 options={ALL_SOURCE_TYPES}
@@ -540,10 +545,13 @@ export function FeedTable({
                 onChange={(types) =>
                   onFiltersChange({ ...filters, sourceTypes: types })
                 }
+                getOptionLabel={toSourceTypeString}
+                renderOptionContent={toSourceTypeString}
+                renderValueLabel={toSourceTypeString}
                 size="small"
               />
             </Box>
-            <Box sx={{ flexGrow: 1, minWidth: 120, maxWidth: { sm: 160 } }}>
+            <Box sx={{ flexGrow: 1 }}>
               <MultiSelectFilter
                 label="Status"
                 options={['Active', 'Inactive', 'Error']}
@@ -554,7 +562,7 @@ export function FeedTable({
                 size="small"
               />
             </Box>
-            <Box sx={{ flexGrow: 1, minWidth: 120, maxWidth: { sm: 200 } }}>
+            <Box sx={{ flexGrow: 1 }}>
               <MultiSelectFilter
                 label="Tags"
                 options={tags}
@@ -563,6 +571,7 @@ export function FeedTable({
                 size="small"
                 groupBy={(tag) => tag.key}
                 getOptionLabel={(tag) => `${tag.key}: ${tag.value}`}
+                getOptionValue={(tag) => `${tag.key}:${tag.value}`}
                 isOptionEqualToValue={(a, b) =>
                   a.key === b.key && a.value === b.value
                 }

@@ -75,7 +75,7 @@ describe('FeedHeader', () => {
       />
     );
 
-    expect(screen.getByText('bcfy_calls')).toBeTruthy();
+    expect(screen.getByText('Broadcastify Calls')).toBeTruthy();
   });
 
   it('shows source url link when sourceUrl is available', () => {
