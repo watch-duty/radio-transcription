@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { jwtDecode } from 'jwt-decode';
+import { decodeJwt } from 'jose';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { act, cleanup, render, screen } from '@testing-library/react';
@@ -8,8 +8,8 @@ import { authSession } from '../service/authSession';
 import { useAuth } from './AuthContext';
 import { AuthProvider } from './AuthProvider';
 
-vi.mock('jwt-decode', () => ({
-  jwtDecode: vi.fn(),
+vi.mock('jose', () => ({
+  decodeJwt: vi.fn(),
 }));
 
 vi.mock('../service/authSession', () => ({
@@ -59,7 +59,7 @@ describe('AuthProvider', () => {
 
   it('does not refresh the token if it is not expired or expiring soon', async () => {
     vi.mocked(authSession).mockResolvedValueOnce('fake-jwt-123');
-    vi.mocked(jwtDecode).mockReturnValue({
+    vi.mocked(decodeJwt).mockReturnValue({
       exp: (Date.now() + 30 * 60 * 1000) / 1000,
     }); // Expires in 30 minutes
 
@@ -91,7 +91,7 @@ describe('AuthProvider', () => {
   it('refreshes the token on visibility change if the token is close to expiring', async () => {
     vi.mocked(authSession).mockResolvedValueOnce('fake-jwt-123');
     // First decode: token is expiring in 4 minutes (less than 5m threshold)
-    vi.mocked(jwtDecode).mockReturnValueOnce({
+    vi.mocked(decodeJwt).mockReturnValueOnce({
       exp: (Date.now() + 4 * 60 * 1000) / 1000,
     });
     vi.mocked(authSession).mockResolvedValueOnce('new-refreshed-jwt');
@@ -133,7 +133,7 @@ describe('AuthProvider', () => {
   it('refreshes the token on window focus if the token is close to expiring', async () => {
     vi.mocked(authSession).mockResolvedValueOnce('fake-jwt-123');
     // Token is expiring in 1 minute
-    vi.mocked(jwtDecode).mockReturnValueOnce({
+    vi.mocked(decodeJwt).mockReturnValueOnce({
       exp: (Date.now() + 1 * 60 * 1000) / 1000,
     });
     vi.mocked(authSession).mockResolvedValueOnce(

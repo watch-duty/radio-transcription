@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 
-import { jwtDecode } from 'jwt-decode';
+import { decodeJwt } from 'jose';
 
 import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -48,7 +48,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     const checkAndRefresh = async () => {
       if (isRefreshingRef.current) return;
       try {
-        const decoded = jwtDecode(token);
+        const decoded = decodeJwt(token);
         const isExpiredOrSoon = decoded.exp
           ? decoded.exp * 1000 - Date.now() < 5 * 60 * 1000
           : true;
