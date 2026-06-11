@@ -124,9 +124,7 @@ def _batch_prediction_line(audio_uri: str, text: str) -> str:
                     ]
                 },
                 "response": {
-                    "candidates": [
-                        {"content": {"parts": [{"text": text}]}}
-                    ]
+                    "candidates": [{"content": {"parts": [{"text": text}]}}]
                 },
             }
         )
@@ -695,9 +693,7 @@ class TestEvaluateRun(unittest.TestCase):
                 "eval transcript",
             )
             pred_fields = [
-                key
-                for key in manifest_rows[0]
-                if key.startswith("pred_text_")
+                key for key in manifest_rows[0] if key.startswith("pred_text_")
             ]
             self.assertEqual(pred_fields, ["pred_text_gemini_3_1_flash_lite"])
 

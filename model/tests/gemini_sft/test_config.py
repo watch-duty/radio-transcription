@@ -97,9 +97,7 @@ learning_rate_multiplier = {values["learning_rate_multiplier"]}
     def test_missing_inference_dataset_slug_raises(self) -> None:
         body = self._valid_toml(inference_dataset_slug='""')
 
-        with self.assertRaisesRegex(
-            RunConfigError, "inference_dataset_slug"
-        ):
+        with self.assertRaisesRegex(RunConfigError, "inference_dataset_slug"):
             load_run_config(self._write_config(body))
 
     def test_inference_dataset_slug_rejects_unsafe_path_segments(

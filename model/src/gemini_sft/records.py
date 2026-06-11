@@ -243,7 +243,9 @@ def _append_inference_artifacts(
         ("tuned_batch_output_uri", "Tuned raw Vertex batch output"),
     ]
     present = [
-        (label, metrics[key]) for key, label in artifact_labels if metrics.get(key)
+        (label, metrics[key])
+        for key, label in artifact_labels
+        if metrics.get(key)
     ]
     if not present:
         return

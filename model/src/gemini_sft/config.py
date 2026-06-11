@@ -237,9 +237,7 @@ def _required_gcs_uri(data: dict[str, Any], key: str) -> str:
     return value
 
 
-def _required_inference_dataset_slug(
-    data: dict[str, Any], key: str
-) -> str:
+def _required_inference_dataset_slug(data: dict[str, Any], key: str) -> str:
     value = _required_str(data, key)
     try:
         return validate_inference_dataset_slug(value)

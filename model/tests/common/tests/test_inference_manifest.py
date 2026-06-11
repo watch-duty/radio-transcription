@@ -19,7 +19,9 @@ from common.inference_manifest import (  # noqa: E402
 
 
 class FakeBlob:
-    def __init__(self, store: dict[tuple[str, str], str], bucket: str, name: str):
+    def __init__(
+        self, store: dict[tuple[str, str], str], bucket: str, name: str
+    ) -> None:
         self._store = store
         self._bucket = bucket
         self.name = name

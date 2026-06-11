@@ -98,7 +98,9 @@ def evaluate_run(
     location = require_config_str(config, "location")
     run_gcs_prefix = require_config_str(config, "run_gcs_prefix")
     dataset = require_config_str(config, "dataset")
-    inference_dataset_slug = require_config_str(config, "inference_dataset_slug")
+    inference_dataset_slug = require_config_str(
+        config, "inference_dataset_slug"
+    )
     gcs_bucket = require_config_str(config, "gcs_bucket")
     epoch_count = require_config_int(config, "epoch_count")
     tuned_endpoint = config.get("endpoint")
