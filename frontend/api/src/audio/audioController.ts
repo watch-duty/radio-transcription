@@ -4,7 +4,6 @@ import type {
   AudioClassification,
   AudioSegment,
 } from '@transcription/common';
-import { GoogleAuth } from 'google-auth-library';
 import {
   Controller,
   Extension,
@@ -18,7 +17,7 @@ import {
 } from 'tsoa';
 
 import { AUDIO_SEGMENTS_API_URL } from '../config.js';
-import { HttpError, handleBackendError } from '../utils.js';
+import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
 
 interface BaseAnnotationBackend {
   audio_segment_id: string;
@@ -133,8 +132,7 @@ export class AudioController extends Controller {
         queryParams.append('is_alert', query.isAlert.toString());
       }
 
-      const auth = new GoogleAuth();
-      const client = await auth.getIdTokenClient(AUDIO_SEGMENTS_API_URL);
+      const client = await getServiceClient(AUDIO_SEGMENTS_API_URL);
       const response = await client.request({
         url: `${AUDIO_SEGMENTS_API_URL}?${queryParams.toString()}`,
         method: 'GET',
