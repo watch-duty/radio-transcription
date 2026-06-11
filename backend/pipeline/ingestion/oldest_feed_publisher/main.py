@@ -45,7 +45,10 @@ from typing import TYPE_CHECKING
 import functions_framework
 
 from backend.pipeline.common.clients.monitoring_client import MonitoringClient
-from backend.pipeline.common.log_helper import setup_logging
+from backend.pipeline.common.log_helper import (
+    setup_asyncio_logging,
+    setup_logging,
+)
 from backend.pipeline.storage.connection import create_pool_from_settings
 from backend.pipeline.storage.settings import AlloyDBSettings
 
@@ -92,6 +95,7 @@ logger = logging.getLogger(__name__)
 # instance. If anyone relaxes that to N>1, this code must add a
 # threading.Lock around the run_until_complete call.
 _loop = asyncio.new_event_loop()
+setup_asyncio_logging(_loop)
 
 # Reused across warm invocations.
 _monitoring_client: MonitoringClient | None = None
