@@ -144,7 +144,7 @@ class EvaluationService:
                 logger.info(
                     "End-to-end latency calculated",
                     extra={
-                        "e2e_latency_ms": total_latency_ms,
+                        "ingestion_to_transcription_e2e_latency": total_latency_ms,
                         "segment_id": new_audio.segment_id,
                         "feed_id": new_audio.feed_id,
                     }
