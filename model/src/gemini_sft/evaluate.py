@@ -21,6 +21,10 @@ from common.gemini.vertex import (
     parse_batch_output,
     submit_batch_inference,
 )
+from common.inference_manifest import (
+    model_family_slug_from_model_id,
+    upload_inference_manifest,
+)
 from common.manifest import rows_from_manifest
 from common.scoring import (
     bootstrap_paired,
@@ -94,6 +98,8 @@ def evaluate_run(
     location = require_config_str(config, "location")
     run_gcs_prefix = require_config_str(config, "run_gcs_prefix")
     dataset = require_config_str(config, "dataset")
+    inference_dataset_slug = require_config_str(config, "inference_dataset_slug")
+    gcs_bucket = require_config_str(config, "gcs_bucket")
     epoch_count = require_config_int(config, "epoch_count")
     tuned_endpoint = config.get("endpoint")
     base_only = bool(getattr(args, "base_only", False))
@@ -108,9 +114,20 @@ def evaluate_run(
 
     eval_entries = download_jsonl_manifest(storage_client, eval_manifest_uri)
     eval_rows = rows_from_manifest(eval_entries)
+    source_rows = _scored_source_rows(eval_entries)
+    if len(source_rows) != len(eval_rows):
+        logger.error(
+            "raw eval rows and parsed eval rows diverged for %s: %s raw "
+            "scored rows vs %s parsed rows.",
+            eval_manifest_uri,
+            len(source_rows),
+            len(eval_rows),
+        )
+        return 1
     if not eval_rows:
         logger.error("Eval manifest has no parsed rows: %s", eval_manifest_uri)
         return 1
+    model_family_slug = model_family_slug_from_model_id(base_model)
 
     base_preds = batch_infer(
         storage_client=storage_client,
@@ -144,6 +161,16 @@ def evaluate_run(
     # Store raw batch output locations alongside metrics so future reviewers can
     # recalculate WER from Vertex responses without rerunning inference.
     metrics["base_batch_output_uri"] = base_preds.output_uri
+    metrics["base_inference_manifest_uri"] = upload_inference_manifest(
+        storage_client,
+        bucket_name=gcs_bucket,
+        inference_dataset_slug=inference_dataset_slug,
+        model_family_slug=model_family_slug,
+        run_id=run_cfg.round_id,
+        artifact_label="base",
+        source_rows=source_rows,
+        predictions_by_audio_uri=base_preds,
+    )
 
     if not base_only and tuned_endpoint:
         tuned_preds = batch_infer(
@@ -166,6 +193,16 @@ def evaluate_run(
             metrics, refs, durations, base_hyps, tuned_hyps, normalizer
         )
         metrics["tuned_batch_output_uri"] = tuned_preds.output_uri
+        metrics["tuned_inference_manifest_uri"] = upload_inference_manifest(
+            storage_client,
+            bucket_name=gcs_bucket,
+            inference_dataset_slug=inference_dataset_slug,
+            model_family_slug=model_family_slug,
+            run_id=run_cfg.round_id,
+            artifact_label="tuned",
+            source_rows=source_rows,
+            predictions_by_audio_uri=tuned_preds,
+        )
 
     write_wer_summary(RESULTS_DIR, run_cfg.round_id, metrics)
     config.update(
@@ -203,6 +240,14 @@ class PredictionMap(dict[str, str]):
     """Prediction map with the GCS output URI attached for provenance."""
 
     output_uri: str
+
+
+def _scored_source_rows(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        dict(entry)
+        for entry in entries
+        if entry.get("audio_filepath") and entry.get("text")
+    ]
 
 
 def batch_infer(

@@ -110,21 +110,48 @@ def _manifest(rows: list[dict[str, Any]]) -> str:
     return "".join(json.dumps(row) + "\n" for row in rows)
 
 
+def _batch_prediction_line(audio_uri: str, text: str) -> str:
+    return (
+        json.dumps(
+            {
+                "request": {
+                    "contents": [
+                        {
+                            "parts": [
+                                {"fileData": {"fileUri": audio_uri}},
+                            ]
+                        }
+                    ]
+                },
+                "response": {
+                    "candidates": [
+                        {"content": {"parts": [{"text": text}]}}
+                    ]
+                },
+            }
+        )
+        + "\n"
+    )
+
+
 def _row(
-    uri: str, text: str = "alpha", duration: float = 3.0
+    uri: str, text: str = "alpha", duration: float = 3.0, **extra: Any
 ) -> dict[str, Any]:
-    return {
+    row = {
         "audio_filepath": uri,
         "text": text,
         "offset": 0.0,
         "duration": duration,
     }
+    row.update(extra)
+    return row
 
 
 def _config_text(round_id: str = "round-a") -> str:
     return f"""
 round_id = "{round_id}"
 dataset = "wd-internal-v1"
+inference_dataset_slug = "echo/eval"
 train_manifest_uri = "gs://source/manifests/train.jsonl"
 validation_manifest_uri = "gs://source/manifests/validation.jsonl"
 eval_manifest_uri = "gs://source/manifests/eval.jsonl"
@@ -606,7 +633,15 @@ class TestEvaluateRun(unittest.TestCase):
             run_cfg = load_run_config(cfg_path)
             storage.put(
                 run_cfg.paths.canonical_eval_uri,
-                _manifest([_row("gs://audio/eval.flac", "eval transcript")]),
+                _manifest(
+                    [
+                        _row(
+                            "gs://audio/eval.flac",
+                            "eval transcript",
+                            dataset_name="echo",
+                        )
+                    ]
+                ),
             )
             storage.put(
                 run_cfg.paths.config_uri, json.dumps(run_cfg.to_record_dict())
@@ -615,33 +650,9 @@ class TestEvaluateRun(unittest.TestCase):
             pred_blob = f"{output_uri}predictions.jsonl"
             storage.put(
                 pred_blob,
-                json.dumps(
-                    {
-                        "request": {
-                            "contents": [
-                                {
-                                    "parts": [
-                                        {
-                                            "fileData": {
-                                                "fileUri": "gs://audio/eval.flac"
-                                            }
-                                        }
-                                    ]
-                                }
-                            ]
-                        },
-                        "response": {
-                            "candidates": [
-                                {
-                                    "content": {
-                                        "parts": [{"text": "eval transcript"}]
-                                    }
-                                }
-                            ]
-                        },
-                    }
-                )
-                + "\n",
+                _batch_prediction_line(
+                    "gs://audio/eval.flac", "eval transcript"
+                ),
             )
             args = argparse.Namespace(config=str(cfg_path), base_only=True)
 
@@ -666,7 +677,105 @@ class TestEvaluateRun(unittest.TestCase):
                 )
             )
             self.assertEqual(metrics["base_batch_output_uri"], output_uri)
+            self.assertEqual(
+                metrics["base_inference_manifest_uri"],
+                "gs://test-bucket/inference_manifests/echo/eval/"
+                "gemini_3_1_flash_lite/round-a/base.jsonl",
+            )
             self.assertEqual(metrics["base_wer"], 0.0)
+            manifest_rows = [
+                json.loads(line)
+                for line in storage.get(
+                    metrics["base_inference_manifest_uri"]
+                ).splitlines()
+            ]
+            self.assertEqual(manifest_rows[0]["dataset_name"], "echo")
+            self.assertEqual(
+                manifest_rows[0]["pred_text_gemini_3_1_flash_lite"],
+                "eval transcript",
+            )
+            pred_fields = [
+                key
+                for key in manifest_rows[0]
+                if key.startswith("pred_text_")
+            ]
+            self.assertEqual(pred_fields, ["pred_text_gemini_3_1_flash_lite"])
+
+    def test_eval_writes_tuned_inference_manifest_uri(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            _seed_source_manifests(storage, eval_uri="gs://audio/eval.flac")
+            cfg_path = _write_config_file(tmp)
+            run_cfg = load_run_config(cfg_path)
+            storage.put(
+                run_cfg.paths.canonical_eval_uri,
+                _manifest(
+                    [
+                        _row(
+                            "gs://audio/eval.flac",
+                            "eval transcript",
+                            dataset_name="echo",
+                        )
+                    ]
+                ),
+            )
+            config = {
+                **run_cfg.to_record_dict(),
+                "endpoint": "projects/test/locations/us/endpoints/1",
+            }
+            base_output = f"{run_cfg.paths.gcs_prefix}/evals/base/output/"
+            tuned_output = f"{run_cfg.paths.gcs_prefix}/evals/tuned/output/"
+            storage.put(
+                f"{base_output}predictions.jsonl",
+                _batch_prediction_line(
+                    "gs://audio/eval.flac", "eval transcript"
+                ),
+            )
+            storage.put(
+                f"{tuned_output}predictions.jsonl",
+                _batch_prediction_line(
+                    "gs://audio/eval.flac", "eval transcript"
+                ),
+            )
+            args = argparse.Namespace(config=str(cfg_path), base_only=False)
+
+            with (
+                unittest.mock.patch.object(
+                    evaluate_module, "RESULTS_DIR", tmp / "results"
+                ),
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "submit_batch_inference",
+                    side_effect=lambda **kwargs: kwargs["output_uri"],
+                ),
+            ):
+                rc = evaluate_module.evaluate_run(
+                    args, run_cfg, storage, config
+                )
+
+            self.assertEqual(rc, 0)
+            metrics = json.loads(
+                (tmp / "results" / "round-a" / "wer_summary.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                metrics["tuned_inference_manifest_uri"],
+                "gs://test-bucket/inference_manifests/echo/eval/"
+                "gemini_3_1_flash_lite/round-a/tuned.jsonl",
+            )
+            tuned_rows = [
+                json.loads(line)
+                for line in storage.get(
+                    metrics["tuned_inference_manifest_uri"]
+                ).splitlines()
+            ]
+            self.assertEqual(tuned_rows[0]["dataset_name"], "echo")
+            self.assertEqual(
+                tuned_rows[0]["pred_text_gemini_3_1_flash_lite"],
+                "eval transcript",
+            )
 
     def test_eval_manifest_uri_comes_from_gcs_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
@@ -689,29 +798,9 @@ class TestEvaluateRun(unittest.TestCase):
             output_uri = f"{run_cfg.paths.gcs_prefix}/evals/base/output/"
             storage.put(
                 f"{output_uri}predictions.jsonl",
-                json.dumps(
-                    {
-                        "request": {
-                            "contents": [
-                                {
-                                    "parts": [
-                                        {
-                                            "fileData": {
-                                                "fileUri": "gs://audio/prepared-eval.flac"
-                                            }
-                                        }
-                                    ]
-                                }
-                            ]
-                        },
-                        "response": {
-                            "candidates": [
-                                {"content": {"parts": [{"text": "prepared"}]}}
-                            ]
-                        },
-                    }
-                )
-                + "\n",
+                _batch_prediction_line(
+                    "gs://audio/prepared-eval.flac", "prepared"
+                ),
             )
             args = argparse.Namespace(config=str(cfg_path), base_only=True)
 
