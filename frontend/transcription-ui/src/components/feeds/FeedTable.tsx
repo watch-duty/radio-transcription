@@ -537,7 +537,7 @@ export function FeedTable({
             }}
           >
             <TuneIcon color="action" fontSize="small" />
-            <Box sx={{ flexGrow: 1, minWidth: 120, maxWidth: { sm: 200 } }}>
+            <Box sx={{ flexGrow: 1 }}>
               <MultiSelectFilter
                 label="Source Type"
                 options={ALL_SOURCE_TYPES}
@@ -551,7 +551,7 @@ export function FeedTable({
                 size="small"
               />
             </Box>
-            <Box sx={{ flexGrow: 1, minWidth: 120, maxWidth: { sm: 160 } }}>
+            <Box sx={{ flexGrow: 1 }}>
               <MultiSelectFilter
                 label="Status"
                 options={['Active', 'Inactive', 'Error']}
@@ -562,7 +562,7 @@ export function FeedTable({
                 size="small"
               />
             </Box>
-            <Box sx={{ flexGrow: 1, minWidth: 120, maxWidth: { sm: 200 } }}>
+            <Box sx={{ flexGrow: 1 }}>
               <MultiSelectFilter
                 label="Tags"
                 options={tags}
