@@ -142,11 +142,11 @@ export class AudioController extends Controller {
 
       const data = response.data as {
         segments: AudioSegmentBackend[];
-        nextToken?: string;
+        next_token?: string;
       };
       return {
         segments: data.segments.map(convertAudioSegmentBackend),
-        nextToken: data.nextToken,
+        nextToken: data.next_token,
       };
     } catch (error: unknown) {
       const { status, message } = handleBackendError(

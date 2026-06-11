@@ -362,11 +362,26 @@ class TestListAudioSegmentsFilters:
     async def test_next_token(
         self, store: AudioSegmentStore, test_segments: dict
     ) -> None:
-        res_limit = await store.list_audio_segments(limit=1)
-        assert len(res_limit.segments) == 1
-        assert res_limit.next_token is not None
+        # Page 1: limit=2
+        res1 = await store.list_audio_segments(limit=2)
+        assert len(res1.segments) == 2
+        assert res1.next_token is not None
+        assert res1.segments[0].id == test_segments["segment_has_alert"].id
+        assert res1.segments[1].id == test_segments["segment_no_annotation"].id
 
-        res_next = await store.list_audio_segments(
-            next_token=res_limit.next_token
+        # Page 2: limit=2
+        res2 = await store.list_audio_segments(
+            next_token=res1.next_token, limit=2
         )
-        assert len(res_next.segments) == 4
+        assert len(res2.segments) == 2
+        assert res2.next_token is not None
+        assert res2.segments[0].id == test_segments["segment_no_evaluation"].id
+        assert res2.segments[1].id == test_segments["segment_no_transcript"].id
+
+        # Page 3: limit=2 (only 1 item remaining)
+        res3 = await store.list_audio_segments(
+            next_token=res2.next_token, limit=2
+        )
+        assert len(res3.segments) == 1
+        assert res3.next_token is None
+        assert res3.segments[0].id == test_segments["segment_no_alert"].id

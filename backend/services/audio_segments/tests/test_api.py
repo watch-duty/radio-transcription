@@ -100,7 +100,7 @@ class TestAudioSegmentsAPI(unittest.TestCase):
                 "start_time": start_time,
                 "end_time": end_time,
                 "order": "asc",
-                "has_alert": True,
+                "is_alert": True,
             },
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
