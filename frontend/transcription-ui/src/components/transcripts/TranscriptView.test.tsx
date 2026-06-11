@@ -1059,8 +1059,10 @@ describe('TranscriptView', () => {
   it('advances playback to the next silence segment inside a silence bundle when the current one finishes', async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let lastHowlOptions: any = null;
+
     const initSpy = vi
-      .spyOn(Howl.prototype, 'init')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .spyOn(Howl.prototype as any, 'init')
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .mockImplementation(function (this: any, o: any) {
         lastHowlOptions = o;
@@ -1069,7 +1071,8 @@ describe('TranscriptView', () => {
       });
 
     const playSpy = vi
-      .spyOn(Howl.prototype, 'play')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .spyOn(Howl.prototype as any, 'play')
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .mockImplementation(function (this: any) {
         if (lastHowlOptions?.onplay) {
