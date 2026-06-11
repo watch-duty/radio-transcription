@@ -191,7 +191,7 @@ def upload_inference_manifest(
         run_id=run_id,
         artifact_label=artifact_label,
     )
-    jsonl_content = "\n".join(json.dumps(row) for row in rows) + "\n"
+    jsonl_content = "".join(json.dumps(row) + "\n" for row in rows)
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(blob_path)
     blob.upload_from_string(

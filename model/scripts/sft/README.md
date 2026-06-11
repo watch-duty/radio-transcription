@@ -78,7 +78,8 @@ resume/eval runs.
 
 `dataset` identifies the SFT training recipe/version. `inference_dataset_slug`
 identifies the evaluated corpus/split used for normalized inference-manifest
-output placement, such as `echo/eval`.
+output placement, such as `echo/eval`. Older local `run.toml` files must add
+this field before they can be used with the current CLI.
 
 ## Data Split Contract
 

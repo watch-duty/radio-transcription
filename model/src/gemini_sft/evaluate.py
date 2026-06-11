@@ -243,6 +243,8 @@ class PredictionMap(dict[str, str]):
 
 
 def _scored_source_rows(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    # Keep this predicate in lockstep with rows_from_manifest. JiWER rejects
+    # empty reference strings, so empty text rows are not scoreable here.
     return [
         dict(entry)
         for entry in entries
