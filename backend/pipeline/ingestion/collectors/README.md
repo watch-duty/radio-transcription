@@ -108,8 +108,8 @@ or count it as audio progress. It may clear stale persisted failure state when
 the leased feed is dirty (`failure_count > 0` or `status_reason IS NOT NULL`).
 
 For Broadcastify Calls, the source item is a call entry in the API `calls`
-array. A missing or non-list `calls` field is treated as an empty page under the
-collector's current extraction semantics. A missing `lastPos` is still a
+array. A missing `calls` field is treated as an empty page; a present non-list
+`calls` field is malformed source data. A missing `lastPos` is still a
 successful observation but does not advance a resume cursor.
 
 For Fire Notifications, yield `SourceObservation` when the poll succeeds and
@@ -169,6 +169,30 @@ explain why policies are scoped by endpoint/stage, not restate every mapping.
 Reason strings must stay short, bounded, and safe for operator surfaces. Do not
 include URLs, ffmpeg stderr blobs, stack traces, tokens, object IDs, timestamps,
 request bodies, signed URLs, feed IDs, call IDs, or secrets in `reason`.
+
+## Shared Collector Helpers
+
+Use the focused helpers at source boundaries where their contracts match:
+
+- `control_flow.sleep_or_cancel` replaces local boolean sleep helpers. It returns
+  after a normal timeout and raises `asyncio.CancelledError` when shutdown
+  interrupts the wait. Shutdown is a stop condition, not an item or feed
+  failure.
+- Completed item download helpers should return `bytes | ItemFailure`.
+  `None` is not an item-download result. Use
+  `item_downloads.classify_item_http_status` for terminal item HTTP evidence and
+  `item_downloads.item_download_failed` when retries exhaust without terminal
+  HTTP evidence.
+- `polling_payloads.extract_optional_item_list` is for optional item arrays in
+  successful polling payloads. Missing fields mean an empty observation; present
+  non-list fields raise a bounded malformed-payload `FeedFailure`.
+- `telemetry.emit_call_download_failed` is the single call-download-failed SLO
+  emit point. Collectors pass only bounded feed metadata.
+
+Collectors still own transport choice, retry loops, source-specific backoff,
+same-endpoint probes, and item-to-feed promotion. Do not move HTTP sessions,
+`curl_cffi` behavior, websocket handling, ffmpeg execution, or
+`ItemBatchOutcome` promotion into the shared helpers.
 
 ## Adding a VM Collector
 

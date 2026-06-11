@@ -79,12 +79,12 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         failure = _require_item_failure(result)
         self.assertIs(
             failure.status_reason,
-            FeedStatusReason.SOURCE_UNREACHABLE,
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
         )
         self.assertEqual(failure.reason, "item_http_404")
 
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_5xx_retry_success(self, mock_sleep: AsyncMock) -> None:
@@ -101,7 +101,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.session.get.call_count, 2)
 
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_5xx_max_retries_fail(self, mock_sleep: MagicMock) -> None:
@@ -123,7 +123,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_network_errors_exhausted_return_item_failure(
@@ -304,7 +304,10 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
     async def test_failed_download_does_not_mark_uuid_seen(
         self, mock_download: AsyncMock
     ) -> None:
-        mock_download.return_value = None
+        mock_download.return_value = ItemFailure(
+            FeedStatusReason.SOURCE_UNREACHABLE,
+            "item_download_failed",
+        )
         files = [
             {
                 "type": "file",
@@ -315,22 +318,28 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         ]
 
         chunks = []
-        async for chunk in collector._process_file_list(
-            files,
-            self.session,
-            self.shutdown,
-            "session-id",
-            self.feed,  # type: ignore
-            self.processed_uuids,
-            "CHAN",
-            "http://mock-s3-bucket",
-            ItemBatchOutcome(),
-        ):
-            chunks.append(chunk)
+        with self.assertRaises(FeedFailure) as ctx:
+            async for chunk in collector._process_file_list(
+                files,
+                self.session,
+                self.shutdown,
+                "session-id",
+                self.feed,  # type: ignore
+                self.processed_uuids,
+                "CHAN",
+                "http://mock-s3-bucket",
+                ItemBatchOutcome(),
+            ):
+                chunks.append(chunk)
 
         self.assertEqual(len(chunks), 0)
         self.assertEqual(len(self.processed_uuids), 0)
         self.assertNotIn("uuid1", self.processed_uuids)
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+        self.assertEqual(ctx.exception.reason, "item_download_failed")
 
     @patch(
         "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
@@ -446,7 +455,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         self.resources = MagicMock()
 
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     @patch(
@@ -568,7 +577,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(str(ctx.exception), expected_reason)
 
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     @patch(
@@ -611,7 +620,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mock_session.get.call_count, 11)
 
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     @patch(
@@ -686,7 +695,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         mock_download.assert_awaited_once()
 
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector._sleep_or_shutdown",
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     @patch(
@@ -695,9 +704,13 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
     async def test_polling_passes_authorization_header(
         self, mock_session_cls: MagicMock, mock_sleep: AsyncMock
     ) -> None:
-        mock_sleep.return_value = True  # Trigger immediate exit from loop
         mock_session = mock_session_cls.return_value
         mock_session.close = AsyncMock()
+
+        async def _stop_after_poll_sleep(*_args: object) -> None:
+            self.shutdown.set()
+
+        mock_sleep.side_effect = _stop_after_poll_sleep
 
         resp_ok = MagicMock(status_code=200)
         resp_ok.json.return_value = {"files": []}

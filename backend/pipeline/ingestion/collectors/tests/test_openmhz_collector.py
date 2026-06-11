@@ -96,7 +96,7 @@ class TestDownloadM4a(unittest.IsolatedAsyncioTestCase):
         cases = {
             401: FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
             403: FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-            404: FeedStatusReason.SOURCE_UNREACHABLE,
+            404: FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
             429: FeedStatusReason.SOURCE_RATE_LIMITED,
         }
         for status, reason in cases.items():
@@ -114,7 +114,7 @@ class TestDownloadM4a(unittest.IsolatedAsyncioTestCase):
                 self.assertIs(failure.status_reason, reason)
                 self.assertEqual(failure.reason, f"item_http_{status}")
 
-    @patch(f"{_COL_MOD}._sleep_or_shutdown", new_callable=AsyncMock)
+    @patch(f"{_COL_MOD}.control_flow.sleep_or_cancel", new_callable=AsyncMock)
     async def test_retry_exhausted_5xx_returns_item_failure(
         self,
         mock_sleep: AsyncMock,
@@ -137,7 +137,7 @@ class TestDownloadM4a(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(failure.reason, "item_http_503")
         self.assertEqual(self.session.get.call_count, 3)
 
-    @patch(f"{_COL_MOD}._sleep_or_shutdown", new_callable=AsyncMock)
+    @patch(f"{_COL_MOD}.control_flow.sleep_or_cancel", new_callable=AsyncMock)
     async def test_network_errors_exhausted_return_item_failure(
         self,
         mock_sleep: AsyncMock,
@@ -255,7 +255,13 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             _make_call(call_id="good"),
         ]
         mock_transport.side_effect = lambda *a, **kw: _mock_transport(calls)
-        mock_download.side_effect = [None, b"m4a"]
+        mock_download.side_effect = [
+            ItemFailure(
+                FeedStatusReason.SOURCE_UNREACHABLE,
+                "item_download_failed",
+            ),
+            b"m4a",
+        ]
 
         shutdown = asyncio.Event()
         results = []
@@ -323,7 +329,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(ctx.exception), "invalid_openmhz_transport")
 
     @patch(f"{_COL_MOD}.websocket_transport")
-    @patch(f"{_COL_MOD}._sleep_or_shutdown", new_callable=AsyncMock)
+    @patch(f"{_COL_MOD}.control_flow.sleep_or_cancel", new_callable=AsyncMock)
     async def test_raises_after_max_reconnect_failures(
         self,
         mock_sleep: AsyncMock,
@@ -419,7 +425,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
 
     @patch(f"{_COL_MOD}.websocket_transport")
     @patch(f"{_COL_MOD}._download_m4a")
-    @patch(f"{_COL_MOD}._sleep_or_shutdown", new_callable=AsyncMock)
+    @patch(f"{_COL_MOD}.control_flow.sleep_or_cancel", new_callable=AsyncMock)
     async def test_session_id_changes_on_reconnect(
         self,
         mock_sleep: AsyncMock,
@@ -510,7 +516,7 @@ class TestOpenmhzReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
 class TestOpenmhzCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
     """LOG-02: OpenMHZ emits call_download_failed at _download_m4a caller."""
 
-    @patch(f"{_COL_MOD}._sleep_or_shutdown", new_callable=AsyncMock)
+    @patch(f"{_COL_MOD}.control_flow.sleep_or_cancel", new_callable=AsyncMock)
     @patch(f"{_COL_MOD}.websocket_transport")
     @patch(f"{_COL_MOD}._download_m4a")
     async def test_emits_call_download_failed_on_terminal_failure(
@@ -521,12 +527,17 @@ class TestOpenmhzCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         call = _make_call(call_id="terminal-fail", length_sec=5)
         mock_transport.side_effect = lambda *a, **kw: _mock_transport([call])
-        mock_download.return_value = None  # terminal failure
-        # After transport events exhaust, collector reconnects (while loop);
-        # returning True from _sleep_or_shutdown signals shutdown, ending the loop.
-        mock_sleep.return_value = True
-
         shutdown = asyncio.Event()
+
+        async def _stop_after_reconnect_sleep(*_args: object) -> None:
+            shutdown.set()
+
+        mock_download.return_value = ItemFailure(
+            FeedStatusReason.SOURCE_UNREACHABLE,
+            "item_download_failed",
+        )
+        mock_sleep.side_effect = _stop_after_reconnect_sleep
+
         with self.assertLogs(
             "backend.pipeline.ingestion.collectors.openmhz.collector",
             level="WARNING",

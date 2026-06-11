@@ -15,6 +15,12 @@ from urllib.parse import urlparse
 import aiohttp
 from google.cloud import secretmanager
 
+from backend.pipeline.ingestion.collectors import (
+    control_flow,
+    item_downloads,
+    polling_payloads,
+    telemetry,
+)
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemBatchOutcome,
     ItemFailure,
@@ -35,7 +41,6 @@ from backend.pipeline.ingestion.models import (
 from backend.pipeline.ingestion.slo_contract import (
     EVENT_TYPE_BCFY_JWT_FETCH_FAILED,
     EVENT_TYPE_CALL_AUTH_FAILURE,
-    EVENT_TYPE_CALL_DOWNLOAD_FAILED,
 )
 from backend.pipeline.storage.feed_store import FeedStatusReason
 
@@ -89,15 +94,6 @@ class AuthError(Exception):
 class _CallChunkResult:
     chunk: CapturedChunk | None = None
     failure: ItemFailure | None = None
-
-
-async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
-    """Sleep for *seconds*, returning ``True`` if interrupted by shutdown."""
-    try:
-        await asyncio.wait_for(shutdown.wait(), timeout=seconds)
-    except TimeoutError:
-        return False
-    return True
 
 
 def _get_jwt_token() -> str:
@@ -277,7 +273,7 @@ def _raise_for_fatal_status(
     raise collector_failure(classification.status_reason, classification.reason)
 
 
-async def _fetch_calls(  # noqa: PLR0911, PLR0912
+async def _fetch_calls(  # noqa: PLR0911
     session: aiohttp.ClientSession,
     url: str,
     headers: dict[str, str],
@@ -289,7 +285,7 @@ async def _fetch_calls(  # noqa: PLR0911, PLR0912
     """Fetch audio calls from Broadcastify, handling retries for 5XX errors."""
     for attempt in range(_MAX_5XX_RETRIES + 1):
         if shutdown_event.is_set():
-            return None
+            raise asyncio.CancelledError
 
         async with session.get(url, headers=headers, params=params) as resp:
             _raise_for_fatal_status(resp.status, feed_id, source_feed_id)
@@ -310,8 +306,7 @@ async def _fetch_calls(  # noqa: PLR0911, PLR0912
                         _MAX_5XX_RETRIES,
                         delay,
                     )
-                    if await _sleep_or_shutdown(shutdown_event, delay):
-                        return None
+                    await control_flow.sleep_or_cancel(shutdown_event, delay)
                     continue
 
                 logger.error(
@@ -339,8 +334,7 @@ async def _fetch_calls(  # noqa: PLR0911, PLR0912
                         _MAX_5XX_RETRIES,
                         delay,
                     )
-                    if await _sleep_or_shutdown(shutdown_event, delay):
-                        return None
+                    await control_flow.sleep_or_cancel(shutdown_event, delay)
                     continue
 
                 logger.error(
@@ -408,12 +402,12 @@ def _get_audio_format(url: str) -> str:
     return "mp3"
 
 
-async def _download_audio(  # noqa: PLR0911, PLR0912
+async def _download_audio(  # noqa: PLR0911
     session: aiohttp.ClientSession,
     audio_url: str,
     shutdown_event: asyncio.Event,
     out_headers: dict[str, str] | None = None,
-) -> bytes | ItemFailure | None:
+) -> bytes | ItemFailure:
     """Download audio file."""
     timeout = aiohttp.ClientTimeout(total=_AUDIO_TIMEOUT_SEC)
     for attempt in range(_AUDIO_FILE_DOWNLOAD_MAX_RETRIES + 1):
@@ -425,13 +419,9 @@ async def _download_audio(  # noqa: PLR0911, PLR0912
                         audio_resp.status,
                         audio_url,
                     )
-                    classification = http_status.classify_http_status(
-                        audio_resp.status,
-                        reason_prefix="item_http",
+                    return item_downloads.classify_item_http_status(
+                        audio_resp.status
                     )
-                    if classification is None:
-                        return None
-                    return ItemFailure.from_classification(classification)
 
                 if audio_resp.status == 429:
                     if attempt < _AUDIO_FILE_DOWNLOAD_MAX_RETRIES:
@@ -446,17 +436,14 @@ async def _download_audio(  # noqa: PLR0911, PLR0912
                             delay,
                             audio_url,
                         )
-                        if await _sleep_or_shutdown(shutdown_event, delay):
-                            return None
+                        await control_flow.sleep_or_cancel(
+                            shutdown_event, delay
+                        )
                         continue
 
-                    classification = http_status.classify_http_status(
-                        audio_resp.status,
-                        reason_prefix="item_http",
+                    return item_downloads.classify_item_http_status(
+                        audio_resp.status
                     )
-                    if classification is None:
-                        return None
-                    return ItemFailure.from_classification(classification)
 
                 if 500 <= audio_resp.status <= 599:
                     if attempt < _AUDIO_FILE_DOWNLOAD_MAX_RETRIES:
@@ -472,8 +459,9 @@ async def _download_audio(  # noqa: PLR0911, PLR0912
                             delay,
                             audio_url,
                         )
-                        if await _sleep_or_shutdown(shutdown_event, delay):
-                            return None
+                        await control_flow.sleep_or_cancel(
+                            shutdown_event, delay
+                        )
                         continue
 
                     logger.error(
@@ -483,13 +471,9 @@ async def _download_audio(  # noqa: PLR0911, PLR0912
                         _AUDIO_FILE_DOWNLOAD_MAX_RETRIES,
                         audio_url,
                     )
-                    classification = http_status.classify_http_status(
-                        audio_resp.status,
-                        reason_prefix="item_http",
+                    return item_downloads.classify_item_http_status(
+                        audio_resp.status
                     )
-                    if classification is None:
-                        return None
-                    return ItemFailure.from_classification(classification)
 
                 if audio_resp.status != 200:
                     logger.error(
@@ -497,15 +481,8 @@ async def _download_audio(  # noqa: PLR0911, PLR0912
                         audio_url,
                         audio_resp.status,
                     )
-                    classification = http_status.classify_http_status(
-                        audio_resp.status,
-                        reason_prefix="item_http",
-                    )
-                    if classification is not None:
-                        return ItemFailure.from_classification(classification)
-                    return ItemFailure(
-                        FeedStatusReason.SOURCE_UNREACHABLE,
-                        "audio_download_failed",
+                    return item_downloads.classify_item_http_status(
+                        audio_resp.status
                     )
 
                 if out_headers is not None:
@@ -524,8 +501,7 @@ async def _download_audio(  # noqa: PLR0911, PLR0912
                     audio_url,
                     exc_info=e,
                 )
-                if await _sleep_or_shutdown(shutdown_event, delay):
-                    return None
+                await control_flow.sleep_or_cancel(shutdown_event, delay)
                 continue
             logger.exception(
                 "Network error downloading audio after %d retries,"
@@ -533,21 +509,21 @@ async def _download_audio(  # noqa: PLR0911, PLR0912
                 _AUDIO_FILE_DOWNLOAD_MAX_RETRIES,
                 audio_url,
             )
-            return ItemFailure(
-                FeedStatusReason.SOURCE_UNREACHABLE,
-                "audio_download_failed",
-            )
-    return None
+            return item_downloads.item_download_failed()
+    return item_downloads.item_download_failed()
 
 
 def _extract_calls_from_response(
     bcfy_calls: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
     """Safely extract the calls list from the API response."""
-    if not isinstance(bcfy_calls, dict):
+    if bcfy_calls is None:
         return []
-    response_calls = bcfy_calls.get("calls")
-    return response_calls if isinstance(response_calls, list) else []
+    return polling_payloads.extract_optional_item_list(
+        bcfy_calls,
+        "calls",
+        malformed_reason="calls_api_payload_malformed",
+    )
 
 
 def _last_pos_to_resume_position(
@@ -586,14 +562,11 @@ async def _create_chunk_from_call(
         audio_result = await _download_audio(
             session, audio_url, shutdown_event, out_h
         )
+    except asyncio.CancelledError:
+        raise
     except Exception as e:
         logger.exception("Failed to process audio for %s: %s", audio_url, e)
-        return _CallChunkResult(
-            failure=ItemFailure(
-                FeedStatusReason.SOURCE_UNREACHABLE,
-                "audio_download_failed",
-            )
-        )
+        return _CallChunkResult(failure=item_downloads.item_download_failed())
 
     if isinstance(audio_result, ItemFailure):
         return _CallChunkResult(failure=audio_result)
@@ -665,7 +638,7 @@ async def _handle_loop_failure(
     consecutive_failures += 1
     if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
         raise collector_failure(failure.status_reason, failure.reason)
-    await _sleep_or_shutdown(shutdown_event, _POLL_INTERVAL_SEC)
+    await control_flow.sleep_or_cancel(shutdown_event, _POLL_INTERVAL_SEC)
     return consecutive_failures
 
 
@@ -784,16 +757,10 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                     chunk = call_result.chunk
                     if not chunk:
                         if not shutdown_event.is_set():
-                            # SLO: call_download_failed emit — bcfy_calls _create_chunk_from_call returned None
-                            logger.warning(
-                                "Call download failed",
-                                extra={
-                                    "json_fields": {
-                                        "event_type": EVENT_TYPE_CALL_DOWNLOAD_FAILED,
-                                        "feed_id": str(feed["id"]),
-                                        "source_type": feed["source_type"],
-                                    },
-                                },
+                            telemetry.emit_call_download_failed(
+                                logger,
+                                feed_id=feed["id"],
+                                source_type=feed["source_type"],
                             )
                         continue
 
@@ -832,7 +799,11 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                 last_bookmark_time_unix = bcfy_calls["lastPos"]
 
             # Wait before polling again, gracefully interruptible by shutdown
-            await _sleep_or_shutdown(shutdown_event, _POLL_INTERVAL_SEC)
+            if shutdown_event.is_set():
+                return
+            await control_flow.sleep_or_cancel(
+                shutdown_event, _POLL_INTERVAL_SEC
+            )
 
         except AuthError:
             # Structured so it joins the other ingestion SLO/alert surfaces via

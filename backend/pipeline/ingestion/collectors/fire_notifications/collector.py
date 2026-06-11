@@ -13,7 +13,13 @@ from zoneinfo import ZoneInfo
 from curl_cffi.requests import AsyncSession
 
 from backend.pipeline.common.audio import get_audio_duration
-from backend.pipeline.ingestion.collectors import failure_classification
+from backend.pipeline.ingestion.collectors import (
+    control_flow,
+    failure_classification,
+    item_downloads,
+    polling_payloads,
+    telemetry,
+)
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemBatchOutcome,
     ItemFailure,
@@ -31,9 +37,6 @@ from backend.pipeline.ingestion.models import (
     SourceObservation,
 )
 from backend.pipeline.ingestion.settings import _require_env
-from backend.pipeline.ingestion.slo_contract import (
-    EVENT_TYPE_CALL_DOWNLOAD_FAILED,
-)
 from backend.pipeline.storage import feed_store
 
 if TYPE_CHECKING:
@@ -86,21 +89,11 @@ def _build_auth_headers() -> dict[str, str]:
     return {"Authorization": f"Basic {encoded}"}
 
 
-async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
-    """Sleep for *seconds*, returning ``True`` if interrupted by shutdown."""
-    try:
-        await asyncio.wait_for(shutdown.wait(), timeout=seconds)
-    except TimeoutError:
-        return False
-    else:
-        return True
-
-
 async def _download_audio(
     session: AsyncSession,
     url: str,
     shutdown: asyncio.Event,
-) -> bytes | ItemFailure | None:
+) -> bytes | ItemFailure:
     """Download audio file from S3 with retries."""
     # Note: We use a manual retry loop instead of 'tenacity' to easily
     # interrupt the backoff sleep when the shutdown event is set,
@@ -118,13 +111,9 @@ async def _download_audio(
                     resp.status_code,
                     url,
                 )
-                classification = http_status.classify_http_status(
-                    resp.status_code,
-                    reason_prefix="item_http",
+                return item_downloads.classify_item_http_status(
+                    resp.status_code
                 )
-                if classification is None:
-                    return None
-                return ItemFailure.from_classification(classification)
             logger.warning(
                 "Download %d (attempt %d/%d): url=%s",
                 resp.status_code,
@@ -141,23 +130,14 @@ async def _download_audio(
                 exc_info=True,
             )
         if attempt < _DOWNLOAD_MAX_RETRIES - 1:
-            if await _sleep_or_shutdown(
+            await control_flow.sleep_or_cancel(
                 shutdown, _DOWNLOAD_BACKOFF_BASE_SEC * (2**attempt)
-            ):
-                return None
+            )
 
     logger.warning("Download failed after retries: url=%s", url)
     if last_status is not None:
-        classification = http_status.classify_http_status(
-            last_status,
-            reason_prefix="item_http",
-        )
-        if classification is not None:
-            return ItemFailure.from_classification(classification)
-    return ItemFailure(
-        feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
-        "item_download_failed",
-    )
+        return item_downloads.classify_item_http_status(last_status)
+    return item_downloads.item_download_failed()
 
 
 def _get_channel_timezone(channel_key: str) -> ZoneInfo:
@@ -253,31 +233,10 @@ async def _process_file_list(
         if isinstance(audio_result, ItemFailure):
             outcome.record_failure(audio_result)
             if not shutdown_event.is_set():
-                # SLO: call_download_failed emit — Fire Notifications _download_audio returned a classified failure
-                logger.warning(
-                    "FN Audio download classified failure: %s",
-                    audio_result.reason,
-                    extra={
-                        "json_fields": {
-                            "event_type": EVENT_TYPE_CALL_DOWNLOAD_FAILED,
-                            "feed_id": str(feed["id"]),
-                            "source_type": feed["source_type"],
-                        },
-                    },
-                )
-            continue
-        if audio_result is None:
-            if not shutdown_event.is_set():
-                # SLO: call_download_failed emit — Fire Notifications _download_audio returned None
-                logger.warning(
-                    "FN Audio download failed",
-                    extra={
-                        "json_fields": {
-                            "event_type": EVENT_TYPE_CALL_DOWNLOAD_FAILED,
-                            "feed_id": str(feed["id"]),
-                            "source_type": feed["source_type"],
-                        },
-                    },
+                telemetry.emit_call_download_failed(
+                    logger,
+                    feed_id=feed["id"],
+                    source_type=feed["source_type"],
                 )
             continue
         mp3_bytes = audio_result
@@ -392,7 +351,11 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
                 )
                 if resp.status_code == 200:
                     data = resp.json()
-                    files = data.get("files", [])
+                    files = polling_payloads.extract_optional_item_list(
+                        data,
+                        "files",
+                        malformed_reason="fn_api_payload_malformed",
+                    )
 
                     if files == []:
                         yield SourceObservation()
@@ -449,11 +412,12 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
                     )
 
             # Sleep before next poll, with a small jitter
-            jitter = random.uniform(0, 5.0)  # noqa: S311
-            if await _sleep_or_shutdown(
-                shutdown_event, _POLL_INTERVAL_SEC + jitter
-            ):
+            if shutdown_event.is_set():
                 return
+            jitter = random.uniform(0, 5.0)  # noqa: S311
+            await control_flow.sleep_or_cancel(
+                shutdown_event, _POLL_INTERVAL_SEC + jitter
+            )
 
     finally:
         await session.close()
