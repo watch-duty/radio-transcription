@@ -146,6 +146,49 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
             self.session.get.call_count, collector._DOWNLOAD_MAX_RETRIES
         )
 
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.control_flow.sleep_or_cancel",
+        new_callable=AsyncMock,
+    )
+    async def test_503_retries_exhausted_return_item_failure(
+        self, mock_sleep: MagicMock
+    ) -> None:
+        mock_sleep.return_value = False
+        resp503 = MagicMock(status_code=503)
+        self.session.get = AsyncMock(return_value=resp503)
+
+        result = await collector._download_audio(
+            self.session, "http://url", self.shutdown
+        )
+
+        failure = _require_item_failure(result)
+        self.assertIs(
+            failure.status_reason,
+            FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+        self.assertEqual(failure.reason, "item_http_503")
+        self.assertEqual(
+            self.session.get.call_count, collector._DOWNLOAD_MAX_RETRIES
+        )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.control_flow.sleep_or_cancel",
+        new_callable=AsyncMock,
+    )
+    async def test_shutdown_during_retry_raises_cancelled_error(
+        self, mock_sleep: MagicMock
+    ) -> None:
+        mock_sleep.side_effect = asyncio.CancelledError
+        resp503 = MagicMock(status_code=503)
+        self.session.get = AsyncMock(return_value=resp503)
+
+        with self.assertRaises(asyncio.CancelledError):
+            await collector._download_audio(
+                self.session, "http://url", self.shutdown
+            )
+
+        self.assertEqual(self.session.get.call_count, 1)
+
 
 class TestPollStatusClassification(unittest.TestCase):
     def test_poll_4xx_maps_to_configuration_invalid(self) -> None:
