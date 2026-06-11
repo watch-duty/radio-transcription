@@ -1,7 +1,9 @@
+import asyncio
 import functools
 import json
 import logging
 import sys
+import threading
 from typing import Any
 
 from google.cloud import logging as cloud_logging
@@ -15,6 +17,73 @@ from backend.pipeline.common.tracing_utils import (
 logger = logging.getLogger(__name__)
 
 
+def _handle_sys_exception(
+    exc_type: Any,
+    exc_value: BaseException,
+    exc_traceback: Any,
+) -> None:
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+    unhandled_logger = logging.getLogger("unhandled_exception")
+    unhandled_logger.critical(
+        "Unhandled exception terminating process",
+        exc_info=(exc_type, exc_value, exc_traceback),
+    )
+
+
+def _handle_thread_exception(args: threading.ExceptHookArgs) -> None:
+    if issubclass(args.exc_type, KeyboardInterrupt):
+        threading.__excepthook__(args)
+        return
+    thread_name = args.thread.name if args.thread else "unknown"
+    thread_logger = logging.getLogger(f"unhandled_exception.{thread_name}")
+    thread_logger.critical(
+        "Unhandled exception in background thread %s",
+        thread_name,
+        exc_info=args.exc_value,
+    )
+
+
+def _asyncio_exception_handler(
+    loop: asyncio.AbstractEventLoop,
+    context: dict[str, Any],
+) -> None:
+    msg = context.get("message", "Unhandled asyncio exception")
+    exc = context.get("exception")
+    task = context.get("task") or context.get("future")
+    task_name = task.get_name() if hasattr(task, "get_name") else str(task)
+
+    extra = {
+        "asyncio_context": {
+            k: str(v)
+            for k, v in context.items()
+            if k not in ("exception", "message")
+        }
+    }
+
+    asyncio_logger = logging.getLogger("asyncio.unhandled")
+    if exc:
+        asyncio_logger.error(
+            "%s (task: %s)", msg, task_name, exc_info=exc, extra=extra
+        )
+    else:
+        asyncio_logger.error("%s (task: %s)", msg, task_name, extra=extra)
+
+
+def setup_asyncio_logging(
+    loop: asyncio.AbstractEventLoop | None = None,
+) -> None:
+    """Installs a structured exception handler on the given (or running) event loop."""
+    if loop is None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+    loop.set_exception_handler(_asyncio_exception_handler)
+
+
 @functools.cache
 def setup_logging() -> None:
     """Sets up logging for the application.
@@ -23,6 +92,10 @@ def setup_logging() -> None:
     with a standard format. Otherwise, it uses the Google Cloud Logging
     client.
     """
+    sys.excepthook = _handle_sys_exception
+    threading.excepthook = _handle_thread_exception
+    setup_asyncio_logging()
+
     if is_gcp_env():
         client = cloud_logging.Client()
         client.setup_logging()
