@@ -13,6 +13,7 @@ import { type Feed } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { listFeeds } from '../../service/listFeeds';
+import { toSourceTypeString } from '../../utils/textUtils';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 import { type FeedFilters, FeedTable } from './FeedTable';
 
@@ -129,7 +130,7 @@ function CondensedFeedSearchResults({
                 }}
               >
                 <Chip
-                  label={option.sourceType}
+                  label={toSourceTypeString(option.sourceType)}
                   size="small"
                   variant="outlined"
                 />
