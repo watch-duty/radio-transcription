@@ -699,6 +699,7 @@ class AudioStitchingStateMachine:
         chunk_data: AudioChunkData,
         ctx: StitcherContext,
         segment: TimeRange,
+        current_file_cursor_ms: int,
         samples_per_ms: int,
     ) -> list[StateMachineAction]:
         """Executes overlap validation, mid-stream severing, and appends a single speech utterance to buffer."""
@@ -740,7 +741,7 @@ class AudioStitchingStateMachine:
             actions=actions,
             file_start_ms=file_start_ms,
             global_start_ms=global_start_ms,
-            active_file_cursor_ms=0,
+            active_file_cursor_ms=current_file_cursor_ms,
             is_significant_gap=is_significant_gap,
             is_max_duration_exceeded=is_max_duration_exceeded,
         )
@@ -829,7 +830,8 @@ class AudioStitchingStateMachine:
 
         # 0. Handle any existing non-speech transmission from a previous chunk
         is_non_speech_active = (
-            ctx.transmission_start_time_ms is not None
+            not self.config.isolate_segmented_chunks
+            and ctx.transmission_start_time_ms is not None
             and not ctx.speech_segments
         )
 
@@ -846,7 +848,8 @@ class AudioStitchingStateMachine:
             speech_start_rel_ms = segment.start_ms
 
             if (
-                speech_start_rel_ms > current_file_cursor_ms
+                not self.config.isolate_segmented_chunks
+                and speech_start_rel_ms > current_file_cursor_ms
                 and ctx.last_segment_end_time_ms is not None
             ):
                 new_actions = self._capture_intra_chunk_silence(
@@ -859,14 +862,15 @@ class AudioStitchingStateMachine:
                 actions.extend(new_actions)
 
             new_actions = self._process_single_speech_utterance(
-                chunk_data, ctx, segment, samples_per_ms
+                chunk_data, ctx, segment, current_file_cursor_ms, samples_per_ms
             )
             actions.extend(new_actions)
             current_file_cursor_ms = max(current_file_cursor_ms, segment.end_ms)
 
         # 2. Capture trailing non-speech audio at the end of the file ONLY if we have an active established stream
         if (
-            current_file_cursor_ms < chunk_data.duration_ms
+            not self.config.isolate_segmented_chunks
+            and current_file_cursor_ms < chunk_data.duration_ms
             and ctx.last_segment_end_time_ms is not None
         ):
             new_actions = self._capture_trailing_chunk_silence(
