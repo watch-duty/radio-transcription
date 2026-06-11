@@ -310,6 +310,8 @@ class StitcherEngine:
         session_id: str,
         curr_context: datatypes.ActiveStitchingState,
         chunk_data: datatypes.AudioChunkData | None = None,
+        *,
+        is_backfill: bool = False,
     ) -> Iterator[tuple[str, datatypes.FlushRequest]]:
         """Emits a structured FlushRequest payload downstream and resets internal state fields."""
         task_logger = _get_task_logger(
@@ -345,20 +347,26 @@ class StitcherEngine:
                 f"[Flush] Emitting segment {segment_id} with {len(processed_uris)} chunks"
             )
 
-            current_start_ms = action.time_range.start_ms
-            last_start_ms = last_start_ms_state.read()
+            # In backfill/catch-up mode (e.g., pipeline recovering from maintenance or outage),
+            # we skip overlap validations and avoid updating `last_start_ms_state`.
+            # This prevents older backlogged audio timestamps from corrupting the sequence tracking
+            # of the active mainline stream, which would otherwise trigger false overlap warnings
+            # and redundant segment outputs once the pipeline catches up to real-time.
+            if action.clear_state and not is_backfill:
+                current_start_ms = action.time_range.start_ms
+                last_start_ms = last_start_ms_state.read()
 
-            if (
-                last_start_ms is not None
-                and abs(current_start_ms - last_start_ms)
-                < trans_constants.OVERLAPPING_TRANSMISSION_TOLERANCE_MS
-            ):
-                task_logger.warning(
-                    f"Potential growing/overlapping transmission detected! "
-                    f"Starts at nearly the same time ({current_start_ms}ms) as previous ({last_start_ms}ms)."
-                )
+                if (
+                    last_start_ms is not None
+                    and abs(current_start_ms - last_start_ms)
+                    < trans_constants.OVERLAPPING_TRANSMISSION_TOLERANCE_MS
+                ):
+                    task_logger.warning(
+                        f"Potential growing/overlapping transmission detected! "
+                        f"Starts at nearly the same time ({current_start_ms}ms) as previous ({last_start_ms}ms)."
+                    )
 
-            last_start_ms_state.write(current_start_ms)
+                last_start_ms_state.write(current_start_ms)
 
             yield (
                 action.feed_id,
@@ -613,6 +621,7 @@ class StitcherEngine:
                                 active_session_id or "unknown",
                                 active_context,
                                 chunk_data,
+                                is_backfill=is_backfill,
                             )
                         )
                     )
