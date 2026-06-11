@@ -9,7 +9,7 @@ import sys
 from apache_beam.options.pipeline_options import PipelineOptions
 
 from backend.pipeline.common.log_helper import get_task_logger
-from backend.pipeline.segmentation.options import TranscriptionOptions
+from backend.pipeline.segmentation.options import SegmentationOptions
 from backend.pipeline.segmentation.orchestration import get_pipeline
 
 logger = get_task_logger(
@@ -21,7 +21,7 @@ def main() -> None:
     """Parses CLI arguments and launches the pipeline orchestration."""
     # Parse all arguments via Beam's PipelineOptions to capture custom configs
     pipeline_options = PipelineOptions(sys.argv[1:])
-    options = pipeline_options.view_as(TranscriptionOptions)
+    options = pipeline_options.view_as(SegmentationOptions)
 
     logger.info(
         "Starting segmentation pipeline: continuous_input=%s, output=%s",

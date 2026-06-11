@@ -12,7 +12,7 @@ from backend.pipeline.segmentation.constants import (
 )
 
 
-class TranscriptionOptions(PipelineOptions):
+class SegmentationOptions(PipelineOptions):
     """CLI pipeline configuration options mapping to Beam's PipelineOptions."""
 
     @classmethod

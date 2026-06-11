@@ -32,7 +32,7 @@ from backend.pipeline.segmentation.datatypes import (
     OrderRestorerConfig,
     StitchAudioConfig,
 )
-from backend.pipeline.segmentation.options import TranscriptionOptions
+from backend.pipeline.segmentation.options import SegmentationOptions
 from backend.pipeline.segmentation.transforms.stateful import (
     OrderedContinuousStitchAudioFn,
 )
@@ -65,7 +65,7 @@ def get_pipeline(
     # Require streaming mode since we handle unbounded logical streams from Pub/Sub
     standard_options = pipeline_options.view_as(StandardOptions)
     standard_options.streaming = True
-    options = pipeline_options.view_as(TranscriptionOptions)
+    options = pipeline_options.view_as(SegmentationOptions)
     project = pipeline_options.view_as(GoogleCloudOptions).project
 
     # Validate logical pipeline timeout configuration rules
@@ -130,7 +130,6 @@ def get_pipeline(
         route_to_dlq=options.route_to_dlq
         if options.route_to_dlq is not None
         else True,
-        isolate_segmented_chunks=False,
     )
 
     continuous_stitching = continuous_parsed[

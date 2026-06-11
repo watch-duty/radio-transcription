@@ -4,13 +4,13 @@ from pathlib import Path
 
 import pytest
 
-from backend.pipeline.segmentation.options import TranscriptionOptions
+from backend.pipeline.segmentation.options import SegmentationOptions
 from backend.pipeline.segmentation.orchestration import get_pipeline
 
 
 def test_pipeline_topology_typehints() -> None:
     """Builds the DAG to trigger Apache Beam's static type checker instantaneously."""
-    options = TranscriptionOptions(
+    options = SegmentationOptions(
         flags=[
             "--project",
             "test-project",
@@ -36,7 +36,7 @@ def test_pipeline_topology_typehints() -> None:
 
 def test_pipeline_invalid_timeout() -> None:
     """Verifies failure when ooo timeout >= stale_timeout_ms."""
-    options = TranscriptionOptions(
+    options = SegmentationOptions(
         flags=[
             "--project",
             "test-project",
@@ -65,7 +65,7 @@ def test_pipeline_invalid_timeout() -> None:
 def test_metadata_json_parameters_parity() -> None:
     """Enforces registration of new programmatic options in metadata.json."""
     parser = argparse.ArgumentParser()
-    TranscriptionOptions._add_argparse_args(parser)
+    SegmentationOptions._add_argparse_args(parser)
 
     # Read arguments from pipeline definition, excluding general plumbing args
     declared_options = {
