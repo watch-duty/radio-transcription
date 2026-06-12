@@ -14,8 +14,8 @@ import Switch from '@mui/material/Switch';
 import Tooltip from '@mui/material/Tooltip';
 import { useTheme } from '@mui/material/styles';
 
+import type { AlertFilter } from '../../hooks/useAudioSegments';
 import { DateTimePicker } from '../common/DateTimePicker';
-import type { AlertFilter } from './TranscriptView';
 
 export interface TranscriptActionsBarProps {
   hasNewerTranscripts: boolean;

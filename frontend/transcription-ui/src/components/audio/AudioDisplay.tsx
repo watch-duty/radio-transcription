@@ -7,15 +7,16 @@ import IconButton from '@mui/material/IconButton';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import { type Theme, useTheme } from '@mui/material/styles';
-import type { Transcript } from '@transcription/common';
+import { type AudioSegment } from '@transcription/common';
 import WavesurferPlayer from '@wavesurfer/react';
 
+import { findEvaluationAnnotationData } from '../../utils/annotationUtils';
 import { getAudioUrl } from '../../utils/audioUtils';
 import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { CustomAlertIcon } from '../common/AlertIcon';
 
 interface AudioDisplayProps {
-  transcripts: Transcript[];
+  transcripts: AudioSegment[];
   currentlyPlayingSegmentId: string | null;
   highlightedSegmentId: string | null;
   onClipClick: (segmentId: string) => void;
@@ -123,6 +124,27 @@ const TimelineClip = React.memo(
   }
 );
 
+/**
+ * Determines whether the timeline window was aligned to the previous live head.
+ *
+ * If it was aligned to the head (or if there is no previous state/window bounds),
+ * the viewport should automatically advance forward to show newly arriving segments.
+ * If the user has scrolled back in time, we should keep the viewport anchored at their scroll position.
+ */
+function isViewportAlignedToHead(
+  windowEndTime: number | null,
+  prevFirstTranscriptEndTimestamp: string | null,
+  isInitialLoad: boolean
+): boolean {
+  if (isInitialLoad || !windowEndTime || !prevFirstTranscriptEndTimestamp) {
+    return true;
+  }
+  const prevHeadTime = new Date(prevFirstTranscriptEndTimestamp).getTime();
+  const timeDifferenceMs = Math.abs(windowEndTime - prevHeadTime);
+  // Allow a 1-second tolerance for floating point rounding in time conversions
+  return timeDifferenceMs < 1000;
+}
+
 export function AudioDisplay({
   transcripts,
   currentlyPlayingSegmentId,
@@ -140,6 +162,8 @@ export function AudioDisplay({
   const [prevFirstTranscriptId, setPrevFirstTranscriptId] = useState<
     string | null
   >(null);
+  const [prevFirstTranscriptEndTimestamp, setPrevFirstTranscriptEndTimestamp] =
+    useState<string | null>(null);
   const [prevPlayingId, setPrevPlayingId] = useState<string | null>(null);
   const [prevHighlightedId, setPrevHighlightedId] = useState<string | null>(
     null
@@ -157,17 +181,36 @@ export function AudioDisplay({
   }, [userDuration]);
 
   const firstTranscript = transcripts[0];
-  const firstTranscriptId = firstTranscript?.segmentId || null;
+  const firstTranscriptId = firstTranscript?.id || null;
   const firstTranscriptEndTimestamp = firstTranscript?.endTimestamp || null;
 
-  // Reset windowEndTime when first transcript changes
-  if (firstTranscriptId !== prevFirstTranscriptId) {
-    setPrevFirstTranscriptId(firstTranscriptId);
-    setWindowEndTime(
-      firstTranscriptEndTimestamp
-        ? new Date(firstTranscriptEndTimestamp).getTime()
-        : null
+  // Check if a new segment has been added to the top of the feed
+  const isNewFirstTranscript = firstTranscriptId !== prevFirstTranscriptId;
+
+  // Check if the current top transcript has been extended (e.g. an ongoing silence bundle).
+  // When a silence bundle is extended, its ID remains the same but its end timestamp advances.
+  const isFirstTranscriptExtended =
+    firstTranscriptEndTimestamp !== prevFirstTranscriptEndTimestamp;
+
+  const shouldUpdateWindow = isNewFirstTranscript || isFirstTranscriptExtended;
+
+  if (shouldUpdateWindow) {
+    const wasAlignedToHead = isViewportAlignedToHead(
+      windowEndTime,
+      prevFirstTranscriptEndTimestamp,
+      !prevFirstTranscriptId
     );
+
+    setPrevFirstTranscriptId(firstTranscriptId);
+    setPrevFirstTranscriptEndTimestamp(firstTranscriptEndTimestamp);
+
+    if (wasAlignedToHead) {
+      setWindowEndTime(
+        firstTranscriptEndTimestamp
+          ? new Date(firstTranscriptEndTimestamp).getTime()
+          : null
+      );
+    }
     setPrevPlayingId(null); // Force re-check of bounds
   }
 
@@ -185,22 +228,21 @@ export function AudioDisplay({
 
     const targetId = highlightedSegmentId || playingId;
     if (targetId) {
-      const targetTranscript = transcripts.find(
-        (t) => t.segmentId === targetId
-      );
+      const targetTranscript = transcripts.find((t) => t.id === targetId);
       if (targetTranscript) {
         const tStart = new Date(targetTranscript.startTimestamp).getTime();
         const tEnd = new Date(targetTranscript.endTimestamp).getTime();
 
-        const currentEndTime =
-          windowEndTime ||
-          (firstTranscript
-            ? new Date(firstTranscript.endTimestamp).getTime()
-            : 0);
+        const newestEnd = firstTranscript
+          ? new Date(firstTranscript.endTimestamp).getTime()
+          : 0;
+
+        const currentEndTime = windowEndTime || newestEnd;
         const currentStartTime = currentEndTime - windowDurationMs;
 
         if (tStart < currentStartTime || tEnd > currentEndTime) {
-          const newEndTime = tStart + windowDurationMs / 2;
+          const preferredEndTime = tStart + windowDurationMs / 2;
+          const newEndTime = Math.min(preferredEndTime, newestEnd);
           setWindowEndTime(newEndTime);
         }
       }
@@ -241,16 +283,20 @@ export function AudioDisplay({
         const left = ((visibleStart - startTime) / windowDuration) * 100;
         const width = ((visibleEnd - visibleStart) / windowDuration) * 100;
 
-        const url = getAudioUrl(t.playbackAudioUri);
+        const url = t.playbackAudioUri ? getAudioUrl(t.playbackAudioUri) : '';
 
+        const evaluationAnnotation = findEvaluationAnnotationData(
+          t.annotations
+        );
         return {
-          id: t.segmentId,
+          id: t.id,
           url,
           left,
           width,
-          isAudioPlaying: t.segmentId === currentlyPlayingSegmentId,
-          isHighlighted: t.segmentId === highlightedSegmentId,
-          hasAlert: t.evaluationDecisions && t.evaluationDecisions.length > 0,
+          isAudioPlaying: t.id === currentlyPlayingSegmentId,
+          isHighlighted: t.id === highlightedSegmentId,
+          hasAlert:
+            !!evaluationAnnotation && evaluationAnnotation.decisions.length > 0,
         };
       });
 
@@ -311,7 +357,7 @@ export function AudioDisplay({
               }}
             >
               <Typography variant="body2" color="text.secondary">
-                No transcripts loaded
+                No audio found
               </Typography>
             </Box>
           )}
