@@ -117,6 +117,12 @@ const TimelineClip = React.memo(
                   ? 'rgba(255, 255, 255, 0.03)'
                   : 'rgba(0, 0, 0, 0.03)',
           },
+          /* Wavesurfer cursor subpixel anti-aliasing / shimmering optimizations */
+          '& div::part(cursor)': {
+            willChange: 'left',
+            transform: 'translateZ(0)',
+            backfaceVisibility: 'hidden',
+          },
         }}
       >
         {clip.hasAlert && (
