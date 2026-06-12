@@ -6,7 +6,9 @@ import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from opentelemetry.context import Context
+from opentelemetry import baggage
+from opentelemetry.baggage.propagation import W3CBaggagePropagator
+from opentelemetry.context import Context, attach, detach, get_current
 from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
 from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.export import (
@@ -143,8 +145,32 @@ def get_trace_attributes() -> dict[str, str]:
     }
 
 
+@contextmanager
+def inject_baggage(baggage_items: dict[str, str]) -> Iterator[None]:
+    """Context manager to attach baggage to the current context."""
+    if not baggage_items:
+        yield
+        return
+
+    ctx = get_current()
+    for k, v in baggage_items.items():
+        ctx = baggage.set_baggage(k, v, context=ctx)
+
+    token = attach(ctx)
+    try:
+        yield
+    finally:
+        detach(token)
+
+
+def inject_otel_context(attributes: dict[str, str]) -> None:
+    """Injects OpenTelemetry traceparent and baggage into the attributes dict."""
+    TraceContextTextMapPropagator().inject(attributes)
+    W3CBaggagePropagator().inject(attributes)
+
+
 def extract_trace_context(attributes: dict[str, str] | None) -> Context:
-    """Restores OpenTelemetry trace context from Message Attributes using W3C TraceContext.
+    """Restores OpenTelemetry trace context and baggage from Message Attributes.
 
     Args:
         attributes: Pub/Sub Message metadata attribute key-value pairs.
@@ -152,26 +178,38 @@ def extract_trace_context(attributes: dict[str, str] | None) -> Context:
     Returns:
         An OpenTelemetry Context.
     """
-    if attributes and attributes.get("traceparent"):
-        return TraceContextTextMapPropagator().extract(carrier=attributes)
+    if not attributes:
+        return Context()
 
-    return Context()
+    ctx = Context()
+    if attributes.get("traceparent"):
+        ctx = TraceContextTextMapPropagator().extract(
+            carrier=attributes, context=ctx
+        )
+    if attributes.get("baggage"):
+        ctx = W3CBaggagePropagator().extract(carrier=attributes, context=ctx)
+
+    return ctx
 
 
 @contextmanager
 def with_tracer_context(
-    traceparent: str,
+    traceparent_or_attrs: str | dict[str, str],
     span_name: str,
     tracer_name: str,
 ) -> Iterator[Span]:
     """Context manager to create a trace context and start a span.
 
     Args:
-        traceparent: The trace parent string.
+        traceparent_or_attrs: The trace parent string or Pub/Sub attributes dict.
         span_name: The name of the span to create.
         tracer_name: The name of the tracer (usually __name__).
     """
-    context = extract_trace_context({"traceparent": traceparent})
+    if isinstance(traceparent_or_attrs, str):
+        context = extract_trace_context({"traceparent": traceparent_or_attrs})
+    else:
+        context = extract_trace_context(traceparent_or_attrs)
+
     tracer = get_tracer(tracer_name)
     with tracer.start_as_current_span(span_name, context=context) as span:
         yield span

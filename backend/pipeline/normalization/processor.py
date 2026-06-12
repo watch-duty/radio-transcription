@@ -100,7 +100,7 @@ class NormalizationEventProcessor:
             return
 
         with with_tracer_context(
-            traceparent,
+            attributes,
             "normalize_segmented_audio",
             __name__,
         ):

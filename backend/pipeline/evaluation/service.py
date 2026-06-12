@@ -1,6 +1,8 @@
+import datetime
 import logging
 
 from google.protobuf.duration_pb2 import Duration
+from opentelemetry import baggage, metrics
 
 from backend.pipeline.evaluation.rules_evaluation import evaluator
 from backend.pipeline.schema_types import (
@@ -11,6 +13,36 @@ from backend.pipeline.schema_types import (
 )
 
 logger = logging.getLogger(__name__)
+
+meter = metrics.get_meter(__name__)
+e2e_latency_histogram = meter.create_histogram(
+    "transcription_e2e_latency_ms",
+    description="End-to-end processing latency from ingestion to evaluation",
+    unit="ms",
+)
+
+
+def _record_e2e_latency(feed_id: str) -> None:
+    """Records the end-to-end latency metric if the ingest time baggage is present."""
+    ingest_time_ms_str = baggage.get_baggage("ingest_time_ms")
+    if not isinstance(ingest_time_ms_str, str):
+        return
+
+    try:
+        ingest_time_ms = int(ingest_time_ms_str)
+        current_time_ms = int(
+            datetime.datetime.now(datetime.UTC).timestamp() * 1000
+        )
+        latency_ms = current_time_ms - ingest_time_ms
+
+        e2e_latency_histogram.record(
+            latency_ms, attributes={"feed_id": feed_id}
+        )
+        logger.info("Recorded E2E latency: %sms", latency_ms)
+    except ValueError:
+        logger.warning(
+            "Invalid ingest_time_ms in baggage: %s", ingest_time_ms_str
+        )
 
 
 def _sanitize_duration(duration: Duration, context: str = "") -> None:
@@ -130,6 +162,9 @@ class EvaluationService:
             evaluated_payload.end_audio_offset.CopyFrom(
                 new_audio.end_audio_offset
             )
+
+            # 5. Record End-to-End Latency Metric via OpenTelemetry
+            _record_e2e_latency(new_audio.feed_id)
 
         except Exception:
             logger.exception("Error processing new audio message")

@@ -68,9 +68,8 @@ class EvaluationEventProcessor:
         """
         pubsub_message = cloud_event.data.get("message", {})
         attributes = pubsub_message.get("attributes", {}) or {}
-        traceparent = attributes.get("traceparent", "")
 
-        with with_tracer_context(traceparent, "evaluate_rules", __name__):
+        with with_tracer_context(attributes, "evaluate_rules", __name__):
             # 1. Decode the Incoming Message
             # TODO (https://linear.app/watchduty/issue/GOO-245/): Handle parse failure.
             new_audio = self._parse_cloud_event(cloud_event)

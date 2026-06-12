@@ -64,7 +64,7 @@ class TranscriptionEventProcessor:
         traceparent = attributes.get("traceparent", "")
 
         with with_tracer_context(
-            traceparent, "transcribe_claim_check", __name__
+            attributes, "transcribe_claim_check", __name__
         ):
             errors = []
             transcript = ""

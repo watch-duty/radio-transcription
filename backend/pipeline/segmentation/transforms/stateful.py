@@ -514,11 +514,15 @@ class OrderedStitchAudioFn(beam.DoFn):
     ]:
         """Intercepts chunk arrival, resolves chronological ordering, and delegates to StitcherEngine."""
         feed_id, metadata = element
-        traceparent = metadata.traceparent or ""
+        trace_attrs = {}
+        if metadata.traceparent:
+            trace_attrs["traceparent"] = metadata.traceparent
+        if metadata.baggage:
+            trace_attrs["baggage"] = metadata.baggage
 
         results = []
         with tracing_utils.with_tracer_context(
-            traceparent, "stitching_process", __name__
+            trace_attrs, "stitching_process", __name__
         ):
             current_ts_ms = int(
                 float(timestamp) * common_constants.MS_PER_SECOND
