@@ -117,7 +117,10 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
     feed = feed_store.resolve_echo_feed(channel_name)
 
     if not feed:
-        logger.warning("No feed found for channel: %s", channel_name)
+        logger.warning(
+            "No feed internally registered to process echo source: %s",
+            channel_name,
+        )
         return
     if feed["status"] == "deactivated":
         logger.info(
