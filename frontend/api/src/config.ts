@@ -131,9 +131,13 @@ export async function checkIsAdmin(email: string): Promise<boolean> {
     });
 
     return isAdmin;
-  } catch (error: any) {
+  } catch (error: unknown) {
     // Note: the hasMember API returns 404 if the user is not found or not a member.
-    if (error.response && error.response.status === 404) {
+    if (
+      axios.isAxiosError(error) &&
+      error.response &&
+      error.response.status === 404
+    ) {
       adminCache.set(normalizedEmail, {
         isAdmin: false,
         expiresAt: Date.now() + CACHE_TTL_MS,
@@ -141,9 +145,10 @@ export async function checkIsAdmin(email: string): Promise<boolean> {
       return false;
     }
 
+    const message = error instanceof Error ? error.message : String(error);
     console.error(
       `Error querying Google Directory API for ${normalizedEmail}:`,
-      error.message || error
+      message
     );
 
     // Fail closed, or fallback to expired cache entry if available
