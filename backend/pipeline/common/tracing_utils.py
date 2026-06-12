@@ -3,6 +3,7 @@
 import logging
 import os
 import threading
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 
@@ -16,6 +17,11 @@ from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
 from opentelemetry.metrics import get_meter_provider, set_meter_provider
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.resources import (
+    SERVICE_INSTANCE_ID,
+    SERVICE_NAME,
+    Resource,
+)
 from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.export import (
     BatchSpanProcessor,
@@ -77,6 +83,7 @@ def setup_tracing(
     will spin up separate process environments.
     """
     if not is_gcp_env():
+        # Do not set up tracing for local development or tests
         return
 
     current_provider = get_tracer_provider()
@@ -90,11 +97,6 @@ def setup_tracing(
             return
 
         project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or ""
-        if not project_id:
-            msg = "GOOGLE_CLOUD_PROJECT environment variable must be set in GCP environment."
-            raise ValueError(msg)
-        provider = TracerProvider()
-        exporter = CloudTraceSpanExporter(project_id=project_id)
 
         # Resolve service metadata from environment if not explicitly provided
         if service_name is None:
@@ -105,6 +107,20 @@ def setup_tracing(
                 or os.environ.get("FUNCTION_TARGET")
                 or "unknown_service"
             )
+
+        resource = Resource(
+            attributes={
+                SERVICE_NAME: service_name,
+                SERVICE_INSTANCE_ID: str(uuid.uuid4()),
+            }
+        )
+
+        if not project_id:
+            msg = "GOOGLE_CLOUD_PROJECT environment variable must be set in GCP environment."
+            raise ValueError(msg)
+        provider = TracerProvider(resource=resource)
+        exporter = CloudTraceSpanExporter(project_id=project_id)
+
         if is_ingestion is None:
             is_ingestion = os.environ.get("IS_INGESTION_SERVICE") == "true"
 
@@ -129,7 +145,9 @@ def setup_tracing(
             )
             # Use default export interval
             reader = PeriodicExportingMetricReader(metrics_exporter)
-            meter_provider = MeterProvider(metric_readers=[reader])
+            meter_provider = MeterProvider(
+                metric_readers=[reader], resource=resource
+            )
             set_meter_provider(meter_provider)
 
 
