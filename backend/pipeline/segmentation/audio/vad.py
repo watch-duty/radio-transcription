@@ -25,6 +25,13 @@ from backend.pipeline.segmentation.audio.dsp import (
     custom_numpy_stft,
 )
 from backend.pipeline.segmentation.constants import (
+    TONE_ACTIVE_FRAME_POWER_RATIO,
+    TONE_FRAME_MIN_CONCENTRATION_RATIO,
+    TONE_MIN_POWER_THRESHOLD,
+    TONE_PEAK_NEIGHBORHOOD_RADIUS,
+    TONE_SEGMENT_MIN_TONE_FRAME_RATIO,
+    TONE_STFT_FRAME_LENGTH,
+    TONE_STFT_HOP_LENGTH,
     VAD_DEFAULT_BLEND_RATIO,
     VAD_DEFAULT_BOOST_FREQ_HZ,
     VAD_DEFAULT_BOOST_GAIN_DB,
@@ -394,8 +401,8 @@ class VoiceActivityDetector:
 
     def _is_tone_segment(self, sig: np.ndarray) -> bool:
         """Analyzes a candidate audio segment to determine if it is primarily an alert or paging tone."""
-        frame_len = 1024
-        hop_len = 512
+        frame_len = TONE_STFT_FRAME_LENGTH
+        hop_len = TONE_STFT_HOP_LENGTH
         if len(sig) < frame_len:
             return False
 
@@ -414,43 +421,48 @@ class VoiceActivityDetector:
 
         frame_powers = np.sum(specs, axis=-1)
         max_power = np.max(frame_powers)
-        if max_power < 1e-10:
+        if max_power < TONE_MIN_POWER_THRESHOLD:
             return False
 
-        active_indices = np.where(frame_powers >= 0.01 * max_power)[0]
+        active_indices = np.where(
+            frame_powers >= TONE_ACTIVE_FRAME_POWER_RATIO * max_power
+        )[0]
         if len(active_indices) == 0:
             return False
 
         tone_frames = 0
+        radius = TONE_PEAK_NEIGHBORHOOD_RADIUS
         for idx in active_indices:
             spec = specs[idx]
             total_p = frame_powers[idx]
 
             # Strongest peak
             k1 = int(np.argmax(spec))
-            low1 = max(0, k1 - 3)
-            high1 = min(len(spec), k1 + 4)
+            low1 = max(0, k1 - radius)
+            high1 = min(len(spec), k1 + radius + 1)
             p1 = float(np.sum(spec[low1:high1]))
 
             # Second strongest peak outside first neighborhood
             spec_rem = spec.copy()
             spec_rem[low1:high1] = 0.0
             k2 = int(np.argmax(spec_rem))
-            low2 = max(0, k2 - 3)
-            high2 = min(len(spec), k2 + 4)
+            low2 = max(0, k2 - radius)
+            high2 = min(len(spec), k2 + radius + 1)
             p2 = float(np.sum(spec[low2:high2]))
 
             # Third strongest peak outside first two neighborhoods
             spec_rem[low2:high2] = 0.0
             k3 = int(np.argmax(spec_rem))
-            low3 = max(0, k3 - 3)
-            high3 = min(len(spec), k3 + 4)
+            low3 = max(0, k3 - radius)
+            high3 = min(len(spec), k3 + radius + 1)
             p3 = float(np.sum(spec[low3:high3]))
 
-            if (p1 + p2 + p3) / total_p > 0.85:
+            if (p1 + p2 + p3) / total_p > TONE_FRAME_MIN_CONCENTRATION_RATIO:
                 tone_frames += 1
 
-        return (tone_frames / len(active_indices)) >= 0.75
+        return (
+            tone_frames / len(active_indices)
+        ) >= TONE_SEGMENT_MIN_TONE_FRAME_RATIO
 
     def _filter_noise_segments(
         self,
