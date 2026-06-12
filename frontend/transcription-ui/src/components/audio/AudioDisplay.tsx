@@ -30,6 +30,8 @@ interface AudioDisplayProps {
   currentAudioRef?: React.RefObject<Howl | null>;
 }
 
+const PLAYING_CURSOR_WIDTH_PX = 1;
+
 const formatTime = (timestamp: number) => {
   const date = new Date(timestamp);
   return date.toLocaleTimeString([], {
@@ -72,7 +74,7 @@ const TimelineClip = React.memo(
           cursorColor: clip.isAudioPlaying
             ? theme.palette.error.main
             : 'transparent',
-          cursorWidth: clip.isAudioPlaying ? 1 : 0,
+          cursorWidth: clip.isAudioPlaying ? PLAYING_CURSOR_WIDTH_PX : 0,
         });
       }
     }, [clip.isAudioPlaying, theme.palette.error.main]);
@@ -149,7 +151,7 @@ const TimelineClip = React.memo(
               cursorColor: clip.isAudioPlaying
                 ? theme.palette.error.main
                 : 'transparent',
-              cursorWidth: clip.isAudioPlaying ? 1 : 0,
+              cursorWidth: clip.isAudioPlaying ? PLAYING_CURSOR_WIDTH_PX : 0,
             });
             if (clip.isAudioPlaying && currentTimeSeconds !== undefined) {
               ws.setTime(currentTimeSeconds);
