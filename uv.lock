@@ -3241,7 +3241,6 @@ name = "transcription-function"
 version = "0.1.0"
 source = { editable = "backend/pipeline/transcription" }
 dependencies = [
-    { name = "betterproto" },
     { name = "cloudevents" },
     { name = "functions-framework" },
     { name = "google-cloud-logging" },
@@ -3259,7 +3258,6 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "betterproto", specifier = ">=2.0.0b6" },
     { name = "cloudevents", specifier = ">=1.12.0" },
     { name = "functions-framework", specifier = ">=3.10.1" },
     { name = "google-cloud-logging", specifier = ">=3.14.0" },

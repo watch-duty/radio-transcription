@@ -1,7 +1,7 @@
 """Google Gemini 3.1 Flash Lite transcriber implementation."""
 
+import dataclasses
 import mimetypes
-import typing
 
 import pydantic
 from google import genai
@@ -22,7 +22,8 @@ logger = get_task_logger(
 )
 
 
-class SafetySetting(typing.TypedDict):
+@dataclasses.dataclass(frozen=True)
+class SafetySetting:
     """Safety setting category and threshold."""
 
     category: str
@@ -123,8 +124,8 @@ class GeminiTranscriber(base.Transcriber):
             system_instruction=self.config.prompt,
             safety_settings=[
                 types.SafetySetting(
-                    category=types.HarmCategory(setting["category"]),
-                    threshold=types.HarmBlockThreshold(setting["threshold"]),
+                    category=types.HarmCategory(setting.category),
+                    threshold=types.HarmBlockThreshold(setting.threshold),
                 )
                 for setting in self.config.safety_settings
             ]
