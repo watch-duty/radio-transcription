@@ -22,6 +22,7 @@ interface AudioDisplayProps {
   userDuration?: string | null;
   isAudioPlaying: boolean;
   onTogglePlayPause: () => void;
+  currentTimeSeconds?: number;
 }
 
 const formatTime = (timestamp: number) => {
@@ -131,6 +132,7 @@ export function AudioDisplay({
   userDuration,
   isAudioPlaying,
   onTogglePlayPause,
+  currentTimeSeconds,
 }: AudioDisplayProps) {
   const theme = useTheme();
   const isDarkTheme = theme.palette.mode === 'dark';
@@ -262,6 +264,27 @@ export function AudioDisplay({
     windowEndTime,
     windowDurationMs,
   ]);
+  const playingTranscript = useMemo(() => {
+    if (!currentlyPlayingSegmentId) return null;
+    return (
+      transcripts.find((t) => t.segmentId === currentlyPlayingSegmentId) || null
+    );
+  }, [transcripts, currentlyPlayingSegmentId]);
+
+  const linePositionPercent = useMemo(() => {
+    if (!playingTranscript || currentTimeSeconds === undefined) return null;
+    const startTimestampMs = new Date(
+      playingTranscript.startTimestamp
+    ).getTime();
+    const currentPlaybackTimestampMs =
+      startTimestampMs + currentTimeSeconds * 1000;
+    const percent =
+      ((currentPlaybackTimestampMs - startTime) / windowDuration) * 100;
+    if (percent >= 0 && percent <= 100) {
+      return percent;
+    }
+    return null;
+  }, [playingTranscript, currentTimeSeconds, startTime, windowDuration]);
 
   return (
     <Box
@@ -299,6 +322,21 @@ export function AudioDisplay({
               theme={theme}
             />
           ))}
+          {linePositionPercent !== null && (
+            <Box
+              data-testid="audio-tracking-line"
+              sx={{
+                position: 'absolute',
+                left: `${linePositionPercent}%`,
+                top: 0,
+                width: '1.5px',
+                height: '100%',
+                bgcolor: 'error.main',
+                zIndex: 2,
+                pointerEvents: 'none',
+              }}
+            />
+          )}
           {transcripts.length === 0 && (
             <Box
               sx={{

@@ -121,6 +121,7 @@ export function TranscriptView({
     null
   );
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
+  const [currentTimeSeconds, setCurrentTimeSeconds] = useState<number>(0);
 
   // A mutable reference to the latest list of transcripts. This prevents stale closures
   // inside the Howl audio lifecycle callbacks (like onend), ensuring continuous playback logic
@@ -133,6 +134,40 @@ export function TranscriptView({
       currentAudio.current?.unload();
     };
   }, []);
+
+  // Reset progress when changing segment
+  useEffect(() => {
+    setCurrentTimeSeconds(0);
+  }, [currentlyPlayingSegmentId]);
+
+  // Poll current playback progress when audio is playing
+  useEffect(() => {
+    if (
+      !isAudioPlaying ||
+      !currentlyPlayingSegmentId ||
+      !currentAudio.current
+    ) {
+      return;
+    }
+
+    let animationFrameId: number;
+
+    const updateProgress = () => {
+      if (currentAudio.current) {
+        const seek = currentAudio.current.seek();
+        if (typeof seek === 'number') {
+          setCurrentTimeSeconds(seek);
+        }
+      }
+      animationFrameId = requestAnimationFrame(updateProgress);
+    };
+
+    updateProgress();
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+    };
+  }, [isAudioPlaying, currentlyPlayingSegmentId]);
 
   // Play and pause audio from a URL.
   const toggleAudio = useCallback(
@@ -808,6 +843,7 @@ export function TranscriptView({
         onClipClick={handleClipClick}
         isAudioPlaying={isAudioPlaying}
         onTogglePlayPause={handleTogglePlayPause}
+        currentTimeSeconds={currentTimeSeconds}
       />
 
       <Box

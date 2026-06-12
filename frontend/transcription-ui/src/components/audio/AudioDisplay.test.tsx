@@ -489,4 +489,86 @@ describe('AudioDisplay', () => {
       expect(labelsAfter).not.toEqual(labelsBefore);
     });
   });
+
+  it('should not render tracking line when currentlyPlayingSegmentId is null or currentTimeSeconds is undefined', () => {
+    const mockTranscripts: Transcript[] = [
+      {
+        segmentId: '1',
+        feedId: 'feed1',
+        startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
+        endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
+        transcript: 'Test 1',
+        canonicalAudioUri: 'audio1.flac',
+        playbackAudioUri: 'audio1.m4a',
+        evaluationDecisions: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+        startAudioOffset: '0',
+        endAudioOffset: '0',
+      },
+    ];
+
+    const { rerender } = render(
+      <AudioDisplay
+        transcripts={mockTranscripts}
+        currentlyPlayingSegmentId={null}
+        onClipClick={vi.fn()}
+        isAudioPlaying={false}
+        onTogglePlayPause={vi.fn()}
+        highlightedSegmentId={null}
+      />
+    );
+
+    expect(screen.queryByTestId('audio-tracking-line')).toBeNull();
+
+    rerender(
+      <AudioDisplay
+        transcripts={mockTranscripts}
+        currentlyPlayingSegmentId="1"
+        onClipClick={vi.fn()}
+        isAudioPlaying={true}
+        onTogglePlayPause={vi.fn()}
+        highlightedSegmentId={null}
+        currentTimeSeconds={undefined}
+      />
+    );
+
+    expect(screen.queryByTestId('audio-tracking-line')).toBeNull();
+  });
+
+  it('should render tracking line when audio is playing and progress is provided', () => {
+    const mockTranscripts: Transcript[] = [
+      {
+        segmentId: '1',
+        feedId: 'feed1',
+        startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
+        endTimestamp: new Date('2026-04-20T09:00:10Z').toISOString(),
+        transcript: 'Test 1',
+        canonicalAudioUri: 'audio1.flac',
+        playbackAudioUri: 'audio1.m4a',
+        evaluationDecisions: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+        startAudioOffset: '0',
+        endAudioOffset: '0',
+      },
+    ];
+
+    render(
+      <AudioDisplay
+        transcripts={mockTranscripts}
+        currentlyPlayingSegmentId="1"
+        onClipClick={vi.fn()}
+        isAudioPlaying={true}
+        onTogglePlayPause={vi.fn()}
+        highlightedSegmentId={null}
+        currentTimeSeconds={5}
+      />
+    );
+
+    const trackingLine = screen.getByTestId('audio-tracking-line');
+    expect(trackingLine).toBeTruthy();
+  });
 });
