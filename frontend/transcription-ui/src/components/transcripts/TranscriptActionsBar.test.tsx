@@ -44,7 +44,7 @@ describe('TranscriptActionsBar', () => {
     render(
       <TranscriptActionsBar
         searchedTimestamp={null}
-        hasNewerTranscripts={false}
+        hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
         dateTime={null}
@@ -65,12 +65,12 @@ describe('TranscriptActionsBar', () => {
     expect(mockSetRedactTranscripts).toHaveBeenCalledWith(true);
   });
 
-  it('renders "Jump to live" button when hasNewerTranscripts is true and calls onClickViewLatest when clicked', () => {
+  it('renders "Jump to live" button when hasNewerAudioSegments is true and calls onClickViewLatest when clicked', () => {
     const onClickViewLatest = vi.fn();
     render(
       <TranscriptActionsBar
         searchedTimestamp={null}
-        hasNewerTranscripts={true}
+        hasNewerAudioSegments={true}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
         dateTime={null}
@@ -89,11 +89,11 @@ describe('TranscriptActionsBar', () => {
     expect(onClickViewLatest).toHaveBeenCalledTimes(1);
   });
 
-  it('renders disabled "Jump to live" button when hasNewerTranscripts is false', () => {
+  it('renders disabled "Jump to live" button when hasNewerAudioSegments is false', () => {
     render(
       <TranscriptActionsBar
         searchedTimestamp={null}
-        hasNewerTranscripts={false}
+        hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
         dateTime={null}
@@ -115,7 +115,7 @@ describe('TranscriptActionsBar', () => {
     render(
       <TranscriptActionsBar
         searchedTimestamp={null}
-        hasNewerTranscripts={false}
+        hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
         dateTime={new Date('2026-05-14T12:00:00Z')}
@@ -149,7 +149,7 @@ describe('TranscriptActionsBar', () => {
     render(
       <TranscriptActionsBar
         searchedTimestamp={null}
-        hasNewerTranscripts={false}
+        hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
         dateTime={new Date('2026-05-14T12:00:00Z')}
@@ -188,7 +188,7 @@ describe('TranscriptActionsBar', () => {
     const { rerender } = render(
       <TranscriptActionsBar
         searchedTimestamp={null}
-        hasNewerTranscripts={false}
+        hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
         dateTime={null}
@@ -220,7 +220,7 @@ describe('TranscriptActionsBar', () => {
     rerender(
       <TranscriptActionsBar
         searchedTimestamp={null}
-        hasNewerTranscripts={false}
+        hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
         dateTime={new Date('2026-05-14T12:00:00.000Z')}
@@ -243,7 +243,7 @@ describe('TranscriptActionsBar', () => {
     render(
       <TranscriptActionsBar
         searchedTimestamp={null}
-        hasNewerTranscripts={false}
+        hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
         dateTime={null}
@@ -281,7 +281,7 @@ describe('TranscriptActionsBar', () => {
     render(
       <TranscriptActionsBar
         searchedTimestamp={null}
-        hasNewerTranscripts={false}
+        hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
         dateTime={null}
@@ -320,7 +320,7 @@ describe('TranscriptActionsBar', () => {
     render(
       <TranscriptActionsBar
         searchedTimestamp={null}
-        hasNewerTranscripts={false}
+        hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
         dateTime={null}
@@ -348,7 +348,7 @@ describe('TranscriptActionsBar', () => {
     render(
       <TranscriptActionsBar
         searchedTimestamp={null}
-        hasNewerTranscripts={false}
+        hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
         dateTime={null}
@@ -373,7 +373,7 @@ describe('TranscriptActionsBar', () => {
     const { rerender } = render(
       <TranscriptActionsBar
         searchedTimestamp={null}
-        hasNewerTranscripts={false}
+        hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
         dateTime={null}
@@ -393,7 +393,7 @@ describe('TranscriptActionsBar', () => {
     rerender(
       <TranscriptActionsBar
         searchedTimestamp={null}
-        hasNewerTranscripts={false}
+        hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
         dateTime={new Date()}
@@ -411,7 +411,7 @@ describe('TranscriptActionsBar', () => {
     rerender(
       <TranscriptActionsBar
         searchedTimestamp={null}
-        hasNewerTranscripts={false}
+        hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
         dateTime={null}
@@ -429,7 +429,7 @@ describe('TranscriptActionsBar', () => {
     rerender(
       <TranscriptActionsBar
         searchedTimestamp={null}
-        hasNewerTranscripts={false}
+        hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
         dateTime={new Date()}
