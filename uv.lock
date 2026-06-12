@@ -3114,7 +3114,6 @@ dependencies = [
     { name = "protobuf" },
     { name = "pydantic" },
     { name = "soundfile" },
-    { name = "tenacity" },
 ]
 
 [package.metadata]
@@ -3134,7 +3133,6 @@ requires-dist = [
     { name = "protobuf", specifier = ">=5.29.6" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "soundfile", specifier = ">=0.13.1" },
-    { name = "tenacity", specifier = ">=9.1.4" },
 ]
 
 [[package]]
