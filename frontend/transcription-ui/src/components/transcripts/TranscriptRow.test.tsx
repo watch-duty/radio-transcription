@@ -4,8 +4,13 @@ import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import type { Transcript } from '@transcription/common';
+import {
+  AnnotationType,
+  AudioClassification,
+  type AudioSegment,
+} from '@transcription/common';
 
+import { type RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
 import TranscriptRow from './TranscriptRow';
 
 // Mocking AudioPlayer to verify it's being called with the correct props.
@@ -22,20 +27,38 @@ vi.mock('../audio/AudioPlayer', () => ({
   ),
 }));
 
-const mockTranscript: Transcript = {
-  segmentId: 'tx-123',
+const mockTranscript: AudioSegment = {
+  id: 'tx-123',
   feedId: 'feed-123',
+  classification: AudioClassification.SPEECH,
   startTimestamp: '2026-04-15T16:00:00Z',
   endTimestamp: '2026-04-15T16:00:05Z',
   canonicalAudioUri: 'https://watchduty.example/audio.flac',
   playbackAudioUri: 'https://watchduty.example/audio.m4a',
-  transcript: 'This is a test transcription',
-  evaluationDecisions: ['rule-1'],
   missingPriorContext: false,
   missingPostContext: false,
   sourceAudioUris: ['https://watchduty.example/audio.flac'],
   startAudioOffset: '0',
   endAudioOffset: '0',
+  createdAt: '2026-04-15T16:00:00Z',
+  annotations: [
+    {
+      type: AnnotationType.TRANSCRIPT,
+      createdAt: '2026-04-15T16:00:00Z',
+      data: {
+        text: 'This is a test transcription',
+        errors: [],
+      },
+    },
+    {
+      type: AnnotationType.EVALUATION,
+      createdAt: '2026-04-15T16:00:00Z',
+      data: {
+        decisions: ['rule-1'],
+        errors: [],
+      },
+    },
+  ],
 };
 
 describe('TranscriptRow', () => {
@@ -187,9 +210,7 @@ describe('TranscriptRow', () => {
       </MemoryRouter>
     );
 
-    const audioPlayer = screen.getByTestId(
-      `audio-player-${mockTranscript.segmentId}`
-    );
+    const audioPlayer = screen.getByTestId(`audio-player-${mockTranscript.id}`);
     expect(audioPlayer).toBeTruthy();
     expect(audioPlayer.getAttribute('data-audio-uri')).toBe(
       mockTranscript.playbackAudioUri
@@ -232,5 +253,86 @@ describe('TranscriptRow', () => {
       'This is a test transcription'
     );
     expect(mockTriggerSnackbar).toHaveBeenCalledWith('Transcript copied');
+  });
+
+  it('renders silence bundle correctly with placeholder text and disabled copy', () => {
+    const mockSilenceBundle: RenderableAudioSegment = {
+      id: 'silence-123',
+      feedId: 'feed-123',
+      classification: AudioClassification.OTHER,
+      startTimestamp: '2026-04-15T16:00:00Z',
+      endTimestamp: '2026-04-15T16:00:10Z',
+      playbackAudioUri: 'https://watchduty.example/silence.m4a',
+      isSilenceBundle: true,
+      bundledSegmentIds: ['silence-123', 'silence-124'],
+      createdAt: '2026-04-15T16:00:00Z',
+      annotations: [],
+      missingPriorContext: false,
+      missingPostContext: false,
+      sourceAudioUris: [],
+    };
+
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          transcript={mockSilenceBundle}
+          index={0}
+          totalTranscripts={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onToggleAudio={mockOnToggleAudio}
+          isAudioPlaying={false}
+          onRowClick={mockOnRowClick}
+          currentlyPlayingSegmentId={null}
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+        />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText('[No speech detected]')).toBeTruthy();
+    expect(screen.getByText('10 sec')).toBeTruthy();
+    expect(screen.queryByLabelText('copy transcript')).toBeNull();
+  });
+
+  it('hides duration when silence row is at the live edge (ongoing silence)', () => {
+    const mockSilenceBundle: RenderableAudioSegment = {
+      id: 'silence-123',
+      feedId: 'feed-123',
+      classification: AudioClassification.OTHER,
+      startTimestamp: '2026-04-15T16:00:00Z',
+      endTimestamp: '2026-04-15T16:00:10Z',
+      playbackAudioUri: 'https://watchduty.example/silence.m4a',
+      isSilenceBundle: true,
+      bundledSegmentIds: ['silence-123', 'silence-124'],
+      createdAt: '2026-04-15T16:00:00Z',
+      annotations: [],
+      missingPriorContext: false,
+      missingPostContext: false,
+      sourceAudioUris: [],
+    };
+
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          transcript={mockSilenceBundle}
+          index={0}
+          totalTranscripts={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onToggleAudio={mockOnToggleAudio}
+          isAudioPlaying={false}
+          onRowClick={mockOnRowClick}
+          currentlyPlayingSegmentId={null}
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+          isTopTranscriptRow={true}
+        />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText('[No speech detected]')).toBeTruthy();
+    expect(screen.queryByText('10 sec')).toBeNull();
+    expect(screen.queryByText(/16:00/)).toBeNull();
   });
 });

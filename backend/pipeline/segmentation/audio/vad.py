@@ -25,6 +25,13 @@ from backend.pipeline.segmentation.audio.dsp import (
     custom_numpy_stft,
 )
 from backend.pipeline.segmentation.constants import (
+    TONE_ACTIVE_FRAME_POWER_RATIO,
+    TONE_FRAME_MIN_CONCENTRATION_RATIO,
+    TONE_MIN_POWER_THRESHOLD,
+    TONE_PEAK_NEIGHBORHOOD_RADIUS,
+    TONE_SEGMENT_MIN_TONE_FRAME_RATIO,
+    TONE_STFT_FRAME_LENGTH,
+    TONE_STFT_HOP_LENGTH,
     VAD_DEFAULT_BLEND_RATIO,
     VAD_DEFAULT_BOOST_FREQ_HZ,
     VAD_DEFAULT_BOOST_GAIN_DB,
@@ -392,6 +399,71 @@ class VoiceActivityDetector:
 
         return True
 
+    def _is_tone_segment(self, sig: np.ndarray) -> bool:
+        """Analyzes a candidate audio segment to determine if it is primarily an alert or paging tone."""
+        frame_len = TONE_STFT_FRAME_LENGTH
+        hop_len = TONE_STFT_HOP_LENGTH
+        if len(sig) < frame_len:
+            return False
+
+        num_frames = 1 + (len(sig) - frame_len) // hop_len
+        shape = (num_frames, frame_len)
+        strides = (sig.strides[0] * hop_len, sig.strides[0])
+        frames = np.lib.stride_tricks.as_strided(
+            sig, shape=shape, strides=strides
+        )
+
+        window = 0.5 * (
+            1.0 - np.cos(2 * np.pi * np.arange(frame_len) / frame_len)
+        )
+        windowed = frames * window.astype(np.float32)
+        specs = np.abs(np.fft.rfft(windowed, axis=-1)) ** 2
+
+        frame_powers = np.sum(specs, axis=-1)
+        max_power = np.max(frame_powers)
+        if max_power < TONE_MIN_POWER_THRESHOLD:
+            return False
+
+        active_indices = np.where(
+            frame_powers >= TONE_ACTIVE_FRAME_POWER_RATIO * max_power
+        )[0]
+        if len(active_indices) == 0:
+            return False
+
+        tone_frames = 0
+        radius = TONE_PEAK_NEIGHBORHOOD_RADIUS
+        for idx in active_indices:
+            spec = specs[idx]
+            total_p = frame_powers[idx]
+
+            # 1. Strongest peak (frequency bin index with global maximum power)
+            peak_bin_1 = int(np.argmax(spec))
+            low1 = max(0, peak_bin_1 - radius)
+            high1 = min(len(spec), peak_bin_1 + radius + 1)
+            p1 = float(np.sum(spec[low1:high1]))
+
+            # 2. Second strongest peak outside the first peak's neighborhood
+            spec_rem = spec.copy()
+            spec_rem[low1:high1] = 0.0
+            peak_bin_2 = int(np.argmax(spec_rem))
+            low2 = max(0, peak_bin_2 - radius)
+            high2 = min(len(spec), peak_bin_2 + radius + 1)
+            p2 = float(np.sum(spec[low2:high2]))
+
+            # 3. Third strongest peak outside the first two neighborhoods
+            spec_rem[low2:high2] = 0.0
+            peak_bin_3 = int(np.argmax(spec_rem))
+            low3 = max(0, peak_bin_3 - radius)
+            high3 = min(len(spec), peak_bin_3 + radius + 1)
+            p3 = float(np.sum(spec[low3:high3]))
+
+            if (p1 + p2 + p3) / total_p > TONE_FRAME_MIN_CONCENTRATION_RATIO:
+                tone_frames += 1
+
+        return (
+            tone_frames / len(active_indices)
+        ) >= TONE_SEGMENT_MIN_TONE_FRAME_RATIO
+
     def _filter_noise_segments(
         self,
         shifted_segments: list[tuple[float, float]],
@@ -406,7 +478,14 @@ class VoiceActivityDetector:
             end_idx = int((end + vad_offset_sec) * TARGET_SAMPLE_RATE)
             seg_signal = vad_input[start_idx:end_idx]
             if self._is_speech_segment(seg_signal, chunk_size):
-                filtered_segments.append((start, end))
+                if self._is_tone_segment(seg_signal):
+                    logger.debug(
+                        "Rejected VAD segment at (%.2f, %.2f) as an alert/paging tone.",
+                        start,
+                        end,
+                    )
+                else:
+                    filtered_segments.append((start, end))
         return filtered_segments
 
     def _extract_vad_frames(

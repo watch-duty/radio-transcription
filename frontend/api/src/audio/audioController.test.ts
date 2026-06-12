@@ -33,7 +33,7 @@ describe('listAudioSegments', () => {
         {
           id: 'segment-1',
           feed_id: 'feed-1',
-          classification: 'SPEECH_DETECTED',
+          classification: 'SPEECH',
           start_timestamp: '2026-01-01T10:00:00Z',
           end_timestamp: '2026-01-01T10:01:00Z',
           missing_prior_context: false,
@@ -43,6 +43,7 @@ describe('listAudioSegments', () => {
           start_audio_offset: 'PT5S',
           end_audio_offset: 'PT10S',
           playback_audio_uri: 'https://example.com/playback.mp3',
+          external_audio_segment_id: 'test-external-id',
           created_at: '2026-01-01T10:02:00Z',
           annotations: [
             {
@@ -57,7 +58,7 @@ describe('listAudioSegments', () => {
           ],
         },
       ],
-      nextToken: 'next-page-token',
+      next_token: 'next-page-token',
     };
 
     const expectedResult = {
@@ -65,7 +66,7 @@ describe('listAudioSegments', () => {
         {
           id: 'segment-1',
           feedId: 'feed-1',
-          classification: 'SPEECH_DETECTED',
+          classification: 'SPEECH',
           startTimestamp: '2026-01-01T10:00:00Z',
           endTimestamp: '2026-01-01T10:01:00Z',
           missingPriorContext: false,
@@ -75,6 +76,7 @@ describe('listAudioSegments', () => {
           startAudioOffset: 'PT5S',
           endAudioOffset: 'PT10S',
           playbackAudioUri: 'https://example.com/playback.mp3',
+          externalAudioSegmentId: 'test-external-id',
           createdAt: '2026-01-01T10:02:00Z',
           annotations: [
             {

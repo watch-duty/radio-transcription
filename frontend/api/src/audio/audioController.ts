@@ -4,7 +4,6 @@ import type {
   AudioClassification,
   AudioSegment,
 } from '@transcription/common';
-import { GoogleAuth } from 'google-auth-library';
 import {
   Controller,
   Extension,
@@ -18,7 +17,7 @@ import {
 } from 'tsoa';
 
 import { AUDIO_SEGMENTS_API_URL } from '../config.js';
-import { HttpError, handleBackendError } from '../utils.js';
+import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
 
 interface BaseAnnotationBackend {
   audio_segment_id: string;
@@ -59,6 +58,7 @@ interface AudioSegmentBackend {
   start_audio_offset: string | null;
   end_audio_offset: string | null;
   playback_audio_uri: string | null;
+  external_audio_segment_id: string | null;
   created_at: string;
   annotations?: AnnotationBackend[];
 }
@@ -87,6 +87,7 @@ function convertAudioSegmentBackend(
     startAudioOffset: response.start_audio_offset ?? undefined,
     endAudioOffset: response.end_audio_offset ?? undefined,
     playbackAudioUri: response.playback_audio_uri ?? undefined,
+    externalAudioSegmentId: response.external_audio_segment_id ?? undefined,
     createdAt: response.created_at,
     annotations: (response.annotations || []).map(convertAnnotationBackend),
   };
@@ -131,8 +132,7 @@ export class AudioController extends Controller {
         queryParams.append('is_alert', query.isAlert.toString());
       }
 
-      const auth = new GoogleAuth();
-      const client = await auth.getIdTokenClient(AUDIO_SEGMENTS_API_URL);
+      const client = await getServiceClient(AUDIO_SEGMENTS_API_URL);
       const response = await client.request({
         url: `${AUDIO_SEGMENTS_API_URL}?${queryParams.toString()}`,
         method: 'GET',
@@ -140,11 +140,11 @@ export class AudioController extends Controller {
 
       const data = response.data as {
         segments: AudioSegmentBackend[];
-        nextToken?: string;
+        next_token?: string;
       };
       return {
         segments: data.segments.map(convertAudioSegmentBackend),
-        nextToken: data.nextToken,
+        nextToken: data.next_token,
       };
     } catch (error: unknown) {
       const { status, message } = handleBackendError(

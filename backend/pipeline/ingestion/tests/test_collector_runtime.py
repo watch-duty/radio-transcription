@@ -70,6 +70,7 @@ _FEED = LeasedFeed(
 _PUBLISH_SESSION_ID_ARG_INDEX = 5
 _PUBLISH_START_TIMESTAMP_ARG_INDEX = 6
 _PUBLISH_SOURCE_TYPE_ARG_INDEX = 8
+_PUBLISH_EXTERNAL_AUDIO_ID_ARG_INDEX = 9
 
 
 class TestFeedFailureContract(unittest.TestCase):
@@ -191,6 +192,7 @@ def _make_settings(**overrides) -> mock.MagicMock:
             SourceType.BCFY_FEEDS: 240,
             SourceType.BCFY_CALLS: 600,
             SourceType.OPENMHZ: 900,
+            SourceType.FIRE_NOTIFICATIONS: 300,
         },
     }
     defaults.update(overrides)
@@ -347,6 +349,7 @@ class TestLeasingLoopOrphanedTask(unittest.IsolatedAsyncioTestCase):
                 SourceType.BCFY_FEEDS: 240,
                 SourceType.BCFY_CALLS: 600,
                 SourceType.OPENMHZ: 900,
+                SourceType.FIRE_NOTIFICATIONS: 300,
             },
         )
         rt._shutdown = asyncio.Event()
@@ -777,10 +780,11 @@ class TestProcessFeedTimestamps(unittest.IsolatedAsyncioTestCase):
             mock_publish.assert_called_once()
             _, args, _kwargs = mock_publish.mock_calls[0]
 
-            self.assertEqual(len(args), 9)
+            self.assertEqual(len(args), 10)
             self.assertEqual(
                 args[1], rt._collector_settings.continuous_pubsub_topic_path
             )
+            self.assertIsNone(args[_PUBLISH_EXTERNAL_AUDIO_ID_ARG_INDEX])
             self.assertEqual(args[2], str(_FEED["id"]))
             self.assertEqual(args[3], "Test Feed")
             self.assertTrue(args[4].startswith("gs://"))
@@ -1391,6 +1395,7 @@ class TestCalculateBranchLimits(unittest.TestCase):
         SourceType.BCFY_FEEDS: 240,
         SourceType.BCFY_CALLS: 600,
         SourceType.OPENMHZ: 900,
+        SourceType.FIRE_NOTIFICATIONS: 300,
     }
 
     def test_cold_start_bounds_sum_at_total_slack(self) -> None:
@@ -1407,22 +1412,24 @@ class TestCalculateBranchLimits(unittest.TestCase):
         self.assertEqual(sum(limits.values()), 800)
 
     def test_slack_exceeds_cap_sum_clamps_at_caps(self) -> None:
-        # total_slack=2000 > sum(caps)=1740 → each branch gets its cap,
+        # total_slack=3000 > sum(caps)=2040 → each branch gets its cap,
         # leftover slack is unassigned.
         held = dict.fromkeys(self.CAPS, 0)
         limits = CollectorRuntime._calculate_branch_limits(
-            2000, self.CAPS, held
+            3000, self.CAPS, held
         )
         self.assertEqual(limits[SourceType.BCFY_FEEDS], 240)
         self.assertEqual(limits[SourceType.BCFY_CALLS], 600)
         self.assertEqual(limits[SourceType.OPENMHZ], 900)
-        self.assertEqual(sum(limits.values()), 1740)
+        self.assertEqual(limits[SourceType.FIRE_NOTIFICATIONS], 300)
+        self.assertEqual(sum(limits.values()), 2040)
 
     def test_type_at_cap_yields_zero_for_that_branch(self) -> None:
         held = {
             SourceType.BCFY_FEEDS: 240,
             SourceType.BCFY_CALLS: 0,
             SourceType.OPENMHZ: 0,
+            SourceType.FIRE_NOTIFICATIONS: 0,
         }
         limits = CollectorRuntime._calculate_branch_limits(250, self.CAPS, held)
         self.assertEqual(limits[SourceType.BCFY_FEEDS], 0)
@@ -1435,6 +1442,7 @@ class TestCalculateBranchLimits(unittest.TestCase):
             SourceType.BCFY_FEEDS: 230,
             SourceType.BCFY_CALLS: 0,
             SourceType.OPENMHZ: 0,
+            SourceType.FIRE_NOTIFICATIONS: 0,
         }
         limits = CollectorRuntime._calculate_branch_limits(300, self.CAPS, held)
         self.assertLessEqual(limits[SourceType.BCFY_FEEDS], 10)
@@ -1452,6 +1460,7 @@ class TestCalculateBranchLimits(unittest.TestCase):
             SourceType.BCFY_FEEDS: -5,
             SourceType.BCFY_CALLS: 0,
             SourceType.OPENMHZ: 0,
+            SourceType.FIRE_NOTIFICATIONS: 0,
         }
         limits = CollectorRuntime._calculate_branch_limits(
             1000, self.CAPS, held
@@ -1460,6 +1469,7 @@ class TestCalculateBranchLimits(unittest.TestCase):
         self.assertLessEqual(limits[SourceType.BCFY_FEEDS], 240)
         self.assertLessEqual(limits[SourceType.BCFY_CALLS], 600)
         self.assertLessEqual(limits[SourceType.OPENMHZ], 900)
+        self.assertLessEqual(limits[SourceType.FIRE_NOTIFICATIONS], 300)
 
     def test_held_missing_keys_treated_as_zero(self) -> None:
         # Future caller passes a sparse dict (only types it currently
@@ -1484,6 +1494,7 @@ class TestLeasingLoopHeldCounts(unittest.IsolatedAsyncioTestCase):
                 SourceType.BCFY_FEEDS: 240,
                 SourceType.BCFY_CALLS: 600,
                 SourceType.OPENMHZ: 900,
+                SourceType.FIRE_NOTIFICATIONS: 300,
             },
         )
         rt._shutdown = asyncio.Event()
@@ -1496,6 +1507,7 @@ class TestLeasingLoopHeldCounts(unittest.IsolatedAsyncioTestCase):
             SourceType.BCFY_FEEDS: 240,
             SourceType.BCFY_CALLS: 0,
             SourceType.OPENMHZ: 0,
+            SourceType.FIRE_NOTIFICATIONS: 0,
             SourceType.ECHO: 0,
         }
         rt._store.acquire_feeds_batch.side_effect = [

@@ -243,9 +243,9 @@ def process_ordering(
     )
 
     # Process chunk through jitter buffer. max_emit caps this bundle's output at
-    # ~67 s of audio (MAX_CHUNKS_PER_WINDMILL_BUNDLE × ~4.5 s/chunk), safely
-    # under Windmill's 300-second lease limit. If the drain hits the cap, the
-    # timer block below re-arms immediately so the next bundle drains the rest.
+    # ~75 s of audio (MAX_CHUNKS_PER_WINDMILL_BUNDLE × ~15 s/chunk under load),
+    # safely under Windmill's 300-second lease limit. If the drain hits the cap,
+    # the timer block below re-arms immediately so the next bundle drains the rest.
     (
         new_expected_next_ts,
         new_buffer_elements,
@@ -314,12 +314,41 @@ def process_ordering(
     return elements_to_emit, curr_context, session_changed
 
 
+def _evaluate_is_backfill(current_ts_ms: int, threshold_ms: int) -> bool:
+    """Determines if a chunk is being processed in backfill/catch-up mode.
+
+    In this context, "backfill" refers to catch-up processing when the pipeline
+    comes back online after an outage, maintenance, or deployment. If a chunk's
+    event time lags significantly behind current wall-clock processing time, it is
+    flagged as backfill so downstream logic skips overlap validation and state updates.
+    This prevents older catch-up timestamps from corrupting mainline sequence tracking.
+
+    Args:
+        current_ts_ms: The event timestamp of the incoming audio chunk in milliseconds.
+        threshold_ms: Lateness threshold (in ms) beyond which a chunk is considered backfill.
+
+    Returns:
+        True if the chunk lateness meets or exceeds the backfill threshold.
+    """
+    lateness = time.time() * common_constants.MS_PER_SECOND - current_ts_ms
+    return lateness >= threshold_ms
+
+
 @beam.typehints.with_input_types(tuple[str, datatypes.ChunkMetadata])
 @beam.typehints.with_output_types(tuple[str, datatypes.FlushRequest])
-class OrderedContinuousStitchAudioFn(beam.DoFn):
-    """Stateful Apache Beam DoFn orchestrating out-of-order and stale windowing for continuous feeds.
+class OrderedStitchAudioFn(beam.DoFn):
+    """Stateful Apache Beam DoFn orchestrating out-of-order and stale windowing for continuous audio feeds.
 
-    Delegates core audio segment calculations to stitcher_engine.StitcherEngine.
+    Key Implementation Rationale (see ARCHITECTURE.md for full exhaustive documentation):
+    1. Bounded Windmill Bundles (Self-Chaining): When unrolling massive catch-up/backfill backlogs,
+       emissions are clamped to 500 chunks and a timer is re-armed at `timestamp` (current watermark)
+       to open fresh worker bundles, avoiding Windmill 300-second commit lease expiry ("poison pills").
+    2. Business Logic Invariant Protection: `_evaluate_is_backfill` suppresses application-level sequence
+       state overwrites and overlap log spam when historical catch-up slices are redriven.
+    3. Dual Stale Timers: Maintains both Event Time (`WATERMARK`) and wall-clock Processing Time (`REAL_TIME`)
+       timers to guarantee transmission flush recovery even if a physical radio stream goes silent/offline.
+
+    Delegates core audio segment calculations to entirely decoupled `stitcher_engine.StitcherEngine`.
     """
 
     # --- State Specs ---
@@ -485,427 +514,9 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
                     stale_timer_event, stale_timer_proc, self.stitch_config
                 )
 
-                # Determine is_backfill mode based on element lateness
-                lateness = (
-                    time.time() * common_constants.MS_PER_SECOND - current_ts_ms
-                )
-                is_backfill = (
-                    lateness
-                    >= self.stitch_config.backfill_lateness_threshold_ms
-                )
-
-                for chunk in elements_to_emit:
-                    # Fetch current state context
-                    curr_context = (
-                        transmission_context_state.read()
-                        or datatypes.IdleFeedState()
-                    )
-                    if isinstance(curr_context, datatypes.IdleFeedState):
-                        curr_context = datatypes.ActiveStitchingState(
-                            session_id=metadata.session_id,
-                            feed_metadata=metadata.feed_metadata,
-                            out_of_order_buffer=curr_context.out_of_order_buffer,
-                            order_timer_active=curr_context.order_timer_active,
-                            traceparent=metadata.traceparent,
-                        )
-                    outputs, next_expected_ts = (
-                        self.engine.process_ordering_chunk(
-                            chunk=chunk,
-                            feed_id=feed_id,
-                            curr_context=curr_context,
-                            transmission_context_state=transmission_context_state,
-                            transmission_buffer_state=transmission_buffer_state,
-                            last_start_ms_state=last_start_ms_state,
-                            timer_manager=timer_manager,
-                            previous_expected_ts=previous_expected_ts,
-                            is_backfill=is_backfill,
-                        )
-                    )
-                    results.extend(outputs)
-                    previous_expected_ts = next_expected_ts
-
-        yield from self._yield_tagged_outputs(results)
-
-    @on_timer(OUT_OF_ORDER_TIMER_SPEC)
-    def handle_gap_timeout(
-        self,
-        feed_id: str = beam.DoFn.KeyParam,  # type: ignore
-        transmission_buffer_state: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
-        transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
-        last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
-        stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
-        stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
-        timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
-        out_of_order_timer: RuntimeTimer = OUT_OF_ORDER_TIMER,  # type: ignore
-    ) -> Iterator[
-        tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
-    ]:
-        """Handles the gap timeout by advancing the expected sequence."""
-        curr_context = (
-            transmission_context_state.read() or datatypes.IdleFeedState()
-        )
-        if isinstance(curr_context, datatypes.IdleFeedState):
-            return
-        traceparent = curr_context.traceparent or ""
-        active_session_id = curr_context.session_id
-        active_feed_metadata = curr_context.feed_metadata
-        active_traceparent = curr_context.traceparent
-
-        results = []
-        with tracing_utils.with_tracer_context(
-            traceparent, "handle_audio_gap", __name__
-        ):
-            curr_context = replace(curr_context, order_timer_active=False)
-            _write_transmission_context(
-                transmission_context_state, curr_context
-            )
-
-            buffer_elements = curr_context.out_of_order_buffer
-            if buffer_elements:
-                sorted_elements = sorted(
-                    buffer_elements, key=lambda x: x.timestamp_ms
-                )
-                new_expected = sorted_elements[0].timestamp_ms
-
-                logger.warning(
-                    f"[{feed_id}] Gap timeout! Advancing expected from {curr_context.expected_next_chunk_start_ms} to {new_expected}."
-                )
-
-                curr_context = replace(
-                    curr_context,
-                    expected_next_chunk_start_ms=new_expected,
-                    missing_prior_context=True,
-                )
-                _write_transmission_context(
-                    transmission_context_state, curr_context
-                )
-
-                seq_buf = sequence_buffer.SequenceBuffer(self.order_config)
-
-                new_expected_next_ts, new_buffer_elements, elements_to_emit = (
-                    seq_buf.drain_ready_elements(
-                        expected_next_ts=new_expected,
-                        buffer_elements=buffer_elements,
-                        epsilon_ms=trans_constants.DEFAULT_FLOAT_TOLERANCE_MS,
-                        max_emit=MAX_CHUNKS_PER_WINDMILL_BUNDLE,
-                    )
-                )
-
-                clamped = (
-                    len(elements_to_emit) >= MAX_CHUNKS_PER_WINDMILL_BUNDLE
-                )
-                if clamped and new_buffer_elements:
-                    # The drain was capped at MAX_CHUNKS_PER_WINDMILL_BUNDLE to
-                    # stay under Windmill's 300-second bundle lease. Entering
-                    # this handler clears order_timer_active, so the timer is
-                    # no longer set. Re-arming it at `timestamp` (this bundle's
-                    # firing time) schedules an immediate Windmill callback so
-                    # Dataflow opens a fresh bundle to drain the next slice.
-                    # Self-chaining continues until new_buffer_elements is empty.
-                    out_of_order_timer.set(timestamp)
-                    curr_context = replace(
-                        curr_context, order_timer_active=True
-                    )
-
-                curr_context = replace(
-                    curr_context,
-                    expected_next_chunk_start_ms=new_expected_next_ts,
-                    out_of_order_buffer=new_buffer_elements,
-                )
-                _write_transmission_context(
-                    transmission_context_state, curr_context
-                )
-
-                # Handle ready elements
-                if elements_to_emit:
-                    timer_manager = StaleTimerManager(
-                        stale_timer_event, stale_timer_proc, self.stitch_config
-                    )
-
-                    # Assume backfill in timeout!
-                    is_backfill = True
-                    previous_expected_ts = new_expected
-
-                    for chunk in elements_to_emit:
-                        curr_context = (
-                            transmission_context_state.read()
-                            or datatypes.IdleFeedState()
-                        )
-                        if isinstance(curr_context, datatypes.IdleFeedState):
-                            curr_context = datatypes.ActiveStitchingState(
-                                session_id=active_session_id,
-                                feed_metadata=active_feed_metadata,
-                                out_of_order_buffer=curr_context.out_of_order_buffer,
-                                order_timer_active=curr_context.order_timer_active,
-                                traceparent=active_traceparent,
-                            )
-                        outputs, next_expected_ts = (
-                            self.engine.process_ordering_chunk(
-                                chunk=chunk,
-                                feed_id=feed_id,
-                                curr_context=curr_context,
-                                transmission_context_state=transmission_context_state,
-                                transmission_buffer_state=transmission_buffer_state,
-                                last_start_ms_state=last_start_ms_state,
-                                timer_manager=timer_manager,
-                                previous_expected_ts=previous_expected_ts,
-                                is_backfill=is_backfill,
-                            )
-                        )
-                        results.extend(outputs)
-                        previous_expected_ts = next_expected_ts
-
-        yield from self._yield_tagged_outputs(results)
-
-    @on_timer(STALE_TIMER_EVENT_SPEC)
-    def handle_stale_transmission_event(
-        self,
-        key: str = beam.DoFn.KeyParam,  # type: ignore
-        transmission_buffer: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
-        transmission_context: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
-        last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
-        stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
-        stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
-    ) -> Iterator[
-        tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
-    ]:
-        """Watermark crossed stale duration, delegate flush to StitcherEngine."""
-        timer_manager = StaleTimerManager(
-            stale_timer_event, stale_timer_proc, self.stitch_config
-        )
-        yield from self._yield_tagged_outputs(
-            self.engine.handle_stale_transmission(
-                key,
-                transmission_buffer,
-                transmission_context,
-                last_start_ms_state,
-                timer_manager,
-            )
-        )
-
-    @on_timer(STALE_TIMER_PROC_SPEC)
-    def handle_stale_transmission_proc(
-        self,
-        key: str = beam.DoFn.KeyParam,  # type: ignore
-        transmission_buffer: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
-        transmission_context: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
-        last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
-        stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
-        stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
-    ) -> Iterator[
-        tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
-    ]:
-        """Wall-clock crossed stale duration, delegate flush to StitcherEngine."""
-        timer_manager = StaleTimerManager(
-            stale_timer_event, stale_timer_proc, self.stitch_config
-        )
-        yield from self._yield_tagged_outputs(
-            self.engine.handle_stale_transmission(
-                key,
-                transmission_buffer,
-                transmission_context,
-                last_start_ms_state,
-                timer_manager,
-            )
-        )
-
-    @property
-    def audio_processor(self) -> Any:
-        if hasattr(self, "engine"):
-            return self.engine.processor
-        return None
-
-    @audio_processor.setter
-    def audio_processor(self, val: Any) -> None:
-        if hasattr(self, "engine"):
-            self.engine.processor = val
-
-
-@beam.typehints.with_input_types(tuple[str, datatypes.ChunkMetadata])
-@beam.typehints.with_output_types(tuple[str, datatypes.FlushRequest])
-class OrderedSegmentedStitchAudioFn(beam.DoFn):
-    """Stateful Apache Beam DoFn orchestrating out-of-order sequence buffers for segmented audio feeds.
-
-    Enforces segmented isolation and splits files > 60 seconds while ensuring wall-clock safety.
-    """
-
-    # --- State Specs ---
-
-    TRANSMISSION_BUFFER_SPEC = BagStateSpec(
-        "transmission_buffer", beam.coders.PickleCoder()
-    )
-    TRANSMISSION_BUFFER_STATE = beam.DoFn.StateParam(TRANSMISSION_BUFFER_SPEC)
-
-    TRANSMISSION_CONTEXT_SPEC = ReadModifyWriteStateSpec(
-        "transmission_context", trans_coders.TransmissionContextCoder()
-    )
-    TRANSMISSION_CONTEXT_STATE = beam.DoFn.StateParam(TRANSMISSION_CONTEXT_SPEC)
-
-    LAST_START_SPEC = ReadModifyWriteStateSpec(
-        "last_start_ms", beam.coders.VarIntCoder()
-    )
-    LAST_START_MS_STATE = beam.DoFn.StateParam(LAST_START_SPEC)
-
-    # --- Timers ---
-
-    OUT_OF_ORDER_TIMER_SPEC = TimerSpec(
-        "out_of_order_timer", beam.TimeDomain.REAL_TIME
-    )
-    OUT_OF_ORDER_TIMER = beam.DoFn.TimerParam(OUT_OF_ORDER_TIMER_SPEC)
-
-    STALE_TIMER_EVENT_SPEC = TimerSpec(
-        "stale_timer_event", beam.TimeDomain.WATERMARK
-    )
-    STALE_TIMER_EVENT_PARAM = beam.DoFn.TimerParam(STALE_TIMER_EVENT_SPEC)
-
-    STALE_TIMER_PROC_SPEC = TimerSpec(
-        "stale_timer_proc", beam.TimeDomain.REAL_TIME
-    )
-    STALE_TIMER_PROC_PARAM = beam.DoFn.TimerParam(STALE_TIMER_PROC_SPEC)
-
-    def __init__(
-        self,
-        order_config: datatypes.OrderRestorerConfig,
-        stitch_config: datatypes.StitchAudioConfig,
-    ) -> None:
-        self.order_config = order_config
-        # Enforce segmented isolation for this DoFn
-        self.stitch_config = replace(
-            stitch_config, isolate_segmented_chunks=True
-        )
-
-    @property
-    def engine(self) -> Any:
-        if not hasattr(self, "_engine_lazy"):
-            self._engine_lazy = stitcher_engine.StitcherEngine(
-                stitch_config=self.stitch_config,
-                order_config=self.order_config,
-                vad_config=self.stitch_config.vad_config,
-            )
-        return self._engine_lazy
-
-    @engine.setter
-    def engine(self, val: Any) -> None:
-        self._engine_lazy = val
-
-    def __getstate__(self) -> dict[str, Any]:
-        state = self.__dict__.copy()
-        if "_engine_lazy" in state:
-            del state["_engine_lazy"]
-        return state
-
-    @override
-    def setup(self) -> None:
-        tracing_utils.setup_tracing(service_name="normalization-pipeline")
-        # Acquire process-level singletons natively via Beam's Shared handle
-        shared_vad = SHARED_RESOURCE_HANDLE.acquire(
-            lambda: vad.VoiceActivityDetector(models_dir=vad.MODELS_DIR),
-            tag="vad",
-        )
-        shared_gcs = SHARED_RESOURCE_HANDLE.acquire(
-            lambda: storage.Client(project=self.stitch_config.project_id),
-            tag="gcs",
-        )
-        self.engine.processor.vad = shared_vad
-        self.engine.processor.gcs_client = shared_gcs
-        self.engine.setup()
-
-    def _yield_tagged_outputs(
-        self,
-        results: Iterable[Any],
-    ) -> Iterator[
-        tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
-    ]:
-        """Yields results, tagging DLQ outputs appropriately."""
-        for res in results:
-            if (
-                isinstance(res, tuple)
-                and res[0] == trans_constants.DEAD_LETTER_QUEUE_TAG
-            ):
-                yield beam.pvalue.TaggedOutput(
-                    trans_constants.DEAD_LETTER_QUEUE_TAG, res[1]
-                )
-            else:
-                yield res
-
-    @override
-    def process(
-        self,
-        element: tuple[str, datatypes.ChunkMetadata],
-        timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
-        transmission_buffer_state: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
-        transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
-        last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
-        out_of_order_timer: RuntimeTimer = OUT_OF_ORDER_TIMER,  # type: ignore
-        stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
-        stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
-    ) -> Iterator[
-        tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
-    ]:
-        """Intercepts chunk arrival, resolves chronological ordering, and delegates to StitcherEngine."""
-        feed_id, metadata = element
-        traceparent = metadata.traceparent or ""
-
-        results = []
-        with tracing_utils.with_tracer_context(
-            traceparent, "stitching_process", __name__
-        ):
-            current_ts_ms = int(
-                float(timestamp) * common_constants.MS_PER_SECOND
-            )
-            curr_context = (
-                transmission_context_state.read() or datatypes.IdleFeedState()
-            )
-            previous_expected_ts = (
-                curr_context.expected_next_chunk_start_ms
-                if isinstance(curr_context, datatypes.ActiveStitchingState)
-                else None
-            )
-
-            # Handle chronological sequence buffering
-            elements_to_emit, curr_context, session_changed = process_ordering(
-                element,
-                timestamp,
-                curr_context,
-                out_of_order_timer,
-                self.order_config,
-            )
-
-            task_logger = _get_task_logger(
-                feed_id, curr_context.session_id, "transcription-stitcher"
-            )
-            task_logger.debug(f"[Process] Processing chunk {metadata.gcs_uri}")
-
-            if curr_context.feed_metadata is None:
-                curr_context = replace(
-                    curr_context, feed_metadata=metadata.feed_metadata
-                )
-            if session_changed:
-                transmission_buffer_state.clear()
-                stale_timer_event.clear()
-                stale_timer_proc.clear()
-                curr_context = replace(
-                    curr_context, prior_audio_tail=None, sample_rate=None
-                )
-
-            # Commit initial sequence context updates
-            _write_transmission_context(
-                transmission_context_state, curr_context
-            )
-
-            # Delegate chunk elements to the execution engine
-            if elements_to_emit:
-                timer_manager = StaleTimerManager(
-                    stale_timer_event, stale_timer_proc, self.stitch_config
-                )
-
-                # Determine is_backfill mode based on element lateness
-                lateness = (
-                    time.time() * common_constants.MS_PER_SECOND - current_ts_ms
-                )
-                is_backfill = (
-                    lateness
-                    >= self.stitch_config.backfill_lateness_threshold_ms
+                is_backfill = _evaluate_is_backfill(
+                    current_ts_ms,
+                    self.stitch_config.backfill_lateness_threshold_ms,
                 )
 
                 for chunk in elements_to_emit:

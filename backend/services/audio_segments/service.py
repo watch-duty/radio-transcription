@@ -37,7 +37,7 @@ class AudioSegmentService:
         end_time: datetime.datetime | None = None,
         order: SortOrder = SortOrder.DESC,
         *,
-        has_alert: bool | None = None,
+        is_alert: bool | None = None,
     ) -> ListAudioSegmentsResponse:
         """Lists all audio segments with annotations and pagination."""
         result = await self._store.list_audio_segments(
@@ -47,7 +47,7 @@ class AudioSegmentService:
             start_time=start_time,
             end_time=end_time,
             order=order,
-            has_alert=has_alert,
+            is_alert=is_alert,
         )
         return ListAudioSegmentsResponse(
             segments=result.segments, next_token=result.next_token
@@ -68,6 +68,7 @@ class AudioSegmentService:
             start_audio_offset=segment.start_audio_offset,
             end_audio_offset=segment.end_audio_offset,
             playback_audio_uri=segment.playback_audio_uri,
+            external_audio_segment_id=segment.external_audio_segment_id,
             missing_prior_context=segment.missing_prior_context,
             missing_post_context=segment.missing_post_context,
         )

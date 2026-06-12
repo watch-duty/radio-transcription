@@ -70,34 +70,22 @@ class StitcherEngine:
         self.order_config = order_config
         self.vad_config = vad_config
 
-        # Incoming chunk counters by feed type
-        self.segmented_chunks_received = Metrics.counter(
-            self.__class__, "segmented_chunks_received"
-        )
-        self.continuous_chunks_received = Metrics.counter(
-            self.__class__, "continuous_chunks_received"
+        # Incoming chunk counters
+        self.chunks_received = Metrics.counter(
+            self.__class__, "chunks_received"
         )
 
-        # VAD evaluated chunk counters by feed type
-        self.segmented_vad_speech_chunks = Metrics.counter(
-            self.__class__, "segmented_vad_speech_chunks"
+        # VAD evaluated chunk counters
+        self.vad_speech_chunks = Metrics.counter(
+            self.__class__, "vad_speech_chunks"
         )
-        self.segmented_vad_silence_chunks = Metrics.counter(
-            self.__class__, "segmented_vad_silence_chunks"
-        )
-        self.continuous_vad_speech_chunks = Metrics.counter(
-            self.__class__, "continuous_vad_speech_chunks"
-        )
-        self.continuous_vad_silence_chunks = Metrics.counter(
-            self.__class__, "continuous_vad_silence_chunks"
+        self.vad_silence_chunks = Metrics.counter(
+            self.__class__, "vad_silence_chunks"
         )
 
-        # Total speech utterances/segments count by feed type
-        self.segmented_speech_segments_count = Metrics.counter(
-            self.__class__, "segmented_speech_segments_count"
-        )
-        self.continuous_speech_segments_count = Metrics.counter(
-            self.__class__, "continuous_speech_segments_count"
+        # Total speech utterances/segments count
+        self.speech_segments_count = Metrics.counter(
+            self.__class__, "speech_segments_count"
         )
 
         # Pipeline health & flushes
@@ -255,6 +243,12 @@ class StitcherEngine:
                 )
                 self.stale_flushes.inc()
 
+                audio_classification = (
+                    datatypes.AudioClassification.AUDIO_CLASSIFICATION_SPEECH
+                    if curr_ctx.speech_segments
+                    else datatypes.AudioClassification.AUDIO_CLASSIFICATION_OTHER
+                )
+
                 yield (
                     feed_id,
                     datatypes.FlushRequest(
@@ -275,6 +269,7 @@ class StitcherEngine:
                         sample_rate=curr_ctx.sample_rate
                         or common_constants.SAMPLE_RATE_HZ,
                         traceparent=curr_ctx.traceparent,
+                        audio_classification=audio_classification,
                     ),
                 )
             except Exception as e:
@@ -303,6 +298,8 @@ class StitcherEngine:
         session_id: str,
         curr_context: datatypes.ActiveStitchingState,
         chunk_data: datatypes.AudioChunkData | None = None,
+        *,
+        is_backfill: bool = False,
     ) -> Iterator[tuple[str, datatypes.FlushRequest]]:
         """Emits a structured FlushRequest payload downstream and resets internal state fields."""
         task_logger = _get_task_logger(
@@ -338,20 +335,26 @@ class StitcherEngine:
                 f"[Flush] Emitting segment {segment_id} with {len(processed_uris)} chunks"
             )
 
-            current_start_ms = action.time_range.start_ms
-            last_start_ms = last_start_ms_state.read()
+            # In backfill/catch-up mode (e.g., pipeline recovering from maintenance or outage),
+            # we skip overlap validations and avoid updating `last_start_ms_state`.
+            # This prevents older backlogged audio timestamps from corrupting the sequence tracking
+            # of the active mainline stream, which would otherwise trigger false overlap warnings
+            # and redundant segment outputs once the pipeline catches up to real-time.
+            if action.clear_state and not is_backfill:
+                current_start_ms = action.time_range.start_ms
+                last_start_ms = last_start_ms_state.read()
 
-            if (
-                last_start_ms is not None
-                and abs(current_start_ms - last_start_ms)
-                < trans_constants.OVERLAPPING_TRANSMISSION_TOLERANCE_MS
-            ):
-                task_logger.warning(
-                    f"Potential growing/overlapping transmission detected! "
-                    f"Starts at nearly the same time ({current_start_ms}ms) as previous ({last_start_ms}ms)."
-                )
+                if (
+                    last_start_ms is not None
+                    and abs(current_start_ms - last_start_ms)
+                    < trans_constants.OVERLAPPING_TRANSMISSION_TOLERANCE_MS
+                ):
+                    task_logger.warning(
+                        f"Potential growing/overlapping transmission detected! "
+                        f"Starts at nearly the same time ({current_start_ms}ms) as previous ({last_start_ms}ms)."
+                    )
 
-            last_start_ms_state.write(current_start_ms)
+                last_start_ms_state.write(current_start_ms)
 
             yield (
                 action.feed_id,
@@ -386,26 +389,13 @@ class StitcherEngine:
     def _record_chunk_evaluation_metrics(
         self, chunk_data: datatypes.AudioChunkData
     ) -> None:
-        """Records VAD evaluation outcomes and chunk volume by pipeline type."""
-        is_segmented = self.stitch_config.isolate_segmented_chunks
-        if is_segmented:
-            self.segmented_chunks_received.inc()
-            if chunk_data.speech_segments:
-                self.segmented_vad_speech_chunks.inc()
-                self.segmented_speech_segments_count.inc(
-                    len(chunk_data.speech_segments)
-                )
-            else:
-                self.segmented_vad_silence_chunks.inc()
+        """Records VAD evaluation outcomes and chunk volume."""
+        self.chunks_received.inc()
+        if chunk_data.speech_segments:
+            self.vad_speech_chunks.inc()
+            self.speech_segments_count.inc(len(chunk_data.speech_segments))
         else:
-            self.continuous_chunks_received.inc()
-            if chunk_data.speech_segments:
-                self.continuous_vad_speech_chunks.inc()
-                self.continuous_speech_segments_count.inc(
-                    len(chunk_data.speech_segments)
-                )
-            else:
-                self.continuous_vad_silence_chunks.inc()
+            self.vad_silence_chunks.inc()
 
     def _process_single_stitch_chunk(
         self,
@@ -606,6 +596,7 @@ class StitcherEngine:
                                 active_session_id or "unknown",
                                 active_context,
                                 chunk_data,
+                                is_backfill=is_backfill,
                             )
                         )
                     )

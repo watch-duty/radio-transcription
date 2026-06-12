@@ -4,18 +4,18 @@ from pathlib import Path
 
 import pytest
 
-from backend.pipeline.segmentation.options import TranscriptionOptions
+from backend.pipeline.segmentation.options import SegmentationOptions
 from backend.pipeline.segmentation.orchestration import get_pipeline
 
 
 def test_pipeline_topology_typehints() -> None:
     """Builds the DAG to trigger Apache Beam's static type checker instantaneously."""
-    options = TranscriptionOptions(
+    options = SegmentationOptions(
         flags=[
             "--project",
             "test-project",
-            "--continuous_input_subscription",
-            "projects/test-project/subscriptions/continuous-in",
+            "--input_subscription",
+            "projects/test-project/subscriptions/audio-in",
             "--output_topic",
             "projects/test-project/topics/out",
             "--dlq_topic",
@@ -36,19 +36,19 @@ def test_pipeline_topology_typehints() -> None:
 
 def test_pipeline_invalid_timeout() -> None:
     """Verifies failure when ooo timeout >= stale_timeout_ms."""
-    options = TranscriptionOptions(
+    options = SegmentationOptions(
         flags=[
             "--project",
             "test-project",
-            "--continuous_input_subscription",
-            "projects/test-project/subscriptions/continuous-in",
+            "--input_subscription",
+            "projects/test-project/subscriptions/audio-in",
             "--output_topic",
             "projects/test-project/topics/out",
             "--dlq_topic",
             "projects/test-project/topics/dlq",
             "--staging_audio_bucket",
             "test-staging-bucket",
-            "--continuous_out_of_order_timeout_ms",
+            "--out_of_order_timeout_ms",
             "80000",
             "--stale_timeout_ms",
             "70000",
@@ -57,7 +57,7 @@ def test_pipeline_invalid_timeout() -> None:
 
     with pytest.raises(
         ValueError,
-        match=r"stale_timeout_ms .* must be strictly greater than .* out_of_order_timeout_ms",
+        match=r"stale_timeout_ms .* must be strictly greater than out_of_order_timeout_ms",
     ):
         get_pipeline(options)
 
@@ -65,7 +65,7 @@ def test_pipeline_invalid_timeout() -> None:
 def test_metadata_json_parameters_parity() -> None:
     """Enforces registration of new programmatic options in metadata.json."""
     parser = argparse.ArgumentParser()
-    TranscriptionOptions._add_argparse_args(parser)
+    SegmentationOptions._add_argparse_args(parser)
 
     # Read arguments from pipeline definition, excluding general plumbing args
     declared_options = {

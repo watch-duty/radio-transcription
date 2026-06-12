@@ -15,7 +15,7 @@ import betterproto
 class FlushRequestProtoAudioClassification(betterproto.Enum):
     AUDIO_CLASSIFICATION_UNSPECIFIED = 0
     AUDIO_CLASSIFICATION_SPEECH = 1
-    AUDIO_CLASSIFICATION_NO_SPEECH = 2
+    AUDIO_CLASSIFICATION_OTHER = 2
 
 
 @dataclass(eq=False, repr=False)
@@ -55,6 +55,10 @@ class ChunkMetadataProto(betterproto.Message):
     timestamp_ms: Optional[int] = betterproto.int64_field(
         7, optional=True, group="_timestamp_ms"
     )
+    """
+    True recording event timestamp of the incoming audio chunk in milliseconds
+    since epoch.
+    """
 
 
 @dataclass(eq=False, repr=False)

@@ -9,16 +9,17 @@ MAIN_TAG: Final = "main"
 DEFAULT_SIGNIFICANT_GAP_MS: Final = 800
 
 # Maximum number of chunks emitted per Dataflow bundle by the stateful ordering
-# DoFns. Keeps bundle execution time at ~67 s (15 × ~4.5 s/chunk) well under
-# Windmill's hard 300-second lease limit. When the drain hits this cap, the
-# DoFn sets an immediate self-chaining timer so the next Windmill bundle picks
-# up the remainder. This prevents the "poison-pill" pattern where a large
+# DoFns. Keeps bundle execution time at ~75 s (5 × ~15 s/chunk under load) well
+# under Windmill's hard 300-second lease limit. When the drain hits this cap,
+# the DoFn sets an immediate self-chaining timer so the next Windmill bundle
+# picks up the remainder. This prevents the "poison-pill" pattern where a large
 # out-of-order backlog (caused by pipeline restarts, lock-induced slowdowns, or
 # traffic spikes) would be retried as a single oversized bundle indefinitely.
 # Tune this value if per-chunk processing latency changes significantly; both
 # the max_emit argument and the clamped-detection check in stateful.py must
 # stay in sync with this constant.
-MAX_CHUNKS_PER_WINDMILL_BUNDLE: Final = 15
+MAX_CHUNKS_PER_WINDMILL_BUNDLE: Final = 5
+GCS_DOWNLOAD_TIMEOUT_SEC: Final = 30
 DEFAULT_STALE_TIMEOUT_MS: Final = 75000
 DEFAULT_SEGMENTED_STALE_TIMEOUT_MS: Final = 5000
 DEFAULT_MAX_TRANSMISSION_DURATION_MS: Final = 59000
@@ -62,6 +63,17 @@ VAD_DEFAULT_SPIKINESS_RATIO_THRESHOLD: Final = 15.0
 VAD_DEFAULT_MIN_RMS_THRESHOLD: Final = 0.001
 VAD_DEFAULT_SEED: Final = 2147483647
 MAX_AUDIO_CHUNK_DURATION_SEC: Final = 300
+
+
+# Signaling Tone Detection Defaults
+# Parameters for identifying and rejecting alert/paging tones (e.g., Quik-Call II)
+TONE_STFT_FRAME_LENGTH: Final = 1024
+TONE_STFT_HOP_LENGTH: Final = 512
+TONE_MIN_POWER_THRESHOLD: Final = 1e-10
+TONE_ACTIVE_FRAME_POWER_RATIO: Final = 0.01
+TONE_PEAK_NEIGHBORHOOD_RADIUS: Final = 3
+TONE_FRAME_MIN_CONCENTRATION_RATIO: Final = 0.85
+TONE_SEGMENT_MIN_TONE_FRAME_RATIO: Final = 0.75
 
 
 # Audio Signal Processing Boundaries

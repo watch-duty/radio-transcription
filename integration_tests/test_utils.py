@@ -5,8 +5,10 @@ import logging
 import os
 import time
 from collections.abc import Callable
+from pathlib import Path
 
 import asyncpg
+import httpx
 import pytest
 
 
@@ -61,5 +63,56 @@ def verify_transcript_in_db(feed_id: str, timeout_sec: float = 300.0) -> bool:
         condition,
         timeout_sec=timeout_sec,
         error_msg="Transcript not found in DB",
+    )
+    return True
+
+
+def get_audio_segments_api_url() -> str:
+    """Returns the base API URL (e.g. http://host:port/v1) for the Audio Segments service."""
+    url = os.environ.get("AUDIO_SEGMENTS_API_URL")
+    if url:
+        if url.endswith("/audio_segments"):
+            url = url.removesuffix("/audio_segments")
+        if not url.endswith("/v1"):
+            url = f"{url.rstrip('/')}/v1"
+        return url
+
+    if Path("/.dockerenv").exists():
+        host = "audio-segments-api:8091"
+    else:
+        host = "localhost:8091"
+    return f"http://{host}/v1"
+
+
+def verify_audio_segments_via_api(
+    feed_id: str,
+    matcher: Callable[[dict], bool],
+    timeout_sec: float = 300.0,
+) -> bool:
+    """Polls /v1/audio_segments until a segment matching the condition is found."""
+    base_url = get_audio_segments_api_url()
+
+    async def _check_api():
+        async with httpx.AsyncClient(base_url=base_url) as client:
+            res = await client.get(
+                "/audio_segments", params={"feed_ids": [feed_id]}
+            )
+            if res.status_code != 200:
+                return False
+            data = res.json()
+            return any(matcher(segment) for segment in data.get("segments", []))
+
+    def condition():
+        try:
+            return asyncio.run(_check_api())
+        except Exception as e:
+            logger.warning(f"API check failed: {e}")
+            return False
+
+    logger.info("Waiting for matching audio segment via API...")
+    assert_eventually(
+        condition,
+        timeout_sec=timeout_sec,
+        error_msg="No matching audio segment found via API",
     )
     return True

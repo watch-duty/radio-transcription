@@ -20,6 +20,8 @@ export interface MultiSelectFilterProps<T> {
   size?: 'small' | 'medium';
   /** How to stringify the generic option for identity/matching. Defaults to String(option). */
   getOptionLabel?: (option: T) => string;
+  /** How to get a unique string identifier/value for the option. Defaults to String(option). */
+  getOptionValue?: (option: T) => string;
   /** Custom comparison rule. Defaults to strict equality (===) */
   isOptionEqualToValue?: (option: T, value: T) => boolean;
   /** Grouping criteria. If defined, automatically applies the styled group header layout. */
@@ -41,6 +43,7 @@ export function MultiSelectFilter<T>({
   label,
   size,
   getOptionLabel = (option) => String(option),
+  getOptionValue = (option) => String(option),
   isOptionEqualToValue = (option, val) => option === val,
   groupBy,
   renderOptionContent = (option) => String(option),
@@ -64,7 +67,7 @@ export function MultiSelectFilter<T>({
           : CheckBoxOutlineBlankIcon;
 
         return (
-          <li key={key} {...optionProps}>
+          <li key={key} {...optionProps} data-value={getOptionValue(option)}>
             <SelectionIcon
               fontSize="small"
               style={{ marginRight: 8, padding: 9, boxSizing: 'content-box' }}

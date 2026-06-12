@@ -133,6 +133,7 @@ def _log_retry(retry_state: RetryCallState) -> None:
         "AlloyDB connection attempt %d failed (%s). Retrying...",
         retry_state.attempt_number,
         exc,
+        exc_info=exc,
     )
 
 
