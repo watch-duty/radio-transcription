@@ -634,7 +634,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         ".bcfy_calls_collector.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
-    async def test_5xx_max_retries_returns_none(
+    async def test_5xx_max_retries_returns_item_failure(
         self, mock_sleep: AsyncMock
     ) -> None:
         mock_sleep.return_value = False
