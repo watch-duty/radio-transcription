@@ -13,7 +13,10 @@ from typing import Any, TypeVar, cast
 import aiohttp
 
 from backend.pipeline.ingestion import models
-from backend.pipeline.ingestion.collectors import failure_classification
+from backend.pipeline.ingestion.collectors import (
+    control_flow,
+    failure_classification,
+)
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemFailure,
     collector_failure,
@@ -28,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 _JSON = TypeVar("_JSON")
 _RETRYABLE_STATUSES = frozenset({408, 429})
-type SleepFunc = Callable[[asyncio.Event, float], Awaitable[bool]]
+type SleepFunc = Callable[[asyncio.Event, float], Awaitable[None]]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -39,18 +42,6 @@ class DownloadedItem:
     headers: Mapping[str, str]
 
 
-async def sleep_or_shutdown(
-    shutdown: asyncio.Event,
-    seconds: float,
-) -> bool:
-    """Sleep for *seconds*, returning ``True`` if interrupted by shutdown."""
-    try:
-        await asyncio.wait_for(shutdown.wait(), timeout=seconds)
-    except TimeoutError:
-        return False
-    return True
-
-
 @dataclasses.dataclass(frozen=True)
 class RetryConfig:
     """Mechanical retry settings shared by aiohttp request helpers."""
@@ -59,7 +50,7 @@ class RetryConfig:
     max_attempts: int
     base_delay_sec: float = 1.0
     jitter_max_sec: float = 1.0
-    sleep_func: SleepFunc = sleep_or_shutdown
+    sleep_func: SleepFunc = control_flow.sleep_or_cancel
 
 
 def _validate_retry_config(retry_config: RetryConfig) -> None:
@@ -107,7 +98,7 @@ async def _sleep_for_retry(
     log_label: str,
     message: str,
     headers: object = None,
-) -> bool:
+) -> None:
     delay = _retry_delay(
         attempt,
         headers=headers,
@@ -122,7 +113,7 @@ async def _sleep_for_retry(
         retry_config.max_attempts,
         delay,
     )
-    return await retry_config.sleep_func(shutdown, delay)
+    await retry_config.sleep_func(shutdown, delay)
 
 
 def _classification_for_status(
@@ -175,17 +166,17 @@ async def fetch_json_with_retries(  # noqa: UP047
     invalid_payload_reason: str,
     transport_status_reason: feed_store.FeedStatusReason,
     transport_reason: str,
-) -> _JSON | None:
+) -> _JSON:
     """Fetch and validate JSON for a feed-scoped endpoint.
 
-    Returns ``None`` only when shutdown interrupts the request or retry sleep.
+    Shutdown interruption raises ``asyncio.CancelledError``.
     Terminal feed-scoped failures raise ``FeedFailure``.
     """
     _validate_retry_config(retry_config)
     timeout = aiohttp.ClientTimeout(total=retry_config.timeout_sec)
     for attempt in range(retry_config.max_attempts):
         if shutdown.is_set():
-            return None
+            raise asyncio.CancelledError
 
         try:
             async with session.get(
@@ -214,15 +205,14 @@ async def fetch_json_with_retries(  # noqa: UP047
                 if _is_retryable_status(
                     response.status
                 ) and _has_attempt_remaining(attempt, retry_config):
-                    if await _sleep_for_retry(
+                    await _sleep_for_retry(
                         shutdown,
                         retry_config,
                         attempt=attempt,
                         log_label=log_label,
                         message=f"returned {response.status}",
                         headers=response.headers,
-                    ):
-                        return None
+                    )
                     continue
 
                 classification = _classification_for_status(
@@ -242,24 +232,24 @@ async def fetch_json_with_retries(  # noqa: UP047
             raise
         except (aiohttp.ClientError, TimeoutError) as exc:
             if _has_attempt_remaining(attempt, retry_config):
-                if await _sleep_for_retry(
+                await _sleep_for_retry(
                     shutdown,
                     retry_config,
                     attempt=attempt,
                     log_label=log_label,
                     message=format_exception_context("transport error", exc),
-                ):
-                    return None
+                )
                 continue
             raise collector_failure(
                 transport_status_reason,
                 format_exception_context(transport_reason, exc),
             )
 
-    return None
+    msg = "unreachable retry loop exit"
+    raise RuntimeError(msg)
 
 
-async def download_item_media(  # noqa: PLR0911
+async def download_item_media(
     session: aiohttp.ClientSession,
     url: str,
     shutdown: asyncio.Event,
@@ -278,17 +268,17 @@ async def download_item_media(  # noqa: PLR0911
         feed_store.FeedStatusReason.SOURCE_UNREACHABLE
     ),
     transport_reason: str = "item_download_failed",
-) -> DownloadedItem | ItemFailure | None:
+) -> DownloadedItem | ItemFailure:
     """Download item media with retry and item-scoped classification.
 
-    Returns ``None`` only for shutdown interruption.
+    Shutdown interruption raises ``asyncio.CancelledError``.
     """
     _validate_retry_config(retry_config)
     timeout = aiohttp.ClientTimeout(total=retry_config.timeout_sec)
 
     for attempt in range(retry_config.max_attempts):
         if shutdown.is_set():
-            return None
+            raise asyncio.CancelledError
 
         try:
             async with session.get(url, timeout=timeout) as response:
@@ -309,15 +299,14 @@ async def download_item_media(  # noqa: PLR0911
                 if _is_retryable_status(
                     response.status
                 ) and _has_attempt_remaining(attempt, retry_config):
-                    if await _sleep_for_retry(
+                    await _sleep_for_retry(
                         shutdown,
                         retry_config,
                         attempt=attempt,
                         log_label=log_label,
                         message=f"returned {response.status}",
                         headers=response.headers,
-                    ):
-                        return None
+                    )
                     continue
 
                 classification = _classification_for_status(
@@ -330,14 +319,13 @@ async def download_item_media(  # noqa: PLR0911
                 return ItemFailure.from_classification(classification)
         except (aiohttp.ClientError, TimeoutError) as exc:
             if _has_attempt_remaining(attempt, retry_config):
-                if await _sleep_for_retry(
+                await _sleep_for_retry(
                     shutdown,
                     retry_config,
                     attempt=attempt,
                     log_label=log_label,
                     message=format_exception_context("transport error", exc),
-                ):
-                    return None
+                )
                 continue
             return ItemFailure(
                 transport_status_reason,

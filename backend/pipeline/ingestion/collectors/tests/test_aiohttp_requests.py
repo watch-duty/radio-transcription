@@ -7,7 +7,7 @@ from unittest import mock
 
 import aiohttp
 
-from backend.pipeline.ingestion.collectors import aiohttp_requests
+from backend.pipeline.ingestion.collectors import aiohttp_requests, control_flow
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemFailure,
 )
@@ -65,7 +65,7 @@ def _retry_config(
         timeout_sec=1.0,
         max_attempts=max_attempts,
         jitter_max_sec=0.0,
-        sleep_func=sleep_func or aiohttp_requests.sleep_or_shutdown,
+        sleep_func=sleep_func or control_flow.sleep_or_cancel,
     )
 
 
@@ -226,6 +226,31 @@ class TestFetchJsonWithRetries(unittest.IsolatedAsyncioTestCase):
                 transport_reason="test_api_transport_failed",
             )
 
+    async def test_shutdown_is_set_raises_cancelled_error(self) -> None:
+        self.shutdown.set()
+
+        with self.assertRaises(asyncio.CancelledError):
+            await aiohttp_requests.fetch_json_with_retries(
+                self.session,
+                "https://api.example.invalid",
+                self.shutdown,
+                retry_config=_retry_config(),
+                log_label="test api",
+                reason_prefix="test_api_http",
+                status_policy=http_status.DEFAULT_HTTP_STATUS_POLICY,
+                validate_payload=_validate_dict,
+                invalid_payload_status_reason=(
+                    feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR
+                ),
+                invalid_payload_reason="test_api_response_invalid",
+                transport_status_reason=(
+                    feed_store.FeedStatusReason.SOURCE_UNREACHABLE
+                ),
+                transport_reason="test_api_transport_failed",
+            )
+
+        self.session.get.assert_not_called()
+
 
 class TestDownloadItemMedia(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
@@ -337,19 +362,20 @@ class TestDownloadItemMedia(unittest.IsolatedAsyncioTestCase):
             "item_download_failed: ClientError: socket down retry failed",
         )
 
-    async def test_shutdown_during_retry_returns_none(self) -> None:
-        sleep = mock.AsyncMock(return_value=True)
+    async def test_shutdown_during_retry_raises_cancelled_error(self) -> None:
+        sleep = mock.AsyncMock(side_effect=asyncio.CancelledError)
         self.session.get.return_value = _Response(503)
 
-        result = await aiohttp_requests.download_item_media(
-            self.session,
-            "https://media.example.invalid/audio.mp3",
-            self.shutdown,
-            retry_config=_retry_config(sleep_func=sleep),
-            log_label="test item",
-        )
+        with self.assertRaises(asyncio.CancelledError):
+            await aiohttp_requests.download_item_media(
+                self.session,
+                "https://media.example.invalid/audio.mp3",
+                self.shutdown,
+                retry_config=_retry_config(sleep_func=sleep),
+                log_label="test item",
+            )
 
-        self.assertIsNone(result)
+        sleep.assert_awaited_once()
 
 
 if __name__ == "__main__":
