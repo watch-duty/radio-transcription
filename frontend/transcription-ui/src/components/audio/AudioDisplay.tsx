@@ -1,4 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+
+import type { Howl } from 'howler';
 
 import PauseIcon from '@mui/icons-material/PauseCircleFilledOutlined';
 import PlayArrowIcon from '@mui/icons-material/PlayCircleFilledOutlined';
@@ -23,6 +25,7 @@ interface AudioDisplayProps {
   isAudioPlaying: boolean;
   onTogglePlayPause: () => void;
   currentTimeSeconds?: number;
+  currentAudioRef?: React.RefObject<Howl | null>;
 }
 
 const formatTime = (timestamp: number) => {
@@ -132,10 +135,55 @@ export function AudioDisplay({
   userDuration,
   isAudioPlaying,
   onTogglePlayPause,
-  currentTimeSeconds,
+  currentTimeSeconds: currentTimeSecondsProp,
+  currentAudioRef,
 }: AudioDisplayProps) {
   const theme = useTheme();
   const isDarkTheme = theme.palette.mode === 'dark';
+
+  const [internalTimeSeconds, setInternalTimeSeconds] = useState<number>(0);
+
+  // Poll current playback progress when audio is playing
+  useEffect(() => {
+    if (
+      currentTimeSecondsProp !== undefined ||
+      !isAudioPlaying ||
+      !currentlyPlayingSegmentId ||
+      !currentAudioRef?.current
+    ) {
+      return;
+    }
+
+    let animationFrameId: number;
+
+    const updateProgress = () => {
+      if (currentAudioRef.current) {
+        const seek = currentAudioRef.current.seek();
+        if (typeof seek === 'number') {
+          setInternalTimeSeconds(seek);
+        }
+      }
+      animationFrameId = requestAnimationFrame(updateProgress);
+    };
+
+    updateProgress();
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+    };
+  }, [
+    isAudioPlaying,
+    currentlyPlayingSegmentId,
+    currentAudioRef,
+    currentTimeSecondsProp,
+  ]);
+
+  const currentTimeSeconds =
+    currentTimeSecondsProp !== undefined
+      ? currentTimeSecondsProp
+      : currentAudioRef !== undefined
+        ? internalTimeSeconds
+        : undefined;
 
   const [windowEndTime, setWindowEndTime] = useState<number | null>(null);
 
@@ -181,6 +229,9 @@ export function AudioDisplay({
     highlightedSegmentId !== prevHighlightedId ||
     (userDuration ?? null) !== prevUserDuration
   ) {
+    if (playingId !== prevPlayingId) {
+      setInternalTimeSeconds(0);
+    }
     setPrevPlayingId(playingId);
     setPrevHighlightedId(highlightedSegmentId);
     setPrevUserDuration(userDuration ?? null);

@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { Howl } from 'howler';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -570,5 +571,52 @@ describe('AudioDisplay', () => {
 
     const trackingLine = screen.getByTestId('audio-tracking-line');
     expect(trackingLine).toBeTruthy();
+  });
+
+  it('should render tracking line and poll progress when currentAudioRef is provided and currentTimeSeconds is undefined', async () => {
+    const mockTranscripts: Transcript[] = [
+      {
+        segmentId: '1',
+        feedId: 'feed1',
+        startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
+        endTimestamp: new Date('2026-04-20T09:00:10Z').toISOString(),
+        transcript: 'Test 1',
+        canonicalAudioUri: 'audio1.flac',
+        playbackAudioUri: 'audio1.m4a',
+        evaluationDecisions: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+        startAudioOffset: '0',
+        endAudioOffset: '0',
+      },
+    ];
+
+    const mockHowl = {
+      seek: vi.fn().mockReturnValue(5),
+    };
+
+    const currentAudioRef = {
+      current: mockHowl as unknown as Howl,
+    };
+
+    render(
+      <AudioDisplay
+        transcripts={mockTranscripts}
+        currentlyPlayingSegmentId="1"
+        onClipClick={vi.fn()}
+        isAudioPlaying={true}
+        onTogglePlayPause={vi.fn()}
+        highlightedSegmentId={null}
+        currentAudioRef={currentAudioRef}
+      />
+    );
+
+    await waitFor(() => {
+      const trackingLine = screen.getByTestId('audio-tracking-line');
+      expect(trackingLine).toBeTruthy();
+    });
+
+    expect(mockHowl.seek).toHaveBeenCalled();
   });
 });
