@@ -23,25 +23,34 @@ import { AudioDisplay } from './AudioDisplay';
 const mockSetTime = vi.fn();
 const mockSetOptions = vi.fn();
 
-vi.mock('@wavesurfer/react', () => ({
-  default: (props: any) => {
+vi.mock('@wavesurfer/react', () => {
+  const MockWavesurferPlayer = (props: {
+    url: string;
+    onReady?: (ws: { setTime: (time: number) => void; setOptions: (opts: unknown) => void }) => void;
+    onDestroy?: () => void;
+  }) => {
+    const { onReady, onDestroy } = props;
     React.useEffect(() => {
-      if (props.onReady) {
-        props.onReady({
+      if (onReady) {
+        onReady({
           setTime: mockSetTime,
           setOptions: mockSetOptions,
         });
       }
       return () => {
-        if (props.onDestroy) {
-          props.onDestroy();
+        if (onDestroy) {
+          onDestroy();
         }
       };
-    }, [props.onReady, props.onDestroy]);
+    }, [onReady, onDestroy]);
 
     return <div data-testid="wavesurfer-player" data-url={props.url} />;
-  },
-}));
+  };
+
+  return {
+    default: MockWavesurferPlayer,
+  };
+});
 
 function makeMockAudioSegment(
   id: string,

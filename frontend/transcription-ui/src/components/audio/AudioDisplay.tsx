@@ -218,11 +218,6 @@ export function AudioDisplay({
   const [localCurrentTimeSeconds, setLocalCurrentTimeSeconds] =
     useState<number>(0);
 
-  // Reset progress when changing segment
-  useEffect(() => {
-    setLocalCurrentTimeSeconds(0);
-  }, [currentlyPlayingSegmentId]);
-
   // Poll current playback progress when audio is playing
   useEffect(() => {
     if (
@@ -261,7 +256,7 @@ export function AudioDisplay({
   const currentTimeSeconds =
     currentTimeSecondsProp !== undefined
       ? currentTimeSecondsProp
-      : currentAudioRef?.current
+      : currentAudioRef
         ? localCurrentTimeSeconds
         : undefined;
 
@@ -330,6 +325,9 @@ export function AudioDisplay({
     highlightedSegmentId !== prevHighlightedId ||
     (userDuration ?? null) !== prevUserDuration
   ) {
+    if (playingId !== prevPlayingId) {
+      setLocalCurrentTimeSeconds(0);
+    }
     setPrevPlayingId(playingId);
     setPrevHighlightedId(highlightedSegmentId);
     setPrevUserDuration(userDuration ?? null);
