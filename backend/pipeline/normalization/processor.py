@@ -19,7 +19,10 @@ from backend.pipeline.common.constants import (
     NANOS_PER_SECOND,
 )
 from backend.pipeline.common.storage import gcs_uploader
-from backend.pipeline.common.tracing_utils import with_tracer_context
+from backend.pipeline.common.tracing_utils import (
+    inject_otel_context,
+    with_tracer_context,
+)
 from backend.pipeline.normalization import audio_processor
 from backend.pipeline.schema_types.normalized_audio_pb2 import NormalizedAudio
 from backend.pipeline.schema_types.segmented_audio_pb2 import (
@@ -91,7 +94,6 @@ class NormalizationEventProcessor:
                 return
             pubsub_message = envelope.get("message", {}) or {}
             attributes = pubsub_message.get("attributes", {}) or {}
-            traceparent = attributes.get("traceparent", "")
             raw_data = pubsub_message.get("data", "")
         except Exception as e:
             logger.exception(
@@ -195,7 +197,6 @@ class NormalizationEventProcessor:
                     canonical_audio_uri=canonical_audio_uri,
                     playback_audio_uri=playback_audio_uri,
                     transcription_audio_uri=transcription_audio_uri,
-                    traceparent=traceparent,
                 )
 
             except Exception as e:
@@ -338,7 +339,6 @@ class NormalizationEventProcessor:
         canonical_audio_uri: str,
         playback_audio_uri: str,
         transcription_audio_uri: str,
-        traceparent: str,
     ) -> None:
         """Publishes the egress NormalizedAudio message downstream to Pub/Sub."""
         segment_id = segmented_audio.segment_id
@@ -367,8 +367,7 @@ class NormalizationEventProcessor:
         topic_path = self.publisher.topic_path(self.project_id, topic_name)
 
         attrs: dict[str, str] = {}
-        if traceparent:
-            attrs["traceparent"] = traceparent
+        inject_otel_context(attrs)
 
         future = self.publisher.publish(
             topic=topic_path,

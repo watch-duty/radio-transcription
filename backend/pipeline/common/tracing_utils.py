@@ -9,7 +9,13 @@ from contextlib import contextmanager
 from opentelemetry import baggage
 from opentelemetry.baggage.propagation import W3CBaggagePropagator
 from opentelemetry.context import Context, attach, detach, get_current
+from opentelemetry.exporter.cloud_monitoring import (
+    CloudMonitoringMetricsExporter,
+)
 from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
+from opentelemetry.metrics import get_meter_provider, set_meter_provider
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.export import (
     BatchSpanProcessor,
@@ -116,6 +122,16 @@ def setup_tracing(
 
         set_tracer_provider(provider)
 
+        current_meter_provider = get_meter_provider()
+        if not isinstance(current_meter_provider, MeterProvider):
+            metrics_exporter = CloudMonitoringMetricsExporter(
+                project_id=project_id
+            )
+            # Use default export interval
+            reader = PeriodicExportingMetricReader(metrics_exporter)
+            meter_provider = MeterProvider(metric_readers=[reader])
+            set_meter_provider(meter_provider)
+
 
 def get_current_traceparent() -> str:
     """Returns the W3C traceparent for the current context."""
@@ -210,6 +226,10 @@ def with_tracer_context(
     else:
         context = extract_trace_context(traceparent_or_attrs)
 
-    tracer = get_tracer(tracer_name)
-    with tracer.start_as_current_span(span_name, context=context) as span:
-        yield span
+    token = attach(context)
+    try:
+        tracer = get_tracer(tracer_name)
+        with tracer.start_as_current_span(span_name) as span:
+            yield span
+    finally:
+        detach(token)
