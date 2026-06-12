@@ -31,15 +31,10 @@ def main() -> None:
             msg = f"Startup check failed for source type {st}: {e}"
             raise RuntimeError(msg) from e
 
-    # Cross-registry invariant: the set of types that have a registered
-    # collector (router._COLLECTORS) must equal the set of types with
-    # per-worker caps (settings._DEFAULT_CAPS). Drift in either direction
-    # is silent in production:
-    #   - Type in caps but not collectors → worker claims feeds it
-    #     can't process; route_capturer raises at first chunk.
-    #   - Type in collectors but not caps → worker has the code path but
-    #     never claims that type (no CTE branch generated, no recovery
-    #     filter match) — feeds back up indefinitely.
+    # Cross-registry invariant: VM-claimable SourceRuntimeSpec entries must
+    # match registered collectors and caps. Drift in either direction is silent
+    # in production: workers either claim feeds they cannot process, or ship
+    # code paths that never claim their feeds.
     collector_types = {SourceType(st) for st in supported_source_types()}
     cap_types = set(settings.caps.keys())
     if collector_types != cap_types:
@@ -47,8 +42,8 @@ def main() -> None:
             "Startup invariant violated: collector registry "
             f"{sorted(t.value for t in collector_types)} differs from "
             f"caps registry {sorted(t.value for t in cap_types)}. "
-            "Both _COLLECTORS (router.py) and _DEFAULT_CAPS (settings.py) "
-            "must be updated together when adding or removing a SourceType."
+            "Both _COLLECTORS (router.py) and SourceRuntimeSpec "
+            "must be updated together when adding or removing a VM source."
         )
         raise RuntimeError(msg)
 
