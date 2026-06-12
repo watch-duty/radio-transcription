@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { getRelativeTimeString } from './timeUtils';
+import { formatDuration, getRelativeTimeString } from './timeUtils';
 
 describe('timeUtils', () => {
   describe('getRelativeTimeString', () => {
@@ -90,6 +90,30 @@ describe('timeUtils', () => {
       expect(getRelativeTimeString('2025-04-28T19:00:00Z')).toBe(
         '365 days ago'
       );
+    });
+  });
+
+  describe('formatDuration', () => {
+    it('formats durations under 60 seconds directly in seconds', () => {
+      expect(formatDuration(45)).toBe('45 sec');
+      expect(formatDuration(59)).toBe('59 sec');
+    });
+
+    it('formats exact minutes without seconds', () => {
+      expect(formatDuration(60)).toBe('1 min');
+      expect(formatDuration(120)).toBe('2 min');
+    });
+
+    it('formats durations over 60 seconds with both minutes and remaining seconds', () => {
+      expect(formatDuration(61)).toBe('1 min 1 sec');
+      expect(formatDuration(90)).toBe('1 min 30 sec');
+      expect(formatDuration(1079)).toBe('17 min 59 sec');
+    });
+
+    it('rounds seconds to the nearest whole number', () => {
+      expect(formatDuration(44.6)).toBe('45 sec');
+      expect(formatDuration(60.2)).toBe('1 min');
+      expect(formatDuration(60.7)).toBe('1 min 1 sec');
     });
   });
 });

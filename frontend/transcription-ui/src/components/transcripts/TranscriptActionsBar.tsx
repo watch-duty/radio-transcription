@@ -14,11 +14,11 @@ import Switch from '@mui/material/Switch';
 import Tooltip from '@mui/material/Tooltip';
 import { useTheme } from '@mui/material/styles';
 
+import type { AlertFilter } from '../../hooks/useAudioSegments';
 import { DateTimePicker } from '../common/DateTimePicker';
-import type { AlertFilter } from './TranscriptView';
 
 export interface TranscriptActionsBarProps {
-  hasNewerTranscripts: boolean;
+  hasNewerAudioSegments: boolean;
   searchedTimestamp: Date | null;
   redactTranscripts: boolean;
   setRedactTranscripts: (redact: boolean) => void;
@@ -33,7 +33,7 @@ const APPLIED_FILTER_BG_COLOR = '#bbdefb';
 const DEFAULT_FILTER_BG_COLOR = '#f9bf90';
 
 export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
-  hasNewerTranscripts,
+  hasNewerAudioSegments,
   redactTranscripts,
   setRedactTranscripts,
   dateTime,
@@ -108,7 +108,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
           variant="contained"
           sx={{ textTransform: 'none', gap: 1 }}
           onClick={onClickViewLatest}
-          disabled={!hasNewerTranscripts}
+          disabled={!hasNewerAudioSegments}
         >
           Jump to live
         </Button>
