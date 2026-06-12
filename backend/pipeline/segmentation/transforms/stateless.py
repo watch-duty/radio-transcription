@@ -3,11 +3,8 @@
 This module defines the stateless mapper and serializer DoFns in our Apache
 Beam DAG. These transforms perform zero stateful buffering or timer scheduling
 and are highly optimized for parallel worker execution:
-1. ParseAndKeyFn: Unmarshals raw Pub/Sub messages, validates protobuf chunk
+ParseAndKeyFn: Unmarshals raw Pub/Sub messages, validates protobuf chunk
    fields, extracts Telemetry tracing context, and sets a deterministic key.
-2. SerializeFn: Formats downstream TranscriptionResult payloads into standard
-   TranscribedAudio protobuf formats, serializes them, and prepares them for
-   egress Pub/Sub topic publication.
 """
 
 import datetime
@@ -32,7 +29,6 @@ from backend.pipeline.common.constants import (
 from backend.pipeline.common.log_helper import get_task_logger
 from backend.pipeline.common.tracing_utils import (
     extract_trace_context,
-    get_current_traceparent,
     setup_tracing,
 )
 from backend.pipeline.schema_types.continuous_audio_pb2 import (
@@ -41,9 +37,6 @@ from backend.pipeline.schema_types.continuous_audio_pb2 import (
 from backend.pipeline.schema_types.segmented_audio_pb2 import (
     SegmentedAudio,
 )
-from backend.pipeline.schema_types.transcribed_audio_pb2 import (
-    TranscribedAudio,
-)
 from backend.pipeline.segmentation.constants import (
     DEAD_LETTER_QUEUE_TAG,
 )
@@ -51,11 +44,10 @@ from backend.pipeline.segmentation.datatypes import (
     ChunkMetadata,
     FeedMetadata,
     SegmentationDlqOutput,
-    TranscriptionResult,
 )
 from backend.pipeline.segmentation.options import (
     DataflowSystemOptions,  # noqa: F401
-    TranscriptionOptions,  # noqa: F401
+    SegmentationOptions,  # noqa: F401
 )
 
 logger = get_task_logger(
@@ -78,7 +70,7 @@ class ParseAndKeyFn(beam.DoFn):
             Set by orchestration based on which Pub/Sub subscription the message arrived from.
     """
 
-    def __init__(self, *, is_continuous: bool) -> None:
+    def __init__(self, *, is_continuous: bool = True) -> None:
         self.is_continuous = is_continuous
 
     @override
@@ -111,7 +103,7 @@ class ParseAndKeyFn(beam.DoFn):
                 if not chunk_proto.gcs_uri:
                     msg = "ContinuousAudio missing required gcs_uri"
                     _raise(msg)
-                if self.is_continuous and not chunk_proto.session_id:
+                if not chunk_proto.session_id:
                     msg = "ContinuousAudio missing required session_id for continuous feed"
                     _raise(msg)
                 if not chunk_proto.feed_name:
@@ -123,13 +115,9 @@ class ParseAndKeyFn(beam.DoFn):
                     if element.attributes
                     else None
                 )
-                if source_type:
-                    if self.is_continuous and source_type != "bcfy_feeds":
-                        msg = f"Received segmented source type '{source_type}' on continuous subscription"
-                        _raise(msg)
-                    elif not self.is_continuous and source_type == "bcfy_feeds":
-                        msg = f"Received continuous source type '{source_type}' on segmented subscription"
-                        _raise(msg)
+                if source_type and source_type != "bcfy_feeds":
+                    msg = f"Received segmented source type '{source_type}' on continuous subscription"
+                    _raise(msg)
 
                 traceparent = (
                     element.attributes.get("traceparent")
@@ -147,15 +135,12 @@ class ParseAndKeyFn(beam.DoFn):
                 )
                 metadata = ChunkMetadata(
                     gcs_uri=chunk_proto.gcs_uri,
-                    # For segmented feeds, session_id is typically the call ID set by ingestion.
-                    # Fall back to feed_id (not a static string) so per-feed session change
-                    # detection in the ordering buffer remains meaningful.
-                    session_id=chunk_proto.session_id or feed_id,
+                    session_id=chunk_proto.session_id,
                     duration_ms=chunk_proto.duration_ms,
                     feed_metadata=FeedMetadata(
                         feed_name=chunk_proto.feed_name,
                     ),
-                    is_continuous=self.is_continuous,
+                    is_continuous=True,
                     traceparent=traceparent,
                     timestamp_ms=start_ms,
                 )
@@ -180,84 +165,6 @@ class ParseAndKeyFn(beam.DoFn):
             )
 
         yield from outputs
-
-
-@beam.typehints.with_input_types(TranscriptionResult)
-@beam.typehints.with_output_types(PubsubMessage)
-class SerializeFn(beam.DoFn):
-    """Serializes the final TranscribedAudio message to Pub/Sub."""
-
-    @override
-    def process(
-        self,
-        element: TranscriptionResult,
-    ) -> Iterator[PubsubMessage | SegmentationDlqOutput]:
-        def _raise(msg: str) -> None:
-            raise ValueError(msg)
-
-        try:
-            value = element
-
-            if value.start_audio_offset_ms is None:
-                msg = f"Missing start_audio_offset_ms for feed_id: {value.feed_id} (session: {value.session_id})"
-                _raise(msg)
-            start_offset = datetime.timedelta(
-                milliseconds=value.start_audio_offset_ms
-            )
-
-            if value.end_audio_offset_ms is None:
-                msg = f"Missing end_audio_offset_ms for feed_id: {value.feed_id} (session: {value.session_id})"
-                _raise(msg)
-            end_offset = datetime.timedelta(
-                milliseconds=value.end_audio_offset_ms
-            )
-
-            if value.feed_metadata is None:
-                msg = f"Missing feed_metadata in TranscriptionResult for feed_id: {value.feed_id} (session: {value.session_id})"
-                _raise(msg)
-
-            if not value.contributing_audio_uris:
-                msg = f"Missing contributing_audio_uris in TranscriptionResult for feed_id: {value.feed_id} (session: {value.session_id})"
-                _raise(msg)
-
-            proto = TranscribedAudio(
-                feed_id=value.feed_id,
-                source_audio_uris=value.contributing_audio_uris,
-                segment_id=value.segment_id,
-                transcript=value.transcript,
-                missing_prior_context=value.missing_prior_context,
-                missing_post_context=value.missing_post_context,
-                start_audio_offset=start_offset,
-                end_audio_offset=end_offset,
-                canonical_audio_uri=value.canonical_audio_uri,
-                playback_audio_uri=value.playback_audio_uri,
-                feed_name=value.feed_metadata.feed_name,
-            )
-            proto.start_timestamp.FromMicroseconds(
-                value.time_range.start_ms * MICROSECONDS_PER_MS
-            )
-            proto.end_timestamp.FromMicroseconds(
-                value.time_range.end_ms * MICROSECONDS_PER_MS
-            )
-            attrs: dict[str, str] = {}
-            current_tp = get_current_traceparent() or value.traceparent
-            if current_tp:
-                attrs["traceparent"] = current_tp
-
-            yield PubsubMessage(
-                data=proto.SerializeToString(),
-                attributes=attrs,
-                ordering_key=value.feed_id,
-            )
-        except Exception as e:
-            logger.exception(
-                "Error serializing transcription result for feed %s",
-                element.feed_id,
-            )
-            yield beam.pvalue.TaggedOutput(
-                DEAD_LETTER_QUEUE_TAG,
-                {"error": str(e), "feed_id": element.feed_id},
-            )
 
 
 @beam.typehints.with_input_types(tuple)

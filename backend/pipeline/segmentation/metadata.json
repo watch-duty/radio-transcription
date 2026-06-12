@@ -3,9 +3,9 @@
   "description": "Flex Template for the Audio Transcription Pipeline (Dataflow).",
   "parameters": [
     {
-      "name": "continuous_input_subscription",
-      "label": "Continuous Input Subscription",
-      "helpText": "Full path of the Pub/Sub ordered subscription for continuous feeds (e.g. projects/your-project/subscriptions/continuous-sub).",
+      "name": "input_subscription",
+      "label": "Input Subscription",
+      "helpText": "Full path of the Pub/Sub ordered subscription for audio feeds (e.g. projects/your-project/subscriptions/audio-sub).",
       "isOptional": false
     },
     {
@@ -39,9 +39,9 @@
       "isOptional": true
     },
     {
-      "name": "continuous_out_of_order_timeout_ms",
-      "label": "Continuous Out Of Order Timeout (MS)",
-      "helpText": "Milliseconds to wait for missing chunks before accepting a logical gap for continuous feeds. Default: 60000ms.",
+      "name": "out_of_order_timeout_ms",
+      "label": "Out Of Order Timeout (MS)",
+      "helpText": "Milliseconds to wait for missing chunks before accepting a logical gap for audio feeds. Default: 60000ms.",
       "isOptional": true
     }
   ]
