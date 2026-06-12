@@ -447,3 +447,25 @@ class TestVadEngine(unittest.TestCase):
             audio_data, sample_rate=sample_rate
         )
         self.assertEqual(segments, [])
+
+    def test_is_tone_segment_mixed_tone_and_speech_retained(self) -> None:
+        """Verifies that a mixed audio transmission containing a loud alert tone
+        followed by quieter/normal human speech is correctly retained and not dropped.
+        """
+        # 1. 4 seconds of loud Quik-Call II paging alert tone (1082 Hz / 600 Hz)
+        t1 = np.linspace(0, 4.0, 64000, endpoint=False)
+        tone = (
+            np.sin(2 * np.pi * 1082.0 * t1) + np.sin(2 * np.pi * 600.0 * t1)
+        ).astype(np.float32) * 0.4
+
+        # 2. 4 seconds of broadband human speech (consonant fricatives / broadband un-concentrated voice)
+        rng = np.random.default_rng(seed=42)
+        speech = rng.normal(0.0, 0.05, 64000).astype(np.float32)
+        # Simulate word envelopes
+        speech[10000:20000] *= 2.0
+        speech[30000:50000] *= 2.0
+
+        mixed_signal = np.concatenate([tone, speech])
+
+        # Assert that the mixed signal is classified as NOT purely an alert tone
+        self.assertFalse(self.vad._is_tone_segment(mixed_signal))

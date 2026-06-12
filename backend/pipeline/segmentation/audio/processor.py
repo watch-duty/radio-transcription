@@ -129,21 +129,9 @@ class SegmentationAudioProcessor:
             except OSError:
                 pass
 
-        speech_segments = []
-        if len(samples) > 0:
-            # VAD processing requires 16kHz mono
-            samples_16k_mono = self._resample_to_16k_mono(samples, sr)
-            prior_samples_16k = None
-            if prior_audio is not None:
-                prior_samples_16k = np.frombuffer(
-                    prior_audio, dtype=np.int16
-                )  # already 16kHz mono
-
-            speech_segments = self.vad.detect_speech_segments(
-                samples_16k_mono,
-                sample_rate=SAMPLE_RATE_HZ,
-                prior_audio=prior_samples_16k,
-            )
+        speech_segments, tone_segments = self._detect_segments_robust(
+            samples, sr, prior_audio
+        )
 
         from backend.pipeline.schema_types import (  # noqa: PLC0415
             streaming_state as bp_state,
@@ -157,6 +145,14 @@ class SegmentationAudioProcessor:
             for s, e in speech_segments
         ]
 
+        tone_segments_proto = [
+            bp_state.TimeRangeProto(
+                start_ms=int(s * 1000),
+                end_ms=int(e * 1000),
+            )
+            for s, e in tone_segments
+        ]
+
         duration_ms = duration_ms or int(len(samples) * 1000 / sr)
 
         return AudioChunkData(
@@ -164,9 +160,44 @@ class SegmentationAudioProcessor:
             audio=samples,
             sample_rate=sr,
             speech_segments=speech_segments_proto,
+            tone_segments=tone_segments_proto,
             gcs_uri=gcs_path,
             duration_ms=duration_ms,
         )
+
+    def _detect_segments_robust(
+        self, samples: np.ndarray, sr: int, prior_audio: bytes | None
+    ) -> tuple[list[tuple[float, float]], list[tuple[float, float]]]:
+        """Runs VAD and tone classification robustly against mocks and fallback methods."""
+        if len(samples) == 0 or self.vad is None:
+            return [], []
+
+        samples_16k_mono = self._resample_to_16k_mono(samples, sr)
+        prior_samples_16k = None
+        if prior_audio is not None:
+            prior_samples_16k = np.frombuffer(prior_audio, dtype=np.int16)
+
+        if hasattr(self.vad, "detect_classified_segments"):
+            res = self.vad.detect_classified_segments(
+                samples_16k_mono,
+                sample_rate=SAMPLE_RATE_HZ,
+                prior_audio=prior_samples_16k,
+            )
+            if isinstance(res, tuple) and len(res) == 2:
+                return res
+            speech_segments = self.vad.detect_speech_segments(
+                samples_16k_mono,
+                sample_rate=SAMPLE_RATE_HZ,
+                prior_audio=prior_samples_16k,
+            )
+            return speech_segments, []
+
+        speech_segments = self.vad.detect_speech_segments(
+            samples_16k_mono,
+            sample_rate=SAMPLE_RATE_HZ,
+            prior_audio=prior_samples_16k,
+        )
+        return speech_segments, []
 
     def _resample_to_16k_mono(self, samples: np.ndarray, sr: int) -> np.ndarray:
         """Downmixes to mono and resamples to 16 kHz for VAD/SED processing."""

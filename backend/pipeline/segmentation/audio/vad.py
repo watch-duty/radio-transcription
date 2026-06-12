@@ -25,7 +25,6 @@ from backend.pipeline.segmentation.audio.dsp import (
     custom_numpy_stft,
 )
 from backend.pipeline.segmentation.constants import (
-    TONE_ACTIVE_FRAME_POWER_RATIO,
     TONE_FRAME_MIN_CONCENTRATION_RATIO,
     TONE_MIN_POWER_THRESHOLD,
     TONE_PEAK_NEIGHBORHOOD_RADIUS,
@@ -424,11 +423,10 @@ class VoiceActivityDetector:
         if max_power < TONE_MIN_POWER_THRESHOLD:
             return False
 
-        active_indices = np.where(
-            frame_powers >= TONE_ACTIVE_FRAME_POWER_RATIO * max_power
-        )[0]
-        if len(active_indices) == 0:
-            return False
+        # Evaluate all frames with audible sound rather than filtering relative to max_power.
+        # Filtering relative to max_power causes loud alert tones to blind the detector
+        # to quieter/normal subsequent dispatcher speech, falsely dropping mixed transmissions.
+        active_indices = np.where(frame_powers >= TONE_MIN_POWER_THRESHOLD)[0]
 
         tone_frames = 0
         radius = TONE_PEAK_NEIGHBORHOOD_RADIUS
@@ -464,15 +462,16 @@ class VoiceActivityDetector:
             tone_frames / len(active_indices)
         ) >= TONE_SEGMENT_MIN_TONE_FRAME_RATIO
 
-    def _filter_noise_segments(
+    def _classify_segments(
         self,
         shifted_segments: list[tuple[float, float]],
         vad_input: np.ndarray,
         vad_offset_sec: float,
         chunk_size: int,
-    ) -> list[tuple[float, float]]:
-        """Filters out transient clicks/noise segments from the list of VAD-detected segments."""
-        filtered_segments = []
+    ) -> tuple[list[tuple[float, float]], list[tuple[float, float]]]:
+        """Separates VAD-detected segments into genuine speech versus alert/paging tone segments."""
+        speech_segments = []
+        tone_segments = []
         for start, end in shifted_segments:
             start_idx = int((start + vad_offset_sec) * TARGET_SAMPLE_RATE)
             end_idx = int((end + vad_offset_sec) * TARGET_SAMPLE_RATE)
@@ -480,13 +479,14 @@ class VoiceActivityDetector:
             if self._is_speech_segment(seg_signal, chunk_size):
                 if self._is_tone_segment(seg_signal):
                     logger.debug(
-                        "Rejected VAD segment at (%.2f, %.2f) as an alert/paging tone.",
+                        "Classified VAD segment at (%.2f, %.2f) as an alert/paging tone.",
                         start,
                         end,
                     )
+                    tone_segments.append((start, end))
                 else:
-                    filtered_segments.append((start, end))
-        return filtered_segments
+                    speech_segments.append((start, end))
+        return speech_segments, tone_segments
 
     def _extract_vad_frames(
         self,
@@ -676,10 +676,106 @@ class VoiceActivityDetector:
             raw_segments, vad_offset_sec
         )
 
-        filtered_segments = self._filter_noise_segments(
+        speech_segs, _tone_segs = self._classify_segments(
             shifted_segments, vad_input, vad_offset_sec, chunk_size
         )
 
         # Pad and merge overlapping segments using the clean native-rate duration calculation
         audio_len_sec = len(audio_array) / float(sample_rate)
-        return self._pad_and_merge_segments(filtered_segments, audio_len_sec)
+        return self._pad_and_merge_segments(speech_segs, audio_len_sec)
+
+    def detect_classified_segments(
+        self,
+        audio_array: np.ndarray,
+        sample_rate: int = TARGET_SAMPLE_RATE,
+        chunk_size: int = DEFAULT_SILERO_WINDOW_SIZE,
+        context_size: int = 64,
+        prior_audio: np.ndarray | None = None,
+    ) -> tuple[list[tuple[float, float]], list[tuple[float, float]]]:
+        """Analyzes a normalized float32 audio array, returning (speech_segments, tone_segments)."""
+        if len(audio_array) == 0:
+            return [], []
+
+        if np.issubdtype(audio_array.dtype, np.integer):
+            audio_array = audio_array.astype(np.float32) / 32768.0
+
+        # Check for silence early on the raw input audio to prevent redundant execution
+        if (
+            len(audio_array) == 0
+            or np.max(np.abs(audio_array)) < self.min_rms_threshold
+        ):
+            return [], []
+        if prior_audio is not None and np.issubdtype(
+            prior_audio.dtype, np.integer
+        ):
+            prior_audio = prior_audio.astype(np.float32) / 32768.0
+
+        # Peak Normalization Heuristic
+        audio_array = self._peak_normalize(audio_array)
+
+        # Fallback Priming (Call Starts / Segment 0):
+        is_fallback_priming = False
+        if prior_audio is None:
+            prior_audio = self._generate_comfort_noise(sample_rate)
+            is_fallback_priming = True
+
+        # 1. Perform physical audio concatenation at native sample_rate
+        if prior_audio is not None and len(prior_audio) > 0:
+            if not is_fallback_priming:
+                prior_audio = self._peak_normalize(prior_audio)
+            prior_len_sec = len(prior_audio) / float(sample_rate)
+            extended_native = np.concatenate([prior_audio, audio_array])
+        else:
+            prior_len_sec = 0.0
+            extended_native = audio_array
+
+        # 2. Resample the entire unified array in a single pass to TARGET_SAMPLE_RATE
+        if sample_rate != TARGET_SAMPLE_RATE:
+            resampler = TorchaudioHannResampler(sample_rate, TARGET_SAMPLE_RATE)
+            extended_audio = resampler.resample(extended_native)
+        else:
+            extended_audio = extended_native
+
+        preprocessed = self.preprocess(
+            extended_audio, prior_len_sec=prior_len_sec
+        )
+
+        # 3. Slicing strategy for VAD state warming (Lookback Priming):
+        preamble_samples = int(prior_len_sec * TARGET_SAMPLE_RATE)
+        if is_fallback_priming:
+            vad_input = (
+                preprocessed[preamble_samples:]
+                if preamble_samples > 0
+                else preprocessed
+            )
+            vad_offset_sec = 0.0
+        else:
+            max_warmup_sec = 1.5
+            warmup_sec = min(prior_len_sec, max_warmup_sec)
+            warmup_samples = int(warmup_sec * TARGET_SAMPLE_RATE)
+            vad_input = (
+                preprocessed[preamble_samples - warmup_samples :]
+                if preamble_samples > 0
+                else preprocessed
+            )
+            vad_offset_sec = warmup_sec
+
+        raw_segments = self._extract_vad_frames(
+            vad_input, chunk_size, context_size
+        )
+
+        # Time Coordinate Trimming & Shifting Mathematics:
+        shifted_segments = self._trim_and_shift_segments(
+            raw_segments, vad_offset_sec
+        )
+
+        speech_segs, tone_segs = self._classify_segments(
+            shifted_segments, vad_input, vad_offset_sec, chunk_size
+        )
+
+        # Pad and merge overlapping segments using the clean native-rate duration calculation
+        audio_len_sec = len(audio_array) / float(sample_rate)
+        return (
+            self._pad_and_merge_segments(speech_segs, audio_len_sec),
+            self._pad_and_merge_segments(tone_segs, audio_len_sec),
+        )

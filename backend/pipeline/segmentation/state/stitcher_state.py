@@ -77,10 +77,12 @@ class AudioStitchingStateMachine:
             ctx.missing_prior_context = True
 
         # 2. Proceed with normal evaluation
-        if not chunk_data.speech_segments:
-            new_actions = self._process_silent_chunk(chunk_data, ctx)
-        else:
+        if chunk_data.speech_segments:
             new_actions = self._process_speech_segments(chunk_data, ctx)
+        elif chunk_data.tone_segments:
+            new_actions = self._process_tone_segments(chunk_data, ctx)
+        else:
+            new_actions = self._process_silent_chunk(chunk_data, ctx)
 
         actions.extend(new_actions)
 
@@ -131,6 +133,8 @@ class AudioStitchingStateMachine:
         )
         if ctx.speech_segments:
             end_ms = ctx.speech_segments[-1].end_ms
+        elif ctx.tone_segments:
+            end_ms = ctx.tone_segments[-1].end_ms
         elif has_valid_last_segment:
             end_ms = ctx.last_segment_end_time_ms
         else:
@@ -293,6 +297,7 @@ class AudioStitchingStateMachine:
         ctx.start_audio_offset_ms = None
         ctx.buffer_duration_ms = 0
         ctx.speech_segments.clear()
+        ctx.tone_segments.clear()
 
     def _process_silent_chunk(
         self, chunk_data: AudioChunkData, ctx: StitcherContext
@@ -917,3 +922,154 @@ class AudioStitchingStateMachine:
             ctx.buffer_duration_ms += buffer_added_duration
 
         return audio_append_cursor_ms
+
+    def _process_tone_segments(
+        self, chunk_data: AudioChunkData, ctx: StitcherContext
+    ) -> list[StateMachineAction]:
+        """Evaluates consecutive signaling tone data and exhaustive non-speech padding to guarantee 100% audio retention."""
+        actions: list[StateMachineAction] = []
+        current_file_cursor_ms = 0
+        samples_per_ms = chunk_data.sample_rate // 1000
+
+        processed_segments = self._pre_split_excessive_speech_segments(
+            chunk_data.tone_segments
+        )
+
+        # 0. Handle any existing non-speech transmission from a previous chunk
+        is_non_speech_active = (
+            not self.config.isolate_segmented_chunks
+            and ctx.transmission_start_time_ms is not None
+            and not ctx.speech_segments
+            and not ctx.tone_segments
+        )
+
+        if is_non_speech_active:
+            first_speech_start_rel_ms = processed_segments[0].start_ms
+            new_actions = self._flush_active_non_speech_transmission(
+                chunk_data, ctx, first_speech_start_rel_ms, samples_per_ms
+            )
+            actions.extend(new_actions)
+            current_file_cursor_ms = first_speech_start_rel_ms
+
+        # 1. Process each tone segment
+        for segment in processed_segments:
+            speech_start_rel_ms = segment.start_ms
+
+            if (
+                not self.config.isolate_segmented_chunks
+                and speech_start_rel_ms > current_file_cursor_ms
+                and ctx.last_segment_end_time_ms is not None
+            ):
+                new_actions = self._capture_intra_chunk_silence(
+                    chunk_data,
+                    ctx,
+                    current_file_cursor_ms,
+                    speech_start_rel_ms,
+                    samples_per_ms,
+                )
+                actions.extend(new_actions)
+
+            new_actions = self._process_single_tone_utterance(
+                chunk_data, ctx, segment, current_file_cursor_ms, samples_per_ms
+            )
+            actions.extend(new_actions)
+            current_file_cursor_ms = max(current_file_cursor_ms, segment.end_ms)
+
+        # 2. Capture trailing non-speech audio at the end of the file ONLY if we have an active established stream
+        if (
+            not self.config.isolate_segmented_chunks
+            and current_file_cursor_ms < chunk_data.duration_ms
+            and ctx.last_segment_end_time_ms is not None
+        ):
+            new_actions = self._capture_trailing_chunk_silence(
+                chunk_data, ctx, current_file_cursor_ms, samples_per_ms
+            )
+            actions.extend(new_actions)
+
+        actions.append(UpdateStateAction())
+        if ctx.last_segment_end_time_ms is not None:
+            expected_stale_deadline_ms = (
+                ctx.last_segment_end_time_ms + self.config.stale_timeout_ms
+            )
+        else:
+            expected_stale_deadline_ms = 0
+
+        actions.append(
+            ScheduleStaleTimerAction(deadline_ms=expected_stale_deadline_ms)
+        )
+        return actions
+
+    def _process_single_tone_utterance(
+        self,
+        chunk_data: AudioChunkData,
+        ctx: StitcherContext,
+        segment: TimeRange,
+        current_file_cursor_ms: int,
+        samples_per_ms: int,
+    ) -> list[StateMachineAction]:
+        """Executes overlap validation, mid-stream severing, and appends a single signaling tone utterance to buffer."""
+        actions: list[StateMachineAction] = []
+        file_start_ms = chunk_data.start_ms
+        actual_start_ms = segment.start_ms
+        if ctx.last_segment_end_time_ms is not None:
+            actual_start_ms = max(
+                actual_start_ms,
+                ctx.last_segment_end_time_ms - file_start_ms,
+            )
+
+        global_start_ms = actual_start_ms
+        global_end_ms = segment.end_ms
+
+        if global_start_ms >= global_end_ms:
+            return actions
+
+        is_significant_gap = (
+            ctx.last_segment_end_time_ms is not None
+            and (
+                (file_start_ms + global_start_ms) - ctx.last_segment_end_time_ms
+            )
+            >= self.config.significant_gap_ms
+        )
+
+        is_max_duration_exceeded = (
+            ctx.transmission_start_time_ms is not None
+            and (
+                (file_start_ms + global_start_ms)
+                - ctx.transmission_start_time_ms
+            )
+            >= self.config.max_transmission_duration_ms
+        )
+
+        _ = self._evaluate_mid_stream_flush(
+            ctx=ctx,
+            chunk_data=chunk_data,
+            actions=actions,
+            file_start_ms=file_start_ms,
+            global_start_ms=global_start_ms,
+            active_file_cursor_ms=current_file_cursor_ms,
+            is_significant_gap=is_significant_gap,
+            is_max_duration_exceeded=is_max_duration_exceeded,
+        )
+
+        if ctx.transmission_start_time_ms is None:
+            ctx.transmission_start_time_ms = file_start_ms + global_start_ms
+            ctx.start_audio_offset_ms = max(0, global_start_ms)
+            ctx.buffer_start_time_ms = file_start_ms + max(0, global_start_ms)
+
+        speech_samples = chunk_data.audio[
+            global_start_ms * samples_per_ms : global_end_ms * samples_per_ms
+        ]
+        if len(speech_samples) > 0:
+            actions.append(AppendBufferAction(audio_buffer=speech_samples))
+            ctx.buffer_duration_ms += global_end_ms - global_start_ms
+
+        if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
+            ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
+        ctx.last_segment_end_time_ms = file_start_ms + global_end_ms
+        ctx.tone_segments.append(
+            TimeRange(
+                start_ms=file_start_ms + global_start_ms,
+                end_ms=file_start_ms + global_end_ms,
+            )
+        )
+        return actions

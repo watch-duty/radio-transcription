@@ -46,6 +46,7 @@ class AudioChunkData:
     gcs_uri: str
     duration_ms: int
     sample_rate: int
+    tone_segments: list[TimeRange] = field(default_factory=list)
 
 
 FeedMetadata = bp_state.FeedMetadataProto
@@ -90,6 +91,7 @@ class StitcherContext:
     end_audio_offset_ms: int | None = None
     buffer_duration_ms: int = 0
     speech_segments: list[TimeRange] = field(default_factory=list)
+    tone_segments: list[TimeRange] = field(default_factory=list)
     traceparent: str | None = None
     prior_audio_tail: bytes | None = None
 
