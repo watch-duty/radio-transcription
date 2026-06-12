@@ -16,7 +16,7 @@ import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { CustomAlertIcon } from '../common/AlertIcon';
 
 interface AudioDisplayProps {
-  transcripts: AudioSegment[];
+  audioSegments: AudioSegment[];
   currentlyPlayingSegmentId: string | null;
   highlightedSegmentId: string | null;
   onClipClick: (segmentId: string) => void;
@@ -146,7 +146,7 @@ function isViewportAlignedToHead(
 }
 
 export function AudioDisplay({
-  transcripts,
+  audioSegments,
   currentlyPlayingSegmentId,
   highlightedSegmentId,
   onClipClick,
@@ -180,17 +180,17 @@ export function AudioDisplay({
     return Math.min(MAX_WINDOW_DURATION_MS, userMs);
   }, [userDuration]);
 
-  const firstTranscript = transcripts[0];
-  const firstTranscriptId = firstTranscript?.id || null;
-  const firstTranscriptEndTimestamp = firstTranscript?.endTimestamp || null;
+  const firstAudioSegment = audioSegments[0];
+  const firstAudioSegmentId = firstAudioSegment?.id || null;
+  const firstAudioSegmentEndTimestamp = firstAudioSegment?.endTimestamp || null;
 
   // Check if a new segment has been added to the top of the feed
-  const isNewFirstTranscript = firstTranscriptId !== prevFirstTranscriptId;
+  const isNewFirstTranscript = firstAudioSegmentId !== prevFirstTranscriptId;
 
   // Check if the current top transcript has been extended (e.g. an ongoing silence bundle).
   // When a silence bundle is extended, its ID remains the same but its end timestamp advances.
   const isFirstTranscriptExtended =
-    firstTranscriptEndTimestamp !== prevFirstTranscriptEndTimestamp;
+    firstAudioSegmentEndTimestamp !== prevFirstTranscriptEndTimestamp;
 
   const shouldUpdateWindow = isNewFirstTranscript || isFirstTranscriptExtended;
 
@@ -201,13 +201,13 @@ export function AudioDisplay({
       !prevFirstTranscriptId
     );
 
-    setPrevFirstTranscriptId(firstTranscriptId);
-    setPrevFirstTranscriptEndTimestamp(firstTranscriptEndTimestamp);
+    setPrevFirstTranscriptId(firstAudioSegmentId);
+    setPrevFirstTranscriptEndTimestamp(firstAudioSegmentEndTimestamp);
 
     if (wasAlignedToHead) {
       setWindowEndTime(
-        firstTranscriptEndTimestamp
-          ? new Date(firstTranscriptEndTimestamp).getTime()
+        firstAudioSegmentEndTimestamp
+          ? new Date(firstAudioSegmentEndTimestamp).getTime()
           : null
       );
     }
@@ -228,13 +228,13 @@ export function AudioDisplay({
 
     const targetId = highlightedSegmentId || playingId;
     if (targetId) {
-      const targetTranscript = transcripts.find((t) => t.id === targetId);
-      if (targetTranscript) {
-        const tStart = new Date(targetTranscript.startTimestamp).getTime();
-        const tEnd = new Date(targetTranscript.endTimestamp).getTime();
+      const targetAudioSegment = audioSegments.find((t) => t.id === targetId);
+      if (targetAudioSegment) {
+        const tStart = new Date(targetAudioSegment.startTimestamp).getTime();
+        const tEnd = new Date(targetAudioSegment.endTimestamp).getTime();
 
-        const newestEnd = firstTranscript
-          ? new Date(firstTranscript.endTimestamp).getTime()
+        const newestEnd = firstAudioSegment
+          ? new Date(firstAudioSegment.endTimestamp).getTime()
           : 0;
 
         const currentEndTime = windowEndTime || newestEnd;
@@ -249,9 +249,9 @@ export function AudioDisplay({
     }
   }
 
-  // Calculates the visible time window bounds and processes transcripts into positioned clips for the waveform display.
+  // Calculates the visible time window bounds and processes audio segments into positioned clips for the waveform display.
   const { startTime, windowDuration, clips } = useMemo(() => {
-    if (transcripts.length === 0) {
+    if (audioSegments.length === 0) {
       return {
         startTime: 0,
         windowDuration: windowDurationMs,
@@ -260,18 +260,18 @@ export function AudioDisplay({
     }
 
     const mostRecentTime =
-      windowEndTime || new Date(transcripts[0].endTimestamp).getTime();
+      windowEndTime || new Date(audioSegments[0].endTimestamp).getTime();
     const windowDuration = windowDurationMs;
     const startTime = mostRecentTime - windowDuration;
 
-    // Filter for transcripts that overlap with the current visible time window
-    const clips = transcripts
+    // Filter for audio segments that overlap with the current visible time window
+    const clips = audioSegments
       .filter((t) => {
         const tStart = new Date(t.startTimestamp).getTime();
         const tEnd = new Date(t.endTimestamp).getTime();
         return tStart < startTime + windowDuration && tEnd > startTime;
       })
-      // Map filtered transcripts to clip objects with calculated positioning and display properties
+      // Map filtered audio segments to clip objects with calculated positioning and display properties
       .map((t) => {
         const tStart = new Date(t.startTimestamp).getTime();
         const tEnd = new Date(t.endTimestamp).getTime();
@@ -302,7 +302,7 @@ export function AudioDisplay({
 
     return { startTime, windowDuration, clips };
   }, [
-    transcripts,
+    audioSegments,
     currentlyPlayingSegmentId,
     highlightedSegmentId,
     windowEndTime,
@@ -321,7 +321,7 @@ export function AudioDisplay({
           size="small"
           color="primary"
           aria-label={isAudioPlaying ? 'pause' : 'play'}
-          disabled={transcripts.length === 0}
+          disabled={audioSegments.length === 0}
         >
           {isAudioPlaying ? <PauseIcon /> : <PlayArrowIcon />}
         </IconButton>
@@ -345,7 +345,7 @@ export function AudioDisplay({
               theme={theme}
             />
           ))}
-          {transcripts.length === 0 && (
+          {audioSegments.length === 0 && (
             <Box
               sx={{
                 position: 'absolute',
@@ -368,8 +368,8 @@ export function AudioDisplay({
             justifyContent: 'space-between',
             mt: 0.5,
             // Reserve space for the time labels even when there are no
-            // transcripts so the UI doesn't jump when transcripts are loaded.
-            visibility: transcripts.length > 0 ? 'visible' : 'hidden',
+            // segments so the UI doesn't jump when segments are loaded.
+            visibility: audioSegments.length > 0 ? 'visible' : 'hidden',
           }}
         >
           {formatTime &&
