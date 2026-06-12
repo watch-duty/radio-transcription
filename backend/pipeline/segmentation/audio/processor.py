@@ -138,8 +138,16 @@ class SegmentationAudioProcessor:
             container = cast("Any", av.open(in_mem_file))
             stream = container.streams.audio[0]
             decoded_frames = []
+            expected_channels = None
             for frame in container.decode(stream):
                 arr = frame.to_ndarray()
+                if expected_channels is None:
+                    expected_channels = arr.shape[0]
+                elif arr.shape[0] != expected_channels:
+                    logger.warning(
+                        "Channel count changed mid-stream, skipping frame"
+                    )
+                    continue
                 decoded_frames.append(arr)
 
             if not decoded_frames:
@@ -159,7 +167,12 @@ class SegmentationAudioProcessor:
                 else:
                     samples = raw_samples.astype(np.int16)
 
-                res = samples, stream.codec_context.sample_rate
+                sr = stream.codec_context.sample_rate
+                if sr <= 0:
+                    logger.warning("Invalid sample rate detected, defaulting")
+                    sr = SAMPLE_RATE_HZ
+
+                res = samples, sr
         except Exception as e:
             logger.exception("PyAV error during audio decode")
             msg = "Failed to decode audio via PyAV"
