@@ -77,7 +77,9 @@ describe('FeedSearchView Condensed Mode', () => {
     // Wait for the tooltip content that formats statusReason and quarantineReason
     await waitFor(() => {
       expect(
-        screen.getByText('Quarantined (System Unexpected Error): unsupported audio format')
+        screen.getByText(
+          'Quarantined (System Unexpected Error): unsupported audio format'
+        )
       ).toBeInTheDocument();
     });
   });
