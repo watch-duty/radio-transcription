@@ -78,6 +78,11 @@ TONE_SEGMENT_MIN_TONE_FRAME_RATIO: Final = 0.75
 
 # Audio Signal Processing Boundaries
 INT16_MAX_FLOAT: Final = 32768.0
+INT16_MIN: Final = -32768
+INT16_MAX: Final = 32767
+PCM_24BIT_SHIFT: Final = 16
+PRIMARY_AUDIO_STREAM_INDEX: Final = 0
+MONO_CHANNEL_COUNT: Final = 1
 
 # DSP Mathematical Heuristic Defaults
 DEFAULT_SED_FFT_SIZE: Final = 2048

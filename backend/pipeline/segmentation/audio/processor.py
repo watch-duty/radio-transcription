@@ -4,15 +4,22 @@ import io
 import logging
 import urllib.parse
 from collections.abc import Callable
-from typing import Any, cast
 
 import av
 import numpy as np
 from google.cloud import storage
 
-from backend.pipeline.common.constants import SAMPLE_RATE_HZ
+from backend.pipeline.common.constants import MS_PER_SECOND, SAMPLE_RATE_HZ
 from backend.pipeline.segmentation.audio import vad
-from backend.pipeline.segmentation.constants import GCS_DOWNLOAD_TIMEOUT_SEC
+from backend.pipeline.segmentation.constants import (
+    GCS_DOWNLOAD_TIMEOUT_SEC,
+    INT16_MAX,
+    INT16_MAX_FLOAT,
+    INT16_MIN,
+    MONO_CHANNEL_COUNT,
+    PCM_24BIT_SHIFT,
+    PRIMARY_AUDIO_STREAM_INDEX,
+)
 from backend.pipeline.segmentation.datatypes import AudioChunkData
 
 logger = logging.getLogger(__name__)
@@ -113,13 +120,13 @@ class SegmentationAudioProcessor:
 
         speech_segments_proto = [
             bp_state.TimeRangeProto(
-                start_ms=int(s * 1000),
-                end_ms=int(e * 1000),
+                start_ms=int(s * MS_PER_SECOND),
+                end_ms=int(e * MS_PER_SECOND),
             )
             for s, e in speech_segments
         ]
 
-        duration_ms = duration_ms or int(len(samples) * 1000 / sr)
+        duration_ms = duration_ms or int(len(samples) * MS_PER_SECOND / sr)
 
         return AudioChunkData(
             start_ms=start_ms,
@@ -130,13 +137,22 @@ class SegmentationAudioProcessor:
             duration_ms=duration_ms,
         )
 
+    def _open_container(
+        self, in_mem_file: io.BytesIO
+    ) -> av.container.InputContainer:
+        container = av.open(in_mem_file)
+        if not isinstance(container, av.container.InputContainer):
+            msg = "Expected InputContainer from av.open"
+            raise TypeError(msg)
+        return container
+
     def _decode_audio_in_memory(
         self, in_mem_file: io.BytesIO
     ) -> tuple[np.ndarray, int]:
         """Decodes raw audio bytes into 16-bit PCM samples using in-process PyAV."""
         try:
-            container = cast("Any", av.open(in_mem_file))
-            stream = container.streams.audio[0]
+            container = self._open_container(in_mem_file)
+            stream = container.streams.audio[PRIMARY_AUDIO_STREAM_INDEX]
             decoded_frames = []
             expected_channels = None
             for frame in container.decode(stream):
@@ -155,15 +171,21 @@ class SegmentationAudioProcessor:
             else:
                 combined = np.concatenate(decoded_frames, axis=-1)
                 raw_samples = (
-                    combined[0] if combined.shape[0] == 1 else combined.T
+                    combined[PRIMARY_AUDIO_STREAM_INDEX]
+                    if combined.shape[0] == MONO_CHANNEL_COUNT
+                    else combined.T
                 )
 
                 if np.issubdtype(raw_samples.dtype, np.floating):
                     samples = np.clip(
-                        raw_samples * 32768.0, -32768, 32767
+                        raw_samples * INT16_MAX_FLOAT,
+                        INT16_MIN,
+                        INT16_MAX,
                     ).astype(np.int16)
                 elif raw_samples.dtype == np.int32:
-                    samples = np.right_shift(raw_samples, 16).astype(np.int16)
+                    samples = np.right_shift(
+                        raw_samples, PCM_24BIT_SHIFT
+                    ).astype(np.int16)
                 else:
                     samples = raw_samples.astype(np.int16)
 
