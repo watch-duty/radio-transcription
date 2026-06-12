@@ -353,12 +353,12 @@ class OrderedStitchAudioTest(unittest.TestCase):
         )
 
         mock_with_tracer_context.assert_any_call(
-            "mock-traceparent",
+            {"traceparent": "mock-traceparent"},
             "stitching_process",
             "backend.pipeline.segmentation.transforms.stateful",
         )
         mock_with_tracer_context.assert_any_call(
-            "mock-traceparent",
+            {"traceparent": "mock-traceparent"},
             "stitching_single_chunk",
             "backend.pipeline.segmentation.transforms.stateful",
         )
@@ -403,12 +403,12 @@ class OrderedStitchAudioTest(unittest.TestCase):
         )
 
         mock_with_tracer_context.assert_any_call(
-            "mock-traceparent-context",
+            {"traceparent": "mock-traceparent-context"},
             "handle_audio_gap",
             "backend.pipeline.segmentation.transforms.stateful",
         )
         mock_with_tracer_context.assert_any_call(
-            "",
+            {},
             "stitching_single_chunk",
             "backend.pipeline.segmentation.transforms.stateful",
         )

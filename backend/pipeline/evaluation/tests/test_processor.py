@@ -250,7 +250,7 @@ class TestEvaluationEventProcessor(unittest.TestCase):
 
         # Verify
         mock_with_tracer_context.assert_called_once_with(
-            traceparent_val,
+            attrs,
             "evaluate_rules",
             "backend.pipeline.evaluation.processor",
         )
@@ -277,7 +277,7 @@ class TestEvaluationEventProcessor(unittest.TestCase):
 
         # Verify
         mock_with_tracer_context.assert_called_once_with(
-            "", "evaluate_rules", "backend.pipeline.evaluation.processor"
+            {}, "evaluate_rules", "backend.pipeline.evaluation.processor"
         )
 
     def test_process_event_add_annotation_failure_continues(self) -> None:

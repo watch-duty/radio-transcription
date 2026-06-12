@@ -626,14 +626,18 @@ class OrderedStitchAudioFn(beam.DoFn):
         )
         if isinstance(curr_context, datatypes.IdleFeedState):
             return
-        traceparent = curr_context.traceparent or ""
+        trace_attrs: dict[str, str] = {}
+        if curr_context.traceparent:
+            trace_attrs["traceparent"] = curr_context.traceparent
+        if curr_context.baggage:
+            trace_attrs["baggage"] = curr_context.baggage
         active_session_id = curr_context.session_id
         active_feed_metadata = curr_context.feed_metadata
         active_traceparent = curr_context.traceparent
 
         results = []
         with tracing_utils.with_tracer_context(
-            traceparent, "handle_audio_gap", __name__
+            trace_attrs, "handle_audio_gap", __name__
         ):
             curr_context = replace(curr_context, order_timer_active=False)
             _write_transmission_context(
