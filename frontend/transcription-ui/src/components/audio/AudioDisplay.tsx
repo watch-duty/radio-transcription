@@ -149,7 +149,7 @@ const TimelineClip = React.memo(
               cursorColor: clip.isAudioPlaying
                 ? theme.palette.error.main
                 : 'transparent',
-              cursorWidth: clip.isAudioPlaying ? 2 : 0,
+              cursorWidth: clip.isAudioPlaying ? 1 : 0,
             });
             if (clip.isAudioPlaying && currentTimeSeconds !== undefined) {
               ws.setTime(currentTimeSeconds);
