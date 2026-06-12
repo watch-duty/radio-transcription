@@ -667,6 +667,7 @@ export function TranscriptView({
         onClipClick={handleClipClick}
         isAudioPlaying={isAudioPlaying}
         onTogglePlayPause={handleTogglePlayPause}
+        currentAudioRef={currentAudio}
       />
 
       <Box

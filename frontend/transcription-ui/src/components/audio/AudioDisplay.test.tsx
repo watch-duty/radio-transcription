@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+import React from 'react';
+
+import type { Howl } from 'howler';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -18,11 +21,40 @@ import { getAudioUrl } from '../../utils/audioUtils';
 import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { AudioDisplay } from './AudioDisplay';
 
-vi.mock('@wavesurfer/react', () => ({
-  default: (props: { url: string }) => (
-    <div data-testid="wavesurfer-player" data-url={props.url} />
-  ),
-}));
+const mockSetTime = vi.fn();
+const mockSetOptions = vi.fn();
+
+vi.mock('@wavesurfer/react', () => {
+  const MockWavesurferPlayer = (props: {
+    url: string;
+    onReady?: (ws: {
+      setTime: (time: number) => void;
+      setOptions: (opts: unknown) => void;
+    }) => void;
+    onDestroy?: () => void;
+  }) => {
+    const { onReady, onDestroy } = props;
+    React.useEffect(() => {
+      if (onReady) {
+        onReady({
+          setTime: mockSetTime,
+          setOptions: mockSetOptions,
+        });
+      }
+      return () => {
+        if (onDestroy) {
+          onDestroy();
+        }
+      };
+    }, [onReady, onDestroy]);
+
+    return <div data-testid="wavesurfer-player" data-url={props.url} />;
+  };
+
+  return {
+    default: MockWavesurferPlayer,
+  };
+});
 
 function makeMockAudioSegment(
   id: string,
@@ -75,6 +107,8 @@ function makeMockAudioSegment(
 describe('AudioDisplay', () => {
   afterEach(() => {
     cleanup();
+    mockSetTime.mockClear();
+    mockSetOptions.mockClear();
   });
 
   it('should render empty state when no transcripts', () => {
@@ -464,5 +498,71 @@ describe('AudioDisplay', () => {
         .map((el) => el.textContent);
       expect(labelsAfter).not.toEqual(labelsBefore);
     });
+  });
+
+  it('should call setTime on wavesurfer player when progress is provided', () => {
+    const mockAudioSegments: AudioSegment[] = [
+      makeMockAudioSegment(
+        '1',
+        'feed1',
+        new Date('2026-04-20T09:00:00Z').toISOString(),
+        new Date('2026-04-20T09:00:05Z').toISOString(),
+        'Test 1',
+        'audio1.m4a'
+      ),
+    ];
+
+    render(
+      <AudioDisplay
+        audioSegments={mockAudioSegments}
+        currentlyPlayingSegmentId="1"
+        onClipClick={vi.fn()}
+        isAudioPlaying={true}
+        onTogglePlayPause={vi.fn()}
+        highlightedSegmentId={null}
+        currentTimeSeconds={3.5}
+      />
+    );
+
+    expect(mockSetTime).toHaveBeenCalledWith(3.5);
+  });
+
+  it('should poll progress from currentAudioRef and seek wavesurfer player', async () => {
+    const mockAudioSegments: AudioSegment[] = [
+      makeMockAudioSegment(
+        '1',
+        'feed1',
+        new Date('2026-04-20T09:00:00Z').toISOString(),
+        new Date('2026-04-20T09:00:05Z').toISOString(),
+        'Test 1',
+        'audio1.m4a'
+      ),
+    ];
+
+    const mockHowl = {
+      seek: vi.fn().mockReturnValue(2.5),
+    };
+
+    const currentAudioRef = {
+      current: mockHowl as unknown as Howl,
+    };
+
+    render(
+      <AudioDisplay
+        audioSegments={mockAudioSegments}
+        currentlyPlayingSegmentId="1"
+        onClipClick={vi.fn()}
+        isAudioPlaying={true}
+        onTogglePlayPause={vi.fn()}
+        highlightedSegmentId={null}
+        currentAudioRef={currentAudioRef}
+      />
+    );
+
+    await waitFor(() => {
+      expect(mockHowl.seek).toHaveBeenCalled();
+    });
+
+    expect(mockSetTime).toHaveBeenCalledWith(2.5);
   });
 });

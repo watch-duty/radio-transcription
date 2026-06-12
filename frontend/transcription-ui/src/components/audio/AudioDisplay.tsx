@@ -1,4 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+
+import type { Howl } from 'howler';
+import type WaveSurfer from 'wavesurfer.js';
 
 import PauseIcon from '@mui/icons-material/PauseCircleFilledOutlined';
 import PlayArrowIcon from '@mui/icons-material/PlayCircleFilledOutlined';
@@ -23,7 +26,11 @@ interface AudioDisplayProps {
   userDuration?: string | null;
   isAudioPlaying: boolean;
   onTogglePlayPause: () => void;
+  currentTimeSeconds?: number;
+  currentAudioRef?: React.RefObject<Howl | null>;
 }
+
+const PLAYING_CURSOR_WIDTH_PX = 1;
 
 const formatTime = (timestamp: number) => {
   const date = new Date(timestamp);
@@ -47,10 +54,44 @@ interface TimelineClipProps {
   onClipClick: (segmentId: string) => void;
   isDarkTheme: boolean;
   theme: Theme;
+  currentTimeSeconds?: number;
 }
 
 const TimelineClip = React.memo(
-  ({ clip, onClipClick, isDarkTheme, theme }: TimelineClipProps) => {
+  ({
+    clip,
+    onClipClick,
+    isDarkTheme,
+    theme,
+    currentTimeSeconds,
+  }: TimelineClipProps) => {
+    const wsRef = useRef<WaveSurfer | null>(null);
+
+    // Sync options dynamically (like cursor color/width) without destroying wavesurfer
+    useEffect(() => {
+      if (wsRef.current) {
+        wsRef.current.setOptions({
+          cursorColor: clip.isAudioPlaying
+            ? theme.palette.error.main
+            : 'transparent',
+          cursorWidth: clip.isAudioPlaying ? PLAYING_CURSOR_WIDTH_PX : 0,
+        });
+      }
+    }, [clip.isAudioPlaying, theme.palette.error.main]);
+
+    // Sync playback progress (seek)
+    useEffect(() => {
+      if (
+        clip.isAudioPlaying &&
+        wsRef.current &&
+        currentTimeSeconds !== undefined
+      ) {
+        wsRef.current.setTime(currentTimeSeconds);
+      } else if (!clip.isAudioPlaying && wsRef.current) {
+        wsRef.current.setTime(0);
+      }
+    }, [clip.isAudioPlaying, currentTimeSeconds]);
+
     return (
       <Box
         onClick={() => onClipClick(clip.id)}
@@ -76,6 +117,12 @@ const TimelineClip = React.memo(
                   ? 'rgba(255, 255, 255, 0.03)'
                   : 'rgba(0, 0, 0, 0.03)',
           },
+          /* Wavesurfer cursor subpixel anti-aliasing / shimmering optimizations */
+          '& div::part(cursor)': {
+            willChange: 'left',
+            transform: 'translateZ(0)',
+            backfaceVisibility: 'hidden',
+          },
         }}
       >
         {clip.hasAlert && (
@@ -99,10 +146,26 @@ const TimelineClip = React.memo(
           waveColor={theme.palette.text.secondary}
           progressColor={theme.palette.text.primary}
           cursorColor="transparent"
+          cursorWidth={0}
           barWidth={0.5}
           barGap={0.5}
           height={60}
           interact={false}
+          onReady={(ws) => {
+            wsRef.current = ws;
+            ws.setOptions({
+              cursorColor: clip.isAudioPlaying
+                ? theme.palette.error.main
+                : 'transparent',
+              cursorWidth: clip.isAudioPlaying ? PLAYING_CURSOR_WIDTH_PX : 0,
+            });
+            if (clip.isAudioPlaying && currentTimeSeconds !== undefined) {
+              ws.setTime(currentTimeSeconds);
+            }
+          }}
+          onDestroy={() => {
+            wsRef.current = null;
+          }}
         />
       </Box>
     );
@@ -119,7 +182,8 @@ const TimelineClip = React.memo(
       prevProps.clip.isHighlighted === nextProps.clip.isHighlighted &&
       prevProps.clip.hasAlert === nextProps.clip.hasAlert &&
       prevProps.isDarkTheme === nextProps.isDarkTheme &&
-      prevProps.theme === nextProps.theme
+      prevProps.theme === nextProps.theme &&
+      prevProps.currentTimeSeconds === nextProps.currentTimeSeconds
     );
   }
 );
@@ -153,9 +217,50 @@ export function AudioDisplay({
   userDuration,
   isAudioPlaying,
   onTogglePlayPause,
+  currentTimeSeconds,
+  currentAudioRef,
 }: AudioDisplayProps) {
   const theme = useTheme();
   const isDarkTheme = theme.palette.mode === 'dark';
+
+  const [localCurrentTimeSeconds, setLocalCurrentTimeSeconds] =
+    useState<number>(0);
+
+  // Poll current playback progress when audio is playing
+  useEffect(() => {
+    if (
+      currentTimeSeconds !== undefined ||
+      !isAudioPlaying ||
+      !currentlyPlayingSegmentId ||
+      !currentAudioRef?.current
+    ) {
+      return;
+    }
+
+    let animationFrameId: number;
+
+    const updateProgress = () => {
+      if (currentAudioRef.current) {
+        const seek = currentAudioRef.current.seek();
+        // seek could be the Howl instance if audio isn't yet loaded, so we should guard against that.
+        if (typeof seek === 'number') {
+          setLocalCurrentTimeSeconds(seek);
+        }
+      }
+      animationFrameId = requestAnimationFrame(updateProgress);
+    };
+
+    updateProgress();
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+    };
+  }, [
+    isAudioPlaying,
+    currentlyPlayingSegmentId,
+    currentAudioRef,
+    currentTimeSeconds,
+  ]);
 
   const [windowEndTime, setWindowEndTime] = useState<number | null>(null);
 
@@ -226,6 +331,9 @@ export function AudioDisplay({
     highlightedSegmentId !== prevHighlightedId ||
     (userDuration ?? null) !== prevUserDuration
   ) {
+    if (playingId !== prevPlayingId) {
+      setLocalCurrentTimeSeconds(0);
+    }
     setPrevPlayingId(playingId);
     setPrevHighlightedId(highlightedSegmentId);
     setPrevUserDuration(userDuration ?? null);
@@ -347,6 +455,15 @@ export function AudioDisplay({
               onClipClick={onClipClick}
               isDarkTheme={isDarkTheme}
               theme={theme}
+              currentTimeSeconds={
+                clip.isAudioPlaying
+                  ? currentTimeSeconds !== undefined
+                    ? currentTimeSeconds
+                    : currentAudioRef
+                      ? localCurrentTimeSeconds
+                      : undefined
+                  : undefined
+              }
             />
           ))}
           {audioSegments.length === 0 && (
