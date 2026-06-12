@@ -249,6 +249,7 @@ def process_ordering(
             order_timer_active=curr_context.order_timer_active,
             traceparent=metadata.traceparent
             or tracing_utils.get_current_traceparent(),
+            baggage=metadata.baggage,
         )
         session_changed = True
         out_of_order_timer.clear()
@@ -263,6 +264,7 @@ def process_ordering(
             feed_metadata=metadata.feed_metadata,
             traceparent=metadata.traceparent
             or tracing_utils.get_current_traceparent(),
+            baggage=metadata.baggage,
         )
 
     seq_buf = sequence_buffer.SequenceBuffer(order_config)
@@ -587,6 +589,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                             out_of_order_buffer=curr_context.out_of_order_buffer,
                             order_timer_active=curr_context.order_timer_active,
                             traceparent=metadata.traceparent,
+                            baggage=metadata.baggage,
                         )
                     outputs, next_expected_ts = (
                         self.engine.process_ordering_chunk(
@@ -634,6 +637,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         active_session_id = curr_context.session_id
         active_feed_metadata = curr_context.feed_metadata
         active_traceparent = curr_context.traceparent
+        active_baggage = curr_context.baggage
 
         results = []
         with tracing_utils.with_tracer_context(
@@ -729,6 +733,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                                 out_of_order_buffer=curr_context.out_of_order_buffer,
                                 order_timer_active=curr_context.order_timer_active,
                                 traceparent=active_traceparent,
+                                baggage=active_baggage,
                             )
                         outputs, next_expected_ts = (
                             self.engine.process_ordering_chunk(
