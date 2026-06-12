@@ -1,4 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+
+import type { Howl } from 'howler';
+import type WaveSurfer from 'wavesurfer.js';
 
 import PauseIcon from '@mui/icons-material/PauseCircleFilledOutlined';
 import PlayArrowIcon from '@mui/icons-material/PlayCircleFilledOutlined';
@@ -23,6 +26,8 @@ interface AudioDisplayProps {
   userDuration?: string | null;
   isAudioPlaying: boolean;
   onTogglePlayPause: () => void;
+  currentTimeSeconds?: number;
+  currentAudioRef?: React.RefObject<Howl | null>;
 }
 
 const formatTime = (timestamp: number) => {
@@ -47,10 +52,44 @@ interface TimelineClipProps {
   onClipClick: (segmentId: string) => void;
   isDarkTheme: boolean;
   theme: Theme;
+  currentTimeSeconds?: number;
 }
 
 const TimelineClip = React.memo(
-  ({ clip, onClipClick, isDarkTheme, theme }: TimelineClipProps) => {
+  ({
+    clip,
+    onClipClick,
+    isDarkTheme,
+    theme,
+    currentTimeSeconds,
+  }: TimelineClipProps) => {
+    const wsRef = useRef<WaveSurfer | null>(null);
+
+    // Sync options dynamically (like cursor color/width) without destroying wavesurfer
+    useEffect(() => {
+      if (wsRef.current) {
+        wsRef.current.setOptions({
+          cursorColor: clip.isAudioPlaying
+            ? theme.palette.error.main
+            : 'transparent',
+          cursorWidth: clip.isAudioPlaying ? 1.5 : 0,
+        });
+      }
+    }, [clip.isAudioPlaying, theme.palette.error.main]);
+
+    // Sync playback progress (seek)
+    useEffect(() => {
+      if (
+        clip.isAudioPlaying &&
+        wsRef.current &&
+        currentTimeSeconds !== undefined
+      ) {
+        wsRef.current.setTime(currentTimeSeconds);
+      } else if (!clip.isAudioPlaying && wsRef.current) {
+        wsRef.current.setTime(0);
+      }
+    }, [clip.isAudioPlaying, currentTimeSeconds]);
+
     return (
       <Box
         onClick={() => onClipClick(clip.id)}
@@ -99,10 +138,26 @@ const TimelineClip = React.memo(
           waveColor={theme.palette.text.secondary}
           progressColor={theme.palette.text.primary}
           cursorColor="transparent"
+          cursorWidth={0}
           barWidth={0.5}
           barGap={0.5}
           height={60}
           interact={false}
+          onReady={(ws) => {
+            wsRef.current = ws;
+            ws.setOptions({
+              cursorColor: clip.isAudioPlaying
+                ? theme.palette.error.main
+                : 'transparent',
+              cursorWidth: clip.isAudioPlaying ? 1.5 : 0,
+            });
+            if (clip.isAudioPlaying && currentTimeSeconds !== undefined) {
+              ws.setTime(currentTimeSeconds);
+            }
+          }}
+          onDestroy={() => {
+            wsRef.current = null;
+          }}
         />
       </Box>
     );
@@ -119,7 +174,8 @@ const TimelineClip = React.memo(
       prevProps.clip.isHighlighted === nextProps.clip.isHighlighted &&
       prevProps.clip.hasAlert === nextProps.clip.hasAlert &&
       prevProps.isDarkTheme === nextProps.isDarkTheme &&
-      prevProps.theme === nextProps.theme
+      prevProps.theme === nextProps.theme &&
+      prevProps.currentTimeSeconds === nextProps.currentTimeSeconds
     );
   }
 );
@@ -153,9 +209,61 @@ export function AudioDisplay({
   userDuration,
   isAudioPlaying,
   onTogglePlayPause,
+  currentTimeSeconds: currentTimeSecondsProp,
+  currentAudioRef,
 }: AudioDisplayProps) {
   const theme = useTheme();
   const isDarkTheme = theme.palette.mode === 'dark';
+
+  const [localCurrentTimeSeconds, setLocalCurrentTimeSeconds] =
+    useState<number>(0);
+
+  // Reset progress when changing segment
+  useEffect(() => {
+    setLocalCurrentTimeSeconds(0);
+  }, [currentlyPlayingSegmentId]);
+
+  // Poll current playback progress when audio is playing
+  useEffect(() => {
+    if (
+      currentTimeSecondsProp !== undefined ||
+      !isAudioPlaying ||
+      !currentlyPlayingSegmentId ||
+      !currentAudioRef?.current
+    ) {
+      return;
+    }
+
+    let animationFrameId: number;
+
+    const updateProgress = () => {
+      if (currentAudioRef.current) {
+        const seek = currentAudioRef.current.seek();
+        if (typeof seek === 'number') {
+          setLocalCurrentTimeSeconds(seek);
+        }
+      }
+      animationFrameId = requestAnimationFrame(updateProgress);
+    };
+
+    updateProgress();
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+    };
+  }, [
+    isAudioPlaying,
+    currentlyPlayingSegmentId,
+    currentAudioRef,
+    currentTimeSecondsProp,
+  ]);
+
+  const currentTimeSeconds =
+    currentTimeSecondsProp !== undefined
+      ? currentTimeSecondsProp
+      : currentAudioRef?.current
+        ? localCurrentTimeSeconds
+        : undefined;
 
   const [windowEndTime, setWindowEndTime] = useState<number | null>(null);
 
@@ -343,6 +451,9 @@ export function AudioDisplay({
               onClipClick={onClipClick}
               isDarkTheme={isDarkTheme}
               theme={theme}
+              currentTimeSeconds={
+                clip.isAudioPlaying ? currentTimeSeconds : undefined
+              }
             />
           ))}
           {transcripts.length === 0 && (
