@@ -119,7 +119,7 @@ wheels = [
 
 [[package]]
 name = "apache-beam"
-version = "2.73.0"
+version = "2.74.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "beartype" },
@@ -147,13 +147,13 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "zstandard" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9a/d3/50fa64464f84f646cae00aa8734c4875dca35be2f747919701ea08a084ce/apache_beam-2.73.0.tar.gz", hash = "sha256:ff9b6b320729051ce97c9809f64b825c9056694cc4c9afd3385fe124dcc60b80", size = 3035061, upload-time = "2026-04-29T12:58:34.643Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/bb/9e/7f0f451aa9ecae924aa1ca31bf68b1cad13f1ce4f56d69a7d62bc0ff7d83/apache_beam-2.74.0.tar.gz", hash = "sha256:c685b2db8330ad220ae39815dcfa5a0493ceb471f872568e746f34f7a04fe1a4", size = 3065517, upload-time = "2026-06-02T17:26:49.611Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4c/84/2cd74138847d6d0a76bca60b0faae145a82dae4dff828e88c904d0c5f7f2/apache_beam-2.73.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:5b56da8da361f1d8df9c57e04d91c6d1cf3856164e74e4cc50b3489fb7305078", size = 6012954, upload-time = "2026-04-29T12:58:14.263Z" },
-    { url = "https://files.pythonhosted.org/packages/7b/56/39464a4536ff3d81369ccd03f08b2b130ed7ebd345d927937ff6a1c044d1/apache_beam-2.73.0-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:6f49a4537983a602ca42b4697d8a2b9274d228b32832168f9deaf2b69eed17ce", size = 17313877, upload-time = "2026-04-29T12:58:16.429Z" },
-    { url = "https://files.pythonhosted.org/packages/bb/dd/fb1b6e3e84303a4039d8a3bf68b7757cfddf45547115f810dd79b4ed32a6/apache_beam-2.73.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:65c23529ede80d970494a602af18c64686e1ac609ae89f941527b1932197177e", size = 17464560, upload-time = "2026-04-29T12:58:18.69Z" },
-    { url = "https://files.pythonhosted.org/packages/14/f0/11f7176ffceb56330dc308cbec3eb4a0fc97af239dd84f27898e1d03bb47/apache_beam-2.73.0-cp313-cp313-win32.whl", hash = "sha256:c2dd20fae4cfc3a6603bc01451763efb56a2ba34cac55db398ec9796a1dc6db9", size = 5462104, upload-time = "2026-04-29T12:58:20.89Z" },
-    { url = "https://files.pythonhosted.org/packages/14/c9/81ee209c169ff4892f2c6a75de0016b3637ebe61767c2a22207d71697e4e/apache_beam-2.73.0-cp313-cp313-win_amd64.whl", hash = "sha256:03b8b849a1ee4e7f22368dbd227a4c31d2e11262ee6f450eac71eb0a51e44b39", size = 5727145, upload-time = "2026-04-29T12:58:22.461Z" },
+    { url = "https://files.pythonhosted.org/packages/e6/64/3076e14f103f8703135c00f677c09b0e7eaafd10dcadd3cb795e38c7f95e/apache_beam-2.74.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:eb9fd400b0bce1a78e50d9bea383eef5bc960cc1876346a2c68ed22789dc4f83", size = 6101135, upload-time = "2026-06-02T17:26:27.477Z" },
+    { url = "https://files.pythonhosted.org/packages/23/db/54f20cda0c1e279d65a5fcf7e36111c3d1cf347849bee9cb4bc8aa92d3cc/apache_beam-2.74.0-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:2bab02d6ca488372c4063e003b068a0918dd55aa094a3102493ba3ff258e7938", size = 17671647, upload-time = "2026-06-02T17:26:30.402Z" },
+    { url = "https://files.pythonhosted.org/packages/8a/15/18416b49e82aba1d2b35c6a619a14e182af48716c4e68285c2b9b66629ab/apache_beam-2.74.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:325d53db346ebc15eb907ae9627a0d7ff685b81ee0c7d6a33bd775b182f4a499", size = 17858081, upload-time = "2026-06-02T17:26:33.164Z" },
+    { url = "https://files.pythonhosted.org/packages/73/80/8a0c2109e020b4616d25023b9079c50280d8de6f3586d34f99bf7087a83f/apache_beam-2.74.0-cp313-cp313-win32.whl", hash = "sha256:5bdd896383288564749709023b3dd80268bab0a5f3a66ec2d83a63aa34190801", size = 5518113, upload-time = "2026-06-02T17:26:35.658Z" },
+    { url = "https://files.pythonhosted.org/packages/0b/53/f93b186e2b3d7f88ea7ca09c68338c6e595aef9a277560fd693c2cc22837/apache_beam-2.74.0-cp313-cp313-win_amd64.whl", hash = "sha256:5c907f9746f23b60773f3fc84108b35900e2881d6c58d59dbe82e6e645f0c36f", size = 5760689, upload-time = "2026-06-02T17:26:37.684Z" },
 ]
 
 [package.optional-dependencies]
@@ -3119,7 +3119,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "apache-beam", extras = ["gcp"], specifier = ">=2.73.0" },
+    { name = "apache-beam", extras = ["gcp"], specifier = ">=2.74.0" },
     { name = "betterproto", specifier = ">=2.0.0b6" },
     { name = "crcmod", specifier = ">=1.7" },
     { name = "google-cloud-logging", specifier = ">=3.14.0" },
