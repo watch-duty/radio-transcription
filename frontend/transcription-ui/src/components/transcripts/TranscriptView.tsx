@@ -10,20 +10,18 @@ import CircularProgress from '@mui/material/CircularProgress';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
-import {
-  type InfiniteData,
-  type QueryKey,
-  useInfiniteQuery,
-  useQuery,
-  useQueryClient,
-} from '@tanstack/react-query';
-import { type Transcript } from '@transcription/common';
+import { useQuery } from '@tanstack/react-query';
+import { AudioClassification, type AudioSegment } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
+import {
+  type AlertFilter,
+  useAudioSegments,
+} from '../../hooks/useAudioSegments';
+import { useConsolidatedAudioSegments } from '../../hooks/useConsolidatedAudioSegments';
 import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
-import { listTranscripts } from '../../service/listTranscripts';
 import { getAudioUrl } from '../../utils/audioUtils';
 import AudioDisplay from '../audio/AudioDisplay';
 import FeedSearchView from '../feeds/FeedSearchView';
@@ -36,19 +34,7 @@ interface TranscriptViewProps {
   onError: (error: Error, titleMessage?: string) => void;
 }
 
-export type ListTranscriptsPage = {
-  nextToken?: string;
-  order: 'asc' | 'desc';
-};
-
-export type ListTranscriptsData = {
-  transcripts: Transcript[];
-} & ListTranscriptsPage;
-
-export type AlertFilter = 'all' | 'alerts';
-
 const DEFAULT_REFRESH_INTERVAL = 10000;
-const MAX_TRANSCRIPTS_POLLING_ITERATIONS = 10;
 const FEED_POLLING_INTERVAL_MS = 15000; // 15 seconds
 
 export function TranscriptView({
@@ -57,8 +43,6 @@ export function TranscriptView({
 }: TranscriptViewProps) {
   const theme = useTheme();
   const { token } = useAuth();
-
-  const queryClient = useQueryClient();
 
   const [searchParams, setSearchParams] = useSearchParams();
   const targetFeedId = searchParams.get('feedId');
@@ -125,7 +109,7 @@ export function TranscriptView({
   // A mutable reference to the latest list of transcripts. This prevents stale closures
   // inside the Howl audio lifecycle callbacks (like onend), ensuring continuous playback logic
   // always evaluates against the most up-to-date transcript list even if it updates mid-playback.
-  const transcriptsRef = useRef<Transcript[]>([]);
+  const transcriptsRef = useRef<AudioSegment[]>([]);
 
   // Cleanup effect to ensure audio is unloaded when component unmounts
   useEffect(() => {
@@ -159,7 +143,7 @@ export function TranscriptView({
           onend: () => {
             const currentTranscripts = transcriptsRef.current;
             const currentIndex = currentTranscripts.findIndex(
-              (t) => t.segmentId === segmentId
+              (t) => t.id === segmentId
             );
             const hasNext = currentIndex > 0;
 
@@ -250,127 +234,35 @@ export function TranscriptView({
   }, []);
 
   const {
-    data: listTranscriptsResponse,
-    fetchNextPage: fetchOlderTranscripts,
-    hasNextPage: hasOlderTranscripts,
-    fetchPreviousPage: fetchNewerTranscripts,
-    hasPreviousPage: hasNewerTranscripts,
-    isFetchingNextPage: isFetchingOlderTranscripts,
-    isFetchingPreviousPage: isFetchingNewerTranscripts,
-    error: transcriptsError,
-    isLoading: isTranscriptsInitialLoading, // isLoading is the first load, which we use to show the main loading spinner
-    isFetching: isTranscriptsFetching, // isFetching is any load, which we use to show that we're loading additional data
-    isSuccess: isTranscriptsSuccess,
-    dataUpdatedAt: transcriptsDataUpdatedAt,
-  } = useInfiniteQuery<
-    ListTranscriptsData,
-    Error,
-    InfiniteData<ListTranscriptsData>,
-    QueryKey,
-    ListTranscriptsPage
-  >({
-    queryKey: [
-      'listTranscripts',
-      token,
-      searchedFeedId,
-      searchedTimestamp,
-      alertFilter,
-    ],
-    queryFn: async ({ pageParam }) => {
-      const { nextToken, order } = pageParam;
-
-      // We only fetch the timestamp on the initial load. On subsequent loads,
-      // the cursor-based positioning of the database in nextToken handles the rest.
-      const originalTimestampMs =
-        !nextToken && searchedTimestamp
-          ? searchedTimestamp.getTime()
-          : undefined;
-
-      const response = await listTranscripts(
-        searchedFeedId,
-        token ?? '',
-        /*limit=*/ undefined,
-        nextToken,
-        /*startTime=*/ order === 'asc' ? originalTimestampMs : undefined,
-        /*endTime=*/ order === 'desc' ? originalTimestampMs : undefined,
-        order,
-        alertFilter === 'alerts' ? true : undefined
-      );
-
-      // The API returns transcripts in ascending order, meaning that the first transcript in
-      // the list is the oldest in time. However, in order to display them in the proper
-      // order (newest in time at the top), we need to reverse the transcripts.
-      if (order === 'asc' && response.transcripts) {
-        response.transcripts.reverse();
-      }
-
-      return { ...response, order };
-    },
-    initialPageParam: {
-      order: searchedTimestamp ? 'asc' : 'desc',
-    },
-    // Note: TanStack Query automatically manages the bidirectional pagination state for us.
-    // - `getNextPageParam` is always passed the LAST page in the cache (oldest) to continue scanning backward.
-    // - `getPreviousPageParam` is always passed the FIRST page in the cache (newest) to continue scanning forward.
-    // Because each page stores its own `nextToken` and `order`, the framework naturally isolates the
-    // forward and backward pagination bookmarks without us needing to maintain separate local state for them.
-    getNextPageParam: (lastPage) => {
-      // 1. If we are already fetching older transcripts ('desc'), continue scanning backward.
-      if (lastPage.order === 'desc') {
-        return lastPage.nextToken
-          ? { order: 'desc', nextToken: lastPage.nextToken }
-          : undefined;
-      }
-      // 2. If the initial load was 'asc' (searching from a timestamp), and the user scrolls down
-      // to load older transcripts, we start fetching them in 'desc' order starting from the searched timestamp.
-      return searchedTimestamp
-        ? { order: 'desc', nextToken: undefined }
-        : undefined;
-    },
-    getPreviousPageParam: (firstPage) => {
-      // 1. If no timestamp was searched, we are at the "live" head. No newer transcripts exist.
-      if (!searchedTimestamp) return undefined;
-      // 2. If we are fetching newer transcripts ('asc') and hit the end, stop.
-      if (firstPage.order === 'asc') {
-        return firstPage.nextToken
-          ? { order: 'asc', nextToken: firstPage.nextToken }
-          : undefined;
-      }
-      // 3. If we are in a descending page load, we cannot fetch newer transcripts directly from it.
-      return undefined;
-    },
-    enabled: !!token && !!searchedFeedId && isFeedsSuccess,
-    refetchOnWindowFocus: false,
+    rawAudioSegments,
+    newestTimestamp,
+    loadOlderTranscripts: fetchOlderTranscripts,
+    loadNewerTranscripts: fetchNewerTranscripts,
+    hasOlderTranscripts,
+    hasNewerTranscripts,
+    isTranscriptsSuccess,
+    transcriptsError,
+    transcriptsDataUpdatedAt,
+    isFetchingNewerTranscripts,
+    isFetchingOlderTranscripts,
+    pollNewerTranscripts,
+    updateCacheWithNewTranscripts,
+    isLoading: isTranscriptsInitialLoading,
+    isFetching: isTranscriptsFetching,
+  } = useAudioSegments({
+    token,
+    searchedFeedId,
+    searchedTimestamp,
+    alertFilter,
+    isFeedsSuccess,
   });
-
-  useEffect(() => {
-    if (transcriptsError) {
-      onError(transcriptsError, 'Loading transcripts');
-    }
-  }, [transcriptsError, onError]);
 
   const transcriptsLastUpdated =
     transcriptsDataUpdatedAt && transcriptsDataUpdatedAt > 0
       ? transcriptsDataUpdatedAt
       : null;
 
-  const transcripts = useMemo(() => {
-    const allTranscripts =
-      listTranscriptsResponse?.pages.flatMap((page) => page.transcripts) ?? [];
-    const seenIds = new Set<string>();
-    const uniqueTranscripts = allTranscripts.filter((transcript) => {
-      if (seenIds.has(transcript.segmentId)) {
-        return false;
-      }
-      seenIds.add(transcript.segmentId);
-      return true;
-    });
-    return uniqueTranscripts.sort(
-      (a, b) =>
-        new Date(b.startTimestamp).getTime() -
-        new Date(a.startTimestamp).getTime()
-    );
-  }, [listTranscriptsResponse]);
+  const transcripts = useConsolidatedAudioSegments(rawAudioSegments);
 
   // Keep the ref in sync with the transcripts so that audio lifecycle callbacks can access the latest list.
   useEffect(() => {
@@ -382,17 +274,61 @@ export function TranscriptView({
   useEffect(() => {
     if (!playbackEndedForId) return;
 
+    // 1. First check if the ended segment was part of a silence bundle, and if there is a next newer segment in that same bundle!
+    const parentBundle = transcripts.find(
+      (t) =>
+        t.isSilenceBundle && t.bundledSegmentIds?.includes(playbackEndedForId)
+    );
+
+    if (parentBundle && parentBundle.bundledSegmentIds) {
+      const endedIdx =
+        parentBundle.bundledSegmentIds.indexOf(playbackEndedForId);
+      if (
+        endedIdx !== -1 &&
+        endedIdx < parentBundle.bundledSegmentIds.length - 1
+      ) {
+        const nextSegmentId = parentBundle.bundledSegmentIds[endedIdx + 1];
+        const nextSegment = rawAudioSegments.find(
+          (s) => s.id === nextSegmentId
+        );
+        if (nextSegment && nextSegment.playbackAudioUri) {
+          toggleAudio(nextSegment.id, nextSegment.playbackAudioUri);
+          setPlaybackEndedForId(null);
+          return;
+        }
+      }
+    }
+
+    // 2. If it was a Speech segment, or the last segment in a silence bundle, advance to the next newer transcript row
     const currentIndex = transcripts.findIndex(
-      (t) => t.segmentId === playbackEndedForId
+      (t) =>
+        t.id === playbackEndedForId ||
+        t.bundledSegmentIds?.includes(playbackEndedForId)
     );
 
     if (currentIndex > 0) {
       const nextTranscript = transcripts[currentIndex - 1];
-      toggleAudio(nextTranscript.segmentId, nextTranscript.playbackAudioUri);
+      if (nextTranscript.playbackAudioUri) {
+        // If the next transcript is a silence bundle, play its first segment
+        if (
+          nextTranscript.isSilenceBundle &&
+          nextTranscript.bundledSegmentIds &&
+          nextTranscript.bundledSegmentIds.length > 0
+        ) {
+          const firstId = nextTranscript.bundledSegmentIds[0];
+          const firstSegment = rawAudioSegments.find((s) => s.id === firstId);
+          if (firstSegment && firstSegment.playbackAudioUri) {
+            toggleAudio(firstSegment.id, firstSegment.playbackAudioUri);
+            setPlaybackEndedForId(null);
+            return;
+          }
+        }
+        toggleAudio(nextTranscript.id, nextTranscript.playbackAudioUri);
+      }
     }
 
     setPlaybackEndedForId(null);
-  }, [playbackEndedForId, transcripts, toggleAudio]);
+  }, [playbackEndedForId, transcripts, rawAudioSegments, toggleAudio]);
 
   // This is used to group transcripts by date and display them in the UI.
   // groupCounts is an array of numbers representing the number of transcripts in each group.
@@ -430,105 +366,6 @@ export function TranscriptView({
     return { groupCounts: counts, groupTitles: titles };
   }, [transcripts]);
 
-  // The timestamp of the newest transcript currently loaded in the UI.
-  // Used as a reference point when polling for newly arriving transcripts.
-  const newestTimestamp = transcripts[0]?.startTimestamp;
-
-  /**
-   * Fetches transcripts that have arrived after the current newest loaded transcript.
-   * Used by both the automatic background polling and the manual "Refresh" button.
-   * Handles pagination in case there are multiple pages of new transcripts.
-   */
-  const pollNewerTranscripts = useCallback(async () => {
-    if (!newestTimestamp || !searchedFeedId || !token) return [];
-
-    const allNewTranscripts: Transcript[] = [];
-    let currentNextToken: string | undefined = undefined;
-    let hasMore = true;
-    let iterations = 0;
-
-    try {
-      // Fetch all pages of new transcripts moving forward in time.
-      while (hasMore) {
-        if (iterations > MAX_TRANSCRIPTS_POLLING_ITERATIONS) {
-          console.warn(
-            'pollNewerTranscripts has more than 10 pages of new transcripts. This is unexpected. If this message continues, please report a bug.'
-          );
-        }
-
-        iterations++;
-        const response = await listTranscripts(
-          searchedFeedId,
-          token,
-          /*limit=*/ undefined,
-          currentNextToken,
-          // Query for transcripts with a start time greater than our current newest
-          /*startTime=*/ new Date(newestTimestamp).getTime(),
-          /*endTime=*/ undefined,
-          /*order=*/ 'asc',
-          alertFilter === 'alerts' ? true : undefined
-        );
-
-        if (response.transcripts && response.transcripts.length > 0) {
-          allNewTranscripts.push(...response.transcripts);
-        }
-
-        currentNextToken = response.nextToken;
-        hasMore = !!currentNextToken;
-      }
-    } catch (error) {
-      console.error('Error polling for new transcripts:', error);
-    }
-
-    // Reverse the array so the newest transcripts are at index 0 for prepending
-    return allNewTranscripts.reverse();
-  }, [newestTimestamp, searchedFeedId, token, alertFilter]);
-
-  /**
-   * Merges newly polled transcripts into the top of the infinite query cache.
-   * This updates the active view without triggering a full refetch of all loaded pages.
-   */
-  const updateCacheWithNewTranscripts = useCallback(
-    (newTranscripts: Transcript[]): Transcript[] => {
-      if (!token) return [];
-      let updatedTranscripts: Transcript[] = [];
-      queryClient.setQueryData<InfiniteData<ListTranscriptsData>>(
-        [
-          'listTranscripts',
-          token,
-          searchedFeedId,
-          searchedTimestamp,
-          alertFilter,
-        ],
-        (oldData) => {
-          if (!oldData) return oldData;
-
-          // Filter out duplicates to prevent rendering issues if a transcript
-          // was caught in both the initial fetch and the poll.
-          const existingIds = new Set(
-            oldData.pages.flatMap((p) => p.transcripts.map((t) => t.segmentId))
-          );
-          const filteredNew = newTranscripts.filter(
-            (t) => !existingIds.has(t.segmentId)
-          );
-
-          if (filteredNew.length === 0) return oldData;
-          updatedTranscripts = filteredNew;
-
-          // Prepend the new transcripts to the first (newest) page of the query cache.
-          const newPages = [...oldData.pages];
-          newPages[0] = {
-            ...newPages[0],
-            transcripts: [...filteredNew, ...newPages[0].transcripts],
-          };
-          return { ...oldData, pages: newPages };
-        }
-      );
-      return updatedTranscripts;
-    },
-    [token, searchedFeedId, searchedTimestamp, alertFilter, queryClient]
-  );
-
   /**
    * Background polling effect.
    * Automatically fetches new transcripts every 15 seconds, provided the user is:
@@ -562,24 +399,32 @@ export function TranscriptView({
           return;
         }
 
-        // Display snackbar indicator that new transcripts were received
-        const message =
-          cachedTranscripts.length === 1
-            ? 'New transcript received'
-            : `${cachedTranscripts.length} new transcripts received`;
-        triggerSnackbar(message);
+        const cachedSpeechTranscripts = cachedTranscripts.filter(
+          (t) => t.classification === AudioClassification.SPEECH
+        );
 
-        // Update the new message count if the user is not viewing the screen
-        if (!document.hasFocus()) {
-          setNewMessageCount(
-            (prevCount) => prevCount + cachedTranscripts.length
-          );
+        if (cachedSpeechTranscripts.length > 0) {
+          // Display snackbar indicator that new transcripts were received
+          const message =
+            cachedSpeechTranscripts.length === 1
+              ? 'New transcript received'
+              : `${cachedSpeechTranscripts.length} new transcripts received`;
+          triggerSnackbar(message);
+
+          // Update the new message count if the user is not viewing the screen
+          if (!document.hasFocus()) {
+            setNewMessageCount(
+              (prevCount) => prevCount + cachedSpeechTranscripts.length
+            );
+          }
         }
 
         // Trigger the new audio to play if no audio is currently playing
         if (!isAudioPlaying && playLatestAudio) {
           const audioToPlay = cachedTranscripts[cachedTranscripts.length - 1];
-          toggleAudio(audioToPlay.segmentId, audioToPlay.playbackAudioUri);
+          if (audioToPlay.playbackAudioUri) {
+            toggleAudio(audioToPlay.id, audioToPlay.playbackAudioUri);
+          }
         }
       } catch (error) {
         console.error('Polling error:', error);
@@ -639,7 +484,9 @@ export function TranscriptView({
       !hasScrolledToTarget.current
     ) {
       const index = transcripts.findIndex(
-        (t) => t.segmentId === targetSegmentId
+        (t) =>
+          t.id === targetSegmentId ||
+          t.bundledSegmentIds?.includes(targetSegmentId)
       );
       if (index !== -1) {
         const timer = setTimeout(() => {
@@ -656,7 +503,9 @@ export function TranscriptView({
   }, [isTranscriptsSuccess, targetSegmentId, transcripts]);
 
   const handleClipClick = (segmentId: string) => {
-    const index = transcripts.findIndex((t) => t.segmentId === segmentId);
+    const index = transcripts.findIndex(
+      (t) => t.id === segmentId || t.bundledSegmentIds?.includes(segmentId)
+    );
     if (index !== -1) {
       virtuosoRef.current?.scrollToIndex({
         index,
@@ -670,14 +519,20 @@ export function TranscriptView({
   const handleTogglePlayPause = () => {
     const targetId = isAudioPlaying
       ? currentlyPlayingSegmentId || highlightedSegmentId
-      : highlightedSegmentId ||
-        currentlyPlayingSegmentId ||
-        transcripts[0]?.segmentId;
+      : highlightedSegmentId || currentlyPlayingSegmentId || transcripts[0]?.id;
     if (!targetId) return;
 
-    const transcript = transcripts.find((t) => t.segmentId === targetId);
-    if (transcript) {
-      toggleAudio(transcript.segmentId, transcript.playbackAudioUri);
+    const specificSegment = rawAudioSegments.find((s) => s.id === targetId);
+    if (specificSegment && specificSegment.playbackAudioUri) {
+      toggleAudio(specificSegment.id, specificSegment.playbackAudioUri);
+      return;
+    }
+
+    const transcript = transcripts.find(
+      (t) => t.id === targetId || t.bundledSegmentIds?.includes(targetId)
+    );
+    if (transcript && transcript.playbackAudioUri) {
+      toggleAudio(transcript.id, transcript.playbackAudioUri);
     }
   };
 
@@ -802,7 +657,7 @@ export function TranscriptView({
       </Box>
 
       <AudioDisplay
-        transcripts={transcripts}
+        transcripts={rawAudioSegments}
         currentlyPlayingSegmentId={currentlyPlayingSegmentId}
         highlightedSegmentId={highlightedSegmentId}
         onClipClick={handleClipClick}

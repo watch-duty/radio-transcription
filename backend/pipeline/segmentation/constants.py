@@ -65,6 +65,17 @@ VAD_DEFAULT_SEED: Final = 2147483647
 MAX_AUDIO_CHUNK_DURATION_SEC: Final = 300
 
 
+# Signaling Tone Detection Defaults
+# Parameters for identifying and rejecting alert/paging tones (e.g., Quik-Call II)
+TONE_STFT_FRAME_LENGTH: Final = 1024
+TONE_STFT_HOP_LENGTH: Final = 512
+TONE_MIN_POWER_THRESHOLD: Final = 1e-10
+TONE_ACTIVE_FRAME_POWER_RATIO: Final = 0.01
+TONE_PEAK_NEIGHBORHOOD_RADIUS: Final = 3
+TONE_FRAME_MIN_CONCENTRATION_RATIO: Final = 0.85
+TONE_SEGMENT_MIN_TONE_FRAME_RATIO: Final = 0.75
+
+
 # Audio Signal Processing Boundaries
 INT16_MAX_FLOAT: Final = 32768.0
 
