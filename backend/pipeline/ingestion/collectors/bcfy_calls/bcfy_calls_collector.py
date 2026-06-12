@@ -6,16 +6,15 @@ import dataclasses
 import datetime
 import logging
 import os
-import random
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
-import aiohttp
 from google.cloud import secretmanager
 
 from backend.pipeline.ingestion.collectors import (
+    aiohttp_requests,
     control_flow,
     item_downloads,
     polling_payloads,
@@ -47,14 +46,16 @@ from backend.pipeline.storage.feed_store import FeedStatusReason
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+    import aiohttp
+
     from backend.pipeline.storage.feed_store import LeasedFeed
 
 logger = logging.getLogger(__name__)
 
-_MAX_5XX_RETRIES = 3
+_CALLS_API_MAX_ATTEMPTS = 4
 _POLL_INTERVAL_SEC = 10.0
 _AUDIO_TIMEOUT_SEC = 60.0
-_AUDIO_FILE_DOWNLOAD_MAX_RETRIES = 3
+_AUDIO_FILE_DOWNLOAD_MAX_ATTEMPTS = 4
 _AUDIO_FILE_DOWNLOAD_BACKOFF_BASE_SEC = 1.0
 _MAX_CONSECUTIVE_FAILURES = 10
 _KNOWN_AUDIO_FORMATS = frozenset({"mp3", "m4a", "wav", "ogg", "aac", "flac"})
@@ -86,14 +87,15 @@ class _JwtCacheState:
 _jwt_state = _JwtCacheState()
 
 
-class AuthError(Exception):
-    """Raised when Broadcastify Calls API returns 401 or 403."""
-
-
 @dataclasses.dataclass(frozen=True)
 class _CallChunkResult:
     chunk: CapturedChunk | None = None
     failure: ItemFailure | None = None
+
+
+async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
+    """Sleep for *seconds*, returning ``True`` if interrupted by shutdown."""
+    return await aiohttp_requests.sleep_or_shutdown(shutdown, seconds)
 
 
 def _get_jwt_token() -> str:
@@ -243,140 +245,67 @@ async def _get_shared_jwt_token_with_retry(
     return None
 
 
-def _raise_for_fatal_status(
-    status: int, feed_id: object, source_feed_id: str
-) -> None:
-    """Raise typed collector failures for non-retryable API statuses."""
-    del source_feed_id
-    if status not in {401, 403, 404}:
-        return
-
-    classification = http_status.classify_http_status(
-        status,
-        reason_prefix="calls_api_http",
-        policy=_CALLS_API_HTTP_POLICY,
+def _log_calls_api_response_invalid(feed_id: object) -> None:
+    """Log invalid successful Calls API payloads before classification."""
+    logger.error(
+        "Invalid Broadcastify Calls API response payload (feed %s)",
+        feed_id,
     )
-    if classification is None:
-        return
-
-    if status in (401, 403):
-        logger.warning(
-            "Auth failure %s from Broadcastify Calls API (feed %s)",
-            status,
-            feed_id,
-        )
-    elif status == 404:
-        logger.error(
-            "Feed not found from Broadcastify Calls API (feed %s)",
-            feed_id,
-        )
-    raise collector_failure(classification.status_reason, classification.reason)
 
 
-async def _fetch_calls(  # noqa: PLR0911
+def _validate_calls_api_payload(
+    payload: object,
+    feed_id: object,
+) -> dict[str, Any]:
+    """Validate the Calls API payload shape before processing."""
+    if not isinstance(payload, dict):
+        _log_calls_api_response_invalid(feed_id)
+        msg = "payload must be an object"
+        raise TypeError(msg)
+    calls_payload = cast("dict[str, Any]", payload)
+    response_calls = calls_payload.get("calls", [])
+    if not isinstance(response_calls, list):
+        _log_calls_api_response_invalid(feed_id)
+        msg = "calls field must be a list"
+        raise TypeError(msg)
+    return calls_payload
+
+
+async def _fetch_calls(
     session: aiohttp.ClientSession,
     url: str,
     headers: dict[str, str],
     params: dict[str, Any],
     feed_id: object,
-    source_feed_id: str,
     shutdown_event: asyncio.Event,
-) -> dict[str, Any] | ItemFailure | None:
-    """Fetch audio calls from Broadcastify, handling retries for 5XX errors."""
-    for attempt in range(_MAX_5XX_RETRIES + 1):
-        if shutdown_event.is_set():
-            raise asyncio.CancelledError
+) -> dict[str, Any] | None:
+    """Fetch one Broadcastify Calls API page with request-level retries."""
 
-        async with session.get(url, headers=headers, params=params) as resp:
-            _raise_for_fatal_status(resp.status, feed_id, source_feed_id)
+    def validate_payload(payload: object) -> dict[str, Any]:
+        return _validate_calls_api_payload(payload, feed_id)
 
-            if resp.status == 429:
-                if attempt < _MAX_5XX_RETRIES:
-                    retry_after = (getattr(resp, "headers", {}) or {}).get(
-                        "Retry-After"
-                    )
-                    if retry_after and retry_after.isdigit():
-                        delay = float(retry_after)
-                    else:
-                        delay = (2**attempt) + random.uniform(0, 1)  # noqa: S311
-                    logger.warning(
-                        "429 rate limit (feed %s), retry %d/%d in %.1fs",
-                        feed_id,
-                        attempt + 1,
-                        _MAX_5XX_RETRIES,
-                        delay,
-                    )
-                    await control_flow.sleep_or_cancel(shutdown_event, delay)
-                    continue
-
-                logger.error(
-                    "429 rate limit (feed %s) after %d retries",
-                    feed_id,
-                    _MAX_5XX_RETRIES,
-                )
-                classification = http_status.classify_http_status(
-                    resp.status,
-                    reason_prefix="calls_api_http",
-                    policy=_CALLS_API_HTTP_POLICY,
-                )
-                if classification is None:
-                    return None
-                return ItemFailure.from_classification(classification)
-
-            if 500 <= resp.status <= 599:
-                if attempt < _MAX_5XX_RETRIES:
-                    delay = (2**attempt) + random.uniform(0, 1)  # noqa: S311
-                    logger.warning(
-                        "5XX %s (feed %s), retry %d/%d in %.1fs",
-                        resp.status,
-                        feed_id,
-                        attempt + 1,
-                        _MAX_5XX_RETRIES,
-                        delay,
-                    )
-                    await control_flow.sleep_or_cancel(shutdown_event, delay)
-                    continue
-
-                logger.error(
-                    "5XX %s (feed %s) after %d retries, giving up on this call",
-                    resp.status,
-                    feed_id,
-                    _MAX_5XX_RETRIES,
-                )
-                classification = http_status.classify_http_status(
-                    resp.status,
-                    reason_prefix="calls_api_http",
-                    policy=_CALLS_API_HTTP_POLICY,
-                )
-                if classification is None:
-                    return None
-                return ItemFailure.from_classification(classification)
-
-            if resp.status != 200:
-                logger.error(
-                    "API call failed with status %s for feed %s "
-                    "(source_feed_id=%s, url=%s, params=%s)",
-                    resp.status,
-                    feed_id,
-                    source_feed_id,
-                    url,
-                    params,
-                )
-                classification = http_status.classify_http_status(
-                    resp.status,
-                    reason_prefix="calls_api_http",
-                    policy=_CALLS_API_HTTP_POLICY,
-                )
-                if classification is not None:
-                    return ItemFailure.from_classification(classification)
-                return ItemFailure(
-                    FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-                    f"calls_api_http_{resp.status}",
-                )
-
-            return await resp.json()
-
-    return None
+    return await aiohttp_requests.fetch_json_with_retries(
+        session,
+        url,
+        shutdown_event,
+        retry_config=aiohttp_requests.RetryConfig(
+            timeout_sec=10.0,
+            max_attempts=_CALLS_API_MAX_ATTEMPTS,
+            base_delay_sec=1.0,
+            jitter_max_sec=1.0,
+            sleep_func=_sleep_or_shutdown,
+        ),
+        headers=headers,
+        params=params,
+        log_label=f"Calls API feed {feed_id}",
+        reason_prefix="calls_api_http",
+        status_policy=_CALLS_API_HTTP_POLICY,
+        validate_payload=validate_payload,
+        invalid_payload_status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        invalid_payload_reason="calls_api_response_invalid",
+        transport_status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+        transport_reason="calls_api_http_transport_failed",
+    )
 
 
 def _get_audio_format(url: str) -> str:
@@ -402,115 +331,30 @@ def _get_audio_format(url: str) -> str:
     return "mp3"
 
 
-async def _download_audio(  # noqa: PLR0911
+async def _download_audio(
     session: aiohttp.ClientSession,
     audio_url: str,
     shutdown_event: asyncio.Event,
     out_headers: dict[str, str] | None = None,
-) -> bytes | ItemFailure:
+) -> bytes | ItemFailure | None:
     """Download audio file."""
-    timeout = aiohttp.ClientTimeout(total=_AUDIO_TIMEOUT_SEC)
-    for attempt in range(_AUDIO_FILE_DOWNLOAD_MAX_RETRIES + 1):
-        try:
-            async with session.get(audio_url, timeout=timeout) as audio_resp:
-                if audio_resp.status in {401, 403}:
-                    logger.warning(
-                        "Auth failure %s downloading audio: %s",
-                        audio_resp.status,
-                        audio_url,
-                    )
-                    return item_downloads.classify_item_http_status(
-                        audio_resp.status
-                    )
-
-                if audio_resp.status == 429:
-                    if attempt < _AUDIO_FILE_DOWNLOAD_MAX_RETRIES:
-                        delay = _AUDIO_FILE_DOWNLOAD_BACKOFF_BASE_SEC * (
-                            2**attempt
-                        )
-                        logger.warning(
-                            "429 downloading audio"
-                            " (attempt %d/%d, retry in %.1fs): %s",
-                            attempt + 1,
-                            _AUDIO_FILE_DOWNLOAD_MAX_RETRIES,
-                            delay,
-                            audio_url,
-                        )
-                        await control_flow.sleep_or_cancel(
-                            shutdown_event, delay
-                        )
-                        continue
-
-                    return item_downloads.classify_item_http_status(
-                        audio_resp.status
-                    )
-
-                if 500 <= audio_resp.status <= 599:
-                    if attempt < _AUDIO_FILE_DOWNLOAD_MAX_RETRIES:
-                        delay = _AUDIO_FILE_DOWNLOAD_BACKOFF_BASE_SEC * (
-                            2**attempt
-                        )
-                        logger.warning(
-                            "5XX %s downloading audio"
-                            " (attempt %d/%d, retry in %.1fs): %s",
-                            audio_resp.status,
-                            attempt + 1,
-                            _AUDIO_FILE_DOWNLOAD_MAX_RETRIES,
-                            delay,
-                            audio_url,
-                        )
-                        await control_flow.sleep_or_cancel(
-                            shutdown_event, delay
-                        )
-                        continue
-
-                    logger.error(
-                        "5XX %s downloading audio after %d retries,"
-                        " skipping: %s",
-                        audio_resp.status,
-                        _AUDIO_FILE_DOWNLOAD_MAX_RETRIES,
-                        audio_url,
-                    )
-                    return item_downloads.classify_item_http_status(
-                        audio_resp.status
-                    )
-
-                if audio_resp.status != 200:
-                    logger.error(
-                        "Failed to download audio from %s (status %d)",
-                        audio_url,
-                        audio_resp.status,
-                    )
-                    return item_downloads.classify_item_http_status(
-                        audio_resp.status
-                    )
-
-                if out_headers is not None:
-                    out_headers.update(audio_resp.headers)
-
-                return await audio_resp.read()
-        except Exception as e:
-            if attempt < _AUDIO_FILE_DOWNLOAD_MAX_RETRIES:
-                delay = _AUDIO_FILE_DOWNLOAD_BACKOFF_BASE_SEC * (2**attempt)
-                logger.warning(
-                    "Network error downloading audio"
-                    " (attempt %d/%d, retry in %.1fs): %s",
-                    attempt + 1,
-                    _AUDIO_FILE_DOWNLOAD_MAX_RETRIES,
-                    delay,
-                    audio_url,
-                    exc_info=e,
-                )
-                await control_flow.sleep_or_cancel(shutdown_event, delay)
-                continue
-            logger.exception(
-                "Network error downloading audio after %d retries,"
-                " skipping: %s",
-                _AUDIO_FILE_DOWNLOAD_MAX_RETRIES,
-                audio_url,
-            )
-            return item_downloads.item_download_failed()
-    return item_downloads.item_download_failed()
+    result = await aiohttp_requests.download_item_media(
+        session,
+        audio_url,
+        shutdown_event,
+        retry_config=aiohttp_requests.RetryConfig(
+            timeout_sec=_AUDIO_TIMEOUT_SEC,
+            max_attempts=_AUDIO_FILE_DOWNLOAD_MAX_ATTEMPTS,
+            base_delay_sec=_AUDIO_FILE_DOWNLOAD_BACKOFF_BASE_SEC,
+            sleep_func=_sleep_or_shutdown,
+        ),
+        log_label="Broadcastify Calls item audio",
+    )
+    if isinstance(result, aiohttp_requests.DownloadedItem):
+        if out_headers is not None:
+            out_headers.update(result.headers)
+        return result.content
+    return result
 
 
 def _extract_calls_from_response(
@@ -571,8 +415,16 @@ async def _create_chunk_from_call(
     if isinstance(audio_result, ItemFailure):
         return _CallChunkResult(failure=audio_result)
 
-    if not audio_result:
+    if audio_result is None:
         return _CallChunkResult()
+
+    if not audio_result:
+        return _CallChunkResult(
+            failure=ItemFailure(
+                FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                "item_download_failed",
+            )
+        )
 
     audio_bytes = audio_result
 
@@ -706,19 +558,11 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                 headers,
                 params,
                 feed_id,
-                source_feed_id,
                 shutdown_event,
             )
-            if isinstance(fetch_result, ItemFailure):
-                consecutive_failures = await _handle_loop_failure(
-                    feed_id,
-                    consecutive_failures,
-                    shutdown_event,
-                    fetch_result,
-                )
-                continue
-
             bcfy_calls = fetch_result
+            if bcfy_calls is None:
+                return
 
             calls = _extract_calls_from_response(bcfy_calls)
 
@@ -805,40 +649,6 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                 shutdown_event, _POLL_INTERVAL_SEC
             )
 
-        except AuthError:
-            # Structured so it joins the other ingestion SLO/alert surfaces via
-            # event_type; token is deliberately NOT logged (bearer tokens in logs
-            # are a secrets-in-logs anti-pattern even when short-lived).
-            logger.warning(
-                "Auth failure (401/403) for feed %s; refreshing token.",
-                feed_id,
-                extra={
-                    "json_fields": {
-                        "event_type": EVENT_TYPE_CALL_AUTH_FAILURE,
-                        "feed_id": str(feed_id),
-                        "source_type": feed["source_type"],
-                    },
-                },
-            )
-            refreshed_token = await _get_shared_jwt_token_with_retry(
-                feed_id,
-                shutdown_event,
-                force_refresh=True,
-                stale_token=jwt_token,
-            )
-            if refreshed_token is None:
-                return
-            jwt_token = refreshed_token
-            headers["Authorization"] = f"Bearer {jwt_token}"
-            consecutive_failures = await _handle_loop_failure(
-                feed_id,
-                consecutive_failures,
-                shutdown_event,
-                ItemFailure(
-                    FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-                    "auth_failed",
-                ),
-            )
         except FeedFailure as e:
             if (
                 e.status_reason
