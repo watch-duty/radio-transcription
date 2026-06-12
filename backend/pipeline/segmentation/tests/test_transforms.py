@@ -1803,4 +1803,3 @@ class DlqTaggingTest(unittest.TestCase):
         mock_logger.warning.assert_not_called()
         # last_start_ms state should NOT be written (remains 10050, not updated to 10070)
         self.assertEqual(mock_last_start_ms.read(), 10050)
-
