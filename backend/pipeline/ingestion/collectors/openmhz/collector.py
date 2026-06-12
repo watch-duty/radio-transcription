@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import datetime
 import logging
 import os
 import random
 import uuid
-from typing import TYPE_CHECKING
+from urllib.parse import urlparse
+from typing import TYPE_CHECKING, Any
 
 from curl_cffi.requests import AsyncSession
 
@@ -49,6 +51,8 @@ _DOWNLOAD_MAX_RETRIES = 3
 _DOWNLOAD_BACKOFF_BASE_SEC = 1.0
 _RECONNECT_BACKOFF_BASE_SEC = 1.0
 _RECONNECT_BACKOFF_CAP_SEC = 30.0
+_OPENMHZ_MEDIA_HOSTS = frozenset({"media.openmhz.com", "media2.openmhz.com"})
+_INVALID_OPENMHZ_MEDIA_URL_REASON = "invalid_openmhz_media_url"
 
 
 def _get_transport(name: str) -> TransportFactory:
@@ -61,6 +65,44 @@ def _get_transport(name: str) -> TransportFactory:
     )
 
 
+def _is_openmhz_media_url(url: str) -> bool:
+    """Return true only for expected OpenMHz-hosted media URLs."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    return parsed.scheme == "https" and host in _OPENMHZ_MEDIA_HOSTS
+
+
+async def _get_m4a_or_cancel(
+    session: AsyncSession,
+    url: str,
+    shutdown: asyncio.Event,
+) -> Any:
+    """Run one media GET, interrupting promptly when shutdown is signaled."""
+    if shutdown.is_set():
+        raise asyncio.CancelledError
+
+    get_task = asyncio.create_task(
+        session.get(url, timeout=30.0, allow_redirects=False)
+    )
+    shutdown_task = asyncio.create_task(shutdown.wait())
+
+    done, pending = await asyncio.wait(
+        {get_task, shutdown_task},
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+    for task in pending:
+        task.cancel()
+
+    if shutdown_task in done and shutdown_task.result():
+        with contextlib.suppress(asyncio.CancelledError):
+            await get_task
+        raise asyncio.CancelledError
+
+    with contextlib.suppress(asyncio.CancelledError):
+        await shutdown_task
+    return await get_task
+
+
 async def _download_m4a(
     session: AsyncSession,
     url: str,
@@ -71,10 +113,17 @@ async def _download_m4a(
     Returns audio bytes on success or a classified item failure on terminal
     failure. Shutdown interruption propagates as ``asyncio.CancelledError``.
     """
+    if not _is_openmhz_media_url(url):
+        logger.warning("Download invalid OpenMHz media URL")
+        return ItemFailure(
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            _INVALID_OPENMHZ_MEDIA_URL_REASON,
+        )
+
     last_status: int | None = None
     for attempt in range(_DOWNLOAD_MAX_RETRIES):
         try:
-            resp = await session.get(url, timeout=30.0)
+            resp = await _get_m4a_or_cancel(session, url, shutdown)
             last_status = resp.status_code
             if resp.status_code == 200:
                 return resp.content

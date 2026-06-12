@@ -92,6 +92,40 @@ class TestDownloadM4a(unittest.IsolatedAsyncioTestCase):
         self.session = MagicMock()
         self.shutdown = asyncio.Event()
 
+    async def test_valid_download_disables_redirects(self) -> None:
+        resp = MagicMock(status_code=200, content=b"m4a")
+        self.session.get = AsyncMock(return_value=resp)
+
+        result = await _download_m4a(
+            self.session,
+            "https://media2.openmhz.com/test.m4a",
+            self.shutdown,
+        )
+
+        self.assertEqual(result, b"m4a")
+        self.session.get.assert_awaited_once_with(
+            "https://media2.openmhz.com/test.m4a",
+            timeout=30.0,
+            allow_redirects=False,
+        )
+
+    async def test_rejects_non_openmhz_media_url(self) -> None:
+        self.session.get = AsyncMock()
+
+        result = await _download_m4a(
+            self.session,
+            "http://169.254.169.254/latest/meta-data/",
+            self.shutdown,
+        )
+
+        failure = _require_item_failure(result)
+        self.assertIs(
+            failure.status_reason,
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        )
+        self.assertEqual(failure.reason, "invalid_openmhz_media_url")
+        self.session.get.assert_not_called()
+
     async def test_terminal_4xx_statuses_return_item_failures(self) -> None:
         cases = {
             401: FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
@@ -158,6 +192,37 @@ class TestDownloadM4a(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(failure.reason, "item_download_failed")
         self.assertEqual(self.session.get.call_count, 3)
+
+    async def test_active_get_cancelled_when_shutdown_is_set(self) -> None:
+        started = asyncio.Event()
+        never_complete = asyncio.Future()
+
+        async def _blocked_get(*_args: object, **_kwargs: object) -> object:
+            started.set()
+            await never_complete
+            msg = "unreachable"
+            raise AssertionError(msg)
+
+        self.session.get = AsyncMock(side_effect=_blocked_get)
+
+        download_task = asyncio.create_task(
+            _download_m4a(
+                self.session,
+                "https://media2.openmhz.com/test.m4a",
+                self.shutdown,
+            )
+        )
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+        self.shutdown.set()
+
+        with self.assertRaises(asyncio.CancelledError):
+            await download_task
+
+        self.session.get.assert_awaited_once_with(
+            "https://media2.openmhz.com/test.m4a",
+            timeout=30.0,
+            allow_redirects=False,
+        )
 
     @patch(f"{_COL_MOD}.control_flow.sleep_or_cancel", new_callable=AsyncMock)
     async def test_shutdown_during_retry_raises_cancelled_error(
