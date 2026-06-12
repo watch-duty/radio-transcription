@@ -63,8 +63,10 @@ export const GOOGLE_AUTH_CLIENT_ID = googleClientId;
 export const GOOGLE_AUTH_CLIENT_SECRET = googleClientSecret;
 export const AUTH_BACKEND = process.env.AUTH_BACKEND || 'google';
 
-export const WORKSPACE_ADMIN_GROUP_EMAIL = process.env.WORKSPACE_ADMIN_GROUP_EMAIL;
-export const WORKSPACE_ADMIN_EMAIL = process.env.WORKSPACE_ADMIN_EMAIL;
+export const WORKSPACE_ADMIN_GROUP_EMAIL =
+  process.env.WORKSPACE_ADMIN_GROUP_EMAIL;
+export const WORKSPACE_IMPERSONATION_EMAIL =
+  process.env.WORKSPACE_IMPERSONATION_EMAIL;
 
 // Cache structure for user admin status
 const adminCache = new Map<string, { isAdmin: boolean; expiresAt: number }>();
@@ -87,18 +89,20 @@ export async function checkIsAdmin(email: string): Promise<boolean> {
     return true;
   }
 
-  if (!WORKSPACE_ADMIN_EMAIL) {
+  if (!WORKSPACE_IMPERSONATION_EMAIL) {
     console.error(
-      'WORKSPACE_ADMIN_EMAIL environment variable is not set, but WORKSPACE_ADMIN_GROUP_EMAIL is configured. Cannot perform group membership lookup.'
+      'WORKSPACE_IMPERSONATION_EMAIL environment variable is not set, but WORKSPACE_ADMIN_GROUP_EMAIL is configured. Cannot perform group membership lookup.'
     );
     return false;
   }
 
   try {
     const auth = new GoogleAuth({
-      scopes: ['https://www.googleapis.com/auth/admin.directory.group.member.readonly'],
+      scopes: [
+        'https://www.googleapis.com/auth/admin.directory.group.member.readonly',
+      ],
       clientOptions: {
-        subject: WORKSPACE_ADMIN_EMAIL, // Impersonate the workspace admin
+        subject: WORKSPACE_IMPERSONATION_EMAIL, // Impersonate the workspace admin
       },
     });
 
@@ -146,4 +150,3 @@ export async function checkIsAdmin(email: string): Promise<boolean> {
     return cached ? cached.isAdmin : false;
   }
 }
-
