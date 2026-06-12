@@ -27,7 +27,7 @@ vi.mock('../audio/AudioPlayer', () => ({
   ),
 }));
 
-const mockTranscript: AudioSegment = {
+const mockAudioSegment: AudioSegment = {
   id: 'tx-123',
   feedId: 'feed-123',
   classification: AudioClassification.SPEECH,
@@ -84,9 +84,9 @@ describe('TranscriptRow', () => {
     render(
       <MemoryRouter>
         <TranscriptRow
-          transcript={mockTranscript}
+          audioSegment={mockAudioSegment}
           index={0}
-          totalTranscripts={1}
+          totalAudioSegments={1}
           ruleIdToNameMap={ruleIdToNameMap}
           rulesLoading={false}
           onToggleAudio={mockOnToggleAudio}
@@ -109,9 +109,9 @@ describe('TranscriptRow', () => {
     render(
       <MemoryRouter>
         <TranscriptRow
-          transcript={mockTranscript}
+          audioSegment={mockAudioSegment}
           index={0}
-          totalTranscripts={1}
+          totalAudioSegments={1}
           ruleIdToNameMap={ruleIdToNameMap}
           rulesLoading={false}
           onToggleAudio={mockOnToggleAudio}
@@ -131,9 +131,9 @@ describe('TranscriptRow', () => {
     render(
       <MemoryRouter>
         <TranscriptRow
-          transcript={mockTranscript}
+          audioSegment={mockAudioSegment}
           index={0}
-          totalTranscripts={1}
+          totalAudioSegments={1}
           ruleIdToNameMap={ruleIdToNameMap}
           rulesLoading={false}
           onToggleAudio={mockOnToggleAudio}
@@ -159,9 +159,9 @@ describe('TranscriptRow', () => {
     render(
       <MemoryRouter>
         <TranscriptRow
-          transcript={mockTranscript}
+          audioSegment={mockAudioSegment}
           index={0}
-          totalTranscripts={1}
+          totalAudioSegments={1}
           ruleIdToNameMap={ruleIdToNameMap}
           rulesLoading={false}
           onToggleAudio={mockOnToggleAudio}
@@ -177,7 +177,7 @@ describe('TranscriptRow', () => {
     const deepLinkButton = screen.getAllByLabelText('copy deeplink')[0];
     fireEvent.click(deepLinkButton);
 
-    const startMs = new Date(mockTranscript.startTimestamp).getTime();
+    const startMs = new Date(mockAudioSegment.startTimestamp).getTime();
 
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
       expect.stringContaining('feedId=feed-123')
@@ -195,9 +195,9 @@ describe('TranscriptRow', () => {
     render(
       <MemoryRouter>
         <TranscriptRow
-          transcript={mockTranscript}
+          audioSegment={mockAudioSegment}
           index={0}
-          totalTranscripts={1}
+          totalAudioSegments={1}
           ruleIdToNameMap={ruleIdToNameMap}
           rulesLoading={false}
           onToggleAudio={mockOnToggleAudio}
@@ -210,10 +210,12 @@ describe('TranscriptRow', () => {
       </MemoryRouter>
     );
 
-    const audioPlayer = screen.getByTestId(`audio-player-${mockTranscript.id}`);
+    const audioPlayer = screen.getByTestId(
+      `audio-player-${mockAudioSegment.id}`
+    );
     expect(audioPlayer).toBeTruthy();
     expect(audioPlayer.getAttribute('data-audio-uri')).toBe(
-      mockTranscript.playbackAudioUri
+      mockAudioSegment.playbackAudioUri
     );
   });
 
@@ -221,9 +223,9 @@ describe('TranscriptRow', () => {
     render(
       <MemoryRouter>
         <TranscriptRow
-          transcript={mockTranscript}
+          audioSegment={mockAudioSegment}
           index={0}
-          totalTranscripts={1}
+          totalAudioSegments={1}
           ruleIdToNameMap={ruleIdToNameMap}
           rulesLoading={false}
           onToggleAudio={mockOnToggleAudio}
@@ -275,9 +277,9 @@ describe('TranscriptRow', () => {
     render(
       <MemoryRouter>
         <TranscriptRow
-          transcript={mockSilenceBundle}
+          audioSegment={mockSilenceBundle}
           index={0}
-          totalTranscripts={1}
+          totalAudioSegments={1}
           ruleIdToNameMap={ruleIdToNameMap}
           rulesLoading={false}
           onToggleAudio={mockOnToggleAudio}
@@ -315,9 +317,9 @@ describe('TranscriptRow', () => {
     render(
       <MemoryRouter>
         <TranscriptRow
-          transcript={mockSilenceBundle}
+          audioSegment={mockSilenceBundle}
           index={0}
-          totalTranscripts={1}
+          totalAudioSegments={1}
           ruleIdToNameMap={ruleIdToNameMap}
           rulesLoading={false}
           onToggleAudio={mockOnToggleAudio}
@@ -326,7 +328,7 @@ describe('TranscriptRow', () => {
           currentlyPlayingSegmentId={null}
           triggerSnackbar={mockTriggerSnackbar}
           showHeader={false}
-          isTopTranscriptRow={true}
+          isTopAudioSegmentRow={true}
         />
       </MemoryRouter>
     );

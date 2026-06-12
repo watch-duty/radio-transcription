@@ -114,7 +114,7 @@ describe('AudioDisplay', () => {
   it('should render empty state when no transcripts', () => {
     render(
       <AudioDisplay
-        transcripts={[]}
+        audioSegments={[]}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
@@ -126,7 +126,7 @@ describe('AudioDisplay', () => {
   });
 
   it('should render transcripts when provided', () => {
-    const mockTranscripts: AudioSegment[] = [
+    const mockAudioSegments: AudioSegment[] = [
       makeMockAudioSegment(
         '1',
         'feed1',
@@ -139,7 +139,7 @@ describe('AudioDisplay', () => {
 
     const { container } = render(
       <AudioDisplay
-        transcripts={mockTranscripts}
+        audioSegments={mockAudioSegments}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
@@ -156,7 +156,7 @@ describe('AudioDisplay', () => {
   });
 
   it('should render warning icon when transcript has evaluation decisions', () => {
-    const mockTranscripts: AudioSegment[] = [
+    const mockAudioSegments: AudioSegment[] = [
       makeMockAudioSegment(
         '1',
         'feed1',
@@ -170,7 +170,7 @@ describe('AudioDisplay', () => {
 
     render(
       <AudioDisplay
-        transcripts={mockTranscripts}
+        audioSegments={mockAudioSegments}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
@@ -183,7 +183,7 @@ describe('AudioDisplay', () => {
   });
 
   it('should shift window when playing segment is outside window', async () => {
-    const mockTranscripts: AudioSegment[] = [
+    const mockAudioSegments: AudioSegment[] = [
       makeMockAudioSegment(
         '1',
         'feed1',
@@ -204,7 +204,7 @@ describe('AudioDisplay', () => {
 
     const { rerender } = render(
       <AudioDisplay
-        transcripts={mockTranscripts}
+        audioSegments={mockAudioSegments}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
@@ -219,7 +219,7 @@ describe('AudioDisplay', () => {
 
     rerender(
       <AudioDisplay
-        transcripts={mockTranscripts}
+        audioSegments={mockAudioSegments}
         currentlyPlayingSegmentId="2"
         onClipClick={vi.fn()}
         isAudioPlaying={false}
@@ -237,7 +237,7 @@ describe('AudioDisplay', () => {
   });
 
   it('should reset window when transcripts[0] changes', async () => {
-    const mockTranscripts1: AudioSegment[] = [
+    const mockAudioSegments1: AudioSegment[] = [
       makeMockAudioSegment(
         '1',
         'feed1',
@@ -248,7 +248,7 @@ describe('AudioDisplay', () => {
       ),
     ];
 
-    const mockTranscripts2: AudioSegment[] = [
+    const mockAudioSegments2: AudioSegment[] = [
       makeMockAudioSegment(
         '2',
         'feed2',
@@ -261,7 +261,7 @@ describe('AudioDisplay', () => {
 
     const { rerender } = render(
       <AudioDisplay
-        transcripts={mockTranscripts1}
+        audioSegments={mockAudioSegments1}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
@@ -276,7 +276,7 @@ describe('AudioDisplay', () => {
 
     rerender(
       <AudioDisplay
-        transcripts={mockTranscripts2}
+        audioSegments={mockAudioSegments2}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
@@ -294,7 +294,7 @@ describe('AudioDisplay', () => {
   });
 
   it('should adjust window duration based on userDuration capped at 15 minutes', async () => {
-    const mockTranscripts: AudioSegment[] = [
+    const mockAudioSegments: AudioSegment[] = [
       makeMockAudioSegment(
         '1',
         'feed1',
@@ -307,7 +307,7 @@ describe('AudioDisplay', () => {
 
     const { rerender } = render(
       <AudioDisplay
-        transcripts={mockTranscripts}
+        audioSegments={mockAudioSegments}
         currentlyPlayingSegmentId={null}
         userDuration="5"
         onClipClick={vi.fn()}
@@ -329,7 +329,7 @@ describe('AudioDisplay', () => {
 
     rerender(
       <AudioDisplay
-        transcripts={mockTranscripts}
+        audioSegments={mockAudioSegments}
         currentlyPlayingSegmentId={null}
         userDuration="30"
         onClipClick={vi.fn()}
@@ -353,7 +353,7 @@ describe('AudioDisplay', () => {
   });
 
   it('passes playbackAudioUri to WavesurferPlayer (transformed via getAudioUrl)', () => {
-    const mockTranscripts: AudioSegment[] = [
+    const mockAudioSegments: AudioSegment[] = [
       makeMockAudioSegment(
         '1',
         'feed1',
@@ -366,7 +366,7 @@ describe('AudioDisplay', () => {
 
     render(
       <AudioDisplay
-        transcripts={mockTranscripts}
+        audioSegments={mockAudioSegments}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
@@ -378,7 +378,7 @@ describe('AudioDisplay', () => {
     const wavesurfer = screen.getByTestId('wavesurfer-player');
     expect(wavesurfer).toBeTruthy();
     expect(wavesurfer.getAttribute('data-url')).toBe(
-      getAudioUrl(mockTranscripts[0].playbackAudioUri ?? '')
+      getAudioUrl(mockAudioSegments[0].playbackAudioUri ?? '')
     );
     expect(wavesurfer.getAttribute('data-url')).toContain('.m4a');
   });
@@ -387,7 +387,7 @@ describe('AudioDisplay', () => {
     const mockOnTogglePlayPause = vi.fn();
     render(
       <AudioDisplay
-        transcripts={[
+        audioSegments={[
           makeMockAudioSegment(
             '1',
             'feed1',
@@ -415,7 +415,7 @@ describe('AudioDisplay', () => {
     const mockOnTogglePlayPause = vi.fn();
     render(
       <AudioDisplay
-        transcripts={[]}
+        audioSegments={[]}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
@@ -434,7 +434,7 @@ describe('AudioDisplay', () => {
   it('should render pause button when playing', () => {
     render(
       <AudioDisplay
-        transcripts={[]}
+        audioSegments={[]}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={true}
@@ -447,7 +447,7 @@ describe('AudioDisplay', () => {
   });
 
   it('should shift window when highlighted segment is outside window', async () => {
-    const mockTranscripts: AudioSegment[] = [
+    const mockAudioSegments: AudioSegment[] = [
       makeMockAudioSegment(
         '1',
         'feed1',
@@ -468,7 +468,7 @@ describe('AudioDisplay', () => {
 
     const { rerender } = render(
       <AudioDisplay
-        transcripts={mockTranscripts}
+        audioSegments={mockAudioSegments}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
@@ -483,7 +483,7 @@ describe('AudioDisplay', () => {
 
     rerender(
       <AudioDisplay
-        transcripts={mockTranscripts}
+        audioSegments={mockAudioSegments}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
