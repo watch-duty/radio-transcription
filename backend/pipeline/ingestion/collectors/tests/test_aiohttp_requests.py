@@ -56,6 +56,19 @@ def _validate_dict(payload: object) -> dict[str, object]:
     return typing.cast("dict[str, object]", payload)
 
 
+def _retry_config(
+    *,
+    max_attempts: int = 3,
+    sleep_func: aiohttp_requests.SleepFunc | None = None,
+) -> aiohttp_requests.RetryConfig:
+    return aiohttp_requests.RetryConfig(
+        timeout_sec=1.0,
+        max_attempts=max_attempts,
+        jitter_max_sec=0.0,
+        sleep_func=sleep_func or aiohttp_requests.sleep_or_shutdown,
+    )
+
+
 class TestFetchJsonWithRetries(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.session = mock.MagicMock()
@@ -68,8 +81,7 @@ class TestFetchJsonWithRetries(unittest.IsolatedAsyncioTestCase):
             self.session,
             "https://api.example.invalid",
             self.shutdown,
-            timeout_sec=1.0,
-            max_attempts=3,
+            retry_config=_retry_config(),
             log_label="test api",
             reason_prefix="test_api_http",
             status_policy=http_status.DEFAULT_HTTP_STATUS_POLICY,
@@ -97,8 +109,7 @@ class TestFetchJsonWithRetries(unittest.IsolatedAsyncioTestCase):
             self.session,
             "https://api.example.invalid",
             self.shutdown,
-            timeout_sec=1.0,
-            max_attempts=3,
+            retry_config=_retry_config(sleep_func=sleep),
             log_label="test api",
             reason_prefix="test_api_http",
             status_policy=http_status.DEFAULT_HTTP_STATUS_POLICY,
@@ -111,13 +122,14 @@ class TestFetchJsonWithRetries(unittest.IsolatedAsyncioTestCase):
                 feed_store.FeedStatusReason.SOURCE_UNREACHABLE
             ),
             transport_reason="test_api_transport_failed",
-            sleep_func=sleep,
         )
 
         self.assertEqual(result, {"ok": True})
         sleep.assert_awaited_once_with(self.shutdown, 7.0)
 
-    async def test_invalid_payload_exhaustion_raises_feed_failure(self) -> None:
+    async def test_invalid_payload_raises_feed_failure_without_retry(
+        self,
+    ) -> None:
         sleep = mock.AsyncMock(return_value=False)
         self.session.get.return_value = _Response(200, payload=[])
 
@@ -126,8 +138,10 @@ class TestFetchJsonWithRetries(unittest.IsolatedAsyncioTestCase):
                 self.session,
                 "https://api.example.invalid",
                 self.shutdown,
-                timeout_sec=1.0,
-                max_attempts=2,
+                retry_config=_retry_config(
+                    max_attempts=3,
+                    sleep_func=sleep,
+                ),
                 log_label="test api",
                 reason_prefix="test_api_http",
                 status_policy=http_status.DEFAULT_HTTP_STATUS_POLICY,
@@ -140,26 +154,34 @@ class TestFetchJsonWithRetries(unittest.IsolatedAsyncioTestCase):
                     feed_store.FeedStatusReason.SOURCE_UNREACHABLE
                 ),
                 transport_reason="test_api_transport_failed",
-                sleep_func=sleep,
             )
 
         self.assertIs(
             context.exception.status_reason,
             feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
         )
-        self.assertEqual(str(context.exception), "test_api_response_invalid")
+        self.assertEqual(
+            str(context.exception),
+            "test_api_response_invalid: TypeError: invalid",
+        )
+        self.assertEqual(self.session.get.call_count, 1)
+        sleep.assert_not_awaited()
 
     async def test_transport_exhaustion_raises_feed_failure(self) -> None:
         sleep = mock.AsyncMock(return_value=False)
-        self.session.get.side_effect = aiohttp.ClientError()
+        self.session.get.side_effect = aiohttp.ClientError(
+            "socket down\nretry failed"
+        )
 
         with self.assertRaises(FeedFailure) as context:
             await aiohttp_requests.fetch_json_with_retries(
                 self.session,
                 "https://api.example.invalid",
                 self.shutdown,
-                timeout_sec=1.0,
-                max_attempts=2,
+                retry_config=_retry_config(
+                    max_attempts=2,
+                    sleep_func=sleep,
+                ),
                 log_label="test api",
                 reason_prefix="test_api_http",
                 status_policy=http_status.DEFAULT_HTTP_STATUS_POLICY,
@@ -172,14 +194,37 @@ class TestFetchJsonWithRetries(unittest.IsolatedAsyncioTestCase):
                     feed_store.FeedStatusReason.SOURCE_UNREACHABLE
                 ),
                 transport_reason="test_api_transport_failed",
-                sleep_func=sleep,
             )
 
         self.assertIs(
             context.exception.status_reason,
             feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
         )
-        self.assertEqual(str(context.exception), "test_api_transport_failed")
+        self.assertEqual(
+            str(context.exception),
+            "test_api_transport_failed: ClientError: socket down retry failed",
+        )
+
+    async def test_invalid_retry_config_raises_value_error(self) -> None:
+        with self.assertRaises(ValueError):
+            await aiohttp_requests.fetch_json_with_retries(
+                self.session,
+                "https://api.example.invalid",
+                self.shutdown,
+                retry_config=_retry_config(max_attempts=0),
+                log_label="test api",
+                reason_prefix="test_api_http",
+                status_policy=http_status.DEFAULT_HTTP_STATUS_POLICY,
+                validate_payload=_validate_dict,
+                invalid_payload_status_reason=(
+                    feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR
+                ),
+                invalid_payload_reason="test_api_response_invalid",
+                transport_status_reason=(
+                    feed_store.FeedStatusReason.SOURCE_UNREACHABLE
+                ),
+                transport_reason="test_api_transport_failed",
+            )
 
 
 class TestDownloadItemMedia(unittest.IsolatedAsyncioTestCase):
@@ -198,8 +243,7 @@ class TestDownloadItemMedia(unittest.IsolatedAsyncioTestCase):
             self.session,
             "https://media.example.invalid/audio.mp3",
             self.shutdown,
-            timeout_sec=1.0,
-            max_attempts=3,
+            retry_config=_retry_config(),
             log_label="test item",
         )
 
@@ -217,8 +261,7 @@ class TestDownloadItemMedia(unittest.IsolatedAsyncioTestCase):
             self.session,
             "https://media.example.invalid/audio.mp3",
             self.shutdown,
-            timeout_sec=1.0,
-            max_attempts=3,
+            retry_config=_retry_config(),
             log_label="test item",
         )
 
@@ -237,8 +280,7 @@ class TestDownloadItemMedia(unittest.IsolatedAsyncioTestCase):
             self.session,
             "https://media.example.invalid/audio.mp3",
             self.shutdown,
-            timeout_sec=1.0,
-            max_attempts=3,
+            retry_config=_retry_config(),
             log_label="test item",
         )
 
@@ -261,10 +303,8 @@ class TestDownloadItemMedia(unittest.IsolatedAsyncioTestCase):
             self.session,
             "https://media.example.invalid/audio.mp3",
             self.shutdown,
-            timeout_sec=1.0,
-            max_attempts=3,
+            retry_config=_retry_config(sleep_func=sleep),
             log_label="test item",
-            sleep_func=sleep,
         )
 
         self.assertIsInstance(result, aiohttp_requests.DownloadedItem)
@@ -274,16 +314,16 @@ class TestDownloadItemMedia(unittest.IsolatedAsyncioTestCase):
 
     async def test_transport_exhaustion_returns_item_failure(self) -> None:
         sleep = mock.AsyncMock(return_value=False)
-        self.session.get.side_effect = aiohttp.ClientError()
+        self.session.get.side_effect = aiohttp.ClientError(
+            "socket down\nretry failed"
+        )
 
         result = await aiohttp_requests.download_item_media(
             self.session,
             "https://media.example.invalid/audio.mp3",
             self.shutdown,
-            timeout_sec=1.0,
-            max_attempts=2,
+            retry_config=_retry_config(max_attempts=2, sleep_func=sleep),
             log_label="test item",
-            sleep_func=sleep,
         )
 
         self.assertIsInstance(result, ItemFailure)
@@ -292,7 +332,10 @@ class TestDownloadItemMedia(unittest.IsolatedAsyncioTestCase):
             failure.status_reason,
             feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
         )
-        self.assertEqual(failure.reason, "item_download_failed")
+        self.assertEqual(
+            failure.reason,
+            "item_download_failed: ClientError: socket down retry failed",
+        )
 
     async def test_shutdown_during_retry_returns_none(self) -> None:
         sleep = mock.AsyncMock(return_value=True)
@@ -302,10 +345,8 @@ class TestDownloadItemMedia(unittest.IsolatedAsyncioTestCase):
             self.session,
             "https://media.example.invalid/audio.mp3",
             self.shutdown,
-            timeout_sec=1.0,
-            max_attempts=3,
+            retry_config=_retry_config(sleep_func=sleep),
             log_label="test item",
-            sleep_func=sleep,
         )
 
         self.assertIsNone(result)

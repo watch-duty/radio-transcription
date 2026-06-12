@@ -7,7 +7,8 @@ import collections.abc
 import dataclasses
 import logging
 import random
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from collections.abc import Awaitable, Callable, Mapping
+from typing import Any, TypeVar, cast
 
 import aiohttp
 
@@ -16,19 +17,18 @@ from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemFailure,
     collector_failure,
+    format_exception_context,
 )
 from backend.pipeline.ingestion.collectors.failure_classifiers import (
     http_status,
 )
 from backend.pipeline.storage import feed_store
 
-if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Mapping
-
 logger = logging.getLogger(__name__)
 
 _JSON = TypeVar("_JSON")
 _RETRYABLE_STATUSES = frozenset({408, 429})
+type SleepFunc = Callable[[asyncio.Event, float], Awaitable[bool]]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -49,6 +49,23 @@ async def sleep_or_shutdown(
     except TimeoutError:
         return False
     return True
+
+
+@dataclasses.dataclass(frozen=True)
+class RetryConfig:
+    """Mechanical retry settings shared by aiohttp request helpers."""
+
+    timeout_sec: float
+    max_attempts: int
+    base_delay_sec: float = 1.0
+    jitter_max_sec: float = 1.0
+    sleep_func: SleepFunc = sleep_or_shutdown
+
+
+def _validate_retry_config(retry_config: RetryConfig) -> None:
+    if retry_config.max_attempts < 1:
+        msg = "retry_config.max_attempts must be >= 1"
+        raise ValueError(msg)
 
 
 def _retry_delay(
@@ -76,6 +93,36 @@ def _retry_delay(
 def _is_retryable_status(status: int) -> bool:
     """Return whether HTTP status should be retried before classification."""
     return status in _RETRYABLE_STATUSES or 500 <= status <= 599
+
+
+def _has_attempt_remaining(attempt: int, retry_config: RetryConfig) -> bool:
+    return attempt < retry_config.max_attempts - 1
+
+
+async def _sleep_for_retry(
+    shutdown: asyncio.Event,
+    retry_config: RetryConfig,
+    *,
+    attempt: int,
+    log_label: str,
+    message: str,
+    headers: object = None,
+) -> bool:
+    delay = _retry_delay(
+        attempt,
+        headers=headers,
+        base_delay_sec=retry_config.base_delay_sec,
+        jitter_max_sec=retry_config.jitter_max_sec,
+    )
+    logger.warning(
+        "%s %s (attempt %d/%d, retry in %.1fs)",
+        log_label,
+        message,
+        attempt + 1,
+        retry_config.max_attempts,
+        delay,
+    )
+    return await retry_config.sleep_func(shutdown, delay)
 
 
 def _classification_for_status(
@@ -117,10 +164,9 @@ async def fetch_json_with_retries(  # noqa: UP047
     url: str,
     shutdown: asyncio.Event,
     *,
+    retry_config: RetryConfig,
     headers: Mapping[str, str] | None = None,
     params: Mapping[str, Any] | None = None,
-    timeout_sec: float,
-    max_attempts: int,
     log_label: str,
     reason_prefix: str,
     status_policy: http_status.HTTPStatusPolicy,
@@ -129,20 +175,15 @@ async def fetch_json_with_retries(  # noqa: UP047
     invalid_payload_reason: str,
     transport_status_reason: feed_store.FeedStatusReason,
     transport_reason: str,
-    retry_base_delay_sec: float = 1.0,
-    retry_jitter_max_sec: float = 0.0,
-    sleep_func: Callable[
-        [asyncio.Event, float],
-        Awaitable[bool],
-    ] = sleep_or_shutdown,
 ) -> _JSON | None:
     """Fetch and validate JSON for a feed-scoped endpoint.
 
     Returns ``None`` only when shutdown interrupts the request or retry sleep.
     Terminal feed-scoped failures raise ``FeedFailure``.
     """
-    timeout = aiohttp.ClientTimeout(total=timeout_sec)
-    for attempt in range(max_attempts):
+    _validate_retry_config(retry_config)
+    timeout = aiohttp.ClientTimeout(total=retry_config.timeout_sec)
+    for attempt in range(retry_config.max_attempts):
         if shutdown.is_set():
             return None
 
@@ -161,49 +202,26 @@ async def fetch_json_with_retries(  # noqa: UP047
                         aiohttp.ContentTypeError,
                         TypeError,
                         ValueError,
-                    ):
-                        if attempt < max_attempts - 1:
-                            delay = _retry_delay(
-                                attempt,
-                                base_delay_sec=retry_base_delay_sec,
-                                jitter_max_sec=retry_jitter_max_sec,
-                            )
-                            logger.warning(
-                                "%s invalid JSON/payload"
-                                " (attempt %d/%d, retry in %.1fs)",
-                                log_label,
-                                attempt + 1,
-                                max_attempts,
-                                delay,
-                                exc_info=True,
-                            )
-                            if await sleep_func(shutdown, delay):
-                                return None
-                            continue
+                    ) as exc:
                         raise collector_failure(
                             invalid_payload_status_reason,
-                            invalid_payload_reason,
+                            format_exception_context(
+                                invalid_payload_reason,
+                                exc,
+                            ),
                         )
 
-                if (
-                    _is_retryable_status(response.status)
-                    and attempt < max_attempts - 1
-                ):
-                    delay = _retry_delay(
-                        attempt,
+                if _is_retryable_status(
+                    response.status
+                ) and _has_attempt_remaining(attempt, retry_config):
+                    if await _sleep_for_retry(
+                        shutdown,
+                        retry_config,
+                        attempt=attempt,
+                        log_label=log_label,
+                        message=f"returned {response.status}",
                         headers=response.headers,
-                        base_delay_sec=retry_base_delay_sec,
-                        jitter_max_sec=retry_jitter_max_sec,
-                    )
-                    logger.warning(
-                        "%s returned %d (attempt %d/%d, retry in %.1fs)",
-                        log_label,
-                        response.status,
-                        attempt + 1,
-                        max_attempts,
-                        delay,
-                    )
-                    if await sleep_func(shutdown, delay):
+                    ):
                         return None
                     continue
 
@@ -222,27 +240,20 @@ async def fetch_json_with_retries(  # noqa: UP047
                 )
         except models.FeedFailure:
             raise
-        except (aiohttp.ClientError, TimeoutError):
-            if attempt < max_attempts - 1:
-                delay = _retry_delay(
-                    attempt,
-                    base_delay_sec=retry_base_delay_sec,
-                    jitter_max_sec=retry_jitter_max_sec,
-                )
-                logger.warning(
-                    "%s transport error (attempt %d/%d, retry in %.1fs)",
-                    log_label,
-                    attempt + 1,
-                    max_attempts,
-                    delay,
-                    exc_info=True,
-                )
-                if await sleep_func(shutdown, delay):
+        except (aiohttp.ClientError, TimeoutError) as exc:
+            if _has_attempt_remaining(attempt, retry_config):
+                if await _sleep_for_retry(
+                    shutdown,
+                    retry_config,
+                    attempt=attempt,
+                    log_label=log_label,
+                    message=format_exception_context("transport error", exc),
+                ):
                     return None
                 continue
             raise collector_failure(
                 transport_status_reason,
-                transport_reason,
+                format_exception_context(transport_reason, exc),
             )
 
     return None
@@ -253,8 +264,7 @@ async def download_item_media(  # noqa: PLR0911
     url: str,
     shutdown: asyncio.Event,
     *,
-    timeout_sec: float,
-    max_attempts: int,
+    retry_config: RetryConfig,
     log_label: str,
     reason_prefix: str = "item_http",
     status_policy: http_status.HTTPStatusPolicy = (
@@ -268,27 +278,20 @@ async def download_item_media(  # noqa: PLR0911
         feed_store.FeedStatusReason.SOURCE_UNREACHABLE
     ),
     transport_reason: str = "item_download_failed",
-    retry_base_delay_sec: float = 1.0,
-    retry_jitter_max_sec: float = 0.0,
-    sleep_func: Callable[
-        [asyncio.Event, float],
-        Awaitable[bool],
-    ] = sleep_or_shutdown,
 ) -> DownloadedItem | ItemFailure | None:
     """Download item media with retry and item-scoped classification.
 
     Returns ``None`` only for shutdown interruption.
     """
-    timeout = aiohttp.ClientTimeout(total=timeout_sec)
-    last_status: int | None = None
+    _validate_retry_config(retry_config)
+    timeout = aiohttp.ClientTimeout(total=retry_config.timeout_sec)
 
-    for attempt in range(max_attempts):
+    for attempt in range(retry_config.max_attempts):
         if shutdown.is_set():
             return None
 
         try:
             async with session.get(url, timeout=timeout) as response:
-                last_status = response.status
                 if response.status == 200:
                     content = await response.read()
                     if not content:
@@ -303,25 +306,17 @@ async def download_item_media(  # noqa: PLR0911
                         ),
                     )
 
-                if (
-                    _is_retryable_status(response.status)
-                    and attempt < max_attempts - 1
-                ):
-                    delay = _retry_delay(
-                        attempt,
+                if _is_retryable_status(
+                    response.status
+                ) and _has_attempt_remaining(attempt, retry_config):
+                    if await _sleep_for_retry(
+                        shutdown,
+                        retry_config,
+                        attempt=attempt,
+                        log_label=log_label,
+                        message=f"returned {response.status}",
                         headers=response.headers,
-                        base_delay_sec=retry_base_delay_sec,
-                        jitter_max_sec=retry_jitter_max_sec,
-                    )
-                    logger.warning(
-                        "%s returned %d (attempt %d/%d, retry in %.1fs)",
-                        log_label,
-                        response.status,
-                        attempt + 1,
-                        max_attempts,
-                        delay,
-                    )
-                    if await sleep_func(shutdown, delay):
+                    ):
                         return None
                     continue
 
@@ -333,37 +328,21 @@ async def download_item_media(  # noqa: PLR0911
                     fallback_reason=fallback_reason,
                 )
                 return ItemFailure.from_classification(classification)
-        except (aiohttp.ClientError, TimeoutError):
-            if attempt < max_attempts - 1:
-                delay = _retry_delay(
-                    attempt,
-                    base_delay_sec=retry_base_delay_sec,
-                    jitter_max_sec=retry_jitter_max_sec,
-                )
-                logger.warning(
-                    "%s transport error (attempt %d/%d, retry in %.1fs)",
-                    log_label,
-                    attempt + 1,
-                    max_attempts,
-                    delay,
-                    exc_info=True,
-                )
-                if await sleep_func(shutdown, delay):
+        except (aiohttp.ClientError, TimeoutError) as exc:
+            if _has_attempt_remaining(attempt, retry_config):
+                if await _sleep_for_retry(
+                    shutdown,
+                    retry_config,
+                    attempt=attempt,
+                    log_label=log_label,
+                    message=format_exception_context("transport error", exc),
+                ):
                     return None
                 continue
             return ItemFailure(
                 transport_status_reason,
-                transport_reason,
+                format_exception_context(transport_reason, exc),
             )
 
-    if last_status is None:
-        return ItemFailure(transport_status_reason, transport_reason)
-
-    classification = _classification_for_status(
-        last_status,
-        reason_prefix=reason_prefix,
-        policy=status_policy,
-        fallback_status_reason=fallback_status_reason,
-        fallback_reason=fallback_reason,
-    )
-    return ItemFailure.from_classification(classification)
+    msg = "unreachable retry loop exit"
+    raise RuntimeError(msg)

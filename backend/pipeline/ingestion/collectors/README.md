@@ -166,8 +166,10 @@ Do not duplicate exact HTTP policy tables in this guide. The `HTTPStatusPolicy`
 instances in code and their tests are the source of truth; this document should
 explain why policies are scoped by endpoint/stage, not restate every mapping.
 
-Reason strings must stay short, bounded, and safe for operator surfaces. Do not
-include URLs, ffmpeg stderr blobs, stack traces, tokens, object IDs, timestamps,
+Reason strings must stay safe for operator surfaces. Exception-derived terminal
+failures may append the exception class/message to a stable stage prefix, for
+example `item_download_failed: TimeoutError`. Do not append raw HTTP response
+bodies, ffmpeg stderr blobs, stack traces, URLs, tokens, object IDs, timestamps,
 request bodies, signed URLs, feed IDs, call IDs, or secrets in `reason`.
 
 ## Adding a VM Collector

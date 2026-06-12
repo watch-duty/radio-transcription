@@ -9,6 +9,7 @@ from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemBatchOutcome,
     ItemFailure,
     collector_failure,
+    format_exception_context,
     missing_source_feed_id_failure,
 )
 from backend.pipeline.ingestion.models import FeedFailure
@@ -21,6 +22,44 @@ def _require_item_failure(value: ItemFailure | None) -> ItemFailure:
         msg = "Expected ItemFailure, got None"
         raise AssertionError(msg)
     return value
+
+
+class TestFormatExceptionContext(unittest.TestCase):
+    """Exception context formatting for failure reasons and retry logs."""
+
+    def test_includes_class_and_message(self) -> None:
+        result = format_exception_context(
+            "item_download_failed",
+            ValueError("bad payload"),
+        )
+
+        self.assertEqual(
+            result,
+            "item_download_failed: ValueError: bad payload",
+        )
+
+    def test_uses_class_name_when_message_is_empty(self) -> None:
+        result = format_exception_context(
+            "item_download_failed",
+            TimeoutError(),
+        )
+
+        self.assertEqual(result, "item_download_failed: TimeoutError")
+
+    def test_collapses_whitespace(self) -> None:
+        result = format_exception_context(
+            "calls_api_response_invalid",
+            ValueError("line one\n\tline two"),
+        )
+
+        self.assertEqual(
+            result,
+            "calls_api_response_invalid: ValueError: line one line two",
+        )
+
+    def test_empty_prefix_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            format_exception_context("", ValueError("bad"))
 
 
 class TestItemBatchOutcome(unittest.TestCase):
