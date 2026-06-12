@@ -63,26 +63,6 @@ class DownloadedChunkPayload:
     session_id: str
 
 
-@dataclass(frozen=True)
-class TranscriptionResult:
-    """Intermediate transcription result holding payload data before Protobuf serialization, bypassing Protobuf pickling issues during Dataflow shuffle."""
-
-    feed_id: str
-    session_id: str
-    contributing_audio_uris: list[str]
-    transcript: str
-    time_range: TimeRange
-    segment_id: str
-    start_audio_offset_ms: int
-    end_audio_offset_ms: int
-    canonical_audio_uri: str
-    playback_audio_uri: str
-    feed_metadata: FeedMetadata
-    missing_prior_context: bool = False
-    missing_post_context: bool = False
-    traceparent: str | None = None
-
-
 IdleFeedState = bp_state.IdleFeedStateProto
 ActiveStitchingState = bp_state.ActiveStitchingStateProto
 
@@ -133,7 +113,6 @@ class StitchAudioConfig:
     max_transmission_duration_ms: int
     route_to_dlq: bool = True
     backfill_lateness_threshold_ms: int = DEFAULT_BACKFILL_LATENESS_THRESHOLD_MS
-    isolate_segmented_chunks: bool = False
     analyze_audio: bool = True
 
     def __post_init__(self) -> None:

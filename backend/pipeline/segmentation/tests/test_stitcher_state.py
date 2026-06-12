@@ -78,24 +78,7 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         self.ctx.file_start_ms = chunk.start_ms
         return self.state_machine.process_chunk(chunk, self.ctx)
 
-    def test_discard_initial_silence_segmented(self) -> None:
-        """Verifies completely silent chunks on segmented streams are dropped."""
-        config = get_test_stitch_config()
-        config = StitchAudioConfig(
-            project_id=config.project_id,
-            vad_config=config.vad_config,
-            significant_gap_ms=config.significant_gap_ms,
-            stale_timeout_ms=config.stale_timeout_ms,
-            max_transmission_duration_ms=config.max_transmission_duration_ms,
-            isolate_segmented_chunks=True,
-        )
-        self.state_machine = AudioStitchingStateMachine(config)
-        chunk = mock_audio_chunk(0, 15000, [])
-        actions = self._process(chunk)
-
-        self.assertTrue(any(isinstance(a, DropAction) for a in actions))
-
-    def test_stitch_initial_non_speech_continuous(self) -> None:
+    def test_stitch_initial_non_speech(self) -> None:
         """Verifies completely silent chunks on continuous streams are stitched into a non-speech transmission."""
         chunk = mock_audio_chunk(0, 15000, [])
         actions = self._process(chunk)
@@ -106,7 +89,7 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         self.assertEqual(self.ctx.transmission_start_time_ms, 0)
         self.assertEqual(len(self.ctx.speech_segments), 0)
 
-    def test_continuous_speech_accumulation(self) -> None:
+    def test_speech_accumulation(self) -> None:
         """Verifies adjacent speech segments beneath gap boundaries strictly trigger AppendBuffer bounds across sequential requests."""
         # Chunk 1: Speech from 1.0s to 12.0s
         chunk1 = mock_audio_chunk(0, 15000, [(1.0, 12.0)], "gs://fake/1.flac")
