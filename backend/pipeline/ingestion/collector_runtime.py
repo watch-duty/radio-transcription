@@ -9,7 +9,6 @@ import threading
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
-from contextlib import ExitStack
 
 import aiohttp
 import asyncpg
@@ -17,7 +16,6 @@ import uvloop
 from aiohttp import web
 from google.api_core import exceptions as google_exceptions
 from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
-from opentelemetry import trace
 
 from backend.pipeline.common import gcp_helper, tracing_utils
 from backend.pipeline.common.clients import gcs_client, pubsub_client
@@ -1164,8 +1162,6 @@ class CollectorRuntime:
                     )
                     raise TypeError(msg)  # noqa: TRY301
                 captured_chunk = capture_event
-                tracer = trace.get_tracer(__name__)
-
                 ingest_time_ms = str(
                     int(
                         (
@@ -1175,15 +1171,11 @@ class CollectorRuntime:
                         * 1000
                     )
                 )
-                with ExitStack() as stack:
-                    stack.enter_context(
-                        tracing_utils.inject_baggage(
-                            {"ingest_time_ms": ingest_time_ms}
-                        )
-                    )
-                    stack.enter_context(
-                        tracer.start_as_current_span("process_captured_chunk")
-                    )
+                with tracing_utils.with_baggage_and_span(
+                    {"ingest_time_ms": ingest_time_ms},
+                    "process_captured_chunk",
+                    __name__,
+                ):
                     chunk_extension = extension
                     chunk_content_type = content_type
 

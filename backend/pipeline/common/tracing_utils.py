@@ -251,3 +251,23 @@ def with_tracer_context(
             yield span
     finally:
         detach(token)
+
+
+@contextmanager
+def with_baggage_and_span(
+    baggage_items: dict[str, str],
+    span_name: str,
+    tracer_name: str,
+) -> Iterator[Span]:
+    """Context manager to attach baggage and start a span cleanly in one step.
+
+    Args:
+        baggage_items: Key-value baggage pairs to attach to the execution context.
+        span_name: The name of the OpenTelemetry span to create.
+        tracer_name: The name of the tracer (usually __name__).
+    """
+    with (
+        inject_baggage(baggage_items),
+        get_tracer(tracer_name).start_as_current_span(span_name) as span,
+    ):
+        yield span

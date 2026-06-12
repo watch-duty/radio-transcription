@@ -1,12 +1,15 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from opentelemetry.trace import get_current_span
+from opentelemetry import baggage
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.trace import get_current_span, set_tracer_provider
 
 from backend.pipeline.common.tracing_utils import (
     ContextPropagationValidator,
     extract_trace_context,
     get_current_traceparent,
+    with_baggage_and_span,
     with_tracer_context,
 )
 
@@ -98,3 +101,22 @@ class TestTracingUtils(unittest.TestCase):
         # 4. None traceparent string (in case casted improperly)
         ctx4 = extract_trace_context({"traceparent": None})  # type: ignore
         self.assertEqual(len(ctx4), 0)
+
+    def test_with_baggage_and_span(self) -> None:
+        """Verifies that with_baggage_and_span attaches baggage and creates a valid span."""
+        set_tracer_provider(TracerProvider())
+
+        span_before = get_current_span()
+        self.assertFalse(span_before.get_span_context().is_valid)
+        self.assertEqual(baggage.get_baggage("test_key"), None)
+
+        with with_baggage_and_span(
+            {"test_key": "test_val"}, "baggage_span", __name__
+        ) as span:
+            self.assertTrue(span.get_span_context().is_valid)
+            self.assertEqual(get_current_span(), span)
+            self.assertEqual(baggage.get_baggage("test_key"), "test_val")
+
+        span_after = get_current_span()
+        self.assertFalse(span_after.get_span_context().is_valid)
+        self.assertEqual(baggage.get_baggage("test_key"), None)
