@@ -234,6 +234,7 @@ export function AudioDisplay({
     const updateProgress = () => {
       if (currentAudioRef.current) {
         const seek = currentAudioRef.current.seek();
+        // seek could be the Howl instance if audio isn't yet loaded, so we should guard against that.
         if (typeof seek === 'number') {
           setLocalCurrentTimeSeconds(seek);
         }
