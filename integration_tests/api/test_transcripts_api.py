@@ -44,6 +44,8 @@ async def test_transcripts_api(
         "feed_id": feed_id,
         "segment_id": segment_id,
         "transcript": transcript_text,
+        "start_timestamp": "2026-01-01T12:00:00Z",
+        "end_timestamp": "2026-01-01T12:01:00Z",
     }
 
     # 1. Create transcript
@@ -54,7 +56,9 @@ async def test_transcripts_api(
     assert created_data["transcript"] == transcript_text
 
     # 2. List transcripts and verify it's there
-    response = await api_client.get("/transcripts", timeout=10.0)
+    response = await api_client.get(
+        "/transcripts", params={"feed_id": feed_id}, timeout=10.0
+    )
     assert response.status_code == 200, f"Failed to list: {response.text}"
     data = response.json()
     assert "transcripts" in data
@@ -95,6 +99,8 @@ async def test_transcripts_api_duplicate_idempotent(
         "feed_id": feed_id,
         "segment_id": segment_id,
         "transcript": transcript_text,
+        "start_timestamp": "2026-01-01T12:00:00Z",
+        "end_timestamp": "2026-01-01T12:01:00Z",
     }
 
     # 1. Create transcript
