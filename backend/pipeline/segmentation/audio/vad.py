@@ -436,25 +436,25 @@ class VoiceActivityDetector:
             spec = specs[idx]
             total_p = frame_powers[idx]
 
-            # Strongest peak
-            k1 = int(np.argmax(spec))
-            low1 = max(0, k1 - radius)
-            high1 = min(len(spec), k1 + radius + 1)
+            # 1. Strongest peak (frequency bin index with global maximum power)
+            peak_bin_1 = int(np.argmax(spec))
+            low1 = max(0, peak_bin_1 - radius)
+            high1 = min(len(spec), peak_bin_1 + radius + 1)
             p1 = float(np.sum(spec[low1:high1]))
 
-            # Second strongest peak outside first neighborhood
+            # 2. Second strongest peak outside the first peak's neighborhood
             spec_rem = spec.copy()
             spec_rem[low1:high1] = 0.0
-            k2 = int(np.argmax(spec_rem))
-            low2 = max(0, k2 - radius)
-            high2 = min(len(spec), k2 + radius + 1)
+            peak_bin_2 = int(np.argmax(spec_rem))
+            low2 = max(0, peak_bin_2 - radius)
+            high2 = min(len(spec), peak_bin_2 + radius + 1)
             p2 = float(np.sum(spec[low2:high2]))
 
-            # Third strongest peak outside first two neighborhoods
+            # 3. Third strongest peak outside the first two neighborhoods
             spec_rem[low2:high2] = 0.0
-            k3 = int(np.argmax(spec_rem))
-            low3 = max(0, k3 - radius)
-            high3 = min(len(spec), k3 + radius + 1)
+            peak_bin_3 = int(np.argmax(spec_rem))
+            low3 = max(0, peak_bin_3 - radius)
+            high3 = min(len(spec), peak_bin_3 + radius + 1)
             p3 = float(np.sum(spec[low3:high3]))
 
             if (p1 + p2 + p3) / total_p > TONE_FRAME_MIN_CONCENTRATION_RATIO:
