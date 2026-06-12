@@ -360,6 +360,41 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         mock_emit.assert_not_called()
         mock_session.close.assert_awaited_once()
 
+    @patch(f"{_COL_MOD}._download_m4a")
+    @patch(f"{_COL_MOD}.websocket_transport")
+    @patch(f"{_COL_MOD}.AsyncSession")
+    async def test_successful_download_after_shutdown_yields_no_chunk(
+        self,
+        mock_session_cls: MagicMock,
+        mock_transport: MagicMock,
+        mock_download: AsyncMock,
+    ) -> None:
+        mock_session = AsyncMock()
+        mock_session.close = AsyncMock()
+        mock_session_cls.return_value = mock_session
+        call = _make_call(call_id="download-finished-after-shutdown")
+        mock_transport.side_effect = lambda *a, **kw: _mock_transport([call])
+        shutdown = asyncio.Event()
+
+        async def _download_then_shutdown(*_args: object) -> bytes:
+            shutdown.set()
+            return b"m4a"
+
+        mock_download.side_effect = _download_then_shutdown
+
+        chunks = []
+        async for chunk in openmhz_collector(
+            _TEST_FEED,
+            shutdown,
+            "https://api.openmhz.com/",
+            _default_resources(),
+        ):
+            chunks.append(chunk)
+
+        self.assertEqual(chunks, [])
+        mock_download.assert_awaited_once()
+        mock_session.close.assert_awaited_once()
+
     async def test_raises_typed_failure_for_missing_source_feed_id(
         self,
     ) -> None:
@@ -373,6 +408,32 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             failure_count=0,
             status_reason=None,
             source_feed_id=None,
+        )
+        shutdown = asyncio.Event()
+        with self.assertRaises(FeedFailure) as ctx:
+            async for _ in openmhz_collector(
+                feed,
+                shutdown,
+                "https://api.openmhz.com/",
+                _default_resources(),
+            ):
+                pass
+
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        )
+        self.assertEqual(str(ctx.exception), "missing_source_feed_id")
+
+    async def test_raises_typed_failure_for_blank_source_feed_id(
+        self,
+    ) -> None:
+        feed = cast(
+            "LeasedFeed",
+            {
+                **_TEST_FEED,
+                "source_feed_id": "   ",
+            },
         )
         shutdown = asyncio.Event()
         with self.assertRaises(FeedFailure) as ctx:

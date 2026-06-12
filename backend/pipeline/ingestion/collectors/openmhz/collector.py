@@ -136,7 +136,8 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
             source failures prevent capture.
     """
     source_feed_id = feed.get("source_feed_id")
-    if not source_feed_id:
+    short_name = source_feed_id.strip() if source_feed_id else ""
+    if not short_name:
         logger.error(
             "Feed %s (%s) missing source_feed_id",
             feed["id"],
@@ -144,7 +145,6 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
         )
         raise missing_source_feed_id_failure()
 
-    short_name = source_feed_id.strip()
     transport_name = os.getenv("OPENMHZ_TRANSPORT", "websocket")
     transport_factory = _get_transport(transport_name)
 
@@ -180,6 +180,8 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                         download_result = await _download_m4a(
                             download_session, call.url, shutdown_event
                         )
+                        if shutdown_event.is_set():
+                            return
                         if isinstance(download_result, ItemFailure):
                             item_outcome.record_attempt()
                             item_outcome.record_failure(download_result)
