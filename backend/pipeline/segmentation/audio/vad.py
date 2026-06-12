@@ -55,6 +55,10 @@ from backend.pipeline.segmentation.constants import (
     VAD_DEFAULT_THRESHOLD_ONSET,
     VAD_NORMALIZATION_MIN_PEAK,
     VAD_NORMALIZATION_TARGET_PEAK,
+    VAD_SPECTRAL_MIN_TOTAL_ENERGY,
+    VAD_VOCAL_ENERGY_MAX_FREQ_HZ,
+    VAD_VOCAL_ENERGY_MIN_FREQ_HZ,
+    VAD_VOCAL_ENERGY_MIN_RATIO,
 )
 
 logger = get_task_logger(
@@ -384,20 +388,47 @@ class VoiceActivityDetector:
 
         # 1. Ratio check: reject if there are high spikes with very quiet median (clicks/transients)
         if rms_ratio > self.spikiness_ratio_threshold:
-            # High spikiness detected: perform tandem verification using spectral flatness
-            spec = np.abs(np.fft.rfft(sig)) ** 2
-            spec = np.maximum(spec[1:], 1e-10)
-            a_mean = np.mean(spec)
-            g_mean = np.exp(np.mean(np.log(spec)))
-            flatness = float(g_mean / a_mean) if a_mean > 1e-10 else 1.0
-            if flatness < 0.0005:  # Static noise shelf is ~0.0003
+            if self._is_transient_noise_spike(sig):
                 return False
 
         # 2. Floor check: reject if the segment is extremely quiet
         if mean_rms < self.min_rms_threshold:
             return False
 
+        # 3. Spectral Energy Distribution Check: reject weird flickering / DC / static ticking
+        if self._is_subaudible_flickering(sig):
+            return False
+
         return True
+
+    def _is_transient_noise_spike(self, sig: np.ndarray) -> bool:
+        """Computes spectral flatness to confirm if a high-RMS spike is static noise/clicks."""
+        spec = np.abs(np.fft.rfft(sig)) ** 2
+        spec = np.maximum(spec[1:], 1e-10)
+        a_mean = np.mean(spec)
+        g_mean = np.exp(np.mean(np.log(spec)))
+        flatness = float(g_mean / a_mean) if a_mean > 1e-10 else 1.0
+        return flatness < 0.0005  # Static noise shelf is ~0.0003
+
+    def _is_subaudible_flickering(self, sig: np.ndarray) -> bool:
+        """Analyzes formant-band energy to reject open-squelch ticks and electrical hum."""
+        spec = np.abs(np.fft.rfft(sig)) ** 2
+        total_energy = float(np.sum(spec))
+        if total_energy <= VAD_SPECTRAL_MIN_TOTAL_ENERGY:
+            return False
+
+        freqs = np.fft.rfftfreq(len(sig), d=1.0 / TARGET_SAMPLE_RATE)
+        vocal_mask = (freqs >= VAD_VOCAL_ENERGY_MIN_FREQ_HZ) & (
+            freqs <= VAD_VOCAL_ENERGY_MAX_FREQ_HZ
+        )
+        vocal_energy = float(np.sum(spec[vocal_mask]))
+        if (vocal_energy / total_energy) < VAD_VOCAL_ENERGY_MIN_RATIO:
+            logger.debug(
+                "Rejected VAD segment as sub-audible flickering / static ticks."
+            )
+            return True
+
+        return False
 
     def _is_tone_segment(self, sig: np.ndarray) -> bool:
         """Analyzes a candidate audio segment to determine if it is primarily an alert or paging tone."""

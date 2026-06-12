@@ -14,6 +14,14 @@ import numpy as np
 import soundfile as sf
 
 from backend.pipeline.segmentation.audio import vad
+from backend.pipeline.segmentation.constants import (
+    TONE_EAS_FREQ1_HZ,
+    TONE_EAS_FREQ2_HZ,
+    TONE_QUIK_CALL_II_FREQ1_HZ,
+    TONE_QUIK_CALL_II_FREQ2_HZ,
+    TONE_STFT_HOP_LENGTH,
+    VAD_TEST_SUBAUDIBLE_RUMBLE_FREQ_HZ,
+)
 
 SAMPLES_PER_MS: Final = 16
 
@@ -417,10 +425,20 @@ class TestVadEngine(unittest.TestCase):
     def test_is_tone_segment_two_tone_paging(self) -> None:
         """Verifies that a two-tone sequential paging signal is identified as a tone segment and rejected."""
         t1 = np.linspace(0, 1.0, 16000, endpoint=False)
-        tone1 = np.sin(2 * np.pi * 600.9 * t1).astype(np.float32) * 0.5
+        tone1 = (
+            np.sin(2 * np.pi * TONE_QUIK_CALL_II_FREQ1_HZ * t1).astype(
+                np.float32
+            )
+            * 0.5
+        )
 
         t2 = np.linspace(0, 3.0, 48000, endpoint=False)
-        tone2 = np.sin(2 * np.pi * 742.5 * t2).astype(np.float32) * 0.5
+        tone2 = (
+            np.sin(2 * np.pi * TONE_QUIK_CALL_II_FREQ2_HZ * t2).astype(
+                np.float32
+            )
+            * 0.5
+        )
 
         paging_signal = np.concatenate([tone1, tone2])
         self.assertTrue(self.vad._is_tone_segment(paging_signal))
@@ -433,17 +451,46 @@ class TestVadEngine(unittest.TestCase):
         """Verifies that an Emergency Alert System (EAS) attention tone (853 Hz + 960 Hz) is identified as a tone segment and rejected."""
         t = np.linspace(0, 4.0, 64000, endpoint=False)
         eas_tone = (
-            np.sin(2 * np.pi * 853.0 * t) + np.sin(2 * np.pi * 960.0 * t)
+            np.sin(2 * np.pi * TONE_EAS_FREQ1_HZ * t)
+            + np.sin(2 * np.pi * TONE_EAS_FREQ2_HZ * t)
         ).astype(np.float32) * 0.25
         self.assertTrue(self.vad._is_tone_segment(eas_tone))
         segments = self.vad.detect_speech_segments(eas_tone, sample_rate=16000)
         self.assertEqual(segments, [])
 
-    def test_integration_tone_only_file(self) -> None:
-        """Integration test to verify that real-world Broadcastify two-tone paging audio is fully rejected as non-speech."""
-        audio_path = Path(__file__).parent / "test_data" / "test_tone_only.flac"
-        audio_data, sample_rate = load_audio(audio_path)
-        segments = self.vad.detect_speech_segments(
-            audio_data, sample_rate=sample_rate
+    def test_is_speech_segment_reject_subaudible_flickering(self) -> None:
+        """Verifies that a sub-audible flickering / static ticking signal is rejected by _is_speech_segment."""
+        t = np.linspace(0, 2.0, 32000, endpoint=False)
+        # 75 Hz sinusoidal rumble mixed with tiny transient ticks
+        rumble = (
+            np.sin(2 * np.pi * VAD_TEST_SUBAUDIBLE_RUMBLE_FREQ_HZ * t).astype(
+                np.float32
+            )
+            * 0.4
         )
+        ticks = (
+            np.random.default_rng(seed=42)
+            .normal(0.0, 0.01, 32000)
+            .astype(np.float32)
+        )
+        flickering_signal = rumble + ticks
+        self.assertFalse(
+            self.vad._is_speech_segment(flickering_signal, TONE_STFT_HOP_LENGTH)
+        )
+        segments = self.vad.detect_speech_segments(
+            flickering_signal, sample_rate=16000
+        )
+        self.assertEqual(segments, [])
+
+    def test_is_speech_segment_reject_subaudible_flickering_file(
+        self,
+    ) -> None:
+        """Verifies that the actual test_subaudible_flickering.flac file is correctly rejected."""
+        flickering_path = (
+            Path(__file__).parent
+            / "test_data"
+            / "test_subaudible_flickering.flac"
+        )
+        samples, sr = load_audio(flickering_path)
+        segments = self.vad.detect_speech_segments(samples, sample_rate=sr)
         self.assertEqual(segments, [])
