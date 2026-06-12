@@ -126,6 +126,23 @@ class TestDownloadM4a(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(failure.reason, "invalid_openmhz_media_url")
         self.session.get.assert_not_called()
 
+    async def test_rejects_malformed_media_url_as_item_failure(self) -> None:
+        self.session.get = AsyncMock()
+
+        result = await _download_m4a(
+            self.session,
+            "http://[::1",
+            self.shutdown,
+        )
+
+        failure = _require_item_failure(result)
+        self.assertIs(
+            failure.status_reason,
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        )
+        self.assertEqual(failure.reason, "invalid_openmhz_media_url")
+        self.session.get.assert_not_called()
+
     async def test_terminal_4xx_statuses_return_item_failures(self) -> None:
         cases = {
             401: FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
@@ -223,6 +240,38 @@ class TestDownloadM4a(unittest.IsolatedAsyncioTestCase):
             timeout=30.0,
             allow_redirects=False,
         )
+
+    async def test_parent_cancellation_cancels_active_get(self) -> None:
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def _blocked_get(*_args: object, **_kwargs: object) -> object:
+            started.set()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            msg = "unreachable"
+            raise AssertionError(msg)
+
+        self.session.get = AsyncMock(side_effect=_blocked_get)
+
+        download_task = asyncio.create_task(
+            _download_m4a(
+                self.session,
+                "https://media2.openmhz.com/test.m4a",
+                self.shutdown,
+            )
+        )
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+        download_task.cancel()
+
+        with self.assertRaises(asyncio.CancelledError):
+            await download_task
+
+        await asyncio.wait_for(cancelled.wait(), timeout=1.0)
+        self.session.get.assert_awaited_once()
 
     @patch(f"{_COL_MOD}.control_flow.sleep_or_cancel", new_callable=AsyncMock)
     async def test_shutdown_during_retry_raises_cancelled_error(

@@ -67,9 +67,17 @@ def _get_transport(name: str) -> TransportFactory:
 
 def _is_openmhz_media_url(url: str) -> bool:
     """Return true only for expected OpenMHz-hosted media URLs."""
-    parsed = urlparse(url)
-    host = (parsed.hostname or "").lower()
-    return parsed.scheme == "https" and host in _OPENMHZ_MEDIA_HOSTS
+    try:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        port = parsed.port
+    except ValueError:
+        return False
+    return (
+        parsed.scheme == "https"
+        and host in _OPENMHZ_MEDIA_HOSTS
+        and port in (None, 443)
+    )
 
 
 async def _get_m4a_or_cancel(
@@ -85,21 +93,29 @@ async def _get_m4a_or_cancel(
         session.get(url, timeout=30.0, allow_redirects=False)
     )
     shutdown_task = asyncio.create_task(shutdown.wait())
+    tasks = {get_task, shutdown_task}
 
-    done, pending = await asyncio.wait(
-        {get_task, shutdown_task},
-        return_when=asyncio.FIRST_COMPLETED,
-    )
+    try:
+        done, pending = await asyncio.wait(
+            tasks,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+    except asyncio.CancelledError:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
     for task in pending:
         task.cancel()
+    await asyncio.gather(*pending, return_exceptions=True)
 
     if shutdown_task in done and shutdown_task.result():
-        with contextlib.suppress(asyncio.CancelledError):
-            await get_task
+        await asyncio.gather(get_task, return_exceptions=True)
         raise asyncio.CancelledError
 
     with contextlib.suppress(asyncio.CancelledError):
-        await shutdown_task
+        await asyncio.gather(shutdown_task, return_exceptions=True)
     return await get_task
 
 
