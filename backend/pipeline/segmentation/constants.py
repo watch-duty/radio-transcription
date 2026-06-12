@@ -9,7 +9,7 @@ MAIN_TAG: Final = "main"
 DEFAULT_SIGNIFICANT_GAP_MS: Final = 800
 
 # Maximum number of chunks emitted per Dataflow bundle by the stateful ordering
-# DoFns. Keeps bundle execution time at ~75 s (5 × ~15 s/chunk under load) well
+# DoFns. Keeps bundle execution time at ~10-15 s (50 × ~0.2-0.3 s/chunk) well
 # under Windmill's hard 300-second lease limit. When the drain hits this cap,
 # the DoFn sets an immediate self-chaining timer so the next Windmill bundle
 # picks up the remainder. This prevents the "poison-pill" pattern where a large
@@ -18,7 +18,7 @@ DEFAULT_SIGNIFICANT_GAP_MS: Final = 800
 # Tune this value if per-chunk processing latency changes significantly; both
 # the max_emit argument and the clamped-detection check in stateful.py must
 # stay in sync with this constant.
-MAX_CHUNKS_PER_WINDMILL_BUNDLE: Final = 5
+MAX_CHUNKS_PER_WINDMILL_BUNDLE: Final = 50
 GCS_DOWNLOAD_TIMEOUT_SEC: Final = 30
 DEFAULT_STALE_TIMEOUT_MS: Final = 75000
 DEFAULT_SEGMENTED_STALE_TIMEOUT_MS: Final = 5000

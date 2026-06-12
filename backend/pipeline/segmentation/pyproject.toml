@@ -19,8 +19,8 @@ dependencies = [
     "numba>=0.61.0",
     "numpy>=2.2.6",
     "pydantic>=2.12.5",
+    "av>=17.1.0",
     "google-cloud-storage>=2.18.2",
-    "tenacity>=9.1.4",
     "soundfile>=0.13.1",
     # OpenTelemetry lower-bound pins derived from existing root repository lockfile dependencies configurations
     "opentelemetry-api>=1.41.1",
