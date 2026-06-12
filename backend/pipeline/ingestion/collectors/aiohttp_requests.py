@@ -325,7 +325,7 @@ async def download_item_media(  # noqa: PLR0911
                     reason_prefix=reason_prefix,
                     policy=status_policy,
                     fallback_status_reason=fallback_status_reason,
-                    fallback_reason=fallback_reason,
+                    fallback_reason=f"{reason_prefix}_{response.status}",
                 )
                 return ItemFailure.from_classification(classification)
         except (aiohttp.ClientError, TimeoutError) as exc:

@@ -370,7 +370,7 @@ async def _fetch_calls(  # noqa: PLR0911
                 if classification is not None:
                     return ItemFailure.from_classification(classification)
                 return ItemFailure(
-                    FeedStatusReason.SOURCE_UNREACHABLE,
+                    FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
                     f"calls_api_http_{resp.status}",
                 )
 
