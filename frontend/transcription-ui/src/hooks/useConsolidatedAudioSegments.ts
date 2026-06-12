@@ -2,6 +2,8 @@ import { useMemo } from 'react';
 
 import { AudioClassification, type AudioSegment } from '@transcription/common';
 
+import { findEvaluationAnnotationData } from '../utils/annotationUtils';
+
 export interface RenderableAudioSegment extends AudioSegment {
   /**
    * Indicates whether this segment represents a consolidated bundle of consecutive
@@ -31,8 +33,12 @@ export function consolidateAudioSegments(
 
   for (const segment of chronologicalSegments) {
     const isSpeech = segment.classification === AudioClassification.SPEECH;
+    const isOther = segment.classification === AudioClassification.OTHER;
+    const hasAlert =
+      (findEvaluationAnnotationData(segment.annotations)?.decisions?.length ??
+        0) > 0;
 
-    if (isSpeech) {
+    if (isSpeech || (isOther && hasAlert)) {
       if (activeSilenceBundle) {
         consolidated.push(activeSilenceBundle);
         activeSilenceBundle = null;

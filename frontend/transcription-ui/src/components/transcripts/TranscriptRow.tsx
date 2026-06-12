@@ -8,7 +8,10 @@ import ListItem from '@mui/material/ListItem';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
-import { type TranscriptAnnotationData } from '@transcription/common';
+import {
+  AudioClassification,
+  type TranscriptAnnotationData,
+} from '@transcription/common';
 
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
 import {
@@ -56,12 +59,18 @@ export function TranscriptRow({
   const currentDate = new Date(transcript.startTimestamp);
 
   const isSilence = !!transcript.isSilenceBundle;
+  const isOther =
+    !isSilence && transcript.classification === AudioClassification.OTHER;
 
   function renderTranscriptionText(
     transcriptAnnotation: TranscriptAnnotationData | null
   ): string {
     if (isSilence) {
       return '[No speech detected]';
+    }
+
+    if (isOther) {
+      return transcriptAnnotation?.text || '[Signaling Alert Tone Detected]';
     }
 
     if (!transcriptAnnotation) {
@@ -82,8 +91,12 @@ export function TranscriptRow({
   const hasErrors = transcriptAnnotation
     ? transcriptAnnotation.errors.length > 0
     : false;
-  const isWaiting = !isSilence && !transcriptAnnotation;
-  const isPlaceholder = isSilence || isWaiting || hasErrors;
+  const isWaiting = !isSilence && !isOther && !transcriptAnnotation;
+  const isPlaceholder =
+    isSilence ||
+    isWaiting ||
+    hasErrors ||
+    (isOther && !transcriptAnnotation?.text);
 
   const evaluationAnnotation = findEvaluationAnnotationData(
     transcript.annotations
@@ -240,8 +253,7 @@ export function TranscriptRow({
             transition: 'filter 0.3s ease, opacity 0.3s ease',
             filter: redactTranscripts ? 'blur(6px)' : 'none',
             opacity: redactTranscripts ? 0.6 : 1,
-            fontStyle:
-              isSilence || isWaiting || hasErrors ? 'italic' : 'normal',
+            fontStyle: isPlaceholder ? 'italic' : 'normal',
           }}
         >
           {renderTranscriptionText(transcriptAnnotation)}

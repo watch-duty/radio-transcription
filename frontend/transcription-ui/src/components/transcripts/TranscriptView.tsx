@@ -400,7 +400,9 @@ export function TranscriptView({
         }
 
         const cachedSpeechTranscripts = cachedTranscripts.filter(
-          (t) => t.classification === AudioClassification.SPEECH
+          (t) =>
+            t.classification === AudioClassification.SPEECH ||
+            t.classification === AudioClassification.OTHER
         );
 
         if (cachedSpeechTranscripts.length > 0) {
