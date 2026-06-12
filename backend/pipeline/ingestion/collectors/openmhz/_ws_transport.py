@@ -7,7 +7,7 @@ import json
 import logging
 import time
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from curl_cffi.requests import AsyncSession
 from curl_cffi.requests.websockets import WebSocketClosed, WebSocketTimeout
@@ -18,6 +18,8 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 
 class OpenMHzTransportError(Exception):
@@ -93,10 +95,12 @@ async def websocket_transport(
     session = AsyncSession(impersonate="chrome")
     ws = None
     try:
-        ws = await session.ws_connect(ws_url)
+        ws = await _await_or_shutdown(session.ws_connect(ws_url), shutdown)
 
         # --- EIO handshake ---
-        open_frame = await ws.recv_str(timeout=10.0)
+        open_frame = await _recv_str_or_shutdown(ws, shutdown, 10.0)
+        if open_frame is None:
+            raise asyncio.CancelledError
         open_data = _parse_eio_open(open_frame)
         sid = open_data["sid"]
         ping_interval_sec: float = open_data["pingInterval"] / 1000
@@ -109,8 +113,10 @@ async def websocket_transport(
         )
 
         # --- SIO connect ---
-        await ws.send_str("40")
-        ack = await ws.recv_str(timeout=10.0)
+        await _await_or_shutdown(ws.send_str("40"), shutdown)
+        ack = await _recv_str_or_shutdown(ws, shutdown, 10.0)
+        if ack is None:
+            raise asyncio.CancelledError
         if not ack.startswith("40"):
             msg = f"Expected SIO connect ack (40...), got: {ack[:60]}"
             raise ValueError(msg)
@@ -119,8 +125,14 @@ async def websocket_transport(
         start_payload = json.dumps(
             ["start", {**_START_PAYLOAD_TEMPLATE, "shortName": short_name}]
         )
-        await ws.send_str(f"42{start_payload}")
+        await _await_or_shutdown(ws.send_str(f"42{start_payload}"), shutdown)
         logger.info("Subscribed to system: short_name=%s", short_name)
+    except asyncio.CancelledError:
+        if ws is not None:
+            with contextlib.suppress(Exception):
+                await ws.close()
+        await session.close()
+        raise
     except Exception as e:
         if ws is not None:
             with contextlib.suppress(Exception):
@@ -245,3 +257,41 @@ async def _recv_str_or_shutdown(
     with contextlib.suppress(asyncio.CancelledError):
         await asyncio.gather(shutdown_task, return_exceptions=True)
     return await recv_task
+
+
+async def _await_or_shutdown(
+    awaitable,
+    shutdown: asyncio.Event,
+) -> _T:
+    """Await one setup operation, cancelling it if shutdown wins."""
+    operation_task = asyncio.ensure_future(awaitable)
+    if shutdown.is_set():
+        operation_task.cancel()
+        await asyncio.gather(operation_task, return_exceptions=True)
+        raise asyncio.CancelledError
+
+    shutdown_task = asyncio.create_task(shutdown.wait())
+    tasks = {operation_task, shutdown_task}
+
+    try:
+        done, pending = await asyncio.wait(
+            tasks,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+    except asyncio.CancelledError:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+    for task in pending:
+        task.cancel()
+    await asyncio.gather(*pending, return_exceptions=True)
+
+    if shutdown_task in done and shutdown_task.result():
+        await asyncio.gather(operation_task, return_exceptions=True)
+        raise asyncio.CancelledError
+
+    with contextlib.suppress(asyncio.CancelledError):
+        await asyncio.gather(shutdown_task, return_exceptions=True)
+    return await operation_task
