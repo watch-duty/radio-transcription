@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import datetime
 import logging
 import os
@@ -33,7 +34,6 @@ from backend.pipeline.ingestion.models import (
 from backend.pipeline.storage.feed_store import FeedStatusReason
 
 if TYPE_CHECKING:
-    import asyncio
     from collections.abc import AsyncIterator
 
     from backend.pipeline.ingestion.collectors.openmhz._types import (
@@ -80,26 +80,25 @@ async def _download_m4a(
                 return resp.content
             if 400 <= resp.status_code < 500:
                 logger.warning(
-                    "Download non-retryable %d: url=%s",
+                    "Download non-retryable item HTTP status=%d",
                     resp.status_code,
-                    url,
                 )
                 return item_downloads.classify_item_http_status(
                     resp.status_code
                 )
             logger.warning(
-                "Download %d (attempt %d/%d): url=%s",
+                "Download retryable item HTTP status=%d attempt=%d/%d",
                 resp.status_code,
                 attempt + 1,
                 _DOWNLOAD_MAX_RETRIES,
-                url,
             )
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.warning(
-                "Download error (attempt %d/%d): url=%s",
+                "Download error attempt=%d/%d",
                 attempt + 1,
                 _DOWNLOAD_MAX_RETRIES,
-                url,
                 exc_info=True,
             )
         if attempt < _DOWNLOAD_MAX_RETRIES - 1:
@@ -107,7 +106,7 @@ async def _download_m4a(
                 shutdown, _DOWNLOAD_BACKOFF_BASE_SEC * (2**attempt)
             )
 
-    logger.warning("Download failed after retries: url=%s", url)
+    logger.warning("Download failed after retries")
     if last_status is not None:
         return item_downloads.classify_item_http_status(last_status)
     return item_downloads.item_download_failed()
@@ -151,8 +150,8 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
 
     consecutive_ws_failures = 0
     # OpenMHz streams item events continuously, so there is no natural API page
-    # or poll batch. Use a bounded failure window and reset it once the
-    # WebSocket connection is successfully established.
+    # or poll batch. Use a bounded consecutive item-failure window and reset it
+    # only after a successful chunk yield.
     item_outcome = ItemBatchOutcome()
     item_failure_count = 0
     download_session = AsyncSession()
@@ -222,6 +221,8 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                         pending_item_failure.reason,
                     )
             except FeedFailure:
+                raise
+            except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.warning(
