@@ -29,7 +29,7 @@
     "@wavesurfer/react": "^1.0.12",
     "date-fns": "^4.1.0",
     "howler": "^2.2.4",
-    "jwt-decode": "^4.0.0",
+    "jose": "^6.2.3",
     "material-symbols": "^0.44.4",
     "pluralize": "^8.0.0",
     "react": "^19.2.0",

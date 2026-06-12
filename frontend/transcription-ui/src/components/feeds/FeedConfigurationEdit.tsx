@@ -33,37 +33,16 @@ import type {
 } from '@transcription/common';
 import { SourceType } from '@transcription/common';
 
+import { toSourceTypeString } from '../../utils/textUtils';
 import { validateFeedSourceId } from '../../utils/validationUtils';
 import {
   ConfirmationDialog,
   type ConfirmationDialogProps,
 } from '../common/ConfirmationDialog';
 
-const SOURCE_TYPE_OPTIONS: {
-  value: SourceType;
-  label: string;
-}[] = [
-  {
-    value: SourceType.BCFY_CALLS,
-    label: 'Broadcastify Calls',
-  },
-  {
-    value: SourceType.BCFY_FEEDS,
-    label: 'Broadcastify Feeds',
-  },
-  {
-    value: SourceType.FIRE_NOTIFICATIONS,
-    label: 'Fire Notifications',
-  },
-  {
-    value: SourceType.ECHO,
-    label: 'Echo',
-  },
-  {
-    value: SourceType.OPENMHZ,
-    label: 'OpenMHZ',
-  },
-];
+const ALL_SOURCE_TYPES = Object.values(SourceType).map((value) => {
+  return { value, label: toSourceTypeString(value) };
+});
 
 export const DialogType = {
   Delete: 'delete',
@@ -467,7 +446,7 @@ export function FeedConfigurationEdit({
                       setFeedSourceType(e.target.value as SourceType)
                     }
                   >
-                    {SOURCE_TYPE_OPTIONS.map((opt) => (
+                    {ALL_SOURCE_TYPES.map((opt) => (
                       <MenuItem key={opt.value} value={opt.value}>
                         {opt.label}
                       </MenuItem>

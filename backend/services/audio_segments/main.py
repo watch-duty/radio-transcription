@@ -67,7 +67,7 @@ async def list_audio_segments(
     end_time: datetime.datetime | None = None,
     order: SortOrder = SortOrder.DESC,
     *,
-    has_alert: bool | None = None,
+    is_alert: bool | None = None,
 ) -> ListAudioSegmentsResponse:
     """List audio segments with their annotations and pagination."""
     service: AudioSegmentService = request.app.state.audio_segment_service
@@ -79,7 +79,7 @@ async def list_audio_segments(
             start_time=start_time,
             end_time=end_time,
             order=order,
-            has_alert=has_alert,
+            is_alert=is_alert,
         )
     except ValueError as e:
         raise HTTPException(
