@@ -160,20 +160,25 @@ class NormalizationEventProcessor:
                 )
                 logger.info("Uploaded playback audio to %s", playback_audio_uri)
 
-                mono_flac_bytes = self.audio_processor.transcode_to_mono_flac(
-                    flac_bytes
-                )
-                mono_flac_path = f"ephemeral/transcription/{feed_id}/{dt:%Y/%m/%d}/{segment_id}.flac"
-                transcription_audio_uri = self.audio_uploader.upload_bytes(
-                    data=mono_flac_bytes,
-                    bucket_name=self.canonical_audio_bucket,
-                    destination_path=mono_flac_path,
-                    content_type="audio/flac",
-                )
-                logger.info(
-                    "Uploaded ephemeral transcription audio to %s",
-                    transcription_audio_uri,
-                )
+                transcription_audio_uri = ""
+                if (
+                    segmented_audio.audio_classification
+                    == SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH
+                ):
+                    mono_flac_bytes = (
+                        self.audio_processor.transcode_to_mono_flac(flac_bytes)
+                    )
+                    mono_flac_path = f"ephemeral/transcription/{feed_id}/{dt:%Y/%m/%d}/{segment_id}.flac"
+                    transcription_audio_uri = self.audio_uploader.upload_bytes(
+                        data=mono_flac_bytes,
+                        bucket_name=self.canonical_audio_bucket,
+                        destination_path=mono_flac_path,
+                        content_type="audio/flac",
+                    )
+                    logger.info(
+                        "Uploaded ephemeral transcription audio to %s",
+                        transcription_audio_uri,
+                    )
 
                 # 4. Persist audio segment metadata record to AlloyDB database
                 self._persist_segment(
