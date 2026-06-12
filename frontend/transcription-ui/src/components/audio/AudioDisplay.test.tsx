@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react';
+
 import type { Howl } from 'howler';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -26,7 +27,10 @@ const mockSetOptions = vi.fn();
 vi.mock('@wavesurfer/react', () => {
   const MockWavesurferPlayer = (props: {
     url: string;
-    onReady?: (ws: { setTime: (time: number) => void; setOptions: (opts: unknown) => void }) => void;
+    onReady?: (ws: {
+      setTime: (time: number) => void;
+      setOptions: (opts: unknown) => void;
+    }) => void;
     onDestroy?: () => void;
   }) => {
     const { onReady, onDestroy } = props;
