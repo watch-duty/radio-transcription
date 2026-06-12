@@ -299,10 +299,10 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
 
     async def test_shutdown_is_set(self) -> None:
         self.shutdown.set()
-        res = await bcfy_calls_collector._fetch_calls(
-            self.session, "url", {}, {}, "fid", self.shutdown
-        )
-        self.assertIsNone(res)
+        with self.assertRaises(asyncio.CancelledError):
+            await bcfy_calls_collector._fetch_calls(
+                self.session, "url", {}, {}, "fid", self.shutdown
+            )
 
     async def test_success_list(self) -> None:
         resp = AsyncMock(status=200)
@@ -331,7 +331,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res, {"call": 1})
 
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_invalid_calls_field_raises_without_retry(
@@ -362,7 +362,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         mock_sleep.assert_not_awaited()
 
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_5xx_retry_success(self, mock_sleep: AsyncMock) -> None:
@@ -391,7 +391,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         mock_sleep.assert_called_once()
 
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_5xx_max_retries_fail(self, mock_sleep: AsyncMock) -> None:
@@ -418,13 +418,13 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_5xx_retry_interrupted_by_shutdown(
         self, mock_sleep: AsyncMock
     ) -> None:
-        mock_sleep.return_value = True
+        mock_sleep.side_effect = asyncio.CancelledError
         resp500 = AsyncMock(status=500)
         resp500.headers = {}
         cm = MagicMock()
@@ -432,10 +432,10 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         cm.__aexit__ = AsyncMock(return_value=False)
         self.session.get.return_value = cm
 
-        res = await bcfy_calls_collector._fetch_calls(
-            self.session, "url", {}, {}, "fid", self.shutdown
-        )
-        self.assertIsNone(res)
+        with self.assertRaises(asyncio.CancelledError):
+            await bcfy_calls_collector._fetch_calls(
+                self.session, "url", {}, {}, "fid", self.shutdown
+            )
         self.assertEqual(self.session.get.call_count, 1)
 
     async def test_other_non_200_status(self) -> None:
@@ -456,7 +456,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(ctx.exception), "calls_api_http_400")
 
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_shutdown",
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_429_max_retries_returns_rate_limited_failure(
@@ -569,7 +569,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls"
-        ".bcfy_calls_collector._sleep_or_shutdown",
+        ".bcfy_calls_collector._sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_http_exception(self, mock_sleep: AsyncMock) -> None:
@@ -594,7 +594,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
 
         with patch(
             "backend.pipeline.ingestion.collectors.bcfy_calls"
-            ".bcfy_calls_collector._sleep_or_shutdown",
+            ".bcfy_calls_collector._sleep_or_cancel",
             new_callable=AsyncMock,
         ) as mock_sleep:
             mock_sleep.return_value = False
@@ -610,7 +610,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls"
-        ".bcfy_calls_collector._sleep_or_shutdown",
+        ".bcfy_calls_collector._sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_5xx_retry_success(self, mock_sleep: AsyncMock) -> None:
@@ -640,7 +640,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls"
-        ".bcfy_calls_collector._sleep_or_shutdown",
+        ".bcfy_calls_collector._sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_5xx_max_retries_returns_item_failure(
@@ -668,23 +668,23 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls"
-        ".bcfy_calls_collector._sleep_or_shutdown",
+        ".bcfy_calls_collector._sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_5xx_retry_interrupted_by_shutdown(
         self, mock_sleep: AsyncMock
     ) -> None:
-        mock_sleep.return_value = True
+        mock_sleep.side_effect = asyncio.CancelledError
         resp502 = AsyncMock(status=502)
         cm = MagicMock()
         cm.__aenter__ = AsyncMock(return_value=resp502)
         cm.__aexit__ = AsyncMock(return_value=False)
         self.session.get.return_value = cm
 
-        res = await bcfy_calls_collector._download_audio(
-            self.session, "http://mp3", self.shutdown
-        )
-        self.assertIsNone(res)
+        with self.assertRaises(asyncio.CancelledError):
+            await bcfy_calls_collector._download_audio(
+                self.session, "http://mp3", self.shutdown
+            )
         self.assertEqual(self.session.get.call_count, 1)
         mock_sleep.assert_called_once()
 
@@ -821,29 +821,6 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result.failure)
         self.assertEqual(chunk.chunk_start_time, fixed_now)
         self.assertEqual(chunk.chunk_end_time, fixed_now)
-
-    @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls"
-        ".bcfy_calls_collector._download_audio",
-        new_callable=AsyncMock,
-    )
-    async def test_download_returns_none_returns_none(
-        self, mock_dl: AsyncMock
-    ) -> None:
-        mock_dl.return_value = None
-        result = {"url": "http://1", "start_ts": 1000, "end_ts": 2000}
-
-        result = await bcfy_calls_collector._create_chunk_from_call(
-            self.session,
-            result,
-            "http://1",
-            self.shutdown,
-            "test-session",
-            datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
-        )
-
-        self.assertIsNone(result.chunk)
-        self.assertIsNone(result.failure)
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls"
@@ -2213,7 +2190,7 @@ class TestBcfyCallsCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
         mock_fetch: AsyncMock,
         mock_jwt: MagicMock,
     ) -> None:
-        """_create_chunk_from_call returns None → emit WARNING log."""
+        """_create_chunk_from_call returns no chunk → emit WARNING log."""
         mock_jwt.return_value = "tok"
         mock_create.return_value = bcfy_calls_collector._CallChunkResult()
 
@@ -2330,9 +2307,8 @@ class TestBcfyCallsCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
             }
         )
 
-        async def _sleep_side_effect(*args, **kwargs) -> bool:
+        async def _sleep_side_effect(*args, **kwargs) -> None:
             shutdown.set()
-            return True
 
         mock_sleep.side_effect = _sleep_side_effect
 
@@ -2383,7 +2359,7 @@ class TestBcfyCallsCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
         shutdown = asyncio.Event()
 
         async def _create_then_shut(*a, **kw):
-            # shutdown set BEFORE create returns None to suppress emit
+            # Shutdown set before the no-chunk result suppresses the emit.
             shutdown.set()
             return bcfy_calls_collector._CallChunkResult()
 
@@ -2400,7 +2376,7 @@ class TestBcfyCallsCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
                 "lastPos": 1_700_000_010,
             }
         )
-        mock_sleep.return_value = True
+        mock_sleep.side_effect = asyncio.CancelledError
 
         with self.assertLogs(
             "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector",

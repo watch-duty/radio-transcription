@@ -93,9 +93,9 @@ class _CallChunkResult:
     failure: ItemFailure | None = None
 
 
-async def _sleep_or_shutdown(shutdown: asyncio.Event, seconds: float) -> bool:
-    """Sleep for *seconds*, returning ``True`` if interrupted by shutdown."""
-    return await aiohttp_requests.sleep_or_shutdown(shutdown, seconds)
+async def _sleep_or_cancel(shutdown: asyncio.Event, seconds: float) -> None:
+    """Sleep for *seconds*, raising ``CancelledError`` on shutdown."""
+    await control_flow.sleep_or_cancel(shutdown, seconds)
 
 
 def _get_jwt_token() -> str:
@@ -278,7 +278,7 @@ async def _fetch_calls(
     params: dict[str, Any],
     feed_id: object,
     shutdown_event: asyncio.Event,
-) -> dict[str, Any] | None:
+) -> dict[str, Any]:
     """Fetch one Broadcastify Calls API page with request-level retries."""
 
     def validate_payload(payload: object) -> dict[str, Any]:
@@ -293,7 +293,7 @@ async def _fetch_calls(
             max_attempts=_CALLS_API_MAX_ATTEMPTS,
             base_delay_sec=1.0,
             jitter_max_sec=1.0,
-            sleep_func=_sleep_or_shutdown,
+            sleep_func=_sleep_or_cancel,
         ),
         headers=headers,
         params=params,
@@ -336,7 +336,7 @@ async def _download_audio(
     audio_url: str,
     shutdown_event: asyncio.Event,
     out_headers: dict[str, str] | None = None,
-) -> bytes | ItemFailure | None:
+) -> bytes | ItemFailure:
     """Download audio file."""
     result = await aiohttp_requests.download_item_media(
         session,
@@ -346,7 +346,7 @@ async def _download_audio(
             timeout_sec=_AUDIO_TIMEOUT_SEC,
             max_attempts=_AUDIO_FILE_DOWNLOAD_MAX_ATTEMPTS,
             base_delay_sec=_AUDIO_FILE_DOWNLOAD_BACKOFF_BASE_SEC,
-            sleep_func=_sleep_or_shutdown,
+            sleep_func=_sleep_or_cancel,
         ),
         log_label="Broadcastify Calls item audio",
     )
@@ -414,9 +414,6 @@ async def _create_chunk_from_call(
 
     if isinstance(audio_result, ItemFailure):
         return _CallChunkResult(failure=audio_result)
-
-    if audio_result is None:
-        return _CallChunkResult()
 
     if not audio_result:
         return _CallChunkResult(
@@ -561,8 +558,6 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                 shutdown_event,
             )
             bcfy_calls = fetch_result
-            if bcfy_calls is None:
-                return
 
             calls = _extract_calls_from_response(bcfy_calls)
 
