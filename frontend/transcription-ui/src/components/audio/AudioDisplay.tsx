@@ -209,7 +209,7 @@ export function AudioDisplay({
   userDuration,
   isAudioPlaying,
   onTogglePlayPause,
-  currentTimeSeconds: currentTimeSecondsProp,
+  currentTimeSeconds,
   currentAudioRef,
 }: AudioDisplayProps) {
   const theme = useTheme();
@@ -221,7 +221,7 @@ export function AudioDisplay({
   // Poll current playback progress when audio is playing
   useEffect(() => {
     if (
-      currentTimeSecondsProp !== undefined ||
+      currentTimeSeconds !== undefined ||
       !isAudioPlaying ||
       !currentlyPlayingSegmentId ||
       !currentAudioRef?.current
@@ -251,15 +251,8 @@ export function AudioDisplay({
     isAudioPlaying,
     currentlyPlayingSegmentId,
     currentAudioRef,
-    currentTimeSecondsProp,
+    currentTimeSeconds,
   ]);
-
-  const currentTimeSeconds =
-    currentTimeSecondsProp !== undefined
-      ? currentTimeSecondsProp
-      : currentAudioRef
-        ? localCurrentTimeSeconds
-        : undefined;
 
   const [windowEndTime, setWindowEndTime] = useState<number | null>(null);
 
@@ -455,7 +448,13 @@ export function AudioDisplay({
               isDarkTheme={isDarkTheme}
               theme={theme}
               currentTimeSeconds={
-                clip.isAudioPlaying ? currentTimeSeconds : undefined
+                clip.isAudioPlaying
+                  ? currentTimeSeconds !== undefined
+                    ? currentTimeSeconds
+                    : currentAudioRef
+                      ? localCurrentTimeSeconds
+                      : undefined
+                  : undefined
               }
             />
           ))}
