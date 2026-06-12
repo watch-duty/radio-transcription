@@ -59,6 +59,12 @@ _AUDIO_FILE_DOWNLOAD_MAX_ATTEMPTS = 4
 _AUDIO_FILE_DOWNLOAD_BACKOFF_BASE_SEC = 1.0
 _MAX_CONSECUTIVE_FAILURES = 10
 _KNOWN_AUDIO_FORMATS = frozenset({"mp3", "m4a", "wav", "ogg", "aac", "flac"})
+_TRANSIENT_CALLS_API_FAILURES = frozenset(
+    {
+        FeedStatusReason.SOURCE_RATE_LIMITED,
+        FeedStatusReason.SOURCE_UNREACHABLE,
+    }
+)
 
 # This policy is only for the Calls API/metadata endpoint. A 404 here means
 # the configured source group/feed id is not valid for the API, unlike an item
@@ -549,14 +555,26 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
             params["pos"] = last_bookmark_time_unix
 
         try:
-            fetch_result = await _fetch_calls(
-                session,
-                normalized_url_base,
-                headers,
-                params,
-                feed_id,
-                shutdown_event,
-            )
+            try:
+                fetch_result = await _fetch_calls(
+                    session,
+                    normalized_url_base,
+                    headers,
+                    params,
+                    feed_id,
+                    shutdown_event,
+                )
+            except FeedFailure as e:
+                if e.status_reason not in _TRANSIENT_CALLS_API_FAILURES:
+                    raise
+                consecutive_failures = await _handle_loop_failure(
+                    feed_id,
+                    consecutive_failures,
+                    shutdown_event,
+                    ItemFailure(e.status_reason, str(e)),
+                )
+                continue
+
             bcfy_calls = fetch_result
 
             calls = _extract_calls_from_response(bcfy_calls)

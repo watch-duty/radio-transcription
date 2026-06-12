@@ -1764,7 +1764,14 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             FeedStatusReason.SOURCE_RATE_LIMITED,
         )
         self.assertEqual(str(ctx.exception), "calls_api_http_429")
-        self.assertEqual(mock_fetch.call_count, 1)
+        self.assertEqual(
+            mock_fetch.call_count,
+            bcfy_calls_collector._MAX_CONSECUTIVE_FAILURES,
+        )
+        self.assertEqual(
+            mock_sleep.call_count,
+            bcfy_calls_collector._MAX_CONSECUTIVE_FAILURES - 1,
+        )
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
@@ -1801,7 +1808,14 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
         self.assertEqual(str(ctx.exception), "calls_api_http_503")
-        self.assertEqual(mock_fetch.call_count, 1)
+        self.assertEqual(
+            mock_fetch.call_count,
+            bcfy_calls_collector._MAX_CONSECUTIVE_FAILURES,
+        )
+        self.assertEqual(
+            mock_sleep.call_count,
+            bcfy_calls_collector._MAX_CONSECUTIVE_FAILURES - 1,
+        )
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
@@ -1814,8 +1828,13 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._create_chunk_from_call",
         new_callable=AsyncMock,
     )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector.control_flow.sleep_or_cancel",
+        new_callable=AsyncMock,
+    )
     async def test_all_page_items_same_failure_promotes_that_reason(
         self,
+        mock_sleep: AsyncMock,
         mock_create: AsyncMock,
         mock_fetch: AsyncMock,
         mock_jwt: MagicMock,
@@ -1845,6 +1864,8 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
         self.assertEqual(str(ctx.exception), "item_download_failed")
+        self.assertEqual(mock_fetch.call_count, 1)
+        mock_sleep.assert_not_awaited()
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
