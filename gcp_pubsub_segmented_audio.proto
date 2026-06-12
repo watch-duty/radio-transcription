@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+message SegmentedAudio {
+  message Timestamp {
+    int64 seconds = 1;
+    int32 nanos = 2;
+  }
+  message Duration {
+    int64 seconds = 1;
+    int32 nanos = 2;
+  }
+
+  string segment_id = 1;
+  string feed_id = 2;
+  Timestamp start_timestamp = 3;
+  Timestamp end_timestamp = 4;
+  bool missing_prior_context = 5;
+  bool missing_post_context = 6;
+  repeated string source_audio_uris = 7;
+  Duration start_audio_offset = 8;
+  Duration end_audio_offset = 9;
+  string feed_name = 10;
+  string external_id = 11;
+
+  enum AudioClassification {
+    AUDIO_CLASSIFICATION_UNSPECIFIED = 0;
+    AUDIO_CLASSIFICATION_SPEECH = 1;
+    AUDIO_CLASSIFICATION_OTHER = 2;
+  }
+
+  AudioClassification audio_classification = 12;
+  string raw_audio_uri = 13;
+  optional string external_audio_segment_id = 14;
+}
