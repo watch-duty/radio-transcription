@@ -184,11 +184,17 @@ export function AudioDisplay({
   const firstTranscriptId = firstTranscript?.id || null;
   const firstTranscriptEndTimestamp = firstTranscript?.endTimestamp || null;
 
-  // Reset/update windowEndTime when first transcript or its endTimestamp changes
-  if (
-    firstTranscriptId !== prevFirstTranscriptId ||
-    firstTranscriptEndTimestamp !== prevFirstTranscriptEndTimestamp
-  ) {
+  // Check if a new segment has been added to the top of the feed
+  const isNewFirstTranscript = firstTranscriptId !== prevFirstTranscriptId;
+
+  // Check if the current top transcript has been extended (e.g. an ongoing silence bundle).
+  // When a silence bundle is extended, its ID remains the same but its end timestamp advances.
+  const isFirstTranscriptExtended =
+    firstTranscriptEndTimestamp !== prevFirstTranscriptEndTimestamp;
+
+  const shouldUpdateWindow = isNewFirstTranscript || isFirstTranscriptExtended;
+
+  if (shouldUpdateWindow) {
     const wasAlignedToHead = isViewportAlignedToHead(
       windowEndTime,
       prevFirstTranscriptEndTimestamp,

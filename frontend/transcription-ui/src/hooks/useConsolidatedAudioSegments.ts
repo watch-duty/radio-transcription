@@ -3,7 +3,16 @@ import { useMemo } from 'react';
 import { AudioClassification, type AudioSegment } from '@transcription/common';
 
 export interface RenderableAudioSegment extends AudioSegment {
+  /**
+   * Indicates whether this segment represents a consolidated bundle of consecutive
+   * non-speech (silence) segments. If true, the row displays a placeholder in the UI
+   * rather than active transcript text.
+   */
   isSilenceBundle?: boolean;
+  /**
+   * The list of individual raw segment IDs that have been consolidated
+   * into this silence bundle.
+   */
   bundledSegmentIds?: string[];
 }
 
