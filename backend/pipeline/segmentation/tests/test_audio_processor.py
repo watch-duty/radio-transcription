@@ -135,16 +135,24 @@ class AudioProcessorTest(unittest.TestCase):
         np.testing.assert_array_equal(actual_samples, expected_samples)
 
     def test_decode_audio_in_memory_stereo_golden(self) -> None:
-        """Golden test: Verifies exact primary channel (Channel 0) extraction from a multi-channel container."""
+        """Golden test: Verifies multi-channel decoding and downstream downmix averaging."""
         channel0 = np.array([10, 20, 30, 40], dtype=np.int16)
-        channel1 = np.array([99, 99, 99, 99], dtype=np.int16)
+        channel1 = np.array([100, 100, 100, 100], dtype=np.int16)
         stereo_array = np.vstack((channel0, channel1)).T  # (samples, 2)
 
         buf = io.BytesIO()
-        sf.write(buf, stereo_array, 32000, format="FLAC")
+        sf.write(buf, stereo_array, 16000, format="FLAC")
         buf.seek(0)
 
         actual_samples, actual_sr = self.processor._decode_audio_in_memory(buf)
 
-        self.assertEqual(actual_sr, 32000)
-        np.testing.assert_array_equal(actual_samples, channel0)
+        self.assertEqual(actual_sr, 16000)
+        np.testing.assert_array_equal(actual_samples, stereo_array)
+
+        # Verify that _resample_to_16k_mono correctly averages (downmixes) the channels
+        downmixed = self.processor._resample_to_16k_mono(
+            actual_samples, actual_sr
+        )
+        expected_downmixed = np.array([55, 60, 65, 70], dtype=np.int16)
+        self.assertEqual(downmixed.ndim, 1)
+        np.testing.assert_array_equal(downmixed[:4], expected_downmixed)
