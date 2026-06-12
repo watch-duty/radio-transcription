@@ -501,7 +501,7 @@ describe('AudioDisplay', () => {
   });
 
   it('should call setTime on wavesurfer player when progress is provided', () => {
-    const mockTranscripts: AudioSegment[] = [
+    const mockAudioSegments: AudioSegment[] = [
       makeMockAudioSegment(
         '1',
         'feed1',
@@ -514,7 +514,7 @@ describe('AudioDisplay', () => {
 
     render(
       <AudioDisplay
-        transcripts={mockTranscripts}
+        audioSegments={mockAudioSegments}
         currentlyPlayingSegmentId="1"
         onClipClick={vi.fn()}
         isAudioPlaying={true}
@@ -528,7 +528,7 @@ describe('AudioDisplay', () => {
   });
 
   it('should poll progress from currentAudioRef and seek wavesurfer player', async () => {
-    const mockTranscripts: AudioSegment[] = [
+    const mockAudioSegments: AudioSegment[] = [
       makeMockAudioSegment(
         '1',
         'feed1',
@@ -549,7 +549,7 @@ describe('AudioDisplay', () => {
 
     render(
       <AudioDisplay
-        transcripts={mockTranscripts}
+        audioSegments={mockAudioSegments}
         currentlyPlayingSegmentId="1"
         onClipClick={vi.fn()}
         isAudioPlaying={true}
