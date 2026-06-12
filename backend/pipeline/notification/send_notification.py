@@ -1,5 +1,6 @@
 # Notification pipeline sender entrypoint
 import base64
+import datetime
 import logging
 import os
 import urllib.parse
@@ -211,6 +212,26 @@ def send_notification(cloud_event: CloudEvent) -> None:
             try:
                 request_handler = container.get_request_handler()
                 request_handler.send_notification(alert_notification)
+
+                if evaluated_transcribed_audio.start_timestamp.seconds > 0:
+                    start_ts = (
+                        evaluated_transcribed_audio.start_timestamp.seconds
+                        + evaluated_transcribed_audio.start_timestamp.nanos
+                        / 1e9
+                    )
+                    now_ts = datetime.datetime.now(datetime.UTC).timestamp()
+                    e2e_latency = max(0.0, now_ts - start_ts)
+                    logger.info(
+                        "Audio E2E pipeline completed successfully",
+                        extra={
+                            "json_fields": {
+                                "event_type": "audio_e2e_pipeline_completed",
+                                "e2e_pipeline_latency_seconds": e2e_latency,
+                                "feed_id": evaluated_transcribed_audio.feed_id,
+                                "segment_id": evaluated_transcribed_audio.segment_id,
+                            }
+                        },
+                    )
             except NonRetryableError:
                 logger.exception(
                     "Failed to send notification for audio segment (segment_id: %s) due to client (4xx) error. Message will not be retried.",
