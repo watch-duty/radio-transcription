@@ -55,6 +55,10 @@ from backend.pipeline.segmentation.constants import (
     VAD_DEFAULT_THRESHOLD_ONSET,
     VAD_NORMALIZATION_MIN_PEAK,
     VAD_NORMALIZATION_TARGET_PEAK,
+    VAD_SPECTRAL_MIN_TOTAL_ENERGY,
+    VAD_VOCAL_ENERGY_MAX_FREQ_HZ,
+    VAD_VOCAL_ENERGY_MIN_FREQ_HZ,
+    VAD_VOCAL_ENERGY_MIN_RATIO,
 )
 
 logger = get_task_logger(
@@ -396,6 +400,22 @@ class VoiceActivityDetector:
         # 2. Floor check: reject if the segment is extremely quiet
         if mean_rms < self.min_rms_threshold:
             return False
+
+        # 3. Spectral Energy Distribution Check: reject weird flickering / DC / static ticking
+        # which has almost no vocal range energy (200-3000Hz).
+        spec = np.abs(np.fft.rfft(sig)) ** 2
+        total_energy = float(np.sum(spec))
+        if total_energy > VAD_SPECTRAL_MIN_TOTAL_ENERGY:
+            freqs = np.fft.rfftfreq(len(sig), d=1.0 / TARGET_SAMPLE_RATE)
+            vocal_mask = (freqs >= VAD_VOCAL_ENERGY_MIN_FREQ_HZ) & (
+                freqs <= VAD_VOCAL_ENERGY_MAX_FREQ_HZ
+            )
+            vocal_energy = float(np.sum(spec[vocal_mask]))
+            if (vocal_energy / total_energy) < VAD_VOCAL_ENERGY_MIN_RATIO:
+                logger.debug(
+                    "Rejected VAD segment as sub-audible flickering / static ticks."
+                )
+                return False
 
         return True
 
