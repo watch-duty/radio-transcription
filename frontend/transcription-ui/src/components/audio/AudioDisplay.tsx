@@ -72,7 +72,7 @@ const TimelineClip = React.memo(
           cursorColor: clip.isAudioPlaying
             ? theme.palette.error.main
             : 'transparent',
-          cursorWidth: clip.isAudioPlaying ? 1.5 : 0,
+          cursorWidth: clip.isAudioPlaying ? 2 : 0,
         });
       }
     }, [clip.isAudioPlaying, theme.palette.error.main]);
@@ -149,7 +149,7 @@ const TimelineClip = React.memo(
               cursorColor: clip.isAudioPlaying
                 ? theme.palette.error.main
                 : 'transparent',
-              cursorWidth: clip.isAudioPlaying ? 1.5 : 0,
+              cursorWidth: clip.isAudioPlaying ? 2 : 0,
             });
             if (clip.isAudioPlaying && currentTimeSeconds !== undefined) {
               ws.setTime(currentTimeSeconds);

@@ -24,3 +24,10 @@ body {
   min-width: 320px;
   min-height: 100vh;
 }
+
+/* Wavesurfer cursor subpixel anti-aliasing / shimmering optimizations */
+div::part(cursor) {
+  will-change: left;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
