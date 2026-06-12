@@ -5,11 +5,13 @@ import datetime
 import logging
 import os
 import random
+import re
 import uuid
 from typing import TYPE_CHECKING
 
 from curl_cffi.requests import AsyncSession
 
+from backend.pipeline.ingestion import failure_diagnostics
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemBatchOutcome,
     ItemFailure,
@@ -50,6 +52,10 @@ _DOWNLOAD_MAX_RETRIES = 3
 _DOWNLOAD_BACKOFF_BASE_SEC = 1.0
 _RECONNECT_BACKOFF_BASE_SEC = 1.0
 _RECONNECT_BACKOFF_CAP_SEC = 30.0
+_WS_UPGRADE_STATUS_RE = re.compile(
+    r"Refused WebSockets upgrade:\s*(\d{3})",
+    re.IGNORECASE,
+)
 
 
 def _get_transport(name: str) -> TransportFactory:
@@ -59,6 +65,29 @@ def _get_transport(name: str) -> TransportFactory:
     raise collector_failure(
         FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
         "invalid_openmhz_transport",
+    )
+
+
+def _transport_failure_from_exception(exc: Exception) -> FeedFailure | None:
+    """Classify transport exceptions that carry terminal HTTP evidence."""
+    match = _WS_UPGRADE_STATUS_RE.search(str(exc))
+    if match is None:
+        return None
+
+    status = int(match.group(1))
+    classification = http_status.classify_http_status(
+        status,
+        reason_prefix="ws_upgrade_http",
+    )
+    if classification is None:
+        return None
+
+    return collector_failure(
+        classification.status_reason,
+        failure_diagnostics.build_diagnostic(
+            f"OpenMHz WebSocket upgrade failed with HTTP {status}",
+            exc,
+        ),
     )
 
 
@@ -179,6 +208,8 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
     # WebSocket connection is successfully established.
     item_outcome = ItemBatchOutcome()
     item_failure_count = 0
+    last_transport_failure: FeedFailure | None = None
+    last_transport_exception: Exception | None = None
     download_session = AsyncSession()
 
     try:
@@ -190,6 +221,8 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                     short_name, url_base, shutdown_event
                 ) as events:
                     consecutive_ws_failures = 0
+                    last_transport_failure = None
+                    last_transport_exception = None
                     if (
                         feed["failure_count"] > 0
                         or feed["status_reason"] is not None
@@ -267,7 +300,11 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                     )
             except FeedFailure:
                 raise
-            except Exception:
+            except Exception as exc:
+                last_transport_exception = exc
+                classified = _transport_failure_from_exception(exc)
+                if classified is not None:
+                    last_transport_failure = classified
                 logger.warning(
                     "Transport error: short_name=%s",
                     short_name,
@@ -285,9 +322,20 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                     short_name,
                     consecutive_ws_failures,
                 )
+                if last_transport_failure is not None:
+                    raise last_transport_failure
                 raise collector_failure(
                     FeedStatusReason.SOURCE_UNREACHABLE,
-                    "source_unreachable",
+                    failure_diagnostics.build_diagnostic(
+                        "OpenMHz transport reconnect exhausted "
+                        f"after {MAX_RECONNECT_FAILURES} consecutive failures",
+                        (
+                            f"{type(last_transport_exception).__name__}: "
+                            f"{last_transport_exception}"
+                            if last_transport_exception is not None
+                            else None
+                        ),
+                    ),
                 )
 
             backoff = min(

@@ -23,6 +23,7 @@ from backend.pipeline.common.constants import (
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
 )
+from backend.pipeline.ingestion import failure_diagnostics
 from backend.pipeline.ingestion.collectors.failure_classification import (
     FailureClassification,
     collector_failure,
@@ -87,7 +88,10 @@ def _now_utc() -> datetime.datetime:
     return datetime.datetime.now(tz=datetime.UTC)
 
 
-def _classify_stream_http_status(status: int) -> FeedFailure | None:
+def _classify_stream_http_status(
+    status: int,
+    reason: str | None = None,
+) -> FeedFailure | None:
     """Classify stream endpoint HTTP status into a typed feed failure."""
     classification = http_status.classify_http_status(
         status,
@@ -96,20 +100,65 @@ def _classify_stream_http_status(status: int) -> FeedFailure | None:
     )
     if classification is None:
         return None
+    http_diagnostic = f"HTTP error {status}"
+    if reason:
+        http_diagnostic = f"{http_diagnostic} {reason}"
     return collector_failure(
         classification.status_reason,
-        classification.reason,
+        failure_diagnostics.build_diagnostic(http_diagnostic),
     )
 
 
 def _feed_failure_from_classification(
     classification: FailureClassification,
+    diagnostic_text: str | None = None,
 ) -> FeedFailure:
     """Convert neutral classifier output into an Icecast feed failure."""
     return collector_failure(
         classification.status_reason,
-        classification.reason,
+        _diagnostic_for_classification(classification, diagnostic_text),
     )
+
+
+def _diagnostic_for_classification(
+    classification: FailureClassification,
+    diagnostic_text: str | None,
+) -> str:
+    """Translate internal classifier tags into operator diagnostics."""
+    if _has_useful_diagnostic_text(diagnostic_text):
+        if classification.reason.startswith("stream_http_"):
+            return failure_diagnostics.build_diagnostic(diagnostic_text)
+        if classification.reason == "capture_timeout":
+            return failure_diagnostics.build_diagnostic(
+                "Stream capture timed out",
+                diagnostic_text,
+            )
+        if classification.reason.startswith(("ffmpeg_exit_", "ffmpeg_signal_")):
+            return failure_diagnostics.build_diagnostic(
+                _humanize_ffmpeg_reason(classification.reason),
+                diagnostic_text,
+            )
+
+    return failure_diagnostics.build_diagnostic(
+        _humanize_ffmpeg_reason(classification.reason),
+    )
+
+
+def _has_useful_diagnostic_text(diagnostic_text: str | None) -> bool:
+    return bool(diagnostic_text and diagnostic_text != "(no stderr captured)")
+
+
+def _humanize_ffmpeg_reason(reason: str) -> str:
+    if reason.startswith("ffmpeg_exit_"):
+        return f"ffmpeg exited with code {reason.removeprefix('ffmpeg_exit_')}"
+    if reason.startswith("ffmpeg_signal_"):
+        return (
+            "ffmpeg terminated by signal "
+            f"{reason.removeprefix('ffmpeg_signal_')}"
+        )
+    if reason == "capture_timeout":
+        return "Stream capture timed out"
+    return reason
 
 
 def _is_raw_ffmpeg_failure(classification: FailureClassification) -> bool:
@@ -154,7 +203,10 @@ async def _probe_stream_once(
             headers=_headers_from_ffmpeg_auth_header(auth_header),
             timeout=aiohttp.ClientTimeout(total=_STREAM_PROBE_TIMEOUT_SEC),
         ) as response:
-            classified = _classify_stream_http_status(response.status)
+            classified = _classify_stream_http_status(
+                response.status,
+                response.reason,
+            )
             if classified is not None:
                 return classified
             if response.status == 200:
@@ -387,7 +439,8 @@ async def capture_icecast_stream(  # noqa: PLR0912, PLR0915
                             raise RuntimeError(msg)
                         if not _is_raw_ffmpeg_failure(classification):
                             raise _feed_failure_from_classification(
-                                classification
+                                classification,
+                                classification_text,
                             )
                         probe_failure = await _probe_stream_once(
                             resources,
@@ -398,7 +451,8 @@ async def capture_icecast_stream(  # noqa: PLR0912, PLR0915
                             probe_failure
                         ):
                             raise _feed_failure_from_classification(
-                                classification
+                                classification,
+                                stderr_snippet,
                             )
                         raise probe_failure
                     logger.info(
@@ -436,7 +490,10 @@ async def capture_icecast_stream(  # noqa: PLR0912, PLR0915
                         msg = "capture_timeout"
                         raise RuntimeError(msg)
                     if not _is_raw_ffmpeg_failure(classification):
-                        raise _feed_failure_from_classification(classification)
+                        raise _feed_failure_from_classification(
+                            classification,
+                            classification_text,
+                        )
                     probe_failure = await _probe_stream_once(
                         resources,
                         url,
@@ -445,7 +502,10 @@ async def capture_icecast_stream(  # noqa: PLR0912, PLR0915
                     if probe_failure is None or _probe_keeps_raw_reason(
                         probe_failure
                     ):
-                        raise _feed_failure_from_classification(classification)
+                        raise _feed_failure_from_classification(
+                            classification,
+                            stderr_snippet,
+                        )
                     raise probe_failure
 
                 await asyncio.sleep(POLL_INTERVAL_SEC)
