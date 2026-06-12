@@ -622,6 +622,42 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mock_sleep.call_count, MAX_RECONNECT_FAILURES - 1)
 
     @patch(f"{_COL_MOD}.websocket_transport")
+    @patch(f"{_COL_MOD}.control_flow.sleep_or_cancel", new_callable=AsyncMock)
+    async def test_raises_after_max_post_handshake_transport_failures(
+        self,
+        mock_sleep: AsyncMock,
+        mock_transport: MagicMock,
+    ) -> None:
+        @contextlib.asynccontextmanager
+        async def _failing_after_enter():
+            async def _events():
+                raise OpenMHzTransportError("frame failure")
+                yield  # pragma: no cover
+
+            yield _events()
+
+        mock_transport.side_effect = lambda *a, **kw: _failing_after_enter()
+        mock_sleep.return_value = False
+
+        shutdown = asyncio.Event()
+        with self.assertRaises(FeedFailure) as ctx:
+            async for _ in openmhz_collector(
+                _TEST_FEED,
+                shutdown,
+                "https://api.openmhz.com/",
+                _default_resources(),
+            ):
+                pass
+
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+        self.assertEqual(str(ctx.exception), "source_unreachable")
+        self.assertEqual(mock_transport.call_count, MAX_RECONNECT_FAILURES)
+        self.assertEqual(mock_sleep.call_count, MAX_RECONNECT_FAILURES - 1)
+
+    @patch(f"{_COL_MOD}.websocket_transport")
     @patch(f"{_COL_MOD}._download_m4a")
     async def test_unexpected_collector_bug_propagates(
         self,

@@ -376,3 +376,61 @@ class TestWebsocketTransport(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(mock_ws._closed)
         mock_session.close.assert_awaited_once()
+
+    @patch(f"{_WS_MOD}.AsyncSession")
+    async def test_pending_receive_exits_on_shutdown(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        class _BlockingAfterHandshakeWebSocket:
+            def __init__(self) -> None:
+                self.sent: list[str] = []
+                self._closed = False
+                self._recv_count = 0
+
+            async def recv_str(self, **_kwargs: object) -> str:
+                self._recv_count += 1
+                if self._recv_count == 1:
+                    return _make_handshake_frames()[0]
+                if self._recv_count == 2:
+                    return _make_handshake_frames()[1]
+
+                started.set()
+                try:
+                    await asyncio.Future()
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+                msg = "unreachable"
+                raise AssertionError(msg)
+
+            async def send_str(self, payload: str) -> None:
+                self.sent.append(payload)
+
+            async def close(self) -> None:
+                self._closed = True
+
+        mock_ws = _BlockingAfterHandshakeWebSocket()
+        mock_session = AsyncMock()
+        mock_session.ws_connect = AsyncMock(return_value=mock_ws)
+        mock_session_cls.return_value = mock_session
+
+        shutdown = asyncio.Event()
+
+        async def _consume() -> None:
+            async with websocket_transport(
+                "wmata", "https://api.openmhz.com/", shutdown
+            ) as events:
+                async for _ in events:
+                    pass
+
+        task = asyncio.create_task(_consume())
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+        shutdown.set()
+
+        await asyncio.wait_for(task, timeout=1.0)
+        await asyncio.wait_for(cancelled.wait(), timeout=1.0)
+        self.assertTrue(mock_ws._closed)
+        mock_session.close.assert_awaited_once()

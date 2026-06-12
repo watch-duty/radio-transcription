@@ -225,12 +225,12 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
     try:
         while not shutdown_event.is_set():
             connection_session_id = str(uuid.uuid4())
+            connection_produced_chunk = False
             try:
                 pending_item_failure: ItemFailure | None = None
                 async with transport_factory(
                     short_name, url_base, shutdown_event
                 ) as events:
-                    consecutive_ws_failures = 0
                     if (
                         feed["failure_count"] > 0
                         or feed["status_reason"] is not None
@@ -281,6 +281,8 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                             session_id=connection_session_id,
                             receipt_time=receipt_time,
                         )
+                        connection_produced_chunk = True
+                        consecutive_ws_failures = 0
                         item_outcome = ItemBatchOutcome()
                         item_failure_count = 0
                 if pending_item_failure is not None:
@@ -302,7 +304,8 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
             if shutdown_event.is_set():
                 return
 
-            consecutive_ws_failures += 1
+            if not connection_produced_chunk:
+                consecutive_ws_failures += 1
             if consecutive_ws_failures >= MAX_RECONNECT_FAILURES:
                 logger.error(
                     "Escalating to runtime: short_name=%s "
@@ -315,14 +318,15 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                     "source_unreachable",
                 )
 
+            reconnect_attempt = max(consecutive_ws_failures, 1)
             backoff = min(
                 _RECONNECT_BACKOFF_CAP_SEC,
-                _RECONNECT_BACKOFF_BASE_SEC * (2**consecutive_ws_failures),
+                _RECONNECT_BACKOFF_BASE_SEC * (2**reconnect_attempt),
             ) + random.uniform(0, 1)  # noqa: S311 -- jitter, not crypto
             logger.info(
                 "Reconnecting: short_name=%s attempt=%d backoff_sec=%.1f",
                 short_name,
-                consecutive_ws_failures,
+                reconnect_attempt,
                 backoff,
             )
             await control_flow.sleep_or_cancel(shutdown_event, backoff)

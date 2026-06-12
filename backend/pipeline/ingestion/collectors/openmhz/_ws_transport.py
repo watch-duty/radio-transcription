@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import datetime
 import json
@@ -14,7 +15,6 @@ from curl_cffi.requests.websockets import WebSocketClosed, WebSocketTimeout
 from backend.pipeline.ingestion.collectors.openmhz._types import CallEvent
 
 if TYPE_CHECKING:
-    import asyncio
     from collections.abc import AsyncIterator
 
 logger = logging.getLogger(__name__)
@@ -167,7 +167,12 @@ async def _stream_frames(
             return
 
         try:
-            frame = await ws.recv_str(timeout=ping_interval_sec)
+            frame = await _recv_str_or_shutdown(
+                ws, shutdown, ping_interval_sec
+            )
+            if frame is None:
+                logger.info("Shutdown requested: short_name=%s", short_name)
+                return
             if frame.startswith("2"):
                 await ws.send_str("3")
                 last_ping_time = time.monotonic()
@@ -203,3 +208,40 @@ async def _stream_frames(
         except Exception as e:
             msg = "openmhz_transport_error"
             raise OpenMHzTransportError(msg) from e
+
+
+async def _recv_str_or_shutdown(
+    ws: Any,
+    shutdown: asyncio.Event,
+    timeout: float,
+) -> str | None:
+    """Receive one websocket frame, returning None if shutdown wins."""
+    if shutdown.is_set():
+        return None
+
+    recv_task = asyncio.create_task(ws.recv_str(timeout=timeout))
+    shutdown_task = asyncio.create_task(shutdown.wait())
+    tasks = {recv_task, shutdown_task}
+
+    try:
+        done, pending = await asyncio.wait(
+            tasks,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+    except asyncio.CancelledError:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+    for task in pending:
+        task.cancel()
+    await asyncio.gather(*pending, return_exceptions=True)
+
+    if shutdown_task in done and shutdown_task.result():
+        await asyncio.gather(recv_task, return_exceptions=True)
+        return None
+
+    with contextlib.suppress(asyncio.CancelledError):
+        await asyncio.gather(shutdown_task, return_exceptions=True)
+    return await recv_task
