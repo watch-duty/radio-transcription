@@ -75,6 +75,7 @@ from typing import TYPE_CHECKING
 
 import aiohttp  # noqa: TC002 — runtime use: CaptureResources holds aiohttp.ClientSession
 
+from backend.pipeline.ingestion import failure_diagnostics
 from backend.pipeline.storage.feed_store import FeedStatusReason
 
 if TYPE_CHECKING:
@@ -120,10 +121,9 @@ class AudioMimeType(StrEnum):
 class FeedFailure(Exception):
     """Feed-level collector failure classified at the collector boundary.
 
-    This is intentionally small: `status_reason` is the bounded operator
-    grouping key, while `reason` is a short raw stage/detail string preserved
-    for logs and quarantine_reason. Do not put stderr, stack traces, URLs with
-    credentials, or other high-cardinality data in either field.
+    ``status_reason`` is the bounded operator grouping key. ``reason`` is the
+    redacted diagnostic text preserved for logs and quarantine_reason so users
+    and engineers can debug the threshold-crossing failure episode.
     """
 
     status_reason: FeedStatusReason
@@ -150,7 +150,7 @@ class FeedFailure(Exception):
         # A frozen dataclass breaks that machinery, so keep only the payload
         # normalized and bounded.
         self.status_reason = normalized_status_reason
-        self.reason = reason[:200]
+        self.reason = failure_diagnostics.build_diagnostic(reason)
         Exception.__init__(self, self.reason)
 
     def __str__(self) -> str:

@@ -106,6 +106,23 @@ class TestFeedFailureContract(unittest.TestCase):
 
         exc.__traceback__ = None
 
+    def test_reason_is_redacted_and_capped_diagnostic_text(self) -> None:
+        """FeedFailure keeps operator diagnostics useful and API-safe."""
+        exc = FeedFailure(
+            FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            (
+                "Authorization: Bearer secret-token "
+                "https://example.com/stream?token=secret-value " + ("x" * 3000)
+            ),
+        )
+
+        self.assertLessEqual(len(exc.reason), 2048)
+        self.assertIn("Authorization: <redacted>", exc.reason)
+        self.assertIn("token=<redacted>", exc.reason)
+        self.assertNotIn("secret-token", exc.reason)
+        self.assertNotIn("secret-value", exc.reason)
+        self.assertTrue(exc.reason.endswith("[truncated]"))
+
 
 def _mock_pubsub_publish(message_id: str = "test-message-id") -> mock._patch:
     """Patch publish_audio_chunk to return a fixed message id (at call site)."""
@@ -1851,7 +1868,13 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
 
         async def _publish(*_args: object, **_kwargs: object) -> str:
             call_order.append("publish")
-            msg = "bad topic"
+            msg = (
+                "400 Invalid data in message: Message failed schema "
+                'validation. [reason: "INVALID_BINARY_PROTO_MESSAGE" '
+                'metadata { key: "message" value: "Message failed '
+                'schema validation" } metadata { key: "revisionInfo" '
+                'value: "Could not parse binary message." }]'
+            )
             raise google_exceptions.InvalidArgument(msg)
 
         rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
@@ -1879,7 +1902,9 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         rt._store.update_feed_progress.assert_awaited_once()
         rt._store.report_feed_failure.assert_awaited_once()
         kwargs = rt._store.report_feed_failure.await_args.kwargs
-        self.assertEqual(kwargs["reason"], "pubsub_publish_failed")
+        self.assertIn("Pub/Sub schema validation failed", kwargs["reason"])
+        self.assertIn("INVALID_BINARY_PROTO_MESSAGE", kwargs["reason"])
+        self.assertIn("Could not parse binary message", kwargs["reason"])
         self.assertIs(
             kwargs["status_reason"],
             FeedStatusReason.SYSTEM_PIPELINE_ERROR,
@@ -2129,7 +2154,8 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         rt._store.update_feed_progress.assert_awaited_once()
         rt._store.report_feed_failure.assert_awaited_once()
         kwargs = rt._store.report_feed_failure.await_args.kwargs
-        self.assertEqual(kwargs["reason"], "pubsub_publish_failed")
+        self.assertIn("Pub/Sub publish failed", kwargs["reason"])
+        self.assertIn("pubsub boom", kwargs["reason"])
         self.assertIs(
             kwargs["status_reason"],
             FeedStatusReason.SYSTEM_PIPELINE_ERROR,

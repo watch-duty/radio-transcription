@@ -349,10 +349,52 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             ctx.exception.status_reason,
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
-        self.assertEqual(str(ctx.exception), "source_unreachable")
+        self.assertIn(
+            "OpenMHz transport reconnect exhausted", str(ctx.exception)
+        )
+        self.assertIn("refused", str(ctx.exception))
 
         # The Nth failure raises before sleeping, so N-1 sleeps
         self.assertEqual(mock_sleep.call_count, MAX_RECONNECT_FAILURES - 1)
+
+    @patch(f"{_COL_MOD}.websocket_transport")
+    @patch(f"{_COL_MOD}._sleep_or_shutdown", new_callable=AsyncMock)
+    async def test_websocket_upgrade_403_raises_auth_diagnostic(
+        self,
+        mock_sleep: AsyncMock,
+        mock_transport: MagicMock,
+    ) -> None:
+        """Repeated WebSocket upgrade 403s keep provider diagnostic detail."""
+        mock_transport.return_value.__aenter__ = AsyncMock(
+            side_effect=ConnectionError(
+                "Failed to perform, curl: (22) Refused WebSockets upgrade: "
+                "403. See https://curl.se/libcurl/c/libcurl-errors.html "
+                "token=secret-value"
+            )
+        )
+        mock_transport.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_sleep.return_value = False
+
+        shutdown = asyncio.Event()
+        with self.assertRaises(FeedFailure) as ctx:
+            async for _ in openmhz_collector(
+                _TEST_FEED,
+                shutdown,
+                "https://api.openmhz.com/",
+                _default_resources(),
+            ):
+                pass
+
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+        )
+        self.assertIn(
+            "WebSocket upgrade failed with HTTP 403", str(ctx.exception)
+        )
+        self.assertIn("Refused WebSockets upgrade: 403", str(ctx.exception))
+        self.assertIn("token=<redacted>", str(ctx.exception))
+        self.assertNotIn("secret-value", str(ctx.exception))
 
     @patch(f"{_COL_MOD}.websocket_transport")
     @patch(f"{_COL_MOD}._download_m4a")

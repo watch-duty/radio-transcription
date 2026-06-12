@@ -473,7 +473,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
     async def test_ffmpeg_error_exit_code_includes_stderr(
         self, mock_create_ffmpeg: AsyncMock
     ) -> None:
-        """Test: ffmpeg non-zero exit raises a categorical tag and logs stderr context."""
+        """Test: ffmpeg non-zero exit raises diagnostic text and logs stderr."""
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=7777,
             wait_delay=0.0,
@@ -497,7 +497,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             self,
             context.exception,
             FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-            "stream_http_403",
+            "HTTP error 403 Forbidden",
         )
         formatted = _formatted_error_calls(self.mock_logger)
         self.assertIn("ffmpeg exited with code 1", formatted)
@@ -536,7 +536,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             self,
             context.exception,
             FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-            "ffmpeg_exit_8",
+            "ffmpeg exited with code 8",
         )
         formatted = _formatted_error_calls(self.mock_logger)
         self.assertIn("ffmpeg exited with code 8", formatted)
@@ -573,7 +573,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             self,
             context.exception,
             FeedStatusReason.SOURCE_OFFLINE,
-            "stream_http_404",
+            "HTTP error 404 Not Found",
         )
 
     @patch(
@@ -607,7 +607,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             self,
             context.exception,
             FeedStatusReason.SOURCE_RATE_LIMITED,
-            "stream_http_429",
+            "HTTP error 429 Too Many Requests",
         )
 
     @patch(
@@ -648,7 +648,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             self,
             context.exception,
             FeedStatusReason.SOURCE_RATE_LIMITED,
-            "stream_http_429",
+            "HTTP error 429 Too Many Requests",
         )
 
     @patch(
@@ -682,7 +682,41 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             self,
             context.exception,
             FeedStatusReason.SOURCE_UNREACHABLE,
-            "stream_http_503",
+            "Server returned 503 Service Unavailable",
+        )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_ffmpeg_error_exit_code_http_502_diagnostic(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Ffmpeg HTTP 502 diagnostics preserve provider evidence."""
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=7785,
+            wait_delay=0.0,
+            wait_result=8,
+            stderr_lines=[b"HTTP error 502 Bad Gateway\n"],
+        )
+
+        feed = _make_feed("bad-gateway-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_resources_with_probe_status(200, reason="OK"),
+        )
+        with self.assertRaises(FeedFailure) as context:
+            await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+
+        _assert_collector_failure(
+            self,
+            context.exception,
+            FeedStatusReason.SOURCE_UNREACHABLE,
+            "HTTP error 502 Bad Gateway",
         )
 
     @patch(
@@ -715,7 +749,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             self,
             context.exception,
             FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-            "ffmpeg_exit_8",
+            "ffmpeg exited with code 8",
         )
 
     @patch(
@@ -725,12 +759,11 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
     async def test_ffmpeg_signal_kill_normalizes_to_signal_tag(
         self, mock_create_ffmpeg: AsyncMock
     ) -> None:
-        """Test: signal-killed ffmpeg (negative returncode) maps to ffmpeg_signal_N tag.
+        """Test: signal-killed ffmpeg maps to diagnostic text.
 
         Python's subprocess.returncode is -N for signal-N termination on POSIX
-        (e.g. SIGKILL -> -9). The raised tag must stay snake_case (no literal
-        minus sign), so the collector splits sign and emits ``ffmpeg_signal_9``
-        rather than ``ffmpeg_exit_-9``.
+        (e.g. SIGKILL -> -9). The classifier still splits sign and emits a
+        normalized internal reason; the feed failure exposes a human diagnostic.
         """
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=7779,
@@ -755,7 +788,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             self,
             context.exception,
             FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-            "ffmpeg_signal_9",
+            "ffmpeg terminated by signal 9; Killed",
         )
         formatted = _formatted_error_calls(self.mock_logger)
         self.assertIn("ffmpeg exited with code -9", formatted)
@@ -823,7 +856,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             self,
             context.exception,
             FeedStatusReason.SOURCE_OFFLINE,
-            "stream_http_404",
+            "HTTP error 404 Not Found",
         )
         formatted = _formatted_error_calls(self.mock_logger)
         self.assertIn("no finalized segment within", formatted)

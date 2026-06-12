@@ -23,6 +23,7 @@ from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.common.log_helper import setup_asyncio_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.ingestion import (
+    failure_diagnostics,
     health_server,
     quarantine_telemetry,
 )
@@ -66,7 +67,6 @@ CaptureFn = Callable[
 logger = logging.getLogger(__name__)
 
 _PIPELINE_GCS_UPLOAD_FAILED = "gcs_upload_failed"
-_PIPELINE_PUBSUB_PUBLISH_FAILED = "pubsub_publish_failed"
 _PIPELINE_BOOKMARK_WRITE_FAILED = "bookmark_write_failed"
 
 
@@ -74,8 +74,30 @@ class _PipelineFailure(Exception):
     """Post-capture runtime side-effect failure with a stable stage tag."""
 
     def __init__(self, reason: str) -> None:
-        super().__init__(reason)
-        self.reason = reason
+        self.reason = failure_diagnostics.build_diagnostic(reason)
+        super().__init__(self.reason)
+
+
+def _pubsub_publish_failure_reason(exc: Exception) -> str:
+    """Build operator diagnostic text for a failed Pub/Sub publish."""
+    if isinstance(exc, pubsub_exceptions.PublishToPausedOrderingKeyException):
+        return failure_diagnostics.build_diagnostic(
+            "Pub/Sub publish paused for ordering key",
+            exc,
+        )
+
+    text = str(exc)
+    if "schema validation" in text.lower():
+        parts: list[object] = ["Pub/Sub schema validation failed"]
+        if "INVALID_BINARY_PROTO_MESSAGE" in text:
+            parts.append("INVALID_BINARY_PROTO_MESSAGE")
+        parts.append(text)
+        return failure_diagnostics.build_diagnostic(*parts)
+
+    return failure_diagnostics.build_diagnostic(
+        "Pub/Sub publish failed",
+        f"{type(exc).__name__}: {exc}",
+    )
 
 
 class CollectorRuntime:
@@ -887,7 +909,7 @@ class CollectorRuntime:
         except (asyncio.CancelledError, LeaseExpiredError):
             raise
         except Exception as exc:
-            raise _PipelineFailure(_PIPELINE_PUBSUB_PUBLISH_FAILED) from exc
+            raise _PipelineFailure(_pubsub_publish_failure_reason(exc)) from exc
 
         logger.info(
             "Published message %s for feed %s",

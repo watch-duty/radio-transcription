@@ -138,6 +138,13 @@ episodes drive quarantine.
 The current canonical abnormal-condition label for a feed. It says whether the
 likely owner is the source/provider or the ingestion system.
 
+### Quarantine Reason
+
+The detailed, redacted diagnostic message persisted when a feed failure episode
+crosses the quarantine threshold. It describes that threshold-crossing episode
+for debugging; it is not the lifecycle owner label and does not summarize the
+full failure budget history.
+
 ### Quarantine
 
 A lifecycle state that makes a feed ineligible for normal claiming after too
