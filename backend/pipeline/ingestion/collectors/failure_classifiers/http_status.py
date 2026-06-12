@@ -27,15 +27,11 @@ class HTTPStatusPolicy:
     exact: Mapping[int, feed_store.FeedStatusReason | None] = dataclasses.field(
         default_factory=dict
     )
-    default_4xx: feed_store.FeedStatusReason | None = (
-        feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR
-    )
+    default_4xx: feed_store.FeedStatusReason | None = None
     default_5xx: feed_store.FeedStatusReason | None = (
         feed_store.FeedStatusReason.SOURCE_UNREACHABLE
     )
-    default_other_failure: feed_store.FeedStatusReason | None = (
-        feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR
-    )
+    default_other_failure: feed_store.FeedStatusReason | None = None
 
 
 DEFAULT_HTTP_STATUS_POLICY = HTTPStatusPolicy(
@@ -49,11 +45,9 @@ DEFAULT_HTTP_STATUS_POLICY = HTTPStatusPolicy(
     ),
 )
 
-# Default terminal HTTP policy for source-owned endpoints. Auth and rate-limit
-# statuses have stable cross-source meaning. Unmapped 4xx statuses default to
-# system_collector_error because item URLs, API endpoints, and streams use
-# endpoint-specific 4xx semantics. 5xx defaults to source_unreachable unless a
-# collector narrows the endpoint semantics locally.
+# Default terminal HTTP policy for evidence with stable cross-collector meaning.
+# Ambiguous 4xx and nonstandard statuses intentionally return None so endpoint
+# code must choose the item/feed semantics locally.
 
 
 def classify_http_status(

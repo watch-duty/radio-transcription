@@ -5,5 +5,5 @@
     "feed_id",
     "source_type"
   ],
-  "_note": "D-13: one of three goldens (co-land with LOG-02 per REQUIREMENTS.md SC#5). Emitted at exactly 2 sites (D-18): OpenMHZ _download_m4a caller + bcfy_calls _create_chunk_from_call caller. Icecast never emits. Keys alphabetized (D-12). Test asserts set(record.json_fields.keys()) == set(golden['expected_keys'])."
+  "_note": "LOG-02: emitted through the shared telemetry.emit_call_download_failed helper. Collectors call the helper instead of owning event payload construction. Keys alphabetized; tests assert the helper payload keys match expected_keys."
 }

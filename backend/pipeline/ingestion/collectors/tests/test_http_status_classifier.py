@@ -67,7 +67,7 @@ class TestHTTPStatusClassifier(unittest.TestCase):
     def test_default_transient_statuses_map_to_source_unreachable(
         self,
     ) -> None:
-        for status in (408, 500, 503):
+        for status in (408, 500, 502, 503, 504, 599):
             with self.subTest(status=status):
                 classification = _require_classification(
                     http_status.classify_http_status(
@@ -85,27 +85,15 @@ class TestHTTPStatusClassifier(unittest.TestCase):
                     f"item_http_{status}",
                 )
 
-    def test_default_ambiguous_statuses_map_to_collector_error(
-        self,
-    ) -> None:
-        for status in (400, 404, 409, 410, 799):
+    def test_ambiguous_and_nonstandard_statuses_return_none(self) -> None:
+        for status in (400, 404, 409, 410, 423, 425, 426, 600, 799, 999):
             with self.subTest(status=status):
-                classification = _require_classification(
+                self.assertIsNone(
                     http_status.classify_http_status(
                         status,
                         reason_prefix="item_http",
                     )
                 )
-
-                self.assertIs(
-                    classification.status_reason,
-                    feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-                )
-                self.assertEqual(
-                    classification.reason,
-                    f"item_http_{status}",
-                )
-
     def test_exact_override_beats_family_default(self) -> None:
         policy = http_status.HTTPStatusPolicy(
             exact={404: feed_store.FeedStatusReason.SOURCE_OFFLINE},

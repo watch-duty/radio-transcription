@@ -43,17 +43,21 @@ class TestFfmpegClassifier(unittest.TestCase):
         )
 
     def test_stderr_http_status_maps_first(self) -> None:
+        policy = http_status.HTTPStatusPolicy(
+            exact={404: feed_store.FeedStatusReason.SOURCE_OFFLINE},
+        )
         classification = _require_classification(
             ffmpeg.classify_ffmpeg_failure(
                 exit_code=1,
                 stderr_text="HTTP error 404 Not Found",
                 probe_http_status=200,
+                http_policy=policy,
             )
         )
 
         self.assertIs(
             classification.status_reason,
-            feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            feed_store.FeedStatusReason.SOURCE_OFFLINE,
         )
         self.assertEqual(classification.reason, "stream_http_404")
 
