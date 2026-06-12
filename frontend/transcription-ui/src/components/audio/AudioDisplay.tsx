@@ -159,10 +159,10 @@ export function AudioDisplay({
 
   const [windowEndTime, setWindowEndTime] = useState<number | null>(null);
 
-  const [prevFirstTranscriptId, setPrevFirstTranscriptId] = useState<
+  const [prevFirstAudioSegmentId, setPrevFirstAudioSegmentId] = useState<
     string | null
   >(null);
-  const [prevFirstTranscriptEndTimestamp, setPrevFirstTranscriptEndTimestamp] =
+  const [prevFirstAudioSegmentEndTimestamp, setPrevFirstAudioSegmentEndTimestamp] =
     useState<string | null>(null);
   const [prevPlayingId, setPrevPlayingId] = useState<string | null>(null);
   const [prevHighlightedId, setPrevHighlightedId] = useState<string | null>(
@@ -185,24 +185,24 @@ export function AudioDisplay({
   const firstAudioSegmentEndTimestamp = firstAudioSegment?.endTimestamp || null;
 
   // Check if a new segment has been added to the top of the feed
-  const isNewFirstTranscript = firstAudioSegmentId !== prevFirstTranscriptId;
+  const isNewFirstAudioSegment = firstAudioSegmentId !== prevFirstAudioSegmentId;
 
-  // Check if the current top transcript has been extended (e.g. an ongoing silence bundle).
+  // Check if the current top audio segment has been extended (e.g. an ongoing silence bundle).
   // When a silence bundle is extended, its ID remains the same but its end timestamp advances.
-  const isFirstTranscriptExtended =
-    firstAudioSegmentEndTimestamp !== prevFirstTranscriptEndTimestamp;
+  const isFirstAudioSegmentExtended =
+    firstAudioSegmentEndTimestamp !== prevFirstAudioSegmentEndTimestamp;
 
-  const shouldUpdateWindow = isNewFirstTranscript || isFirstTranscriptExtended;
+  const shouldUpdateWindow = isNewFirstAudioSegment || isFirstAudioSegmentExtended;
 
   if (shouldUpdateWindow) {
     const wasAlignedToHead = isViewportAlignedToHead(
       windowEndTime,
-      prevFirstTranscriptEndTimestamp,
-      !prevFirstTranscriptId
+      prevFirstAudioSegmentEndTimestamp,
+      !prevFirstAudioSegmentId
     );
 
-    setPrevFirstTranscriptId(firstAudioSegmentId);
-    setPrevFirstTranscriptEndTimestamp(firstAudioSegmentEndTimestamp);
+    setPrevFirstAudioSegmentId(firstAudioSegmentId);
+    setPrevFirstAudioSegmentEndTimestamp(firstAudioSegmentEndTimestamp);
 
     if (wasAlignedToHead) {
       setWindowEndTime(
