@@ -748,7 +748,7 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
         chunk_data = AudioChunkData(
             start_ms=100000,
             audio=np.zeros(16000 * 5, dtype=np.int16),
-            speech_segments=[TimeRange(1000, 4000)],
+            speech_segments=[TimeRange(0, 5000)],
             gcs_uri="gs://bucket/chunk1.flac",
             duration_ms=5000,
             sample_rate=16000,
@@ -824,7 +824,7 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
         self.assertIsInstance(saved_context, ActiveStitchingState)
         self.assertTrue(len(saved_context.speech_segments) > 0)
         self.assertEqual(
-            get_duration_ms(saved_context.speech_segments[0]), 3000
+            get_duration_ms(saved_context.speech_segments[0]), 5000
         )
 
         # 2. Trigger stale flush and verify mapped speech_segments in FlushRequest payload
@@ -844,7 +844,7 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
         self.assertEqual(feed_id, "test-feed")
         self.assertTrue(len(flush_request.speech_segments) > 0)
         self.assertEqual(
-            get_duration_ms(flush_request.speech_segments[0]), 3000
+            get_duration_ms(flush_request.speech_segments[0]), 5000
         )
         self.assertEqual(
             flush_request.audio_classification,
@@ -1233,13 +1233,21 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
             )
         )
 
-        # Should immediately yield one flush request for the first speech segment
-        self.assertEqual(len(outputs), 1)
+        # Under Continuous Audio Retention, we yield two flush requests: one for speech and one for silence
+        self.assertEqual(len(outputs), 2)
         feed_id, flush_req = outputs[0]
         self.assertEqual(feed_id, "test-feed")
         # Since it split at a natural silence gap, missing_post_context should be False
         self.assertFalse(flush_req.missing_post_context)
         self.assertEqual(flush_req.speech_segments[-1].end_ms, 30000)
+
+        # Second output: pure silence gap (30000 to 35000)
+        feed_id_2, flush_req_2 = outputs[1]
+        self.assertEqual(feed_id_2, "test-feed")
+        self.assertEqual(
+            flush_req_2.audio_classification,
+            AudioClassification.AUDIO_CLASSIFICATION_OTHER,
+        )
 
         # Saved context should hold the second speech segment natively started
         saved_context = mock_state_context.read()

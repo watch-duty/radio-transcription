@@ -62,6 +62,7 @@ dev = [
   "soundfile>=0.12.1",
   "pyopenssl>=26.0.0",
   "deepdiff>=9.1.0",
+  "types-protobuf>=7.34.1",
 ]
 
 [tool.ruff]
@@ -236,6 +237,7 @@ exclude = ["model/", "backend/services/local-whisper-api/"]
 
 [tool.pyright]
 pythonVersion = "3.13"
+reportUnusedTypeIgnoreComment = false
 
 [tool.uv.workspace]
 members = [
