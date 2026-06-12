@@ -83,3 +83,21 @@ INT16_MAX_FLOAT: Final = 32768.0
 DEFAULT_SED_FFT_SIZE: Final = 2048
 DEFAULT_SED_HOP_SIZE: Final = 512
 VAD_RMS_SILENCE_THRESHOLD: Final = 0.005
+
+
+# Voice Activity Detection Formant Spectral Gating Defaults
+VAD_SPECTRAL_MIN_TOTAL_ENERGY: Final = 1e-10
+VAD_VOCAL_ENERGY_MIN_FREQ_HZ: Final = 200.0
+VAD_VOCAL_ENERGY_MAX_FREQ_HZ: Final = 3000.0
+# Empirically tuned: genuine speech (including whispers) typically maintains >0.40 energy ratio
+# in the 200-3000Hz vocal formant band; 72Hz electrical flicker and low-frequency rumble maintain ~0.02.
+# A 0.15 threshold provides a highly robust safety margin for whisper-heavy streams while rejecting interference.
+VAD_VOCAL_ENERGY_MIN_RATIO: Final = 0.15
+
+
+# Integration Suite Automated Testing Tone Definitions
+TONE_QUIK_CALL_II_FREQ1_HZ: Final = 600.9
+TONE_QUIK_CALL_II_FREQ2_HZ: Final = 742.5
+TONE_EAS_FREQ1_HZ: Final = 853.0
+TONE_EAS_FREQ2_HZ: Final = 960.0
+VAD_TEST_SUBAUDIBLE_RUMBLE_FREQ_HZ: Final = 75.0
