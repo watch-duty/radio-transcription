@@ -203,9 +203,11 @@ same-endpoint probes, and item-to-feed promotion. Do not move HTTP sessions,
    - add a `_COLLECTORS` entry in `router.py`;
    - update topic routing if the source is continuous instead of segmented.
 2. Implement the `CollectorFn` signature from `models.py`.
-3. Use `CaptureResources.http_session` for async HTTP. Do not create hidden
-   long-lived sessions per feed unless the source-specific transport requires
-   it and the collector owns its cleanup.
+3. Use `CaptureResources.http_session` for ordinary async HTTP. A
+   collector-owned `curl_cffi` session is acceptable only when the
+   source-specific transport requires browser impersonation, websocket
+   handshake behavior, or another capability the runtime aiohttp session does
+   not provide; in that case the collector must own cleanup in `finally`.
 4. Generate a stable `session_id` at the source's natural continuity boundary:
    stream connection, websocket connection, polling invocation, or source file.
 5. Fill `CapturedChunk.receipt_time` when the source exposes a useful arrival
@@ -222,6 +224,23 @@ same-endpoint probes, and item-to-feed promotion. Do not move HTTP sessions,
    per-item files.
 9. Update router/settings tests if a new source type changes the registry,
    caps, or topic-routing behavior.
+
+Minimum tests for an item-downloading VM collector:
+
+- completed downloads return `bytes | ItemFailure`, never `None`;
+- shutdown during a retry wait or active source request raises
+  `asyncio.CancelledError` and does not emit `call_download_failed`;
+- terminal item HTTP statuses and retry exhaustion use
+  `item_downloads.classify_item_http_status` and
+  `item_downloads.item_download_failed`;
+- missing optional poll item lists are empty observations, while present
+  non-list item lists raise a malformed-payload `FeedFailure` through
+  `polling_payloads.extract_optional_item_list`;
+- partial item success suppresses `ItemBatchOutcome` promotion, all attempted
+  item failures promote, and mixed canonical reasons promote as
+  `mixed_item_failures`;
+- completed item failures call `telemetry.emit_call_download_failed` instead of
+  building `call_download_failed` JSON locally.
 
 For Echo-like synchronous ingestion, do not register a VM collector. Keep its
 classification in the Cloud Function path and write reasons through

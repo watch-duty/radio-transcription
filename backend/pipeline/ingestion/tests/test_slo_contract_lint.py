@@ -96,7 +96,7 @@ class TestEmitMarkerCount(unittest.TestCase):
                 count += len(matches)
         return count, found
 
-    def test_exactly_three_call_download_failed_emit_markers(self) -> None:
+    def test_exactly_one_call_download_failed_emit_marker(self) -> None:
         count, found_files = self._count_matches(
             _CALL_DL_FAILED_EMIT_RE, _INGESTION_DIR
         )
