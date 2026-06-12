@@ -2,6 +2,7 @@
 
 import base64
 import datetime
+import json
 import logging
 import urllib.parse
 
@@ -204,8 +205,11 @@ class NormalizationEventProcessor:
                     feed_id,
                     e,
                 )
-                # Re-raise exception to let functions framework retry transient Pub/Sub errors
-                raise
+                self._publish_dlq(
+                    segmented_audio=segmented_audio,
+                    error=e,
+                    traceparent=traceparent,
+                )
 
     def _download_raw_audio(self, raw_audio_uri: str) -> bytes:
         """Downloads raw audio bytes from GCS staging."""
@@ -335,6 +339,59 @@ class NormalizationEventProcessor:
             segment_id,
             feed_id,
         )
+
+    def _publish_dlq(
+        self,
+        segmented_audio: SegmentedAudio,
+        error: Exception,
+        traceparent: str,
+    ) -> None:
+        """Publishes a structured error payload to the Normalization Dead Letter Queue topic."""
+        segment_id = segmented_audio.segment_id or "unknown_segment"
+        feed_id = segmented_audio.feed_id or "unknown_feed"
+
+        dlq_payload = {
+            "segment_id": segment_id,
+            "feed_id": feed_id,
+            "error": str(error),
+            "timestamp_ms": int(
+                datetime.datetime.now(datetime.UTC).timestamp() * 1000
+            ),
+        }
+        if segmented_audio.external_audio_segment_id:
+            dlq_payload["external_audio_segment_id"] = (
+                segmented_audio.external_audio_segment_id
+            )
+
+        data_bytes = json.dumps(dlq_payload).encode("utf-8")
+
+        # Route to DLQ topic (e.g., projects/.../topics/normalized-audio-dlq-prod)
+        topic_name = "normalized-audio-dlq-prod"
+        if self.output_topic and "-dlq" not in self.output_topic:
+            topic_name = f"{self.output_topic.split('/')[-1]}-dlq"
+        topic_path = self.publisher.topic_path(self.project_id, topic_name)
+
+        attrs: dict[str, str] = {"error_type": "normalization_failure"}
+        if traceparent:
+            attrs["traceparent"] = traceparent
+
+        try:
+            future = self.publisher.publish(
+                topic=topic_path,
+                data=data_bytes,
+                ordering_key=feed_id,
+                **attrs,
+            )
+            msg_id = future.result()
+            logger.info(
+                "Successfully routed failed segment %s (feed %s) to DLQ topic %s (Msg: %s)",
+                segment_id,
+                feed_id,
+                topic_path,
+                msg_id,
+            )
+        except Exception:
+            logger.exception("Failed to publish to DLQ topic %s", topic_path)
 
     def _parse_claim(self, raw_data: str) -> SegmentedAudio:
         """Parses the base64 encoded SegmentedAudio protobuf payload."""
