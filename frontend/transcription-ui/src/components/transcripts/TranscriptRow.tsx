@@ -33,7 +33,7 @@ interface TranscriptRowProps {
   isHighlighted?: boolean;
   redactTranscripts?: boolean;
   onRowClick: (segmentId: string) => void;
-  isCurrentSilence?: boolean;
+  isTopTranscriptRow?: boolean;
 }
 
 export function TranscriptRow({
@@ -50,7 +50,7 @@ export function TranscriptRow({
   isHighlighted = false,
   redactTranscripts = false,
   onRowClick,
-  isCurrentSilence = false,
+  isTopTranscriptRow = false,
 }: TranscriptRowProps) {
   const theme = useTheme();
   const currentDate = new Date(transcript.startTimestamp);
@@ -95,6 +95,8 @@ export function TranscriptRow({
       (transcript.isSilenceBundle &&
         currentlyPlayingSegmentId &&
         transcript.bundledSegmentIds?.includes(currentlyPlayingSegmentId)));
+
+  const isOngoingSilence = isSilence && isTopTranscriptRow;
 
   const getBorderColor = () => {
     if (isSilence) {
@@ -197,7 +199,7 @@ export function TranscriptRow({
               })}
             </Typography>
           )}
-          {(!isSilence || !isCurrentSilence) && (
+          {!isOngoingSilence && (
             <Typography
               variant="caption"
               color="text.secondary"

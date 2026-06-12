@@ -295,7 +295,7 @@ describe('TranscriptRow', () => {
     expect(screen.queryByLabelText('copy transcript')).toBeNull();
   });
 
-  it('hides both timestamp and duration when silence row is current silence', () => {
+  it('hides duration when silence row is at the live edge (ongoing silence)', () => {
     const mockSilenceBundle: RenderableAudioSegment = {
       id: 'silence-123',
       feedId: 'feed-123',
@@ -326,7 +326,7 @@ describe('TranscriptRow', () => {
           currentlyPlayingSegmentId={null}
           triggerSnackbar={mockTriggerSnackbar}
           showHeader={false}
-          isCurrentSilence={true}
+          isTopTranscriptRow={true}
         />
       </MemoryRouter>
     );

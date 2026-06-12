@@ -190,7 +190,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
               }
               redactTranscripts={redactTranscripts}
               onRowClick={onRowClick}
-              isCurrentSilence={index === 0 && !hasNewerTranscripts}
+              isTopTranscriptRow={index === 0 && !hasNewerTranscripts}
             />
           );
         }}
