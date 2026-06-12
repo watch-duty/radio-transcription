@@ -235,7 +235,6 @@ export function TranscriptView({
 
   const {
     rawAudioSegments,
-    newestTimestamp,
     loadOlderTranscripts: fetchOlderTranscripts,
     loadNewerTranscripts: fetchNewerTranscripts,
     hasOlderTranscripts,
@@ -374,12 +373,13 @@ export function TranscriptView({
    */
   useEffect(() => {
     if (
+      // Skip polling if the initial transcript load hasn't completed yet
+      !isTranscriptsSuccess ||
       // Skip polling if not viewing at the top of the transcripts to prevent fetching data when the user would not see it.
       // User can always click refresh button if they want to.
       !isViewAtTopOfTranscripts ||
       // Skip polling if there are older historical pages ahead of us to load.
       hasNewerTranscripts ||
-      !newestTimestamp ||
       !searchedFeedId
     ) {
       return;
@@ -435,9 +435,9 @@ export function TranscriptView({
 
     return () => clearInterval(interval);
   }, [
+    isTranscriptsSuccess,
     isViewAtTopOfTranscripts,
     hasNewerTranscripts,
-    newestTimestamp,
     searchedFeedId,
     pollNewerTranscripts,
     updateCacheWithNewTranscripts,

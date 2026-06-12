@@ -681,6 +681,58 @@ describe('TranscriptView', () => {
     vi.useRealTimers();
   });
 
+  it('polls for newer transcripts in background when none initially exist', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+
+    const newerTranscripts = [
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        '2026-04-10T12:05:00Z',
+        '2026-04-10T12:05:05Z',
+        'New Transcript',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+
+    vi.mocked(listAudioSegments)
+      .mockResolvedValueOnce({
+        segments: [],
+        nextToken: undefined,
+      })
+      .mockResolvedValueOnce({
+        segments: newerTranscripts,
+        nextToken: undefined,
+      });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole('heading', { name: 'Feed 123' })
+      ).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('No transcripts found')).toBeTruthy();
+    });
+
+    // Advance time by 15 seconds
+    vi.advanceTimersByTime(15000);
+
+    await waitFor(() => {
+      expect(listAudioSegments).toHaveBeenCalledTimes(2);
+      expect(screen.getByText('New Transcript')).toBeTruthy();
+      expect(screen.queryByText('No transcripts found')).toBeNull();
+    });
+
+    vi.useRealTimers();
+  });
+
   it('polls for feed status in background', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 

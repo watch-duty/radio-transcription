@@ -143,45 +143,68 @@ export function useAudioSegments({
   const pollNewerTranscripts = useCallback(async (): Promise<
     AudioSegment[]
   > => {
-    if (!newestTimestamp || !searchedFeedId || !token) return [];
+    if (!searchedFeedId || !token) return [];
 
     const allNewTranscripts: AudioSegment[] = [];
-    let currentNextToken: string | undefined = undefined;
-    let hasMore = true;
-    let iterations = 0;
 
-    try {
-      while (hasMore) {
-        if (iterations > MAX_TRANSCRIPTS_POLLING_ITERATIONS) {
-          console.warn(
-            'pollNewerTranscripts has more than 10 pages of new transcripts. This is unexpected. If this message continues, please report a bug.'
+    if (newestTimestamp) {
+      let currentNextToken: string | undefined = undefined;
+      let hasMore = true;
+      let iterations = 0;
+
+      try {
+        while (hasMore) {
+          if (iterations > MAX_TRANSCRIPTS_POLLING_ITERATIONS) {
+            console.warn(
+              'pollNewerTranscripts has more than 10 pages of new transcripts. This is unexpected. If this message continues, please report a bug.'
+            );
+          }
+          iterations++;
+
+          const response = await listAudioSegments(
+            searchedFeedId,
+            token,
+            /*limit=*/ undefined,
+            currentNextToken,
+            /*startTime=*/ new Date(newestTimestamp).getTime(),
+            /*endTime=*/ undefined,
+            /*order=*/ 'asc',
+            alertFilter === 'alerts' ? true : undefined
           );
-        }
-        iterations++;
 
+          if (response.segments && response.segments.length > 0) {
+            allNewTranscripts.push(...response.segments);
+          }
+
+          currentNextToken = response.nextToken;
+          hasMore = !!currentNextToken;
+        }
+      } catch (error) {
+        console.error('Error polling for new transcripts:', error);
+      }
+
+      return allNewTranscripts.reverse();
+    } else {
+      try {
         const response = await listAudioSegments(
           searchedFeedId,
           token,
           /*limit=*/ undefined,
-          currentNextToken,
-          /*startTime=*/ new Date(newestTimestamp).getTime(),
+          /*nextToken=*/ undefined,
+          /*startTime=*/ undefined,
           /*endTime=*/ undefined,
-          /*order=*/ 'asc',
+          /*order=*/ 'desc',
           alertFilter === 'alerts' ? true : undefined
         );
-
-        if (response.segments && response.segments.length > 0) {
-          allNewTranscripts.push(...response.segments);
-        }
-
-        currentNextToken = response.nextToken;
-        hasMore = !!currentNextToken;
+        return response.segments || [];
+      } catch (error) {
+        console.error(
+          'Error polling for new transcripts (no initial transcripts):',
+          error
+        );
+        return [];
       }
-    } catch (error) {
-      console.error('Error polling for new transcripts:', error);
     }
-
-    return allNewTranscripts.reverse();
   }, [newestTimestamp, searchedFeedId, token, alertFilter]);
 
   const updateCacheWithNewTranscripts = useCallback(
