@@ -13,11 +13,6 @@ from backend.pipeline.common.constants import MS_PER_SECOND, SAMPLE_RATE_HZ
 from backend.pipeline.segmentation.audio import vad
 from backend.pipeline.segmentation.constants import (
     GCS_DOWNLOAD_TIMEOUT_SEC,
-    INT16_MAX,
-    INT16_MAX_FLOAT,
-    INT16_MIN,
-    MONO_CHANNEL_COUNT,
-    PCM_32BIT_TO_16BIT_SHIFT,
     PRIMARY_AUDIO_STREAM_INDEX,
 )
 from backend.pipeline.segmentation.datatypes import AudioChunkData
@@ -153,51 +148,43 @@ class SegmentationAudioProcessor:
         try:
             with self._open_container(in_mem_file) as container:
                 stream = container.streams.audio[PRIMARY_AUDIO_STREAM_INDEX]
+                resampler = av.AudioResampler(format="s16p")
                 decoded_frames = []
                 expected_channels = None
                 for frame in container.decode(stream):
-                    arr = frame.to_ndarray()
-                    if expected_channels is None:
-                        expected_channels = arr.shape[0]
-                    elif arr.shape[0] != expected_channels:
-                        logger.warning(
-                            "Channel count changed mid-stream, skipping frame"
-                        )
+                    reframed = resampler.resample(frame)
+                    if reframed is None:
                         continue
-                    decoded_frames.append(arr)
+                    frames_to_process = (
+                        reframed
+                        if isinstance(reframed, (list, tuple))
+                        else [reframed]
+                    )
+                    for f in frames_to_process:
+                        arr = f.to_ndarray()
+                        if expected_channels is None:
+                            expected_channels = arr.shape[0]
+                        elif arr.shape[0] != expected_channels:
+                            logger.warning(
+                                "Channel count changed mid-stream, skipping frame"
+                            )
+                            continue
+                        decoded_frames.append(arr)
 
                 if not decoded_frames:
                     return np.array([], dtype=np.int16), SAMPLE_RATE_HZ
 
                 combined = np.concatenate(decoded_frames, axis=-1)
-                # If mono (1, samples), return flat 1D array.
-                # If multi-channel (channels, samples), return transposed (samples, channels) 2D array
-                # to be correctly downmixed to mono downstream by _resample_to_16k_mono.
-                raw_samples = (
-                    combined[PRIMARY_AUDIO_STREAM_INDEX]
-                    if combined.shape[0] == MONO_CHANNEL_COUNT
-                    else combined.T
-                )
-
-                if np.issubdtype(raw_samples.dtype, np.floating):
-                    samples = np.clip(
-                        raw_samples * INT16_MAX_FLOAT,
-                        INT16_MIN,
-                        INT16_MAX,
-                    ).astype(np.int16)
-                elif raw_samples.dtype == np.int32:
-                    samples = np.right_shift(
-                        raw_samples, PCM_32BIT_TO_16BIT_SHIFT
-                    ).astype(np.int16)
-                else:
-                    samples = raw_samples.astype(np.int16)
+                # Completely isolate primary channel (Channel 0) to eliminate multi-channel
+                # cross-channel bleed or downmixing averaging (np.mean) entirely.
+                raw_samples = combined[PRIMARY_AUDIO_STREAM_INDEX]
 
                 sr = stream.codec_context.sample_rate
                 if sr <= 0:
                     logger.warning("Invalid sample rate detected, defaulting")
                     sr = SAMPLE_RATE_HZ
 
-                return samples, sr
+                return raw_samples, sr
         except Exception as e:
             logger.exception("PyAV error during audio decode")
             msg = "Failed to decode audio via PyAV"
