@@ -15,6 +15,9 @@ from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemFailure,
 )
 from backend.pipeline.ingestion.collectors.openmhz._types import CallEvent
+from backend.pipeline.ingestion.collectors.openmhz._ws_transport import (
+    OpenMHzTransportError,
+)
 from backend.pipeline.ingestion.collectors.openmhz.collector import (
     MAX_ITEM_DOWNLOAD_FAILURES,
     MAX_RECONNECT_FAILURES,
@@ -595,7 +598,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Transport always raises -> collector escalates."""
         mock_transport.return_value.__aenter__ = AsyncMock(
-            side_effect=ConnectionError("refused")
+            side_effect=OpenMHzTransportError("refused")
         )
         mock_transport.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_sleep.return_value = False
@@ -617,6 +620,26 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
 
         # The Nth failure raises before sleeping, so N-1 sleeps
         self.assertEqual(mock_sleep.call_count, MAX_RECONNECT_FAILURES - 1)
+
+    @patch(f"{_COL_MOD}.websocket_transport")
+    @patch(f"{_COL_MOD}._download_m4a")
+    async def test_unexpected_collector_bug_propagates(
+        self,
+        mock_download: AsyncMock,
+        mock_transport: MagicMock,
+    ) -> None:
+        call = _make_call(call_id="bug", length_sec=5)
+        mock_transport.side_effect = lambda *a, **kw: _mock_transport([call])
+        mock_download.side_effect = RuntimeError("collector bug")
+
+        with self.assertRaisesRegex(RuntimeError, "collector bug"):
+            async for _ in openmhz_collector(
+                _TEST_FEED,
+                asyncio.Event(),
+                "https://api.openmhz.com/",
+                _default_resources(),
+            ):
+                pass
 
     @patch(f"{_COL_MOD}.websocket_transport")
     @patch(f"{_COL_MOD}._download_m4a")
@@ -801,7 +824,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
                     async def _events():
                         yield call
                         msg = "transport error"
-                        raise ConnectionError(msg)
+                        raise OpenMHzTransportError(msg)
 
                     yield _events()
 

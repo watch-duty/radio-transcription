@@ -19,6 +19,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+class OpenMHzTransportError(Exception):
+    """Expected OpenMHz websocket connection or protocol failure."""
+
+
 _START_PAYLOAD_TEMPLATE: dict[str, object] = {
     "filterCode": "",
     "filterType": "all",
@@ -116,7 +121,15 @@ async def websocket_transport(
         )
         await ws.send_str(f"42{start_payload}")
         logger.info("Subscribed to system: short_name=%s", short_name)
+    except Exception as e:
+        if ws is not None:
+            with contextlib.suppress(Exception):
+                await ws.close()
+        await session.close()
+        msg = "openmhz_transport_error"
+        raise OpenMHzTransportError(msg) from e
 
+    try:
         yield _stream_frames(
             ws, shutdown, short_name, ping_interval_sec, ping_timeout_sec
         )
@@ -155,34 +168,38 @@ async def _stream_frames(
 
         try:
             frame = await ws.recv_str(timeout=ping_interval_sec)
+            if frame.startswith("2"):
+                await ws.send_str("3")
+                last_ping_time = time.monotonic()
+            elif frame.startswith("42"):
+                call = _parse_sio_event(frame)
+                if call is not None:
+                    logger.debug(
+                        "Call received: short_name=%s call_id=%s talkgroup=%d",
+                        short_name,
+                        call.id,
+                        call.talkgroup_num,
+                    )
+                    yield call
+            elif frame.startswith("41"):
+                logger.warning(
+                    "Server disconnect (41): short_name=%s", short_name
+                )
+                return
+            elif frame.startswith("44"):
+                logger.warning(
+                    "Connect error (44): short_name=%s message=%s",
+                    short_name,
+                    frame[2:],
+                )
+                return
+            else:
+                logger.debug("Ignoring frame: %s", frame[:50])
         except WebSocketTimeout:
             continue
         except WebSocketClosed:
             logger.warning("WebSocket closed: short_name=%s", short_name)
             return
-
-        if frame.startswith("2"):
-            await ws.send_str("3")
-            last_ping_time = time.monotonic()
-        elif frame.startswith("42"):
-            call = _parse_sio_event(frame)
-            if call is not None:
-                logger.debug(
-                    "Call received: short_name=%s call_id=%s talkgroup=%d",
-                    short_name,
-                    call.id,
-                    call.talkgroup_num,
-                )
-                yield call
-        elif frame.startswith("41"):
-            logger.warning("Server disconnect (41): short_name=%s", short_name)
-            return
-        elif frame.startswith("44"):
-            logger.warning(
-                "Connect error (44): short_name=%s message=%s",
-                short_name,
-                frame[2:],
-            )
-            return
-        else:
-            logger.debug("Ignoring frame: %s", frame[:50])
+        except Exception as e:
+            msg = "openmhz_transport_error"
+            raise OpenMHzTransportError(msg) from e

@@ -24,6 +24,7 @@ from backend.pipeline.ingestion.collectors.failure_classification import (
     missing_source_feed_id_failure,
 )
 from backend.pipeline.ingestion.collectors.openmhz._ws_transport import (
+    OpenMHzTransportError,
     websocket_transport,
 )
 from backend.pipeline.ingestion.models import (
@@ -291,7 +292,7 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                 raise
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except OpenMHzTransportError:
                 logger.warning(
                     "Transport error: short_name=%s",
                     short_name,
