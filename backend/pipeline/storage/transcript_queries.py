@@ -15,7 +15,6 @@ TRANSCRIPT_COLUMNS_SQL = """\
     evaluation_decisions,
     playback_audio_uri,
     evaluation_errors,
-    evaluation_annotations,
     created_at
 """
 
@@ -35,10 +34,9 @@ INSERT INTO transcripts (
     end_audio_offset,
     evaluation_decisions,
     playback_audio_uri,
-    evaluation_errors,
-    evaluation_annotations
+    evaluation_errors
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 ON CONFLICT (segment_id) DO UPDATE
 SET segment_id = transcripts.segment_id
 RETURNING

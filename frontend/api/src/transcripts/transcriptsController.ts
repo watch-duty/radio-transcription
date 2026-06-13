@@ -1,6 +1,5 @@
 import type {
   ListTranscriptsResponse,
-  RuleAnnotation,
   Transcript,
 } from '@transcription/common';
 import {
@@ -18,16 +17,6 @@ import {
 import { TRANSCRIPTS_API_URL } from '../config.js';
 import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
 
-interface TextMatchSpanResponse {
-  start: number;
-  end: number;
-  matched_text: string;
-}
-
-interface RuleAnnotationResponse {
-  text_match?: TextMatchSpanResponse[];
-}
-
 export interface TranscriptResponse {
   feed_id: string;
   segment_id: string;
@@ -42,21 +31,6 @@ export interface TranscriptResponse {
   start_audio_offset: string;
   end_audio_offset: string;
   evaluation_decisions: string[];
-  rule_annotations?: Record<string, RuleAnnotationResponse>;
-}
-
-function convertRuleAnnotation(
-  response: RuleAnnotationResponse
-): RuleAnnotation {
-  return {
-    textMatch: response.text_match
-      ? response.text_match.map((s) => ({
-          startIndex: s.start,
-          endIndex: s.end,
-          matchedText: s.matched_text,
-        }))
-      : undefined,
-  };
 }
 
 function convertTranscriptResponse(response: TranscriptResponse): Transcript {
@@ -74,11 +48,6 @@ function convertTranscriptResponse(response: TranscriptResponse): Transcript {
     startAudioOffset: response.start_audio_offset,
     endAudioOffset: response.end_audio_offset,
     evaluationDecisions: response.evaluation_decisions,
-    ruleAnnotations: Object.fromEntries(
-      Object.entries(response.rule_annotations ?? {}).map(
-        ([ruleId, annotation]) => [ruleId, convertRuleAnnotation(annotation)]
-      )
-    ),
   };
 }
 

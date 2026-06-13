@@ -6,36 +6,6 @@ components:
   requestBodies: {}
   responses: {}
   schemas:
-    TextMatchSpan:
-      properties:
-        startIndex:
-          type: number
-          format: double
-        endIndex:
-          type: number
-          format: double
-        matchedText:
-          type: string
-      required:
-        - startIndex
-        - endIndex
-        - matchedText
-      type: object
-      additionalProperties: false
-    RuleAnnotation:
-      properties:
-        textMatch:
-          items:
-            $ref: "#/components/schemas/TextMatchSpan"
-          type: array
-      type: object
-      additionalProperties: false
-    Record_string.RuleAnnotation_:
-      properties: {}
-      additionalProperties:
-        $ref: "#/components/schemas/RuleAnnotation"
-      type: object
-      description: Construct a type with a set of properties K of type T
     Transcript:
       properties:
         feedId:
@@ -68,8 +38,6 @@ components:
           items:
             type: string
           type: array
-        ruleAnnotations:
-          $ref: "#/components/schemas/Record_string.RuleAnnotation_"
       required:
         - feedId
         - segmentId
@@ -84,7 +52,6 @@ components:
         - startAudioOffset
         - endAudioOffset
         - evaluationDecisions
-        - ruleAnnotations
       type: object
       additionalProperties: false
     ListTranscriptsResponse:
@@ -496,6 +463,36 @@ components:
         - errors
       type: object
       additionalProperties: false
+    TextMatchSpan:
+      properties:
+        startIndex:
+          type: number
+          format: double
+        endIndex:
+          type: number
+          format: double
+        matchedText:
+          type: string
+      required:
+        - startIndex
+        - endIndex
+        - matchedText
+      type: object
+      additionalProperties: false
+    RuleAnnotation:
+      properties:
+        textMatch:
+          items:
+            $ref: "#/components/schemas/TextMatchSpan"
+          type: array
+      type: object
+      additionalProperties: false
+    Record_string.RuleAnnotation_:
+      properties: {}
+      additionalProperties:
+        $ref: "#/components/schemas/RuleAnnotation"
+      type: object
+      description: Construct a type with a set of properties K of type T
     EvaluationAnnotationData:
       properties:
         decisions:
@@ -506,9 +503,12 @@ components:
           items:
             type: string
           type: array
+        ruleAnnotations:
+          $ref: "#/components/schemas/Record_string.RuleAnnotation_"
       required:
         - decisions
         - errors
+        - ruleAnnotations
       type: object
       additionalProperties: false
     Annotation:

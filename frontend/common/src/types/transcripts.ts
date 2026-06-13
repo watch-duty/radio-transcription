@@ -22,7 +22,6 @@ export interface Transcript {
   startAudioOffset: string;
   endAudioOffset: string;
   evaluationDecisions: string[];
-  ruleAnnotations: Record<string, RuleAnnotation>;
 }
 
 export interface ListTranscriptsResponse {

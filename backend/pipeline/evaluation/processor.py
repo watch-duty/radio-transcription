@@ -4,6 +4,8 @@ import base64
 import logging
 from typing import TYPE_CHECKING
 
+from google.protobuf import json_format
+
 from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.common.tracing_utils import (
     inject_otel_context,
@@ -132,6 +134,16 @@ class EvaluationEventProcessor:
                             evaluated_payload.evaluation_decisions
                         ),
                         "errors": list(evaluated_payload.errors),
+                        # preserving_proto_field_name keeps snake_case keys so the
+                        # JSON matches the audio-segments EvaluationAnnotationData schema.
+                        "rule_annotations": {
+                            rule_id: json_format.MessageToDict(
+                                annotation, preserving_proto_field_name=True
+                            )
+                            for rule_id, annotation in (
+                                evaluated_payload.rule_annotations.items()
+                            )
+                        },
                     }
                     self.audio_segments_client.add_audio_segment_annotation(
                         audio_segment_id=new_audio.segment_id,

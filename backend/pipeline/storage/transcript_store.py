@@ -2,14 +2,11 @@
 
 import base64
 import datetime
-import json
 import logging
 import uuid
 from typing import NamedTuple
 
 import asyncpg
-import asyncpg.exceptions
-from google.protobuf import json_format
 
 from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
@@ -74,16 +71,6 @@ class TranscriptStore:
         if row["evaluation_errors"]:
             msg.errors.extend(row["evaluation_errors"])
 
-        raw_annotations = row["evaluation_annotations"]
-        if raw_annotations:
-            entries = (
-                json.loads(raw_annotations)
-                if isinstance(raw_annotations, str)
-                else raw_annotations
-            )
-            for rule_id, entry in entries.items():
-                json_format.ParseDict(entry, msg.rule_annotations[rule_id])
-
         return msg
 
     def _decode_cursor(
@@ -130,15 +117,6 @@ class TranscriptStore:
         if transcript.HasField("end_audio_offset"):
             end_offset = transcript.end_audio_offset.ToTimedelta()
 
-        annotations_json = json.dumps(
-            {
-                rule_id: json_format.MessageToDict(
-                    annotation, preserving_proto_field_name=True
-                )
-                for rule_id, annotation in transcript.rule_annotations.items()
-            }
-        )
-
         try:
             row = await self._pool.fetchrow(
                 transcript_queries.CREATE_TRANSCRIPT_SQL,
@@ -156,7 +134,6 @@ class TranscriptStore:
                 list(transcript.evaluation_decisions),
                 transcript.playback_audio_uri or None,
                 list(transcript.errors),
-                annotations_json,
             )
         except asyncpg.exceptions.UniqueViolationError as e:
             raise AlreadyExistsError(str(segment_id)) from e

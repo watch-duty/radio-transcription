@@ -1,3 +1,5 @@
+import type { RuleAnnotation } from './transcripts.js';
+
 export enum AudioClassification {
   UNSPECIFIED = 'UNSPECIFIED',
   SPEECH = 'SPEECH',
@@ -17,6 +19,7 @@ export interface TranscriptAnnotationData {
 export interface EvaluationAnnotationData {
   decisions: string[];
   errors: string[];
+  ruleAnnotations: Record<string, RuleAnnotation>;
 }
 
 export interface Annotation {

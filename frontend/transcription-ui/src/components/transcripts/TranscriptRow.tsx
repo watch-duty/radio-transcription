@@ -245,7 +245,15 @@ export function TranscriptRow({
               isSilence || isWaiting || hasErrors ? 'italic' : 'normal',
           }}
         >
-          {renderTranscriptionText(transcriptAnnotation)}
+          {/* Placeholder strings (silence/waiting/error) have no real transcript to highlight. */}
+          {isPlaceholder ? (
+            renderTranscriptionText(transcriptAnnotation)
+          ) : (
+            <HighlightedTranscript
+              text={transcriptAnnotation?.text ?? ''}
+              ruleAnnotations={evaluationAnnotation?.ruleAnnotations}
+            />
+          )}
         </Typography>
         <Box sx={{ display: 'flex', gap: 1, flexShrink: 0 }}>
           {!isSilence && (

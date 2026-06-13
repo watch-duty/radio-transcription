@@ -29,7 +29,6 @@ _TRANSCRIPT_ROW = {
     "evaluation_decisions": ["rule-1"],
     "playback_audio_uri": None,
     "evaluation_errors": [],
-    "evaluation_annotations": "{}",
     "created_at": datetime.datetime(2026, 1, 1, 0, 2, tzinfo=datetime.UTC),
 }
 
@@ -115,59 +114,6 @@ class TestCreateTranscript(BaseTranscriptStoreTest):
             await self.store.create_transcript(msg)
 
         self.assertIn("Invalid feed_id UUID", str(cm.exception))
-
-    async def test_round_trips_rule_annotations(self) -> None:
-        """Annotations on the input proto are serialized to JSONB and read back as the same proto shape."""
-        annotations_dict = {
-            "rule-1": {
-                "text_match": {
-                    "spans": [{"start": 5, "end": 9, "matched_text": "fire"}]
-                },
-            }
-        }
-        self.pool.fetchrow.return_value = {
-            **_TRANSCRIPT_ROW,
-            "evaluation_annotations": annotations_dict,
-        }
-
-        msg = EvaluatedTranscribedAudio()
-        msg.segment_id = str(_SEGMENT_ID)
-        msg.feed_id = str(_FEED_ID)
-        msg.transcript = "Hello world"
-        msg.start_timestamp.FromDatetime(
-            datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
-        )
-        msg.end_timestamp.FromDatetime(
-            datetime.datetime(2026, 1, 1, 0, 1, tzinfo=datetime.UTC)
-        )
-        span = msg.rule_annotations["rule-1"].text_match.spans.add()
-        span.start = 5
-        span.end = 9
-        span.matched_text = "fire"
-
-        result = await self.store.create_transcript(msg)
-
-        self.assertEqual(len(result.rule_annotations), 1)
-        self.assertIn("rule-1", result.rule_annotations)
-        self.assertEqual(
-            result.rule_annotations["rule-1"].text_match.spans[0].matched_text,
-            "fire",
-        )
-
-    async def test_raises_already_exists_error_on_duplicate(self) -> None:
-        """Verifies it raises AlreadyExistsError for duplicate segment_id."""
-        self.pool.fetchrow.side_effect = (
-            asyncpg.exceptions.UniqueViolationError()
-        )
-
-        msg = EvaluatedTranscribedAudio()
-        msg.segment_id = str(_SEGMENT_ID)
-        msg.feed_id = str(_FEED_ID)
-
-        with self.assertRaises(AlreadyExistsError) as cm:
-            await self.store.create_transcript(msg)
-
-        self.assertIn("already exists", str(cm.exception))
 
 
 class TestGetTranscript(BaseTranscriptStoreTest):

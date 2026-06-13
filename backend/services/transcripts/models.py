@@ -3,8 +3,6 @@ from typing import Any
 
 from pydantic import BaseModel, model_validator
 
-from backend.pipeline.common.evaluation.annotations import RuleAnnotation
-
 
 class Transcript(BaseModel):
     """Transcript type used by the Transcript API."""
@@ -23,7 +21,6 @@ class Transcript(BaseModel):
     evaluation_decisions: list[str] = []
     playback_audio_uri: str | None = None
     evaluation_errors: list[str] = []
-    rule_annotations: dict[str, RuleAnnotation] = {}
     errors: list[str] = []
 
     @model_validator(mode="before")

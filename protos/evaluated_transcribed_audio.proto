@@ -69,7 +69,7 @@ message EvaluatedTranscribedAudio {
   // optional payload for rules that produced one. Text-match rules carry span
   // offsets; future non-text rule kinds carry their own annotation messages via
   // the oneof in RuleAnnotation.
-  map<string, RuleAnnotation> rule_annotations = 18;
+  map<string, RuleAnnotation> rule_annotations = 19;
 
   // Reserved old enum field for backward compatibility in Pub/Sub schemas.
   // Field 16 (external_id) removed in GOO-498.
