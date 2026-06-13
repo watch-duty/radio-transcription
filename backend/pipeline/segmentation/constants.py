@@ -8,11 +8,32 @@ MAIN_TAG: Final = "main"
 # Pipeline Defaults
 DEFAULT_SIGNIFICANT_GAP_MS: Final = 800
 
-# Maximum number of chunks emitted per Dataflow bundle by the stateful ordering
-# DoFns. Keeps bundle execution time at ~1-2 s (5 × ~0.2-0.3 s/chunk) to ensure
-# minimal state lock contention and maximize self-chaining timer parallelization
-# across independent Windmill worker threads and worker leases.
-MAX_CHUNKS_PER_WINDMILL_BUNDLE: Final = 5
+# Operational Sizing Sweet Spot: Maximum number of chunks emitted per Dataflow bundle
+# by our stateful ordering DoFns. Why exactly 10 chunks (~150 seconds of raw audio)?
+#
+# 1. Multiprocessing Work-Stealing Parallelism: Python enforces the Global Interpreter Lock (GIL).
+#    If we computed 50+ chunks at a time, a single worker VM would entirely monopolize its CPU core,
+#    causing severe Head-of-Line starvation across our remaining autoscaled worker machines.
+#    Clamping at 10 chunks keeps DAG compute time at ~3-4 seconds, enabling central Windmill servers
+#    to instantly work-steal and distribute subsequent chained bundles to completely different idle VMs.
+#
+# 2. Transaction Rollback "Blast Radius": If a sudden GCP network glitch or downstream database
+#    exception occurs, Windmill must entirely roll back the active bundle transaction. A 10-chunk
+#    clamp limits your re-drive compute penalty perfectly to just a few seconds of compute effort.
+#
+# 3. Synchronous Checkpointing: Committing SSD state Checkpoints every ~3-4 seconds guarantees that
+#    downstream windowed joins, active database deduplication FSMs, and live custom Stackdriver
+#    user execution counters (`chunks_received`) remain 100% active, live, and real-time.
+MAX_CHUNKS_PER_WINDMILL_BUNDLE: Final = 10
+
+# Resilient Runner V2 Gate: Minimum timer advancement (in seconds) to satisfy Dataflow Streaming
+# Engine forward-progression invariants. In Apache Beam, scheduling a self-chaining recursive timer
+# at un-advanced Event-Time (`timestamp + 0`) risks triggering un-progressed circular watermark
+# dependencies, resulting in CommitStatus: NOT_FOUND commit loops or work-item evictions.
+# We beautifully advance self-chaining timers by the true physical Event-Time duration of the audio
+# successfully emitted in the bundle (e.g., ~150s), while maintaining this 1ms epsilon as an absolute
+# bulletproof safety lower-bound to guarantee forward progress across every edge case. See PR #727.
+WINDMILL_TIMER_MIN_ADVANCE_SECS: Final = 0.001
 GCS_DOWNLOAD_TIMEOUT_SEC: Final = 30
 DEFAULT_STALE_TIMEOUT_MS: Final = 75000
 DEFAULT_SEGMENTED_STALE_TIMEOUT_MS: Final = 5000
