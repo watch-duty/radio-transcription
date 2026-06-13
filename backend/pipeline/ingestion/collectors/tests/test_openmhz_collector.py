@@ -664,8 +664,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             "WebSocket upgrade failed with HTTP 403", str(ctx.exception)
         )
         self.assertIn("Refused WebSockets upgrade: 403", str(ctx.exception))
-        self.assertIn("token=<redacted>", str(ctx.exception))
-        self.assertNotIn("secret-value", str(ctx.exception))
+        self.assertIn("token=secret-value", str(ctx.exception))
 
     @patch(f"{_COL_MOD}.websocket_transport")
     @patch(f"{_COL_MOD}.control_flow.sleep_or_cancel", new_callable=AsyncMock)

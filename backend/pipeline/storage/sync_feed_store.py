@@ -12,6 +12,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from backend.pipeline.ingestion import quarantine_reason
+
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -138,6 +140,11 @@ class SyncFeedStore:
         reached.
         """
         status_reason_value = status_reason.value if status_reason is not None else None  # fmt: skip
+        stored_reason = (
+            quarantine_reason.cap_quarantine_reason_for_storage(reason)
+            if reason is not None
+            else None
+        )
         with self._connect_db() as conn:
             conn.execute(
                 _RECORD_FAILURE_SQL,
@@ -147,7 +154,7 @@ class SyncFeedStore:
                     self._max_backoff_sec,
                     self._base_backoff_sec,
                     self._failure_threshold,
-                    reason,
+                    stored_reason,
                     status_reason_value,
                     feed_id,
                 ),

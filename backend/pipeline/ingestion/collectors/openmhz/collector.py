@@ -13,7 +13,6 @@ from urllib.parse import urlparse
 
 from curl_cffi.requests import AsyncSession
 
-from backend.pipeline.ingestion import failure_diagnostics
 from backend.pipeline.ingestion.collectors import (
     control_flow,
     item_downloads,
@@ -91,10 +90,8 @@ def _transport_failure_from_exception(exc: Exception) -> FeedFailure | None:
 
     return collector_failure(
         status_reason,
-        failure_diagnostics.build_diagnostic(
-            f"OpenMHz WebSocket upgrade failed with HTTP {status}",
-            exception_text,
-        ),
+        f"OpenMHz WebSocket upgrade failed with HTTP {status}; "
+        f"{exception_text}",
     )
 
 
@@ -363,15 +360,16 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                 )
                 if last_transport_failure is not None:
                     raise last_transport_failure
+                exception_context = (
+                    f"; {_exception_chain_text(last_transport_exception)}"
+                    if last_transport_exception is not None
+                    else ""
+                )
                 raise collector_failure(
                     FeedStatusReason.SOURCE_UNREACHABLE,
-                    failure_diagnostics.build_diagnostic(
-                        "OpenMHz transport reconnect exhausted "
-                        f"after {MAX_RECONNECT_FAILURES} consecutive failures",
-                        _exception_chain_text(last_transport_exception)
-                        if last_transport_exception is not None
-                        else None,
-                    ),
+                    "OpenMHz transport reconnect exhausted "
+                    f"after {MAX_RECONNECT_FAILURES} consecutive failures"
+                    f"{exception_context}",
                 )
 
             reconnect_attempt = max(consecutive_ws_failures, 1)

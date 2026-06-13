@@ -45,7 +45,7 @@ is a nullable, current abnormal-condition label that helps operators answer:
 async progress, successful Echo heartbeat/progress, and manual reset clear
 stale status reasons.
 
-`quarantine_reason` is different. It preserves detailed, redacted diagnostic
+`quarantine_reason` is different. It preserves detailed diagnostic
 text for the failure episode that crosses the quarantine threshold. Do not
 parse it for canonical ownership, do not treat it as a stable code, and do not
 replace it with `status_reason`.
@@ -136,6 +136,9 @@ runtime.
 Shared failure classifiers classify evidence only. Collectors and source
 helpers still own quarantine-reason text because they know the operation,
 available exception text, stderr tail, and source-specific semantics.
+`backend.pipeline.ingestion.quarantine_reason` owns only shared storage-boundary
+helpers: exception detail formatting and the database storage cap. It must not
+grow source-specific message construction helpers.
 Collectors still own:
 
 - retry and backoff policy;
@@ -145,17 +148,21 @@ Collectors still own:
 
 ## Quarantine-Reason Policy
 
-Quarantine reasons should be useful for on-call debugging and safe for
-operator surfaces. Include the direct evidence that explains the failure:
-terminal HTTP status and reason phrase, exception class/message after retries
-are exhausted, ffmpeg exit/signal/timeout details, and the bounded stderr tail
-when it materially explains an ffmpeg failure.
+Quarantine reasons should be useful for on-call debugging. Include the direct
+evidence that explains the failure: terminal HTTP status and reason phrase,
+exception class/message after retries are exhausted, ffmpeg exit/signal/timeout
+details, and the bounded stderr tail when it materially explains an ffmpeg
+failure.
 
 Do not derive quarantine reasons from Python stack frames or function names.
 Build them at the call site that has the evidence. Shared helpers may render
 generic operations they own, such as item media downloads or JSON fetches.
 Collectors render source-specific operations, such as stream capture and
 same-stream probes.
+
+Do not truncate quarantine-reason text in collectors or failure objects.
+`FeedFailure` and runtime `_PipelineFailure` carry full diagnostics; async and
+sync feed stores cap the text immediately before persisting it.
 
 Do not branch on quarantine-reason text. If later behavior depends on a
 classification, carry typed information such as HTTP status, ffmpeg failure

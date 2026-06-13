@@ -18,18 +18,6 @@ MIXED_ITEM_FAILURE_REASON = "mixed_item_failures"
 MISSING_SOURCE_FEED_ID_REASON = "missing_source_feed_id"
 
 
-def format_exception_context(prefix: str, exc: BaseException) -> str:
-    """Format one-line exception context for logs or quarantine reasons."""
-    if not prefix:
-        msg = "exception context prefix must be non-empty"
-        raise ValueError(msg)
-
-    message = " ".join(str(exc).split())
-    if message:
-        return f"{prefix}: {type(exc).__name__}: {message}"
-    return f"{prefix}: {type(exc).__name__}"
-
-
 @dataclasses.dataclass(frozen=True)
 class FailureInfo:
     """Feed status plus quarantine-reason text before scope is applied."""
