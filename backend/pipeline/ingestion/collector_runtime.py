@@ -24,9 +24,9 @@ from backend.pipeline.common.log_helper import setup_asyncio_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.ingestion import (
     health_server,
-    quarantine_reason,
     quarantine_telemetry,
 )
+from backend.pipeline.ingestion.failure_classifiers import pubsub
 from backend.pipeline.ingestion.health_server import HealthState
 from backend.pipeline.ingestion.models import (
     AudioMimeType,
@@ -76,25 +76,6 @@ class _PipelineFailure(Exception):
     def __init__(self, reason: str) -> None:
         self.reason = reason
         super().__init__(self.reason)
-
-
-def _pubsub_publish_failure_reason(exc: Exception) -> str:
-    """Build operator diagnostic text for a failed Pub/Sub publish."""
-    if isinstance(exc, pubsub_exceptions.PublishToPausedOrderingKeyException):
-        return (
-            "Pub/Sub publish paused for ordering key: "
-            f"{quarantine_reason.exception_text(exc)}"
-        )
-
-    text = str(exc)
-    if "schema validation" in text.lower():
-        parts = ["Pub/Sub schema validation failed"]
-        if "INVALID_BINARY_PROTO_MESSAGE" in text:
-            parts.append("INVALID_BINARY_PROTO_MESSAGE")
-        parts.append(text)
-        return "; ".join(parts)
-
-    return f"Pub/Sub publish failed: {quarantine_reason.exception_text(exc)}"
 
 
 class CollectorRuntime:
@@ -906,7 +887,7 @@ class CollectorRuntime:
         except (asyncio.CancelledError, LeaseExpiredError):
             raise
         except Exception as exc:
-            raise _PipelineFailure(_pubsub_publish_failure_reason(exc)) from exc
+            raise _PipelineFailure(pubsub.publish_failure_reason(exc)) from exc
 
         logger.info(
             "Published message %s for feed %s",
