@@ -261,7 +261,10 @@ def _optional_gcs_uri(data: dict[str, Any], key: str) -> str | None:
     value = _lookup(data, key)
     if value is None:
         return None
-    if not isinstance(value, str) or not value.strip():
+    if not isinstance(value, str):
+        msg = f"{key} must be a gs:// URI"
+        raise RunConfigError(msg)
+    if not value.strip():
         return None
     uri = value.strip()
     if not uri.startswith("gs://"):

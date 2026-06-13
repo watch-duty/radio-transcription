@@ -122,6 +122,12 @@ learning_rate_multiplier = {values["learning_rate_multiplier"]}
             "gs://bucket/sft/runs/round/config.json",
         )
 
+    def test_eval_config_rejects_non_string_optional_manifest_uri(self) -> None:
+        body = self._valid_toml(train_manifest_uri="123")
+
+        with self.assertRaisesRegex(RunConfigError, "train_manifest_uri"):
+            load_eval_run_config(self._write_config(body))
+
     def test_round_id_must_be_safe_single_path_component(self) -> None:
         for round_id in (
             "../escape",
