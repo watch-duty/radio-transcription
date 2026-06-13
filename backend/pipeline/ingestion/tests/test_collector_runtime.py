@@ -1973,7 +1973,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             feed_id=str(_FEED_ID),
             feed_name="Test Feed",
             source_type="bcfy_feeds",
-            reason="capture_failed",
+            reason="RuntimeError: capture_failed",
             status_reason="system_unexpected_error",
         )
         # _releasing_feeds cleaned up
@@ -2010,49 +2010,37 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
 
         mock_telemetry.emit_quarantine_event.assert_not_awaited()
 
-    async def test_reason_caps_at_200_chars(self) -> None:
-        """Catch-all truncates exception messages longer than 200 chars.
-
-        Guards the 100→200 cap bump in `_process_feed`. A 250-char message
-        must be truncated to exactly 200 chars before reaching
-        `report_feed_failure`; a 150-char message (over the old 100-char
-        cap, under the new 200-char cap) must pass through untruncated.
-        """
+    async def test_unexpected_exception_reason_reaches_storage_uncapped(
+        self,
+    ) -> None:
+        """Catch-all preserves full diagnostics until the storage boundary."""
         long_message = "x" * 250
-        mid_message = "y" * 150
 
-        for raised_message, expected_reason in (
-            (long_message, "x" * 200),
-            (mid_message, "y" * 150),
-        ):
+        async def _failing_capture(feed, shutdown, _resources):
+            yield _make_captured_chunk(b"audio")
+            raise RuntimeError(long_message)
 
-            async def _failing_capture(
-                feed, shutdown, _resources, _msg=raised_message
-            ):
-                yield _make_captured_chunk(b"audio")
-                raise RuntimeError(_msg)
+        rt = CollectorRuntime(
+            capture_fn=_failing_capture, settings=_make_settings()
+        )
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress.return_value = True
+        rt._store.report_feed_failure.return_value = "failing"
+        rt._releasing_feeds = set()
 
-            rt = CollectorRuntime(
-                capture_fn=_failing_capture, settings=_make_settings()
-            )
-            rt._shutdown = asyncio.Event()
-            rt._lease_lost = asyncio.Event()
-            rt._capture_resources = _default_resources()
-            rt._store = mock.AsyncMock()
-            rt._store.update_feed_progress.return_value = True
-            rt._store.report_feed_failure.return_value = "failing"
-            rt._releasing_feeds = set()
+        with _mock_upload_audio(), _mock_pubsub_publish():
+            await rt._process_feed(_FEED)
 
-            with _mock_upload_audio(), _mock_pubsub_publish():
-                await rt._process_feed(_FEED)
-
-            rt._store.report_feed_failure.assert_awaited_once()
-            kwargs = rt._store.report_feed_failure.await_args.kwargs
-            self.assertEqual(kwargs["reason"], expected_reason)
-            self.assertIs(
-                kwargs["status_reason"],
-                FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
-            )
+        rt._store.report_feed_failure.assert_awaited_once()
+        kwargs = rt._store.report_feed_failure.await_args.kwargs
+        self.assertEqual(kwargs["reason"], f"RuntimeError: {long_message}")
+        self.assertIs(
+            kwargs["status_reason"],
+            FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
+        )
 
     async def test_typed_collector_failure_persists_carried_status_reason(
         self,
@@ -2252,7 +2240,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         json_fields = cast("dict[str, Any]", record.__dict__["json_fields"])
         self.assertEqual(json_fields["feed_id"], str(_FEED_ID))
         self.assertEqual(json_fields["source_type"], "bcfy_feeds")
-        self.assertEqual(json_fields["reason"], "capture_failed")
+        self.assertEqual(json_fields["reason"], "RuntimeError: capture_failed")
         self.assertEqual(
             json_fields["status_reason"],
             "system_unexpected_error",

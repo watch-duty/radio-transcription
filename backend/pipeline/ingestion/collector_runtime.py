@@ -24,6 +24,7 @@ from backend.pipeline.common.log_helper import setup_asyncio_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.ingestion import (
     health_server,
+    quarantine_reason,
     quarantine_telemetry,
 )
 from backend.pipeline.ingestion.failure_classifiers import pubsub
@@ -1229,7 +1230,7 @@ class CollectorRuntime:
             # Transitional catch-all for bugs or untyped collector failures.
             # Source-specific attribution belongs in collectors that raise
             # FeedFailure; the runtime only records the explicit fallback.
-            reason = str(e)[:200] if str(e) else type(e).__name__
+            reason = quarantine_reason.exception_text(e)
             await self._record_feed_failure(
                 feed,
                 worker_id,
