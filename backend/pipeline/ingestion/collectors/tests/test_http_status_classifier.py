@@ -10,12 +10,10 @@ from backend.pipeline.ingestion.collectors.failure_classifiers import (
 from backend.pipeline.storage import feed_store
 
 
-def _require_classification(
-    value,
-):
-    """Return a classification for tests that intentionally expect one."""
+def _require_status_reason(value: feed_store.FeedStatusReason | None):
+    """Return a status reason for tests that intentionally expect one."""
     if value is None:
-        msg = "Expected FailureClassification, got None"
+        msg = "Expected FeedStatusReason, got None"
         raise AssertionError(msg)
     return value
 
@@ -24,76 +22,49 @@ class TestHTTPStatusClassifier(unittest.TestCase):
     """Shared HTTP status policy behavior."""
 
     def test_success_status_returns_none(self) -> None:
-        self.assertIsNone(
-            http_status.classify_http_status(200, reason_prefix="item_http")
-        )
-        self.assertIsNone(
-            http_status.classify_http_status(302, reason_prefix="item_http")
-        )
+        self.assertIsNone(http_status.classify_http_status(200))
+        self.assertIsNone(http_status.classify_http_status(302))
 
     def test_auth_statuses_map_to_authentication_failed(self) -> None:
         for status in (401, 403):
             with self.subTest(status=status):
-                classification = _require_classification(
-                    http_status.classify_http_status(
-                        status,
-                        reason_prefix="item_http",
-                    )
+                status_reason = _require_status_reason(
+                    http_status.classify_http_status(status)
                 )
 
                 self.assertIs(
-                    classification.status_reason,
+                    status_reason,
                     feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-                )
-                self.assertEqual(
-                    classification.reason,
-                    f"item_http_{status}",
                 )
 
     def test_rate_limit_maps_to_rate_limited(self) -> None:
-        classification = _require_classification(
-            http_status.classify_http_status(
-                429,
-                reason_prefix="item_http",
-            )
+        status_reason = _require_status_reason(
+            http_status.classify_http_status(429)
         )
 
         self.assertIs(
-            classification.status_reason,
+            status_reason,
             feed_store.FeedStatusReason.SOURCE_RATE_LIMITED,
         )
-        self.assertEqual(classification.reason, "item_http_429")
 
     def test_default_transient_statuses_map_to_source_unreachable(
         self,
     ) -> None:
         for status in (408, 500, 502, 503, 504, 599):
             with self.subTest(status=status):
-                classification = _require_classification(
-                    http_status.classify_http_status(
-                        status,
-                        reason_prefix="item_http",
-                    )
+                status_reason = _require_status_reason(
+                    http_status.classify_http_status(status)
                 )
 
                 self.assertIs(
-                    classification.status_reason,
+                    status_reason,
                     feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
-                )
-                self.assertEqual(
-                    classification.reason,
-                    f"item_http_{status}",
                 )
 
     def test_ambiguous_and_nonstandard_statuses_return_none(self) -> None:
         for status in (400, 404, 409, 410, 423, 425, 426, 600, 799, 999):
             with self.subTest(status=status):
-                self.assertIsNone(
-                    http_status.classify_http_status(
-                        status,
-                        reason_prefix="item_http",
-                    )
-                )
+                self.assertIsNone(http_status.classify_http_status(status))
     def test_exact_override_beats_family_default(self) -> None:
         policy = http_status.HTTPStatusPolicy(
             exact={404: feed_store.FeedStatusReason.SOURCE_OFFLINE},
@@ -104,19 +75,17 @@ class TestHTTPStatusClassifier(unittest.TestCase):
             ),
         )
 
-        classification = _require_classification(
+        status_reason = _require_status_reason(
             http_status.classify_http_status(
                 404,
-                reason_prefix="stream_http",
                 policy=policy,
             )
         )
 
         self.assertIs(
-            classification.status_reason,
+            status_reason,
             feed_store.FeedStatusReason.SOURCE_OFFLINE,
         )
-        self.assertEqual(classification.reason, "stream_http_404")
 
     def test_fire_notifications_poll_policy_maps_4xx_to_configuration_invalid(
         self,
@@ -138,15 +107,14 @@ class TestHTTPStatusClassifier(unittest.TestCase):
 
         for status in (400, 404):
             with self.subTest(status=status):
-                classification = _require_classification(
+                status_reason = _require_status_reason(
                     http_status.classify_http_status(
                         status,
-                        reason_prefix="fn_api_http",
                         policy=policy,
                     )
                 )
                 self.assertIs(
-                    classification.status_reason,
+                    status_reason,
                     feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
                 )
 
@@ -162,14 +130,13 @@ class TestHTTPStatusClassifier(unittest.TestCase):
             (429, feed_store.FeedStatusReason.SOURCE_RATE_LIMITED),
         ):
             with self.subTest(status=status):
-                classification = _require_classification(
+                status_reason = _require_status_reason(
                     http_status.classify_http_status(
                         status,
-                        reason_prefix="fn_api_http",
                         policy=policy,
                     )
                 )
-                self.assertIs(classification.status_reason, reason)
+                self.assertIs(status_reason, reason)
 
 
 if __name__ == "__main__":

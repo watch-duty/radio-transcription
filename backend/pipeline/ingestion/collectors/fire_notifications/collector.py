@@ -65,16 +65,18 @@ _FN_POLL_HTTP_POLICY = http_status.HTTPStatusPolicy(
 
 def _classify_poll_status(
     status: int,
-) -> failure_classification.FailureClassification:
+) -> failure_classification.FailureInfo:
     """Classify a terminal Fire Notifications poll status."""
-    classification = http_status.classify_http_status(
+    status_reason = http_status.classify_http_status(
         status,
-        reason_prefix="fn_api_http",
         policy=_FN_POLL_HTTP_POLICY,
     )
-    if classification is not None:
-        return classification
-    return failure_classification.FailureClassification(
+    if status_reason is not None:
+        return failure_classification.FailureInfo(
+            status_reason,
+            f"fn_api_http_{status}",
+        )
+    return failure_classification.FailureInfo(
         feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
         "source_unreachable",
     )
@@ -332,7 +334,7 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
     # We use a deque with maxlen to prevent unbounded memory growth.
     processed_uuids: collections.deque[str] = collections.deque(maxlen=1000)
     consecutive_failures = 0
-    last_poll_failure = failure_classification.FailureClassification(
+    last_poll_failure = failure_classification.FailureInfo(
         feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
         "source_unreachable",
     )
@@ -390,7 +392,7 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
                 raise
             except Exception:
                 last_poll_failure = (
-                    failure_classification.FailureClassification(
+                    failure_classification.FailureInfo(
                         feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
                         "source_unreachable",
                     )

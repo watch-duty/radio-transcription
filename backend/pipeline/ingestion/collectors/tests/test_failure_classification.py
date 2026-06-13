@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 
 from backend.pipeline.ingestion.collectors.failure_classification import (
-    FailureClassification,
+    FailureInfo,
     ItemBatchOutcome,
     ItemFailure,
     collector_failure,
@@ -65,25 +65,25 @@ class TestFormatExceptionContext(unittest.TestCase):
 class TestItemBatchOutcome(unittest.TestCase):
     """Shared item-failure promotion rules."""
 
-    def test_failure_classification_preserves_fields(self) -> None:
-        classification = FailureClassification(
+    def test_failure_info_preserves_fields(self) -> None:
+        info = FailureInfo(
             FeedStatusReason.SOURCE_UNREACHABLE,
             "download_failed",
         )
 
         self.assertIs(
-            classification.status_reason,
+            info.status_reason,
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
-        self.assertEqual(classification.reason, "download_failed")
+        self.assertEqual(info.reason, "download_failed")
 
-    def test_item_failure_from_classification_copies_fields(self) -> None:
-        classification = FailureClassification(
+    def test_item_failure_from_info_copies_fields(self) -> None:
+        info = FailureInfo(
             FeedStatusReason.SOURCE_UNREACHABLE,
             "download_failed",
         )
 
-        failure = ItemFailure.from_classification(classification)
+        failure = ItemFailure.from_info(info)
 
         self.assertIs(
             failure.status_reason,

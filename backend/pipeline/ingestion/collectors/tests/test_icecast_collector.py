@@ -756,7 +756,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
-    async def test_ffmpeg_signal_kill_normalizes_to_signal_tag(
+    async def test_ffmpeg_signal_kill_renders_signal_diagnostic(
         self, mock_create_ffmpeg: AsyncMock
     ) -> None:
         """Test: signal-killed ffmpeg maps to diagnostic text.

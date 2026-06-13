@@ -143,7 +143,8 @@ likely owner is the source/provider or the ingestion system.
 The detailed, redacted diagnostic message persisted when a feed failure episode
 crosses the quarantine threshold. It describes that threshold-crossing episode
 for debugging; it is not the lifecycle owner label and does not summarize the
-full failure budget history.
+full failure budget history. It is not a stable machine-readable code and
+should not drive control flow.
 
 ### Quarantine
 

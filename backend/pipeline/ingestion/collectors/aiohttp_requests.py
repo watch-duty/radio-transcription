@@ -123,16 +123,18 @@ def _classification_for_status(
     policy: http_status.HTTPStatusPolicy,
     fallback_status_reason: feed_store.FeedStatusReason,
     fallback_reason: str,
-) -> failure_classification.FailureClassification:
+) -> failure_classification.FailureInfo:
     """Classify status or return the caller's bounded fallback."""
-    classification = http_status.classify_http_status(
+    status_reason = http_status.classify_http_status(
         status,
-        reason_prefix=reason_prefix,
         policy=policy,
     )
-    if classification is not None:
-        return classification
-    return failure_classification.FailureClassification(
+    if status_reason is not None:
+        return failure_classification.FailureInfo(
+            status_reason,
+            f"{reason_prefix}_{status}",
+        )
+    return failure_classification.FailureInfo(
         fallback_status_reason,
         fallback_reason,
     )
@@ -316,7 +318,7 @@ async def download_item_media(
                     fallback_status_reason=fallback_status_reason,
                     fallback_reason=f"{reason_prefix}_{response.status}",
                 )
-                return ItemFailure.from_classification(classification)
+                return ItemFailure.from_info(classification)
         except (aiohttp.ClientError, TimeoutError) as exc:
             if _has_attempt_remaining(attempt, retry_config):
                 await _sleep_for_retry(

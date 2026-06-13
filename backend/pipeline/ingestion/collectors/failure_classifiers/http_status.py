@@ -6,7 +6,6 @@ import dataclasses
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
-from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.storage import feed_store
 
 if TYPE_CHECKING:
@@ -53,10 +52,9 @@ DEFAULT_HTTP_STATUS_POLICY = HTTPStatusPolicy(
 def classify_http_status(
     status: int,
     *,
-    reason_prefix: str,
     policy: HTTPStatusPolicy = DEFAULT_HTTP_STATUS_POLICY,
-) -> failure_classification.FailureClassification | None:
-    """Classify a terminal HTTP status using an explicit source policy."""
+) -> feed_store.FeedStatusReason | None:
+    """Classify terminal HTTP status evidence using an explicit source policy."""
     if 100 <= status < 400:
         return None
 
@@ -69,10 +67,4 @@ def classify_http_status(
     else:
         status_reason = policy.default_other_failure
 
-    if status_reason is None:
-        return None
-
-    return failure_classification.FailureClassification(
-        status_reason,
-        f"{reason_prefix}_{status}",
-    )
+    return status_reason

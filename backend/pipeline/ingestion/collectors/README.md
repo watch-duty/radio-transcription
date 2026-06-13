@@ -45,8 +45,9 @@ is a nullable, current abnormal-condition label that helps operators answer:
 async progress, successful Echo heartbeat/progress, and manual reset clear
 stale status reasons.
 
-`quarantine_reason` is different. It preserves the short raw forensic reason
-on quarantine transitions. Do not parse it for canonical ownership, and do not
+`quarantine_reason` is different. It preserves detailed, redacted diagnostic
+text for the failure episode that crosses the quarantine threshold. Do not
+parse it for canonical ownership, do not treat it as a stable code, and do not
 replace it with `status_reason`.
 
 Use source-owned reasons when the source or its provider cannot currently
@@ -84,7 +85,7 @@ every eligible attempted item in that boundary fails:
 
 - If all failures have the same canonical reason, promote that reason.
 - If all attempted items failed but reasons are mixed, promote
-  `system_collector_error` with the raw reason `mixed_item_failures`.
+  `system_collector_error` with the quarantine reason `mixed_item_failures`.
 - If no eligible items were attempted, or at least one item succeeded, do not
   record a feed failure.
 
@@ -119,42 +120,48 @@ attempted item continue through `_process_file_list` item handling.
 
 ## Failure Classification Model
 
-`FailureClassification` is neutral terminal evidence: a canonical
-`FeedStatusReason` plus a bounded reason tag. It is not item-scoped or
-feed-scoped by itself.
+`FailureInfo` is a lightweight container for a canonical `FeedStatusReason`
+plus quarantine-reason text before item or feed scope is applied. The text is
+operator diagnostic material, not a machine-readable tag.
 
-`ItemFailure` applies item scope to a `FailureClassification`. Use it when an
-individual object, call, file, or media URL fails inside a collector-owned
-batch. `ItemBatchOutcome` owns the "all attempted items failed" promotion
-rule.
+`ItemFailure` applies item scope to a `FailureInfo` or locally-built
+quarantine reason. Use it when an individual object, call, file, or media URL
+fails inside a collector-owned batch. `ItemBatchOutcome` owns the "all
+attempted items failed" promotion rule.
 
 `FeedFailure` applies feed scope. Raise it only after the collector has enough
 source-specific evidence to report the current feed-level condition to the
 runtime.
 
-Shared failure classifiers classify evidence only. Collectors still own:
+Shared failure classifiers classify evidence only. Collectors and source
+helpers still own quarantine-reason text because they know the operation,
+available exception text, stderr tail, and source-specific semantics.
+Collectors still own:
 
 - retry and backoff policy;
 - same-endpoint probes;
 - item versus feed escalation;
-- final reason-prefix selection for the endpoint or stage.
+- final quarantine-reason construction.
 
-## Endpoint/Stage Policy
+## Quarantine-Reason Policy
 
-Use endpoint/stage-specific reason prefixes so on-call output says where the
-evidence came from without carrying high-cardinality data:
+Quarantine reasons should be useful for on-call debugging and safe for
+operator surfaces. Include the direct evidence that explains the failure:
+terminal HTTP status and reason phrase, exception class/message after retries
+are exhausted, ffmpeg exit/signal/timeout details, and the bounded stderr tail
+when it materially explains an ffmpeg failure.
 
-| Reason pattern | Use when |
-|----------------|----------|
-| `item_http_<status>` | A discrete downloaded item, media file, call recording, or object fails with a terminal HTTP status. |
-| `item_download_failed` | A discrete item download exhausts retries without terminal HTTP status evidence, such as repeated connection drops or timeouts. |
-| `calls_api_http_<status>` | Broadcastify Calls API or metadata endpoint status is terminal after its retry policy. |
-| `fn_api_http_<status>` | Fire Notifications poll/list endpoint status is terminal after its retry policy. |
-| `stream_http_<status>` | A direct stream endpoint or same-endpoint probe returns a terminal HTTP status. |
-| `ffmpeg_exit_<n>` | ffmpeg exits non-zero without stronger HTTP/probe evidence. |
-| `ffmpeg_signal_<n>` | ffmpeg is terminated by POSIX signal `n`. |
-| `capture_timeout` | Stream capture exceeds the collector-owned read timeout. |
-| `mixed_item_failures` | Every attempted item failed, but item failures have mixed canonical reasons. |
+Do not derive quarantine reasons from Python stack frames or function names.
+Build them at the call site that has the evidence. Shared helpers may render
+generic operations they own, such as item media downloads or JSON fetches.
+Collectors render source-specific operations, such as stream capture and
+same-stream probes.
+
+Do not branch on quarantine-reason text. If later behavior depends on a
+classification, carry typed information such as HTTP status, ffmpeg failure
+kind, exit code, signal number, or a local probe outcome. For example, Icecast
+stream capture uses typed ffmpeg failure info to decide whether to run a
+same-stream probe; it does not parse strings like `ffmpeg_signal_9`.
 
 The shared HTTP and ffmpeg classifiers are deliberately conservative. When an
 endpoint has source-specific semantics, define a local policy near the
@@ -166,11 +173,9 @@ Do not duplicate exact HTTP policy tables in this guide. The `HTTPStatusPolicy`
 instances in code and their tests are the source of truth; this document should
 explain why policies are scoped by endpoint/stage, not restate every mapping.
 
-Reason strings must stay safe for operator surfaces. Exception-derived terminal
-failures may append the exception class/message to a stable stage prefix, for
-example `item_download_failed: TimeoutError`. Do not append raw HTTP response
-bodies, ffmpeg stderr blobs, stack traces, URLs, tokens, object IDs, timestamps,
-request bodies, signed URLs, feed IDs, call IDs, or secrets in `reason`.
+Do not append raw HTTP response bodies, full ffmpeg stderr, stack traces, URLs,
+tokens, object IDs, timestamps, request bodies, signed URLs, feed IDs, call IDs,
+or secrets in quarantine-reason text.
 
 ## Shared Collector Helpers
 
