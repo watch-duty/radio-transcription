@@ -1,7 +1,13 @@
 # `round_id` becomes gs://<bucket>/sft/runs/<round_id>/ and must be unique
 # for a new experiment.
 round_id = "YYYY-MM-DD-short-description"
+
+# `dataset` identifies the SFT training recipe/version. `inference_dataset_slug`
+# identifies the evaluated corpus/split used for normalized inference-manifest
+# output placement, for example:
+# gs://<bucket>/inference_manifests/echo/eval/<model>/<round_id>/base.jsonl
 dataset = "dataset-version-name"
+inference_dataset_slug = "echo/eval"
 
 # These are canonical manifests. `prepare` derives Gemini SFT JSONL for train
 # and validation, while eval stays held out for `gemini-sft eval`.

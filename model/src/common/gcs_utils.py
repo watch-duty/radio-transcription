@@ -46,6 +46,23 @@ def blob_exists(
     return blob.exists(retry=DEFAULT_RETRY, timeout=timeout)
 
 
+def gcs_uri_exists(storage_client: storage.Client, uri: str) -> bool:
+    """Return whether a GCS object exists."""
+    return blob_exists(storage_client, uri)
+
+
+def gcs_prefix_has_any_blob(
+    storage_client: storage.Client, prefix_uri: str
+) -> bool:
+    """Return whether any object exists under a GCS prefix."""
+    bucket_name, blob_prefix = parse_gcs_uri(prefix_uri)
+    for _ in storage_client.bucket(bucket_name).list_blobs(
+        prefix=blob_prefix, max_results=1
+    ):
+        return True
+    return False
+
+
 def download_blob_to_file(
     storage_client: storage.Client,
     bucket_name: str,
@@ -75,6 +92,55 @@ def upload_file_to_blob(
     )
 
 
+def download_gcs_uri(
+    storage_client: storage.Client, uri: str, local_path: Path
+) -> None:
+    """Download a GCS object to a local path."""
+    bucket_name, blob_path = parse_gcs_uri(uri)
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    download_blob_to_file(
+        storage_client, bucket_name, blob_path, str(local_path)
+    )
+
+
+def upload_local_file(
+    storage_client: storage.Client, local_path: Path, gcs_uri: str
+) -> None:
+    """Upload a local file to a GCS object."""
+    bucket_name, blob_path = parse_gcs_uri(gcs_uri)
+    upload_file_to_blob(storage_client, bucket_name, blob_path, str(local_path))
+
+
+def upload_text(
+    storage_client: storage.Client,
+    text: str,
+    gcs_uri: str,
+    *,
+    content_type: str = "text/plain",
+) -> None:
+    """Upload text directly to a GCS object."""
+    bucket_name, blob_path = parse_gcs_uri(gcs_uri)
+    storage_client.bucket(bucket_name).blob(blob_path).upload_from_string(
+        text, content_type=content_type, retry=DEFAULT_RETRY
+    )
+
+
+def download_json_text(
+    storage_client: storage.Client, gcs_uri: str
+) -> dict[str, Any]:
+    """Download a JSON object from GCS."""
+    bucket_name, blob_path = parse_gcs_uri(gcs_uri)
+    obj = json.loads(
+        storage_client.bucket(bucket_name)
+        .blob(blob_path)
+        .download_as_text(retry=DEFAULT_RETRY)
+    )
+    if not isinstance(obj, dict):
+        msg = f"Expected JSON object at {gcs_uri}"
+        raise TypeError(msg)
+    return obj
+
+
 def download_jsonl_manifest(
     storage_client: storage.Client, gcs_manifest_uri: str
 ) -> list[dict[str, Any]]:
@@ -102,8 +168,10 @@ def upload_inference_results(
     experiment_name: str,
     results_list: list[dict[str, Any]],
 ) -> str:
-    """
-    Uploads inference results directly from memory to GCS using the standard path structure.
+    """Upload legacy Colab inference results to GCS.
+
+    Deprecated for new pipelines: use ``common.inference_manifest`` so output
+    paths and ``pred_text_*`` semantics match the shared scorer contract.
     """
     blob_path = f"inference_manifests/{project_name}/{model_name}/{experiment_name}_results.jsonl"
 
