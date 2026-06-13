@@ -9,7 +9,11 @@ _SRC_DIR = str(Path(__file__).resolve().parents[2] / "src")
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
-from gemini_sft.config import RunConfigError, load_run_config  # noqa: E402
+from gemini_sft.config import (  # noqa: E402
+    RunConfigError,
+    load_eval_run_config,
+    load_run_config,
+)
 
 
 class TestRunConfig(unittest.TestCase):
@@ -59,6 +63,12 @@ learning_rate_multiplier = {values["learning_rate_multiplier"]}
 {values["prompts"]}
 """
 
+    def _without_manifest_lines(self, body: str, *keys: str) -> str:
+        prefixes = tuple(f"{key} =" for key in keys)
+        return "\n".join(
+            line for line in body.splitlines() if not line.startswith(prefixes)
+        )
+
     def test_valid_minimal_toml_resolves_required_fields_and_paths(
         self,
     ) -> None:
@@ -94,29 +104,42 @@ learning_rate_multiplier = {values["learning_rate_multiplier"]}
         with self.assertRaisesRegex(RunConfigError, "validation_manifest_uri"):
             load_run_config(self._write_config(body))
 
-    def test_missing_inference_dataset_slug_raises(self) -> None:
-        body = self._valid_toml(inference_dataset_slug='""')
-
-        with self.assertRaisesRegex(RunConfigError, "inference_dataset_slug"):
-            load_run_config(self._write_config(body))
-
-    def test_inference_dataset_slug_rejects_unsafe_path_segments(
+    def test_eval_config_allows_missing_train_and_validation_manifest_uris(
         self,
     ) -> None:
-        for slug in (
-            "../echo",
-            "/echo/eval",
-            "echo/eval/",
-            "echo//eval",
-            "echo\\eval",
-        ):
-            with self.subTest(slug=slug):
-                body = self._valid_toml(inference_dataset_slug=f"'{slug}'")
+        body = self._without_manifest_lines(
+            self._valid_toml(),
+            "train_manifest_uri",
+            "validation_manifest_uri",
+        )
 
-                with self.assertRaisesRegex(
-                    RunConfigError, "inference_dataset_slug"
-                ):
-                    load_run_config(self._write_config(body))
+        cfg = load_eval_run_config(self._write_config(body))
+
+        self.assertIsNone(cfg.train_manifest_uri)
+        self.assertIsNone(cfg.validation_manifest_uri)
+        self.assertEqual(
+            cfg.eval_manifest_uri,
+            "gs://source/manifests/eval.jsonl",
+        )
+        self.assertEqual(
+            cfg.paths.config_uri,
+            "gs://bucket/sft/runs/round/config.json",
+        )
+
+    def test_eval_config_rejects_non_string_optional_manifest_uri(self) -> None:
+        body = self._valid_toml(train_manifest_uri="123")
+
+        with self.assertRaisesRegex(RunConfigError, "train_manifest_uri"):
+            load_eval_run_config(self._write_config(body))
+
+    def test_eval_config_requires_eval_manifest_uri(self) -> None:
+        body = self._without_manifest_lines(
+            self._valid_toml(),
+            "eval_manifest_uri",
+        )
+
+        with self.assertRaisesRegex(RunConfigError, "eval_manifest_uri"):
+            load_eval_run_config(self._write_config(body))
 
     def test_round_id_must_be_safe_single_path_component(self) -> None:
         for round_id in (
@@ -129,6 +152,16 @@ learning_rate_multiplier = {values["learning_rate_multiplier"]}
                 body = self._valid_toml(round_id=f'"{round_id}"')
 
                 with self.assertRaisesRegex(RunConfigError, "round_id"):
+                    load_run_config(self._write_config(body))
+
+    def test_inference_dataset_slug_must_be_safe_relative_path(self) -> None:
+        for slug in ("", "/absolute", "echo/../eval", "echo//eval"):
+            with self.subTest(slug=slug):
+                body = self._valid_toml(inference_dataset_slug=f'"{slug}"')
+
+                with self.assertRaisesRegex(
+                    RunConfigError, "inference_dataset_slug"
+                ):
                     load_run_config(self._write_config(body))
 
     def test_inline_prompts_override_defaults(self) -> None:

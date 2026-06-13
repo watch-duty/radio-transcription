@@ -13,7 +13,13 @@ from common.gcs_utils import (
     parse_gcs_uri,
     upload_file_to_blob,
 )
-from common.manifest import CanonicalRow, load_manifest, rows_from_manifest
+from common.manifest import (
+    CanonicalRow,
+    canonical_row_identity,
+    load_manifest,
+    require_canonical_manifest,
+    rows_from_manifest,
+)
 
 from gemini_sft.records import write_config
 
@@ -183,16 +189,21 @@ def load_canonical_rows(
 ) -> tuple[list[dict[str, Any]], list[CanonicalRow]]:
     """Load a canonical manifest and return raw entries plus parsed rows."""
     entries = load_manifest(str(path))
+    return canonical_rows_from_entries(entries, split=split, source=str(path))
+
+
+def canonical_rows_from_entries(
+    entries: list[dict[str, Any]],
+    *,
+    split: str,
+    source: str,
+) -> tuple[list[dict[str, Any]], list[CanonicalRow]]:
+    """Validate and convert canonical manifest entries for packaged flows."""
+    if not entries:
+        msg = f"{split} manifest has zero parsed rows: {source}"
+        raise ValueError(msg)
+    require_canonical_manifest(entries)
     rows = rows_from_manifest(entries)
-    if not rows:
-        msg = f"{split} manifest has zero parsed rows: {path}"
-        raise ValueError(msg)
-    if len(rows) != len(entries):
-        msg = (
-            f"{split} manifest parsed {len(rows)}/{len(entries)} rows; "
-            "fix malformed rows before tuning"
-        )
-        raise ValueError(msg)
     return entries, rows
 
 
@@ -202,15 +213,29 @@ def reject_split_overlap(
     right_name: str,
     right_rows: list[CanonicalRow],
 ) -> None:
-    """Reject audio URI overlap between two splits."""
+    """Reject audio URI or logical identity overlap between two splits."""
     left_uris = {row.audio_filepath for row in left_rows}
     right_uris = {row.audio_filepath for row in right_rows}
-    overlap = sorted(left_uris & right_uris)
-    if not overlap:
+    uri_overlap = sorted(left_uris & right_uris)
+    left_identities = {canonical_row_identity(row) for row in left_rows}
+    right_identities = {canonical_row_identity(row) for row in right_rows}
+    identity_overlap = sorted(left_identities & right_identities)
+    if not uri_overlap and not identity_overlap:
         return
-    sample = ", ".join(overlap[:5])
-    msg = (
-        f"{left_name} and {right_name} manifests overlap on "
-        f"{len(overlap)} audio URI(s): {sample}"
-    )
+    parts = [f"{left_name} and {right_name} manifests overlap"]
+    if uri_overlap:
+        uri_sample = ", ".join(uri_overlap[:5])
+        parts.append(f"{len(uri_overlap)} audio URI(s): {uri_sample}")
+    if identity_overlap:
+        identity_sample = ", ".join(
+            _format_identity(identity) for identity in identity_overlap[:5]
+        )
+        parts.append(
+            f"{len(identity_overlap)} identity value(s): {identity_sample}"
+        )
+    msg = "; ".join(parts)
     raise ValueError(msg)
+
+
+def _format_identity(identity: tuple[str, str]) -> str:
+    return f"{identity[0]}/{identity[1]}"

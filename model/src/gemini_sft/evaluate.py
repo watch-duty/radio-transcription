@@ -25,7 +25,6 @@ from common.inference_manifest import (
     model_family_slug_from_model_id,
     upload_inference_manifest,
 )
-from common.manifest import is_scoreable_manifest_entry, rows_from_manifest
 from common.scoring import (
     bootstrap_paired,
     build_normalizer,
@@ -39,6 +38,7 @@ from google.cloud import storage
 
 from gemini_sft.artifacts import (
     DEFAULT_RESULTS_DIR,
+    canonical_rows_from_entries,
     download_json_text,
     gcs_uri_exists,
     write_and_upload_config,
@@ -46,7 +46,7 @@ from gemini_sft.artifacts import (
 from gemini_sft.config import (
     RunConfig,
     RunConfigError,
-    load_run_config,
+    load_eval_run_config,
     require_config_int,
     require_config_str,
 )
@@ -62,7 +62,7 @@ RESULTS_DIR = DEFAULT_RESULTS_DIR
 def evaluate(args: argparse.Namespace) -> int:
     """CLI handler for ``gemini-sft eval``."""
     try:
-        run_cfg = load_run_config(args.config)
+        run_cfg = load_eval_run_config(args.config)
         storage_client = storage.Client(project=run_cfg.gcp_project)
         if not gcs_uri_exists(storage_client, run_cfg.paths.config_uri):
             logger.error(
@@ -115,20 +115,11 @@ def evaluate_run(
         base_only = True
 
     eval_entries = download_jsonl_manifest(storage_client, eval_manifest_uri)
-    eval_rows = rows_from_manifest(eval_entries)
-    source_rows = _scored_source_rows(eval_entries)
-    if len(source_rows) != len(eval_rows):
-        logger.error(
-            "raw eval rows and parsed eval rows diverged for %s: %s raw "
-            "scored rows vs %s parsed rows.",
-            eval_manifest_uri,
-            len(source_rows),
-            len(eval_rows),
-        )
-        return 1
-    if not eval_rows:
-        logger.error("Eval manifest has no parsed rows: %s", eval_manifest_uri)
-        return 1
+    source_rows, eval_rows = canonical_rows_from_entries(
+        eval_entries,
+        split="eval",
+        source=eval_manifest_uri,
+    )
     model_family_slug = model_family_slug_from_model_id(base_model)
 
     base_preds = batch_infer(
@@ -242,12 +233,6 @@ class PredictionMap(dict[str, str]):
     """Prediction map with the GCS output URI attached for provenance."""
 
     output_uri: str
-
-
-def _scored_source_rows(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        dict(entry) for entry in entries if is_scoreable_manifest_entry(entry)
-    ]
 
 
 def batch_infer(

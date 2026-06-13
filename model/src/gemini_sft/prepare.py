@@ -149,6 +149,13 @@ def prepare_artifacts(
     run_dir: Path,
 ) -> PreparedRunArtifacts:
     """Build canonical and Gemini model-input artifacts locally."""
+    if (
+        run_cfg.train_manifest_uri is None
+        or run_cfg.validation_manifest_uri is None
+    ):
+        msg = "prepare requires train_manifest_uri and validation_manifest_uri"
+        raise ValueError(msg)
+
     canonical_dir = run_dir / "manifests" / "canonical"
     model_inputs_dir = run_dir / "model_inputs" / "gemini"
     preflight_dir = run_dir / "preflight"
