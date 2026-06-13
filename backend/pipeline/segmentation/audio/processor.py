@@ -7,11 +7,14 @@ from collections.abc import Callable
 
 import av
 import numpy as np
+import requests.adapters
 from google.cloud import storage
 
 from backend.pipeline.common.constants import MS_PER_SECOND, SAMPLE_RATE_HZ
 from backend.pipeline.segmentation.audio import vad
 from backend.pipeline.segmentation.constants import (
+    GCS_CONNECTION_MAX_RETRIES,
+    GCS_CONNECTION_POOL_SIZE,
     GCS_DOWNLOAD_TIMEOUT_SEC,
     MONO_CHANNEL_COUNT,
     PRIMARY_AUDIO_STREAM_INDEX,
@@ -50,12 +53,26 @@ class SegmentationAudioProcessor:
         self.vad_factory = vad_factory
         self.vad = vad_instance
         self.gcs_client = gcs_client_instance
+        # If gcs_factory is omitted, default to storage.Client, which acquires
+        # Application Default Credentials (ADC) implicitly from the active execution environment.
         self.gcs_factory = gcs_factory or storage.Client
 
     def setup(self) -> None:
         """Initializes the GCS Client and triggers VAD ONNX session warmup."""
         if self.gcs_client is None:
             self.gcs_client = self.gcs_factory()
+            # If the client was constructed via the default ADC factory, mount a custom HTTPAdapter
+            # to guarantee robust connection pooling and retry resiliency under high intra-process concurrency.
+            if (
+                hasattr(self.gcs_client, "_http") and self.gcs_client._http  # noqa: SLF001
+            ):
+                adapter = requests.adapters.HTTPAdapter(
+                    pool_connections=GCS_CONNECTION_POOL_SIZE,
+                    pool_maxsize=GCS_CONNECTION_POOL_SIZE,
+                    max_retries=GCS_CONNECTION_MAX_RETRIES,
+                )
+                self.gcs_client._http.mount("https://", adapter)  # noqa: SLF001
+
         active_vad_factory = self.vad_factory or get_vad_engine
         if self.vad is None:
             self.vad = active_vad_factory(self.vad_config)
@@ -96,18 +113,32 @@ class SegmentationAudioProcessor:
 
         speech_segments = []
         if len(samples) > 0:
-            # VAD processing requires 16kHz mono
-            samples_16k_mono = self._resample_to_16k_mono(samples, sr)
-            prior_samples_16k = None
+            # 1. Downmix current samples to mono if multi-channel
+            mono_samples = self._downmix_to_mono(samples)
+
+            # 2. Downmix prior audio to mono if multi-channel (retaining source sample rate sr)
+            prior_samples = None
             if prior_audio is not None:
-                prior_samples_16k = np.frombuffer(
-                    prior_audio, dtype=np.int16
-                )  # already 16kHz mono
+                prior_arr = np.frombuffer(prior_audio, dtype=np.int16)
+                if samples.ndim > 1 and len(prior_arr) > 0:
+                    channels = samples.shape[1]
+                    try:
+                        prior_samples = np.mean(
+                            prior_arr.reshape(-1, channels), axis=1
+                        ).astype(np.int16)
+                    except ValueError:
+                        logger.warning(
+                            "prior_audio length not divisible by current channel count (%d), treating as mono",
+                            channels,
+                        )
+                        prior_samples = prior_arr
+                else:
+                    prior_samples = prior_arr
 
             speech_segments = self.vad.detect_speech_segments(
-                samples_16k_mono,
-                sample_rate=SAMPLE_RATE_HZ,
-                prior_audio=prior_samples_16k,
+                mono_samples,
+                sample_rate=sr,
+                prior_audio=prior_samples,
             )
 
         from backend.pipeline.schema_types import (  # noqa: PLC0415
@@ -155,25 +186,41 @@ class SegmentationAudioProcessor:
                 resampler = av.AudioResampler(format="s16p")
                 decoded_frames = []
                 expected_channels = None
-                for frame in container.decode(stream):
-                    reframed = resampler.resample(frame)
-                    if reframed is None:
-                        continue
-                    frames_to_process = (
-                        reframed
-                        if isinstance(reframed, (list, tuple))
-                        else [reframed]
-                    )
-                    for f in frames_to_process:
-                        arr = f.to_ndarray()
-                        if expected_channels is None:
-                            expected_channels = arr.shape[0]
-                        elif arr.shape[0] != expected_channels:
+                try:
+                    for packet in container.demux(stream):
+                        try:
+                            for frame in packet.decode():
+                                reframed = resampler.resample(frame)
+                                if reframed is None:
+                                    continue
+                                frames_to_process = (
+                                    reframed
+                                    if isinstance(reframed, (list, tuple))
+                                    else [reframed]
+                                )
+                                for f in frames_to_process:
+                                    arr = f.to_ndarray()
+                                    if expected_channels is None:
+                                        expected_channels = arr.shape[0]
+                                    elif arr.shape[0] != expected_channels:
+                                        logger.warning(
+                                            "Channel count changed mid-stream, skipping frame"
+                                        )
+                                        continue
+                                    decoded_frames.append(arr)
+                        except Exception as e:
+                            packet_err = str(e)
                             logger.warning(
-                                "Channel count changed mid-stream, skipping frame"
+                                "PyAV packet decode error, ignoring damaged frame: %s",
+                                packet_err,
                             )
                             continue
-                        decoded_frames.append(arr)
+                except Exception as e:
+                    demux_err = str(e)
+                    logger.exception(
+                        "PyAV container demux ended with error, retaining recovered frames: %s",
+                        demux_err,
+                    )
 
                 if not decoded_frames:
                     return np.array([], dtype=np.int16), SAMPLE_RATE_HZ
@@ -202,18 +249,10 @@ class SegmentationAudioProcessor:
 
             raise RuntimeError(_err()) from e
 
-    def _resample_to_16k_mono(self, samples: np.ndarray, sr: int) -> np.ndarray:
-        """Downmixes to mono and resamples to 16 kHz for VAD/SED processing."""
-        # 1. Downmix if stereo/multi-channel
-        if samples.ndim > 1:
-            samples = np.mean(samples, axis=1)
-
-        if sr != SAMPLE_RATE_HZ:
-            from backend.pipeline.segmentation.audio.dsp import (  # noqa: PLC0415
-                TorchaudioHannResampler,
-            )
-
-            resampler = TorchaudioHannResampler(sr, SAMPLE_RATE_HZ)
-            samples = resampler.resample(samples)
-
-        return samples.astype(np.int16)
+    def _downmix_to_mono(self, samples: np.ndarray) -> np.ndarray:
+        """Averages multi-channel audio arrays to flat 1D mono arrays."""
+        return (
+            np.mean(samples, axis=1).astype(np.int16)
+            if samples.ndim > 1
+            else samples
+        )

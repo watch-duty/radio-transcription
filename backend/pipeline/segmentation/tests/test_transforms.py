@@ -1328,7 +1328,7 @@ class DlqTaggingTest(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertIsInstance(results[0], beam.pvalue.TaggedOutput)
         assert isinstance(results[0], beam.pvalue.TaggedOutput)
-        self.assertEqual(results[0].tag, "normalization_dlq")
+        self.assertEqual(results[0].tag, "segmentation_dlq")
         self.assertEqual(results[0].value, dlq_payload)
 
     def test_yield_tagged_outputs_passes_through_normal_results(self) -> None:
@@ -1371,7 +1371,7 @@ class DlqTaggingTest(unittest.TestCase):
         # Second is wrapped
         self.assertIsInstance(results[1], beam.pvalue.TaggedOutput)
         assert isinstance(results[1], beam.pvalue.TaggedOutput)
-        self.assertEqual(results[1].tag, "normalization_dlq")
+        self.assertEqual(results[1].tag, "segmentation_dlq")
 
     # --- Bug 2: feed_metadata preserved through stale flush ---
 

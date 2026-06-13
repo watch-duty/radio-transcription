@@ -24,12 +24,12 @@ logger = logging.getLogger(__name__)
 
 # Type alias for the segmentation Dead Letter Queue tagged output
 SegmentationDlqOutput = beam.pvalue.TaggedOutput[
-    Literal["normalization_dlq"],
+    Literal["segmentation_dlq"],
     dict[str, Any],
 ]
 
 # Type alias for the raw DLQ payload tuple yielded by StitcherEngine
-SegmentationRawDlqOutput = tuple[Literal["normalization_dlq"], dict[str, Any]]
+SegmentationRawDlqOutput = tuple[Literal["segmentation_dlq"], dict[str, Any]]
 
 
 TimeRange = bp_state.TimeRangeProto
