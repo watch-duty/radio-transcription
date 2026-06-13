@@ -10,9 +10,11 @@ fields such as `audio_filepath`, `text`, `offset`, `duration`, and optional
 dataset metadata. It does not contain model predictions.
 
 A normalized inference manifest is the scorer-ready output for one model family
-and one run. It preserves the source/canonical manifest rows and adds exactly
-one prediction field named `pred_text_<model_family_slug>`. Missing predictions
-are written as empty strings so metrics keep the original eval denominator.
+and one run. It preserves the source/canonical manifest rows, requires reference
+`text` on every row, and adds at most one prediction field named
+`pred_text_<model_family_slug>` per row. The field is present only when a
+prediction record exists for that row; an empty string value means the
+prediction record existed and contained empty text.
 
 A merged comparison manifest is a derived wide artifact that contains multiple
 `pred_text_*` fields on each row. These are useful for side-by-side analysis,
@@ -43,8 +45,9 @@ inference_manifests/<inference_dataset_slug>/<model_family_slug>/<run_id>/<artif
 or `checkpoint_1`.
 
 Historical artifacts remain valid and are not moved. Existing scorer consumers
-discover `pred_text_*` fields, so they can score a normalized inference manifest
-with one prediction field or a merged comparison manifest with multiple
+discover `pred_text_*` fields and should treat an absent prediction field as an
+empty hypothesis, so they can score a normalized inference manifest with at most
+one prediction field per row or a merged comparison manifest with multiple
 prediction fields.
 
 Wide base-vs-tuned or model-vs-model comparison manifests are derived artifacts

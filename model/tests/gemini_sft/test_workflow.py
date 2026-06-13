@@ -773,6 +773,58 @@ class TestEvaluateRun(unittest.TestCase):
                 "eval transcript",
             )
 
+    def test_eval_manifest_omits_pred_text_when_prediction_is_missing(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            _seed_source_manifests(storage, eval_uri="gs://audio/eval.flac")
+            cfg_path = _write_config_file(tmp)
+            run_cfg = load_run_config(cfg_path)
+            storage.put(
+                run_cfg.paths.canonical_eval_uri,
+                _manifest([_row("gs://audio/eval.flac", "eval transcript")]),
+            )
+            storage.put(
+                run_cfg.paths.config_uri, json.dumps(run_cfg.to_record_dict())
+            )
+            output_uri = f"{run_cfg.paths.gcs_prefix}/evals/base/output/"
+            storage.put(
+                f"{output_uri}predictions.jsonl",
+                json.dumps({"status": {"code": 13}}) + "\n",
+            )
+            args = argparse.Namespace(config=str(cfg_path), base_only=True)
+
+            with (
+                unittest.mock.patch.object(
+                    evaluate_module, "RESULTS_DIR", tmp / "results"
+                ),
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "submit_batch_inference",
+                    return_value=output_uri,
+                ),
+            ):
+                rc = evaluate_module.evaluate_run(
+                    args, run_cfg, storage, run_cfg.to_record_dict()
+                )
+
+            metrics = json.loads(
+                (tmp / "results" / "round-a" / "wer_summary.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            manifest_rows = [
+                json.loads(line)
+                for line in storage.get(
+                    metrics["base_inference_manifest_uri"]
+                ).splitlines()
+            ]
+
+        self.assertEqual(rc, 0)
+        self.assertNotIn("pred_text_gemini_3_1_flash_lite", manifest_rows[0])
+
     def test_eval_manifest_uri_comes_from_gcs_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
             tmp = Path(tmp_s)
@@ -857,6 +909,71 @@ class TestEvaluateRun(unittest.TestCase):
             eval_rows = [
                 types.SimpleNamespace(audio_filepath="gs://audio/eval.flac")
             ]
+
+            with unittest.mock.patch.object(
+                evaluate_module,
+                "submit_batch_inference",
+                return_value=output_uri,
+            ):
+                preds = evaluate_module.batch_infer(
+                    storage_client=storage,
+                    run_gcs_prefix=run_cfg.paths.gcs_prefix,
+                    gcp_project=run_cfg.gcp_project,
+                    location=run_cfg.location,
+                    model_id="gemini-3.1-flash-lite",
+                    label="base",
+                    eval_rows=eval_rows,
+                    system_prompt="sys",
+                    user_prompt="user",
+                )
+
+        self.assertIsNone(preds)
+
+    def test_batch_infer_rejects_duplicate_eval_audio_uris_before_submit(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            run_cfg = load_run_config(_write_config_file(tmp))
+            eval_rows = [
+                types.SimpleNamespace(audio_filepath="gs://audio/eval.flac"),
+                types.SimpleNamespace(audio_filepath="gs://audio/eval.flac"),
+            ]
+
+            with unittest.mock.patch.object(
+                evaluate_module, "submit_batch_inference"
+            ) as submit:
+                preds = evaluate_module.batch_infer(
+                    storage_client=storage,
+                    run_gcs_prefix=run_cfg.paths.gcs_prefix,
+                    gcp_project=run_cfg.gcp_project,
+                    location=run_cfg.location,
+                    model_id="gemini-3.1-flash-lite",
+                    label="base",
+                    eval_rows=eval_rows,
+                    system_prompt="sys",
+                    user_prompt="user",
+                )
+
+        self.assertIsNone(preds)
+        submit.assert_not_called()
+
+    def test_batch_infer_rejects_prediction_uris_outside_eval_manifest(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            run_cfg = load_run_config(_write_config_file(tmp))
+            output_uri = f"{run_cfg.paths.gcs_prefix}/evals/base/output/"
+            eval_rows = [
+                types.SimpleNamespace(audio_filepath="gs://audio/eval.flac")
+            ]
+            storage.put(
+                f"{output_uri}predictions.jsonl",
+                _batch_prediction_line("gs://audio/other.flac", "other"),
+            )
 
             with unittest.mock.patch.object(
                 evaluate_module,

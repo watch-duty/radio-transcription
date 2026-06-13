@@ -92,6 +92,15 @@ Evaluation outputs that let maintainers inspect or recalculate model quality,
 including local `wer_summary.{json,md}`, ledger rows, and GCS paths to raw
 Vertex batch inference results.
 
+### Normalized Inference Manifest
+
+A scorer-ready eval artifact that preserves canonical manifest rows and adds
+model prediction fields. It requires reference transcription text on every row;
+a single row owns a single inference input; prediction records must belong to
+that manifest's rows. A `pred_text_*` field is present only when a prediction
+record existed for that row, and an empty string value means the prediction
+record existed and contained empty text.
+
 ## Ingestion Context
 
 ### Feed

@@ -82,6 +82,12 @@ class TestInferenceManifest(unittest.TestCase):
             "gemini_3_1_flash_lite",
         )
 
+    def test_model_slug_rejects_endpoint_resource(self) -> None:
+        with self.assertRaisesRegex(ValueError, "endpoint resource"):
+            model_family_slug_from_model_id(
+                "projects/123/locations/us/endpoints/456"
+            )
+
     def test_row_builder_preserves_metadata_and_writes_target_field(
         self,
     ) -> None:
@@ -105,30 +111,46 @@ class TestInferenceManifest(unittest.TestCase):
         pred_fields = [key for key in rows[0] if key.startswith("pred_text_")]
         self.assertEqual(pred_fields, ["pred_text_gemini_3_1_flash_lite"])
 
-    def test_missing_prediction_writes_empty_string(self) -> None:
+    def test_missing_prediction_omits_target_field(self) -> None:
         rows = build_inference_manifest_rows(
             model_family_slug="gemini_3_1_flash_lite",
-            source_rows=[{"audio_filepath": "gs://audio/a.flac"}],
+            source_rows=[
+                {"audio_filepath": "gs://audio/a.flac", "text": "alpha"}
+            ],
             predictions_by_audio_uri={},
+        )
+
+        self.assertNotIn("pred_text_gemini_3_1_flash_lite", rows[0])
+
+    def test_empty_prediction_writes_empty_string(self) -> None:
+        rows = build_inference_manifest_rows(
+            model_family_slug="gemini_3_1_flash_lite",
+            source_rows=[
+                {"audio_filepath": "gs://audio/a.flac", "text": "alpha"}
+            ],
+            predictions_by_audio_uri={"gs://audio/a.flac": ""},
         )
 
         self.assertEqual(rows[0]["pred_text_gemini_3_1_flash_lite"], "")
 
-    def test_duplicate_audio_uri_rows_are_preserved(self) -> None:
-        rows = build_inference_manifest_rows(
-            model_family_slug="gemini_3_1_flash_lite",
-            source_rows=[
-                {"audio_filepath": "gs://audio/a.flac", "segment_id": "1"},
-                {"audio_filepath": "gs://audio/a.flac", "segment_id": "2"},
-            ],
-            predictions_by_audio_uri={"gs://audio/a.flac": "shared"},
-        )
-
-        self.assertEqual(len(rows), 2)
-        self.assertEqual(rows[0]["segment_id"], "1")
-        self.assertEqual(rows[1]["segment_id"], "2")
-        self.assertEqual(rows[0]["pred_text_gemini_3_1_flash_lite"], "shared")
-        self.assertEqual(rows[1]["pred_text_gemini_3_1_flash_lite"], "shared")
+    def test_duplicate_audio_uri_rows_raise(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unique 'audio_filepath'"):
+            build_inference_manifest_rows(
+                model_family_slug="gemini_3_1_flash_lite",
+                source_rows=[
+                    {
+                        "audio_filepath": "gs://audio/a.flac",
+                        "text": "alpha",
+                        "segment_id": "1",
+                    },
+                    {
+                        "audio_filepath": "gs://audio/a.flac",
+                        "text": "bravo",
+                        "segment_id": "2",
+                    },
+                ],
+                predictions_by_audio_uri={"gs://audio/a.flac": "shared"},
+            )
 
     def test_stale_target_field_is_overwritten(self) -> None:
         rows = build_inference_manifest_rows(
@@ -136,6 +158,7 @@ class TestInferenceManifest(unittest.TestCase):
             source_rows=[
                 {
                     "audio_filepath": "gs://audio/a.flac",
+                    "text": "alpha",
                     "pred_text_gemini_3_1_flash_lite": "stale",
                 }
             ],
@@ -144,6 +167,23 @@ class TestInferenceManifest(unittest.TestCase):
 
         self.assertEqual(rows[0]["pred_text_gemini_3_1_flash_lite"], "fresh")
 
+    def test_stale_target_field_is_removed_when_prediction_is_missing(
+        self,
+    ) -> None:
+        rows = build_inference_manifest_rows(
+            model_family_slug="gemini_3_1_flash_lite",
+            source_rows=[
+                {
+                    "audio_filepath": "gs://audio/a.flac",
+                    "text": "alpha",
+                    "pred_text_gemini_3_1_flash_lite": "stale",
+                }
+            ],
+            predictions_by_audio_uri={},
+        )
+
+        self.assertNotIn("pred_text_gemini_3_1_flash_lite", rows[0])
+
     def test_rejects_non_target_pred_text_field(self) -> None:
         with self.assertRaisesRegex(ValueError, "merged comparison manifest"):
             build_inference_manifest_rows(
@@ -151,10 +191,43 @@ class TestInferenceManifest(unittest.TestCase):
                 source_rows=[
                     {
                         "audio_filepath": "gs://audio/a.flac",
+                        "text": "alpha",
                         "pred_text_other_model": "other",
                     }
                 ],
                 predictions_by_audio_uri={"gs://audio/a.flac": "fresh"},
+            )
+
+    def test_missing_reference_text_raises(self) -> None:
+        for text in ("", "   ", None):
+            with self.subTest(text=text):
+                with self.assertRaisesRegex(
+                    ValueError, "non-empty string 'text'"
+                ):
+                    build_inference_manifest_rows(
+                        model_family_slug="gemini_3_1_flash_lite",
+                        source_rows=[
+                            {
+                                "audio_filepath": "gs://audio/a.flac",
+                                "text": text,
+                            }
+                        ],
+                        predictions_by_audio_uri={},
+                    )
+
+    def test_extra_prediction_uri_raises(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError, "not present in the source rows"
+        ):
+            build_inference_manifest_rows(
+                model_family_slug="gemini_3_1_flash_lite",
+                source_rows=[
+                    {"audio_filepath": "gs://audio/a.flac", "text": "alpha"}
+                ],
+                predictions_by_audio_uri={
+                    "gs://audio/a.flac": "alpha",
+                    "gs://audio/b.flac": "bravo",
+                },
             )
 
     def test_invalid_path_components_raise(self) -> None:

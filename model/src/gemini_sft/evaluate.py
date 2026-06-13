@@ -263,6 +263,14 @@ def batch_infer(
     user_prompt: str,
 ) -> PredictionMap | None:
     """Build batch input JSONL, submit, download outputs, and parse predictions."""
+    eval_audio_uris = _eval_audio_uris(eval_rows)
+    if eval_audio_uris is None:
+        logger.error(
+            "[%s] eval rows contain duplicate audio_filepath values; one "
+            "prediction record cannot belong to multiple manifest rows.",
+            label,
+        )
+        return None
     with tempfile.TemporaryDirectory() as tmp:
         batch_input_gcs, batch_output_gcs = build_batch_jsonl(
             storage_client=storage_client,
@@ -309,9 +317,17 @@ def batch_infer(
             preds.update(
                 parse_batch_output(local_path.read_text(encoding="utf-8"))
             )
-        expected_count = len({row.audio_filepath for row in eval_rows})
-        # Predictions are keyed by audio URI. Duplicate eval rows intentionally
-        # share one prediction, so completeness is measured over unique URIs.
+        extra_prediction_uris = set(preds) - eval_audio_uris
+        if extra_prediction_uris:
+            preview = ", ".join(sorted(extra_prediction_uris)[:3])
+            logger.error(
+                "[%s] prediction output contained audio URIs outside the eval "
+                "manifest: %s",
+                label,
+                preview,
+            )
+            return None
+        expected_count = len(eval_audio_uris)
         missing = max(0, expected_count - len(preds))
         if missing > 0:
             logger.warning(
@@ -323,6 +339,16 @@ def batch_infer(
             )
         preds.output_uri = output_loc
         return preds
+
+
+def _eval_audio_uris(eval_rows: list[Any]) -> set[str] | None:
+    audio_uris: set[str] = set()
+    for row in eval_rows:
+        audio_uri = str(row.audio_filepath)
+        if audio_uri in audio_uris:
+            return None
+        audio_uris.add(audio_uri)
+    return audio_uris
 
 
 def _log_cli_error(exc: Exception) -> int:

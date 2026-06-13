@@ -1,9 +1,10 @@
 """Writers for normalized inference manifest artifacts.
 
-Normalized inference manifests preserve the evaluated source rows and add one
-prediction column named ``pred_text_<model_family_slug>``. They are the stable
-scoring artifact emitted by model eval workflows; raw provider outputs and
-wide model-comparison manifests remain separate artifact types.
+Normalized inference manifests preserve evaluated source rows and add the target
+``pred_text_<model_family_slug>`` field only for rows that received a prediction
+record. They are the stable scoring artifact emitted by model eval workflows;
+raw provider outputs and wide model-comparison manifests remain separate
+artifact types.
 """
 
 from __future__ import annotations
@@ -31,14 +32,22 @@ def model_family_slug_from_model_id(model_id: str) -> str:
 
     Args:
         model_id: Model ID such as ``gemini-3.1-flash-lite`` or a Vertex
-            resource path ending in the model ID.
+            model resource path ending in the model ID.
 
     Returns:
         Lowercase slug with non-alphanumeric runs collapsed to underscores.
 
     Raises:
-        ValueError: If ``model_id`` cannot produce a non-empty slug.
+        ValueError: If ``model_id`` cannot produce a non-empty slug, or if it
+            is an endpoint resource name rather than a model family.
     """
+    if "/endpoints/" in model_id:
+        msg = (
+            "model_id must be a base model ID or model resource name, not an "
+            "endpoint resource; pass the run's base_model when naming "
+            "inference manifest artifacts"
+        )
+        raise ValueError(msg)
     model_leaf = model_id.rstrip("/").rsplit("/", maxsplit=1)[-1]
     model_leaf = model_leaf.split("@", maxsplit=1)[0]
     slug = re.sub(r"[^A-Za-z0-9]+", "_", model_leaf).strip("_").lower()
@@ -130,18 +139,31 @@ def build_inference_manifest_rows(
         audio_uri_field: Source-row field containing the audio URI.
 
     Returns:
-        New row dictionaries preserving all source fields plus exactly one
-        target ``pred_text_<model_family_slug>`` field.
+        New row dictionaries preserving all source fields. Rows with a
+        prediction record also include the target
+        ``pred_text_<model_family_slug>`` field.
 
     Raises:
-        ValueError: If an audio URI is missing, or if source rows already
-            contain prediction fields for other models.
+        ValueError: If an audio URI or reference text is missing, if source
+            rows contain duplicate audio URIs, if predictions contain unknown
+            audio URIs, or if source rows already contain prediction fields for
+            other models.
     """
     model_slug = _validate_safe_segment(model_family_slug, "model_family_slug")
     target_field = f"{PREDICTION_FIELD_PREFIX}{model_slug}"
     output_rows: list[dict[str, Any]] = []
+    source_audio_uris: set[str] = set()
     for index, source_row in enumerate(source_rows):
         audio_uri = _row_audio_uri(source_row, audio_uri_field, index)
+        _row_reference_text(source_row, index)
+        if audio_uri in source_audio_uris:
+            msg = (
+                "normalized inference manifest source rows must have unique "
+                f"{audio_uri_field!r} values; duplicate {audio_uri!r} at row "
+                f"{index}"
+            )
+            raise ValueError(msg)
+        source_audio_uris.add(audio_uri)
         for key in source_row:
             if key.startswith(PREDICTION_FIELD_PREFIX) and key != target_field:
                 msg = (
@@ -151,9 +173,18 @@ def build_inference_manifest_rows(
                 )
                 raise ValueError(msg)
         row = dict(source_row)
-        prediction = predictions_by_audio_uri.get(audio_uri, "")
-        row[target_field] = str(prediction or "")
+        row.pop(target_field, None)
+        if audio_uri in predictions_by_audio_uri:
+            row[target_field] = predictions_by_audio_uri[audio_uri] or ""
         output_rows.append(row)
+    extra_prediction_uris = set(predictions_by_audio_uri) - source_audio_uris
+    if extra_prediction_uris:
+        preview = ", ".join(sorted(extra_prediction_uris)[:3])
+        msg = (
+            "prediction map contains audio URIs that are not present in the "
+            f"source rows: {preview}"
+        )
+        raise ValueError(msg)
     return output_rows
 
 
@@ -226,3 +257,14 @@ def _row_audio_uri(
         )
         raise ValueError(msg)
     return str(value)
+
+
+def _row_reference_text(source_row: dict[str, Any], index: int) -> str:
+    value = source_row.get("text")
+    if not isinstance(value, str) or not value.strip():
+        msg = (
+            "source row "
+            f"{index} missing non-empty string 'text': {source_row!r}"
+        )
+        raise ValueError(msg)
+    return value

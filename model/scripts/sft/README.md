@@ -129,7 +129,8 @@ evals/tuned/output/
 
 `gemini-sft eval` also writes normalized inference manifests under the shared
 `inference_manifests/` tree. These JSONL files preserve the eval source rows and
-add one prediction field named for the model family:
+add a prediction field named for the model family on rows that received a
+prediction record:
 
 ```text
 gs://<bucket>/inference_manifests/<inference_dataset_slug>/<model_family_slug>/<round_id>/base.jsonl
@@ -147,8 +148,9 @@ WER can be recalculated from provider responses or from the scorer-ready JSONL.
 `eval` can run base-only when `--base-only` is passed or when `config.json` has
 no tuned endpoint. Missing Vertex batch predictions are scored as empty
 hypotheses, which makes them count as full deletions instead of removing those
-segments from the denominator. The normalized inference manifests write those
-missing predictions as empty strings for the same reason.
+segments from the denominator. The normalized inference manifests leave
+`pred_text_*` absent for those missing prediction records; explicit empty model
+outputs are written as `pred_text_* = ""`.
 
 Base-model batch inference uses `[gcp].location`. If the tuned endpoint stored
 in `config.json` is a full Vertex resource name, tuned batch inference uses the
