@@ -114,7 +114,11 @@ async def _sleep_for_retry(
 
 
 def _headers_dict(headers: object) -> dict[str, str]:
-    """Return a plain header dict from aiohttp headers or sparse test fakes."""
+    """Return a plain single-value header dict from aiohttp or test fakes.
+
+    Multi-value headers are intentionally not preserved; callers currently use
+    this only for single-value response metadata such as ``Content-Type``.
+    """
     if not isinstance(headers, collections.abc.Mapping):
         return {}
     header_map = cast("Mapping[object, object]", headers)

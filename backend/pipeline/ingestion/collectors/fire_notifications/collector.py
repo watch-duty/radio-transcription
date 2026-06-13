@@ -357,7 +357,14 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
                     poll_url, headers=headers, timeout=10.0
                 )
                 if resp.status_code == 200:
-                    data = resp.json()
+                    try:
+                        data = resp.json()
+                    except ValueError as exc:
+                        raise collector_failure(
+                            feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                            "fn_api_payload_malformed: "
+                            f"{quarantine_reason.exception_text(exc)}",
+                        ) from exc
                     files = payloads.extract_optional_item_list(
                         data,
                         "files",

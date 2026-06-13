@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -53,20 +52,16 @@ async def await_or_cancel[T](
         await asyncio.gather(*tasks, return_exceptions=True)
         raise
 
-    for task in pending:
-        task.cancel()
-    await asyncio.gather(*pending, return_exceptions=True)
+    if pending:
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
 
     if operation_task in done and not operation_task.cancelled():
         if operation_task.exception() is None:
-            with contextlib.suppress(asyncio.CancelledError):
-                await asyncio.gather(shutdown_task, return_exceptions=True)
             return operation_task.result()
 
     if shutdown_task in done and shutdown_task.result():
-        await asyncio.gather(operation_task, return_exceptions=True)
         raise asyncio.CancelledError
 
-    with contextlib.suppress(asyncio.CancelledError):
-        await asyncio.gather(shutdown_task, return_exceptions=True)
     return await operation_task

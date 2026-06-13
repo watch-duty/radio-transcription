@@ -825,6 +825,37 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(str(ctx.exception), expected_reason)
 
     @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.AsyncSession",
+    )
+    async def test_poll_malformed_json_raises_payload_failure(
+        self,
+        mock_session_cls: MagicMock,
+    ) -> None:
+        mock_session = mock_session_cls.return_value
+        mock_session.close = AsyncMock()
+        resp_ok = MagicMock(status_code=200)
+        resp_ok.json.side_effect = ValueError("bad json")
+        mock_session.get = AsyncMock(return_value=resp_ok)
+
+        with self.assertRaises(FeedFailure) as ctx:
+            async for _ in collector.fire_notifications_collector(
+                self.feed,  # type: ignore
+                self.shutdown,
+                "http://base",
+                self.resources,
+            ):
+                pass
+
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        )
+        self.assertEqual(
+            str(ctx.exception),
+            "fn_api_payload_malformed: ValueError: bad json",
+        )
+
+    @patch(
         "backend.pipeline.ingestion.collectors.fire_notifications.collector.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
