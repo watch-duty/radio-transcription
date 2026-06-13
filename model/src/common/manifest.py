@@ -310,9 +310,8 @@ def _validate_source_audio(
             "source_audio must be an object",
         )
         return
-    if (
-        "audio_filepath" in source_audio
-        and not _stripped_string(source_audio["audio_filepath"])
+    if "audio_filepath" in source_audio and not _stripped_string(
+        source_audio["audio_filepath"]
     ):
         _add_invalid_metadata(
             issues,
@@ -798,5 +797,7 @@ def _format_prediction_sample(candidate: _PredictionCandidate) -> str:
         f"offset={candidate.offset}",
     ]
     if candidate.identity is not None:
-        parts.append(f"identity={candidate.identity[0]}/{candidate.identity[1]}")
+        parts.append(
+            f"identity={candidate.identity[0]}/{candidate.identity[1]}"
+        )
     return "{" + ", ".join(parts) + "}"

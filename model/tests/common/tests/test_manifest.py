@@ -164,8 +164,7 @@ class TestCanonicalManifestValidation(unittest.TestCase):
 
                 self.assertTrue(
                     any(
-                        issue.code == expected_code
-                        and issue.field == field
+                        issue.code == expected_code and issue.field == field
                         for issue in issues
                     )
                 )
@@ -608,9 +607,7 @@ class TestRowsFromManifestRequiredFields(unittest.TestCase):
 
     def test_blank_audio_filepath_raises_with_row_context(self) -> None:
         with self.assertRaisesRegex(ValueError, "row 0.*audio_filepath"):
-            rows_from_manifest(
-                [{"audio_filepath": "  ", "text": "hello"}]
-            )
+            rows_from_manifest([{"audio_filepath": "  ", "text": "hello"}])
 
     def test_missing_text_raises_with_row_context(self) -> None:
         with self.assertRaisesRegex(ValueError, "row 0.*text"):
