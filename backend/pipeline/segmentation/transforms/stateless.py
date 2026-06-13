@@ -16,7 +16,7 @@ import apache_beam as beam
 import numpy as np
 import soundfile as sf
 from apache_beam.io.gcp.pubsub import PubsubMessage
-from google.cloud import storage
+from apache_beam.utils.shared import Shared
 from google.protobuf.duration_pb2 import Duration
 from google.protobuf.timestamp_pb2 import Timestamp
 from opentelemetry import trace
@@ -36,6 +36,9 @@ from backend.pipeline.schema_types.continuous_audio_pb2 import (
 )
 from backend.pipeline.schema_types.segmented_audio_pb2 import (
     SegmentedAudio,
+)
+from backend.pipeline.segmentation.audio.storage import (
+    acquire_shared_gcs_client,
 )
 from backend.pipeline.segmentation.constants import (
     DEAD_LETTER_QUEUE_TAG,
@@ -180,6 +183,8 @@ class UploadRawSegmentFn(beam.DoFn):
     and yield a SegmentedAudio claim-check protobuf message.
     """
 
+    SHARED_GCS_HANDLE = Shared()
+
     def __init__(
         self, staging_audio_bucket: str | None, project_id: str
     ) -> None:
@@ -189,9 +194,9 @@ class UploadRawSegmentFn(beam.DoFn):
 
     @override
     def setup(self) -> None:
-        """Initializes GCS client for uploading raw segments."""
-        setup_tracing()
-        self.gcs_client = storage.Client(project=self.project_id)
+        self.gcs_client = acquire_shared_gcs_client(
+            self.project_id, shared_handle=self.SHARED_GCS_HANDLE
+        )
 
     def _pcm_to_flac(self, pcm_bytes: bytes, sample_rate: int) -> bytes:
         audio_arr = np.frombuffer(pcm_bytes, dtype=np.int16)

@@ -1,6 +1,7 @@
 """Segmentation-specific audio processing with neural Voice Activity Detection (VAD)."""
 
 import io
+import json
 import logging
 from collections.abc import Callable
 
@@ -22,9 +23,6 @@ logger = logging.getLogger(__name__)
 
 
 def get_vad_engine(config_json: str) -> vad.VoiceActivityDetector:
-    """Creates a VoiceActivityDetector engine using optional JSON config."""
-    import json  # noqa: PLC0415
-
     try:
         config = json.loads(config_json) if config_json else {}
     except Exception:
@@ -54,6 +52,7 @@ class SegmentationAudioProcessor:
             gcs_factory=gcs_factory,
         )
 
+    # Compatibility shim to avoid breaking legacy pipeline callers or tests that set processor.gcs_client directly.
     @property
     def gcs_client(self) -> storage.Client | None:
         return self.fetcher.client

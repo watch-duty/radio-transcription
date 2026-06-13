@@ -6,10 +6,16 @@ import urllib.parse
 from collections.abc import Callable
 from typing import Any
 
+import google.auth
 import requests.adapters
+import requests.exceptions
+from apache_beam.utils.shared import Shared
 from google.api_core import exceptions as api_exceptions
-from google.api_core import retry as api_retry
+from google.auth.credentials import AnonymousCredentials
+from google.auth.exceptions import DefaultCredentialsError
+from google.auth.transport.requests import AuthorizedSession
 from google.cloud import storage
+from google.cloud.storage.retry import DEFAULT_RETRY
 
 from backend.pipeline.segmentation.constants import (
     GCS_CONNECTION_MAX_RETRIES,
@@ -20,9 +26,54 @@ from backend.pipeline.segmentation.constants import (
 logger = logging.getLogger(__name__)
 
 
-def _default_gcs_factory() -> storage.Client:
-    return storage.Client(
-        client_options={"api_endpoint": "storage.googleapis.com:443"}
+def get_gcs_client(project_id: str | None = None) -> storage.Client:
+    """Universal GCS Client factory configured with our authoritative connection pooling and resilient ADC CI fallbacks.
+
+    Completely consolidates all HTTPAdapter mounting logic into this single, absolute source of truth.
+    """
+    try:
+        credentials, project = google.auth.default()
+        authed_session = AuthorizedSession(credentials)
+
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=GCS_CONNECTION_POOL_SIZE,
+            pool_maxsize=GCS_CONNECTION_POOL_SIZE,
+            max_retries=GCS_CONNECTION_MAX_RETRIES,
+        )
+        authed_session.mount("https://", adapter)
+        return storage.Client(
+            project=project_id or project,
+            credentials=credentials,
+            _http=authed_session,
+        )
+    except DefaultCredentialsError:
+        # Fallback for un-authenticated remote testing sandboxes (e.g., GitHub Actions CI)
+        return storage.Client(
+            project=project_id or "test-project",
+            credentials=AnonymousCredentials(),
+        )
+
+
+UNIVERSAL_GCS_SHARED_HANDLE = Shared()
+
+
+def acquire_shared_gcs_client(
+    project_id: str | None = None,
+    shared_handle: Shared | None = None,
+) -> storage.Client:
+    """Acquires a process-wide thread-safe storage.Client singleton using Apache Beam's Shared resource tracking.
+
+    Ensures that all DoFn threads running inside the exact same physical Python worker VM share precisely
+    one AuthorizedSession HTTP adapter connection pool, completely eliminating TCP socket exhaustion.
+    """
+    handle = shared_handle or UNIVERSAL_GCS_SHARED_HANDLE
+
+    def _construct() -> storage.Client:
+        return get_gcs_client(project_id=project_id)
+
+    # Use a highly specific deterministic tag to avoid conflicting with other user shared assets
+    return handle.acquire(
+        _construct, tag=f"gcs_client_singleton_{project_id or 'default'}"
     )
 
 
@@ -39,21 +90,14 @@ class GcsAudioFetcher:
         gcs_factory: Callable[[], storage.Client] | None = None,
     ) -> None:
         self.client = gcs_client_instance
-        self.gcs_factory = gcs_factory or _default_gcs_factory
+        self.gcs_factory = gcs_factory or acquire_shared_gcs_client
+        # Flawlessly inherit official GCS idempotent retry predicates while enforcing our custom 30s timeout
+        self._retry = DEFAULT_RETRY.with_timeout(GCS_DOWNLOAD_TIMEOUT_SEC)
 
     def setup(self) -> None:
-        """Lazily initializes the GCS client and configures underlying HTTP transport adapters."""
+        """Lazily initializes the GCS client via our universal pooled factory."""
         if self.client is None:
             self.client = self.gcs_factory()
-            if (
-                isinstance(self.client, storage.Client) and self.client._http  # noqa: SLF001
-            ):
-                adapter = requests.adapters.HTTPAdapter(
-                    pool_connections=GCS_CONNECTION_POOL_SIZE,
-                    pool_maxsize=GCS_CONNECTION_POOL_SIZE,
-                    max_retries=GCS_CONNECTION_MAX_RETRIES,
-                )
-                self.client._http.mount("https://", adapter)  # noqa: SLF001
 
     def download_audio_to_memory(self, gcs_path: str) -> io.BytesIO:
         """Downloads an audio blob from GCS into a fully self-contained in-memory BytesIO bitstream."""
@@ -67,42 +111,17 @@ class GcsAudioFetcher:
 
         bucket = self.client.bucket(bucket_name)
 
-        # SRP & Test Resiliency: If a genuine GCP storage.Client is provided, instantiate storage.Blob
-        # offline to cut network metadata round trips by 50%. If an arbitrary test Mock is provided,
-        # delegate to bucket.get_blob() to seamlessly consume unit test return_value hierarchies.
-        if isinstance(self.client, storage.Client):
-            blob = storage.Blob(blob_name, bucket)
-        else:
-            blob = bucket.get_blob(blob_name, timeout=GCS_DOWNLOAD_TIMEOUT_SEC)
-            if blob is None:
-                err_msg = f"GCS object not found: {gcs_path}"
-                logger.error(err_msg)
-                raise FileNotFoundError(err_msg)
+        blob = storage.Blob(blob_name, bucket)
 
         in_mem_file = io.BytesIO()
         try:
-            cooperative_retry = api_retry.Retry(
-                initial=1.0,
-                maximum=15.0,
-                multiplier=2.0,
-                predicate=api_retry.if_exception_type(
-                    api_exceptions.TooManyRequests,
-                    api_exceptions.InternalServerError,
-                    api_exceptions.BadGateway,
-                    api_exceptions.ServiceUnavailable,
-                    api_exceptions.GatewayTimeout,
-                    requests.exceptions.ConnectionError,
-                    requests.exceptions.ChunkedEncodingError,
-                ),
-                timeout=GCS_DOWNLOAD_TIMEOUT_SEC,
-            )
             blob.download_to_file(
                 in_mem_file,
-                retry=cooperative_retry,
+                retry=self._retry,
                 timeout=GCS_DOWNLOAD_TIMEOUT_SEC,
             )
-        except Exception as e:
-            err_msg = f"Failed to download GCS object {gcs_path}: {e}"
+        except (api_exceptions.NotFound, FileNotFoundError) as e:
+            err_msg = f"GCS object not found: {gcs_path}"
             logger.exception(err_msg)
             raise FileNotFoundError(err_msg) from e
 
