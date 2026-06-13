@@ -437,7 +437,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             _TEST_FEED,
             shutdown,
             "https://api.openmhz.com/",
-            object(),  # type: ignore[arg-type]
+            _default_resources(),
         ):
             chunks.append(_require_captured_chunk(chunk))
             shutdown.set()

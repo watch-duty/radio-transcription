@@ -6,7 +6,7 @@ import asyncio
 import logging
 import pathlib
 import unittest
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.pipeline.ingestion.collectors import (
@@ -202,7 +202,9 @@ class TestCrossCollectorItemFailureSemantics(unittest.TestCase):
 
 class TestPollingPayloadRegression(unittest.TestCase):
     def test_bcfy_missing_calls_is_empty_response(self) -> None:
-        self.assertEqual(bcfy_calls_collector._extract_calls_from_response({}), [])
+        self.assertEqual(
+            bcfy_calls_collector._extract_calls_from_response({}), []
+        )
 
     def test_bcfy_empty_calls_list_is_empty_response(self) -> None:
         self.assertEqual(
@@ -297,7 +299,10 @@ class TestCallDownloadFailedRegression(unittest.TestCase):
             logger.propagate = True
 
         self.assertEqual(len(handler.records), 1)
-        fields: dict[str, Any] = handler.records[0].json_fields
+        fields = cast(
+            "dict[str, Any]",
+            handler.records[0].__dict__["json_fields"],
+        )
         self.assertEqual(
             fields,
             {

@@ -177,9 +177,7 @@ async def _probe_stream_once(
                     classified,
                 )
             if response.status == 200:
-                return _StreamProbeResult(
-                    _StreamProbeOutcome.STREAM_AVAILABLE
-                )
+                return _StreamProbeResult(_StreamProbeOutcome.STREAM_AVAILABLE)
             return _StreamProbeResult(_StreamProbeOutcome.INCONCLUSIVE)
     except Exception as exc:
         logger.warning("stream probe failed", exc_info=True)
@@ -187,8 +185,7 @@ async def _probe_stream_once(
             _StreamProbeOutcome.TERMINAL_FAILURE,
             collector_failure(
                 FeedStatusReason.SOURCE_UNREACHABLE,
-                f"stream_probe_failed: "
-                f"{quarantine_reason.exception_text(exc)}",
+                f"stream_probe_failed: {quarantine_reason.exception_text(exc)}",
             ),
         )
 
@@ -221,7 +218,8 @@ async def _build_stream_capture_failure(
 
     probe = await _probe_stream_once(resources, url, auth_header)
     if (
-        probe.outcome is _StreamProbeOutcome.TERMINAL_FAILURE
+        probe is not None
+        and probe.outcome is _StreamProbeOutcome.TERMINAL_FAILURE
         and probe.failure is not None
     ):
         return probe.failure

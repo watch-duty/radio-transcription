@@ -65,6 +65,7 @@ class TestHTTPStatusClassifier(unittest.TestCase):
         for status in (400, 404, 409, 410, 423, 425, 426, 600, 799, 999):
             with self.subTest(status=status):
                 self.assertIsNone(http_status.classify_http_status(status))
+
     def test_exact_override_beats_family_default(self) -> None:
         policy = http_status.HTTPStatusPolicy(
             exact={404: feed_store.FeedStatusReason.SOURCE_OFFLINE},

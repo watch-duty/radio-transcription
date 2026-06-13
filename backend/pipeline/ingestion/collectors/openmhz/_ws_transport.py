@@ -7,7 +7,7 @@ import json
 import logging
 import time
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, NoReturn
 
 from curl_cffi.requests import AsyncSession
 from curl_cffi.requests.websockets import WebSocketClosed, WebSocketTimeout
@@ -15,15 +15,21 @@ from curl_cffi.requests.websockets import WebSocketClosed, WebSocketTimeout
 from backend.pipeline.ingestion.collectors.openmhz._types import CallEvent
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Awaitable
 
 logger = logging.getLogger(__name__)
-
-_T = TypeVar("_T")
 
 
 class OpenMHzTransportError(Exception):
     """Expected OpenMHz websocket connection or protocol failure."""
+
+
+def _raise_cancelled() -> NoReturn:
+    raise asyncio.CancelledError
+
+
+def _raise_protocol_error(message: str) -> NoReturn:
+    raise ValueError(message)
 
 
 _START_PAYLOAD_TEMPLATE: dict[str, object] = {
@@ -100,7 +106,7 @@ async def websocket_transport(
         # --- EIO handshake ---
         open_frame = await _recv_str_or_shutdown(ws, shutdown, 10.0)
         if open_frame is None:
-            raise asyncio.CancelledError
+            _raise_cancelled()
         open_data = _parse_eio_open(open_frame)
         sid = open_data["sid"]
         ping_interval_sec: float = open_data["pingInterval"] / 1000
@@ -116,10 +122,10 @@ async def websocket_transport(
         await _await_or_shutdown(ws.send_str("40"), shutdown)
         ack = await _recv_str_or_shutdown(ws, shutdown, 10.0)
         if ack is None:
-            raise asyncio.CancelledError
+            _raise_cancelled()
         if not ack.startswith("40"):
             msg = f"Expected SIO connect ack (40...), got: {ack[:60]}"
-            raise ValueError(msg)
+            _raise_protocol_error(msg)
 
         # --- Subscribe ---
         start_payload = json.dumps(
@@ -154,7 +160,7 @@ async def websocket_transport(
         await session.close()
 
 
-async def _stream_frames(
+async def _stream_frames(  # noqa: PLR0912
     ws: Any,
     shutdown: asyncio.Event,
     short_name: str,
@@ -179,9 +185,7 @@ async def _stream_frames(
             return
 
         try:
-            frame = await _recv_str_or_shutdown(
-                ws, shutdown, ping_interval_sec
-            )
+            frame = await _recv_str_or_shutdown(ws, shutdown, ping_interval_sec)
             if frame is None:
                 logger.info("Shutdown requested: short_name=%s", short_name)
                 return
@@ -225,13 +229,13 @@ async def _stream_frames(
 async def _recv_str_or_shutdown(
     ws: Any,
     shutdown: asyncio.Event,
-    timeout: float,
+    timeout_sec: float,
 ) -> str | None:
     """Receive one websocket frame, returning None if shutdown wins."""
     if shutdown.is_set():
         return None
 
-    recv_task = asyncio.create_task(ws.recv_str(timeout=timeout))
+    recv_task = asyncio.create_task(ws.recv_str(timeout=timeout_sec))
     shutdown_task = asyncio.create_task(shutdown.wait())
     tasks = {recv_task, shutdown_task}
 
@@ -259,10 +263,10 @@ async def _recv_str_or_shutdown(
     return await recv_task
 
 
-async def _await_or_shutdown(
-    awaitable,
+async def _await_or_shutdown[T](
+    awaitable: Awaitable[T],
     shutdown: asyncio.Event,
-) -> _T:
+) -> T:
     """Await one setup operation, cancelling it if shutdown wins."""
     operation_task = asyncio.ensure_future(awaitable)
     if shutdown.is_set():

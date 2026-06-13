@@ -113,9 +113,7 @@ async def _download_audio(
                     resp.status_code,
                     url,
                 )
-                return item_downloads.item_http_failure(
-                    resp.status_code
-                )
+                return item_downloads.item_http_failure(resp.status_code)
             logger.warning(
                 "Download %d (attempt %d/%d): url=%s",
                 resp.status_code,
@@ -391,11 +389,9 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
             except FeedFailure:
                 raise
             except Exception:
-                last_poll_failure = (
-                    failure_classification.FailureInfo(
-                        feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
-                        "source_unreachable",
-                    )
+                last_poll_failure = failure_classification.FailureInfo(
+                    feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+                    "source_unreachable",
                 )
                 logger.warning(
                     "FN API poll error: %s",

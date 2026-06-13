@@ -213,8 +213,7 @@ async def fetch_json_with_retries(  # noqa: UP047
                 continue
             raise collector_failure(
                 transport_status_reason,
-                f"{transport_reason}: "
-                f"{quarantine_reason.exception_text(exc)}",
+                f"{transport_reason}: {quarantine_reason.exception_text(exc)}",
             )
 
     msg = "unreachable retry loop exit"
@@ -304,8 +303,7 @@ async def download_item_media(
                 continue
             return ItemFailure(
                 transport_status_reason,
-                f"{transport_reason}: "
-                f"{quarantine_reason.exception_text(exc)}",
+                f"{transport_reason}: {quarantine_reason.exception_text(exc)}",
             )
 
     msg = "unreachable retry loop exit"

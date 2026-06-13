@@ -546,6 +546,45 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
+    async def test_ffmpeg_error_exit_code_no_probe_result_is_inconclusive(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Ambiguous ffmpeg exit falls back when probing gives no evidence."""
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=7779,
+            wait_delay=0.0,
+            wait_result=1,
+        )
+
+        feed = _make_feed("no-probe-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        with patch(
+            "backend.pipeline.ingestion.collectors.icecast."
+            "icecast_collector._probe_stream_once",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            gen = icecast_collector.capture_icecast_stream(
+                feed,
+                shutdown_event,
+                url_base="https://mock.example.com/",
+                resources=_default_resources(),
+            )
+            with self.assertRaises(FeedFailure) as context:
+                await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+
+        _assert_collector_failure(
+            self,
+            context.exception,
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            "ffmpeg exited with code 1",
+        )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
     async def test_ffmpeg_error_exit_code_http_404_source_offline(
         self, mock_create_ffmpeg: AsyncMock
     ) -> None:

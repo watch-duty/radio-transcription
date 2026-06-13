@@ -188,9 +188,7 @@ async def _download_m4a(
                     "Download non-retryable item HTTP status=%d",
                     resp.status_code,
                 )
-                return item_downloads.item_http_failure(
-                    resp.status_code
-                )
+                return item_downloads.item_http_failure(resp.status_code)
             logger.warning(
                 "Download retryable item HTTP status=%d attempt=%d/%d",
                 resp.status_code,

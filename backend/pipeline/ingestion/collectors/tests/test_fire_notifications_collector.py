@@ -14,6 +14,9 @@ from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemFailure,
 )
 from backend.pipeline.ingestion.collectors.fire_notifications import collector
+from backend.pipeline.ingestion.collectors.tests.conftest import (
+    _default_resources,
+)
 from backend.pipeline.ingestion.models import (
     AudioMimeType,
     FeedFailure,
@@ -841,7 +844,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
             self.feed,  # type: ignore
             self.shutdown,
             "http://base",
-            object(),  # type: ignore[arg-type]
+            _default_resources(),
         ):
             pass
 

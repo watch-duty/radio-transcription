@@ -28,7 +28,9 @@ def test_publish_failure_reason_for_invalid_binary_schema_error() -> None:
     )
 
 
-def test_publish_failure_reason_for_schema_error_without_binary_marker() -> None:
+def test_publish_failure_reason_for_schema_error_without_binary_marker() -> (
+    None
+):
     reason = pubsub.publish_failure_reason(
         RuntimeError("schema validation failed: missing field")
     )

@@ -229,12 +229,9 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
         _mirror_to_dev_best_effort(bucket, name)
 
     except Exception as exc:
-        classification = (
-            failure
-            or failure_classification.FailureInfo(
-                FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
-                _unexpected_failure_reason(exc),
-            )
+        classification = failure or failure_classification.FailureInfo(
+            FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
+            _unexpected_failure_reason(exc),
         )
         try:
             feed_store.record_failure(

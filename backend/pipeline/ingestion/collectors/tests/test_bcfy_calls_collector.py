@@ -2458,9 +2458,7 @@ class TestBcfyCallsHttp01(unittest.IsolatedAsyncioTestCase):
         ".bcfy_calls_collector.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
-    @patch(
-        "aiohttp.ClientSession"
-    )
+    @patch("aiohttp.ClientSession")
     async def test_no_per_poll_session_construction(
         self,
         mock_session_ctor: MagicMock,

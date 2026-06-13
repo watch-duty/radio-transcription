@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import unittest
-from typing import Any
+from typing import Any, cast
 
 from backend.pipeline.ingestion import slo_contract
 from backend.pipeline.ingestion.collectors import (
@@ -154,7 +154,10 @@ class TestTelemetryHelpers(unittest.TestCase):
             handler.records[0].getMessage(), "Call download failed"
         )
         self.assertEqual(
-            handler.records[0].json_fields,
+            cast(
+                "dict[str, Any]",
+                handler.records[0].__dict__["json_fields"],
+            ),
             {
                 "event_type": (slo_contract.EVENT_TYPE_CALL_DOWNLOAD_FAILED),
                 "feed_id": "123",

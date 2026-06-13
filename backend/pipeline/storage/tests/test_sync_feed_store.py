@@ -155,9 +155,7 @@ class TestRecordFailure:
         conn = _make_mock_conn()
         store = _make_store(conn)
         feed_id = uuid.uuid4()
-        long_reason = "x" * (
-            quarantine_reason.MAX_QUARANTINE_REASON_LENGTH + 1
-        )
+        long_reason = "x" * (quarantine_reason.MAX_QUARANTINE_REASON_LENGTH + 1)
 
         store.record_failure(feed_id, reason=long_reason)
 

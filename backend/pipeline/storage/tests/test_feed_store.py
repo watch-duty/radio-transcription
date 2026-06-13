@@ -799,9 +799,7 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
             },
         )
         store = FeedStore(pool)
-        long_reason = "x" * (
-            quarantine_reason.MAX_QUARANTINE_REASON_LENGTH + 1
-        )
+        long_reason = "x" * (quarantine_reason.MAX_QUARANTINE_REASON_LENGTH + 1)
 
         await store.report_feed_failure(
             _FEED_ID,
