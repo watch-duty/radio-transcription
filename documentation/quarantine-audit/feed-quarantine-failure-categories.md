@@ -13,26 +13,24 @@ GitHub URL for this report: https://github.com/watch-duty/radio-transcription/bl
 
 ## Executive Summary
 
-The quarantine population is dominated by upstream/provider or credential failures, plus one clear pipeline contract failure class. The main leadership decision is whether source/provider failures should quarantine feeds quickly, while pipeline-wide failures should generally not consume per-feed quarantine budgets.
-
-| Category | Dev | Prod | Total | Root cause | Decision framing |
-|---|---:|---:|---:|---|---|
-| Broadcastify stream HTTP 404 / missing feed | 130 | 51 | 181 | Upstream Broadcastify stream endpoint returned HTTP 404 Not Found. Most legacy ffmpeg_exit_8 rows have stderr showing the same 404. | Leadership decision: retry after a long delay or quarantine after a larger persistence window; this usually means the upstream stream/feed is gone or temporarily unavailable, not a pipeline bug. |
-| Broadcastify stream mixed HTTP 502/404 upstream failure | 0 | 2 | 2 | Focused ffmpeg stderr review found two prod rows where Broadcastify returned HTTP 502 Bad Gateway before later HTTP 404 responses on the same stream URL. | Leadership decision: provider/upstream outage class; retry with medium or long backoff and avoid treating as a local pipeline bug. |
-| Broadcastify Calls API auth HTTP 401 (legacy source_unreachable) | 0 | 100 | 100 | Adjacent runtime traces show AuthError: Broadcastify Calls API returned HTTP 401; legacy collector collapsed it to source_unreachable/system_unexpected_error. | Recommended default: same as Calls API auth 401; historical rows were misclassified. |
-| Broadcastify Calls API auth HTTP 401 | 0 | 50 | 50 | Broadcastify Calls API rejected the configured token/credentials with HTTP 401. | Recommended default: system auth/config incident; pause or retry after credential refresh, not per-feed quarantine unless leadership wants individual feed visibility. |
-| Pub/Sub schema validation failure after Calls capture | 0 | 44 | 44 | Runtime captured audio, but Pub/Sub rejected the serialized segmented payload as `INVALID_BINARY_PROTO_MESSAGE` against `segmented-audio-claims-schema-prod` revision `26561522`; ordering-key pauses were follow-on symptoms. | Recommended default: do not quarantine feeds; this is a post-capture pipeline contract failure. Stop/rollback or dead-letter and page engineering. |
-| Fire Notifications API auth HTTP 401 (legacy source_unreachable) | 4 | 7 | 11 | Collector warnings immediately before quarantine show repeated FN API returned 401 responses. | Recommended default: system auth/config incident; do not burn per-feed retry budgets if credential-wide. |
-| Broadcastify Calls item metadata HTTP 403 | 0 | 4 | 4 | All attempted call items in the page failed with item-level HTTP 403. | Leadership decision: probably feed/source entitlement; retry after longer interval and quarantine only if every attempted item is forbidden repeatedly. |
-| Broadcastify stream auth HTTP 401 | 0 | 4 | 4 | Broadcastify stream endpoint rejected the configured partner stream credentials with HTTP 401. | Recommended default: do not spend feed retry budget for long; mark auth/config failure and alert ops because all feeds using the credential can be affected. |
-| OpenMHz WebSocket upgrade HTTP 403 / reconnect exhausted | 1 | 3 | 4 | OpenMHz WebSocket upgrade was refused with HTTP 403; each collector attempt exhausted 10 transport reconnect failures before the feed-level quarantine threshold was reached. | Leadership decision: treat as source/provider access denial, not ordinary transient disconnect. Retry after long backoff or quarantine with an explicit provider-auth/access label. |
-| Pub/Sub schema validation failure after Fire Notifications capture | 0 | 4 | 4 | Runtime captured audio, but Pub/Sub rejected the serialized segmented payload as `INVALID_BINARY_PROTO_MESSAGE` against `segmented-audio-claims-schema-prod` revision `26561522`; ordering-key pauses were follow-on symptoms. | Recommended default: same as Calls Pub/Sub schema failure. |
-| Legacy Broadcastify stream quarantine with missing reason | 0 | 3 | 3 | Older telemetry emitted the quarantine event without reason/status fields; retained logs do not preserve enough detail to refine it. | No policy decision from this telemetry alone; keep as legacy unknown and rely on current typed reasons going forward. |
-| Broadcastify Calls audio media HTTP 403 | 0 | 2 | 2 | All attempted call audio downloads in the page failed with HTTP 403. | Leadership decision: same as item 403, but scoped to media URLs; retry after longer interval and alert if broad. |
-| OpenMHz WebSocket upgrade HTTP 403 / source unreachable | 2 | 0 | 2 | OpenMHz WebSocket upgrade was refused with HTTP 403; collector escalated after 10 transport failures and stored source_unreachable. | Leadership decision: same as OpenMHz reconnect exhausted; current status should be authentication/access-oriented rather than generic source_unreachable. |
-| Broadcastify Calls API returned HTTP 200 non-JSON | 0 | 1 | 1 | Calls API returned HTTP 200 with text/plain; collector failed while parsing JSON and legacy code stored source_unreachable. | Leadership decision: retry with moderate backoff and alert provider/engineering if persistent; this is an API contract/content-type anomaly. |
-| Broadcastify stream capture timeout | 0 | 1 | 1 | ffmpeg connected to the stream but no finalized segment appeared within the 30 second read timeout; final attempt was force-killed. | Leadership decision: short retry is reasonable, but quarantine policy should distinguish silent/slow stream behavior from permanent feed removal. |
-| Fire Notifications auth env var missing | 1 | 0 | 1 | Collector process was missing required FIRE_NOTIFICATIONS_USER configuration. | Recommended default: deployment/config failure; alert immediately and avoid per-feed quarantine as the primary behavior. |
+| Category | Best option |
+|---|---|
+| Broadcastify stream HTTP 404 / missing feed | Long backoff plus periodic recovery probe; quarantine only after extended persistence. |
+| Broadcastify stream mixed HTTP 502/404 upstream failure | Medium backoff first, then long backoff; no immediate per-feed quarantine. |
+| Broadcastify Calls API auth HTTP 401 (legacy source_unreachable) | Reclassify as auth failure; treat as a system incident, not feed quarantine. |
+| Broadcastify Calls API auth HTTP 401 | System incident with class-wide pause and automatic recovery after credential validation. |
+| Pub/Sub schema validation failure after Calls capture | Remove from feed failure budget; page and rollback/fix; preserve or replay data where possible. |
+| Fire Notifications API auth HTTP 401 (legacy source_unreachable) | System incident and source-class pause until credentials/config are fixed. |
+| Broadcastify Calls item metadata HTTP 403 | Long backoff plus entitlement review if repeated; quarantine only for persistent feed-wide denial. |
+| Broadcastify stream auth HTTP 401 | Page and pause/retry after credential refresh; do not consume feed budget. |
+| OpenMHz WebSocket upgrade HTTP 403 / reconnect exhausted | Long backoff with explicit provider-access label; quarantine only after persistent denial. |
+| Pub/Sub schema validation failure after Fire Notifications capture | Remove from feed failure budget; page and rollback/fix. |
+| Legacy Broadcastify stream quarantine with missing reason | Keep as legacy unknown; require typed reasons going forward. |
+| Broadcastify Calls audio media HTTP 403 | Long backoff plus entitlement/provider review; quarantine only if persistent. |
+| OpenMHz WebSocket upgrade HTTP 403 / source unreachable | Reclassify as provider-access denial; long backoff and controlled probes. |
+| Broadcastify Calls API returned HTTP 200 non-JSON | Short retry, then medium backoff; provider/engineering alert if repeated. |
+| Broadcastify stream capture timeout | Short retry first; reason-aware budget; quarantine only after repeated timeout evidence. |
+| Fire Notifications auth env var missing | Block or fail deployment, page, and resume after config validation. |
 
 ## Leadership Decision Matrix
 
