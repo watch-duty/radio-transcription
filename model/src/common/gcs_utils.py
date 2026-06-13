@@ -168,8 +168,10 @@ def upload_inference_results(
     experiment_name: str,
     results_list: list[dict[str, Any]],
 ) -> str:
-    """
-    Uploads inference results directly from memory to GCS using the standard path structure.
+    """Upload legacy Colab inference results to GCS.
+
+    Deprecated for new pipelines: use ``common.inference_manifest`` so output
+    paths and ``pred_text_*`` semantics match the shared scorer contract.
     """
     blob_path = f"inference_manifests/{project_name}/{model_name}/{experiment_name}_results.jsonl"
 

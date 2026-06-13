@@ -152,6 +152,10 @@ segments from the denominator. The normalized inference manifests leave
 `pred_text_*` absent for those missing prediction records; explicit empty model
 outputs are written as `pred_text_* = ""`.
 
+Eval manifests must use one unique model-ready `audio_filepath` clip URI per
+row. The batch path rejects duplicate audio URIs because one provider prediction
+record cannot be assigned to multiple manifest rows.
+
 Base-model batch inference uses `[gcp].location`. If the tuned endpoint stored
 in `config.json` is a full Vertex resource name, tuned batch inference uses the
 endpoint's own resource location, for example `locations/us`.
