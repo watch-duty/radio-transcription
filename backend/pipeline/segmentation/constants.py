@@ -2,7 +2,7 @@
 
 from typing import Final
 
-DEAD_LETTER_QUEUE_TAG: Final = "normalization_dlq"
+DEAD_LETTER_QUEUE_TAG: Final = "segmentation_dlq"
 MAIN_TAG: Final = "main"
 
 # Pipeline Defaults
