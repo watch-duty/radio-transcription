@@ -2,25 +2,18 @@
 
 from __future__ import annotations
 
-import json
 import logging
-import tempfile
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from common.gcs_utils import (
-    download_blob_to_file,
+    download_json_text,
     download_jsonl_manifest,
-    parse_gcs_uri,
-    upload_file_to_blob,
+    gcs_uri_exists,
 )
+from common.gemini.batch import BatchPredictionMap, run_batch_audio_inference
 from common.gemini.prompts import GEMINI_TRANSCRIBE_KEYWORDS
-from common.gemini.vertex import (
-    build_request,
-    parse_batch_output,
-    submit_batch_inference,
-)
+from common.gemini.vertex import submit_batch_inference
 from common.inference_manifest import (
     model_family_slug_from_model_id,
     upload_inference_manifest,
@@ -39,8 +32,6 @@ from google.cloud import storage
 from gemini_sft.artifacts import (
     DEFAULT_RESULTS_DIR,
     canonical_rows_from_entries,
-    download_json_text,
-    gcs_uri_exists,
     write_and_upload_config,
 )
 from gemini_sft.config import (
@@ -229,10 +220,7 @@ def evaluate_run(
     return 0
 
 
-class PredictionMap(dict[str, str]):
-    """Prediction map with the GCS output URI attached for provenance."""
-
-    output_uri: str
+PredictionMap = BatchPredictionMap
 
 
 def batch_infer(
@@ -248,134 +236,23 @@ def batch_infer(
     user_prompt: str,
 ) -> PredictionMap | None:
     """Build batch input JSONL, submit, download outputs, and parse predictions."""
-    eval_audio_uris = _eval_audio_uris(eval_rows)
-    if eval_audio_uris is None:
-        logger.error(
-            "[%s] eval rows contain duplicate audio_filepath values; one "
-            "prediction record cannot belong to multiple manifest rows.",
-            label,
-        )
-        return None
-    with tempfile.TemporaryDirectory() as tmp:
-        batch_input_gcs, batch_output_gcs = build_batch_jsonl(
-            storage_client=storage_client,
-            run_gcs_prefix=run_gcs_prefix,
-            label=label,
-            eval_rows=eval_rows,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            tmp_dir=Path(tmp),
-        )
-        try:
-            output_loc = submit_batch_inference(
-                input_uri=batch_input_gcs,
-                output_uri=batch_output_gcs,
-                model=model_id,
-                project=gcp_project,
-                location=location,
-            )
-        except (RuntimeError, TimeoutError) as exc:
-            _log_batch_error(label, exc)
-            return None
-
-        out_bucket, out_prefix = parse_gcs_uri(output_loc.rstrip("/") + "/")
-        pred_blobs = [
-            blob
-            for blob in storage_client.bucket(out_bucket).list_blobs(
-                prefix=out_prefix
-            )
-            if blob.name.endswith(".jsonl")
-        ]
-        if not pred_blobs:
-            logger.error(
-                "[%s] no .jsonl prediction output under %s.",
-                label,
-                output_loc,
-            )
-            return None
-        preds = PredictionMap()
-        for i, blob in enumerate(pred_blobs):
-            local_path = Path(tmp) / f"predictions_{i}.jsonl"
-            download_blob_to_file(
-                storage_client, out_bucket, blob.name, str(local_path)
-            )
-            preds.update(
-                parse_batch_output(local_path.read_text(encoding="utf-8"))
-            )
-        extra_prediction_uris = set(preds) - eval_audio_uris
-        if extra_prediction_uris:
-            preview = ", ".join(sorted(extra_prediction_uris)[:3])
-            logger.error(
-                "[%s] prediction output contained audio URIs outside the eval "
-                "manifest: %s",
-                label,
-                preview,
-            )
-            return None
-        expected_count = len(eval_audio_uris)
-        missing = max(0, expected_count - len(preds))
-        if missing > 0:
-            logger.warning(
-                "[%s] %s/%s unique segments returned no prediction; they "
-                "score as full deletions.",
-                label,
-                missing,
-                expected_count,
-            )
-        preds.output_uri = output_loc
-        return preds
-
-
-def _eval_audio_uris(eval_rows: list[Any]) -> set[str] | None:
-    audio_uris: set[str] = set()
-    for row in eval_rows:
-        audio_uri = str(row.audio_filepath)
-        if audio_uri in audio_uris:
-            return None
-        audio_uris.add(audio_uri)
-    return audio_uris
+    return run_batch_audio_inference(
+        storage_client=storage_client,
+        run_gcs_prefix=run_gcs_prefix,
+        gcp_project=gcp_project,
+        location=location,
+        model_id=model_id,
+        label=label,
+        audio_uris=[str(row.audio_filepath) for row in eval_rows],
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        submit_fn=submit_batch_inference,
+    )
 
 
 def _log_cli_error(exc: Exception) -> int:
     logger.error(str(exc))
     return 1
-
-
-def _log_batch_error(label: str, exc: Exception) -> None:
-    logger.error("[%s] Batch inference failed: %s", label, exc)
-
-
-def build_batch_jsonl(
-    *,
-    storage_client: storage.Client,
-    run_gcs_prefix: str,
-    label: str,
-    eval_rows: list[Any],
-    system_prompt: str,
-    user_prompt: str,
-    tmp_dir: Path,
-) -> tuple[str, str]:
-    """Write and upload a Vertex batch input JSONL file."""
-    batch_input_path = tmp_dir / f"batch_input_{label}.jsonl"
-    with batch_input_path.open("w", encoding="utf-8") as fh:
-        for row in eval_rows:
-            fh.write(
-                json.dumps(
-                    build_request(
-                        row.audio_filepath,
-                        system_prompt=system_prompt,
-                        user_prompt=user_prompt,
-                    )
-                )
-                + "\n"
-            )
-    batch_input_gcs = f"{run_gcs_prefix}/evals/{label}/input.jsonl"
-    batch_output_gcs = f"{run_gcs_prefix}/evals/{label}/output/"
-    in_bucket, in_blob = parse_gcs_uri(batch_input_gcs)
-    upload_file_to_blob(
-        storage_client, in_bucket, in_blob, str(batch_input_path)
-    )
-    return batch_input_gcs, batch_output_gcs
 
 
 def build_metrics(

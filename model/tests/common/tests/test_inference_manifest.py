@@ -4,7 +4,8 @@ import json
 import sys
 import unittest
 from pathlib import Path
-from typing import Any
+
+from fake_gcs import FakeStorageClient
 
 _SRC_DIR = str(Path(__file__).resolve().parents[3] / "src")
 if _SRC_DIR not in sys.path:
@@ -16,43 +17,6 @@ from common.inference_manifest import (  # noqa: E402
     model_family_slug_from_model_id,
     upload_inference_manifest,
 )
-
-
-class FakeBlob:
-    def __init__(
-        self, store: dict[tuple[str, str], str], bucket: str, name: str
-    ) -> None:
-        self._store = store
-        self._bucket = bucket
-        self.name = name
-        self.content_type: str | None = None
-
-    def upload_from_string(
-        self, data: str, content_type: str | None = None, **_: Any
-    ) -> None:
-        self._store[(self._bucket, self.name)] = data
-        self.content_type = content_type
-
-
-class FakeBucket:
-    def __init__(self, store: dict[tuple[str, str], str], name: str) -> None:
-        self._store = store
-        self.name = name
-
-    def blob(self, name: str) -> FakeBlob:
-        return FakeBlob(self._store, self.name, name)
-
-
-class FakeStorageClient:
-    def __init__(self) -> None:
-        self.store: dict[tuple[str, str], str] = {}
-
-    def bucket(self, name: str) -> FakeBucket:
-        return FakeBucket(self.store, name)
-
-    def get(self, uri: str) -> str:
-        bucket, blob = uri[len("gs://") :].split("/", maxsplit=1)
-        return self.store[(bucket, blob)]
 
 
 class TestInferenceManifest(unittest.TestCase):

@@ -8,11 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from common.gcs_utils import (
-    download_blob_to_file,
-    parse_gcs_uri,
-    upload_file_to_blob,
-)
+from common.gcs_utils import upload_local_file
 from common.manifest import (
     CanonicalRow,
     canonical_row_identity,
@@ -62,71 +58,6 @@ def local_run_dir(results_dir: Path, round_id: str) -> Path:
 def local_config_path(results_dir: Path, round_id: str) -> Path:
     """Return the local mirror config path for a run."""
     return local_run_dir(results_dir, round_id) / "config.json"
-
-
-def gcs_uri_exists(storage_client: storage.Client, uri: str) -> bool:
-    """Return whether a GCS object exists."""
-    bucket_name, blob_path = parse_gcs_uri(uri)
-    return bool(storage_client.bucket(bucket_name).blob(blob_path).exists())
-
-
-def gcs_prefix_has_any_blob(
-    storage_client: storage.Client, prefix_uri: str
-) -> bool:
-    """Return whether any object exists under a GCS prefix."""
-    bucket_name, blob_prefix = parse_gcs_uri(prefix_uri)
-    for _ in storage_client.bucket(bucket_name).list_blobs(
-        prefix=blob_prefix, max_results=1
-    ):
-        return True
-    return False
-
-
-def download_gcs_uri(
-    storage_client: storage.Client, uri: str, local_path: Path
-) -> None:
-    """Download a GCS object to a local path."""
-    bucket_name, blob_path = parse_gcs_uri(uri)
-    local_path.parent.mkdir(parents=True, exist_ok=True)
-    download_blob_to_file(
-        storage_client, bucket_name, blob_path, str(local_path)
-    )
-
-
-def upload_local_file(
-    storage_client: storage.Client, local_path: Path, gcs_uri: str
-) -> None:
-    """Upload a local file to a GCS object."""
-    bucket_name, blob_path = parse_gcs_uri(gcs_uri)
-    upload_file_to_blob(storage_client, bucket_name, blob_path, str(local_path))
-
-
-def upload_text(
-    storage_client: storage.Client,
-    text: str,
-    gcs_uri: str,
-    *,
-    content_type: str = "text/plain",
-) -> None:
-    """Upload text directly to GCS."""
-    bucket_name, blob_path = parse_gcs_uri(gcs_uri)
-    storage_client.bucket(bucket_name).blob(blob_path).upload_from_string(
-        text, content_type=content_type
-    )
-
-
-def download_json_text(
-    storage_client: storage.Client, gcs_uri: str
-) -> dict[str, Any]:
-    """Download a JSON object from GCS."""
-    bucket_name, blob_path = parse_gcs_uri(gcs_uri)
-    obj = json.loads(
-        storage_client.bucket(bucket_name).blob(blob_path).download_as_text()
-    )
-    if not isinstance(obj, dict):
-        msg = f"Expected JSON object at {gcs_uri}"
-        raise TypeError(msg)
-    return obj
 
 
 def write_json_artifact(
@@ -202,7 +133,7 @@ def canonical_rows_from_entries(
     if not entries:
         msg = f"{split} manifest has zero parsed rows: {source}"
         raise ValueError(msg)
-    require_canonical_manifest(entries)
+    require_canonical_manifest(entries, expected_split=split)
     rows = rows_from_manifest(entries)
     return entries, rows
 
