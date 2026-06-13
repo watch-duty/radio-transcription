@@ -13,10 +13,166 @@ import unittest
 from pathlib import Path
 
 from common.manifest import (
+    CanonicalManifestIssue,
+    CanonicalRow,
+    canonical_row_identity,
     load_manifest,
     merge_predictions_to_manifest,
+    require_canonical_manifest,
     rows_from_manifest,
+    validate_canonical_manifest,
 )
+
+
+def _canonical_row(**overrides: object) -> dict[str, object]:
+    row: dict[str, object] = {
+        "audio_filepath": "gs://bucket/audio/example.flac",
+        "text": "dispatch transcript",
+        "offset": 0.0,
+        "duration": 1.25,
+        "example_id": "example",
+        "segment_id": "001",
+    }
+    row.update(overrides)
+    return row
+
+
+class TestCanonicalManifestValidation(unittest.TestCase):
+    """Strict Canonical Manifest validation covers the public contract."""
+
+    def test_valid_row_with_optional_metadata_returns_no_issues(self) -> None:
+        row = _canonical_row(
+            audio_filepath="gs://bucket/audio/example.FLAC",
+            split="train",
+            lang="en",
+            dataset={
+                "name": "watch-duty",
+                "family": "radio",
+                "extra": {"ignored": True},
+            },
+            source_audio={
+                "audio_filepath": "raw/source.wav",
+                "offset": 0,
+                "duration": 12.5,
+                "extra": "ignored",
+            },
+            audio_processing={
+                "masked_categories": ["pii", "address"],
+                "extra": "ignored",
+            },
+            pred_text_gemini="prediction fields are tolerated",
+            unknown_row_key={"ignored": True},
+        )
+
+        issues = validate_canonical_manifest([row], expected_split="train")
+
+        self.assertEqual(issues, [])
+
+    def test_invalid_rows_return_structured_issues(self) -> None:
+        rows = [
+            _canonical_row(
+                audio_filepath="s3://bucket/audio/example.mp3",
+                text=" ",
+                offset=True,
+                duration=0,
+                split="eval",
+                lang="",
+                dataset={"name": " ", "family": 42},
+                source_audio={
+                    "audio_filepath": "",
+                    "offset": False,
+                    "duration": 0,
+                },
+                audio_processing={"masked_categories": ["ok", "", 42]},
+            ),
+            {
+                "audio_filepath": "gs://bucket/audio/other.flac",
+                "offset": 0,
+                "duration": 1.0,
+                "example_id": "example",
+                "segment_id": "001",
+            },
+            _canonical_row(audio_filepath="gs://bucket/audio/other.flac"),
+        ]
+
+        issues = validate_canonical_manifest(rows, expected_split="train")
+        codes = {issue.code for issue in issues}
+
+        self.assertTrue(
+            all(isinstance(issue, CanonicalManifestIssue) for issue in issues)
+        )
+        self.assertIn("missing_required", codes)
+        self.assertIn("blank_required", codes)
+        self.assertIn("invalid_audio_uri", codes)
+        self.assertIn("invalid_duration", codes)
+        self.assertIn("invalid_offset", codes)
+        self.assertIn("duplicate_identity", codes)
+        self.assertIn("duplicate_audio_filepath", codes)
+        self.assertIn("split_mismatch", codes)
+        self.assertIn("invalid_metadata", codes)
+        self.assertTrue(
+            any(
+                issue.code == "missing_required"
+                and issue.row_index == 1
+                and issue.field == "text"
+                for issue in issues
+            )
+        )
+        self.assertTrue(
+            any(
+                issue.code == "duplicate_identity"
+                and issue.row_index == 1
+                and issue.field == "example_id,segment_id"
+                for issue in issues
+            )
+        )
+        self.assertTrue(
+            any(
+                issue.code == "duplicate_audio_filepath"
+                and issue.row_index == 2
+                and issue.field == "audio_filepath"
+                for issue in issues
+            )
+        )
+
+    def test_require_canonical_manifest_raises_aggregated_error(self) -> None:
+        rows = [_canonical_row(text=" ", split="eval")]
+
+        with self.assertRaisesRegex(ValueError, "blank_required") as ctx:
+            require_canonical_manifest(rows, expected_split="train")
+
+        message = str(ctx.exception)
+        self.assertIn("split_mismatch", message)
+        self.assertIn("row 0", message)
+        self.assertIn("field text", message)
+
+
+class TestCanonicalRowIdentity(unittest.TestCase):
+    """Row identity is public and stable for dict rows and CanonicalRow."""
+
+    def test_identity_from_dict_and_canonical_row_is_stripped(self) -> None:
+        dict_identity = canonical_row_identity(
+            {"example_id": " example ", "segment_id": " 001 "}
+        )
+        typed_identity = canonical_row_identity(
+            CanonicalRow(
+                audio_filepath="gs://bucket/audio/example.flac",
+                example_id="typed-example",
+                segment_id="002",
+                offset=0.0,
+                duration=1.0,
+                text="hello",
+            )
+        )
+
+        self.assertEqual(dict_identity, ("example", "001"))
+        self.assertEqual(typed_identity, ("typed-example", "002"))
+
+    def test_identity_missing_or_blank_fields_raise(self) -> None:
+        with self.assertRaisesRegex(ValueError, "segment_id"):
+            canonical_row_identity({"example_id": "example"})
+        with self.assertRaisesRegex(ValueError, "example_id"):
+            canonical_row_identity({"example_id": " ", "segment_id": "001"})
 
 
 class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
