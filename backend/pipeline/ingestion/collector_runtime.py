@@ -24,8 +24,10 @@ from backend.pipeline.common.log_helper import setup_asyncio_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.ingestion import (
     health_server,
+    quarantine_reason,
     quarantine_telemetry,
 )
+from backend.pipeline.ingestion.failure_classifiers import pubsub
 from backend.pipeline.ingestion.health_server import HealthState
 from backend.pipeline.ingestion.models import (
     AudioMimeType,
@@ -66,7 +68,6 @@ CaptureFn = Callable[
 logger = logging.getLogger(__name__)
 
 _PIPELINE_GCS_UPLOAD_FAILED = "gcs_upload_failed"
-_PIPELINE_PUBSUB_PUBLISH_FAILED = "pubsub_publish_failed"
 _PIPELINE_BOOKMARK_WRITE_FAILED = "bookmark_write_failed"
 
 
@@ -74,8 +75,8 @@ class _PipelineFailure(Exception):
     """Post-capture runtime side-effect failure with a stable stage tag."""
 
     def __init__(self, reason: str) -> None:
-        super().__init__(reason)
         self.reason = reason
+        super().__init__(self.reason)
 
 
 class CollectorRuntime:
@@ -887,7 +888,7 @@ class CollectorRuntime:
         except (asyncio.CancelledError, LeaseExpiredError):
             raise
         except Exception as exc:
-            raise _PipelineFailure(_PIPELINE_PUBSUB_PUBLISH_FAILED) from exc
+            raise _PipelineFailure(pubsub.publish_failure_reason(exc)) from exc
 
         logger.info(
             "Published message %s for feed %s",
@@ -1229,7 +1230,7 @@ class CollectorRuntime:
             # Transitional catch-all for bugs or untyped collector failures.
             # Source-specific attribution belongs in collectors that raise
             # FeedFailure; the runtime only records the explicit fallback.
-            reason = str(e)[:200] if str(e) else type(e).__name__
+            reason = quarantine_reason.exception_text(e)
             await self._record_feed_failure(
                 feed,
                 worker_id,

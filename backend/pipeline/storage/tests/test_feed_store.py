@@ -12,7 +12,7 @@ from unittest import mock
 import asyncpg
 import yaml
 
-from backend.pipeline.storage import feed_queries
+from backend.pipeline.storage import feed_queries, quarantine_reason
 from backend.pipeline.storage.feed_store import (
     FeedStatus,
     FeedStatusReason,
@@ -785,6 +785,34 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
 
         args = pool.fetchrow.call_args[0]
         self.assertIsNone(args[-1])
+
+    async def test_caps_quarantine_reason_at_persistence_boundary(
+        self,
+    ) -> None:
+        """Long reasons are capped only before database writes."""
+        pool = make_mock_pool(
+            fetchrow_result={
+                "status": "failing",
+                "failure_count": 1,
+                "retry_after": None,
+            },
+        )
+        store = FeedStore(pool)
+        long_reason = "x" * (quarantine_reason.MAX_QUARANTINE_REASON_LENGTH + 1)
+
+        await store.report_feed_failure(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            reason=long_reason,
+        )
+
+        reason_arg = pool.fetchrow.call_args[0][-2]
+        self.assertEqual(
+            len(reason_arg),
+            quarantine_reason.MAX_QUARANTINE_REASON_LENGTH,
+        )
+        self.assertTrue(reason_arg.endswith("[truncated]"))
 
 
 class TestReleaseFeed(unittest.IsolatedAsyncioTestCase):

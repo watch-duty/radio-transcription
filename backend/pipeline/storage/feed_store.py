@@ -14,6 +14,7 @@ from backend.pipeline.common.exceptions import (
     FeedAlreadyExistsError,
     FeedNameAlreadyExistsError,
 )
+from backend.pipeline.storage import quarantine_reason
 from backend.pipeline.storage.feed_queries import (
     COUNT_FEEDS_SQL,
     COUNT_HELD_BY_TYPE_SQL,
@@ -456,9 +457,9 @@ class FeedStore:
                 quarantine.
             backoff_base_sec: Base delay in seconds for the first retry.
             backoff_max_sec: Maximum backoff cap in seconds.
-            reason: Short snake_case tag for the failure mode
-                (e.g. ``"auth_failed"``).  Persisted to
-                ``feeds.quarantine_reason`` on transition to quarantined.
+            reason: Diagnostic failure text. Persisted to
+                ``feeds.quarantine_reason`` on transition to quarantined,
+                after applying the storage boundary length cap.
                 ``None`` (default) writes SQL NULL — preferred over an empty
                 string so triage queries can use ``WHERE quarantine_reason
                 IS NOT NULL``.
@@ -473,6 +474,11 @@ class FeedStore:
 
         """
         status_reason_value = status_reason.value if status_reason is not None else None  # fmt: skip
+        stored_reason = (
+            quarantine_reason.cap_quarantine_reason_for_storage(reason)
+            if reason is not None
+            else None
+        )
         row = await self._pool.fetchrow(
             REPORT_FAILURE_SQL,
             feed_id,
@@ -481,7 +487,7 @@ class FeedStore:
             fencing_token,
             backoff_max_sec,
             backoff_base_sec,
-            reason,  # $7 — populates quarantine_reason on transition
+            stored_reason,  # $7 — populates quarantine_reason on transition
             status_reason_value,
         )
         if row is None:

@@ -423,7 +423,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self,
         mock_create_ffmpeg,
     ) -> None:
-        """Ffmpeg exit code 1 -> RuntimeError -> feed status = 'failing'."""
+        """Ffmpeg exit code 1 -> FeedFailure -> feed status = 'failing'."""
         feed = await self._lease_feed("error-feed")
 
         # Mock ffmpeg: no segments and non-zero exit
@@ -450,7 +450,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             ctx.exception.status_reason,
             FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
         )
-        self.assertEqual(str(ctx.exception), "ffmpeg_exit_1")
+        self.assertEqual(str(ctx.exception), "ffmpeg exited with code 1")
 
         # Simulate what CollectorRuntime._process_feed does on exception
         await self.store.report_feed_failure(

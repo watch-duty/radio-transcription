@@ -589,6 +589,37 @@ class TestHandle:
             status_reason=FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
         )
 
+    @pytest.mark.usefixtures("_patch_globals")
+    def test_unwrapped_bug_preserves_full_exception_text(
+        self, mock_store
+    ) -> None:
+        feed_id = uuid.uuid4()
+        self._set_feed(
+            mock_store,
+            {
+                "id": feed_id,
+                "name": "Central Fire",
+                "external_id": "ext-id",
+                "status": "active",
+                "failure_count": 0,
+            },
+        )
+        message = "token=secret-value " + ("x" * 300)
+
+        with patch(
+            "backend.pipeline.ingestion.collectors.echo.main._parse_timestamp",
+            side_effect=RuntimeError(message),
+        ):
+            with pytest.raises(RuntimeError, match=message):
+                _handle(self._make_event())
+
+        self._assert_failure_recorded(
+            mock_store,
+            feed_id,
+            reason=message,
+            status_reason=FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
+        )
+
     # -----------------------------------------------------------------
     # Dual-write to dev recordings bucket (best-effort mirror)
     # -----------------------------------------------------------------
