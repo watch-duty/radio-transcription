@@ -624,6 +624,8 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                     seen_urls.append(audio_url)
                     # Reset consecutive failures on successful yield
                     consecutive_failures = 0
+                if shutdown_event.is_set():
+                    return
                 promoted = outcome.promoted_failure()
                 if promoted is not None:
                     _raise_item_failure(promoted)

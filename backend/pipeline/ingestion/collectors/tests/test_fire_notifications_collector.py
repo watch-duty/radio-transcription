@@ -585,8 +585,9 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
             },
         ]
 
-        with self.assertRaises(FeedFailure):
-            async for _ in collector._process_file_list(
+        chunks = [
+            chunk
+            async for chunk in collector._process_file_list(
                 files,
                 self.session,
                 self.shutdown,
@@ -596,9 +597,10 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
                 "CHAN",
                 "http://mock-s3-bucket",
                 ItemBatchOutcome(),
-            ):
-                pass
+            )
+        ]
 
+        self.assertEqual(chunks, [])
         mock_emit.assert_not_called()
 
     @patch(

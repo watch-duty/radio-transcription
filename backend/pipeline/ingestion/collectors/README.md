@@ -181,9 +181,10 @@ Do not duplicate exact HTTP policy tables in this guide. The `HTTPStatusPolicy`
 instances in code and their tests are the source of truth; this document should
 explain why policies are scoped by endpoint/stage, not restate every mapping.
 
-Do not append raw HTTP response bodies, full ffmpeg stderr, stack traces, URLs,
-tokens, object IDs, timestamps, request bodies, signed URLs, feed IDs, call IDs,
-or secrets in quarantine-reason text.
+Do not append raw HTTP response bodies, full ffmpeg stderr, stack traces, or
+large request/response bodies. Exception text and bounded stderr tails may be
+preserved when they are the direct diagnostic evidence for the failure episode;
+storage applies the final quarantine-reason cap immediately before persistence.
 
 ## Shared Collector Helpers
 

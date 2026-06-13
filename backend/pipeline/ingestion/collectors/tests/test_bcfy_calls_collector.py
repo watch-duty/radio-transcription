@@ -2382,7 +2382,12 @@ class TestBcfyCallsCallDownloadFailedEmit(unittest.IsolatedAsyncioTestCase):
         async def _create_then_shut(*a, **kw):
             # Shutdown set before the no-chunk result suppresses the emit.
             shutdown.set()
-            return bcfy_calls_collector._CallChunkResult()
+            return bcfy_calls_collector._CallChunkResult(
+                failure=ItemFailure(
+                    FeedStatusReason.SOURCE_UNREACHABLE,
+                    "item_download_failed",
+                )
+            )
 
         mock_create.side_effect = _create_then_shut
         mock_fetch.return_value = _fetch_payload(

@@ -294,6 +294,9 @@ async def _process_file_list(
         processed_uuids.append(file_uuid)
         outcome.record_chunk_produced()
 
+    if shutdown_event.is_set():
+        return
+
     promoted = outcome.promoted_failure()
     if promoted is not None:
         raise collector_failure(promoted.status_reason, promoted.reason)
