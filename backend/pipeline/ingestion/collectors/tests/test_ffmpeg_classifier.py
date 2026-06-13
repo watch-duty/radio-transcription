@@ -14,9 +14,9 @@ from backend.pipeline.storage import feed_store
 def _require_classification(
     value,
 ):
-    """Return a classification for tests that intentionally expect one."""
+    """Return ffmpeg info for tests that intentionally expect one."""
     if value is None:
-        msg = "Expected FailureClassification, got None"
+        msg = "Expected FfmpegFailureInfo, got None"
         raise AssertionError(msg)
     return value
 
@@ -59,7 +59,15 @@ class TestFfmpegClassifier(unittest.TestCase):
             classification.status_reason,
             feed_store.FeedStatusReason.SOURCE_OFFLINE,
         )
-        self.assertEqual(classification.reason, "stream_http_404")
+        self.assertIs(
+            classification.kind,
+            ffmpeg.FfmpegFailureKind.HTTP_STATUS,
+        )
+        self.assertIs(
+            classification.source,
+            ffmpeg.FfmpegEvidenceSource.STDERR,
+        )
+        self.assertEqual(classification.http_status, 404)
 
     def test_stderr_skips_success_status_before_terminal_status(self) -> None:
         classification = _require_classification(
@@ -78,7 +86,11 @@ class TestFfmpegClassifier(unittest.TestCase):
             classification.status_reason,
             feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
         )
-        self.assertEqual(classification.reason, "stream_http_503")
+        self.assertIs(
+            classification.kind,
+            ffmpeg.FfmpegFailureKind.HTTP_STATUS,
+        )
+        self.assertEqual(classification.http_status, 503)
 
     def test_probe_status_maps_without_stderr_status(self) -> None:
         policy = http_status.HTTPStatusPolicy(
@@ -98,9 +110,17 @@ class TestFfmpegClassifier(unittest.TestCase):
             classification.status_reason,
             feed_store.FeedStatusReason.SOURCE_OFFLINE,
         )
-        self.assertEqual(classification.reason, "stream_http_404")
+        self.assertIs(
+            classification.kind,
+            ffmpeg.FfmpegFailureKind.HTTP_STATUS,
+        )
+        self.assertIs(
+            classification.source,
+            ffmpeg.FfmpegEvidenceSource.PROBE,
+        )
+        self.assertEqual(classification.http_status, 404)
 
-    def test_timeout_maps_to_capture_timeout(self) -> None:
+    def test_timeout_maps_to_timeout_info(self) -> None:
         classification = _require_classification(
             ffmpeg.classify_ffmpeg_failure(exit_code=None, timed_out=True)
         )
@@ -109,9 +129,9 @@ class TestFfmpegClassifier(unittest.TestCase):
             classification.status_reason,
             feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
         )
-        self.assertEqual(classification.reason, "capture_timeout")
+        self.assertIs(classification.kind, ffmpeg.FfmpegFailureKind.TIMEOUT)
 
-    def test_positive_exit_maps_to_ffmpeg_exit_reason(self) -> None:
+    def test_positive_exit_maps_to_process_exit_info(self) -> None:
         classification = _require_classification(
             ffmpeg.classify_ffmpeg_failure(exit_code=8)
         )
@@ -120,9 +140,13 @@ class TestFfmpegClassifier(unittest.TestCase):
             classification.status_reason,
             feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
         )
-        self.assertEqual(classification.reason, "ffmpeg_exit_8")
+        self.assertIs(
+            classification.kind,
+            ffmpeg.FfmpegFailureKind.PROCESS_EXIT,
+        )
+        self.assertEqual(classification.exit_code, 8)
 
-    def test_signal_exit_maps_to_ffmpeg_signal_reason(self) -> None:
+    def test_signal_exit_maps_to_process_signal_info(self) -> None:
         classification = _require_classification(
             ffmpeg.classify_ffmpeg_failure(exit_code=-9)
         )
@@ -131,7 +155,11 @@ class TestFfmpegClassifier(unittest.TestCase):
             classification.status_reason,
             feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
         )
-        self.assertEqual(classification.reason, "ffmpeg_signal_9")
+        self.assertIs(
+            classification.kind,
+            ffmpeg.FfmpegFailureKind.PROCESS_SIGNAL,
+        )
+        self.assertEqual(classification.signal_number, 9)
 
     def test_zero_exit_without_timeout_returns_none(self) -> None:
         self.assertIsNone(ffmpeg.classify_ffmpeg_failure(exit_code=0))

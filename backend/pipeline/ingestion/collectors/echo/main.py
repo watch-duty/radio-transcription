@@ -133,7 +133,7 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
         )
         return
 
-    failure: failure_classification.FailureClassification | None = None
+    failure: failure_classification.FailureInfo | None = None
 
     try:
         # Download MP3.  A NotFound means the object was deleted between the
@@ -231,7 +231,7 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
     except Exception as exc:
         classification = (
             failure
-            or failure_classification.FailureClassification(
+            or failure_classification.FailureInfo(
                 FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
                 _unexpected_failure_reason(exc),
             )
@@ -252,8 +252,8 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
 # ---------------------------------------------------------------------------
 def _pipeline_failure(
     reason: str,
-) -> failure_classification.FailureClassification:
-    return failure_classification.FailureClassification(
+) -> failure_classification.FailureInfo:
+    return failure_classification.FailureInfo(
         FeedStatusReason.SYSTEM_PIPELINE_ERROR,
         reason,
     )

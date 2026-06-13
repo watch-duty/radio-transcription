@@ -2042,7 +2042,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
     async def test_typed_collector_failure_persists_carried_status_reason(
         self,
     ) -> None:
-        """FeedFailure carries canonical and raw reasons to storage."""
+        """FeedFailure carries status and quarantine reasons to storage."""
 
         async def _failing_capture(feed, shutdown, _resources):
             raise FeedFailure(
@@ -2203,7 +2203,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_failure_log_includes_runtime_reason_fields(self) -> None:
-        """Runtime failure logs include canonical and raw reason fields."""
+        """Runtime failure logs include status and quarantine reason fields."""
 
         async def _failing_capture(feed, shutdown, _resources):
             msg = "capture_failed"

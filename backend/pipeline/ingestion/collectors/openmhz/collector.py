@@ -83,15 +83,14 @@ def _transport_failure_from_exception(exc: Exception) -> FeedFailure | None:
         return None
 
     status = int(match.group(1))
-    classification = http_status.classify_http_status(
+    status_reason = http_status.classify_http_status(
         status,
-        reason_prefix="ws_upgrade_http",
     )
-    if classification is None:
+    if status_reason is None:
         return None
 
     return collector_failure(
-        classification.status_reason,
+        status_reason,
         failure_diagnostics.build_diagnostic(
             f"OpenMHz WebSocket upgrade failed with HTTP {status}",
             exception_text,

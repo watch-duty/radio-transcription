@@ -16,13 +16,11 @@ def classify_item_http_status(
     status: int,
 ) -> failure_classification.ItemFailure:
     """Classify terminal item HTTP evidence with item-scope fallback."""
-    classification = http_status.classify_http_status(
-        status,
-        reason_prefix=ITEM_HTTP_REASON_PREFIX,
-    )
-    if classification is not None:
-        return failure_classification.ItemFailure.from_classification(
-            classification
+    status_reason = http_status.classify_http_status(status)
+    if status_reason is not None:
+        return failure_classification.ItemFailure(
+            status_reason,
+            f"{ITEM_HTTP_REASON_PREFIX}_{status}",
         )
 
     return failure_classification.ItemFailure(

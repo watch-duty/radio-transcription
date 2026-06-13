@@ -4,12 +4,14 @@ import asyncio
 import base64
 import collections
 import contextlib
+import dataclasses
 import datetime
 import logging
 import os
 import tempfile
 import time
 import uuid
+from enum import Enum, auto
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlencode, urljoin
@@ -25,8 +27,8 @@ from backend.pipeline.common.constants import (
 )
 from backend.pipeline.ingestion import failure_diagnostics
 from backend.pipeline.ingestion.collectors.failure_classification import (
-    FailureClassification,
     collector_failure,
+    format_exception_context,
     missing_source_feed_id_failure,
 )
 from backend.pipeline.ingestion.collectors.failure_classifiers import (
@@ -70,6 +72,18 @@ _ICECAST_STREAM_HTTP_POLICY = http_status.HTTPStatusPolicy(
 )
 
 
+class _StreamProbeOutcome(Enum):
+    TERMINAL_FAILURE = auto()
+    STREAM_AVAILABLE = auto()
+    INCONCLUSIVE = auto()
+
+
+@dataclasses.dataclass(frozen=True)
+class _StreamProbeResult:
+    outcome: _StreamProbeOutcome
+    failure: FeedFailure | None = None
+
+
 def _build_auth_header() -> str:
     """Build Basic Auth header from env vars, raising if missing."""
     user = os.getenv("BROADCASTIFY_USERNAME")
@@ -93,82 +107,77 @@ def _classify_stream_http_status(
     reason: str | None = None,
 ) -> FeedFailure | None:
     """Classify stream endpoint HTTP status into a typed feed failure."""
-    classification = http_status.classify_http_status(
+    status_reason = http_status.classify_http_status(
         status,
-        reason_prefix="stream_http",
         policy=_ICECAST_STREAM_HTTP_POLICY,
     )
-    if classification is None:
+    if status_reason is None:
         return None
     http_diagnostic = f"HTTP error {status}"
     if reason:
         http_diagnostic = f"{http_diagnostic} {reason}"
     return collector_failure(
-        classification.status_reason,
+        status_reason,
         failure_diagnostics.build_diagnostic(http_diagnostic),
     )
 
 
-def _feed_failure_from_classification(
-    classification: FailureClassification,
+def _feed_failure_from_ffmpeg_info(
+    info: ffmpeg_classifier.FfmpegFailureInfo,
     diagnostic_text: str | None = None,
 ) -> FeedFailure:
-    """Convert neutral classifier output into an Icecast feed failure."""
+    """Convert ffmpeg failure info into an Icecast feed failure."""
     return collector_failure(
-        classification.status_reason,
-        _diagnostic_for_classification(classification, diagnostic_text),
+        info.status_reason,
+        _diagnostic_for_ffmpeg_info(info, diagnostic_text),
     )
 
 
-def _diagnostic_for_classification(
-    classification: FailureClassification,
+def _diagnostic_for_ffmpeg_info(
+    info: ffmpeg_classifier.FfmpegFailureInfo,
     diagnostic_text: str | None,
 ) -> str:
-    """Translate internal classifier tags into operator diagnostics."""
-    if _has_useful_diagnostic_text(diagnostic_text):
-        if classification.reason.startswith("stream_http_"):
-            return failure_diagnostics.build_diagnostic(diagnostic_text)
-        if classification.reason == "capture_timeout":
-            return failure_diagnostics.build_diagnostic(
-                "Stream capture timed out",
-                diagnostic_text,
-            )
-        if classification.reason.startswith(("ffmpeg_exit_", "ffmpeg_signal_")):
-            return failure_diagnostics.build_diagnostic(
-                _humanize_ffmpeg_reason(classification.reason),
-                diagnostic_text,
-            )
+    """Render typed ffmpeg failure info into operator diagnostics."""
+    if (
+        info.kind is ffmpeg_classifier.FfmpegFailureKind.HTTP_STATUS
+        and _has_useful_diagnostic_text(diagnostic_text)
+    ):
+        return failure_diagnostics.build_diagnostic(diagnostic_text)
 
-    return failure_diagnostics.build_diagnostic(
-        _humanize_ffmpeg_reason(classification.reason),
-    )
+    base = _humanize_ffmpeg_info(info)
+    if _has_useful_diagnostic_text(diagnostic_text):
+        return failure_diagnostics.build_diagnostic(base, diagnostic_text)
+    return failure_diagnostics.build_diagnostic(base)
 
 
 def _has_useful_diagnostic_text(diagnostic_text: str | None) -> bool:
     return bool(diagnostic_text and diagnostic_text != "(no stderr captured)")
 
 
-def _humanize_ffmpeg_reason(reason: str) -> str:
-    if reason.startswith("ffmpeg_exit_"):
-        return f"ffmpeg exited with code {reason.removeprefix('ffmpeg_exit_')}"
-    if reason.startswith("ffmpeg_signal_"):
-        return (
-            "ffmpeg terminated by signal "
-            f"{reason.removeprefix('ffmpeg_signal_')}"
-        )
-    if reason == "capture_timeout":
+def _humanize_ffmpeg_info(info: ffmpeg_classifier.FfmpegFailureInfo) -> str:
+    if info.kind is ffmpeg_classifier.FfmpegFailureKind.HTTP_STATUS:
+        if info.http_status is None:
+            return "HTTP stream error"
+        return f"HTTP error {info.http_status}"
+    if info.kind is ffmpeg_classifier.FfmpegFailureKind.PROCESS_EXIT:
+        return f"ffmpeg exited with code {info.exit_code}"
+    if info.kind is ffmpeg_classifier.FfmpegFailureKind.PROCESS_SIGNAL:
+        return f"ffmpeg terminated by signal {info.signal_number}"
+    if info.kind is ffmpeg_classifier.FfmpegFailureKind.TIMEOUT:
         return "Stream capture timed out"
-    return reason
+    return "ffmpeg failed"
 
 
-def _is_raw_ffmpeg_failure(classification: FailureClassification) -> bool:
+def _is_raw_ffmpeg_failure(info: ffmpeg_classifier.FfmpegFailureInfo) -> bool:
     """Return whether probe evidence should decide a raw ffmpeg fallback."""
     return (
-        classification.status_reason is FeedStatusReason.SYSTEM_COLLECTOR_ERROR
-        and (
-            classification.reason.startswith("ffmpeg_")
-            or classification.reason == "capture_timeout"
-        )
+        info.status_reason is FeedStatusReason.SYSTEM_COLLECTOR_ERROR
+        and info.kind
+        in {
+            ffmpeg_classifier.FfmpegFailureKind.PROCESS_EXIT,
+            ffmpeg_classifier.FfmpegFailureKind.PROCESS_SIGNAL,
+            ffmpeg_classifier.FfmpegFailureKind.TIMEOUT,
+        }
     )
 
 
@@ -182,20 +191,11 @@ def _headers_from_ffmpeg_auth_header(auth_header: str) -> dict[str, str]:
     return headers
 
 
-def _probe_keeps_raw_reason(probe_failure: FeedFailure) -> bool:
-    """Return whether ambiguous probe evidence should preserve raw ffmpeg reason."""
-    return (
-        probe_failure.status_reason is FeedStatusReason.SYSTEM_COLLECTOR_ERROR
-        and str(probe_failure)
-        in {"stream_available", "stream_probe_inconclusive"}
-    )
-
-
 async def _probe_stream_once(
     resources: CaptureResources,
     url: str,
     auth_header: str,
-) -> FeedFailure | None:
+) -> _StreamProbeResult:
     """Probe the same stream URL once after ambiguous ffmpeg failures."""
     try:
         async with resources.http_session.get(
@@ -208,22 +208,60 @@ async def _probe_stream_once(
                 response.reason,
             )
             if classified is not None:
-                return classified
-            if response.status == 200:
-                return collector_failure(
-                    FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-                    "stream_available",
+                return _StreamProbeResult(
+                    _StreamProbeOutcome.TERMINAL_FAILURE,
+                    classified,
                 )
-            return collector_failure(
-                FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-                "stream_probe_inconclusive",
-            )
-    except Exception:
+            if response.status == 200:
+                return _StreamProbeResult(
+                    _StreamProbeOutcome.STREAM_AVAILABLE
+                )
+            return _StreamProbeResult(_StreamProbeOutcome.INCONCLUSIVE)
+    except Exception as exc:
         logger.warning("stream probe failed", exc_info=True)
-        return collector_failure(
-            FeedStatusReason.SOURCE_UNREACHABLE,
-            "stream_probe_failed",
+        return _StreamProbeResult(
+            _StreamProbeOutcome.TERMINAL_FAILURE,
+            collector_failure(
+                FeedStatusReason.SOURCE_UNREACHABLE,
+                format_exception_context("stream_probe_failed", exc),
+            ),
         )
+
+
+async def _build_stream_capture_failure(
+    resources: CaptureResources,
+    url: str,
+    auth_header: str,
+    *,
+    exit_code: int | None,
+    timed_out: bool,
+    classification_text: str,
+    stderr_snippet: str,
+) -> FeedFailure:
+    """Build the feed failure for terminal ffmpeg stream-capture evidence."""
+    info = ffmpeg_classifier.classify_ffmpeg_failure(
+        exit_code=exit_code,
+        stderr_text=classification_text,
+        timed_out=timed_out,
+        http_policy=_ICECAST_STREAM_HTTP_POLICY,
+    )
+    if info is None:
+        return collector_failure(
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            "ffmpeg failed without classifiable terminal evidence",
+        )
+
+    if not _is_raw_ffmpeg_failure(info):
+        return _feed_failure_from_ffmpeg_info(info, classification_text)
+
+    probe = await _probe_stream_once(resources, url, auth_header)
+    if (
+        probe.outcome is _StreamProbeOutcome.TERMINAL_FAILURE
+        and probe.failure is not None
+    ):
+        return probe.failure
+
+    return _feed_failure_from_ffmpeg_info(info, stderr_snippet)
 
 
 async def _drain_stderr(
@@ -266,7 +304,7 @@ def _segment_path(directory: Path, index: int) -> Path:
     return directory / f"chunk_{index:06d}.{AUDIO_FORMAT}"
 
 
-async def capture_icecast_stream(  # noqa: PLR0912, PLR0915
+async def capture_icecast_stream(  # noqa: PLR0915
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
     url_base: str,
@@ -427,34 +465,16 @@ async def capture_icecast_stream(  # noqa: PLR0912, PLR0915
                             if stderr_http_status_lines
                             else stderr_snippet
                         )
-                        classification = (
-                            ffmpeg_classifier.classify_ffmpeg_failure(
-                                exit_code=exit_code,
-                                stderr_text=classification_text,
-                                http_policy=_ICECAST_STREAM_HTTP_POLICY,
-                            )
-                        )
-                        if classification is None:
-                            msg = "ffmpeg_failed_without_classification"
-                            raise RuntimeError(msg)
-                        if not _is_raw_ffmpeg_failure(classification):
-                            raise _feed_failure_from_classification(
-                                classification,
-                                classification_text,
-                            )
-                        probe_failure = await _probe_stream_once(
+                        failure = await _build_stream_capture_failure(
                             resources,
                             url,
                             auth_header,
+                            exit_code=exit_code,
+                            timed_out=False,
+                            classification_text=classification_text,
+                            stderr_snippet=stderr_snippet,
                         )
-                        if probe_failure is None or _probe_keeps_raw_reason(
-                            probe_failure
-                        ):
-                            raise _feed_failure_from_classification(
-                                classification,
-                                stderr_snippet,
-                            )
-                        raise probe_failure
+                        raise failure
                     logger.info(
                         "Feed %s (%s): ffmpeg exited normally",
                         feed_id,
@@ -480,33 +500,16 @@ async def capture_icecast_stream(  # noqa: PLR0912, PLR0915
                         if stderr_http_status_lines
                         else stderr_snippet
                     )
-                    classification = ffmpeg_classifier.classify_ffmpeg_failure(
-                        exit_code=process.returncode,
-                        stderr_text=classification_text,
-                        timed_out=True,
-                        http_policy=_ICECAST_STREAM_HTTP_POLICY,
-                    )
-                    if classification is None:
-                        msg = "capture_timeout"
-                        raise RuntimeError(msg)
-                    if not _is_raw_ffmpeg_failure(classification):
-                        raise _feed_failure_from_classification(
-                            classification,
-                            classification_text,
-                        )
-                    probe_failure = await _probe_stream_once(
+                    failure = await _build_stream_capture_failure(
                         resources,
                         url,
                         auth_header,
+                        exit_code=process.returncode,
+                        timed_out=True,
+                        classification_text=classification_text,
+                        stderr_snippet=stderr_snippet,
                     )
-                    if probe_failure is None or _probe_keeps_raw_reason(
-                        probe_failure
-                    ):
-                        raise _feed_failure_from_classification(
-                            classification,
-                            stderr_snippet,
-                        )
-                    raise probe_failure
+                    raise failure
 
                 await asyncio.sleep(POLL_INTERVAL_SEC)
 
