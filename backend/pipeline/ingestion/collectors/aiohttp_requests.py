@@ -12,7 +12,7 @@ from typing import Any, TypeVar, cast
 
 import aiohttp
 
-from backend.pipeline.ingestion import models
+from backend.pipeline.ingestion import models, quarantine_reason
 from backend.pipeline.ingestion.collectors import (
     control_flow,
     failure_classification,
@@ -20,7 +20,6 @@ from backend.pipeline.ingestion.collectors import (
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemFailure,
     collector_failure,
-    format_exception_context,
 )
 from backend.pipeline.ingestion.collectors.failure_classifiers import (
     http_status,
@@ -198,10 +197,8 @@ async def fetch_json_with_retries(  # noqa: UP047
                     ) as exc:
                         raise collector_failure(
                             invalid_payload_status_reason,
-                            format_exception_context(
-                                invalid_payload_reason,
-                                exc,
-                            ),
+                            f"{invalid_payload_reason}: "
+                            f"{quarantine_reason.exception_text(exc)}",
                         )
 
                 if _is_retryable_status(
@@ -239,12 +236,16 @@ async def fetch_json_with_retries(  # noqa: UP047
                     retry_config,
                     attempt=attempt,
                     log_label=log_label,
-                    message=format_exception_context("transport error", exc),
+                    message=(
+                        "transport error: "
+                        f"{quarantine_reason.exception_text(exc)}"
+                    ),
                 )
                 continue
             raise collector_failure(
                 transport_status_reason,
-                format_exception_context(transport_reason, exc),
+                f"{transport_reason}: "
+                f"{quarantine_reason.exception_text(exc)}",
             )
 
     msg = "unreachable retry loop exit"
@@ -326,12 +327,16 @@ async def download_item_media(
                     retry_config,
                     attempt=attempt,
                     log_label=log_label,
-                    message=format_exception_context("transport error", exc),
+                    message=(
+                        "transport error: "
+                        f"{quarantine_reason.exception_text(exc)}"
+                    ),
                 )
                 continue
             return ItemFailure(
                 transport_status_reason,
-                format_exception_context(transport_reason, exc),
+                f"{transport_reason}: "
+                f"{quarantine_reason.exception_text(exc)}",
             )
 
     msg = "unreachable retry loop exit"

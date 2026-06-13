@@ -25,10 +25,9 @@ from backend.pipeline.common.constants import (
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
 )
-from backend.pipeline.ingestion import failure_diagnostics
+from backend.pipeline.ingestion import quarantine_reason
 from backend.pipeline.ingestion.collectors.failure_classification import (
     collector_failure,
-    format_exception_context,
     missing_source_feed_id_failure,
 )
 from backend.pipeline.ingestion.collectors.failure_classifiers import (
@@ -118,7 +117,7 @@ def _classify_stream_http_status(
         http_diagnostic = f"{http_diagnostic} {reason}"
     return collector_failure(
         status_reason,
-        failure_diagnostics.build_diagnostic(http_diagnostic),
+        http_diagnostic,
     )
 
 
@@ -142,12 +141,12 @@ def _diagnostic_for_ffmpeg_info(
         info.kind is ffmpeg_classifier.FfmpegFailureKind.HTTP_STATUS
         and _has_useful_diagnostic_text(diagnostic_text)
     ):
-        return failure_diagnostics.build_diagnostic(diagnostic_text)
+        return diagnostic_text
 
     base = _humanize_ffmpeg_info(info)
     if _has_useful_diagnostic_text(diagnostic_text):
-        return failure_diagnostics.build_diagnostic(base, diagnostic_text)
-    return failure_diagnostics.build_diagnostic(base)
+        return f"{base}; {diagnostic_text}"
+    return base
 
 
 def _has_useful_diagnostic_text(diagnostic_text: str | None) -> bool:
@@ -223,7 +222,8 @@ async def _probe_stream_once(
             _StreamProbeOutcome.TERMINAL_FAILURE,
             collector_failure(
                 FeedStatusReason.SOURCE_UNREACHABLE,
-                format_exception_context("stream_probe_failed", exc),
+                f"stream_probe_failed: "
+                f"{quarantine_reason.exception_text(exc)}",
             ),
         )
 

@@ -140,11 +140,12 @@ likely owner is the source/provider or the ingestion system.
 
 ### Quarantine Reason
 
-The detailed, redacted diagnostic message persisted when a feed failure episode
+The detailed diagnostic message persisted when a feed failure episode
 crosses the quarantine threshold. It describes that threshold-crossing episode
 for debugging; it is not the lifecycle owner label and does not summarize the
 full failure budget history. It is not a stable machine-readable code and
-should not drive control flow.
+should not drive control flow. Ingestion keeps the full useful diagnostic in
+memory; storage caps it only at the database persistence boundary.
 
 ### Quarantine
 

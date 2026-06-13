@@ -261,7 +261,7 @@ def _pipeline_failure(
 
 def _unexpected_failure_reason(exc: Exception) -> str:
     reason = str(exc)
-    return reason[:200] if reason else type(exc).__name__
+    return reason or type(exc).__name__
 
 
 def _mirror_to_dev_best_effort(bucket: str, name: str) -> None:

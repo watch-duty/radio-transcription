@@ -23,8 +23,8 @@ from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.common.log_helper import setup_asyncio_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.ingestion import (
-    failure_diagnostics,
     health_server,
+    quarantine_reason,
     quarantine_telemetry,
 )
 from backend.pipeline.ingestion.health_server import HealthState
@@ -74,30 +74,27 @@ class _PipelineFailure(Exception):
     """Post-capture runtime side-effect failure with a stable stage tag."""
 
     def __init__(self, reason: str) -> None:
-        self.reason = failure_diagnostics.build_diagnostic(reason)
+        self.reason = reason
         super().__init__(self.reason)
 
 
 def _pubsub_publish_failure_reason(exc: Exception) -> str:
     """Build operator diagnostic text for a failed Pub/Sub publish."""
     if isinstance(exc, pubsub_exceptions.PublishToPausedOrderingKeyException):
-        return failure_diagnostics.build_diagnostic(
-            "Pub/Sub publish paused for ordering key",
-            exc,
+        return (
+            "Pub/Sub publish paused for ordering key: "
+            f"{quarantine_reason.exception_text(exc)}"
         )
 
     text = str(exc)
     if "schema validation" in text.lower():
-        parts: list[object] = ["Pub/Sub schema validation failed"]
+        parts = ["Pub/Sub schema validation failed"]
         if "INVALID_BINARY_PROTO_MESSAGE" in text:
             parts.append("INVALID_BINARY_PROTO_MESSAGE")
         parts.append(text)
-        return failure_diagnostics.build_diagnostic(*parts)
+        return "; ".join(parts)
 
-    return failure_diagnostics.build_diagnostic(
-        "Pub/Sub publish failed",
-        f"{type(exc).__name__}: {exc}",
-    )
+    return f"Pub/Sub publish failed: {quarantine_reason.exception_text(exc)}"
 
 
 class CollectorRuntime:

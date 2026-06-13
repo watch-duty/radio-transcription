@@ -15,7 +15,10 @@ from google.api_core import exceptions as google_exceptions
 from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
-from backend.pipeline.ingestion.collector_runtime import CollectorRuntime
+from backend.pipeline.ingestion.collector_runtime import (
+    CollectorRuntime,
+    _PipelineFailure,
+)
 from backend.pipeline.ingestion.models import (
     CapturedChunk,
     CaptureResources,
@@ -106,8 +109,10 @@ class TestFeedFailureContract(unittest.TestCase):
 
         exc.__traceback__ = None
 
-    def test_reason_is_redacted_and_capped_diagnostic_text(self) -> None:
-        """FeedFailure keeps operator diagnostics useful and API-safe."""
+    def test_reason_preserves_raw_diagnostic_text_without_capping(
+        self,
+    ) -> None:
+        """FeedFailure keeps full raw diagnostics until persistence."""
         exc = FeedFailure(
             FeedStatusReason.SYSTEM_PIPELINE_ERROR,
             (
@@ -116,12 +121,22 @@ class TestFeedFailureContract(unittest.TestCase):
             ),
         )
 
-        self.assertLessEqual(len(exc.reason), 2048)
-        self.assertIn("Authorization: <redacted>", exc.reason)
-        self.assertIn("token=<redacted>", exc.reason)
-        self.assertNotIn("secret-token", exc.reason)
-        self.assertNotIn("secret-value", exc.reason)
-        self.assertTrue(exc.reason.endswith("[truncated]"))
+        self.assertGreater(len(exc.reason), 2048)
+        self.assertIn("Authorization: Bearer secret-token", exc.reason)
+        self.assertIn("token=secret-value", exc.reason)
+        self.assertFalse(exc.reason.endswith("[truncated]"))
+
+    def test_pipeline_failure_reason_preserves_raw_text_without_capping(
+        self,
+    ) -> None:
+        """Runtime pipeline failures follow the same in-memory reason rule."""
+        exc = _PipelineFailure(
+            "Authorization: Bearer secret-token " + ("x" * 3000)
+        )
+
+        self.assertGreater(len(exc.reason), 2048)
+        self.assertIn("Authorization: Bearer secret-token", exc.reason)
+        self.assertFalse(exc.reason.endswith("[truncated]"))
 
 
 def _mock_pubsub_publish(message_id: str = "test-message-id") -> mock._patch:

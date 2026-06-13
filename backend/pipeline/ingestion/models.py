@@ -75,7 +75,6 @@ from typing import TYPE_CHECKING
 
 import aiohttp  # noqa: TC002 — runtime use: CaptureResources holds aiohttp.ClientSession
 
-from backend.pipeline.ingestion import failure_diagnostics
 from backend.pipeline.storage.feed_store import FeedStatusReason
 
 if TYPE_CHECKING:
@@ -122,8 +121,8 @@ class FeedFailure(Exception):
     """Feed-level collector failure classified at the collector boundary.
 
     ``status_reason`` is the bounded operator grouping key. ``reason`` is the
-    redacted diagnostic text preserved for logs and quarantine_reason so users
-    and engineers can debug the threshold-crossing failure episode.
+    diagnostic text preserved for logs and quarantine_reason so users and
+    engineers can debug the threshold-crossing failure episode.
     """
 
     status_reason: FeedStatusReason
@@ -148,9 +147,9 @@ class FeedFailure(Exception):
         # Exception instances must remain runtime-mutable: Python sets
         # __traceback__, __context__, and __cause__ while propagating them.
         # A frozen dataclass breaks that machinery, so keep only the payload
-        # normalized and bounded.
+        # normalized.
         self.status_reason = normalized_status_reason
-        self.reason = failure_diagnostics.build_diagnostic(reason)
+        self.reason = reason
         Exception.__init__(self, self.reason)
 
     def __str__(self) -> str:
