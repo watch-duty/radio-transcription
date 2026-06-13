@@ -52,8 +52,8 @@ class RunConfig:
     raw_toml: str
     round_id: str
     dataset: str
-    train_manifest_uri: str
-    validation_manifest_uri: str
+    train_manifest_uri: str | None
+    validation_manifest_uri: str | None
     eval_manifest_uri: str
     gcp_project: str
     gcs_bucket: str
@@ -68,11 +68,9 @@ class RunConfig:
 
     def to_record_dict(self) -> dict[str, Any]:
         """Return the resolved run config shape stored in config.json."""
-        return {
+        record = {
             "round_id": self.round_id,
             "dataset": self.dataset,
-            "train_manifest_uri": self.train_manifest_uri,
-            "validation_manifest_uri": self.validation_manifest_uri,
             "eval_manifest_uri": self.eval_manifest_uri,
             "gcp_project": self.gcp_project,
             "gcs_bucket": self.gcs_bucket,
@@ -91,10 +89,29 @@ class RunConfig:
             "gemini_train_uri": self.paths.gemini_train_uri,
             "gemini_validation_uri": self.paths.gemini_validation_uri,
         }
+        if self.train_manifest_uri is not None:
+            record["train_manifest_uri"] = self.train_manifest_uri
+        if self.validation_manifest_uri is not None:
+            record["validation_manifest_uri"] = self.validation_manifest_uri
+        return record
 
 
 def load_run_config(path: str | Path) -> RunConfig:
     """Load, validate, and resolve an external TOML run config."""
+    return _load_run_config(path, require_training_manifests=True)
+
+
+def load_eval_run_config(path: str | Path) -> RunConfig:
+    """Load an eval TOML config without requiring train/validation manifests."""
+    return _load_run_config(path, require_training_manifests=False)
+
+
+def _load_run_config(
+    path: str | Path,
+    *,
+    require_training_manifests: bool,
+) -> RunConfig:
+    """Load and resolve a TOML run config."""
     source_path = Path(path).expanduser()
     try:
         raw_toml = source_path.read_text(encoding="utf-8")
@@ -110,8 +127,18 @@ def load_run_config(path: str | Path) -> RunConfig:
 
     round_id = _required_round_id(data, "round_id")
     dataset = _required_str(data, "dataset")
-    train_manifest_uri = _required_gcs_uri(data, "train_manifest_uri")
-    validation_manifest_uri = _required_gcs_uri(data, "validation_manifest_uri")
+    if require_training_manifests:
+        train_manifest_uri = _required_gcs_uri(data, "train_manifest_uri")
+        validation_manifest_uri = _required_gcs_uri(
+            data,
+            "validation_manifest_uri",
+        )
+    else:
+        train_manifest_uri = _optional_gcs_uri(data, "train_manifest_uri")
+        validation_manifest_uri = _optional_gcs_uri(
+            data,
+            "validation_manifest_uri",
+        )
     eval_manifest_uri = _required_gcs_uri(data, "eval_manifest_uri")
 
     gcp = _required_table(data, "gcp")
@@ -228,6 +255,19 @@ def _required_gcs_uri(data: dict[str, Any], key: str) -> str:
         msg = f"{key} must be a gs:// URI"
         raise RunConfigError(msg)
     return value
+
+
+def _optional_gcs_uri(data: dict[str, Any], key: str) -> str | None:
+    value = _lookup(data, key)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        return None
+    uri = value.strip()
+    if not uri.startswith("gs://"):
+        msg = f"{key} must be a gs:// URI"
+        raise RunConfigError(msg)
+    return uri
 
 
 def _required_bucket(data: dict[str, Any], key: str) -> str:

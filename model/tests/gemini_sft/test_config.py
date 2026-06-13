@@ -9,7 +9,11 @@ _SRC_DIR = str(Path(__file__).resolve().parents[2] / "src")
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
-from gemini_sft.config import RunConfigError, load_run_config  # noqa: E402
+from gemini_sft.config import (  # noqa: E402
+    RunConfigError,
+    load_eval_run_config,
+    load_run_config,
+)
 
 
 class TestRunConfig(unittest.TestCase):
@@ -57,6 +61,12 @@ learning_rate_multiplier = {values["learning_rate_multiplier"]}
 {values["prompts"]}
 """
 
+    def _without_manifest_lines(self, body: str, *keys: str) -> str:
+        prefixes = tuple(f"{key} =" for key in keys)
+        return "\n".join(
+            line for line in body.splitlines() if not line.startswith(prefixes)
+        )
+
     def test_valid_minimal_toml_resolves_required_fields_and_paths(
         self,
     ) -> None:
@@ -89,6 +99,28 @@ learning_rate_multiplier = {values["learning_rate_multiplier"]}
 
         with self.assertRaisesRegex(RunConfigError, "validation_manifest_uri"):
             load_run_config(self._write_config(body))
+
+    def test_eval_config_allows_missing_train_and_validation_manifest_uris(
+        self,
+    ) -> None:
+        body = self._without_manifest_lines(
+            self._valid_toml(),
+            "train_manifest_uri",
+            "validation_manifest_uri",
+        )
+
+        cfg = load_eval_run_config(self._write_config(body))
+
+        self.assertIsNone(cfg.train_manifest_uri)
+        self.assertIsNone(cfg.validation_manifest_uri)
+        self.assertEqual(
+            cfg.eval_manifest_uri,
+            "gs://source/manifests/eval.jsonl",
+        )
+        self.assertEqual(
+            cfg.paths.config_uri,
+            "gs://bucket/sft/runs/round/config.json",
+        )
 
     def test_round_id_must_be_safe_single_path_component(self) -> None:
         for round_id in (

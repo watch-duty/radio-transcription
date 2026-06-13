@@ -815,6 +815,82 @@ class TestTuneRun(unittest.TestCase):
 
 
 class TestEvaluateRun(unittest.TestCase):
+    def test_eval_rejects_invalid_eval_manifest_before_batch_inference(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            _seed_source_manifests(storage)
+            cfg_path = _write_config_file(tmp)
+            run_cfg = load_run_config(cfg_path)
+            storage.put(
+                run_cfg.paths.canonical_eval_uri,
+                _manifest(
+                    [
+                        {
+                            "audio_filepath": "local/audio.mp3",
+                            "text": "bad",
+                            "offset": 0.0,
+                            "duration": 1.0,
+                            "example_id": "bad",
+                            "segment_id": "001",
+                        }
+                    ]
+                ),
+            )
+            config = run_cfg.to_record_dict()
+            storage.put(run_cfg.paths.config_uri, json.dumps(config))
+            args = argparse.Namespace(config=str(cfg_path), base_only=True)
+
+            with unittest.mock.patch.object(
+                evaluate_module,
+                "submit_batch_inference",
+            ) as submit:
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "Canonical Manifest validation failed",
+                ):
+                    evaluate_module.evaluate_run(
+                        args,
+                        run_cfg,
+                        storage,
+                        config,
+                    )
+
+        submit.assert_not_called()
+
+    def test_eval_rejects_empty_eval_manifest_before_batch_inference(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            _seed_source_manifests(storage)
+            cfg_path = _write_config_file(tmp)
+            run_cfg = load_run_config(cfg_path)
+            storage.put(run_cfg.paths.canonical_eval_uri, "")
+            config = run_cfg.to_record_dict()
+            storage.put(run_cfg.paths.config_uri, json.dumps(config))
+            args = argparse.Namespace(config=str(cfg_path), base_only=True)
+
+            with unittest.mock.patch.object(
+                evaluate_module,
+                "submit_batch_inference",
+            ) as submit:
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "eval manifest has zero parsed rows",
+                ):
+                    evaluate_module.evaluate_run(
+                        args,
+                        run_cfg,
+                        storage,
+                        config,
+                    )
+
+        submit.assert_not_called()
+
     def test_eval_handler_returns_clean_error_when_vertex_extra_missing(
         self,
     ) -> None:
