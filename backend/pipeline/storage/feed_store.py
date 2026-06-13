@@ -457,9 +457,9 @@ class FeedStore:
                 quarantine.
             backoff_base_sec: Base delay in seconds for the first retry.
             backoff_max_sec: Maximum backoff cap in seconds.
-            reason: Short snake_case tag for the failure mode
-                (e.g. ``"auth_failed"``).  Persisted to
-                ``feeds.quarantine_reason`` on transition to quarantined.
+            reason: Diagnostic failure text. Persisted to
+                ``feeds.quarantine_reason`` on transition to quarantined,
+                after applying the storage boundary length cap.
                 ``None`` (default) writes SQL NULL — preferred over an empty
                 string so triage queries can use ``WHERE quarantine_reason
                 IS NOT NULL``.

@@ -151,7 +151,6 @@ class TestDownloadM4a(unittest.IsolatedAsyncioTestCase):
             401: FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
             403: FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
             404: FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-            429: FeedStatusReason.SOURCE_RATE_LIMITED,
         }
         for status, reason in cases.items():
             with self.subTest(status=status):
@@ -167,6 +166,32 @@ class TestDownloadM4a(unittest.IsolatedAsyncioTestCase):
                 failure = _require_item_failure(result)
                 self.assertIs(failure.status_reason, reason)
                 self.assertEqual(failure.reason, f"item_http_{status}")
+
+    @patch(f"{_COL_MOD}.control_flow.sleep_or_cancel", new_callable=AsyncMock)
+    async def test_retryable_4xx_retry_success(
+        self,
+        mock_sleep: AsyncMock,
+    ) -> None:
+        mock_sleep.return_value = False
+        for status in (408, 429):
+            with self.subTest(status=status):
+                mock_sleep.reset_mock(return_value=True, side_effect=True)
+                mock_sleep.return_value = False
+                resp_retryable = MagicMock(status_code=status)
+                resp200 = MagicMock(status_code=200, content=b"m4a")
+                self.session.get = AsyncMock(
+                    side_effect=[resp_retryable, resp200]
+                )
+
+                result = await _download_m4a(
+                    self.session,
+                    "https://media2.openmhz.com/test.m4a",
+                    self.shutdown,
+                )
+
+                self.assertEqual(result, b"m4a")
+                self.assertEqual(self.session.get.call_count, 2)
+                mock_sleep.assert_awaited_once()
 
     @patch(f"{_COL_MOD}.control_flow.sleep_or_cancel", new_callable=AsyncMock)
     async def test_retry_exhausted_5xx_returns_item_failure(

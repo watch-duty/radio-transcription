@@ -107,20 +107,32 @@ async def _download_audio(
             last_status = resp.status_code
             if resp.status_code == 200:
                 return resp.content
-            if 400 <= resp.status_code < 500:
+            if (
+                http_status.is_retryable_http_status(resp.status_code)
+                and attempt < _DOWNLOAD_MAX_RETRIES - 1
+            ):
+                logger.warning(
+                    "Download retryable %d (attempt %d/%d): url=%s",
+                    resp.status_code,
+                    attempt + 1,
+                    _DOWNLOAD_MAX_RETRIES,
+                    url,
+                )
+            elif 400 <= resp.status_code < 500:
                 logger.warning(
                     "Download non-retryable %d: url=%s",
                     resp.status_code,
                     url,
                 )
                 return item_downloads.item_http_failure(resp.status_code)
-            logger.warning(
-                "Download %d (attempt %d/%d): url=%s",
-                resp.status_code,
-                attempt + 1,
-                _DOWNLOAD_MAX_RETRIES,
-                url,
-            )
+            else:
+                logger.warning(
+                    "Download %d (attempt %d/%d): url=%s",
+                    resp.status_code,
+                    attempt + 1,
+                    _DOWNLOAD_MAX_RETRIES,
+                    url,
+                )
         except Exception:
             logger.warning(
                 "Download error (attempt %d/%d): url=%s",

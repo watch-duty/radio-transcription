@@ -183,18 +183,29 @@ async def _download_m4a(
             last_status = resp.status_code
             if resp.status_code == 200:
                 return resp.content
-            if 400 <= resp.status_code < 500:
+            if (
+                http_status.is_retryable_http_status(resp.status_code)
+                and attempt < _DOWNLOAD_MAX_RETRIES - 1
+            ):
+                logger.warning(
+                    "Download retryable item HTTP status=%d attempt=%d/%d",
+                    resp.status_code,
+                    attempt + 1,
+                    _DOWNLOAD_MAX_RETRIES,
+                )
+            elif 400 <= resp.status_code < 500:
                 logger.warning(
                     "Download non-retryable item HTTP status=%d",
                     resp.status_code,
                 )
                 return item_downloads.item_http_failure(resp.status_code)
-            logger.warning(
-                "Download retryable item HTTP status=%d attempt=%d/%d",
-                resp.status_code,
-                attempt + 1,
-                _DOWNLOAD_MAX_RETRIES,
-            )
+            else:
+                logger.warning(
+                    "Download retryable item HTTP status=%d attempt=%d/%d",
+                    resp.status_code,
+                    attempt + 1,
+                    _DOWNLOAD_MAX_RETRIES,
+                )
         except asyncio.CancelledError:
             raise
         except Exception:

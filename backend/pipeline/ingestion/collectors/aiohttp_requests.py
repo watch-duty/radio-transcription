@@ -26,7 +26,6 @@ from backend.pipeline.storage import feed_store
 logger = logging.getLogger(__name__)
 
 _JSON = TypeVar("_JSON")
-_RETRYABLE_STATUSES = frozenset({408, 429})
 type SleepFunc = Callable[[asyncio.Event, float], Awaitable[None]]
 
 
@@ -79,7 +78,7 @@ def _retry_delay(
 
 def _is_retryable_status(status: int) -> bool:
     """Return whether HTTP status should be retried before classification."""
-    return status in _RETRYABLE_STATUSES or 500 <= status <= 599
+    return http_status.is_retryable_http_status(status)
 
 
 def _has_attempt_remaining(attempt: int, retry_config: RetryConfig) -> bool:

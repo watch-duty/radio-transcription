@@ -44,9 +44,16 @@ DEFAULT_HTTP_STATUS_POLICY = HTTPStatusPolicy(
     ),
 )
 
+_RETRYABLE_HTTP_STATUSES = frozenset({408, 429})
+
 # Default terminal HTTP policy for evidence with stable cross-collector meaning.
 # Ambiguous 4xx and nonstandard statuses intentionally return None so endpoint
 # code must choose the item/feed semantics locally.
+
+
+def is_retryable_http_status(status: int) -> bool:
+    """Return whether a terminal HTTP status should be retried first."""
+    return status in _RETRYABLE_HTTP_STATUSES or 500 <= status <= 599
 
 
 def classify_http_status(

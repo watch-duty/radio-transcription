@@ -61,6 +61,15 @@ class TestHTTPStatusClassifier(unittest.TestCase):
                     feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
                 )
 
+    def test_retryable_statuses_are_shared_policy(self) -> None:
+        for status in (408, 429, 500, 502, 503, 504, 599):
+            with self.subTest(status=status):
+                self.assertTrue(http_status.is_retryable_http_status(status))
+
+        for status in (200, 302, 400, 401, 403, 404, 600):
+            with self.subTest(status=status):
+                self.assertFalse(http_status.is_retryable_http_status(status))
+
     def test_ambiguous_and_nonstandard_statuses_return_none(self) -> None:
         for status in (400, 404, 409, 410, 423, 425, 426, 600, 799, 999):
             with self.subTest(status=status):

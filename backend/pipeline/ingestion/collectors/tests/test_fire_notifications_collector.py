@@ -107,6 +107,32 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.fire_notifications.collector.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
+    async def test_retryable_4xx_retry_success(
+        self, mock_sleep: AsyncMock
+    ) -> None:
+        mock_sleep.return_value = False
+        for status in (408, 429):
+            with self.subTest(status=status):
+                mock_sleep.reset_mock(return_value=True, side_effect=True)
+                mock_sleep.return_value = False
+                resp_retryable = MagicMock(status_code=status)
+                resp200 = MagicMock(status_code=200, content=b"data")
+                self.session.get = AsyncMock(
+                    side_effect=[resp_retryable, resp200]
+                )
+
+                data = await collector._download_audio(
+                    self.session, "http://url", self.shutdown
+                )
+
+                self.assertEqual(data, b"data")
+                self.assertEqual(self.session.get.call_count, 2)
+                mock_sleep.assert_awaited_once()
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.control_flow.sleep_or_cancel",
+        new_callable=AsyncMock,
+    )
     async def test_5xx_max_retries_fail(self, mock_sleep: MagicMock) -> None:
         mock_sleep.return_value = False
         resp500 = MagicMock(status_code=500)
