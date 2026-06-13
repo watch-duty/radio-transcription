@@ -9,9 +9,10 @@ SAMPLE_WIDTH_16BIT = 2  # 16-bit PCM sample width in bytes
 FLAC_COMPRESSION_LEVEL = "5"
 M4A_BITRATE = "32k"
 
-# Google Cloud shared constants
 GCS_METADATA_SIZE_LIMIT = 8 * 1024  # 8 KiB in bytes
 GCS_DOWNLOAD_TIMEOUT_SEC = 30
+GCS_UPLOAD_TIMEOUT_SEC = 60
+GCS_ASYNC_RETRY_TIMEOUT_SEC = 120.0
 
 # Time Conversion shared constants
 MS_PER_SECOND = 1000
