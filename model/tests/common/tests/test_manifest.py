@@ -40,6 +40,19 @@ def _canonical_row(**overrides: object) -> dict[str, object]:
 class TestCanonicalManifestValidation(unittest.TestCase):
     """Strict Canonical Manifest validation covers the public contract."""
 
+    def assertHasIssue(
+        self,
+        issues: list[CanonicalManifestIssue],
+        code: str,
+        field: str,
+    ) -> None:
+        self.assertTrue(
+            any(
+                issue.code == code and issue.field == field for issue in issues
+            ),
+            f"Missing {code}/{field} in {issues!r}",
+        )
+
     def test_valid_row_with_optional_metadata_returns_no_issues(self) -> None:
         row = _canonical_row(
             audio_filepath="gs://bucket/audio/example.FLAC",
@@ -65,6 +78,157 @@ class TestCanonicalManifestValidation(unittest.TestCase):
         )
 
         issues = validate_canonical_manifest([row], expected_split="train")
+
+        self.assertEqual(issues, [])
+
+    def test_required_field_failures_report_code_and_field(self) -> None:
+        cases = [
+            (
+                "missing audio_filepath",
+                "audio_filepath",
+                None,
+                "missing_required",
+            ),
+            ("blank audio_filepath", "audio_filepath", " ", "blank_required"),
+            ("missing text", "text", None, "missing_required"),
+            ("blank text", "text", " ", "blank_required"),
+            ("missing example_id", "example_id", None, "missing_required"),
+            ("blank example_id", "example_id", " ", "blank_required"),
+            ("missing segment_id", "segment_id", None, "missing_required"),
+            ("blank segment_id", "segment_id", " ", "blank_required"),
+            ("missing offset", "offset", None, "missing_required"),
+            ("non-numeric offset", "offset", "start", "invalid_offset"),
+            ("bool offset", "offset", True, "invalid_offset"),
+            ("missing duration", "duration", None, "missing_required"),
+            ("zero duration", "duration", 0, "invalid_duration"),
+            ("non-numeric duration", "duration", "short", "invalid_duration"),
+            ("bool duration", "duration", True, "invalid_duration"),
+        ]
+
+        for name, field, value, expected_code in cases:
+            with self.subTest(name=name):
+                row = _canonical_row()
+                if value is None:
+                    row.pop(field)
+                else:
+                    row[field] = value
+
+                issues = validate_canonical_manifest([row])
+
+                self.assertHasIssue(issues, expected_code, field)
+
+    def test_audio_uri_and_duplicate_failures_report_code_and_field(
+        self,
+    ) -> None:
+        cases = [
+            ("s3://bucket/audio/example.flac", "non-GCS"),
+            ("gs://bucket/audio/example.wav", "non-FLAC"),
+        ]
+
+        for audio_filepath, name in cases:
+            with self.subTest(name=name):
+                issues = validate_canonical_manifest(
+                    [_canonical_row(audio_filepath=audio_filepath)]
+                )
+
+                self.assertHasIssue(
+                    issues,
+                    "invalid_audio_uri",
+                    "audio_filepath",
+                )
+
+        duplicate_audio_issues = validate_canonical_manifest(
+            [
+                _canonical_row(
+                    audio_filepath="gs://bucket/audio/dup.flac",
+                    example_id="example-a",
+                    segment_id="001",
+                ),
+                _canonical_row(
+                    audio_filepath="gs://bucket/audio/dup.flac",
+                    example_id="example-b",
+                    segment_id="001",
+                ),
+            ]
+        )
+        self.assertHasIssue(
+            duplicate_audio_issues,
+            "duplicate_audio_filepath",
+            "audio_filepath",
+        )
+
+        duplicate_identity_issues = validate_canonical_manifest(
+            [
+                _canonical_row(
+                    audio_filepath="gs://bucket/audio/a.flac",
+                    example_id="shared",
+                    segment_id="001",
+                ),
+                _canonical_row(
+                    audio_filepath="gs://bucket/audio/b.flac",
+                    example_id="shared",
+                    segment_id="001",
+                ),
+            ]
+        )
+        self.assertHasIssue(
+            duplicate_identity_issues,
+            "duplicate_identity",
+            "example_id,segment_id",
+        )
+
+    def test_optional_metadata_failures_report_code_and_field(self) -> None:
+        cases = [
+            ("blank split", {"split": " "}, "invalid_metadata", "split"),
+            (
+                "split mismatch",
+                {"split": "eval"},
+                "split_mismatch",
+                "split",
+            ),
+            ("blank lang", {"lang": " "}, "invalid_metadata", "lang"),
+            (
+                "malformed dataset",
+                {"dataset": []},
+                "invalid_metadata",
+                "dataset",
+            ),
+            (
+                "malformed source_audio",
+                {"source_audio": []},
+                "invalid_metadata",
+                "source_audio",
+            ),
+            (
+                "malformed audio_processing",
+                {"audio_processing": []},
+                "invalid_metadata",
+                "audio_processing",
+            ),
+        ]
+
+        for name, overrides, expected_code, expected_field in cases:
+            with self.subTest(name=name):
+                issues = validate_canonical_manifest(
+                    [_canonical_row(**overrides)],
+                    expected_split="train",
+                )
+
+                self.assertHasIssue(
+                    issues,
+                    expected_code,
+                    expected_field,
+                )
+
+    def test_unknown_and_prediction_enriched_fields_are_ignored(
+        self,
+    ) -> None:
+        row = _canonical_row(
+            pred_text_whisper="already scored",
+            unknown_future_field={"ignored": True},
+        )
+
+        issues = validate_canonical_manifest([row])
 
         self.assertEqual(issues, [])
 
@@ -333,6 +497,34 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
         result = merge_predictions_to_manifest(gt, preds, "whisper")
 
         self.assertEqual(result[0]["pred_text_whisper"], "predicted")
+
+    def test_prediction_without_identity_matches_exact_uri_and_offset(
+        self,
+    ) -> None:
+        """Older predictions without identity still match by exact URI."""
+        gt = [
+            {
+                "audio_filepath": "gs://b/a.flac",
+                "offset": 1.0,
+                "text": "gold",
+                "example_id": "example",
+                "segment_id": "001",
+            }
+        ]
+        preds = [
+            {
+                "audio_filepath": "gs://b/a.flac",
+                "offset": 1.0,
+                "text": "legacy prediction",
+            }
+        ]
+
+        result = merge_predictions_to_manifest(gt, preds, "legacy")
+
+        self.assertEqual(
+            result[0]["pred_text_legacy"],
+            "legacy prediction",
+        )
 
     def test_binds_closest_of_multiple_in_tolerance_candidates(self) -> None:
         """When several predictions are within tolerance, the nearest wins."""
