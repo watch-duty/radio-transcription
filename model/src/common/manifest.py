@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -382,7 +383,11 @@ def _is_gcs_flac_uri(value: str) -> bool:
 
 
 def _is_number(value: Any) -> bool:
-    return isinstance(value, (float, int)) and not isinstance(value, bool)
+    return (
+        isinstance(value, (float, int))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
 
 
 def _add_invalid_metadata(

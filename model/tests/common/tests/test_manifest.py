@@ -146,6 +146,62 @@ class TestCanonicalManifestValidation(unittest.TestCase):
         self.assertIn("row 0", message)
         self.assertIn("field text", message)
 
+    def test_non_finite_timing_values_are_invalid(self) -> None:
+        cases = [
+            ("invalid_offset", "offset", float("nan")),
+            ("invalid_offset", "offset", float("inf")),
+            ("invalid_offset", "offset", float("-inf")),
+            ("invalid_duration", "duration", float("nan")),
+            ("invalid_duration", "duration", float("inf")),
+            ("invalid_duration", "duration", float("-inf")),
+        ]
+
+        for expected_code, field, value in cases:
+            with self.subTest(field=field, value=value):
+                issues = validate_canonical_manifest(
+                    [_canonical_row(**{field: value})]
+                )
+
+                self.assertTrue(
+                    any(
+                        issue.code == expected_code
+                        and issue.field == field
+                        for issue in issues
+                    )
+                )
+
+    def test_non_finite_source_audio_timing_is_invalid(self) -> None:
+        cases = [
+            ("source_audio.offset", float("nan")),
+            ("source_audio.offset", float("inf")),
+            ("source_audio.duration", float("nan")),
+            ("source_audio.duration", float("inf")),
+        ]
+
+        for field, value in cases:
+            parent, child = field.split(".")
+            with self.subTest(field=field, value=value):
+                issues = validate_canonical_manifest(
+                    [
+                        _canonical_row(
+                            **{
+                                parent: {
+                                    "audio_filepath": "raw/source.wav",
+                                    child: value,
+                                }
+                            }
+                        )
+                    ]
+                )
+
+                self.assertTrue(
+                    any(
+                        issue.code == "invalid_metadata"
+                        and issue.field == field
+                        for issue in issues
+                    )
+                )
+
 
 class TestCanonicalRowIdentity(unittest.TestCase):
     """Row identity is public and stable for dict rows and CanonicalRow."""
