@@ -47,7 +47,10 @@ class DatasetAdapter(Protocol):
 
 def is_scoreable_manifest_entry(entry: Mapping[str, Any]) -> bool:
     """Return whether a raw manifest entry can enter JiWER scoring."""
-    return bool(entry.get("audio_filepath") and entry.get("text"))
+    text = entry.get("text")
+    return bool(
+        entry.get("audio_filepath") and isinstance(text, str) and text.strip()
+    )
 
 
 def rows_from_manifest(manifest: list[dict[str, Any]]) -> list[CanonicalRow]:

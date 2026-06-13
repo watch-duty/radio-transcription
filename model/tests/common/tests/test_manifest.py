@@ -323,4 +323,21 @@ class TestScoreableManifestEntry(unittest.TestCase):
                 {"audio_filepath": "gs://b/a.flac", "text": ""}
             )
         )
+        self.assertFalse(
+            is_scoreable_manifest_entry(
+                {"audio_filepath": "gs://b/a.flac", "text": "   "}
+            )
+        )
+        self.assertFalse(
+            is_scoreable_manifest_entry(
+                {"audio_filepath": "gs://b/a.flac", "text": None}
+            )
+        )
         self.assertFalse(is_scoreable_manifest_entry({"text": "hello"}))
+
+    def test_rows_from_manifest_skips_whitespace_only_text(self) -> None:
+        rows = rows_from_manifest(
+            [{"audio_filepath": "gs://b/a.flac", "text": "   "}]
+        )
+
+        self.assertEqual(rows, [])
