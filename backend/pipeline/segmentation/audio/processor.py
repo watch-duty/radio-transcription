@@ -97,11 +97,7 @@ class SegmentationAudioProcessor:
         speech_segments = []
         if len(samples) > 0:
             # 1. Downmix current samples to mono if multi-channel
-            mono_samples = (
-                np.mean(samples, axis=1).astype(np.int16)
-                if samples.ndim > 1
-                else samples
-            )
+            mono_samples = self._downmix_to_mono(samples)
 
             # 2. Downmix prior audio to mono if multi-channel (retaining source sample rate sr)
             prior_samples = None
@@ -109,9 +105,16 @@ class SegmentationAudioProcessor:
                 prior_arr = np.frombuffer(prior_audio, dtype=np.int16)
                 if samples.ndim > 1 and len(prior_arr) > 0:
                     channels = samples.shape[1]
-                    prior_samples = np.mean(
-                        prior_arr.reshape(-1, channels), axis=1
-                    ).astype(np.int16)
+                    try:
+                        prior_samples = np.mean(
+                            prior_arr.reshape(-1, channels), axis=1
+                        ).astype(np.int16)
+                    except ValueError:
+                        logger.warning(
+                            "prior_audio length not divisible by current channel count (%d), treating as mono",
+                            channels,
+                        )
+                        prior_samples = prior_arr
                 else:
                     prior_samples = prior_arr
 
@@ -197,7 +200,7 @@ class SegmentationAudioProcessor:
                             continue
                 except Exception as e:
                     demux_err = str(e)
-                    logger.warning(
+                    logger.exception(
                         "PyAV container demux ended with error, retaining recovered frames: %s",
                         demux_err,
                     )
@@ -229,18 +232,10 @@ class SegmentationAudioProcessor:
 
             raise RuntimeError(_err()) from e
 
-    def _resample_to_16k_mono(self, samples: np.ndarray, sr: int) -> np.ndarray:
-        """Downmixes to mono and resamples to 16 kHz for VAD/SED processing."""
-        # 1. Downmix if stereo/multi-channel
-        if samples.ndim > 1:
-            samples = np.mean(samples, axis=1)
-
-        if sr != SAMPLE_RATE_HZ:
-            from backend.pipeline.segmentation.audio.dsp import (  # noqa: PLC0415
-                TorchaudioHannResampler,
-            )
-
-            resampler = TorchaudioHannResampler(sr, SAMPLE_RATE_HZ)
-            samples = resampler.resample(samples)
-
-        return samples.astype(np.int16)
+    def _downmix_to_mono(self, samples: np.ndarray) -> np.ndarray:
+        """Averages multi-channel audio arrays to flat 1D mono arrays."""
+        return (
+            np.mean(samples, axis=1).astype(np.int16)
+            if samples.ndim > 1
+            else samples
+        )

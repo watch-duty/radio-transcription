@@ -149,10 +149,8 @@ class AudioProcessorTest(unittest.TestCase):
         self.assertEqual(actual_sr, 16000)
         np.testing.assert_array_equal(actual_samples, stereo_array)
 
-        # Verify that _resample_to_16k_mono correctly averages (downmixes) the channels
-        downmixed = self.processor._resample_to_16k_mono(
-            actual_samples, actual_sr
-        )
+        # Verify that _downmix_to_mono correctly averages the multi-channel array
+        downmixed = self.processor._downmix_to_mono(actual_samples)
         expected_downmixed = np.array([55, 60, 65, 70], dtype=np.int16)
         self.assertEqual(downmixed.ndim, 1)
         np.testing.assert_array_equal(downmixed[:4], expected_downmixed)
@@ -167,15 +165,10 @@ class AudioProcessorTest(unittest.TestCase):
         )
         processor.setup()
 
-        # Create stereo current audio chunk
+        # Create stereo current audio chunk array and prior audio tail bytes
         curr_stereo = np.array([[10, 20], [30, 40]], dtype=np.int16)
-        buf = io.BytesIO()
-        sf.write(buf, curr_stereo, 32000, format="FLAC")
-        buf.seek(0)
-        # Create stereo prior audio tail bytes
         prior_stereo = np.array([[100, 200], [300, 400]], dtype=np.int16)
         prior_bytes = prior_stereo.tobytes()
-        from unittest.mock import patch  # noqa: PLC0415
 
         with patch.object(
             processor,
