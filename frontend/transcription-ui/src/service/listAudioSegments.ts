@@ -5,10 +5,10 @@ import { apiFetch } from '../utils/apiUtils';
 export async function listAudioSegments(
   feedId: string,
   token: string,
-  limit: number,
+  limit?: number,
   nextToken?: string,
-  startTime?: string,
-  endTime?: string,
+  startTime?: number | string,
+  endTime?: number | string,
   order?: 'asc' | 'desc',
   isAlert?: boolean
 ): Promise<{ segments: AudioSegment[]; nextToken: string | undefined }> {
@@ -16,8 +16,18 @@ export async function listAudioSegments(
   const params = new URLSearchParams();
   if (limit) params.append('limit', limit.toString());
   if (nextToken) params.append('nextToken', nextToken);
-  if (startTime) params.append('startTime', startTime.toString());
-  if (endTime) params.append('endTime', endTime.toString());
+  if (startTime) {
+    const startStr =
+      typeof startTime === 'number'
+        ? new Date(startTime).toISOString()
+        : startTime;
+    params.append('startTime', startStr);
+  }
+  if (endTime) {
+    const endStr =
+      typeof endTime === 'number' ? new Date(endTime).toISOString() : endTime;
+    params.append('endTime', endStr);
+  }
   if (order) params.append('order', order);
   // Can be true/false, just not undefined.
   if (isAlert !== undefined) params.append('isAlert', isAlert.toString());

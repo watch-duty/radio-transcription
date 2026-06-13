@@ -19,6 +19,21 @@ export default defineConfig(({ mode }) => {
     server: {
       headers: { 'Cross-Origin-Opener-Policy': 'same-origin-allow-popups' },
     },
+    optimizeDeps: {
+      include: [
+        'react',
+        'react-dom',
+        'react-router',
+        '@mui/material',
+        '@mui/icons-material',
+        '@mui/material/styles',
+        '@tanstack/react-query',
+        'howler',
+        'react-virtuoso',
+        '@wavesurfer/react',
+      ],
+      exclude: ['@transcription/common'],
+    },
   };
 
   if (env.VITE_AUTH_BACKEND === 'none') {

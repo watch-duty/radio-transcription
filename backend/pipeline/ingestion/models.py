@@ -120,10 +120,9 @@ class AudioMimeType(StrEnum):
 class FeedFailure(Exception):
     """Feed-level collector failure classified at the collector boundary.
 
-    This is intentionally small: `status_reason` is the bounded operator
-    grouping key, while `reason` is a short raw stage/detail string preserved
-    for logs and quarantine_reason. Do not put stderr, stack traces, URLs with
-    credentials, or other high-cardinality data in either field.
+    ``status_reason`` is the bounded operator grouping key. ``reason`` is the
+    diagnostic text preserved for logs and quarantine_reason so users and
+    engineers can debug the threshold-crossing failure episode.
     """
 
     status_reason: FeedStatusReason
@@ -148,9 +147,9 @@ class FeedFailure(Exception):
         # Exception instances must remain runtime-mutable: Python sets
         # __traceback__, __context__, and __cause__ while propagating them.
         # A frozen dataclass breaks that machinery, so keep only the payload
-        # normalized and bounded.
+        # normalized.
         self.status_reason = normalized_status_reason
-        self.reason = reason[:200]
+        self.reason = reason
         Exception.__init__(self, self.reason)
 
     def __str__(self) -> str:

@@ -58,7 +58,7 @@ describe('listAudioSegments', () => {
           ],
         },
       ],
-      nextToken: 'next-page-token',
+      next_token: 'next-page-token',
     };
 
     const expectedResult = {

@@ -118,6 +118,8 @@ function CondensedFeedSearchResults({
                   status={option.status}
                   substatus={option.substatus}
                   lastHeartbeat={option.lastHeartbeat}
+                  statusReason={option.statusReason}
+                  quarantineReason={option.quarantineReason}
                 />
               </Box>
               <Box

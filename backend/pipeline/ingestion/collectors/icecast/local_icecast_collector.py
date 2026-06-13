@@ -12,11 +12,11 @@ import aiohttp
 
 from backend.pipeline.common.constants import AUDIO_FORMAT
 from backend.pipeline.common.log_helper import setup_logging
+from backend.pipeline.ingestion import source_runtime_specs
 from backend.pipeline.ingestion.collectors.icecast.icecast_collector import (
     capture_icecast_stream,
 )
 from backend.pipeline.ingestion.models import CaptureResources
-from backend.pipeline.ingestion.router import BCFY_FEEDS_URL_BASE
 from backend.pipeline.storage.feed_store import SourceType
 
 if TYPE_CHECKING:
@@ -58,10 +58,11 @@ async def run_local_capture() -> None:
     shutdown_event = asyncio.Event()
 
     chunk_count = 0
+    url_base = source_runtime_specs.url_base_for(SourceType.BCFY_FEEDS)
     async with aiohttp.ClientSession() as http_session:
         resources = CaptureResources(http_session=http_session)
         async for captured_chunk in capture_icecast_stream(
-            feed, shutdown_event, BCFY_FEEDS_URL_BASE, resources
+            feed, shutdown_event, url_base, resources
         ):
             chunk_count += 1
             timestamp = datetime.now(UTC).isoformat(timespec="milliseconds")

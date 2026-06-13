@@ -3,9 +3,13 @@ from __future__ import annotations
 import os
 import uuid
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
-from backend.pipeline.storage.feed_store import SourceType
+from backend.pipeline.ingestion import source_runtime_specs
 from backend.pipeline.storage.settings import AlloyDBSettings
+
+if TYPE_CHECKING:
+    from backend.pipeline.storage.feed_store import SourceType
 
 
 def _require_env(name: str) -> str:
@@ -17,18 +21,11 @@ def _require_env(name: str) -> str:
     return value
 
 
-# Per-type claim-budget defaults (scaling plan §4/§6). The set of keys
-# IS the canonical "what types this fleet claims" registry — adding a
-# new claimable source type means adding one entry here. The runtime
-# and FeedStore both iterate this set; neither references SourceType
-# members directly. ECHO is intentionally absent: Echo feeds are
-# served by a separate cloud function, not VM-leased.
-_DEFAULT_CAPS: dict[SourceType, int] = {
-    SourceType.BCFY_FEEDS: 240,
-    SourceType.BCFY_CALLS: 600,
-    SourceType.OPENMHZ: 900,
-    SourceType.FIRE_NOTIFICATIONS: 300,
-}
+# Per-type claim-budget defaults. The key set comes from SourceRuntimeSpec so
+# adding a VM-claimable source updates caps, topic routing metadata, and URL
+# metadata in one place. ECHO is intentionally absent: Echo feeds are served by
+# a separate cloud function, not VM-leased.
+_DEFAULT_CAPS: dict[SourceType, int] = source_runtime_specs.default_caps()
 
 
 def _load_caps_from_env() -> dict[SourceType, int]:

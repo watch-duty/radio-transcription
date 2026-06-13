@@ -119,7 +119,7 @@ wheels = [
 
 [[package]]
 name = "apache-beam"
-version = "2.73.0"
+version = "2.74.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "beartype" },
@@ -147,13 +147,13 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "zstandard" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9a/d3/50fa64464f84f646cae00aa8734c4875dca35be2f747919701ea08a084ce/apache_beam-2.73.0.tar.gz", hash = "sha256:ff9b6b320729051ce97c9809f64b825c9056694cc4c9afd3385fe124dcc60b80", size = 3035061, upload-time = "2026-04-29T12:58:34.643Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/bb/9e/7f0f451aa9ecae924aa1ca31bf68b1cad13f1ce4f56d69a7d62bc0ff7d83/apache_beam-2.74.0.tar.gz", hash = "sha256:c685b2db8330ad220ae39815dcfa5a0493ceb471f872568e746f34f7a04fe1a4", size = 3065517, upload-time = "2026-06-02T17:26:49.611Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4c/84/2cd74138847d6d0a76bca60b0faae145a82dae4dff828e88c904d0c5f7f2/apache_beam-2.73.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:5b56da8da361f1d8df9c57e04d91c6d1cf3856164e74e4cc50b3489fb7305078", size = 6012954, upload-time = "2026-04-29T12:58:14.263Z" },
-    { url = "https://files.pythonhosted.org/packages/7b/56/39464a4536ff3d81369ccd03f08b2b130ed7ebd345d927937ff6a1c044d1/apache_beam-2.73.0-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:6f49a4537983a602ca42b4697d8a2b9274d228b32832168f9deaf2b69eed17ce", size = 17313877, upload-time = "2026-04-29T12:58:16.429Z" },
-    { url = "https://files.pythonhosted.org/packages/bb/dd/fb1b6e3e84303a4039d8a3bf68b7757cfddf45547115f810dd79b4ed32a6/apache_beam-2.73.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:65c23529ede80d970494a602af18c64686e1ac609ae89f941527b1932197177e", size = 17464560, upload-time = "2026-04-29T12:58:18.69Z" },
-    { url = "https://files.pythonhosted.org/packages/14/f0/11f7176ffceb56330dc308cbec3eb4a0fc97af239dd84f27898e1d03bb47/apache_beam-2.73.0-cp313-cp313-win32.whl", hash = "sha256:c2dd20fae4cfc3a6603bc01451763efb56a2ba34cac55db398ec9796a1dc6db9", size = 5462104, upload-time = "2026-04-29T12:58:20.89Z" },
-    { url = "https://files.pythonhosted.org/packages/14/c9/81ee209c169ff4892f2c6a75de0016b3637ebe61767c2a22207d71697e4e/apache_beam-2.73.0-cp313-cp313-win_amd64.whl", hash = "sha256:03b8b849a1ee4e7f22368dbd227a4c31d2e11262ee6f450eac71eb0a51e44b39", size = 5727145, upload-time = "2026-04-29T12:58:22.461Z" },
+    { url = "https://files.pythonhosted.org/packages/e6/64/3076e14f103f8703135c00f677c09b0e7eaafd10dcadd3cb795e38c7f95e/apache_beam-2.74.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:eb9fd400b0bce1a78e50d9bea383eef5bc960cc1876346a2c68ed22789dc4f83", size = 6101135, upload-time = "2026-06-02T17:26:27.477Z" },
+    { url = "https://files.pythonhosted.org/packages/23/db/54f20cda0c1e279d65a5fcf7e36111c3d1cf347849bee9cb4bc8aa92d3cc/apache_beam-2.74.0-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:2bab02d6ca488372c4063e003b068a0918dd55aa094a3102493ba3ff258e7938", size = 17671647, upload-time = "2026-06-02T17:26:30.402Z" },
+    { url = "https://files.pythonhosted.org/packages/8a/15/18416b49e82aba1d2b35c6a619a14e182af48716c4e68285c2b9b66629ab/apache_beam-2.74.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:325d53db346ebc15eb907ae9627a0d7ff685b81ee0c7d6a33bd775b182f4a499", size = 17858081, upload-time = "2026-06-02T17:26:33.164Z" },
+    { url = "https://files.pythonhosted.org/packages/73/80/8a0c2109e020b4616d25023b9079c50280d8de6f3586d34f99bf7087a83f/apache_beam-2.74.0-cp313-cp313-win32.whl", hash = "sha256:5bdd896383288564749709023b3dd80268bab0a5f3a66ec2d83a63aa34190801", size = 5518113, upload-time = "2026-06-02T17:26:35.658Z" },
+    { url = "https://files.pythonhosted.org/packages/0b/53/f93b186e2b3d7f88ea7ca09c68338c6e595aef9a277560fd693c2cc22837/apache_beam-2.74.0-cp313-cp313-win_amd64.whl", hash = "sha256:5c907f9746f23b60773f3fc84108b35900e2881d6c58d59dbe82e6e645f0c36f", size = 5760689, upload-time = "2026-06-02T17:26:37.684Z" },
 ]
 
 [package.optional-dependencies]
@@ -246,6 +246,24 @@ requires-dist = [
     { name = "radio-transcription-common", editable = "backend/pipeline/common" },
     { name = "tenacity", specifier = ">=9.1.4" },
     { name = "uvicorn", specifier = ">=0.27.0" },
+]
+
+[[package]]
+name = "av"
+version = "17.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/5e/e3/477fa20578c284abeda08d91b63ee9abaebc93445d8feeb989d3d444bae1/av-17.1.0.tar.gz", hash = "sha256:7f1e71ff621b66253333926f948e00faae11d855b2442133c65128bca64cdeb3", size = 4288546, upload-time = "2026-06-07T05:52:55.999Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ec/87/8036b5c781bc3639ea04ef42d4e26da253bd4bd4311d8705b6a1c8824047/av-17.1.0-cp311-abi3-macosx_11_0_x86_64.whl", hash = "sha256:ad7b4aa011093324b7118245f50ac6db244cfe9900d4072508a5245a2b0d3f41", size = 22460847, upload-time = "2026-06-07T05:52:04.261Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/af/dfdf6fc7b17814b50d0aa9e7a7e37b87be91be3890f44b0d525433cd1fd1/av-17.1.0-cp311-abi3-macosx_14_0_arm64.whl", hash = "sha256:43ebbe977f19a7f2d2bd1a4e119675a0b15e05852cf7309846b6ab922ba7ffe9", size = 18159115, upload-time = "2026-06-07T05:52:06.64Z" },
+    { url = "https://files.pythonhosted.org/packages/ad/13/64f6c466471cea225b8b2f4cdc51a571f8a286984b55a08d169b932fda5d/av-17.1.0-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:6a20658ec7d96a70e14b1196eff00b7cdd8831ac3b99868e16b8ba8b24090847", size = 33224427, upload-time = "2026-06-07T05:52:09.165Z" },
+    { url = "https://files.pythonhosted.org/packages/77/43/96b35170bf2e64e00a41748c6400ff73232dc0fc62ded283679fb07c7fe0/av-17.1.0-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:f9a65d1f48b818323fb411e80358f89d77dec340b01d27c6b2dfbb9cbf4b779f", size = 35370183, upload-time = "2026-06-07T05:52:11.959Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/b3/8e8b4b6498731bfbd88e8399a756543f8088f1bd33d08eab678b5aebe728/av-17.1.0-cp311-abi3-manylinux_2_31_armv7l.whl", hash = "sha256:58f7593726437cda5bd19793027e027768450b5c4a594777bf487798a33db702", size = 24459265, upload-time = "2026-06-07T05:52:14.66Z" },
+    { url = "https://files.pythonhosted.org/packages/14/ac/ceb84b7553db21f1143d817245c560d9267168e1e58b1a8eeae2b62c4d04/av-17.1.0-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:bbab058bd965309f39962e53caac8126987c68c0be094fc4f9427e5615b0218f", size = 34283709, upload-time = "2026-06-07T05:52:17.389Z" },
+    { url = "https://files.pythonhosted.org/packages/59/f9/4115fd84148c9a1cf365096694be6ac882fd3cd3cdb7a2f35e71fecf1631/av-17.1.0-cp311-abi3-musllinux_1_2_armv7l.whl", hash = "sha256:9514cfda85180554c430695282faf4be3ffdf95775d8519733821244eecb58e0", size = 25397573, upload-time = "2026-06-07T05:52:20.012Z" },
+    { url = "https://files.pythonhosted.org/packages/e2/ac/92e52d5ed0e0b84d9d93e52b4338c2713d8a44082b8696e6516fdae7c4e4/av-17.1.0-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:e1c90f85cd7431ede95b11e8e711571a896ebea433f298849c2c0f1594c8d86e", size = 36451495, upload-time = "2026-06-07T05:52:22.581Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/f2/53a7cd34adb6a971d7e6d99663e74db286966c9db8afdca17472fdf0f98e/av-17.1.0-cp311-abi3-win_amd64.whl", hash = "sha256:5df5c1172ef1cf65a1529d612f7da7798ce2cf82c1ff7212466b538a6cc7214c", size = 28036393, upload-time = "2026-06-07T05:52:25.657Z" },
+    { url = "https://files.pythonhosted.org/packages/66/47/cd9ae0edf2206351c1251bb94b5ec58728e42c5f6ee16c03c412f3a1bb3e/av-17.1.0-cp311-abi3-win_arm64.whl", hash = "sha256:ee98534242a74da847af78624779ac5a3177dc7c69f956a4da9e6f0fdb37d7f6", size = 21174601, upload-time = "2026-06-07T05:52:28.077Z" },
 ]
 
 [[package]]
@@ -2830,6 +2848,7 @@ dev = [
     { name = "soundfile" },
     { name = "testcontainers" },
     { name = "ty" },
+    { name = "types-protobuf" },
 ]
 
 [package.metadata]
@@ -2875,6 +2894,7 @@ dev = [
     { name = "soundfile", specifier = ">=0.12.1" },
     { name = "testcontainers", extras = ["postgres"] },
     { name = "ty", specifier = ">=0.0.42" },
+    { name = "types-protobuf", specifier = ">=7.34.1" },
 ]
 
 [[package]]
@@ -2900,7 +2920,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiohttp", specifier = ">=3.14.0" },
+    { name = "aiohttp", specifier = ">=3.14" },
     { name = "fastapi", specifier = ">=0.110.0" },
     { name = "gcloud-aio-storage", specifier = ">=9.6.4" },
     { name = "google-auth", specifier = ">=2.29.0" },
@@ -3098,6 +3118,7 @@ version = "0.1.0"
 source = { editable = "backend/pipeline/segmentation" }
 dependencies = [
     { name = "apache-beam", extra = ["gcp"] },
+    { name = "av" },
     { name = "betterproto" },
     { name = "crcmod" },
     { name = "google-cloud-logging" },
@@ -3112,12 +3133,12 @@ dependencies = [
     { name = "protobuf" },
     { name = "pydantic" },
     { name = "soundfile" },
-    { name = "tenacity" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "apache-beam", extras = ["gcp"], specifier = ">=2.73.0" },
+    { name = "apache-beam", extras = ["gcp"], specifier = ">=2.74.0" },
+    { name = "av", specifier = ">=17.1.0" },
     { name = "betterproto", specifier = ">=2.0.0b6" },
     { name = "crcmod", specifier = ">=1.7" },
     { name = "google-cloud-logging", specifier = ">=3.14.0" },
@@ -3132,7 +3153,6 @@ requires-dist = [
     { name = "protobuf", specifier = ">=5.29.6" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "soundfile", specifier = ">=0.13.1" },
-    { name = "tenacity", specifier = ">=9.1.4" },
 ]
 
 [[package]]
@@ -3321,6 +3341,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e1/04/52b7325dad8d1a86653f90240208f3e3657bed5e3c8144eed367a0f736b0/ty-0.0.42-py3-none-win32.whl", hash = "sha256:984a55c2fe63b40dac03f5a144b99033c7ed720eb7611787e3f0bd49af8dcf12", size = 10783897, upload-time = "2026-06-01T19:40:22.189Z" },
     { url = "https://files.pythonhosted.org/packages/94/d2/3d2d61255c76c0843766f00b39290115c23cc1cd4fcb0471d84a48f482f1/ty-0.0.42-py3-none-win_amd64.whl", hash = "sha256:f7afd81b10b377d9d4ce6aad355a4f47fd37d47f443118c01ca6e79d46fe6608", size = 11878640, upload-time = "2026-06-01T19:40:50.903Z" },
     { url = "https://files.pythonhosted.org/packages/b4/91/1eb0c1e3d558707ead7424f8bfd89b58f42e576714cbed7ad46dcceef34a/ty-0.0.42-py3-none-win_arm64.whl", hash = "sha256:4068c24b0b264fc9f1901e06b97988a041fcaa36c90f18d7747f05124701c7b3", size = 11202335, upload-time = "2026-06-01T19:40:53.155Z" },
+]
+
+[[package]]
+name = "types-protobuf"
+version = "7.34.1.20260518"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/29/59/e2b13b499d15e6720150c4b1a8d91e31fcacf716b432397475b3151ff7e4/types_protobuf-7.34.1.20260518.tar.gz", hash = "sha256:28cfaded25889cb83ebfb63cfb0a43628f0b6f3785767bec17287dc6468795f2", size = 68936, upload-time = "2026-05-18T06:01:47.332Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2a/1f/ec5caf72c2e3b688ca3927e0979a04ddad19e1afc4bf1c199bd743e0f419/types_protobuf-7.34.1.20260518-py3-none-any.whl", hash = "sha256:a0a5337413347166439c0e07cbc26c6164d091401c6f01b1dfd8cdb966c4dd8f", size = 85992, upload-time = "2026-05-18T06:01:45.696Z" },
 ]
 
 [[package]]

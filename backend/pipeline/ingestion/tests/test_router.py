@@ -7,6 +7,7 @@ from unittest import mock
 
 import aiohttp
 
+from backend.pipeline.ingestion import source_runtime_specs
 from backend.pipeline.ingestion.models import CaptureResources
 from backend.pipeline.ingestion.router import (
     _COLLECTORS,
@@ -42,10 +43,11 @@ class TestRouteCapturerRegistered(unittest.TestCase):
     """Tests that every registered source_type routes correctly."""
 
     def test_each_registered_source_type_routes_correctly(self) -> None:
-        for source_type, (capture_fn, url_base) in _COLLECTORS.items():
+        for source_type in _COLLECTORS:
             with self.subTest(source_type=source_type.value):
                 sentinel = object()
                 mock_fn = mock.MagicMock(return_value=sentinel)
+                url_base = source_runtime_specs.url_base_for(source_type)
 
                 feed = _make_feed(source_type)
                 shutdown_event = mock.MagicMock(spec=asyncio.Event)
@@ -53,7 +55,7 @@ class TestRouteCapturerRegistered(unittest.TestCase):
 
                 with mock.patch.dict(
                     "backend.pipeline.ingestion.router._COLLECTORS",
-                    {source_type: (mock_fn, url_base)},
+                    {source_type: mock_fn},
                 ):
                     result = route_capturer(feed, shutdown_event, resources)
 
@@ -102,9 +104,10 @@ class TestCollectorRegistryIntegrity(unittest.TestCase):
         self.assertTrue(_COLLECTORS)
 
     def test_all_entries_are_callable(self) -> None:
-        for source_type, (capture_fn, url_base) in _COLLECTORS.items():
+        for source_type, capture_fn in _COLLECTORS.items():
             with self.subTest(source_type=source_type.value):
                 self.assertTrue(callable(capture_fn))
+                url_base = source_runtime_specs.url_base_for(source_type)
                 self.assertIsInstance(url_base, str)
                 # FIRE_NOTIFICATIONS may have empty default to fail lazily on claim due to api secret
                 if source_type != SourceType.FIRE_NOTIFICATIONS:

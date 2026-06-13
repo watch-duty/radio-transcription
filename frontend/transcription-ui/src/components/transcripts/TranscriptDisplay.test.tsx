@@ -5,16 +5,26 @@ import { VirtuosoMockContext } from 'react-virtuoso';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanup, render, screen } from '@testing-library/react';
-import type { Transcript } from '@transcription/common';
+import {
+  AnnotationType,
+  AudioClassification,
+  type AudioSegment,
+} from '@transcription/common';
 
+import { findTranscriptAnnotationData } from '../../utils/annotationUtils';
 import { TranscriptDisplay } from './TranscriptDisplay';
 
 vi.mock('./TranscriptRow', () => ({
-  default: (props: { transcript: Transcript; index: number }) => (
-    <div data-testid={`transcript-row-${props.index}`}>
-      {props.transcript.transcript}
-    </div>
-  ),
+  default: (props: { audioSegment: AudioSegment; index: number }) => {
+    const transcriptData = findTranscriptAnnotationData(
+      props.audioSegment.annotations
+    );
+    return (
+      <div data-testid={`transcript-row-${props.index}`}>
+        {transcriptData?.text ?? ''}
+      </div>
+    );
+  },
 }));
 
 describe('TranscriptDisplay', () => {
@@ -22,21 +32,31 @@ describe('TranscriptDisplay', () => {
     cleanup();
   });
 
-  const mockTranscripts: Transcript[] = [
+  const mockAudioSegments: AudioSegment[] = [
     {
+      id: 'tx-1',
       feedId: 'feed123',
-      segmentId: 'tx-1',
-      transcript: 'Hello from component first',
-      canonicalAudioUri: 'gs://audio.flac',
-      playbackAudioUri: 'gs://audio.m4a',
+      classification: AudioClassification.SPEECH,
       startTimestamp: '2026-04-10T12:00:00Z',
       endTimestamp: '2026-04-10T12:00:05Z',
+      canonicalAudioUri: 'gs://audio.flac',
+      playbackAudioUri: 'gs://audio.m4a',
       missingPriorContext: false,
       missingPostContext: false,
       sourceAudioUris: [],
       startAudioOffset: '0s',
       endAudioOffset: '5s',
-      evaluationDecisions: [],
+      createdAt: '2026-04-10T12:00:00Z',
+      annotations: [
+        {
+          type: AnnotationType.TRANSCRIPT,
+          createdAt: '2026-04-10T12:00:00Z',
+          data: {
+            text: 'Hello from component first',
+            errors: [],
+          },
+        },
+      ],
     },
   ];
 
@@ -49,17 +69,17 @@ describe('TranscriptDisplay', () => {
       >
         <MemoryRouter>
           <TranscriptDisplay
-            transcripts={mockTranscripts}
+            audioSegments={mockAudioSegments}
             groupCounts={[1]}
             groupTitles={['Friday, April 10, 2026']}
-            setIsViewAtTopOfTranscripts={mockSetTop}
-            hasNewerTranscripts={false}
-            isFetchingNewerTranscripts={false}
-            fetchNewerTranscripts={vi.fn()}
-            isTranscriptsFetching={false}
-            hasOlderTranscripts={false}
-            isFetchingOlderTranscripts={false}
-            fetchOlderTranscripts={vi.fn()}
+            setIsViewAtTopOfAudioSegments={mockSetTop}
+            hasNewerAudioSegments={false}
+            isFetchingNewerAudioSegments={false}
+            fetchNewerAudioSegments={vi.fn()}
+            isAudioSegmentsFetching={false}
+            hasOlderAudioSegments={false}
+            isFetchingOlderAudioSegments={false}
+            fetchOlderAudioSegments={vi.fn()}
             triggerSnackbar={vi.fn()}
             ruleIdToNameMap={new Map()}
             rulesLoading={false}
@@ -69,8 +89,8 @@ describe('TranscriptDisplay', () => {
             highlightedSegmentId={null}
             redactTranscripts={false}
             onRowClick={vi.fn()}
-            isTranscriptsPolling={false}
-            transcriptsLastUpdated={null}
+            isAudioSegmentsPolling={false}
+            audioSegmentsLastUpdated={null}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>
@@ -88,17 +108,17 @@ describe('TranscriptDisplay', () => {
       >
         <MemoryRouter>
           <TranscriptDisplay
-            transcripts={mockTranscripts}
+            audioSegments={mockAudioSegments}
             groupCounts={[1]}
             groupTitles={['Friday, April 10, 2026']}
-            setIsViewAtTopOfTranscripts={vi.fn()}
-            hasNewerTranscripts={true}
-            isFetchingNewerTranscripts={false}
-            fetchNewerTranscripts={vi.fn()}
-            isTranscriptsFetching={false}
-            hasOlderTranscripts={false}
-            isFetchingOlderTranscripts={false}
-            fetchOlderTranscripts={vi.fn()}
+            setIsViewAtTopOfAudioSegments={vi.fn()}
+            hasNewerAudioSegments={true}
+            isFetchingNewerAudioSegments={false}
+            fetchNewerAudioSegments={vi.fn()}
+            isAudioSegmentsFetching={false}
+            hasOlderAudioSegments={false}
+            isFetchingOlderAudioSegments={false}
+            fetchOlderAudioSegments={vi.fn()}
             triggerSnackbar={vi.fn()}
             ruleIdToNameMap={new Map()}
             rulesLoading={false}
@@ -108,8 +128,8 @@ describe('TranscriptDisplay', () => {
             highlightedSegmentId={null}
             redactTranscripts={false}
             onRowClick={vi.fn()}
-            isTranscriptsPolling={false}
-            transcriptsLastUpdated={null}
+            isAudioSegmentsPolling={false}
+            audioSegmentsLastUpdated={null}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>
@@ -127,17 +147,17 @@ describe('TranscriptDisplay', () => {
       >
         <MemoryRouter>
           <TranscriptDisplay
-            transcripts={mockTranscripts}
+            audioSegments={mockAudioSegments}
             groupCounts={[1]}
             groupTitles={['Friday, April 10, 2026']}
-            setIsViewAtTopOfTranscripts={vi.fn()}
-            hasNewerTranscripts={false}
-            isFetchingNewerTranscripts={false}
-            fetchNewerTranscripts={vi.fn()}
-            isTranscriptsFetching={false}
-            hasOlderTranscripts={true}
-            isFetchingOlderTranscripts={false}
-            fetchOlderTranscripts={vi.fn()}
+            setIsViewAtTopOfAudioSegments={vi.fn()}
+            hasNewerAudioSegments={false}
+            isFetchingNewerAudioSegments={false}
+            fetchNewerAudioSegments={vi.fn()}
+            isAudioSegmentsFetching={false}
+            hasOlderAudioSegments={true}
+            isFetchingOlderAudioSegments={false}
+            fetchOlderAudioSegments={vi.fn()}
             triggerSnackbar={vi.fn()}
             ruleIdToNameMap={new Map()}
             rulesLoading={false}
@@ -147,8 +167,8 @@ describe('TranscriptDisplay', () => {
             highlightedSegmentId={null}
             redactTranscripts={false}
             onRowClick={vi.fn()}
-            isTranscriptsPolling={false}
-            transcriptsLastUpdated={null}
+            isAudioSegmentsPolling={false}
+            audioSegmentsLastUpdated={null}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>
@@ -166,17 +186,17 @@ describe('TranscriptDisplay', () => {
       >
         <MemoryRouter>
           <TranscriptDisplay
-            transcripts={mockTranscripts}
+            audioSegments={mockAudioSegments}
             groupCounts={[1]}
             groupTitles={['Friday, April 10, 2026']}
-            setIsViewAtTopOfTranscripts={vi.fn()}
-            hasNewerTranscripts={false}
-            isFetchingNewerTranscripts={false}
-            fetchNewerTranscripts={vi.fn()}
-            isTranscriptsFetching={false}
-            hasOlderTranscripts={false}
-            isFetchingOlderTranscripts={false}
-            fetchOlderTranscripts={vi.fn()}
+            setIsViewAtTopOfAudioSegments={vi.fn()}
+            hasNewerAudioSegments={false}
+            isFetchingNewerAudioSegments={false}
+            fetchNewerAudioSegments={vi.fn()}
+            isAudioSegmentsFetching={false}
+            hasOlderAudioSegments={false}
+            isFetchingOlderAudioSegments={false}
+            fetchOlderAudioSegments={vi.fn()}
             triggerSnackbar={vi.fn()}
             ruleIdToNameMap={new Map()}
             rulesLoading={false}
@@ -186,8 +206,8 @@ describe('TranscriptDisplay', () => {
             highlightedSegmentId={null}
             redactTranscripts={false}
             onRowClick={vi.fn()}
-            isTranscriptsPolling={false}
-            transcriptsLastUpdated={null}
+            isAudioSegmentsPolling={false}
+            audioSegmentsLastUpdated={null}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>
@@ -208,17 +228,17 @@ describe('TranscriptDisplay', () => {
       >
         <MemoryRouter>
           <TranscriptDisplay
-            transcripts={mockTranscripts}
+            audioSegments={mockAudioSegments}
             groupCounts={[1]}
             groupTitles={['Friday, April 10, 2026']}
-            setIsViewAtTopOfTranscripts={vi.fn()}
-            hasNewerTranscripts={false}
-            isFetchingNewerTranscripts={false}
-            fetchNewerTranscripts={vi.fn()}
-            isTranscriptsFetching={false}
-            hasOlderTranscripts={false}
-            isFetchingOlderTranscripts={false}
-            fetchOlderTranscripts={vi.fn()}
+            setIsViewAtTopOfAudioSegments={vi.fn()}
+            hasNewerAudioSegments={false}
+            isFetchingNewerAudioSegments={false}
+            fetchNewerAudioSegments={vi.fn()}
+            isAudioSegmentsFetching={false}
+            hasOlderAudioSegments={false}
+            isFetchingOlderAudioSegments={false}
+            fetchOlderAudioSegments={vi.fn()}
             triggerSnackbar={vi.fn()}
             ruleIdToNameMap={new Map()}
             rulesLoading={false}
@@ -228,8 +248,8 @@ describe('TranscriptDisplay', () => {
             highlightedSegmentId={null}
             redactTranscripts={false}
             onRowClick={vi.fn()}
-            isTranscriptsPolling={false}
-            transcriptsLastUpdated={testTimestamp}
+            isAudioSegmentsPolling={false}
+            audioSegmentsLastUpdated={testTimestamp}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>
@@ -249,17 +269,17 @@ describe('TranscriptDisplay', () => {
       >
         <MemoryRouter>
           <TranscriptDisplay
-            transcripts={mockTranscripts}
+            audioSegments={mockAudioSegments}
             groupCounts={[1]}
             groupTitles={['Friday, April 10, 2026']}
-            setIsViewAtTopOfTranscripts={vi.fn()}
-            hasNewerTranscripts={false}
-            isFetchingNewerTranscripts={false}
-            fetchNewerTranscripts={vi.fn()}
-            isTranscriptsFetching={false}
-            hasOlderTranscripts={false}
-            isFetchingOlderTranscripts={false}
-            fetchOlderTranscripts={vi.fn()}
+            setIsViewAtTopOfAudioSegments={vi.fn()}
+            hasNewerAudioSegments={false}
+            isFetchingNewerAudioSegments={false}
+            fetchNewerAudioSegments={vi.fn()}
+            isAudioSegmentsFetching={false}
+            hasOlderAudioSegments={false}
+            isFetchingOlderAudioSegments={false}
+            fetchOlderAudioSegments={vi.fn()}
             triggerSnackbar={vi.fn()}
             ruleIdToNameMap={new Map()}
             rulesLoading={false}
@@ -269,8 +289,8 @@ describe('TranscriptDisplay', () => {
             highlightedSegmentId={null}
             redactTranscripts={false}
             onRowClick={vi.fn()}
-            isTranscriptsPolling={true}
-            transcriptsLastUpdated={testTimestamp}
+            isAudioSegmentsPolling={true}
+            audioSegmentsLastUpdated={testTimestamp}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>
@@ -287,17 +307,17 @@ describe('TranscriptDisplay', () => {
       >
         <MemoryRouter>
           <TranscriptDisplay
-            transcripts={mockTranscripts}
+            audioSegments={mockAudioSegments}
             groupCounts={[1]}
             groupTitles={['Friday, April 10, 2026']}
-            setIsViewAtTopOfTranscripts={vi.fn()}
-            hasNewerTranscripts={false}
-            isFetchingNewerTranscripts={false}
-            fetchNewerTranscripts={vi.fn()}
-            isTranscriptsFetching={false}
-            hasOlderTranscripts={false}
-            isFetchingOlderTranscripts={false}
-            fetchOlderTranscripts={vi.fn()}
+            setIsViewAtTopOfAudioSegments={vi.fn()}
+            hasNewerAudioSegments={false}
+            isFetchingNewerAudioSegments={false}
+            fetchNewerAudioSegments={vi.fn()}
+            isAudioSegmentsFetching={false}
+            hasOlderAudioSegments={false}
+            isFetchingOlderAudioSegments={false}
+            fetchOlderAudioSegments={vi.fn()}
             triggerSnackbar={vi.fn()}
             ruleIdToNameMap={new Map()}
             rulesLoading={false}
@@ -307,8 +327,8 @@ describe('TranscriptDisplay', () => {
             highlightedSegmentId={null}
             redactTranscripts={false}
             onRowClick={vi.fn()}
-            isTranscriptsPolling={false}
-            transcriptsLastUpdated={null}
+            isAudioSegmentsPolling={false}
+            audioSegmentsLastUpdated={null}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>
@@ -324,17 +344,17 @@ describe('TranscriptDisplay', () => {
       >
         <MemoryRouter>
           <TranscriptDisplay
-            transcripts={mockTranscripts}
+            audioSegments={mockAudioSegments}
             groupCounts={[1]}
             groupTitles={['Friday, April 10, 2026']}
-            setIsViewAtTopOfTranscripts={vi.fn()}
-            hasNewerTranscripts={true}
-            isFetchingNewerTranscripts={false}
-            fetchNewerTranscripts={vi.fn()}
-            isTranscriptsFetching={false}
-            hasOlderTranscripts={false}
-            isFetchingOlderTranscripts={false}
-            fetchOlderTranscripts={vi.fn()}
+            setIsViewAtTopOfAudioSegments={vi.fn()}
+            hasNewerAudioSegments={true}
+            isFetchingNewerAudioSegments={false}
+            fetchNewerAudioSegments={vi.fn()}
+            isAudioSegmentsFetching={false}
+            hasOlderAudioSegments={false}
+            isFetchingOlderAudioSegments={false}
+            fetchOlderAudioSegments={vi.fn()}
             triggerSnackbar={vi.fn()}
             ruleIdToNameMap={new Map()}
             rulesLoading={false}
@@ -344,8 +364,8 @@ describe('TranscriptDisplay', () => {
             highlightedSegmentId={null}
             redactTranscripts={false}
             onRowClick={vi.fn()}
-            isTranscriptsPolling={false}
-            transcriptsLastUpdated={null}
+            isAudioSegmentsPolling={false}
+            audioSegmentsLastUpdated={null}
           />
         </MemoryRouter>
       </VirtuosoMockContext.Provider>

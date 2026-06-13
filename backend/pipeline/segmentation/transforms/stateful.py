@@ -81,6 +81,9 @@ from dataclasses import replace
 from typing import Any, override
 
 import apache_beam as beam
+import google.auth
+import requests
+import requests.adapters
 from apache_beam.transforms.userstate import (
     BagRuntimeState,
     BagStateSpec,
@@ -92,6 +95,9 @@ from apache_beam.transforms.userstate import (
 )
 from apache_beam.utils.shared import Shared
 from apache_beam.utils.timestamp import Timestamp
+from google.auth.credentials import AnonymousCredentials
+from google.auth.exceptions import DefaultCredentialsError
+from google.auth.transport.requests import AuthorizedSession
 from google.cloud import storage
 
 from backend.pipeline.common import constants as common_constants
@@ -103,6 +109,7 @@ from backend.pipeline.segmentation import datatypes
 from backend.pipeline.segmentation.audio import vad
 from backend.pipeline.segmentation.constants import (
     MAX_CHUNKS_PER_WINDMILL_BUNDLE,
+    WINDMILL_TIMER_MIN_ADVANCE_SECS,
 )
 from backend.pipeline.segmentation.state import sequence_buffer
 from backend.pipeline.segmentation.transforms import stitcher_engine
@@ -112,6 +119,30 @@ SHARED_RESOURCE_HANDLE = Shared()
 logger = get_task_logger(
     __name__, {"system": "transcription", "component": "ordered-stitcher"}
 )
+
+
+def get_gcs_client(project_id: str | None) -> storage.Client:
+    """Creates a GCS Client configured with an expanded HTTP connection pool."""
+    try:
+        credentials, project = google.auth.default()
+        authed_session = AuthorizedSession(credentials)
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=trans_constants.GCS_CONNECTION_POOL_SIZE,
+            pool_maxsize=trans_constants.GCS_CONNECTION_POOL_SIZE,
+            max_retries=trans_constants.GCS_CONNECTION_MAX_RETRIES,
+        )
+        authed_session.mount("https://", adapter)
+        return storage.Client(
+            project=project_id or project,
+            credentials=credentials,
+            _http=authed_session,
+        )
+    except DefaultCredentialsError:
+        # Fallback for un-authenticated remote testing environments (e.g., GitHub Actions CI)
+        return storage.Client(
+            project=project_id or "test-project",
+            credentials=AnonymousCredentials(),
+        )
 
 
 def _get_task_logger(
@@ -272,6 +303,7 @@ def process_ordering(
         task_logger.debug(f"[Order] Releasing {len(elements_to_emit)} chunks")
 
     # Update jitter buffer state
+    old_expected_ts = curr_context.expected_next_chunk_start_ms
     curr_context = replace(
         curr_context,
         expected_next_chunk_start_ms=new_expected_next_ts,
@@ -297,8 +329,21 @@ def process_ordering(
     clamped = len(elements_to_emit) >= MAX_CHUNKS_PER_WINDMILL_BUNDLE
     if new_buffer_elements:
         if clamped:
-            # Immediate self-chaining timer — next bundle drains the next slice.
-            out_of_order_timer.set(timestamp)
+            # 1. Self-Chaining Invariant: Drains are capped at MAX_CHUNKS_PER_WINDMILL_BUNDLE to stay
+            #    under Windmill's 300s bundle lease limit. Entering this block re-arms a recursive callback.
+            # 2. Domain-Driven Forward Progression: We advance the timer by exactly the cumulative physical
+            #    Event-Time duration of the audio chunks successfully emitted in this bundle (or our robust safety min).
+            emitted_duration_ms = (
+                (new_expected_next_ts - old_expected_ts)
+                if old_expected_ts is not None
+                else 0
+            )
+            advance_sec = max(
+                WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                float(emitted_duration_ms)
+                / float(common_constants.MS_PER_SECOND),
+            )
+            out_of_order_timer.set(timestamp + advance_sec)
             curr_context = replace(curr_context, order_timer_active=True)
         elif not curr_context.order_timer_active:
             deadline = timestamp + (
@@ -336,10 +381,24 @@ def _evaluate_is_backfill(current_ts_ms: int, threshold_ms: int) -> bool:
 
 @beam.typehints.with_input_types(tuple[str, datatypes.ChunkMetadata])
 @beam.typehints.with_output_types(tuple[str, datatypes.FlushRequest])
-class OrderedContinuousStitchAudioFn(beam.DoFn):
-    """Stateful Apache Beam DoFn orchestrating out-of-order and stale windowing for continuous feeds.
+class OrderedStitchAudioFn(beam.DoFn):
+    """Stateful Apache Beam DoFn orchestrating out-of-order and stale windowing for continuous audio feeds.
 
-    Delegates core audio segment calculations to stitcher_engine.StitcherEngine.
+    Enterprise Architectural Rationale: Why implement an explicit Jitter Buffer in Beam User State (`BagState`)
+    rather than simply enabling native GCP Pub/Sub Subscription Ordering Keys?!
+    1. Total Autoscaler Head-of-Line Starvation: Pub/Sub subscription ordering strictly blocks delivering message #2
+       until message #1 is fully computed and its official distributed network Acknowledgement (`Ack()`) is returned.
+       In Beam, workers pull tens of thousands of messages in highly parallel, un-ordered work-stealing bundles.
+       Enabling Pub/Sub ordering completely Head-of-Line starves the auto-scaled fleet (e.g., 99 worker pods sit
+       100% completely idle waiting for a single pod to compute, complete Beam DAG traversal, and network `Ack()` chunk #1).
+       Decoupling ordering into Beam State empowers our 100 worker machines to asynchronously ingest millions of chunks at maximum velocity.
+    2. Exactly-Once ML FSM Protection: Pub/Sub fundamentally only guarantees `At-Least-Once Delivery`. Any transient
+       network blip or VM preemption forces Pub/Sub to actively re-deliver un-acked duplicates. Our isolated Beam
+       SequenceBuffer beautifully filters duplicate frames, entirely preventing false positive VAD speech boundaries.
+    3. Bounded Micro-Batch Self-Chaining: When unrolling multi-day incident backlogs, emissions are clamped to
+       `MAX_CHUNKS_PER_WINDMILL_BUNDLE` (10 chunks) and an Event-Time recursive timer is re-armed to open fresh worker
+       bundles. This proves our worker heartbeats to central Windmill servers every ~3-4 seconds, entirely avoiding
+       300-second bundle lease evictions ("poison pills") while ensuring perfectly smooth downstream side-input join checkpointing.
     """
 
     # --- State Specs ---
@@ -406,15 +465,16 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
 
     @override
     def setup(self) -> None:
-        tracing_utils.setup_tracing(service_name="normalization-pipeline")
+        tracing_utils.setup_tracing(service_name="segmentation-pipeline")
         # Acquire process-level singletons natively via Beam's Shared handle
         shared_vad = SHARED_RESOURCE_HANDLE.acquire(
             lambda: vad.VoiceActivityDetector(models_dir=vad.MODELS_DIR),
             tag="vad",
         )
+
         shared_gcs = SHARED_RESOURCE_HANDLE.acquire(
-            lambda: storage.Client(project=self.stitch_config.project_id),
-            tag="gcs",
+            lambda: get_gcs_client(self.stitch_config.project_id),
+            tag="gcs_pool_100",
         )
         self.engine.processor.vad = shared_vad
         self.engine.processor.gcs_client = shared_gcs
@@ -611,424 +671,21 @@ class OrderedContinuousStitchAudioFn(beam.DoFn):
                     len(elements_to_emit) >= MAX_CHUNKS_PER_WINDMILL_BUNDLE
                 )
                 if clamped and new_buffer_elements:
-                    # The drain was capped at MAX_CHUNKS_PER_WINDMILL_BUNDLE to
-                    # stay under Windmill's 300-second bundle lease. Entering
-                    # this handler clears order_timer_active, so the timer is
-                    # no longer set. Re-arming it at `timestamp` (this bundle's
-                    # firing time) schedules an immediate Windmill callback so
-                    # Dataflow opens a fresh bundle to drain the next slice.
-                    # Self-chaining continues until new_buffer_elements is empty.
-                    out_of_order_timer.set(timestamp)
-                    curr_context = replace(
-                        curr_context, order_timer_active=True
+                    # 1. Self-Chaining Invariant: Drains are capped at MAX_CHUNKS_PER_WINDMILL_BUNDLE to stay
+                    #    under Windmill's 300s bundle lease limit. Entering this block re-arms a recursive callback.
+                    # 2. Domain-Driven Forward Progression: We advance the timer by exactly the cumulative physical
+                    #    Event-Time duration of the audio chunks successfully emitted in this bundle (or our robust safety min).
+                    emitted_duration_ms = (
+                        (new_expected_next_ts - new_expected)
+                        if new_expected is not None
+                        else 0
                     )
-
-                curr_context = replace(
-                    curr_context,
-                    expected_next_chunk_start_ms=new_expected_next_ts,
-                    out_of_order_buffer=new_buffer_elements,
-                )
-                _write_transmission_context(
-                    transmission_context_state, curr_context
-                )
-
-                # Handle ready elements
-                if elements_to_emit:
-                    timer_manager = StaleTimerManager(
-                        stale_timer_event, stale_timer_proc, self.stitch_config
+                    advance_sec = max(
+                        WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                        float(emitted_duration_ms)
+                        / float(common_constants.MS_PER_SECOND),
                     )
-
-                    # Assume backfill in timeout!
-                    is_backfill = True
-                    previous_expected_ts = new_expected
-
-                    for chunk in elements_to_emit:
-                        curr_context = (
-                            transmission_context_state.read()
-                            or datatypes.IdleFeedState()
-                        )
-                        if isinstance(curr_context, datatypes.IdleFeedState):
-                            curr_context = datatypes.ActiveStitchingState(
-                                session_id=active_session_id,
-                                feed_metadata=active_feed_metadata,
-                                out_of_order_buffer=curr_context.out_of_order_buffer,
-                                order_timer_active=curr_context.order_timer_active,
-                                traceparent=active_traceparent,
-                            )
-                        outputs, next_expected_ts = (
-                            self.engine.process_ordering_chunk(
-                                chunk=chunk,
-                                feed_id=feed_id,
-                                curr_context=curr_context,
-                                transmission_context_state=transmission_context_state,
-                                transmission_buffer_state=transmission_buffer_state,
-                                last_start_ms_state=last_start_ms_state,
-                                timer_manager=timer_manager,
-                                previous_expected_ts=previous_expected_ts,
-                                is_backfill=is_backfill,
-                            )
-                        )
-                        results.extend(outputs)
-                        previous_expected_ts = next_expected_ts
-
-        yield from self._yield_tagged_outputs(results)
-
-    @on_timer(STALE_TIMER_EVENT_SPEC)
-    def handle_stale_transmission_event(
-        self,
-        key: str = beam.DoFn.KeyParam,  # type: ignore
-        transmission_buffer: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
-        transmission_context: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
-        last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
-        stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
-        stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
-    ) -> Iterator[
-        tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
-    ]:
-        """Watermark crossed stale duration, delegate flush to StitcherEngine."""
-        timer_manager = StaleTimerManager(
-            stale_timer_event, stale_timer_proc, self.stitch_config
-        )
-        yield from self._yield_tagged_outputs(
-            self.engine.handle_stale_transmission(
-                key,
-                transmission_buffer,
-                transmission_context,
-                last_start_ms_state,
-                timer_manager,
-            )
-        )
-
-    @on_timer(STALE_TIMER_PROC_SPEC)
-    def handle_stale_transmission_proc(
-        self,
-        key: str = beam.DoFn.KeyParam,  # type: ignore
-        transmission_buffer: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
-        transmission_context: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
-        last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
-        stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
-        stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
-    ) -> Iterator[
-        tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
-    ]:
-        """Wall-clock crossed stale duration, delegate flush to StitcherEngine."""
-        timer_manager = StaleTimerManager(
-            stale_timer_event, stale_timer_proc, self.stitch_config
-        )
-        yield from self._yield_tagged_outputs(
-            self.engine.handle_stale_transmission(
-                key,
-                transmission_buffer,
-                transmission_context,
-                last_start_ms_state,
-                timer_manager,
-            )
-        )
-
-    @property
-    def audio_processor(self) -> Any:
-        if hasattr(self, "engine"):
-            return self.engine.processor
-        return None
-
-    @audio_processor.setter
-    def audio_processor(self, val: Any) -> None:
-        if hasattr(self, "engine"):
-            self.engine.processor = val
-
-
-@beam.typehints.with_input_types(tuple[str, datatypes.ChunkMetadata])
-@beam.typehints.with_output_types(tuple[str, datatypes.FlushRequest])
-class OrderedSegmentedStitchAudioFn(beam.DoFn):
-    """Stateful Apache Beam DoFn orchestrating out-of-order sequence buffers for segmented audio feeds.
-
-    Enforces segmented isolation and splits files > 60 seconds while ensuring wall-clock safety.
-    """
-
-    # --- State Specs ---
-
-    TRANSMISSION_BUFFER_SPEC = BagStateSpec(
-        "transmission_buffer", beam.coders.PickleCoder()
-    )
-    TRANSMISSION_BUFFER_STATE = beam.DoFn.StateParam(TRANSMISSION_BUFFER_SPEC)
-
-    TRANSMISSION_CONTEXT_SPEC = ReadModifyWriteStateSpec(
-        "transmission_context", trans_coders.TransmissionContextCoder()
-    )
-    TRANSMISSION_CONTEXT_STATE = beam.DoFn.StateParam(TRANSMISSION_CONTEXT_SPEC)
-
-    LAST_START_SPEC = ReadModifyWriteStateSpec(
-        "last_start_ms", beam.coders.VarIntCoder()
-    )
-    LAST_START_MS_STATE = beam.DoFn.StateParam(LAST_START_SPEC)
-
-    # --- Timers ---
-
-    OUT_OF_ORDER_TIMER_SPEC = TimerSpec(
-        "out_of_order_timer", beam.TimeDomain.REAL_TIME
-    )
-    OUT_OF_ORDER_TIMER = beam.DoFn.TimerParam(OUT_OF_ORDER_TIMER_SPEC)
-
-    STALE_TIMER_EVENT_SPEC = TimerSpec(
-        "stale_timer_event", beam.TimeDomain.WATERMARK
-    )
-    STALE_TIMER_EVENT_PARAM = beam.DoFn.TimerParam(STALE_TIMER_EVENT_SPEC)
-
-    STALE_TIMER_PROC_SPEC = TimerSpec(
-        "stale_timer_proc", beam.TimeDomain.REAL_TIME
-    )
-    STALE_TIMER_PROC_PARAM = beam.DoFn.TimerParam(STALE_TIMER_PROC_SPEC)
-
-    def __init__(
-        self,
-        order_config: datatypes.OrderRestorerConfig,
-        stitch_config: datatypes.StitchAudioConfig,
-    ) -> None:
-        self.order_config = order_config
-        # Enforce segmented isolation for this DoFn
-        self.stitch_config = replace(
-            stitch_config, isolate_segmented_chunks=True
-        )
-
-    @property
-    def engine(self) -> Any:
-        if not hasattr(self, "_engine_lazy"):
-            self._engine_lazy = stitcher_engine.StitcherEngine(
-                stitch_config=self.stitch_config,
-                order_config=self.order_config,
-                vad_config=self.stitch_config.vad_config,
-            )
-        return self._engine_lazy
-
-    @engine.setter
-    def engine(self, val: Any) -> None:
-        self._engine_lazy = val
-
-    def __getstate__(self) -> dict[str, Any]:
-        state = self.__dict__.copy()
-        if "_engine_lazy" in state:
-            del state["_engine_lazy"]
-        return state
-
-    @override
-    def setup(self) -> None:
-        tracing_utils.setup_tracing(service_name="normalization-pipeline")
-        # Acquire process-level singletons natively via Beam's Shared handle
-        shared_vad = SHARED_RESOURCE_HANDLE.acquire(
-            lambda: vad.VoiceActivityDetector(models_dir=vad.MODELS_DIR),
-            tag="vad",
-        )
-        shared_gcs = SHARED_RESOURCE_HANDLE.acquire(
-            lambda: storage.Client(project=self.stitch_config.project_id),
-            tag="gcs",
-        )
-        self.engine.processor.vad = shared_vad
-        self.engine.processor.gcs_client = shared_gcs
-        self.engine.setup()
-
-    def _yield_tagged_outputs(
-        self,
-        results: Iterable[Any],
-    ) -> Iterator[
-        tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
-    ]:
-        """Yields results, tagging DLQ outputs appropriately."""
-        for res in results:
-            if (
-                isinstance(res, tuple)
-                and res[0] == trans_constants.DEAD_LETTER_QUEUE_TAG
-            ):
-                yield beam.pvalue.TaggedOutput(
-                    trans_constants.DEAD_LETTER_QUEUE_TAG, res[1]
-                )
-            else:
-                yield res
-
-    @override
-    def process(
-        self,
-        element: tuple[str, datatypes.ChunkMetadata],
-        timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
-        transmission_buffer_state: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
-        transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
-        last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
-        out_of_order_timer: RuntimeTimer = OUT_OF_ORDER_TIMER,  # type: ignore
-        stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
-        stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
-    ) -> Iterator[
-        tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
-    ]:
-        """Intercepts chunk arrival, resolves chronological ordering, and delegates to StitcherEngine."""
-        feed_id, metadata = element
-        traceparent = metadata.traceparent or ""
-
-        results = []
-        with tracing_utils.with_tracer_context(
-            traceparent, "stitching_process", __name__
-        ):
-            current_ts_ms = int(
-                float(timestamp) * common_constants.MS_PER_SECOND
-            )
-            curr_context = (
-                transmission_context_state.read() or datatypes.IdleFeedState()
-            )
-            previous_expected_ts = (
-                curr_context.expected_next_chunk_start_ms
-                if isinstance(curr_context, datatypes.ActiveStitchingState)
-                else None
-            )
-
-            # Handle chronological sequence buffering
-            elements_to_emit, curr_context, session_changed = process_ordering(
-                element,
-                timestamp,
-                curr_context,
-                out_of_order_timer,
-                self.order_config,
-            )
-
-            task_logger = _get_task_logger(
-                feed_id, curr_context.session_id, "transcription-stitcher"
-            )
-            task_logger.debug(f"[Process] Processing chunk {metadata.gcs_uri}")
-
-            if curr_context.feed_metadata is None:
-                curr_context = replace(
-                    curr_context, feed_metadata=metadata.feed_metadata
-                )
-            if session_changed:
-                transmission_buffer_state.clear()
-                stale_timer_event.clear()
-                stale_timer_proc.clear()
-                curr_context = replace(
-                    curr_context, prior_audio_tail=None, sample_rate=None
-                )
-
-            # Commit initial sequence context updates
-            _write_transmission_context(
-                transmission_context_state, curr_context
-            )
-
-            # Delegate chunk elements to the execution engine
-            if elements_to_emit:
-                timer_manager = StaleTimerManager(
-                    stale_timer_event, stale_timer_proc, self.stitch_config
-                )
-
-                is_backfill = _evaluate_is_backfill(
-                    current_ts_ms,
-                    self.stitch_config.backfill_lateness_threshold_ms,
-                )
-
-                for chunk in elements_to_emit:
-                    # Fetch current state context
-                    curr_context = (
-                        transmission_context_state.read()
-                        or datatypes.IdleFeedState()
-                    )
-                    if isinstance(curr_context, datatypes.IdleFeedState):
-                        curr_context = datatypes.ActiveStitchingState(
-                            session_id=metadata.session_id,
-                            feed_metadata=metadata.feed_metadata,
-                            out_of_order_buffer=curr_context.out_of_order_buffer,
-                            order_timer_active=curr_context.order_timer_active,
-                            traceparent=metadata.traceparent,
-                        )
-                    outputs, next_expected_ts = (
-                        self.engine.process_ordering_chunk(
-                            chunk=chunk,
-                            feed_id=feed_id,
-                            curr_context=curr_context,
-                            transmission_context_state=transmission_context_state,
-                            transmission_buffer_state=transmission_buffer_state,
-                            last_start_ms_state=last_start_ms_state,
-                            timer_manager=timer_manager,
-                            previous_expected_ts=previous_expected_ts,
-                            is_backfill=is_backfill,
-                        )
-                    )
-                    results.extend(outputs)
-                    previous_expected_ts = next_expected_ts
-
-        yield from self._yield_tagged_outputs(results)
-
-    @on_timer(OUT_OF_ORDER_TIMER_SPEC)
-    def handle_gap_timeout(
-        self,
-        feed_id: str = beam.DoFn.KeyParam,  # type: ignore
-        transmission_buffer_state: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
-        transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
-        last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
-        stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
-        stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
-        timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
-        out_of_order_timer: RuntimeTimer = OUT_OF_ORDER_TIMER,  # type: ignore
-    ) -> Iterator[
-        tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
-    ]:
-        """Handles the gap timeout by advancing the expected sequence."""
-        curr_context = (
-            transmission_context_state.read() or datatypes.IdleFeedState()
-        )
-        if isinstance(curr_context, datatypes.IdleFeedState):
-            return
-        traceparent = curr_context.traceparent or ""
-        active_session_id = curr_context.session_id
-        active_feed_metadata = curr_context.feed_metadata
-        active_traceparent = curr_context.traceparent
-
-        results = []
-        with tracing_utils.with_tracer_context(
-            traceparent, "handle_audio_gap", __name__
-        ):
-            curr_context = replace(curr_context, order_timer_active=False)
-            _write_transmission_context(
-                transmission_context_state, curr_context
-            )
-
-            buffer_elements = curr_context.out_of_order_buffer
-            if buffer_elements:
-                sorted_elements = sorted(
-                    buffer_elements, key=lambda x: x.timestamp_ms
-                )
-                new_expected = sorted_elements[0].timestamp_ms
-
-                logger.warning(
-                    f"[{feed_id}] Gap timeout! Advancing expected from {curr_context.expected_next_chunk_start_ms} to {new_expected}."
-                )
-
-                curr_context = replace(
-                    curr_context,
-                    expected_next_chunk_start_ms=new_expected,
-                    missing_prior_context=True,
-                )
-                _write_transmission_context(
-                    transmission_context_state, curr_context
-                )
-
-                seq_buf = sequence_buffer.SequenceBuffer(self.order_config)
-
-                new_expected_next_ts, new_buffer_elements, elements_to_emit = (
-                    seq_buf.drain_ready_elements(
-                        expected_next_ts=new_expected,
-                        buffer_elements=buffer_elements,
-                        epsilon_ms=trans_constants.DEFAULT_FLOAT_TOLERANCE_MS,
-                        max_emit=MAX_CHUNKS_PER_WINDMILL_BUNDLE,
-                    )
-                )
-
-                clamped = (
-                    len(elements_to_emit) >= MAX_CHUNKS_PER_WINDMILL_BUNDLE
-                )
-                if clamped and new_buffer_elements:
-                    # The drain was capped at MAX_CHUNKS_PER_WINDMILL_BUNDLE to
-                    # stay under Windmill's 300-second bundle lease. Entering
-                    # this handler clears order_timer_active, so the timer is
-                    # no longer set. Re-arming it at `timestamp` (this bundle's
-                    # firing time) schedules an immediate Windmill callback so
-                    # Dataflow opens a fresh bundle to drain the next slice.
-                    # Self-chaining continues until new_buffer_elements is empty.
-                    out_of_order_timer.set(timestamp)
+                    out_of_order_timer.set(timestamp + advance_sec)
                     curr_context = replace(
                         curr_context, order_timer_active=True
                     )

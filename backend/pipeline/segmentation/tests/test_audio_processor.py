@@ -116,3 +116,95 @@ class AudioProcessorTest(unittest.TestCase):
             processor.download_audio_and_detect(
                 "gs://my-bucket/missing.flac", 0
             )
+
+    def test_decode_audio_in_memory_golden(self) -> None:
+        """Golden test: Verifies exact PCM audio sample decoding and sample rate extraction via PyAV."""
+        expected_samples = np.array(
+            [1000, -2000, 3000, -4000, 5000, -6000], dtype=np.int16
+        )
+
+        # Write to an in-memory FLAC container at 22050 Hz (testing source sample rate extraction)
+        buf = io.BytesIO()
+        sf.write(buf, expected_samples, 22050, format="FLAC")
+        buf.seek(0)
+
+        # Decode using in-process PyAV
+        actual_samples, actual_sr = self.processor._decode_audio_in_memory(buf)
+
+        self.assertEqual(actual_sr, 22050)
+        np.testing.assert_array_equal(actual_samples, expected_samples)
+
+    def test_decode_audio_in_memory_stereo_golden(self) -> None:
+        """Golden test: Verifies multi-channel decoding and downstream downmix averaging."""
+        channel0 = np.array([10, 20, 30, 40], dtype=np.int16)
+        channel1 = np.array([100, 100, 100, 100], dtype=np.int16)
+        stereo_array = np.vstack((channel0, channel1)).T  # (samples, 2)
+
+        buf = io.BytesIO()
+        sf.write(buf, stereo_array, 16000, format="FLAC")
+        buf.seek(0)
+
+        actual_samples, actual_sr = self.processor._decode_audio_in_memory(buf)
+
+        self.assertEqual(actual_sr, 16000)
+        np.testing.assert_array_equal(actual_samples, stereo_array)
+
+        # Verify that _downmix_to_mono correctly averages the multi-channel array
+        downmixed = self.processor._downmix_to_mono(actual_samples)
+        expected_downmixed = np.array([55, 60, 65, 70], dtype=np.int16)
+        self.assertEqual(downmixed.ndim, 1)
+        np.testing.assert_array_equal(downmixed[:4], expected_downmixed)
+
+    def test_download_audio_and_detect_with_prior_stereo_audio(self) -> None:
+        """Tests that prior multi-channel audio is correctly downmixed to mono during streaming detection."""
+        mock_vad = MagicMock()
+        mock_vad.detect_speech_segments.return_value = []
+        processor = SegmentationAudioProcessor(
+            gcs_client_instance=MagicMock(),
+            vad_factory=MagicMock(return_value=mock_vad),
+        )
+        processor.setup()
+
+        # Create stereo current audio chunk array and prior audio tail bytes
+        curr_stereo = np.array([[10, 20], [30, 40]], dtype=np.int16)
+        prior_stereo = np.array([[100, 200], [300, 400]], dtype=np.int16)
+        prior_bytes = prior_stereo.tobytes()
+
+        with patch.object(
+            processor,
+            "_decode_audio_in_memory",
+            return_value=(curr_stereo, 32000),
+        ):
+            processor.download_audio_and_detect(
+                "gs://bucket/test.flac", 0, prior_audio=prior_bytes
+            )
+
+        # Verify that detect_speech_segments was called with correctly downmixed 1D mono arrays
+        call_args = mock_vad.detect_speech_segments.call_args[1]
+        actual_prior = call_args["prior_audio"]
+        expected_prior = np.array([150, 350], dtype=np.int16)
+        np.testing.assert_array_equal(actual_prior, expected_prior)
+
+    def test_decode_audio_in_memory_resilient_against_truncated_containers(
+        self,
+    ) -> None:
+        """Verifies that PyAV gracefully returns recovered audio from truncated containers instead of crashing."""
+        valid_samples = (
+            np.random.default_rng(42)
+            .integers(-1000, 1000, 32000)
+            .astype(np.int16)
+        )
+        buf = io.BytesIO()
+        sf.write(buf, valid_samples, 16000, format="MP3")
+        raw_bytes = buf.getvalue()
+
+        # Purposely slice off the final 50 bytes to destroy the trailing audio packet/frame
+        truncated_bytes = raw_bytes[:-50]
+        damaged_buf = io.BytesIO(truncated_bytes)
+
+        # Act
+        samples, sr = self.processor._decode_audio_in_memory(damaged_buf)
+
+        # Assert: Should return the thousands of intact samples recovered rather than throwing RuntimeError
+        self.assertEqual(sr, 16000)
+        self.assertGreater(len(samples), 30000)
