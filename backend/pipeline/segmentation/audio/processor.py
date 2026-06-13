@@ -176,9 +176,8 @@ class SegmentationAudioProcessor:
                     return np.array([], dtype=np.int16), SAMPLE_RATE_HZ
 
                 combined = np.concatenate(decoded_frames, axis=-1)
-                # If mono (1, samples), return flat 1D array.
-                # If multi-channel (channels, samples), return transposed (samples, channels) 2D array
-                # to be correctly downmixed to mono downstream by _resample_to_16k_mono.
+                # Return 1D array for mono feeds, or (samples, channels) for multi-channel feeds
+                # so that _resample_to_16k_mono can perform downmix averaging across channels.
                 raw_samples = (
                     combined[PRIMARY_AUDIO_STREAM_INDEX]
                     if combined.shape[0] == MONO_CHANNEL_COUNT
