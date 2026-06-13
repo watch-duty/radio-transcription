@@ -81,6 +81,9 @@ from dataclasses import replace
 from typing import Any, override
 
 import apache_beam as beam
+import google.auth
+import requests
+import requests.adapters
 from apache_beam.transforms.userstate import (
     BagRuntimeState,
     BagStateSpec,
@@ -92,6 +95,7 @@ from apache_beam.transforms.userstate import (
 )
 from apache_beam.utils.shared import Shared
 from apache_beam.utils.timestamp import Timestamp
+from google.auth.transport.requests import AuthorizedSession
 from google.cloud import storage
 
 from backend.pipeline.common import constants as common_constants
@@ -421,9 +425,23 @@ class OrderedStitchAudioFn(beam.DoFn):
             lambda: vad.VoiceActivityDetector(models_dir=vad.MODELS_DIR),
             tag="vad",
         )
+
+        def _create_gcs() -> storage.Client:
+            credentials, project = google.auth.default()
+            authed_session = AuthorizedSession(credentials)
+            adapter = requests.adapters.HTTPAdapter(
+                pool_connections=100, pool_maxsize=100, max_retries=3
+            )
+            authed_session.mount("https://", adapter)
+            return storage.Client(
+                project=self.stitch_config.project_id or project,
+                credentials=credentials,
+                _http=authed_session,
+            )
+
         shared_gcs = SHARED_RESOURCE_HANDLE.acquire(
-            lambda: storage.Client(project=self.stitch_config.project_id),
-            tag="gcs",
+            _create_gcs,
+            tag="gcs_pool_100",
         )
         self.engine.processor.vad = shared_vad
         self.engine.processor.gcs_client = shared_gcs
