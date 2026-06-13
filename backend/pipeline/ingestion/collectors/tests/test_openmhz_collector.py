@@ -275,6 +275,37 @@ class TestDownloadM4a(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(failure.reason, "item_download_failed: TimeoutError")
         self.assertEqual(self.session.get.call_count, 3)
 
+    @patch(f"{_COL_MOD}.control_flow.sleep_or_cancel", new_callable=AsyncMock)
+    async def test_final_transport_error_wins_over_stale_status(
+        self,
+        mock_sleep: AsyncMock,
+    ) -> None:
+        mock_sleep.return_value = False
+        resp = MagicMock(status_code=503)
+        self.session.get = AsyncMock(
+            side_effect=[
+                resp,
+                TimeoutError("mid attempt"),
+                TimeoutError("final attempt"),
+            ]
+        )
+
+        result = await _download_m4a(
+            self.session,
+            "https://media2.openmhz.com/test.m4a",
+            self.shutdown,
+        )
+
+        failure = _require_item_failure(result)
+        self.assertIs(
+            failure.status_reason,
+            FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+        self.assertEqual(
+            failure.reason,
+            "item_download_failed: TimeoutError: final attempt",
+        )
+
     async def test_active_get_cancelled_when_shutdown_is_set(self) -> None:
         started = asyncio.Event()
         never_complete = asyncio.Future()

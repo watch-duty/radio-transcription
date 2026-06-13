@@ -161,6 +161,7 @@ async def _download_m4a(
         try:
             resp = await _get_m4a_or_cancel(session, url, shutdown)
             last_status = resp.status_code
+            last_exception = None
             if resp.status_code == 200:
                 return resp.content
             if http_status.is_retryable_http_status(resp.status_code):
@@ -180,6 +181,7 @@ async def _download_m4a(
             raise
         except Exception as exc:
             last_exception = exc
+            last_status = None
             logger.warning(
                 "Download error attempt=%d/%d",
                 attempt + 1,

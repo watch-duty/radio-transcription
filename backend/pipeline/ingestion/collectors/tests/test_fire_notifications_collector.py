@@ -222,6 +222,37 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.fire_notifications.collector.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
+    async def test_final_transport_error_wins_over_stale_status(
+        self, mock_sleep: MagicMock
+    ) -> None:
+        mock_sleep.return_value = False
+        resp503 = MagicMock(status_code=503)
+        self.session.get = AsyncMock(
+            side_effect=[
+                resp503,
+                TimeoutError("mid attempt"),
+                TimeoutError("final attempt"),
+            ]
+        )
+
+        result = await collector._download_audio(
+            self.session, "http://url", self.shutdown
+        )
+
+        failure = _require_item_failure(result)
+        self.assertIs(
+            failure.status_reason,
+            FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+        self.assertEqual(
+            failure.reason,
+            "item_download_failed: TimeoutError: final attempt",
+        )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.control_flow.sleep_or_cancel",
+        new_callable=AsyncMock,
+    )
     async def test_shutdown_during_retry_raises_cancelled_error(
         self, mock_sleep: MagicMock
     ) -> None:

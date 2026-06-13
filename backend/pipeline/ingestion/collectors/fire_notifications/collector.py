@@ -107,6 +107,7 @@ async def _download_audio(
         try:
             resp = await session.get(url, timeout=30.0)
             last_status = resp.status_code
+            last_exception = None
             if resp.status_code == 200:
                 return resp.content
             if http_status.is_retryable_http_status(resp.status_code):
@@ -126,6 +127,7 @@ async def _download_audio(
                 return item_downloads.item_http_failure(resp.status_code)
         except Exception as exc:
             last_exception = exc
+            last_status = None
             logger.warning(
                 "Download error (attempt %d/%d): url=%s",
                 attempt + 1,
