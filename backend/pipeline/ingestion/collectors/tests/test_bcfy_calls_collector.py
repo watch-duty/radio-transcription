@@ -890,7 +890,7 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
             session, audio_url, shutdown_event, out_headers=None
         ):
             if out_headers is not None:
-                out_headers["Content-Type"] = "audio/mpeg"
+                out_headers["content-type"] = "audio/mpeg"
             return b"mpeg_bytes"
 
         mock_dl.side_effect = mock_dl_side_effect

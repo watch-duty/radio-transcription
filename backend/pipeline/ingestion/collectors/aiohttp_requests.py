@@ -114,16 +114,18 @@ async def _sleep_for_retry(
 
 
 def _headers_dict(headers: object) -> dict[str, str]:
-    """Return a plain single-value header dict from aiohttp or test fakes.
+    """Return a plain lower-case single-value header dict.
 
     Multi-value headers are intentionally not preserved; callers currently use
-    this only for single-value response metadata such as ``Content-Type``.
+    this only for single-value response metadata such as ``content-type``.
+    Keys are normalized to lower-case because plain ``dict`` does not preserve
+    aiohttp's case-insensitive header lookup semantics.
     """
     if not isinstance(headers, collections.abc.Mapping):
         return {}
     header_map = cast("Mapping[object, object]", headers)
     return {
-        key: value
+        key.lower(): value
         for key, value in header_map.items()
         if isinstance(key, str) and isinstance(value, str)
     }
@@ -177,7 +179,7 @@ async def fetch_json_with_retries(  # noqa: UP047
                             invalid_payload_status_reason,
                             f"{invalid_payload_reason}: "
                             f"{quarantine_reason.exception_text(exc)}",
-                        )
+                        ) from exc
 
                 if _is_retryable_status(
                     response.status
@@ -219,7 +221,7 @@ async def fetch_json_with_retries(  # noqa: UP047
             raise collector_failure(
                 transport_status_reason,
                 f"{transport_reason}: {quarantine_reason.exception_text(exc)}",
-            )
+            ) from exc
 
     msg = "unreachable retry loop exit"
     raise RuntimeError(msg)

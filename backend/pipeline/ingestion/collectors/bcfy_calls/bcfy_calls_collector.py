@@ -429,7 +429,7 @@ async def _create_chunk_from_call(
             extra={"json_fields": {"event_type": "bcfy_calls_missing_ts"}},
         )
 
-    content_type = out_h.get("Content-Type")
+    content_type = out_h.get("content-type")
     mime_type = AudioMimeType.from_string(content_type)
 
     return _CallChunkResult(

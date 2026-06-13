@@ -164,6 +164,7 @@ class TestFetchJsonWithRetries(unittest.IsolatedAsyncioTestCase):
             str(context.exception),
             "test_api_response_invalid: TypeError: invalid",
         )
+        self.assertIsInstance(context.exception.__cause__, TypeError)
         self.assertEqual(self.session.get.call_count, 1)
         sleep.assert_not_awaited()
 
@@ -204,6 +205,7 @@ class TestFetchJsonWithRetries(unittest.IsolatedAsyncioTestCase):
             str(context.exception),
             "test_api_transport_failed: ClientError: socket down retry failed",
         )
+        self.assertIsInstance(context.exception.__cause__, aiohttp.ClientError)
 
     async def test_invalid_retry_config_raises_value_error(self) -> None:
         with self.assertRaises(ValueError):
@@ -275,7 +277,8 @@ class TestDownloadItemMedia(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(result, aiohttp_requests.DownloadedItem)
         downloaded = typing.cast("aiohttp_requests.DownloadedItem", result)
         self.assertEqual(downloaded.content, b"audio")
-        self.assertEqual(downloaded.headers["Content-Type"], "audio/mpeg")
+        self.assertEqual(downloaded.headers["content-type"], "audio/mpeg")
+        self.assertNotIn("Content-Type", downloaded.headers)
 
     async def test_ambiguous_4xx_returns_collector_error_item_failure(
         self,
