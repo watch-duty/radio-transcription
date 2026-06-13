@@ -17,7 +17,7 @@ from backend.pipeline.ingestion.collectors import (
     control_flow,
     failure_classification,
     item_downloads,
-    polling_payloads,
+    payloads,
     telemetry,
 )
 from backend.pipeline.ingestion.collectors.failure_classification import (
@@ -113,7 +113,7 @@ async def _download_audio(
                     resp.status_code,
                     url,
                 )
-                return item_downloads.classify_item_http_status(
+                return item_downloads.item_http_failure(
                     resp.status_code
                 )
             logger.warning(
@@ -138,7 +138,7 @@ async def _download_audio(
 
     logger.warning("Download failed after retries: url=%s", url)
     if last_status is not None:
-        return item_downloads.classify_item_http_status(last_status)
+        return item_downloads.item_http_failure(last_status)
     return item_downloads.item_download_failed()
 
 
@@ -353,7 +353,7 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
                 )
                 if resp.status_code == 200:
                     data = resp.json()
-                    files = polling_payloads.extract_optional_item_list(
+                    files = payloads.extract_optional_item_list(
                         data,
                         "files",
                         malformed_reason="fn_api_payload_malformed",

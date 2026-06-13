@@ -11,7 +11,7 @@ from backend.pipeline.ingestion import slo_contract
 from backend.pipeline.ingestion.collectors import (
     control_flow,
     item_downloads,
-    polling_payloads,
+    payloads,
     telemetry,
 )
 from backend.pipeline.ingestion.models import FeedFailure
@@ -59,7 +59,7 @@ class TestSleepOrCancel(unittest.IsolatedAsyncioTestCase):
 
 class TestItemDownloadHelpers(unittest.TestCase):
     def test_classifies_terminal_item_http_status(self) -> None:
-        failure = item_downloads.classify_item_http_status(401)
+        failure = item_downloads.item_http_failure(401)
 
         self.assertIs(
             failure.status_reason,
@@ -70,7 +70,7 @@ class TestItemDownloadHelpers(unittest.TestCase):
     def test_unmapped_item_http_status_falls_back_to_collector_error(
         self,
     ) -> None:
-        failure = item_downloads.classify_item_http_status(404)
+        failure = item_downloads.item_http_failure(404)
 
         self.assertIs(
             failure.status_reason,
@@ -90,10 +90,10 @@ class TestItemDownloadHelpers(unittest.TestCase):
         self.assertEqual(failure.reason, "item_download_failed")
 
 
-class TestPollingPayloadHelpers(unittest.TestCase):
+class TestPayloadHelpers(unittest.TestCase):
     def test_missing_field_returns_empty_list(self) -> None:
         self.assertEqual(
-            polling_payloads.extract_optional_item_list(
+            payloads.extract_optional_item_list(
                 {},
                 "files",
                 malformed_reason="payload_malformed",
@@ -105,7 +105,7 @@ class TestPollingPayloadHelpers(unittest.TestCase):
         files: list[Any] = [{"id": "a"}]
 
         self.assertIs(
-            polling_payloads.extract_optional_item_list(
+            payloads.extract_optional_item_list(
                 {"files": files},
                 "files",
                 malformed_reason="payload_malformed",
@@ -115,7 +115,7 @@ class TestPollingPayloadHelpers(unittest.TestCase):
 
     def test_present_non_list_field_raises_feed_failure(self) -> None:
         with self.assertRaises(FeedFailure) as cm:
-            polling_payloads.extract_optional_item_list(
+            payloads.extract_optional_item_list(
                 {"files": {}},
                 "files",
                 malformed_reason="payload_malformed",

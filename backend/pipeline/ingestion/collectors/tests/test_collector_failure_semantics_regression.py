@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.pipeline.ingestion.collectors import (
     item_downloads,
-    polling_payloads,
+    payloads,
     telemetry,
 )
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
@@ -128,7 +128,7 @@ class TestCrossCollectorItemFailureSemantics(unittest.TestCase):
 
         for status, (status_reason, reason) in cases.items():
             with self.subTest(status=status):
-                failure = item_downloads.classify_item_http_status(status)
+                failure = item_downloads.item_http_failure(status)
 
                 self.assertIs(failure.status_reason, status_reason)
                 self.assertEqual(failure.reason, reason)
@@ -222,7 +222,7 @@ class TestPollingPayloadRegression(unittest.TestCase):
 
     def test_missing_files_is_empty_fire_notifications_response(self) -> None:
         self.assertEqual(
-            polling_payloads.extract_optional_item_list(
+            payloads.extract_optional_item_list(
                 {},
                 "files",
                 malformed_reason="fn_api_payload_malformed",
@@ -234,7 +234,7 @@ class TestPollingPayloadRegression(unittest.TestCase):
         self,
     ) -> None:
         self.assertEqual(
-            polling_payloads.extract_optional_item_list(
+            payloads.extract_optional_item_list(
                 {"files": []},
                 "files",
                 malformed_reason="fn_api_payload_malformed",
@@ -244,7 +244,7 @@ class TestPollingPayloadRegression(unittest.TestCase):
 
     def test_non_list_files_is_malformed_payload(self) -> None:
         with self.assertRaises(FeedFailure) as cm:
-            polling_payloads.extract_optional_item_list(
+            payloads.extract_optional_item_list(
                 {"files": {}},
                 "files",
                 malformed_reason="fn_api_payload_malformed",

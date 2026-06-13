@@ -38,20 +38,6 @@ class TestItemBatchOutcome(unittest.TestCase):
         )
         self.assertEqual(info.reason, "download_failed")
 
-    def test_item_failure_from_info_copies_fields(self) -> None:
-        info = FailureInfo(
-            FeedStatusReason.SOURCE_UNREACHABLE,
-            "download_failed",
-        )
-
-        failure = ItemFailure.from_info(info)
-
-        self.assertIs(
-            failure.status_reason,
-            FeedStatusReason.SOURCE_UNREACHABLE,
-        )
-        self.assertEqual(failure.reason, "download_failed")
-
     def test_item_failure_preserves_status_reason_and_reason(self) -> None:
         failure = ItemFailure(
             FeedStatusReason.SOURCE_UNREACHABLE,

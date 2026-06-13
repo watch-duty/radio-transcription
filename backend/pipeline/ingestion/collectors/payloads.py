@@ -1,4 +1,4 @@
-"""Helpers for validating source polling payload item lists."""
+"""Helpers for validating collector source payloads."""
 
 from __future__ import annotations
 

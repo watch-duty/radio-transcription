@@ -121,13 +121,12 @@ attempted item continue through `_process_file_list` item handling.
 ## Failure Classification Model
 
 `FailureInfo` is a lightweight container for a canonical `FeedStatusReason`
-plus quarantine-reason text before item or feed scope is applied. The text is
-operator diagnostic material, not a machine-readable tag.
+plus quarantine-reason text before feed scope is applied. The text is operator
+diagnostic material, not a machine-readable tag.
 
-`ItemFailure` applies item scope to a `FailureInfo` or locally-built
-quarantine reason. Use it when an individual object, call, file, or media URL
-fails inside a collector-owned batch. `ItemBatchOutcome` owns the "all
-attempted items failed" promotion rule.
+`ItemFailure` is an item-scoped failure value. Use it when an individual
+object, call, file, or media URL fails inside a collector-owned batch.
+`ItemBatchOutcome` owns the "all attempted items failed" promotion rule.
 
 `FeedFailure` applies feed scope. Raise it only after the collector has enough
 source-specific evidence to report the current feed-level condition to the
@@ -196,10 +195,10 @@ Use the focused helpers at source boundaries where their contracts match:
   failure.
 - Completed item download helpers should return `bytes | ItemFailure`.
   `None` is not an item-download result. Use
-  `item_downloads.classify_item_http_status` for terminal item HTTP evidence and
-  `item_downloads.item_download_failed` when retries exhaust without terminal
-  HTTP evidence.
-- `polling_payloads.extract_optional_item_list` is for optional item arrays in
+  `item_downloads.item_http_failure` to build an item-scoped failure from
+  terminal item HTTP evidence and `item_downloads.item_download_failed` when
+  retries exhaust without terminal HTTP evidence.
+- `payloads.extract_optional_item_list` is for optional item arrays in
   successful polling payloads. Missing fields mean an empty observation; present
   non-list fields raise a bounded malformed-payload `FeedFailure`.
 - `telemetry.emit_call_download_failed` is the single call-download-failed SLO
@@ -247,11 +246,11 @@ Minimum tests for an item-downloading VM collector:
 - shutdown during a retry wait or active source request raises
   `asyncio.CancelledError` and does not emit `call_download_failed`;
 - terminal item HTTP statuses and retry exhaustion use
-  `item_downloads.classify_item_http_status` and
+  `item_downloads.item_http_failure` and
   `item_downloads.item_download_failed`;
 - missing optional poll item lists are empty observations, while present
   non-list item lists raise a malformed-payload `FeedFailure` through
-  `polling_payloads.extract_optional_item_list`;
+  `payloads.extract_optional_item_list`;
 - partial item success suppresses `ItemBatchOutcome` promotion, all attempted
   item failures promote, and mixed canonical reasons promote as
   `mixed_item_failures`;

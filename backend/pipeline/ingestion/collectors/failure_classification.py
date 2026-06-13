@@ -39,17 +39,6 @@ class ItemFailure:
     status_reason: FeedStatusReason
     reason: str
 
-    @classmethod
-    def from_info(
-        cls,
-        info: FailureInfo,
-    ) -> ItemFailure:
-        """Apply item scope to status/quarantine-reason information."""
-        return cls(
-            info.status_reason,
-            info.reason,
-        )
-
 
 @dataclasses.dataclass
 class ItemBatchOutcome:

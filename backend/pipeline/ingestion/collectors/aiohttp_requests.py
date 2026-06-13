@@ -13,10 +13,7 @@ from typing import Any, TypeVar, cast
 import aiohttp
 
 from backend.pipeline.ingestion import models, quarantine_reason
-from backend.pipeline.ingestion.collectors import (
-    control_flow,
-    failure_classification,
-)
+from backend.pipeline.ingestion.collectors import control_flow
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemFailure,
     collector_failure,
@@ -115,30 +112,6 @@ async def _sleep_for_retry(
     await retry_config.sleep_func(shutdown, delay)
 
 
-def _classification_for_status(
-    status: int,
-    *,
-    reason_prefix: str,
-    policy: http_status.HTTPStatusPolicy,
-    fallback_status_reason: feed_store.FeedStatusReason,
-    fallback_reason: str,
-) -> failure_classification.FailureInfo:
-    """Classify status or return the caller's bounded fallback."""
-    status_reason = http_status.classify_http_status(
-        status,
-        policy=policy,
-    )
-    if status_reason is not None:
-        return failure_classification.FailureInfo(
-            status_reason,
-            f"{reason_prefix}_{status}",
-        )
-    return failure_classification.FailureInfo(
-        fallback_status_reason,
-        fallback_reason,
-    )
-
-
 def _headers_dict(headers: object) -> dict[str, str]:
     """Return a plain header dict from aiohttp headers or sparse test fakes."""
     if not isinstance(headers, collections.abc.Mapping):
@@ -214,18 +187,14 @@ async def fetch_json_with_retries(  # noqa: UP047
                     )
                     continue
 
-                classification = _classification_for_status(
+                status_reason = http_status.classify_http_status(
                     response.status,
-                    reason_prefix=reason_prefix,
                     policy=status_policy,
-                    fallback_status_reason=(
-                        feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR
-                    ),
-                    fallback_reason=f"{reason_prefix}_{response.status}",
                 )
                 raise collector_failure(
-                    classification.status_reason,
-                    classification.reason,
+                    status_reason
+                    or feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                    f"{reason_prefix}_{response.status}",
                 )
         except models.FeedFailure:
             raise
@@ -312,14 +281,14 @@ async def download_item_media(
                     )
                     continue
 
-                classification = _classification_for_status(
+                status_reason = http_status.classify_http_status(
                     response.status,
-                    reason_prefix=reason_prefix,
                     policy=status_policy,
-                    fallback_status_reason=fallback_status_reason,
-                    fallback_reason=f"{reason_prefix}_{response.status}",
                 )
-                return ItemFailure.from_info(classification)
+                return ItemFailure(
+                    status_reason or fallback_status_reason,
+                    f"{reason_prefix}_{response.status}",
+                )
         except (aiohttp.ClientError, TimeoutError) as exc:
             if _has_attempt_remaining(attempt, retry_config):
                 await _sleep_for_retry(

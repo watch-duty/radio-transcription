@@ -17,7 +17,7 @@ from backend.pipeline.ingestion.collectors import (
     aiohttp_requests,
     control_flow,
     item_downloads,
-    polling_payloads,
+    payloads,
     telemetry,
 )
 from backend.pipeline.ingestion.collectors.failure_classification import (
@@ -369,7 +369,7 @@ def _extract_calls_from_response(
     """Safely extract the calls list from the API response."""
     if bcfy_calls is None:
         return []
-    return polling_payloads.extract_optional_item_list(
+    return payloads.extract_optional_item_list(
         bcfy_calls,
         "calls",
         malformed_reason="calls_api_payload_malformed",

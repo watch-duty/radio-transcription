@@ -12,10 +12,10 @@ ITEM_HTTP_REASON_PREFIX = "item_http"
 ITEM_DOWNLOAD_FAILED_REASON = "item_download_failed"
 
 
-def classify_item_http_status(
+def item_http_failure(
     status: int,
 ) -> failure_classification.ItemFailure:
-    """Classify terminal item HTTP evidence with item-scope fallback."""
+    """Build an item-scoped failure for terminal item HTTP evidence."""
     status_reason = http_status.classify_http_status(status)
     if status_reason is not None:
         return failure_classification.ItemFailure(
