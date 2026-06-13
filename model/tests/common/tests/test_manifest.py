@@ -338,11 +338,20 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
     def test_binds_closest_of_multiple_in_tolerance_candidates(self) -> None:
         """When several predictions are within tolerance, the nearest wins."""
         gt = [
-            {"audio_filepath": "gs://b/a.flac", "offset": 1.15, "text": "gold"}
+            {
+                "audio_filepath": "gs://b/a.flac",
+                "offset": 1.15,
+                "text": "gold",
+            },
+            {
+                "audio_filepath": "gs://b/a.flac",
+                "offset": 1.0,
+                "text": "other",
+            },
         ]
-        # 1.0 and 1.1 are both within the default 0.25s tolerance of 1.15;
-        # 1.1 (diff 0.05) is nearer than 1.0 (diff 0.15), so "closer" must win
-        # even though "first" appears earlier in the candidate list.
+        # 1.0 and 1.1 are both within the default 0.25s tolerance of 1.15.
+        # 1.1 is nearer than 1.0 for the first row, so "closer" wins there,
+        # while "first" is still consumed by the exact-offset second row.
         preds = [
             {"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "first"},
             {
@@ -355,6 +364,7 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
         result = merge_predictions_to_manifest(gt, preds, "whisper")
 
         self.assertEqual(result[0]["pred_text_whisper"], "closer")
+        self.assertEqual(result[1]["pred_text_whisper"], "first")
 
     def test_prediction_with_null_text_does_not_become_literal_none(
         self,
@@ -395,6 +405,72 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
         # 1.18 is nearer 1.2 than 1.0, so row 1 binds it; row 0 stays blank.
         self.assertNotIn("pred_text_whisper", result[0])
         self.assertEqual(result[1]["pred_text_whisper"], "only")
+
+    def test_identity_disambiguates_predictions_with_same_audio_filepath(
+        self,
+    ) -> None:
+        gt = [
+            {
+                "audio_filepath": "gs://b/shared.flac",
+                "offset": 1.0,
+                "text": "gold A",
+                "example_id": "ex-a",
+                "segment_id": "seg-a",
+            },
+            {
+                "audio_filepath": "gs://b/shared.flac",
+                "offset": 1.2,
+                "text": "gold B",
+                "example_id": "ex-b",
+                "segment_id": "seg-b",
+            },
+        ]
+        preds = [
+            {
+                "audio_filepath": "gs://b/shared.flac",
+                "offset": 1.01,
+                "text": "pred B",
+                "example_id": "ex-b",
+                "segment_id": "seg-b",
+            },
+            {
+                "audio_filepath": "gs://b/shared.flac",
+                "offset": 1.19,
+                "text": "pred A",
+                "example_id": "ex-a",
+                "segment_id": "seg-a",
+            },
+        ]
+
+        result = merge_predictions_to_manifest(gt, preds, "whisper")
+
+        self.assertEqual(result[0]["pred_text_whisper"], "pred A")
+        self.assertEqual(result[1]["pred_text_whisper"], "pred B")
+
+    def test_matching_identity_with_different_audio_filepath_does_not_match(
+        self,
+    ) -> None:
+        gt = [
+            {
+                "audio_filepath": "gs://b/a.flac",
+                "offset": 1.0,
+                "text": "gold",
+                "example_id": "same",
+                "segment_id": "001",
+            }
+        ]
+        preds = [
+            {
+                "audio_filepath": "gs://b/b.flac",
+                "offset": 1.0,
+                "text": "predicted",
+                "example_id": "same",
+                "segment_id": "001",
+            }
+        ]
+
+        with self.assertRaisesRegex(ValueError, "unmatched prediction"):
+            merge_predictions_to_manifest(gt, preds, "whisper")
 
     def test_stale_pred_text_field_is_cleared_on_rerun(self) -> None:
         """Re-running clears a stale pred_text_{model_key} when no new prediction matches.
@@ -444,9 +520,8 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
             }
         ]
 
-        result = merge_predictions_to_manifest(gt, preds, "whisper")
-
-        self.assertNotIn("pred_text_whisper", result[0])
+        with self.assertRaisesRegex(ValueError, "unmatched prediction"):
+            merge_predictions_to_manifest(gt, preds, "whisper")
 
     def test_returns_same_list_object(self) -> None:
         """Result is the ground_truth list mutated in place."""

@@ -9,7 +9,7 @@ Exports:
   require_canonical_manifest    — fail-loud strict validation wrapper
   rows_from_manifest            — convert raw manifest dicts to typed CanonicalRow instances
   load_manifest                 — load a JSON array or JSONL manifest from local disk
-  merge_predictions_to_manifest — offset-tolerant merge of model predictions onto GT rows
+  merge_predictions_to_manifest — URI-first prediction merge onto GT rows
 """
 
 from __future__ import annotations
@@ -559,14 +559,14 @@ def merge_predictions_to_manifest(
     model_key: str,
     offset_tolerance: float = 0.25,
 ) -> list[dict[str, Any]]:
-    """Align model predictions onto ground-truth rows by (audio_filepath, offset).
+    """Align model predictions onto ground-truth rows.
 
-    Uses an absolute-difference tolerance for offset matching — NEVER exact float
-    equality (exact float equality is silently fragile). Predictions are matched
-    to ground-truth rows ONE-TO-ONE per audio_filepath: the closest in-tolerance
-    (row, prediction) pairs are bound first, and each prediction is consumed at
-    most once — so a missing prediction leaves its row's pred_text_{model_key}
-    unset (correctly scored as an error) instead of borrowing a neighbor's.
+    Matching is URI-first: candidates are grouped by exact ``audio_filepath``.
+    Inside each URI group, identical ``(example_id, segment_id)`` values
+    disambiguate candidates when both sides have identity. Remaining candidates
+    use offset-tolerant closest-pair matching. Every prediction row must be
+    consumed, and unmatched predictions raise ``ValueError``. Ground-truth rows
+    without predictions remain allowed.
 
     Args:
         ground_truth: List of ground-truth manifest dicts (NeMo-style schema).
@@ -584,9 +584,8 @@ def merge_predictions_to_manifest(
         objects being mutated.
 
     Raises:
-        ValueError: If required prediction or ground-truth keys are missing.
-            Unexpected errors are intentionally not swallowed: returning an
-            empty merge would let downstream scoring report false success.
+        ValueError: If required prediction or ground-truth keys are missing,
+            malformed, or any prediction row cannot be matched.
     """
     pred_index = _prediction_index(predictions)
     gt_by_file = _ground_truth_index(ground_truth)
@@ -598,38 +597,83 @@ def merge_predictions_to_manifest(
         _merge_file_predictions(
             ground_truth=ground_truth,
             candidates=pred_index.get(audio_fp, []),
-            gt_indices=gt_indices,
+            gt_candidates=gt_indices,
             field_name=field_name,
             offset_tolerance=offset_tolerance,
         )
+    unmatched = _unmatched_predictions(pred_index)
+    if unmatched:
+        raise _unmatched_predictions_error(unmatched)
 
     return ground_truth
 
 
+@dataclass
+class _PredictionCandidate:
+    index: int
+    audio_filepath: str
+    offset: float
+    text: str
+    identity: tuple[str, str] | None
+    matched: bool = False
+
+
+@dataclass
+class _GroundTruthCandidate:
+    index: int
+    audio_filepath: str
+    offset: float
+    identity: tuple[str, str] | None
+    matched: bool = False
+
+
 def _prediction_index(
     predictions: list[dict[str, Any]],
-) -> dict[str, list[tuple[float, str]]]:
-    pred_index: dict[str, list[tuple[float, str]]] = {}
-    for pred in predictions:
+) -> dict[str, list[_PredictionCandidate]]:
+    pred_index: dict[str, list[_PredictionCandidate]] = {}
+    for i, pred in enumerate(predictions):
         audio_fp = str(_required_key(pred, "audio_filepath", "prediction"))
-        p_offset = float(_required_key(pred, "offset", "prediction"))
+        p_offset = _required_float(pred, "offset", "prediction")
         raw_text = pred.get("text")
         p_text = "" if raw_text is None else str(raw_text)
-        pred_index.setdefault(audio_fp, []).append((p_offset, p_text))
+        pred_index.setdefault(audio_fp, []).append(
+            _PredictionCandidate(
+                index=i,
+                audio_filepath=audio_fp,
+                offset=p_offset,
+                text=p_text,
+                identity=_optional_identity(pred),
+            )
+        )
     return pred_index
 
 
 def _ground_truth_index(
     ground_truth: list[dict[str, Any]],
-) -> dict[str, list[int]]:
-    gt_by_file: dict[str, list[int]] = {}
+) -> dict[str, list[_GroundTruthCandidate]]:
+    gt_by_file: dict[str, list[_GroundTruthCandidate]] = {}
     for i, gt_row in enumerate(ground_truth):
         audio_fp = str(
             _required_key(gt_row, "audio_filepath", "ground truth row")
         )
-        _required_key(gt_row, "offset", "ground truth row")
-        gt_by_file.setdefault(audio_fp, []).append(i)
+        gt_by_file.setdefault(audio_fp, []).append(
+            _GroundTruthCandidate(
+                index=i,
+                audio_filepath=audio_fp,
+                offset=_required_float(gt_row, "offset", "ground truth row"),
+                identity=_optional_identity(gt_row),
+            )
+        )
     return gt_by_file
+
+
+def _optional_identity(row: dict[str, Any]) -> tuple[str, str] | None:
+    """Return a non-blank row identity when both identity fields are present."""
+    example_id = _stripped_string(row.get("example_id"))
+    segment_id = _stripped_string(row.get("segment_id"))
+    if example_id is None or segment_id is None:
+        return None
+    return example_id, segment_id
 
 
 def _required_key(row: dict[str, Any], key: str, row_kind: str) -> Any:
@@ -639,27 +683,120 @@ def _required_key(row: dict[str, Any], key: str, row_kind: str) -> Any:
     raise ValueError(msg)
 
 
+def _required_float(row: dict[str, Any], key: str, row_kind: str) -> float:
+    value = _required_key(row, key, row_kind)
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        msg = f"{row_kind} has non-numeric '{key}': {row!r}"
+        raise ValueError(msg) from exc
+
+
 def _merge_file_predictions(
     *,
     ground_truth: list[dict[str, Any]],
-    candidates: list[tuple[float, str]],
-    gt_indices: list[int],
+    candidates: list[_PredictionCandidate],
+    gt_candidates: list[_GroundTruthCandidate],
     field_name: str,
     offset_tolerance: float,
 ) -> None:
-    pairs: list[tuple[float, int, int]] = []
-    for gi in gt_indices:
-        gt_offset = float(ground_truth[gi]["offset"])
-        for pi, (p_offset, _) in enumerate(candidates):
-            diff = abs(gt_offset - p_offset)
-            if diff < offset_tolerance:
-                pairs.append((diff, gi, pi))
-    pairs.sort(key=lambda pair: pair[0])
-    used_gt: set[int] = set()
-    used_pred: set[int] = set()
-    for _, gi, pi in pairs:
-        if gi in used_gt or pi in used_pred:
+    _merge_identity_predictions(
+        ground_truth=ground_truth,
+        candidates=candidates,
+        gt_candidates=gt_candidates,
+        field_name=field_name,
+    )
+    pairs: list[tuple[float, _GroundTruthCandidate, _PredictionCandidate]] = []
+    for gt_candidate in gt_candidates:
+        if gt_candidate.matched:
             continue
-        ground_truth[gi][field_name] = candidates[pi][1]
-        used_gt.add(gi)
-        used_pred.add(pi)
+        for pred_candidate in candidates:
+            if pred_candidate.matched:
+                continue
+            diff = abs(gt_candidate.offset - pred_candidate.offset)
+            if diff < offset_tolerance:
+                pairs.append((diff, gt_candidate, pred_candidate))
+    pairs.sort(key=lambda pair: pair[0])
+    for _, gt_candidate, pred_candidate in pairs:
+        if gt_candidate.matched or pred_candidate.matched:
+            continue
+        _assign_prediction(
+            ground_truth,
+            gt_candidate,
+            pred_candidate,
+            field_name,
+        )
+
+
+def _merge_identity_predictions(
+    *,
+    ground_truth: list[dict[str, Any]],
+    candidates: list[_PredictionCandidate],
+    gt_candidates: list[_GroundTruthCandidate],
+    field_name: str,
+) -> None:
+    gt_by_identity: dict[tuple[str, str], list[_GroundTruthCandidate]] = {}
+    for gt_candidate in gt_candidates:
+        if gt_candidate.identity is None:
+            continue
+        gt_by_identity.setdefault(gt_candidate.identity, []).append(
+            gt_candidate
+        )
+    for pred_candidate in candidates:
+        if pred_candidate.identity is None or pred_candidate.matched:
+            continue
+        for gt_candidate in gt_by_identity.get(pred_candidate.identity, []):
+            if gt_candidate.matched:
+                continue
+            _assign_prediction(
+                ground_truth,
+                gt_candidate,
+                pred_candidate,
+                field_name,
+            )
+            break
+
+
+def _assign_prediction(
+    ground_truth: list[dict[str, Any]],
+    gt_candidate: _GroundTruthCandidate,
+    pred_candidate: _PredictionCandidate,
+    field_name: str,
+) -> None:
+    ground_truth[gt_candidate.index][field_name] = pred_candidate.text
+    gt_candidate.matched = True
+    pred_candidate.matched = True
+
+
+def _unmatched_predictions(
+    pred_index: dict[str, list[_PredictionCandidate]],
+) -> list[_PredictionCandidate]:
+    unmatched: list[_PredictionCandidate] = []
+    for candidates in pred_index.values():
+        for candidate in candidates:
+            if not candidate.matched:
+                unmatched.append(candidate)
+    return unmatched
+
+
+def _unmatched_predictions_error(
+    unmatched: list[_PredictionCandidate],
+) -> ValueError:
+    samples = ", ".join(
+        _format_prediction_sample(candidate) for candidate in unmatched[:5]
+    )
+    msg = (
+        f"unmatched prediction row(s): {len(unmatched)} prediction(s) could "
+        f"not be matched to ground truth; samples: {samples}"
+    )
+    return ValueError(msg)
+
+
+def _format_prediction_sample(candidate: _PredictionCandidate) -> str:
+    parts = [
+        f"audio_filepath={candidate.audio_filepath}",
+        f"offset={candidate.offset}",
+    ]
+    if candidate.identity is not None:
+        parts.append(f"identity={candidate.identity[0]}/{candidate.identity[1]}")
+    return "{" + ", ".join(parts) + "}"
