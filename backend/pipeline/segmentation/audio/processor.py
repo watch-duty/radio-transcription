@@ -7,11 +7,14 @@ from collections.abc import Callable
 
 import av
 import numpy as np
+import requests.adapters
 from google.cloud import storage
 
 from backend.pipeline.common.constants import MS_PER_SECOND, SAMPLE_RATE_HZ
 from backend.pipeline.segmentation.audio import vad
 from backend.pipeline.segmentation.constants import (
+    GCS_CONNECTION_MAX_RETRIES,
+    GCS_CONNECTION_POOL_SIZE,
     GCS_DOWNLOAD_TIMEOUT_SEC,
     MONO_CHANNEL_COUNT,
     PRIMARY_AUDIO_STREAM_INDEX,
@@ -50,12 +53,26 @@ class SegmentationAudioProcessor:
         self.vad_factory = vad_factory
         self.vad = vad_instance
         self.gcs_client = gcs_client_instance
+        # If gcs_factory is omitted, default to storage.Client, which acquires
+        # Application Default Credentials (ADC) implicitly from the active execution environment.
         self.gcs_factory = gcs_factory or storage.Client
 
     def setup(self) -> None:
         """Initializes the GCS Client and triggers VAD ONNX session warmup."""
         if self.gcs_client is None:
             self.gcs_client = self.gcs_factory()
+            # If the client was constructed via the default ADC factory, mount a custom HTTPAdapter
+            # to guarantee robust connection pooling and retry resiliency under high intra-process concurrency.
+            if (
+                hasattr(self.gcs_client, "_http") and self.gcs_client._http  # noqa: SLF001
+            ):
+                adapter = requests.adapters.HTTPAdapter(
+                    pool_connections=GCS_CONNECTION_POOL_SIZE,
+                    pool_maxsize=GCS_CONNECTION_POOL_SIZE,
+                    max_retries=GCS_CONNECTION_MAX_RETRIES,
+                )
+                self.gcs_client._http.mount("https://", adapter)  # noqa: SLF001
+
         active_vad_factory = self.vad_factory or get_vad_engine
         if self.vad is None:
             self.vad = active_vad_factory(self.vad_config)
