@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from backend.pipeline.ingestion.collectors.failure_classifiers import (
+from backend.pipeline.ingestion.failure_classifiers import (
     ffmpeg,
     http_status,
 )

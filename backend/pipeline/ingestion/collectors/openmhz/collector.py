@@ -24,12 +24,12 @@ from backend.pipeline.ingestion.collectors.failure_classification import (
     collector_failure,
     missing_source_feed_id_failure,
 )
-from backend.pipeline.ingestion.collectors.failure_classifiers import (
-    http_status,
-)
 from backend.pipeline.ingestion.collectors.openmhz._ws_transport import (
     OpenMHzTransportError,
     websocket_transport,
+)
+from backend.pipeline.ingestion.failure_classifiers import (
+    http_status,
 )
 from backend.pipeline.ingestion.models import (
     CapturedChunk,

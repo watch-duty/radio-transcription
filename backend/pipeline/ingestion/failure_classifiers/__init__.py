@@ -1,1 +1,1 @@
-"""Runtime-side failure evidence classifiers."""
+"""Shared ingestion failure evidence classifiers."""

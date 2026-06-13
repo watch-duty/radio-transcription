@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from backend.pipeline.ingestion.collectors import failure_classification
-from backend.pipeline.ingestion.collectors.failure_classifiers import (
+from backend.pipeline.ingestion.failure_classifiers import (
     http_status,
 )
 from backend.pipeline.storage import feed_store

@@ -11,7 +11,7 @@ from backend.pipeline.ingestion.collectors import aiohttp_requests, control_flow
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemFailure,
 )
-from backend.pipeline.ingestion.collectors.failure_classifiers import (
+from backend.pipeline.ingestion.failure_classifiers import (
     http_status,
 )
 from backend.pipeline.ingestion.models import FeedFailure
