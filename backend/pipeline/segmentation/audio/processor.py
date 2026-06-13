@@ -2,24 +2,23 @@
 
 import io
 import logging
-import subprocess
-import tempfile
 import urllib.parse
 from collections.abc import Callable
-from pathlib import Path
 
+import av
 import numpy as np
-import soundfile as sf
 from google.cloud import storage
 
-from backend.pipeline.common.constants import SAMPLE_RATE_HZ
+from backend.pipeline.common.constants import MS_PER_SECOND, SAMPLE_RATE_HZ
 from backend.pipeline.segmentation.audio import vad
-from backend.pipeline.segmentation.constants import GCS_DOWNLOAD_TIMEOUT_SEC
+from backend.pipeline.segmentation.constants import (
+    GCS_DOWNLOAD_TIMEOUT_SEC,
+    MONO_CHANNEL_COUNT,
+    PRIMARY_AUDIO_STREAM_INDEX,
+)
 from backend.pipeline.segmentation.datatypes import AudioChunkData
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_FFMPEG_TIMEOUT_SEC = 30
 
 
 def get_vad_engine(config_json: str) -> vad.VoiceActivityDetector:
@@ -93,41 +92,7 @@ class SegmentationAudioProcessor:
         blob.download_to_file(in_mem_file, timeout=GCS_DOWNLOAD_TIMEOUT_SEC)
         in_mem_file.seek(0)
 
-        with tempfile.NamedTemporaryFile(
-            suffix=".flac", delete=False
-        ) as temp_file:
-            temp_filename = temp_file.name
-
-        try:
-            # Use ffmpeg to extract standard FLAC to a seekable temporary file
-            process = subprocess.run(
-                [
-                    "ffmpeg",
-                    "-y",
-                    "-i",
-                    "pipe:0",  # Read from stdin
-                    "-f",
-                    "flac",  # Output FLAC format
-                    temp_filename,
-                ],
-                input=in_mem_file.getvalue(),
-                capture_output=True,
-                check=False,
-                timeout=DEFAULT_FFMPEG_TIMEOUT_SEC,
-            )
-            if process.returncode != 0:
-                logger.error(
-                    f"ffmpeg error during audio decode: {process.stderr.decode()}"
-                )
-                msg = "Failed to decode audio via ffmpeg"
-                raise RuntimeError(msg)
-
-            samples, sr = sf.read(temp_filename, dtype="int16")
-        finally:
-            try:
-                Path(temp_filename).unlink()
-            except OSError:
-                pass
+        samples, sr = self._decode_audio_in_memory(in_mem_file)
 
         speech_segments = []
         if len(samples) > 0:
@@ -151,13 +116,13 @@ class SegmentationAudioProcessor:
 
         speech_segments_proto = [
             bp_state.TimeRangeProto(
-                start_ms=int(s * 1000),
-                end_ms=int(e * 1000),
+                start_ms=int(s * MS_PER_SECOND),
+                end_ms=int(e * MS_PER_SECOND),
             )
             for s, e in speech_segments
         ]
 
-        duration_ms = duration_ms or int(len(samples) * 1000 / sr)
+        duration_ms = duration_ms or int(len(samples) * MS_PER_SECOND / sr)
 
         return AudioChunkData(
             start_ms=start_ms,
@@ -167,6 +132,75 @@ class SegmentationAudioProcessor:
             gcs_uri=gcs_path,
             duration_ms=duration_ms,
         )
+
+    def _open_container(
+        self, in_mem_file: io.BytesIO
+    ) -> av.container.InputContainer:
+        container = av.open(in_mem_file)
+        if not isinstance(container, av.container.InputContainer):
+
+            def _error() -> str:
+                return f"Expected InputContainer from av.open, got {type(container).__name__}"
+
+            raise TypeError(_error())
+        return container
+
+    def _decode_audio_in_memory(
+        self, in_mem_file: io.BytesIO
+    ) -> tuple[np.ndarray, int]:
+        """Decodes raw audio bytes into 16-bit PCM samples using in-process PyAV."""
+        try:
+            with self._open_container(in_mem_file) as container:
+                stream = container.streams.audio[PRIMARY_AUDIO_STREAM_INDEX]
+                resampler = av.AudioResampler(format="s16p")
+                decoded_frames = []
+                expected_channels = None
+                for frame in container.decode(stream):
+                    reframed = resampler.resample(frame)
+                    if reframed is None:
+                        continue
+                    frames_to_process = (
+                        reframed
+                        if isinstance(reframed, (list, tuple))
+                        else [reframed]
+                    )
+                    for f in frames_to_process:
+                        arr = f.to_ndarray()
+                        if expected_channels is None:
+                            expected_channels = arr.shape[0]
+                        elif arr.shape[0] != expected_channels:
+                            logger.warning(
+                                "Channel count changed mid-stream, skipping frame"
+                            )
+                            continue
+                        decoded_frames.append(arr)
+
+                if not decoded_frames:
+                    return np.array([], dtype=np.int16), SAMPLE_RATE_HZ
+
+                combined = np.concatenate(decoded_frames, axis=-1)
+                # Return 1D array for mono feeds, or (samples, channels) for multi-channel feeds
+                # so that _resample_to_16k_mono can perform downmix averaging across channels.
+                raw_samples = (
+                    combined[PRIMARY_AUDIO_STREAM_INDEX]
+                    if combined.shape[0] == MONO_CHANNEL_COUNT
+                    else combined.T
+                )
+
+                sr = stream.codec_context.sample_rate
+                if sr <= 0:
+                    logger.warning("Invalid sample rate detected, defaulting")
+                    sr = SAMPLE_RATE_HZ
+
+                return raw_samples, sr
+        except Exception as e:
+            err_msg = str(e)
+            logger.exception("PyAV error during audio decode: %s", err_msg)
+
+            def _err() -> str:
+                return f"Failed to decode audio via PyAV: {err_msg}"
+
+            raise RuntimeError(_err()) from e
 
     def _resample_to_16k_mono(self, samples: np.ndarray, sr: int) -> np.ndarray:
         """Downmixes to mono and resamples to 16 kHz for VAD/SED processing."""
