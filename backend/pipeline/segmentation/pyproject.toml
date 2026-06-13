@@ -6,7 +6,7 @@ requires-python = ">=3.13, <3.14"
 dependencies = [
     # IMPORTANT: When updating the apache-beam version here, you must also update
     # the base image version in backend/pipeline/segmentation/Dockerfile to match.
-    "apache-beam[gcp]>=2.73.0",
+    "apache-beam[gcp]>=2.74.0",
     # Adding betterproto because it's an indirect dependency of beam and is a pre-release version.
     # Since pre-release versions are not permitted in this repo, we list it explicitly here.
     # This allows it to as a dependency for beam without enabling pre-releases globally.
