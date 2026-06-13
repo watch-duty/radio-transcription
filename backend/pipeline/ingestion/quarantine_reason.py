@@ -1,17 +1,17 @@
-"""Shared storage boundary helpers for feed quarantine reasons."""
+"""Shared ingestion helpers for quarantine diagnostic text."""
 
 from __future__ import annotations
 
-MAX_QUARANTINE_REASON_LENGTH = 2048
-_TRUNCATION_MARKER = " [truncated]"
+from backend.pipeline.storage import (
+    quarantine_reason as storage_quarantine_reason,
+)
 
-
-def cap_quarantine_reason_for_storage(text: str) -> str:
-    """Cap quarantine text while keeping a visible truncation marker."""
-    if len(text) <= MAX_QUARANTINE_REASON_LENGTH:
-        return text
-    prefix_len = MAX_QUARANTINE_REASON_LENGTH - len(_TRUNCATION_MARKER)
-    return f"{text[:prefix_len].rstrip()}{_TRUNCATION_MARKER}"
+MAX_QUARANTINE_REASON_LENGTH = (
+    storage_quarantine_reason.MAX_QUARANTINE_REASON_LENGTH
+)
+cap_quarantine_reason_for_storage = (
+    storage_quarantine_reason.cap_quarantine_reason_for_storage
+)
 
 
 def exception_text(exc: BaseException) -> str:

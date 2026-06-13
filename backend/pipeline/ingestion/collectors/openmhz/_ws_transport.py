@@ -236,32 +236,15 @@ async def _recv_str_or_shutdown(
     if shutdown.is_set():
         return None
 
-    recv_task = asyncio.create_task(ws.recv_str(timeout=timeout_sec))
-    shutdown_task = asyncio.create_task(shutdown.wait())
-    tasks = {recv_task, shutdown_task}
-
     try:
-        done, pending = await asyncio.wait(
-            tasks,
-            return_when=asyncio.FIRST_COMPLETED,
+        return await control_flow.await_or_cancel(
+            ws.recv_str(timeout=timeout_sec),
+            shutdown,
         )
     except asyncio.CancelledError:
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        if shutdown.is_set():
+            return None
         raise
-
-    for task in pending:
-        task.cancel()
-    await asyncio.gather(*pending, return_exceptions=True)
-
-    if shutdown_task in done and shutdown_task.result():
-        await asyncio.gather(recv_task, return_exceptions=True)
-        return None
-
-    with contextlib.suppress(asyncio.CancelledError):
-        await asyncio.gather(shutdown_task, return_exceptions=True)
-    return await recv_task
 
 
 async def _await_or_shutdown[T](

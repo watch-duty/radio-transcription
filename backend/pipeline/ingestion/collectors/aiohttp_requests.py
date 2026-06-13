@@ -66,7 +66,9 @@ def _retry_delay(
     if isinstance(headers, collections.abc.Mapping):
         header_map = cast("Mapping[object, object]", headers)
         retry_after = header_map.get("Retry-After")
-    retry_after_text = str(retry_after) if retry_after is not None else ""
+    retry_after_text = (
+        str(retry_after).strip() if retry_after is not None else ""
+    )
     if retry_after_text.isdigit():
         return float(retry_after_text)
 

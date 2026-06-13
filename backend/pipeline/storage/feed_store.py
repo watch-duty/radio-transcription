@@ -14,7 +14,7 @@ from backend.pipeline.common.exceptions import (
     FeedAlreadyExistsError,
     FeedNameAlreadyExistsError,
 )
-from backend.pipeline.ingestion import quarantine_reason
+from backend.pipeline.storage import quarantine_reason
 from backend.pipeline.storage.feed_queries import (
     COUNT_FEEDS_SQL,
     COUNT_HELD_BY_TYPE_SQL,

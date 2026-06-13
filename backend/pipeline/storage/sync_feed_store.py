@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from backend.pipeline.ingestion import quarantine_reason
+from backend.pipeline.storage import quarantine_reason
 
 logger = logging.getLogger(__name__)
 

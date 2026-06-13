@@ -57,6 +57,84 @@ class TestSleepOrCancel(unittest.IsolatedAsyncioTestCase):
         await task
 
 
+class TestAwaitOrCancel(unittest.IsolatedAsyncioTestCase):
+    async def test_operation_completes_successfully(self) -> None:
+        shutdown = asyncio.Event()
+
+        async def op() -> str:
+            return "success_val"
+
+        result = await control_flow.await_or_cancel(op(), shutdown)
+
+        self.assertEqual(result, "success_val")
+
+    async def test_shutdown_already_set_prevents_operation(self) -> None:
+        shutdown = asyncio.Event()
+        shutdown.set()
+        op_called = False
+
+        async def op() -> str:
+            nonlocal op_called
+            op_called = True
+            return "ok"
+
+        with self.assertRaises(asyncio.CancelledError):
+            await control_flow.await_or_cancel(op(), shutdown)
+
+        self.assertFalse(op_called)
+
+    async def test_shutdown_triggered_during_operation(self) -> None:
+        shutdown = asyncio.Event()
+        op_started = asyncio.Event()
+        op_cancelled = asyncio.Event()
+
+        async def op() -> str:
+            op_started.set()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                op_cancelled.set()
+                raise
+            msg = "unreachable"
+            raise AssertionError(msg)
+
+        async def trigger_shutdown() -> None:
+            await op_started.wait()
+            shutdown.set()
+
+        trigger_task = asyncio.create_task(trigger_shutdown())
+
+        with self.assertRaises(asyncio.CancelledError):
+            await control_flow.await_or_cancel(op(), shutdown)
+
+        await trigger_task
+        await asyncio.wait_for(op_cancelled.wait(), timeout=1.0)
+
+    async def test_operation_fails_propagates_exception(self) -> None:
+        shutdown = asyncio.Event()
+
+        async def op() -> str:
+            msg = "op failed"
+            raise ValueError(msg)
+
+        with self.assertRaises(ValueError) as cm:
+            await control_flow.await_or_cancel(op(), shutdown)
+
+        self.assertEqual(str(cm.exception), "op failed")
+
+    async def test_operation_wins_on_simultaneous_completion(self) -> None:
+        shutdown = asyncio.Event()
+
+        async def op() -> str:
+            shutdown.set()
+            await shutdown.wait()
+            return "success_val"
+
+        result = await control_flow.await_or_cancel(op(), shutdown)
+
+        self.assertEqual(result, "success_val")
+
+
 class TestItemDownloadHelpers(unittest.TestCase):
     def test_classifies_terminal_item_http_status(self) -> None:
         failure = item_downloads.item_http_failure(401)

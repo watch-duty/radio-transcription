@@ -16,6 +16,7 @@ from backend.pipeline.ingestion.collectors.openmhz._ws_transport import (
     _await_or_shutdown,
     _parse_eio_open,
     _parse_sio_event,
+    _recv_str_or_shutdown,
     websocket_transport,
 )
 
@@ -447,6 +448,23 @@ class TestWebsocketTransport(unittest.IsolatedAsyncioTestCase):
         result = await _await_or_shutdown(_complete_and_shutdown(), shutdown)
 
         self.assertEqual(result, "connected")
+
+    async def test_recv_str_result_wins_when_shutdown_also_set(self) -> None:
+        shutdown = asyncio.Event()
+
+        class _CompletingWebSocket:
+            async def recv_str(self, **_kwargs: object) -> str:
+                shutdown.set()
+                await shutdown.wait()
+                return "42[]"
+
+        result = await _recv_str_or_shutdown(
+            _CompletingWebSocket(),
+            shutdown,
+            10.0,
+        )
+
+        self.assertEqual(result, "42[]")
 
     @patch(f"{_WS_MOD}.AsyncSession")
     async def test_pending_eio_open_exits_on_shutdown(

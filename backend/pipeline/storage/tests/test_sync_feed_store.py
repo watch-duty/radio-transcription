@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from unittest.mock import MagicMock, patch
 
-from backend.pipeline.ingestion import quarantine_reason
+from backend.pipeline.storage import quarantine_reason
 from backend.pipeline.storage.feed_store import FeedStatusReason
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
 

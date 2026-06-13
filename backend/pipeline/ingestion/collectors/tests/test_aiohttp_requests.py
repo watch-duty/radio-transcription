@@ -101,7 +101,7 @@ class TestFetchJsonWithRetries(unittest.IsolatedAsyncioTestCase):
     async def test_retry_after_then_success(self) -> None:
         sleep = mock.AsyncMock(return_value=False)
         self.session.get.side_effect = [
-            _Response(429, headers={"Retry-After": "7"}),
+            _Response(429, headers={"Retry-After": " 7 "}),
             _Response(200, payload={"ok": True}),
         ]
 

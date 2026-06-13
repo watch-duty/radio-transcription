@@ -12,8 +12,7 @@ from unittest import mock
 import asyncpg
 import yaml
 
-from backend.pipeline.ingestion import quarantine_reason
-from backend.pipeline.storage import feed_queries
+from backend.pipeline.storage import feed_queries, quarantine_reason
 from backend.pipeline.storage.feed_store import (
     FeedStatus,
     FeedStatusReason,
