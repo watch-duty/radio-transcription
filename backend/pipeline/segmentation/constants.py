@@ -2,23 +2,17 @@
 
 from typing import Final
 
-DEAD_LETTER_QUEUE_TAG: Final = "normalization_dlq"
+DEAD_LETTER_QUEUE_TAG: Final = "segmentation_dlq"
 MAIN_TAG: Final = "main"
 
 # Pipeline Defaults
 DEFAULT_SIGNIFICANT_GAP_MS: Final = 800
 
 # Maximum number of chunks emitted per Dataflow bundle by the stateful ordering
-# DoFns. Keeps bundle execution time at ~10-15 s (50 × ~0.2-0.3 s/chunk) well
-# under Windmill's hard 300-second lease limit. When the drain hits this cap,
-# the DoFn sets an immediate self-chaining timer so the next Windmill bundle
-# picks up the remainder. This prevents the "poison-pill" pattern where a large
-# out-of-order backlog (caused by pipeline restarts, lock-induced slowdowns, or
-# traffic spikes) would be retried as a single oversized bundle indefinitely.
-# Tune this value if per-chunk processing latency changes significantly; both
-# the max_emit argument and the clamped-detection check in stateful.py must
-# stay in sync with this constant.
-MAX_CHUNKS_PER_WINDMILL_BUNDLE: Final = 50
+# DoFns. Keeps bundle execution time at ~1-2 s (5 × ~0.2-0.3 s/chunk) to ensure
+# minimal state lock contention and maximize self-chaining timer parallelization
+# across independent Windmill worker threads and worker leases.
+MAX_CHUNKS_PER_WINDMILL_BUNDLE: Final = 5
 GCS_DOWNLOAD_TIMEOUT_SEC: Final = 30
 DEFAULT_STALE_TIMEOUT_MS: Final = 75000
 DEFAULT_SEGMENTED_STALE_TIMEOUT_MS: Final = 5000
@@ -28,6 +22,8 @@ DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS: Final = 10000
 DEFAULT_BACKFILL_LATENESS_THRESHOLD_MS: Final = 300000
 OVERLAPPING_TRANSMISSION_TOLERANCE_MS: Final = 100
 DEFAULT_FLOAT_TOLERANCE_MS: Final = 500
+GCS_CONNECTION_POOL_SIZE: Final = 100
+GCS_CONNECTION_MAX_RETRIES: Final = 3
 
 # Structured watermark and FSM recovery configurations
 DEFAULT_VAD_POST_ROLL_MS: Final = 500
