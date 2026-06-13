@@ -138,8 +138,11 @@ class SegmentationAudioProcessor:
     ) -> av.container.InputContainer:
         container = av.open(in_mem_file)
         if not isinstance(container, av.container.InputContainer):
-            msg = "Expected InputContainer from av.open"
-            raise TypeError(msg)
+
+            def _error() -> str:
+                return f"Expected InputContainer from av.open, got {type(container).__name__}"
+
+            raise TypeError(_error())
         return container
 
     def _decode_audio_in_memory(
@@ -191,9 +194,13 @@ class SegmentationAudioProcessor:
 
                 return raw_samples, sr
         except Exception as e:
-            logger.exception("PyAV error during audio decode")
-            msg = "Failed to decode audio via PyAV"
-            raise RuntimeError(msg) from e
+            err_msg = str(e)
+            logger.exception("PyAV error during audio decode: %s", err_msg)
+
+            def _err() -> str:
+                return f"Failed to decode audio via PyAV: {err_msg}"
+
+            raise RuntimeError(_err()) from e
 
     def _resample_to_16k_mono(self, samples: np.ndarray, sr: int) -> np.ndarray:
         """Downmixes to mono and resamples to 16 kHz for VAD/SED processing."""
