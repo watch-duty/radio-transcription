@@ -415,17 +415,29 @@ class OrderedStitchAudioFn(beam.DoFn):
 
     @override
     def setup(self) -> None:
-        tracing_utils.setup_tracing(service_name="normalization-pipeline")
-        # Acquire process-level singletons natively via Beam's Shared handle
-        shared_vad = SHARED_RESOURCE_HANDLE.acquire(
-            lambda: vad.VoiceActivityDetector(models_dir=vad.MODELS_DIR),
-            tag="vad",
+        import requests  # noqa: PLC0415
+        import requests.adapters  # noqa: PLC0415
+
+        tracing_utils.setup_tracing(service_name="segmentation-pipeline")
+        # Instantiate a DoFn instance-local VAD object to completely avoid OS CPU thread deadlock
+        # and lock thrashing across concurrent Python threads inside ONNXRuntime C++ arenas.
+        self.engine.processor.vad = vad.VoiceActivityDetector(
+            models_dir=vad.MODELS_DIR
         )
+
+        # Acquire process-level singletons natively via Beam's Shared handle with an aggressive 100-connection pool
+        def _create_gcs() -> storage.Client:
+            client = storage.Client(project=self.stitch_config.project_id)
+            adapter = requests.adapters.HTTPAdapter(
+                pool_connections=100, pool_maxsize=100, max_retries=3
+            )
+            client._http.mount("https://", adapter)  # noqa: SLF001
+            return client
+
         shared_gcs = SHARED_RESOURCE_HANDLE.acquire(
-            lambda: storage.Client(project=self.stitch_config.project_id),
-            tag="gcs",
+            _create_gcs,
+            tag="gcs_pool_100",
         )
-        self.engine.processor.vad = shared_vad
         self.engine.processor.gcs_client = shared_gcs
         self.engine.setup()
 
