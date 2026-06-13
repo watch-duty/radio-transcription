@@ -183,6 +183,26 @@ class TestDownloadM4a(unittest.IsolatedAsyncioTestCase):
                 self.assertIs(failure.status_reason, reason)
                 self.assertEqual(failure.reason, f"item_http_{status}")
 
+    async def test_non_retryable_3xx_returns_item_failure_without_retry(
+        self,
+    ) -> None:
+        resp = MagicMock(status_code=302)
+        self.session.get = AsyncMock(return_value=resp)
+
+        result = await _download_m4a(
+            self.session,
+            "https://media2.openmhz.com/test.m4a",
+            self.shutdown,
+        )
+
+        failure = _require_item_failure(result)
+        self.assertIs(
+            failure.status_reason,
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        )
+        self.assertEqual(failure.reason, "item_http_302")
+        self.session.get.assert_awaited_once()
+
     @patch(f"{_COL_MOD}.control_flow.sleep_or_cancel", new_callable=AsyncMock)
     async def test_retryable_4xx_retry_success(
         self,

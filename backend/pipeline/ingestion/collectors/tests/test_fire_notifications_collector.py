@@ -86,6 +86,24 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(failure.reason, "item_http_404")
 
+    async def test_non_retryable_3xx_returns_item_failure_without_retry(
+        self,
+    ) -> None:
+        resp = MagicMock(status_code=302)
+        self.session.get = AsyncMock(return_value=resp)
+
+        result = await collector._download_audio(
+            self.session, "http://url", self.shutdown
+        )
+
+        failure = _require_item_failure(result)
+        self.assertIs(
+            failure.status_reason,
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        )
+        self.assertEqual(failure.reason, "item_http_302")
+        self.session.get.assert_awaited_once()
+
     @patch(
         "backend.pipeline.ingestion.collectors.fire_notifications.collector.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
