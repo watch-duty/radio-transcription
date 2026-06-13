@@ -89,7 +89,7 @@ class SegmentationOptions(PipelineOptions):
             "--staging_audio_bucket",
             type=str,
             required=False,
-            help="GCS bucket name for storing temporary raw audio segments before normalization.",
+            help="GCS bucket name for storing temporary raw audio segments before segmentation.",
         )
 
 

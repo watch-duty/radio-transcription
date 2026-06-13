@@ -415,7 +415,7 @@ class OrderedStitchAudioFn(beam.DoFn):
 
     @override
     def setup(self) -> None:
-        tracing_utils.setup_tracing(service_name="normalization-pipeline")
+        tracing_utils.setup_tracing(service_name="segmentation-pipeline")
         # Acquire process-level singletons natively via Beam's Shared handle
         shared_vad = SHARED_RESOURCE_HANDLE.acquire(
             lambda: vad.VoiceActivityDetector(models_dir=vad.MODELS_DIR),

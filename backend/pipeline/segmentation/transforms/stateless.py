@@ -76,7 +76,7 @@ class ParseAndKeyFn(beam.DoFn):
     @override
     def setup(self) -> None:
         """Initializes tracing for the worker."""
-        setup_tracing(service_name="normalization-pipeline")
+        setup_tracing(service_name="segmentation-pipeline")
 
     @override
     def process(
@@ -95,7 +95,7 @@ class ParseAndKeyFn(beam.DoFn):
             context = extract_trace_context(element.attributes)
             tracer = trace.get_tracer(__name__)
             with tracer.start_as_current_span(
-                "receive_audio_chunk_for_normalization", context=context
+                "receive_audio_chunk_for_segmentation", context=context
             ):
                 if not feed_id:
                     msg = "ContinuousAudio missing required feed_id"
