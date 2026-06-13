@@ -116,3 +116,43 @@ class AudioProcessorTest(unittest.TestCase):
             processor.download_audio_and_detect(
                 "gs://my-bucket/missing.flac", 0
             )
+
+    def test_decode_audio_in_memory_golden(self) -> None:
+        """Golden test: Verifies exact PCM audio sample decoding and sample rate extraction via PyAV."""
+        expected_samples = np.array(
+            [1000, -2000, 3000, -4000, 5000, -6000], dtype=np.int16
+        )
+
+        # Write to an in-memory FLAC container at 22050 Hz (testing source sample rate extraction)
+        buf = io.BytesIO()
+        sf.write(buf, expected_samples, 22050, format="FLAC")
+        buf.seek(0)
+
+        # Decode using in-process PyAV
+        actual_samples, actual_sr = self.processor._decode_audio_in_memory(buf)
+
+        self.assertEqual(actual_sr, 22050)
+        np.testing.assert_array_equal(actual_samples, expected_samples)
+
+    def test_decode_audio_in_memory_stereo_golden(self) -> None:
+        """Golden test: Verifies multi-channel decoding and downstream downmix averaging."""
+        channel0 = np.array([10, 20, 30, 40], dtype=np.int16)
+        channel1 = np.array([100, 100, 100, 100], dtype=np.int16)
+        stereo_array = np.vstack((channel0, channel1)).T  # (samples, 2)
+
+        buf = io.BytesIO()
+        sf.write(buf, stereo_array, 16000, format="FLAC")
+        buf.seek(0)
+
+        actual_samples, actual_sr = self.processor._decode_audio_in_memory(buf)
+
+        self.assertEqual(actual_sr, 16000)
+        np.testing.assert_array_equal(actual_samples, stereo_array)
+
+        # Verify that _resample_to_16k_mono correctly averages (downmixes) the channels
+        downmixed = self.processor._resample_to_16k_mono(
+            actual_samples, actual_sr
+        )
+        expected_downmixed = np.array([55, 60, 65, 70], dtype=np.int16)
+        self.assertEqual(downmixed.ndim, 1)
+        np.testing.assert_array_equal(downmixed[:4], expected_downmixed)
