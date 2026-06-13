@@ -439,21 +439,20 @@ def rows_from_manifest(manifest: list[dict[str, Any]]) -> list[CanonicalRow]:
         manifest: List of raw manifest dicts (as returned by load_manifest).
 
     Returns:
-        List of CanonicalRow instances. Rows missing audio_filepath or text are
-        skipped with a warning.
+        List of CanonicalRow instances.
+
+    Raises:
+        ValueError: If a row is missing audio_filepath or text, or either
+            value is blank.
     """
     rows: list[CanonicalRow] = []
     for i, entry in enumerate(manifest):
-        audio_filepath: str | None = entry.get("audio_filepath")
-        text: str | None = entry.get("text")
-        if not audio_filepath:
-            logger.warning(f"Skipping manifest row {i}: missing audio_filepath")
-            continue
-        if not text:
-            logger.warning(
-                f"Skipping manifest row {i}: missing text ({audio_filepath!r})"
-            )
-            continue
+        audio_filepath = _required_manifest_string(
+            entry,
+            "audio_filepath",
+            row_index=i,
+        )
+        text = _required_manifest_string(entry, "text", row_index=i)
         offset: float = float(entry.get("offset") or 0.0)
         duration: float = float(entry.get("duration") or 0.0)
         # Derive stable example_id / segment_id from the manifest or fallback to basename
@@ -472,6 +471,20 @@ def rows_from_manifest(manifest: list[dict[str, Any]]) -> list[CanonicalRow]:
             )
         )
     return rows
+
+
+def _required_manifest_string(
+    row: dict[str, Any],
+    field: str,
+    *,
+    row_index: int,
+) -> str:
+    value = row.get(field)
+    text = "" if value is None else str(value)
+    if not text.strip():
+        msg = f"manifest row {row_index} missing or blank {field}"
+        raise ValueError(msg)
+    return text
 
 
 def load_manifest(path: str) -> list[dict[str, Any]]:
