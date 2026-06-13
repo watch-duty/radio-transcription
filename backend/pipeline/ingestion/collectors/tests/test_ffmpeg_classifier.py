@@ -165,6 +165,63 @@ class TestFfmpegClassifier(unittest.TestCase):
         self.assertIsNone(ffmpeg.classify_ffmpeg_failure(exit_code=0))
         self.assertIsNone(ffmpeg.classify_ffmpeg_failure(exit_code=None))
 
+    def test_renders_http_status_with_useful_stderr_text(self) -> None:
+        info = ffmpeg.FfmpegFailureInfo(
+            status_reason=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+            kind=ffmpeg.FfmpegFailureKind.HTTP_STATUS,
+            source=ffmpeg.FfmpegEvidenceSource.STDERR,
+            http_status=503,
+            exit_code=1,
+        )
+
+        self.assertEqual(
+            ffmpeg.render_ffmpeg_diagnostic(
+                info,
+                "Server returned 503 Service Unavailable",
+            ),
+            "Server returned 503 Service Unavailable",
+        )
+
+    def test_renders_process_exit_with_stderr_tail(self) -> None:
+        info = ffmpeg.FfmpegFailureInfo(
+            status_reason=feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            kind=ffmpeg.FfmpegFailureKind.PROCESS_EXIT,
+            source=ffmpeg.FfmpegEvidenceSource.PROCESS,
+            exit_code=8,
+        )
+
+        self.assertEqual(
+            ffmpeg.render_ffmpeg_diagnostic(info, "(no stderr captured)"),
+            "ffmpeg exited with code 8",
+        )
+        self.assertEqual(
+            ffmpeg.render_ffmpeg_diagnostic(info, "Input/output error"),
+            "ffmpeg exited with code 8; Input/output error",
+        )
+
+    def test_renders_process_signal_and_timeout(self) -> None:
+        signal_info = ffmpeg.FfmpegFailureInfo(
+            status_reason=feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            kind=ffmpeg.FfmpegFailureKind.PROCESS_SIGNAL,
+            source=ffmpeg.FfmpegEvidenceSource.PROCESS,
+            exit_code=-9,
+            signal_number=9,
+        )
+        timeout_info = ffmpeg.FfmpegFailureInfo(
+            status_reason=feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            kind=ffmpeg.FfmpegFailureKind.TIMEOUT,
+            source=ffmpeg.FfmpegEvidenceSource.PROCESS,
+        )
+
+        self.assertEqual(
+            ffmpeg.render_ffmpeg_diagnostic(signal_info, "Killed"),
+            "ffmpeg terminated by signal 9; Killed",
+        )
+        self.assertEqual(
+            ffmpeg.render_ffmpeg_diagnostic(timeout_info),
+            "Stream capture timed out",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

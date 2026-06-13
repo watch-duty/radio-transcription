@@ -128,43 +128,8 @@ def _feed_failure_from_ffmpeg_info(
     """Convert ffmpeg failure info into an Icecast feed failure."""
     return collector_failure(
         info.status_reason,
-        _diagnostic_for_ffmpeg_info(info, diagnostic_text),
+        ffmpeg_classifier.render_ffmpeg_diagnostic(info, diagnostic_text),
     )
-
-
-def _diagnostic_for_ffmpeg_info(
-    info: ffmpeg_classifier.FfmpegFailureInfo,
-    diagnostic_text: str | None,
-) -> str:
-    """Render typed ffmpeg failure info into operator diagnostics."""
-    if (
-        info.kind is ffmpeg_classifier.FfmpegFailureKind.HTTP_STATUS
-        and _has_useful_diagnostic_text(diagnostic_text)
-    ):
-        return diagnostic_text
-
-    base = _humanize_ffmpeg_info(info)
-    if _has_useful_diagnostic_text(diagnostic_text):
-        return f"{base}; {diagnostic_text}"
-    return base
-
-
-def _has_useful_diagnostic_text(diagnostic_text: str | None) -> bool:
-    return bool(diagnostic_text and diagnostic_text != "(no stderr captured)")
-
-
-def _humanize_ffmpeg_info(info: ffmpeg_classifier.FfmpegFailureInfo) -> str:
-    if info.kind is ffmpeg_classifier.FfmpegFailureKind.HTTP_STATUS:
-        if info.http_status is None:
-            return "HTTP stream error"
-        return f"HTTP error {info.http_status}"
-    if info.kind is ffmpeg_classifier.FfmpegFailureKind.PROCESS_EXIT:
-        return f"ffmpeg exited with code {info.exit_code}"
-    if info.kind is ffmpeg_classifier.FfmpegFailureKind.PROCESS_SIGNAL:
-        return f"ffmpeg terminated by signal {info.signal_number}"
-    if info.kind is ffmpeg_classifier.FfmpegFailureKind.TIMEOUT:
-        return "Stream capture timed out"
-    return "ffmpeg failed"
 
 
 def _is_raw_ffmpeg_failure(info: ffmpeg_classifier.FfmpegFailureInfo) -> bool:

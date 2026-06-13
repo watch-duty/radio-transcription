@@ -132,3 +132,38 @@ def classify_ffmpeg_failure(
         source=FfmpegEvidenceSource.PROCESS,
         exit_code=exit_code,
     )
+
+
+def render_ffmpeg_diagnostic(
+    info: FfmpegFailureInfo,
+    diagnostic_text: str | None = None,
+) -> str:
+    """Render typed ffmpeg failure info into operator diagnostics."""
+    if (
+        info.kind is FfmpegFailureKind.HTTP_STATUS
+        and _has_useful_diagnostic_text(diagnostic_text)
+    ):
+        return diagnostic_text
+
+    base = _humanize_ffmpeg_info(info)
+    if _has_useful_diagnostic_text(diagnostic_text):
+        return f"{base}; {diagnostic_text}"
+    return base
+
+
+def _has_useful_diagnostic_text(diagnostic_text: str | None) -> bool:
+    return bool(diagnostic_text and diagnostic_text != "(no stderr captured)")
+
+
+def _humanize_ffmpeg_info(info: FfmpegFailureInfo) -> str:
+    if info.kind is FfmpegFailureKind.HTTP_STATUS:
+        if info.http_status is None:
+            return "HTTP stream error"
+        return f"HTTP error {info.http_status}"
+    if info.kind is FfmpegFailureKind.PROCESS_EXIT:
+        return f"ffmpeg exited with code {info.exit_code}"
+    if info.kind is FfmpegFailureKind.PROCESS_SIGNAL:
+        return f"ffmpeg terminated by signal {info.signal_number}"
+    if info.kind is FfmpegFailureKind.TIMEOUT:
+        return "Stream capture timed out"
+    return "ffmpeg failed"

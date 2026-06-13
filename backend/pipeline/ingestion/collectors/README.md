@@ -133,9 +133,11 @@ attempted items failed" promotion rule.
 source-specific evidence to report the current feed-level condition to the
 runtime.
 
-Shared failure classifiers classify evidence only. Collectors and source
-helpers still own quarantine-reason text because they know the operation,
-available exception text, stderr tail, and source-specific semantics.
+Shared failure classifiers own evidence-specific classification, and may render
+diagnostics for that evidence type, such as ffmpeg exit/signal/timeout details.
+Collectors and source helpers still own quarantine-reason text around source
+operations because they know the operation, available exception text, captured
+stderr tail, and source-specific semantics.
 `backend.pipeline.ingestion.quarantine_reason` owns only shared storage-boundary
 helpers: exception detail formatting and the database storage cap. It must not
 grow source-specific message construction helpers.
@@ -144,7 +146,7 @@ Collectors still own:
 - retry and backoff policy;
 - same-endpoint probes;
 - item versus feed escalation;
-- final quarantine-reason construction.
+- final quarantine-reason construction for source-specific operations.
 
 ## Quarantine-Reason Policy
 
