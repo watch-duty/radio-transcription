@@ -385,7 +385,7 @@ async def _create_chunk_from_call(
         raise
     except Exception as e:
         logger.exception("Failed to process audio for %s: %s", audio_url, e)
-        return _CallChunkResult(failure=item_downloads.item_download_failed())
+        return _CallChunkResult(failure=item_downloads.item_download_failed(e))
 
     if isinstance(audio_result, ItemFailure):
         return _CallChunkResult(failure=audio_result)

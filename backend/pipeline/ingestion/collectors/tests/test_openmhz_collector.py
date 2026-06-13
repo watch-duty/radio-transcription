@@ -271,7 +271,7 @@ class TestDownloadM4a(unittest.IsolatedAsyncioTestCase):
             failure.status_reason,
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
-        self.assertEqual(failure.reason, "item_download_failed")
+        self.assertEqual(failure.reason, "item_download_failed: TimeoutError")
         self.assertEqual(self.session.get.call_count, 3)
 
     async def test_active_get_cancelled_when_shutdown_is_set(self) -> None:

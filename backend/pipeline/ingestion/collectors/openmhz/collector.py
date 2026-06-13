@@ -181,6 +181,7 @@ async def _download_m4a(
         )
 
     last_status: int | None = None
+    last_exception: Exception | None = None
     for attempt in range(_DOWNLOAD_MAX_RETRIES):
         try:
             resp = await _get_m4a_or_cancel(session, url, shutdown)
@@ -202,7 +203,8 @@ async def _download_m4a(
                 return item_downloads.item_http_failure(resp.status_code)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
+            last_exception = exc
             logger.warning(
                 "Download error attempt=%d/%d",
                 attempt + 1,
@@ -217,7 +219,7 @@ async def _download_m4a(
     logger.warning("Download failed after retries")
     if last_status is not None:
         return item_downloads.item_http_failure(last_status)
-    return item_downloads.item_download_failed()
+    return item_downloads.item_download_failed(last_exception)
 
 
 async def openmhz_collector(  # noqa: PLR0912, PLR0915

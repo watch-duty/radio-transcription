@@ -814,7 +814,10 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
             failure.status_reason,
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
-        self.assertEqual(failure.reason, "item_download_failed")
+        self.assertEqual(
+            failure.reason,
+            "item_download_failed: RuntimeError: CDN rate limit",
+        )
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls"
@@ -841,6 +844,10 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
         self.assertIs(
             failure.status_reason,
             FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+        self.assertEqual(
+            failure.reason,
+            "item_download_failed: ValueError: unexpected",
         )
 
     @patch(
@@ -1979,7 +1986,10 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             ctx.exception.status_reason,
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
-        self.assertEqual(str(ctx.exception), "item_download_failed")
+        self.assertEqual(
+            str(ctx.exception),
+            "item_download_failed: RuntimeError: CDN rate limit",
+        )
         self.assertEqual(mock_dl.call_count, 1)
 
     @patch(

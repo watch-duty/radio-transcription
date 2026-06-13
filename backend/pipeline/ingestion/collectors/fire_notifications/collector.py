@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 from curl_cffi.requests import AsyncSession
 
 from backend.pipeline.common.audio import get_audio_duration
+from backend.pipeline.ingestion import quarantine_reason
 from backend.pipeline.ingestion.collectors import (
     control_flow,
     failure_classification,
@@ -101,6 +102,7 @@ async def _download_audio(
     # interrupt the backoff sleep when the shutdown event is set,
     # matching the pattern in bcfy_calls_collector.py.
     last_status: int | None = None
+    last_exception: Exception | None = None
     for attempt in range(_DOWNLOAD_MAX_RETRIES):
         try:
             resp = await session.get(url, timeout=30.0)
@@ -122,7 +124,8 @@ async def _download_audio(
                     url,
                 )
                 return item_downloads.item_http_failure(resp.status_code)
-        except Exception:
+        except Exception as exc:
+            last_exception = exc
             logger.warning(
                 "Download error (attempt %d/%d): url=%s",
                 attempt + 1,
@@ -138,7 +141,7 @@ async def _download_audio(
     logger.warning("Download failed after retries: url=%s", url)
     if last_status is not None:
         return item_downloads.item_http_failure(last_status)
-    return item_downloads.item_download_failed()
+    return item_downloads.item_download_failed(last_exception)
 
 
 def _get_channel_timezone(channel_key: str) -> ZoneInfo:
@@ -392,10 +395,11 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
                     )
             except FeedFailure:
                 raise
-            except Exception:
+            except Exception as exc:
                 last_poll_failure = failure_classification.FailureInfo(
                     feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
-                    "source_unreachable",
+                    "source_unreachable: "
+                    f"{quarantine_reason.exception_text(exc)}",
                 )
                 logger.warning(
                     "FN API poll error: %s",

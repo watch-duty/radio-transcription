@@ -144,6 +144,20 @@ class TestCrossCollectorItemFailureSemantics(unittest.TestCase):
         )
         self.assertEqual(failure.reason, "item_download_failed")
 
+    def test_retry_exhaustion_preserves_exception_text(self) -> None:
+        failure = item_downloads.item_download_failed(
+            TimeoutError("socket down")
+        )
+
+        self.assertIs(
+            failure.status_reason,
+            FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+        self.assertEqual(
+            failure.reason,
+            "item_download_failed: TimeoutError: socket down",
+        )
+
     def test_partial_success_suppresses_item_batch_promotion(self) -> None:
         outcome = ItemBatchOutcome()
         outcome.record_attempt()

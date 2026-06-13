@@ -188,7 +188,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
             failure.status_reason,
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
-        self.assertEqual(failure.reason, "item_download_failed")
+        self.assertEqual(failure.reason, "item_download_failed: TimeoutError")
         self.assertEqual(
             self.session.get.call_count, collector._DOWNLOAD_MAX_RETRIES
         )
@@ -721,7 +721,10 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
             ctx.exception.status_reason,
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
-        self.assertEqual(str(ctx.exception), "source_unreachable")
+        self.assertEqual(
+            str(ctx.exception),
+            "source_unreachable: Exception: Connection failure",
+        )
         self.assertEqual(mock_session.get.call_count, 10)
 
     async def test_missing_source_feed_id_raises_typed_failure(self) -> None:
