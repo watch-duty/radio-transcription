@@ -96,18 +96,29 @@ class SegmentationAudioProcessor:
 
         speech_segments = []
         if len(samples) > 0:
-            # VAD processing requires 16kHz mono
-            samples_16k_mono = self._resample_to_16k_mono(samples, sr)
-            prior_samples_16k = None
+            # 1. Downmix current samples to mono if multi-channel
+            mono_samples = (
+                np.mean(samples, axis=1).astype(np.int16)
+                if samples.ndim > 1
+                else samples
+            )
+
+            # 2. Downmix prior audio to mono if multi-channel (retaining source sample rate sr)
+            prior_samples = None
             if prior_audio is not None:
-                prior_samples_16k = np.frombuffer(
-                    prior_audio, dtype=np.int16
-                )  # already 16kHz mono
+                prior_arr = np.frombuffer(prior_audio, dtype=np.int16)
+                if samples.ndim > 1 and len(prior_arr) > 0:
+                    channels = samples.shape[1]
+                    prior_samples = np.mean(
+                        prior_arr.reshape(-1, channels), axis=1
+                    ).astype(np.int16)
+                else:
+                    prior_samples = prior_arr
 
             speech_segments = self.vad.detect_speech_segments(
-                samples_16k_mono,
-                sample_rate=SAMPLE_RATE_HZ,
-                prior_audio=prior_samples_16k,
+                mono_samples,
+                sample_rate=sr,
+                prior_audio=prior_samples,
             )
 
         from backend.pipeline.schema_types import (  # noqa: PLC0415
@@ -155,25 +166,41 @@ class SegmentationAudioProcessor:
                 resampler = av.AudioResampler(format="s16p")
                 decoded_frames = []
                 expected_channels = None
-                for frame in container.decode(stream):
-                    reframed = resampler.resample(frame)
-                    if reframed is None:
-                        continue
-                    frames_to_process = (
-                        reframed
-                        if isinstance(reframed, (list, tuple))
-                        else [reframed]
-                    )
-                    for f in frames_to_process:
-                        arr = f.to_ndarray()
-                        if expected_channels is None:
-                            expected_channels = arr.shape[0]
-                        elif arr.shape[0] != expected_channels:
+                try:
+                    for packet in container.demux(stream):
+                        try:
+                            for frame in packet.decode():
+                                reframed = resampler.resample(frame)
+                                if reframed is None:
+                                    continue
+                                frames_to_process = (
+                                    reframed
+                                    if isinstance(reframed, (list, tuple))
+                                    else [reframed]
+                                )
+                                for f in frames_to_process:
+                                    arr = f.to_ndarray()
+                                    if expected_channels is None:
+                                        expected_channels = arr.shape[0]
+                                    elif arr.shape[0] != expected_channels:
+                                        logger.warning(
+                                            "Channel count changed mid-stream, skipping frame"
+                                        )
+                                        continue
+                                    decoded_frames.append(arr)
+                        except Exception as e:
+                            packet_err = str(e)
                             logger.warning(
-                                "Channel count changed mid-stream, skipping frame"
+                                "PyAV packet decode error, ignoring damaged frame: %s",
+                                packet_err,
                             )
                             continue
-                        decoded_frames.append(arr)
+                except Exception as e:
+                    demux_err = str(e)
+                    logger.warning(
+                        "PyAV container demux ended with error, retaining recovered frames: %s",
+                        demux_err,
+                    )
 
                 if not decoded_frames:
                     return np.array([], dtype=np.int16), SAMPLE_RATE_HZ

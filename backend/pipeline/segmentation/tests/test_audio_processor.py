@@ -156,3 +156,38 @@ class AudioProcessorTest(unittest.TestCase):
         expected_downmixed = np.array([55, 60, 65, 70], dtype=np.int16)
         self.assertEqual(downmixed.ndim, 1)
         np.testing.assert_array_equal(downmixed[:4], expected_downmixed)
+
+    def test_download_audio_and_detect_with_prior_stereo_audio(self) -> None:
+        """Tests that prior multi-channel audio is correctly downmixed to mono during streaming detection."""
+        mock_vad = MagicMock()
+        mock_vad.detect_speech_segments.return_value = []
+        processor = SegmentationAudioProcessor(
+            gcs_client_instance=MagicMock(),
+            vad_factory=MagicMock(return_value=mock_vad),
+        )
+        processor.setup()
+
+        # Create stereo current audio chunk
+        curr_stereo = np.array([[10, 20], [30, 40]], dtype=np.int16)
+        buf = io.BytesIO()
+        sf.write(buf, curr_stereo, 32000, format="FLAC")
+        buf.seek(0)
+        # Create stereo prior audio tail bytes
+        prior_stereo = np.array([[100, 200], [300, 400]], dtype=np.int16)
+        prior_bytes = prior_stereo.tobytes()
+        from unittest.mock import patch  # noqa: PLC0415
+
+        with patch.object(
+            processor,
+            "_decode_audio_in_memory",
+            return_value=(curr_stereo, 32000),
+        ):
+            processor.download_audio_and_detect(
+                "gs://bucket/test.flac", 0, prior_audio=prior_bytes
+            )
+
+        # Verify that detect_speech_segments was called with correctly downmixed 1D mono arrays
+        call_args = mock_vad.detect_speech_segments.call_args[1]
+        actual_prior = call_args["prior_audio"]
+        expected_prior = np.array([150, 350], dtype=np.int16)
+        np.testing.assert_array_equal(actual_prior, expected_prior)
