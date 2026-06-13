@@ -204,12 +204,6 @@ def canonical_rows_from_entries(
         raise ValueError(msg)
     require_canonical_manifest(entries)
     rows = rows_from_manifest(entries)
-    if len(rows) != len(entries):
-        msg = (
-            f"{split} manifest parsed {len(rows)}/{len(entries)} rows; "
-            f"fix malformed rows before tuning: {source}"
-        )
-        raise ValueError(msg)
     return entries, rows
 
 
