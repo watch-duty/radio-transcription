@@ -222,6 +222,19 @@ def _seed_source_manifests(
     storage.put(eval_uri, "audio")
 
 
+def _assert_no_prepared_outputs(
+    test_case: unittest.TestCase,
+    tmp: Path,
+    storage: FakeStorageClient,
+) -> None:
+    gemini_dir = tmp / "results" / "round-a" / "model_inputs" / "gemini"
+    test_case.assertFalse((gemini_dir / "train.jsonl").exists())
+    test_case.assertFalse((gemini_dir / "validation.jsonl").exists())
+    test_case.assertFalse(
+        storage.has("gs://test-bucket/sft/runs/round-a/config.json")
+    )
+
+
 class TestCli(unittest.TestCase):
     def test_help_lists_supported_commands_only(self) -> None:
         parser = cli.build_parser()
@@ -321,7 +334,74 @@ class TestPrepareRun(unittest.TestCase):
             storage.has("gs://test-bucket/sft/runs/round-a/config.json")
         )
 
-    def test_prepare_rejects_invalid_canonical_manifest_before_writing_gemini_jsonl(
+    def test_prepare_rejects_invalid_or_empty_manifests_before_gemini_jsonl(
+        self,
+    ) -> None:
+        invalid_manifest = _manifest(
+            [
+                {
+                    "audio_filepath": "local/audio.mp3",
+                    "text": "bad",
+                    "offset": 0.0,
+                    "duration": 1.0,
+                    "example_id": "bad",
+                    "segment_id": "001",
+                }
+            ]
+        )
+        cases = [
+            (
+                "train",
+                "invalid",
+                invalid_manifest,
+                "Canonical Manifest validation failed",
+            ),
+            (
+                "validation",
+                "invalid",
+                invalid_manifest,
+                "Canonical Manifest validation failed",
+            ),
+            (
+                "eval",
+                "invalid",
+                invalid_manifest,
+                "Canonical Manifest validation failed",
+            ),
+            ("train", "empty", "", "train manifest has zero parsed rows"),
+            (
+                "validation",
+                "empty",
+                "",
+                "validation manifest has zero parsed rows",
+            ),
+            ("eval", "empty", "", "eval manifest has zero parsed rows"),
+        ]
+        manifest_uris = {
+            "train": "gs://source/manifests/train.jsonl",
+            "validation": "gs://source/manifests/validation.jsonl",
+            "eval": "gs://source/manifests/eval.jsonl",
+        }
+
+        for role, mode, content, message in cases:
+            with self.subTest(role=role, mode=mode):
+                with tempfile.TemporaryDirectory() as tmp_s:
+                    tmp = Path(tmp_s)
+                    storage = FakeStorageClient()
+                    _seed_source_manifests(storage)
+                    storage.put(manifest_uris[role], content)
+                    run_cfg = load_run_config(_write_config_file(tmp))
+
+                    with self.assertRaisesRegex(ValueError, message):
+                        prepare_run(
+                            run_cfg=run_cfg,
+                            storage_client=storage,
+                            results_dir=tmp / "results",
+                        )
+
+                    _assert_no_prepared_outputs(self, tmp, storage)
+
+    def test_train_eval_uri_and_identity_overlap_reports_both_categories(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
@@ -332,37 +412,57 @@ class TestPrepareRun(unittest.TestCase):
                 "gs://source/manifests/train.jsonl",
                 _manifest(
                     [
-                        {
-                            "audio_filepath": "local/audio.mp3",
-                            "text": "bad",
-                            "offset": 0.0,
-                            "duration": 1.0,
-                            "example_id": "bad",
-                            "segment_id": "001",
-                        }
+                        _row(
+                            "gs://audio/shared.flac",
+                            "shared audio train",
+                            4.0,
+                            example_id="train-audio",
+                            segment_id="001",
+                        ),
+                        _row(
+                            "gs://audio/train-identity.flac",
+                            "shared identity train",
+                            4.0,
+                            example_id="shared-example",
+                            segment_id="seg-001",
+                        ),
+                    ]
+                ),
+            )
+            storage.put(
+                "gs://source/manifests/eval.jsonl",
+                _manifest(
+                    [
+                        _row(
+                            "gs://audio/shared.flac",
+                            "shared audio eval",
+                            6.0,
+                            example_id="eval-audio",
+                            segment_id="001",
+                        ),
+                        _row(
+                            "gs://audio/eval-identity.flac",
+                            "shared identity eval",
+                            6.0,
+                            example_id="shared-example",
+                            segment_id="seg-001",
+                        ),
                     ]
                 ),
             )
             run_cfg = load_run_config(_write_config_file(tmp))
 
-            with self.assertRaisesRegex(
-                ValueError,
-                "Canonical Manifest validation failed",
-            ):
+            with self.assertRaisesRegex(ValueError, "train and eval") as ctx:
                 prepare_run(
                     run_cfg=run_cfg,
                     storage_client=storage,
                     results_dir=tmp / "results",
                 )
 
-            gemini_dir = tmp / "results" / "round-a" / "model_inputs"
-            self.assertFalse((gemini_dir / "gemini" / "train.jsonl").exists())
-            self.assertFalse(
-                (gemini_dir / "gemini" / "validation.jsonl").exists()
-            )
-            self.assertFalse(
-                storage.has("gs://test-bucket/sft/runs/round-a/config.json")
-            )
+            message = str(ctx.exception)
+            self.assertIn("audio URI(s)", message)
+            self.assertIn("identity value(s)", message)
+            _assert_no_prepared_outputs(self, tmp, storage)
 
     def test_prepare_ignores_mismatched_split_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:

@@ -128,6 +128,15 @@ learning_rate_multiplier = {values["learning_rate_multiplier"]}
         with self.assertRaisesRegex(RunConfigError, "train_manifest_uri"):
             load_eval_run_config(self._write_config(body))
 
+    def test_eval_config_requires_eval_manifest_uri(self) -> None:
+        body = self._without_manifest_lines(
+            self._valid_toml(),
+            "eval_manifest_uri",
+        )
+
+        with self.assertRaisesRegex(RunConfigError, "eval_manifest_uri"):
+            load_eval_run_config(self._write_config(body))
+
     def test_round_id_must_be_safe_single_path_component(self) -> None:
         for round_id in (
             "../escape",
