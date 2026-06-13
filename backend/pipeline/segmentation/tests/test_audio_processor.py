@@ -191,3 +191,27 @@ class AudioProcessorTest(unittest.TestCase):
         actual_prior = call_args["prior_audio"]
         expected_prior = np.array([150, 350], dtype=np.int16)
         np.testing.assert_array_equal(actual_prior, expected_prior)
+
+    def test_decode_audio_in_memory_resilient_against_truncated_containers(
+        self,
+    ) -> None:
+        """Verifies that PyAV gracefully returns recovered audio from truncated containers instead of crashing."""
+        valid_samples = (
+            np.random.default_rng(42)
+            .integers(-1000, 1000, 32000)
+            .astype(np.int16)
+        )
+        buf = io.BytesIO()
+        sf.write(buf, valid_samples, 16000, format="MP3")
+        raw_bytes = buf.getvalue()
+
+        # Purposely slice off the final 50 bytes to destroy the trailing audio packet/frame
+        truncated_bytes = raw_bytes[:-50]
+        damaged_buf = io.BytesIO(truncated_bytes)
+
+        # Act
+        samples, sr = self.processor._decode_audio_in_memory(damaged_buf)
+
+        # Assert: Should return the thousands of intact samples recovered rather than throwing RuntimeError
+        self.assertEqual(sr, 16000)
+        self.assertGreater(len(samples), 30000)
