@@ -111,14 +111,28 @@ def _manifest(rows: list[dict[str, Any]]) -> str:
 
 
 def _row(
-    uri: str, text: str = "alpha", duration: float = 3.0
+    uri: str,
+    text: str = "alpha",
+    duration: float = 3.0,
+    *,
+    example_id: str | None = None,
+    segment_id: str = "001",
+    offset: float = 0.0,
+    split: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    if example_id is None:
+        example_id = uri.rsplit("/", maxsplit=1)[-1].removesuffix(".flac")
+    row = {
         "audio_filepath": uri,
         "text": text,
-        "offset": 0.0,
+        "offset": offset,
         "duration": duration,
+        "example_id": example_id,
+        "segment_id": segment_id,
     }
+    if split is not None:
+        row["split"] = split
+    return row
 
 
 def _config_text(round_id: str = "round-a") -> str:
@@ -140,6 +154,42 @@ epoch_count = 6
 adapter_size = "SIXTEEN"
 learning_rate_multiplier = 1.0
 """
+
+
+def _fake_wer(
+    refs: list[str],
+    hyps: list[str],
+    normalizer: Any = None,
+) -> dict[str, float | int]:
+    del normalizer
+    total_words = sum(len(ref.split()) for ref in refs)
+    return {
+        "wer": 0.0 if refs == hyps else 1.0,
+        "hits": total_words if refs == hyps else 0,
+        "substitutions": 0 if refs == hyps else total_words,
+        "deletions": 0,
+        "insertions": 0,
+    }
+
+
+def _fake_cer(
+    refs: list[str],
+    hyps: list[str],
+    normalizer: Any = None,
+) -> dict[str, float]:
+    del normalizer
+    return {"cer": 0.0 if refs == hyps else 1.0}
+
+
+def _patched_eval_scoring() -> Any:
+    return unittest.mock.patch.multiple(
+        evaluate_module,
+        build_normalizer=lambda: None,
+        compute_wer=_fake_wer,
+        compute_cer=_fake_cer,
+        duration_bucket_wer=lambda *_, **__: [],
+        keyword_metrics=lambda *_, **__: [],
+    )
 
 
 def _write_config_file(tmp: Path, round_id: str = "round-a") -> Path:
@@ -270,6 +320,209 @@ class TestPrepareRun(unittest.TestCase):
         self.assertFalse(
             storage.has("gs://test-bucket/sft/runs/round-a/config.json")
         )
+
+    def test_prepare_rejects_invalid_canonical_manifest_before_writing_gemini_jsonl(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            _seed_source_manifests(storage)
+            storage.put(
+                "gs://source/manifests/train.jsonl",
+                _manifest(
+                    [
+                        {
+                            "audio_filepath": "local/audio.mp3",
+                            "text": "bad",
+                            "offset": 0.0,
+                            "duration": 1.0,
+                            "example_id": "bad",
+                            "segment_id": "001",
+                        }
+                    ]
+                ),
+            )
+            run_cfg = load_run_config(_write_config_file(tmp))
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "Canonical Manifest validation failed",
+            ):
+                prepare_run(
+                    run_cfg=run_cfg,
+                    storage_client=storage,
+                    results_dir=tmp / "results",
+                )
+
+            gemini_dir = tmp / "results" / "round-a" / "model_inputs"
+            self.assertFalse((gemini_dir / "gemini" / "train.jsonl").exists())
+            self.assertFalse(
+                (gemini_dir / "gemini" / "validation.jsonl").exists()
+            )
+            self.assertFalse(
+                storage.has("gs://test-bucket/sft/runs/round-a/config.json")
+            )
+
+    def test_prepare_ignores_mismatched_split_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            _seed_source_manifests(storage)
+            storage.put(
+                "gs://source/manifests/train.jsonl",
+                _manifest(
+                    [
+                        _row(
+                            "gs://audio/train.flac",
+                            "train transcript",
+                            4.0,
+                            split="eval",
+                        )
+                    ]
+                ),
+            )
+            storage.put(
+                "gs://source/manifests/validation.jsonl",
+                _manifest(
+                    [
+                        _row(
+                            "gs://audio/validation.flac",
+                            "validation transcript",
+                            5.0,
+                            split="train",
+                        )
+                    ]
+                ),
+            )
+            storage.put(
+                "gs://source/manifests/eval.jsonl",
+                _manifest(
+                    [
+                        _row(
+                            "gs://audio/eval.flac",
+                            "eval transcript",
+                            6.0,
+                            split="validation",
+                        )
+                    ]
+                ),
+            )
+            run_cfg = load_run_config(_write_config_file(tmp))
+
+            _, config = prepare_run(
+                run_cfg=run_cfg,
+                storage_client=storage,
+                results_dir=tmp / "results",
+            )
+
+        self.assertEqual(config["status"], "preflight_passed")
+
+    def test_train_eval_identity_overlap_fails_before_writing_gemini_jsonl(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            _seed_source_manifests(
+                storage,
+                train_uri="gs://audio/train.flac",
+                eval_uri="gs://audio/eval.flac",
+            )
+            storage.put(
+                "gs://source/manifests/train.jsonl",
+                _manifest(
+                    [
+                        _row(
+                            "gs://audio/train.flac",
+                            "train transcript",
+                            4.0,
+                            example_id="shared-example",
+                            segment_id="seg-001",
+                        )
+                    ]
+                ),
+            )
+            storage.put(
+                "gs://source/manifests/eval.jsonl",
+                _manifest(
+                    [
+                        _row(
+                            "gs://audio/eval.flac",
+                            "eval transcript",
+                            6.0,
+                            example_id="shared-example",
+                            segment_id="seg-001",
+                        )
+                    ]
+                ),
+            )
+            run_cfg = load_run_config(_write_config_file(tmp))
+
+            with self.assertRaisesRegex(ValueError, "identity"):
+                prepare_run(
+                    run_cfg=run_cfg,
+                    storage_client=storage,
+                    results_dir=tmp / "results",
+                )
+
+            gemini_dir = tmp / "results" / "round-a" / "model_inputs"
+            self.assertFalse((gemini_dir / "gemini" / "train.jsonl").exists())
+            self.assertFalse(
+                (gemini_dir / "gemini" / "validation.jsonl").exists()
+            )
+            self.assertFalse(
+                storage.has("gs://test-bucket/sft/runs/round-a/config.json")
+            )
+
+    def test_train_validation_identity_overlap_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            _seed_source_manifests(
+                storage,
+                train_uri="gs://audio/train.flac",
+                validation_uri="gs://audio/validation.flac",
+            )
+            storage.put(
+                "gs://source/manifests/train.jsonl",
+                _manifest(
+                    [
+                        _row(
+                            "gs://audio/train.flac",
+                            "train transcript",
+                            4.0,
+                            example_id="shared-example",
+                            segment_id="seg-001",
+                        )
+                    ]
+                ),
+            )
+            storage.put(
+                "gs://source/manifests/validation.jsonl",
+                _manifest(
+                    [
+                        _row(
+                            "gs://audio/validation.flac",
+                            "validation transcript",
+                            5.0,
+                            example_id="shared-example",
+                            segment_id="seg-001",
+                        )
+                    ]
+                ),
+            )
+            run_cfg = load_run_config(_write_config_file(tmp))
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "train and validation.*identity",
+            ):
+                prepare_run(
+                    run_cfg=run_cfg,
+                    storage_client=storage,
+                    results_dir=tmp / "results",
+                )
 
     def test_validation_eval_overlap_is_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
@@ -654,6 +907,7 @@ class TestEvaluateRun(unittest.TestCase):
                     "submit_batch_inference",
                     return_value=output_uri,
                 ),
+                _patched_eval_scoring(),
             ):
                 rc = evaluate_module.evaluate_run(
                     args, run_cfg, storage, run_cfg.to_record_dict()
@@ -724,6 +978,7 @@ class TestEvaluateRun(unittest.TestCase):
                     "submit_batch_inference",
                     return_value=output_uri,
                 ),
+                _patched_eval_scoring(),
             ):
                 rc = evaluate_module.evaluate_run(
                     args, run_cfg, storage, config
