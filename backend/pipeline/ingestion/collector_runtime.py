@@ -926,19 +926,37 @@ class CollectorRuntime:
         status_reason: FeedStatusReason,
     ) -> None:
         """Persist a classified feed failure through the fenced store path."""
-        logger.exception(
-            "Feed processing error: feed=%s reason=%s",
-            feed["name"],
-            reason,
-            extra={
-                "json_fields": {
-                    "feed_id": str(feed["id"]),
-                    "source_type": str(feed["source_type"]),
-                    "reason": reason,
-                    "status_reason": status_reason.value,
-                },
+        extra: dict[str, object] = {
+            "json_fields": {
+                "feed_id": str(feed["id"]),
+                "source_type": str(feed["source_type"]),
+                "reason": reason,
+                "status_reason": status_reason.value,
             },
-        )
+        }
+        if status_reason in (
+            FeedStatusReason.SOURCE_OFFLINE,
+            FeedStatusReason.SOURCE_UNREACHABLE,
+            FeedStatusReason.SOURCE_RATE_LIMITED,
+        ):
+            # External operational Gotchas (e.g. Icecast 404 stream missing, CDN bans) are environment observations.
+            # Log them as a warning without attaching a noisy stack traceback or spawning permanent Stackdriver Error Groups.
+            logger.warning(
+                "Feed source processing observation: feed=%s reason=%s status_reason=%s",
+                feed["name"],
+                reason,
+                status_reason.value,
+                extra=extra,
+            )
+        else:
+            # Actionable Watch Duty internal system Gotchas (e.g. collector bugs, DB/auth failures) warrant an ERROR traceback.
+            logger.exception(
+                "Feed internal processing error: feed=%s reason=%s status_reason=%s",
+                feed["name"],
+                reason,
+                status_reason.value,
+                extra=extra,
+            )
         # SAFETY: _releasing_feeds invariant -- add BEFORE the first await
         # that drops the lease (report_feed_failure sets worker_id=NULL).
         self._releasing_feeds.add(feed["id"])
