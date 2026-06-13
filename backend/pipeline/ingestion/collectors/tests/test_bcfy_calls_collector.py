@@ -486,40 +486,6 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         )
 
 
-class TestGetAudioFormat(unittest.TestCase):
-    def test_mp3_url(self) -> None:
-        res = bcfy_calls_collector._get_audio_format(
-            "http://example.com/audio.mp3"
-        )
-        self.assertEqual(res, "mp3")
-
-    def test_m4a_url(self) -> None:
-        res = bcfy_calls_collector._get_audio_format(
-            "http://example.com/audio.m4a"
-        )
-        self.assertEqual(res, "m4a")
-
-    def test_uppercase_extension(self) -> None:
-        res = bcfy_calls_collector._get_audio_format(
-            "http://example.com/audio.MP3"
-        )
-        self.assertEqual(res, "mp3")
-
-    def test_no_extension_defaults_to_mp3(self) -> None:
-        res = bcfy_calls_collector._get_audio_format("http://example.com/audio")
-        self.assertEqual(res, "mp3")
-
-    def test_url_without_dot_defaults_to_mp3(self) -> None:
-        res = bcfy_calls_collector._get_audio_format("http://mp3")
-        self.assertEqual(res, "mp3")
-
-    def test_unknown_extension_defaults_to_mp3(self) -> None:
-        res = bcfy_calls_collector._get_audio_format(
-            "http://example.com/audio.php"
-        )
-        self.assertEqual(res, "mp3")
-
-
 class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.session = MagicMock()

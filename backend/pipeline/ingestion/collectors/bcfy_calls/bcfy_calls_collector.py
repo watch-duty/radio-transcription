@@ -7,9 +7,7 @@ import datetime
 import logging
 import os
 import uuid
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
-from urllib.parse import urlparse
 
 from google.cloud import secretmanager
 
@@ -58,7 +56,6 @@ _AUDIO_TIMEOUT_SEC = 60.0
 _AUDIO_FILE_DOWNLOAD_MAX_ATTEMPTS = 4
 _AUDIO_FILE_DOWNLOAD_BACKOFF_BASE_SEC = 1.0
 _MAX_CONSECUTIVE_FAILURES = 10
-_KNOWN_AUDIO_FORMATS = frozenset({"mp3", "m4a", "wav", "ogg", "aac", "flac"})
 _TRANSIENT_CALLS_API_FAILURES = frozenset(
     {
         FeedStatusReason.SOURCE_RATE_LIMITED,
@@ -307,29 +304,6 @@ async def _fetch_calls(
         transport_status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
         transport_reason="calls_api_http_transport_failed",
     )
-
-
-def _get_audio_format(url: str) -> str:
-    """Infer the audio format from a URL's file extension.
-
-    Args:
-        url: The audio file URL (e.g., 'https://site.com/jake.mp3?v=1').
-
-    Returns:
-        The lowercase file extension without the leading dot,
-        or 'mp3' if no valid extension is found.
-    """
-    # 1. Isolate the path from the URL (strips 'https://' and '?query=...')
-    path = urlparse(url).path
-
-    # 2. Extract the suffix (e.g., '.mp3'), drop the dot, and make lowercase
-    ext = Path(path).suffix[1:].lower()
-
-    # 3. Validate against known formats
-    if ext in _KNOWN_AUDIO_FORMATS:
-        return ext
-
-    return "mp3"
 
 
 async def _download_audio(
