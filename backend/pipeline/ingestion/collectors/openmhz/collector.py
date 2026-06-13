@@ -7,6 +7,7 @@ import logging
 import os
 import random
 import re
+import time
 import uuid
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -56,6 +57,7 @@ _DOWNLOAD_MAX_RETRIES = 3
 _DOWNLOAD_BACKOFF_BASE_SEC = 1.0
 _RECONNECT_BACKOFF_BASE_SEC = 1.0
 _RECONNECT_BACKOFF_CAP_SEC = 30.0
+_QUIET_CONNECTION_HEALTHY_MIN_SEC = 60.0
 _WS_UPGRADE_STATUS_RE = re.compile(
     r"Refused WebSockets upgrade:\s*(\d{3})",
     re.IGNORECASE,
@@ -98,8 +100,10 @@ def _transport_failure_from_exception(exc: Exception) -> FeedFailure | None:
 def _exception_chain_text(exc: BaseException) -> str:
     """Return exception text plus causes for bounded quarantine diagnostics."""
     parts: list[str] = []
+    seen: set[int] = set()
     current: BaseException | None = exc
-    while current is not None:
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
         parts.append(f"{type(current).__name__}: {current}")
         current = current.__cause__ or current.__context__
     return "; ".join(parts)
@@ -276,11 +280,13 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
         while not shutdown_event.is_set():
             connection_session_id = str(uuid.uuid4())
             connection_produced_chunk = False
+            connection_started_at: float | None = None
             try:
                 pending_item_failure: ItemFailure | None = None
                 async with transport_factory(
                     short_name, url_base, shutdown_event
                 ) as events:
+                    connection_started_at = time.monotonic()
                     if (
                         feed["failure_count"] > 0
                         or feed["status_reason"] is not None
@@ -358,7 +364,16 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
             if shutdown_event.is_set():
                 return
 
-            if not connection_produced_chunk:
+            healthy_quiet_connection = (
+                connection_started_at is not None
+                and time.monotonic() - connection_started_at
+                >= _QUIET_CONNECTION_HEALTHY_MIN_SEC
+            )
+            if healthy_quiet_connection:
+                consecutive_ws_failures = 0
+                last_transport_failure = None
+                last_transport_exception = None
+            elif not connection_produced_chunk:
                 consecutive_ws_failures += 1
             if consecutive_ws_failures >= MAX_RECONNECT_FAILURES:
                 logger.error(

@@ -22,6 +22,7 @@ from backend.pipeline.ingestion.collectors.openmhz.collector import (
     MAX_ITEM_DOWNLOAD_FAILURES,
     MAX_RECONNECT_FAILURES,
     _download_m4a,
+    _exception_chain_text,
     openmhz_collector,
 )
 from backend.pipeline.ingestion.collectors.tests.conftest import (
@@ -88,6 +89,21 @@ def _require_item_failure(value: ItemFailure | bytes) -> ItemFailure:
         msg = f"Expected ItemFailure, got {value!r}"
         raise TypeError(msg)
     return value
+
+
+class TestOpenMHzDiagnostics(unittest.TestCase):
+    def test_exception_chain_text_stops_on_cycles(self) -> None:
+        first = RuntimeError("first")
+        second = ValueError("second")
+        first.__context__ = second
+        second.__context__ = first
+
+        text = _exception_chain_text(first)
+
+        self.assertEqual(
+            text,
+            "RuntimeError: first; ValueError: second",
+        )
 
 
 class TestDownloadM4a(unittest.IsolatedAsyncioTestCase):
@@ -730,6 +746,44 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
         self.assertIn("frame failure", str(ctx.exception))
         self.assertEqual(mock_transport.call_count, MAX_RECONNECT_FAILURES)
         self.assertEqual(mock_sleep.call_count, MAX_RECONNECT_FAILURES - 1)
+
+    @patch(f"{_COL_MOD}._QUIET_CONNECTION_HEALTHY_MIN_SEC", 0.0)
+    @patch(f"{_COL_MOD}.websocket_transport")
+    @patch(f"{_COL_MOD}.control_flow.sleep_or_cancel", new_callable=AsyncMock)
+    @patch(f"{_COL_MOD}.AsyncSession")
+    async def test_quiet_successful_connections_do_not_escalate(
+        self,
+        mock_session_cls: MagicMock,
+        mock_sleep: AsyncMock,
+        mock_transport: MagicMock,
+    ) -> None:
+        mock_session = AsyncMock()
+        mock_session.close = AsyncMock()
+        mock_session_cls.return_value = mock_session
+        mock_transport.side_effect = lambda *a, **kw: _mock_transport([])
+        shutdown = asyncio.Event()
+        attempts = 0
+
+        async def _sleep_then_stop(*_args: object) -> None:
+            nonlocal attempts
+            attempts += 1
+            if attempts > MAX_RECONNECT_FAILURES + 1:
+                shutdown.set()
+
+        mock_sleep.side_effect = _sleep_then_stop
+
+        chunks = []
+        async for chunk in openmhz_collector(
+            _TEST_FEED,
+            shutdown,
+            "https://api.openmhz.com/",
+            _default_resources(),
+        ):
+            chunks.append(chunk)
+
+        self.assertEqual(chunks, [])
+        self.assertGreater(mock_transport.call_count, MAX_RECONNECT_FAILURES)
+        mock_session.close.assert_awaited_once()
 
     @patch(f"{_COL_MOD}.websocket_transport")
     @patch(f"{_COL_MOD}._download_m4a")
