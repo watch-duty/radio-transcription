@@ -119,6 +119,27 @@ logger = get_task_logger(
 )
 
 
+def get_gcs_client(project_id: str | None) -> storage.Client:
+    """Creates a GCS Client configured with an expanded HTTP connection pool."""
+    try:
+        credentials, project = google.auth.default()
+        authed_session = AuthorizedSession(credentials)
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=trans_constants.GCS_CONNECTION_POOL_SIZE,
+            pool_maxsize=trans_constants.GCS_CONNECTION_POOL_SIZE,
+            max_retries=trans_constants.GCS_CONNECTION_MAX_RETRIES,
+        )
+        authed_session.mount("https://", adapter)
+        return storage.Client(
+            project=project_id or project,
+            credentials=credentials,
+            _http=authed_session,
+        )
+    except DefaultCredentialsError:
+        # Fallback for un-authenticated remote testing environments (e.g., GitHub Actions CI)
+        return storage.Client(project=project_id or "test-project")
+
+
 def _get_task_logger(
     feed_id: str, session_id: str | None, component: str
 ) -> std_logging.LoggerAdapter:
@@ -427,27 +448,8 @@ class OrderedStitchAudioFn(beam.DoFn):
             tag="vad",
         )
 
-        def _create_gcs() -> storage.Client:
-            try:
-                credentials, project = google.auth.default()
-                authed_session = AuthorizedSession(credentials)
-                adapter = requests.adapters.HTTPAdapter(
-                    pool_connections=100, pool_maxsize=100, max_retries=3
-                )
-                authed_session.mount("https://", adapter)
-                return storage.Client(
-                    project=self.stitch_config.project_id or project,
-                    credentials=credentials,
-                    _http=authed_session,
-                )
-            except DefaultCredentialsError:
-                # Fallback for un-authenticated remote testing environments (e.g., GitHub Actions CI)
-                return storage.Client(
-                    project=self.stitch_config.project_id or "test-project"
-                )
-
         shared_gcs = SHARED_RESOURCE_HANDLE.acquire(
-            _create_gcs,
+            lambda: get_gcs_client(self.stitch_config.project_id),
             tag="gcs_pool_100",
         )
         self.engine.processor.vad = shared_vad
