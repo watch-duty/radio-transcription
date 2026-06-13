@@ -13,24 +13,24 @@ GitHub URL for this report: https://github.com/watch-duty/radio-transcription/bl
 
 ## Executive Summary
 
-| Category | External issue? | Best option |
-|---|---|---|
-| Broadcastify stream HTTP 404 / missing feed | Yes - external source/provider issue | Long backoff plus periodic recovery probe; quarantine only after extended persistence. |
-| Broadcastify stream mixed HTTP 502/404 upstream failure | Yes - external provider issue | Medium backoff first, then long backoff; no immediate per-feed quarantine. |
-| Broadcastify Calls API auth HTTP 401 (legacy source_unreachable) | No - system auth/config or account entitlement issue | Reclassify as auth failure; treat as a system incident, not feed quarantine. |
-| Broadcastify Calls API auth HTTP 401 | No - system auth/config or account entitlement issue | System incident with class-wide pause and automatic recovery after credential validation. |
-| Pub/Sub schema validation failure after Calls capture | No - internal pipeline contract issue | Remove from feed failure budget; page and rollback/fix; preserve or replay data where possible. |
-| Fire Notifications API auth HTTP 401 (legacy source_unreachable) | No - system auth/config or account entitlement issue | System incident and source-class pause until credentials/config are fixed. |
-| Broadcastify Calls item metadata HTTP 403 | Yes - external provider access/entitlement denial | Long backoff plus entitlement review if repeated; quarantine only for persistent feed-wide denial. |
-| Broadcastify stream auth HTTP 401 | No - system auth/session/config issue | Page and pause/retry after credential refresh; do not consume feed budget. |
-| OpenMHz WebSocket upgrade HTTP 403 / reconnect exhausted | Yes - external provider access denial | Long backoff with explicit provider-access label; quarantine only after persistent denial. |
-| Pub/Sub schema validation failure after Fire Notifications capture | No - internal pipeline contract issue | Remove from feed failure budget; page and rollback/fix. |
-| Legacy Broadcastify stream quarantine with missing reason | Unknown | Keep as legacy unknown; require typed reasons going forward. |
-| Broadcastify Calls audio media HTTP 403 | Yes - external provider access/entitlement denial | Long backoff plus entitlement/provider review; quarantine only if persistent. |
-| OpenMHz WebSocket upgrade HTTP 403 / source unreachable | Yes - external provider access denial | Reclassify as provider-access denial; long backoff and controlled probes. |
-| Broadcastify Calls API returned HTTP 200 non-JSON | Yes - external API response anomaly | Short retry, then medium backoff; provider/engineering alert if repeated. |
-| Broadcastify stream capture timeout | Mixed - external source behavior plus internal budget semantics | Short retry first; reason-aware budget; quarantine only after repeated timeout evidence. |
-| Fire Notifications auth env var missing | No - internal deployment/config issue | Block or fail deployment, page, and resume after config validation. |
+| Category | Total count | Root cause | External issue? | Best options |
+|---|---:|---|---|---|
+| Broadcastify stream HTTP 404 / missing feed | 181 | Broadcastify stream endpoint returned HTTP 404; feed URL was offline, removed, invalid, or not serving audio. | Yes - external source/provider issue | Long backoff with periodic recovery probe; quarantine only after extended persistence; manual review or auto-retire after multi-day evidence. |
+| Broadcastify Calls API auth HTTP 401 (legacy source_unreachable) | 100 | Broadcastify Calls rejected configured API access with HTTP 401; legacy telemetry stored this as generic source_unreachable. | No - system auth/config or account entitlement issue | Reclassify as auth failure; handle as system incident; pause affected Calls collectors until credentials or entitlement are validated. |
+| Broadcastify Calls API auth HTTP 401 | 50 | Broadcastify Calls rejected the configured token/account with HTTP 401. | No - system auth/config or account entitlement issue | Use one confirmation retry; pause source class until credential validation succeeds; do not consume per-feed failure budget. |
+| Pub/Sub schema validation failure after Calls capture | 44 | Calls capture succeeded, but Pub/Sub rejected the produced message as `INVALID_BINARY_PROTO_MESSAGE`. | No - internal pipeline contract issue | Remove from feed failure budget; page and rollback/fix producer or schema; dead-letter, hold, or replay captured work. |
+| Fire Notifications API auth HTTP 401 (legacy source_unreachable) | 11 | Fire Notifications rejected configured access with HTTP 401; legacy telemetry stored this as generic source_unreachable. | No - system auth/config or account entitlement issue | Treat as source-class system incident; pause until credentials/config are fixed; suppress per-feed blame. |
+| Broadcastify Calls item metadata HTTP 403 | 4 | Broadcastify denied item metadata requests with HTTP 403. | Yes - external provider access/entitlement denial | Short confirmation retry; long backoff plus entitlement review if repeated; quarantine only for persistent feed-wide denial. |
+| Broadcastify stream auth HTTP 401 | 4 | Broadcastify stream access rejected configured partner credentials/session with HTTP 401. | No - system auth/session/config issue | Page owning team; refresh/validate credentials before broad retry; keep out of feed failure budget. |
+| OpenMHz WebSocket upgrade HTTP 403 / reconnect exhausted | 4 | OpenMHz refused WebSocket upgrades with HTTP 403 until collector reconnect attempts and feed-level budget were exhausted. | Yes - external provider access denial | Long backoff with explicit access-denied label; separate transport reconnect budget from feed budget; quarantine only after persistent denial. |
+| Pub/Sub schema validation failure after Fire Notifications capture | 4 | Fire Notifications capture succeeded, but Pub/Sub rejected the produced message as invalid for the configured schema. | No - internal pipeline contract issue | Remove from feed failure budget; page and rollback/fix producer or schema; dead-letter, hold, or replay captured work. |
+| Legacy Broadcastify stream quarantine with missing reason | 3 | Older telemetry omitted status and reason; retained logs do not preserve enough context to classify origin. | Unknown | Keep as legacy unknown; do not derive new behavior from these rows; require typed reasons going forward. |
+| Broadcastify Calls audio media HTTP 403 | 2 | Broadcastify denied audio media downloads with HTTP 403. | Yes - external provider access/entitlement denial | Short retry for URL/entitlement races; long backoff plus provider/entitlement review; quarantine only if persistent feed-wide denial. |
+| Broadcastify stream mixed HTTP 502/404 upstream failure | 2 | Broadcastify returned HTTP 502 before later HTTP 404 responses, indicating upstream degradation or feed disappearance. | Yes - external provider issue | Medium backoff for 502; long backoff if 404 persists; avoid immediate per-feed quarantine. |
+| OpenMHz WebSocket upgrade HTTP 403 / source unreachable | 2 | OpenMHz refused WebSocket upgrades with HTTP 403, but telemetry stored the result as generic source_unreachable. | Yes - external provider access denial | Reclassify as provider access denied; long backoff with controlled probes; quarantine only after persistent denial. |
+| Broadcastify Calls API returned HTTP 200 non-JSON | 1 | Broadcastify Calls returned HTTP 200 with a non-JSON response, causing the client parse to fail. | Yes - external API response anomaly | Immediate or short retry; medium backoff if repeated; alert provider/engineering on repeated or broad anomalies. |
+| Broadcastify stream capture timeout | 1 | Ffmpeg connected but no segment finalized before timeout; quarantine occurred after earlier 404s had already consumed most of the feed-level budget. | Mixed - external source behavior plus internal budget semantics | Short retry first; use reason-aware or weighted failure budgets; quarantine only after repeated timeout evidence. |
+| Fire Notifications auth env var missing | 1 | Collector process was missing required `FIRE_NOTIFICATIONS_USER` configuration. | No - internal deployment/config issue | Block or fail deployment; page owning team; resume only after config validation. |
 
 ## Root Cause Origin By Category
 
