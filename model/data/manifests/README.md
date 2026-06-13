@@ -4,6 +4,8 @@ Canonical manifests are row-per-audio-segment JSONL inputs consumed before any
 provider-specific model input conversion. New strict train/eval manifests use
 one row shape and should not carry duplicate legacy lineage fields.
 
+A provided train, validation, or eval manifest must contain at least one row.
+
 ## Required Fields
 
 Each JSONL row must include exactly these core contract fields:

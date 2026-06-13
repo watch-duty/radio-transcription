@@ -81,6 +81,13 @@ class TestCanonicalManifestValidation(unittest.TestCase):
 
         self.assertEqual(issues, [])
 
+    def test_empty_manifest_is_invalid(self) -> None:
+        issues = validate_canonical_manifest([])
+
+        self.assertTrue(any(issue.code == "empty_manifest" for issue in issues))
+        with self.assertRaisesRegex(ValueError, "empty_manifest"):
+            require_canonical_manifest([])
+
     def test_required_field_failures_report_code_and_field(self) -> None:
         cases = [
             (
@@ -810,6 +817,19 @@ class TestRowsFromManifestRequiredFields(unittest.TestCase):
             rows_from_manifest(
                 [{"audio_filepath": "gs://b/a.flac", "text": "  "}]
             )
+
+    def test_required_string_values_are_stripped(self) -> None:
+        rows = rows_from_manifest(
+            [
+                {
+                    "audio_filepath": " gs://b/a.flac ",
+                    "text": " hello ",
+                }
+            ]
+        )
+
+        self.assertEqual(rows[0].audio_filepath, "gs://b/a.flac")
+        self.assertEqual(rows[0].text, "hello")
 
     def test_strict_canonical_rules_remain_outside_row_conversion(self) -> None:
         rows = rows_from_manifest(

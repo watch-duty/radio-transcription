@@ -98,6 +98,14 @@ def validate_canonical_manifest(
     compatibility conversion boundary rather than a full strict validator.
     """
     issues: list[CanonicalManifestIssue] = []
+    if not rows:
+        _add_issue(
+            issues,
+            "empty_manifest",
+            "manifest must contain at least one row",
+        )
+        return issues
+
     seen_identities: dict[tuple[str, str], int] = {}
     seen_audio_filepaths: dict[str, int] = {}
 
@@ -485,10 +493,11 @@ def _required_manifest_string(
 ) -> str:
     value = row.get(field)
     text = "" if value is None else str(value)
-    if not text.strip():
+    stripped = text.strip()
+    if not stripped:
         msg = f"manifest row {row_index} missing or blank {field}"
         raise ValueError(msg)
-    return text
+    return stripped
 
 
 def load_manifest(path: str) -> list[dict[str, Any]]:
