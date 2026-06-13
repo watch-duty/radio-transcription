@@ -99,11 +99,6 @@ class _CallChunkResult:
     failure: ItemFailure | None = None
 
 
-async def _sleep_or_cancel(shutdown: asyncio.Event, seconds: float) -> None:
-    """Sleep for *seconds*, raising ``CancelledError`` on shutdown."""
-    await control_flow.sleep_or_cancel(shutdown, seconds)
-
-
 def _get_jwt_token() -> str:
     """Fetch Broadcastify JWT token synchronously from Secret Manager."""
     # Currently there is no implicit redirection support for the Secret Manager SDK to another endpoint.
@@ -236,7 +231,7 @@ async def _get_shared_jwt_token_with_retry(
                 feed_id,
                 jwt_failures,
                 shutdown_event,
-                ItemFailure(e.status_reason, str(e)),
+                ItemFailure(e.status_reason, e.reason),
             )
         except Exception:
             jwt_failures = await _handle_loop_failure(
@@ -299,7 +294,7 @@ async def _fetch_calls(
             max_attempts=_CALLS_API_MAX_ATTEMPTS,
             base_delay_sec=1.0,
             jitter_max_sec=1.0,
-            sleep_func=_sleep_or_cancel,
+            sleep_func=control_flow.sleep_or_cancel,
         ),
         headers=headers,
         params=params,
@@ -352,7 +347,7 @@ async def _download_audio(
             timeout_sec=_AUDIO_TIMEOUT_SEC,
             max_attempts=_AUDIO_FILE_DOWNLOAD_MAX_ATTEMPTS,
             base_delay_sec=_AUDIO_FILE_DOWNLOAD_BACKOFF_BASE_SEC,
-            sleep_func=_sleep_or_cancel,
+            sleep_func=control_flow.sleep_or_cancel,
         ),
         log_label="Broadcastify Calls item audio",
     )
@@ -571,7 +566,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                     feed_id,
                     consecutive_failures,
                     shutdown_event,
-                    ItemFailure(e.status_reason, str(e)),
+                    ItemFailure(e.status_reason, e.reason),
                 )
                 continue
 
@@ -693,7 +688,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                 feed_id,
                 consecutive_failures,
                 shutdown_event,
-                ItemFailure(e.status_reason, str(e)),
+                ItemFailure(e.status_reason, e.reason),
             )
         except Exception as e:
             logger.exception("Error in capture_bcfy_calls loop: %s", e)

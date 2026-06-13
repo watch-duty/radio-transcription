@@ -331,7 +331,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(res, {"call": 1})
 
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_cancel",
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_invalid_calls_field_raises_without_retry(
@@ -362,7 +362,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         mock_sleep.assert_not_awaited()
 
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_cancel",
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_5xx_retry_success(self, mock_sleep: AsyncMock) -> None:
@@ -391,7 +391,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         mock_sleep.assert_called_once()
 
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_cancel",
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_5xx_max_retries_fail(self, mock_sleep: AsyncMock) -> None:
@@ -418,7 +418,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_cancel",
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_5xx_retry_interrupted_by_shutdown(
@@ -456,7 +456,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(ctx.exception), "calls_api_http_400")
 
     @patch(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._sleep_or_cancel",
+        "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_429_max_retries_returns_rate_limited_failure(
@@ -569,7 +569,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls"
-        ".bcfy_calls_collector._sleep_or_cancel",
+        ".bcfy_calls_collector.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_http_exception(self, mock_sleep: AsyncMock) -> None:
@@ -594,7 +594,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
 
         with patch(
             "backend.pipeline.ingestion.collectors.bcfy_calls"
-            ".bcfy_calls_collector._sleep_or_cancel",
+            ".bcfy_calls_collector.control_flow.sleep_or_cancel",
             new_callable=AsyncMock,
         ) as mock_sleep:
             mock_sleep.return_value = False
@@ -610,7 +610,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls"
-        ".bcfy_calls_collector._sleep_or_cancel",
+        ".bcfy_calls_collector.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_5xx_retry_success(self, mock_sleep: AsyncMock) -> None:
@@ -640,7 +640,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls"
-        ".bcfy_calls_collector._sleep_or_cancel",
+        ".bcfy_calls_collector.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_5xx_max_retries_returns_item_failure(
@@ -668,7 +668,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls"
-        ".bcfy_calls_collector._sleep_or_cancel",
+        ".bcfy_calls_collector.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_5xx_retry_interrupted_by_shutdown(
