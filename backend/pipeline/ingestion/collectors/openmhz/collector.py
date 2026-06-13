@@ -179,7 +179,11 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
     # WebSocket connection is successfully established.
     item_outcome = ItemBatchOutcome()
     item_failure_count = 0
-    download_session = AsyncSession()
+    headers: dict[str, str] = {
+        "Referer": "https://openmhz.com/",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    download_session = AsyncSession(impersonate="chrome", headers=headers)
 
     try:
         while not shutdown_event.is_set():

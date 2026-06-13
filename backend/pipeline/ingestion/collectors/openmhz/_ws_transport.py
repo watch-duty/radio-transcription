@@ -85,7 +85,14 @@ async def websocket_transport(
         "http://", "ws://", 1
     )
 
-    session = AsyncSession(impersonate="chrome")
+    headers: dict[str, str] = {
+        "Origin": "https://openmhz.com",
+        "Referer": "https://openmhz.com/",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Pragma": "no-cache",
+        "Cache-Control": "no-cache",
+    }
+    session = AsyncSession(impersonate="chrome", headers=headers)
     ws = None
     try:
         ws = await session.ws_connect(ws_url)
