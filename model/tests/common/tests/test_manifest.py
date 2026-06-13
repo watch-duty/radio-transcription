@@ -464,3 +464,78 @@ class TestRowsFromManifestNullSafe(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].offset, 0.0)
         self.assertEqual(rows[0].duration, 0.0)
+        self.assertEqual(rows[0].example_id, "a")
+        self.assertEqual(rows[0].segment_id, "001")
+
+
+class TestRowsFromManifestRequiredFields(unittest.TestCase):
+    """rows_from_manifest fails loudly for required compatibility fields."""
+
+    def test_missing_audio_filepath_raises_with_row_context(self) -> None:
+        with self.assertRaisesRegex(ValueError, "row 0.*audio_filepath"):
+            rows_from_manifest([{"text": "hello"}])
+
+    def test_blank_audio_filepath_raises_with_row_context(self) -> None:
+        with self.assertRaisesRegex(ValueError, "row 0.*audio_filepath"):
+            rows_from_manifest(
+                [{"audio_filepath": "  ", "text": "hello"}]
+            )
+
+    def test_missing_text_raises_with_row_context(self) -> None:
+        with self.assertRaisesRegex(ValueError, "row 0.*text"):
+            rows_from_manifest([{"audio_filepath": "gs://b/a.flac"}])
+
+    def test_blank_text_raises_with_row_context(self) -> None:
+        with self.assertRaisesRegex(ValueError, "row 0.*text"):
+            rows_from_manifest(
+                [{"audio_filepath": "gs://b/a.flac", "text": "  "}]
+            )
+
+    def test_strict_canonical_rules_remain_outside_row_conversion(self) -> None:
+        rows = rows_from_manifest(
+            [
+                {
+                    "audio_filepath": "local/audio.mp3",
+                    "text": "hello",
+                    "offset": -1,
+                    "duration": -2,
+                },
+                {
+                    "audio_filepath": "local/audio.mp3",
+                    "text": "duplicate audio allowed here",
+                    "offset": 0,
+                    "duration": 0,
+                },
+            ]
+        )
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0].audio_filepath, "local/audio.mp3")
+        self.assertEqual(rows[0].duration, -2.0)
+
+
+class TestLoadManifestLenientBoundaries(unittest.TestCase):
+    """load_manifest remains a lenient parser, not a strict validator."""
+
+    def test_json_array_is_loaded_without_strict_validation(self) -> None:
+        fd, path = tempfile.mkstemp(suffix=".json")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump([{"audio_filepath": "local/audio.mp3"}], f)
+            rows = load_manifest(path)
+        finally:
+            Path(path).unlink()
+
+        self.assertEqual(rows, [{"audio_filepath": "local/audio.mp3"}])
+
+    def test_malformed_jsonl_rows_are_skipped(self) -> None:
+        fd, path = tempfile.mkstemp(suffix=".jsonl")
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write("{bad json}\n")
+                f.write(json.dumps({"audio_filepath": "local/audio.mp3"}))
+            rows = load_manifest(path)
+        finally:
+            Path(path).unlink()
+
+        self.assertEqual(rows, [{"audio_filepath": "local/audio.mp3"}])
