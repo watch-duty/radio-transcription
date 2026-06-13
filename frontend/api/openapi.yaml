@@ -508,7 +508,6 @@ components:
       required:
         - decisions
         - errors
-        - ruleAnnotations
       type: object
       additionalProperties: false
     Annotation:
