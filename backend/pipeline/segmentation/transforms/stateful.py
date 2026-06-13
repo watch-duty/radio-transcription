@@ -81,6 +81,8 @@ from dataclasses import replace
 from typing import Any, override
 
 import apache_beam as beam
+import requests
+import requests.adapters
 from apache_beam.transforms.userstate import (
     BagRuntimeState,
     BagStateSpec,
@@ -415,9 +417,6 @@ class OrderedStitchAudioFn(beam.DoFn):
 
     @override
     def setup(self) -> None:
-        import requests  # noqa: PLC0415
-        import requests.adapters  # noqa: PLC0415
-
         tracing_utils.setup_tracing(service_name="normalization-pipeline")
         # Acquire process-level singletons natively via Beam's Shared handle with a 100-connection pool
         shared_vad = SHARED_RESOURCE_HANDLE.acquire(
