@@ -95,6 +95,7 @@ from apache_beam.transforms.userstate import (
 )
 from apache_beam.utils.shared import Shared
 from apache_beam.utils.timestamp import Timestamp
+from google.auth.credentials import AnonymousCredentials
 from google.auth.exceptions import DefaultCredentialsError
 from google.auth.transport.requests import AuthorizedSession
 from google.cloud import storage
@@ -137,7 +138,10 @@ def get_gcs_client(project_id: str | None) -> storage.Client:
         )
     except DefaultCredentialsError:
         # Fallback for un-authenticated remote testing environments (e.g., GitHub Actions CI)
-        return storage.Client(project=project_id or "test-project")
+        return storage.Client(
+            project=project_id or "test-project",
+            credentials=AnonymousCredentials(),
+        )
 
 
 def _get_task_logger(
