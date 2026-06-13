@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, NoReturn
 from curl_cffi.requests import AsyncSession
 from curl_cffi.requests.websockets import WebSocketClosed, WebSocketTimeout
 
+from backend.pipeline.ingestion.collectors import control_flow
 from backend.pipeline.ingestion.collectors.openmhz._types import CallEvent
 
 if TYPE_CHECKING:
@@ -268,34 +269,4 @@ async def _await_or_shutdown[T](
     shutdown: asyncio.Event,
 ) -> T:
     """Await one setup operation, cancelling it if shutdown wins."""
-    operation_task = asyncio.ensure_future(awaitable)
-    if shutdown.is_set():
-        operation_task.cancel()
-        await asyncio.gather(operation_task, return_exceptions=True)
-        raise asyncio.CancelledError
-
-    shutdown_task = asyncio.create_task(shutdown.wait())
-    tasks = {operation_task, shutdown_task}
-
-    try:
-        done, pending = await asyncio.wait(
-            tasks,
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-    except asyncio.CancelledError:
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        raise
-
-    for task in pending:
-        task.cancel()
-    await asyncio.gather(*pending, return_exceptions=True)
-
-    if shutdown_task in done and shutdown_task.result():
-        await asyncio.gather(operation_task, return_exceptions=True)
-        raise asyncio.CancelledError
-
-    with contextlib.suppress(asyncio.CancelledError):
-        await asyncio.gather(shutdown_task, return_exceptions=True)
-    return await operation_task
+    return await control_flow.await_or_cancel(awaitable, shutdown)

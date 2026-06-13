@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import datetime
 import logging
 import os
@@ -133,34 +132,10 @@ async def _get_m4a_or_cancel(
     if shutdown.is_set():
         raise asyncio.CancelledError
 
-    get_task = asyncio.create_task(
-        session.get(url, timeout=30.0, allow_redirects=False)
+    return await control_flow.await_or_cancel(
+        session.get(url, timeout=30.0, allow_redirects=False),
+        shutdown,
     )
-    shutdown_task = asyncio.create_task(shutdown.wait())
-    tasks = {get_task, shutdown_task}
-
-    try:
-        done, pending = await asyncio.wait(
-            tasks,
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-    except asyncio.CancelledError:
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        raise
-
-    for task in pending:
-        task.cancel()
-    await asyncio.gather(*pending, return_exceptions=True)
-
-    if shutdown_task in done and shutdown_task.result():
-        await asyncio.gather(get_task, return_exceptions=True)
-        raise asyncio.CancelledError
-
-    with contextlib.suppress(asyncio.CancelledError):
-        await asyncio.gather(shutdown_task, return_exceptions=True)
-    return await get_task
 
 
 async def _download_m4a(

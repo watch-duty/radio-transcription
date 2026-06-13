@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 from curl_cffi.requests.websockets import WebSocketClosed, WebSocketTimeout
 
 from backend.pipeline.ingestion.collectors.openmhz._ws_transport import (
+    _await_or_shutdown,
     _parse_eio_open,
     _parse_sio_event,
     websocket_transport,
@@ -432,6 +433,20 @@ class TestWebsocketTransport(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(task, timeout=1.0)
         await asyncio.wait_for(cancelled.wait(), timeout=1.0)
         mock_session.close.assert_awaited_once()
+
+    async def test_await_or_shutdown_returns_successful_operation_when_shutdown_also_set(
+        self,
+    ) -> None:
+        shutdown = asyncio.Event()
+
+        async def _complete_and_shutdown() -> str:
+            shutdown.set()
+            await shutdown.wait()
+            return "connected"
+
+        result = await _await_or_shutdown(_complete_and_shutdown(), shutdown)
+
+        self.assertEqual(result, "connected")
 
     @patch(f"{_WS_MOD}.AsyncSession")
     async def test_pending_eio_open_exits_on_shutdown(

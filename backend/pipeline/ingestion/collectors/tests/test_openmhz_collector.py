@@ -23,6 +23,7 @@ from backend.pipeline.ingestion.collectors.openmhz.collector import (
     MAX_RECONNECT_FAILURES,
     _download_m4a,
     _exception_chain_text,
+    _get_m4a_or_cancel,
     openmhz_collector,
 )
 from backend.pipeline.ingestion.collectors.tests.conftest import (
@@ -304,6 +305,26 @@ class TestDownloadM4a(unittest.IsolatedAsyncioTestCase):
             timeout=30.0,
             allow_redirects=False,
         )
+
+    async def test_active_get_result_wins_when_shutdown_also_set(self) -> None:
+        response = MagicMock(status_code=200, content=b"m4a")
+
+        async def _complete_and_shutdown(
+            *_args: object, **_kwargs: object
+        ) -> object:
+            self.shutdown.set()
+            await self.shutdown.wait()
+            return response
+
+        self.session.get = AsyncMock(side_effect=_complete_and_shutdown)
+
+        result = await _get_m4a_or_cancel(
+            self.session,
+            "https://media2.openmhz.com/test.m4a",
+            self.shutdown,
+        )
+
+        self.assertIs(result, response)
 
     async def test_parent_cancellation_cancels_active_get(self) -> None:
         started = asyncio.Event()
