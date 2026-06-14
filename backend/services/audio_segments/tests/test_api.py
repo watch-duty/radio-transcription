@@ -12,9 +12,11 @@ from backend.services.audio_segments.models import (
     AnnotationType,
     AudioClassification,
     AudioSegment,
+    AudioSegmentSummary,
     EvaluationAnnotation,
     EvaluationAnnotationData,
     ListAudioSegmentsResponse,
+    ListAudioSegmentSummariesResponse,
     TranscriptAnnotation,
     TranscriptAnnotationData,
 )
@@ -79,6 +81,7 @@ class TestAudioSegmentsAPI(unittest.TestCase):
             start_time=None,
             end_time=None,
             order=SortOrder.DESC,
+            ids=None,
             is_alert=None,
         )
 
@@ -111,7 +114,209 @@ class TestAudioSegmentsAPI(unittest.TestCase):
             start_time=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
             end_time=datetime.datetime(2026, 1, 1, 1, tzinfo=datetime.UTC),
             order=SortOrder.ASC,
+            ids=None,
             is_alert=True,
+        )
+
+    def test_list_audio_segments_with_ids(self) -> None:
+        """The ids filter is forwarded for batch hydration."""
+        self.mock_service.list_audio_segments.return_value = (
+            ListAudioSegmentsResponse(segments=[])
+        )
+        other_id = "cccccccc-dddd-eeee-ffff-000000000000"
+
+        response = self.client.get(
+            "/v1/audio_segments", params={"ids": [_SEGMENT_ID, other_id]}
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.mock_service.list_audio_segments.assert_called_once_with(
+            feed_ids=None,
+            limit=100,
+            next_token=None,
+            start_time=None,
+            end_time=None,
+            order=SortOrder.DESC,
+            ids=[_SEGMENT_ID, other_id],
+            is_alert=None,
+        )
+
+    def test_get_audio_segment_success(self) -> None:
+        """Fetch a single audio segment by id."""
+        mock_segment = AudioSegment(
+            id=_SEGMENT_ID,
+            feed_id=_FEED_ID,
+            classification=AudioClassification.SPEECH,
+            start_timestamp=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+            end_timestamp=datetime.datetime(
+                2026, 1, 1, 0, 1, tzinfo=datetime.UTC
+            ),
+            missing_prior_context=False,
+            missing_post_context=False,
+            source_audio_uris=["gs://bucket/audio1.ogg"],
+            canonical_audio_uri="gs://bucket/canonical.ogg",
+            start_audio_offset=datetime.timedelta(seconds=5),
+            end_audio_offset=datetime.timedelta(seconds=10),
+            playback_audio_uri=None,
+            created_at=datetime.datetime(2026, 1, 1, 0, 2, tzinfo=datetime.UTC),
+            annotations=[],
+        )
+        self.mock_service.get_audio_segment.return_value = mock_segment
+
+        response = self.client.get(f"/v1/audio_segments/{_SEGMENT_ID}")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["id"], _SEGMENT_ID)
+        self.mock_service.get_audio_segment.assert_called_once_with(_SEGMENT_ID)
+
+    def test_get_audio_segment_not_found(self) -> None:
+        """A missing segment surfaces as a 404."""
+        self.mock_service.get_audio_segment.return_value = None
+
+        response = self.client.get(f"/v1/audio_segments/{_SEGMENT_ID}")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertIn("not found", response.json()["detail"])
+
+    def test_get_audio_segment_invalid_uuid(self) -> None:
+        """An invalid id surfaces as a 400."""
+        self.mock_service.get_audio_segment.side_effect = ValueError(
+            "Invalid segment_id UUID: not-a-uuid"
+        )
+
+        response = self.client.get("/v1/audio_segments/not-a-uuid")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Invalid segment_id UUID", response.json()["detail"])
+
+    def test_list_audio_segment_summaries_defaults_end_time_to_now(
+        self,
+    ) -> None:
+        """end_time defaults to 'now' server-side when omitted."""
+        summary = AudioSegmentSummary(
+            id=_SEGMENT_ID,
+            feed_id=_FEED_ID,
+            start_timestamp=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+            end_timestamp=datetime.datetime(
+                2026, 1, 1, 0, 1, tzinfo=datetime.UTC
+            ),
+            classification=AudioClassification.SPEECH,
+            is_alert=False,
+        )
+        self.mock_service.list_audio_segment_summaries.return_value = (
+            ListAudioSegmentSummariesResponse(segments=[summary])
+        )
+
+        before = datetime.datetime.now(datetime.UTC)
+        response = self.client.get(
+            "/v1/audio_segment_summaries",
+            params={
+                "feed_ids": [_FEED_ID],
+                "start_time": "2026-01-01T00:00:00Z",
+            },
+        )
+        after = datetime.datetime.now(datetime.UTC)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertEqual(len(data["segments"]), 1)
+        self.assertEqual(data["segments"][0]["id"], _SEGMENT_ID)
+        self.assertFalse(data["truncated"])
+
+        kwargs = self.mock_service.list_audio_segment_summaries.call_args.kwargs
+        self.assertEqual(kwargs["feed_ids"], [_FEED_ID])
+        self.assertEqual(
+            kwargs["start_time"],
+            datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+        )
+        self.assertIsNone(kwargs["is_alert"])
+        self.assertTrue(before <= kwargs["end_time"] <= after)
+
+    def test_list_audio_segment_summaries_with_filters(self) -> None:
+        """Explicit window and is_alert are forwarded as given."""
+        self.mock_service.list_audio_segment_summaries.return_value = (
+            ListAudioSegmentSummariesResponse(segments=[])
+        )
+
+        response = self.client.get(
+            "/v1/audio_segment_summaries",
+            params={
+                "feed_ids": [_FEED_ID],
+                "start_time": "2026-01-01T00:00:00Z",
+                "end_time": "2026-01-01T01:00:00Z",
+                "is_alert": True,
+            },
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.mock_service.list_audio_segment_summaries.assert_called_once_with(
+            start_time=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+            end_time=datetime.datetime(2026, 1, 1, 1, tzinfo=datetime.UTC),
+            feed_ids=[_FEED_ID],
+            next_token=None,
+            is_alert=True,
+        )
+
+    def test_list_audio_segment_summaries_overflow_returns_token(self) -> None:
+        """An overflowed window sets truncated to the resume cursor."""
+        self.mock_service.list_audio_segment_summaries.return_value = (
+            ListAudioSegmentSummariesResponse(
+                segments=[], truncated="cursor-123"
+            )
+        )
+
+        response = self.client.get(
+            "/v1/audio_segment_summaries",
+            params={
+                "feed_ids": [_FEED_ID],
+                "start_time": "2026-01-01T00:00:00Z",
+            },
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertEqual(data["truncated"], "cursor-123")
+
+    def test_list_audio_segment_summaries_resume_forwards_token(self) -> None:
+        """A supplied next_token is forwarded to resume the window."""
+        self.mock_service.list_audio_segment_summaries.return_value = (
+            ListAudioSegmentSummariesResponse(segments=[])
+        )
+
+        response = self.client.get(
+            "/v1/audio_segment_summaries",
+            params={
+                "feed_ids": [_FEED_ID],
+                "start_time": "2026-01-01T00:00:00Z",
+                "next_token": "cursor-123",
+            },
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        kwargs = self.mock_service.list_audio_segment_summaries.call_args.kwargs
+        self.assertEqual(kwargs["next_token"], "cursor-123")
+
+    def test_list_audio_segment_summaries_absurd_window_returns_400(
+        self,
+    ) -> None:
+        """A window the service rejects surfaces as a 400."""
+        self.mock_service.list_audio_segment_summaries.side_effect = ValueError(
+            "Requested window exceeds the maximum of 7 days."
+        )
+
+        response = self.client.get(
+            "/v1/audio_segment_summaries",
+            params={
+                "feed_ids": [_FEED_ID],
+                "start_time": "2020-01-01T00:00:00Z",
+                "end_time": "2026-01-01T00:00:00Z",
+            },
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("exceeds the maximum", response.json()["detail"])
+
+    def test_list_audio_segment_summaries_requires_start_time(self) -> None:
+        """start_time is a required query parameter."""
+        response = self.client.get(
+            "/v1/audio_segment_summaries", params={"feed_ids": [_FEED_ID]}
+        )
+        self.assertEqual(
+            response.status_code, status.HTTP_422_UNPROCESSABLE_CONTENT
         )
 
     def test_create_audio_segment_success(self) -> None:

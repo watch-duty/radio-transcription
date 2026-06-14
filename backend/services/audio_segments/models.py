@@ -123,3 +123,27 @@ class ListAudioSegmentsResponse(BaseModel):
 
     segments: list[AudioSegment]
     next_token: str | None = None
+
+
+class AudioSegmentSummary(BaseModel):
+    """Lightweight audio segment for the timeline (no annotations/text/URIs)."""
+
+    id: str
+    feed_id: str
+    start_timestamp: datetime
+    end_timestamp: datetime
+    classification: AudioClassification
+    is_alert: bool
+
+
+class ListAudioSegmentSummariesResponse(BaseModel):
+    """Response model for a windowed list of audio segment summaries.
+
+    truncated is False when the whole window fit, or a resume cursor
+    (a timestamp+id token) when it overflowed the row cap -- truthy/falsy
+    for legacy clients, while carrying the cursor to pass back as the
+    next_token query parameter.
+    """
+
+    segments: list[AudioSegmentSummary]
+    truncated: bool | str = False

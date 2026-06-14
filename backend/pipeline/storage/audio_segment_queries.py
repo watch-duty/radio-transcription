@@ -38,8 +38,9 @@ WHERE ($1::uuid[] IS NULL OR s.feed_id = ANY($1))
   AND ($4::timestamptz IS NULL OR s.end_timestamp >= $4)
   AND ($5::timestamptz IS NULL OR s.end_timestamp <= $5)
   AND ($6::boolean IS NULL OR COALESCE(a.is_alert, False) = $6::boolean)
+  AND ($7::uuid[] IS NULL OR s.id = ANY($7))
 ORDER BY s.end_timestamp DESC, s.id DESC
-LIMIT $7
+LIMIT $8
 """
 
 LIST_AUDIO_SEGMENTS_ASC_SQL = """
@@ -80,8 +81,71 @@ WHERE ($1::uuid[] IS NULL OR s.feed_id = ANY($1))
   AND ($4::timestamptz IS NULL OR s.end_timestamp >= $4)
   AND ($5::timestamptz IS NULL OR s.end_timestamp <= $5)
   AND ($6::boolean IS NULL OR COALESCE(a.is_alert, False) = $6::boolean)
+  AND ($7::uuid[] IS NULL OR s.id = ANY($7))
 ORDER BY s.end_timestamp ASC, s.id ASC
+LIMIT $8
+"""
+
+# Filters on end_timestamp; with feed_ids this rides
+# idx_audio_segments_feed_pagination. Cursor ($2,$3) only resumes an
+# overflowed window.
+LIST_AUDIO_SEGMENT_SUMMARIES_IN_WINDOW_SQL = """
+SELECT
+    s.id,
+    s.feed_id,
+    s.start_timestamp,
+    s.end_timestamp,
+    s.classification,
+    COALESCE(a.is_alert, False) AS is_alert
+FROM audio_segments s
+LEFT JOIN (
+    SELECT audio_segment_id,
+           bool_or(type = 'EVALUATION' AND jsonb_array_length(data->'decisions') > 0) AS is_alert
+    FROM annotations
+    GROUP BY audio_segment_id
+) a ON s.id = a.audio_segment_id
+WHERE ($1::uuid[] IS NULL OR s.feed_id = ANY($1))
+  AND ($2::timestamptz IS NULL OR s.end_timestamp < $2 OR (s.end_timestamp = $2 AND s.id < $3))
+  AND s.end_timestamp >= $4
+  AND s.end_timestamp <= $5
+  AND ($6::boolean IS NULL OR COALESCE(a.is_alert, False) = $6::boolean)
+ORDER BY s.end_timestamp DESC, s.id DESC
 LIMIT $7
+"""
+
+GET_AUDIO_SEGMENT_BY_ID_SQL = """
+SELECT
+    s.id,
+    s.feed_id,
+    s.classification,
+    s.start_timestamp,
+    s.end_timestamp,
+    s.missing_prior_context,
+    s.missing_post_context,
+    s.source_audio_uris,
+    s.canonical_audio_uri,
+    s.start_audio_offset,
+    s.end_audio_offset,
+    s.playback_audio_uri,
+    s.external_audio_segment_id,
+    s.created_at,
+    COALESCE(a.annotations, '[]'::json) AS annotations
+FROM audio_segments s
+LEFT JOIN (
+    SELECT audio_segment_id,
+           json_agg(
+               json_build_object(
+                   'audio_segment_id', audio_segment_id,
+                   'type', type,
+                   'data', data,
+                   'created_at', created_at,
+                   'updated_at', updated_at
+               )
+           ) AS annotations
+    FROM annotations
+    GROUP BY audio_segment_id
+) a ON s.id = a.audio_segment_id
+WHERE s.id = $1
 """
 
 ADD_ANNOTATION_SQL = """

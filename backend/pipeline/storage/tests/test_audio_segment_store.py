@@ -3,11 +3,19 @@ from __future__ import annotations
 import datetime
 import unittest
 import uuid
+from unittest import mock
 
 import asyncpg
 
-from backend.pipeline.storage import audio_segment_queries
-from backend.pipeline.storage.audio_segment_store import AudioSegmentStore
+from backend.pipeline.storage import audio_segment_queries, audio_segment_store
+from backend.pipeline.storage.audio_segment_store import (
+    MAX_SUMMARY_ROWS,
+    AudioSegmentStore,
+)
+from backend.pipeline.storage.pagination_utils import (
+    decode_cursor,
+    encode_cursor,
+)
 from backend.pipeline.storage.tests.connection_util import make_mock_pool
 from backend.services.audio_segments.models import (
     AnnotationType,
@@ -54,6 +62,16 @@ _AUDIO_SEGMENT_ROW = {
             "updated_at": "2026-01-01T00:00:00Z",
         }
     ],
+}
+
+
+_SUMMARY_ROW = {
+    "id": _SEGMENT_ID,
+    "feed_id": _FEED_ID,
+    "start_timestamp": datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+    "end_timestamp": datetime.datetime(2026, 1, 1, 0, 1, tzinfo=datetime.UTC),
+    "classification": "SPEECH",
+    "is_alert": False,
 }
 
 
@@ -230,6 +248,7 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             None,
             None,
             None,
+            None,
             101,
         )
 
@@ -245,13 +264,190 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             None,
             None,
             None,
+            None,
             101,
+        )
+
+    async def test_list_audio_segments_with_ids(self) -> None:
+        result = await self.store.list_audio_segments(ids=[str(_SEGMENT_ID)])
+
+        self.assertEqual(len(result.segments), 1)
+        # An id request ignores limit/pagination: LIMIT NULL, no next_token.
+        self.assertIsNone(result.next_token)
+        self.pool.fetch.assert_called_once_with(
+            audio_segment_queries.LIST_AUDIO_SEGMENTS_DESC_SQL,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            [_SEGMENT_ID],
+            None,
         )
 
     async def test_list_audio_segments_invalid_feed_id(self) -> None:
         with self.assertRaises(ValueError) as cm:
             await self.store.list_audio_segments(["invalid-uuid"])
         self.assertIn("Invalid feed_id UUID in list", str(cm.exception))
+
+    async def test_list_audio_segments_invalid_id(self) -> None:
+        with self.assertRaises(ValueError) as cm:
+            await self.store.list_audio_segments(ids=["invalid-uuid"])
+        self.assertIn("Invalid id UUID in list", str(cm.exception))
+
+    async def test_get_audio_segment_success(self) -> None:
+        self.pool.fetchrow.return_value = _AUDIO_SEGMENT_ROW
+
+        result = await self.store.get_audio_segment(str(_SEGMENT_ID))
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.id, str(_SEGMENT_ID))
+        self.pool.fetchrow.assert_called_once_with(
+            audio_segment_queries.GET_AUDIO_SEGMENT_BY_ID_SQL,
+            _SEGMENT_ID,
+        )
+
+    async def test_get_audio_segment_not_found(self) -> None:
+        self.pool.fetchrow.return_value = None
+
+        result = await self.store.get_audio_segment(str(_SEGMENT_ID))
+
+        self.assertIsNone(result)
+
+    async def test_get_audio_segment_invalid_uuid(self) -> None:
+        with self.assertRaises(ValueError) as cm:
+            await self.store.get_audio_segment("invalid-uuid")
+        self.assertIn("Invalid segment_id UUID", str(cm.exception))
+
+    async def test_list_audio_segment_summaries(self) -> None:
+        self.pool.fetch.return_value = [_SUMMARY_ROW]
+        start = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
+        end = datetime.datetime(2026, 1, 2, tzinfo=datetime.UTC)
+
+        result = await self.store.list_audio_segment_summaries(
+            start_time=start, end_time=end
+        )
+
+        self.assertIsNone(result.next_token)
+        self.assertEqual(len(result.summaries), 1)
+        self.assertEqual(result.summaries[0].id, str(_SEGMENT_ID))
+        self.assertFalse(result.summaries[0].is_alert)
+        self.pool.fetch.assert_called_once_with(
+            audio_segment_queries.LIST_AUDIO_SEGMENT_SUMMARIES_IN_WINDOW_SQL,
+            None,
+            None,
+            None,
+            start,
+            end,
+            None,
+            MAX_SUMMARY_ROWS + 1,
+        )
+
+    async def test_list_audio_segment_summaries_feed_and_alert(self) -> None:
+        self.pool.fetch.return_value = [_SUMMARY_ROW]
+        start = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
+        end = datetime.datetime(2026, 1, 2, tzinfo=datetime.UTC)
+
+        is_alert = True
+        await self.store.list_audio_segment_summaries(
+            start_time=start,
+            end_time=end,
+            feed_ids=[str(_FEED_ID)],
+            is_alert=is_alert,
+        )
+
+        self.pool.fetch.assert_called_once_with(
+            audio_segment_queries.LIST_AUDIO_SEGMENT_SUMMARIES_IN_WINDOW_SQL,
+            [_FEED_ID],
+            None,
+            None,
+            start,
+            end,
+            is_alert,
+            MAX_SUMMARY_ROWS + 1,
+        )
+
+    async def test_list_audio_segment_summaries_resume(self) -> None:
+        self.pool.fetch.return_value = [_SUMMARY_ROW]
+        start = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
+        end = datetime.datetime(2026, 1, 2, tzinfo=datetime.UTC)
+        cursor_ts = datetime.datetime(2026, 1, 1, 12, tzinfo=datetime.UTC)
+        token = encode_cursor(cursor_ts, _SEGMENT_ID)
+
+        await self.store.list_audio_segment_summaries(
+            start_time=start, end_time=end, next_token=token
+        )
+
+        self.pool.fetch.assert_called_once_with(
+            audio_segment_queries.LIST_AUDIO_SEGMENT_SUMMARIES_IN_WINDOW_SQL,
+            None,
+            cursor_ts,
+            _SEGMENT_ID,
+            start,
+            end,
+            None,
+            MAX_SUMMARY_ROWS + 1,
+        )
+
+    async def test_list_audio_segment_summaries_end_before_start(self) -> None:
+        start = datetime.datetime(2026, 1, 2, tzinfo=datetime.UTC)
+        end = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
+        with self.assertRaises(ValueError) as cm:
+            await self.store.list_audio_segment_summaries(
+                start_time=start, end_time=end
+            )
+        self.assertIn("must not be before", str(cm.exception))
+        self.pool.fetch.assert_not_called()
+
+    async def test_list_audio_segment_summaries_naive_start_time(self) -> None:
+        # Naive start vs aware end must not raise TypeError.
+        self.pool.fetch.return_value = [_SUMMARY_ROW]
+        naive_start = datetime.datetime(2026, 1, 1)
+        aware_end = datetime.datetime(2026, 1, 2, tzinfo=datetime.UTC)
+
+        result = await self.store.list_audio_segment_summaries(
+            start_time=naive_start, end_time=aware_end
+        )
+
+        self.assertEqual(len(result.summaries), 1)
+
+    async def test_list_audio_segment_summaries_window_too_large(self) -> None:
+        start = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
+        end = start + datetime.timedelta(days=30)
+        with self.assertRaises(ValueError) as cm:
+            await self.store.list_audio_segment_summaries(
+                start_time=start, end_time=end
+            )
+        self.assertIn("exceeds the maximum", str(cm.exception))
+        self.pool.fetch.assert_not_called()
+
+    async def test_list_audio_segment_summaries_invalid_feed_id(self) -> None:
+        start = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
+        end = datetime.datetime(2026, 1, 2, tzinfo=datetime.UTC)
+        with self.assertRaises(ValueError) as cm:
+            await self.store.list_audio_segment_summaries(
+                start_time=start, end_time=end, feed_ids=["invalid-uuid"]
+            )
+        self.assertIn("Invalid feed_id UUID in list", str(cm.exception))
+
+    async def test_list_audio_segment_summaries_overflow_returns_token(
+        self,
+    ) -> None:
+        start = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
+        end = datetime.datetime(2026, 1, 2, tzinfo=datetime.UTC)
+        with mock.patch.object(audio_segment_store, "MAX_SUMMARY_ROWS", 2):
+            self.pool.fetch.return_value = [_SUMMARY_ROW] * 3
+            result = await self.store.list_audio_segment_summaries(
+                start_time=start, end_time=end
+            )
+
+        assert result.next_token is not None
+        self.assertEqual(len(result.summaries), 2)
+        cursor_ts, cursor_uid = decode_cursor(result.next_token)
+        self.assertEqual(cursor_ts, _SUMMARY_ROW["end_timestamp"])
+        self.assertEqual(cursor_uid, _SEGMENT_ID)
 
 
 if __name__ == "__main__":

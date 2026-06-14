@@ -42,3 +42,13 @@ export interface AudioSegment {
   createdAt: string;
   annotations: Annotation[];
 }
+
+/** Lightweight audio segment for timeline rendering (no annotations/text/URIs). */
+export interface AudioSegmentSummary {
+  id: string;
+  feedId: string;
+  classification: AudioClassification;
+  startTimestamp: string;
+  endTimestamp: string;
+  isAlert: boolean;
+}

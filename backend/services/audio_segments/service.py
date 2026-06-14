@@ -5,7 +5,10 @@ from typing import TYPE_CHECKING
 
 from backend.pipeline.storage.audio_segment_store import SortOrder
 
-from .models import ListAudioSegmentsResponse
+from .models import (
+    ListAudioSegmentsResponse,
+    ListAudioSegmentSummariesResponse,
+)
 
 if TYPE_CHECKING:
     import datetime
@@ -36,6 +39,7 @@ class AudioSegmentService:
         start_time: datetime.datetime | None = None,
         end_time: datetime.datetime | None = None,
         order: SortOrder = SortOrder.DESC,
+        ids: list[str] | None = None,
         *,
         is_alert: bool | None = None,
     ) -> ListAudioSegmentsResponse:
@@ -47,10 +51,36 @@ class AudioSegmentService:
             start_time=start_time,
             end_time=end_time,
             order=order,
+            ids=ids,
             is_alert=is_alert,
         )
         return ListAudioSegmentsResponse(
             segments=result.segments, next_token=result.next_token
+        )
+
+    async def get_audio_segment(self, segment_id: str) -> AudioSegment | None:
+        """Fetch a single audio segment with its annotations, or None."""
+        return await self._store.get_audio_segment(segment_id)
+
+    async def list_audio_segment_summaries(
+        self,
+        start_time: datetime.datetime,
+        end_time: datetime.datetime,
+        feed_ids: list[str] | None = None,
+        next_token: str | None = None,
+        *,
+        is_alert: bool | None = None,
+    ) -> ListAudioSegmentSummariesResponse:
+        """Return every lightweight segment summary in a time window."""
+        result = await self._store.list_audio_segment_summaries(
+            start_time=start_time,
+            end_time=end_time,
+            feed_ids=feed_ids,
+            next_token=next_token,
+            is_alert=is_alert,
+        )
+        return ListAudioSegmentSummariesResponse(
+            segments=result.summaries, truncated=result.next_token or False
         )
 
     async def create_audio_segment(

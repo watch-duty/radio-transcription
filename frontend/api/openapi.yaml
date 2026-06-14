@@ -546,6 +546,53 @@ components:
             - desc
         isAlert:
           type: boolean
+        ids:
+          items:
+            type: string
+          type: array
+          description: Hydrate specific segments by id; combines with the other filters.
+      type: object
+      additionalProperties: false
+    AudioSegmentSummary:
+      description: |-
+        Lightweight audio segment for timeline rendering. Excludes annotations,
+        transcript text, and audio URIs so a whole time window can be fetched cheaply.
+      properties:
+        id:
+          type: string
+        feedId:
+          type: string
+        classification:
+          $ref: "#/components/schemas/AudioClassification"
+        startTimestamp:
+          type: string
+        endTimestamp:
+          type: string
+        isAlert:
+          type: boolean
+      required:
+        - id
+        - feedId
+        - classification
+        - startTimestamp
+        - endTimestamp
+        - isAlert
+      type: object
+      additionalProperties: false
+    ListAudioSegmentSummariesQueryParams:
+      properties:
+        startTime:
+          type: string
+        endTime:
+          type: string
+          description: ISO-8601; defaults to "now" server-side when omitted.
+        isAlert:
+          type: boolean
+        nextToken:
+          type: string
+          description: Resume cursor returned when a prior window was truncated.
+      required:
+        - startTime
       type: object
       additionalProperties: false
   securitySchemes:
@@ -1690,6 +1737,189 @@ paths:
           required: false
           schema:
             type: boolean
+        - description: Hydrate specific segments by id; combines with the other filters.
+          in: query
+          name: ids
+          required: false
+          schema:
+            type: array
+            items:
+              type: string
+      x-google-backend: radio-transcription-api
+  /api/v1/audioSegments/{feedId}/summaries:
+    get:
+      operationId: ListAudioSegmentSummaries
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                properties:
+                  truncated:
+                    anyOf:
+                      - type: boolean
+                      - type: string
+                  segments:
+                    items:
+                      $ref: "#/components/schemas/AudioSegmentSummary"
+                    type: array
+                required:
+                  - truncated
+                  - segments
+                type: object
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      description: |-
+        Lightweight segment summaries across a time window, for timeline rendering.
+        Returns the whole window in one response unless it overflows the row cap,
+        in which case truncated carries a resume cursor; pass it back as nextToken
+        to fetch the next page.
+      tags:
+        - Audio Segments
+      security:
+        - google_id_token: []
+      parameters:
+        - in: path
+          name: feedId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: startTime
+          required: true
+          schema:
+            type: string
+        - description: ISO-8601; defaults to "now" server-side when omitted.
+          in: query
+          name: endTime
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: isAlert
+          required: false
+          schema:
+            type: boolean
+        - description: Resume cursor returned when a prior window was truncated.
+          in: query
+          name: nextToken
+          required: false
+          schema:
+            type: string
+      x-google-backend: radio-transcription-api
+  /api/v1/audioSegments/{feedId}/{audioSegmentId}:
+    get:
+      operationId: GetAudioSegment
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AudioSegment"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      description: Fetch a single audio segment, with its annotations, by id.
+      tags:
+        - Audio Segments
+      security:
+        - google_id_token: []
+      parameters:
+        - in: path
+          name: feedId
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: audioSegmentId
+          required: true
+          schema:
+            type: string
       x-google-backend: radio-transcription-api
 servers:
   - url: https://${radio_transcription_api_service_name}/

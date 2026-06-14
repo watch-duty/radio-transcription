@@ -3,6 +3,7 @@ import type {
   Annotation,
   AudioClassification,
   AudioSegment,
+  AudioSegmentSummary,
 } from '@transcription/common';
 import {
   Controller,
@@ -71,6 +72,28 @@ function convertAnnotationBackend(response: AnnotationBackend): Annotation {
   };
 }
 
+interface AudioSegmentSummaryBackend {
+  id: string;
+  feed_id: string;
+  start_timestamp: string;
+  end_timestamp: string;
+  classification: AudioClassification;
+  is_alert: boolean;
+}
+
+function convertAudioSegmentSummaryBackend(
+  response: AudioSegmentSummaryBackend
+): AudioSegmentSummary {
+  return {
+    id: response.id,
+    feedId: response.feed_id,
+    classification: response.classification,
+    startTimestamp: response.start_timestamp,
+    endTimestamp: response.end_timestamp,
+    isAlert: response.is_alert,
+  };
+}
+
 function convertAudioSegmentBackend(
   response: AudioSegmentBackend
 ): AudioSegment {
@@ -103,6 +126,17 @@ export class ListAudioSegmentsQueryParams {
   endTime?: string;
   order?: 'asc' | 'desc';
   isAlert?: boolean;
+  /** Hydrate specific segments by id; combines with the other filters. */
+  ids?: string[];
+}
+
+export class ListAudioSegmentSummariesQueryParams {
+  startTime!: string;
+  /** ISO-8601; defaults to "now" server-side when omitted. */
+  endTime?: string;
+  isAlert?: boolean;
+  /** Resume cursor returned when a prior window was truncated. */
+  nextToken?: string;
 }
 
 @Route('api/v1/audioSegments')
@@ -131,6 +165,9 @@ export class AudioController extends Controller {
       if (query.isAlert !== undefined) {
         queryParams.append('is_alert', query.isAlert.toString());
       }
+      for (const id of query.ids ?? []) {
+        queryParams.append('ids', id);
+      }
 
       const client = await getServiceClient(AUDIO_SEGMENTS_API_URL);
       const response = await client.request({
@@ -150,6 +187,86 @@ export class AudioController extends Controller {
       const { status, message } = handleBackendError(
         error,
         'fetching audio segments'
+      );
+      throw new HttpError(status, message);
+    }
+  }
+
+  /**
+   * Lightweight segment summaries across a time window, for timeline rendering.
+   * Returns the whole window in one response unless it overflows the row cap,
+   * in which case truncated carries a resume cursor; pass it back as nextToken
+   * to fetch the next page.
+   */
+  @Get('{feedId}/summaries')
+  @Security('google_id_token')
+  @Extension('x-google-backend', 'radio-transcription-api')
+  public async listAudioSegmentSummaries(
+    @Path() feedId: string,
+    @Queries() query: ListAudioSegmentSummariesQueryParams
+  ): Promise<{
+    segments: AudioSegmentSummary[];
+    truncated: boolean | string;
+  }> {
+    try {
+      const queryParams = new URLSearchParams();
+      queryParams.append('feed_ids', [feedId].toString());
+      queryParams.append('start_time', query.startTime);
+      if (query.endTime) queryParams.append('end_time', query.endTime);
+      if (query.isAlert !== undefined) {
+        queryParams.append('is_alert', query.isAlert.toString());
+      }
+      if (query.nextToken) queryParams.append('next_token', query.nextToken);
+
+      // Same Cloud Run service as the base URL, differing only by path.
+      const summariesUrl = AUDIO_SEGMENTS_API_URL.replace(
+        /\/audio_segments$/,
+        '/audio_segment_summaries'
+      );
+      const client = await getServiceClient(AUDIO_SEGMENTS_API_URL);
+      const response = await client.request({
+        url: `${summariesUrl}?${queryParams.toString()}`,
+        method: 'GET',
+      });
+
+      const data = response.data as {
+        segments: AudioSegmentSummaryBackend[];
+        truncated?: boolean | string;
+      };
+      return {
+        segments: data.segments.map(convertAudioSegmentSummaryBackend),
+        truncated: data.truncated ?? false,
+      };
+    } catch (error: unknown) {
+      const { status, message } = handleBackendError(
+        error,
+        'fetching audio segment summaries'
+      );
+      throw new HttpError(status, message);
+    }
+  }
+
+  /** Fetch a single audio segment, with its annotations, by id. */
+  // Must stay after {feedId}/summaries, else this captures that path.
+  @Get('{feedId}/{audioSegmentId}')
+  @Security('google_id_token')
+  @Extension('x-google-backend', 'radio-transcription-api')
+  public async getAudioSegment(
+    @Path() feedId: string,
+    @Path() audioSegmentId: string
+  ): Promise<AudioSegment> {
+    try {
+      const client = await getServiceClient(AUDIO_SEGMENTS_API_URL);
+      const response = await client.request({
+        url: `${AUDIO_SEGMENTS_API_URL}/${audioSegmentId}`,
+        method: 'GET',
+      });
+
+      return convertAudioSegmentBackend(response.data as AudioSegmentBackend);
+    } catch (error: unknown) {
+      const { status, message } = handleBackendError(
+        error,
+        'fetching audio segment'
       );
       throw new HttpError(status, message);
     }
