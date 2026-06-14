@@ -7,8 +7,6 @@ import uuid
 from typing import TYPE_CHECKING, TypedDict
 
 import aiohttp
-from google.api_core import retry as api_retry
-from google.api_core import retry_async as api_retry_async
 from google.cloud.pubsub_v1.publisher.exceptions import (
     PublishToPausedOrderingKeyException,
 )
@@ -16,10 +14,16 @@ from opentelemetry import trace
 from opentelemetry.trace.propagation.tracecontext import (
     TraceContextTextMapPropagator,
 )
+from tenacity import (
+    RetryCallState,
+    retry,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from backend.pipeline.common import tracing_utils
 from backend.pipeline.common.constants import (
-    GCS_ASYNC_RETRY_TIMEOUT_SEC,
     GCS_DOWNLOAD_TIMEOUT_SEC,
     GCS_UPLOAD_TIMEOUT_SEC,
 )
@@ -167,8 +171,12 @@ async def upload_audio(
         },
     )
 
-    try:
+    @gcs_async_retry
+    async def _execute_upload() -> None:
         await storage.upload(bucket, object_name, audio_chunk, **upload_kwargs)
+
+    try:
+        await _execute_upload()
     except aiohttp.ClientResponseError as exc:
         # Catch 412 here rather than in the caller because
         # aiohttp.ClientResponseError is a subclass of ClientError, which
@@ -202,33 +210,36 @@ def parse_gcs_uri(gcs_uri: str) -> tuple[str, str]:
     return bucket, object_name
 
 
-def _async_gcs_predicate(exc: BaseException) -> bool:
+def _should_retry_gcs(exc: BaseException) -> bool:
     if isinstance(exc, aiohttp.ClientResponseError):
-        # Do not retry on missing objects (404) or authentication issues (403)
-        return exc.status not in (404, 403)
-    if isinstance(exc, (aiohttp.ClientError, asyncio.TimeoutError)):
-        return True
-    if isinstance(exc, Exception):
-        return bool(api_retry.if_transient_error(exc))
-    return False
+        # Do not retry on missing objects (404), authentication issues (403), or existing objects (412)
+        return exc.status not in (404, 403, 412)
+    return isinstance(exc, (aiohttp.ClientError, asyncio.TimeoutError))
 
 
-# Compiled module-level retry policy. AsyncRetry calculates its active deadline FSM state
-# freshly on every individual coroutine invocation, guaranteeing 100% thread-safety under high asyncio concurrency.
-GCS_ASYNC_RETRY = api_retry_async.AsyncRetry(
-    predicate=_async_gcs_predicate,
-    initial=1.0,
-    maximum=15.0,
-    multiplier=2.0,
-    timeout=GCS_ASYNC_RETRY_TIMEOUT_SEC,
+def _log_gcs_retry(retry_state: RetryCallState) -> None:
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    logger.warning(
+        "GCS operation failed (attempt %d/5): %s. Retrying...",
+        retry_state.attempt_number,
+        exc,
+    )
+
+
+gcs_async_retry = retry(
+    retry=retry_if_exception(_should_retry_gcs),
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=1, min=1, max=15),
+    before_sleep=_log_gcs_retry,
+    reraise=True,
 )
 
 
 async def download_audio(gcs_client: GcsClient, gcs_uri: str) -> bytes:
     """Download an audio file from GCS using the shared async client.
 
-    Configures highly resilient asynchronous exponential backoff retries via official Google
-    api_core policies to entirely absorb transient network drops and Colossus load-shedding (`429` / `503`).
+    Configures highly resilient asynchronous exponential backoff retries via Tenacity
+    policies to entirely absorb transient network drops and Colossus load-shedding (`429` / `503`).
     Missing 404 objects are short-circuited and translated to standard Python FileNotFoundError.
 
     Args:
@@ -245,10 +256,14 @@ async def download_audio(gcs_client: GcsClient, gcs_uri: str) -> bytes:
     storage = gcs_client.get_storage()
     bucket, object_name = parse_gcs_uri(gcs_uri)
 
-    try:
-        return await GCS_ASYNC_RETRY(storage.download)(
+    @gcs_async_retry
+    async def _execute_download() -> bytes:
+        return await storage.download(
             bucket, object_name, timeout=GCS_DOWNLOAD_TIMEOUT_SEC
         )
+
+    try:
+        return await _execute_download()
     except aiohttp.ClientResponseError as exc:
         if exc.status == 404:
             err_msg = f"GCS object not found: {gcs_uri}"
