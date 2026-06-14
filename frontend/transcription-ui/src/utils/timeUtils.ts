@@ -2,7 +2,7 @@ import RelativeTimeFormat from 'relative-time-format';
 import en from 'relative-time-format/locale/en';
 
 // Default span of the audio-timeline window; overridable per useAudioTimelineWindow call.
-export const DEFAULT_AUDIO_WINDOW_DURATION_MS = 30 * 60 * 1000;
+export const DEFAULT_AUDIO_WINDOW_DURATION_MS = 15 * 60 * 1000;
 
 // How far back the timeline overview (mini-map / heatmap) reaches from the live edge.
 export const TIMELINE_RANGE_DURATION_MS = 24 * 60 * 60 * 1000;

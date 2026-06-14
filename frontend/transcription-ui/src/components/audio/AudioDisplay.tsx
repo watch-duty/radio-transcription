@@ -19,6 +19,7 @@ import { formatClockTime } from '../../utils/timeUtils';
 import { CustomAlertIcon } from '../common/AlertIcon';
 import { TimelineMiniMap } from './TimelineMiniMap';
 import { type TranscriptTime } from './timelineMath';
+import { usePeaksDecodeQueue } from './usePeaksDecodeQueue';
 
 interface AudioDisplayProps {
   audioSegments: AudioSegment[];
@@ -48,6 +49,9 @@ interface TimelineClipProps {
     isAudioPlaying: boolean;
     isHighlighted: boolean;
     hasAlert: boolean;
+    // Precomputed by the decode queue; absent until a clip's audio is decoded.
+    peaks?: (Float32Array | number[])[];
+    duration?: number;
   };
   onClipClick: (segmentId: string) => void;
   isDarkTheme: boolean;
@@ -64,6 +68,10 @@ const TimelineClip = React.memo(
     currentTimeSeconds,
   }: TimelineClipProps) => {
     const wsRef = useRef<WaveSurfer | null>(null);
+    // Render from cached peaks only — never a url — so clips don't each fetch
+    // and decode their own audio (50+ at once never finish). The queue decodes
+    // once, off-screen and bounded; until then the clip is a cheap placeholder.
+    const renderWaveform = !!clip.peaks;
 
     // Update the cursor (color/width) without recreating the player.
     useEffect(() => {
@@ -138,32 +146,48 @@ const TimelineClip = React.memo(
             }}
           />
         )}
-        <WavesurferPlayer
-          url={clip.url}
-          waveColor={theme.palette.text.secondary}
-          progressColor={theme.palette.text.primary}
-          cursorColor="transparent"
-          cursorWidth={0}
-          barWidth={0.5}
-          barGap={0.5}
-          height={60}
-          interact={false}
-          onReady={(ws) => {
-            wsRef.current = ws;
-            ws.setOptions({
-              cursorColor: clip.isAudioPlaying
-                ? theme.palette.error.main
-                : 'transparent',
-              cursorWidth: clip.isAudioPlaying ? PLAYING_CURSOR_WIDTH_PX : 0,
-            });
-            if (clip.isAudioPlaying && currentTimeSeconds !== undefined) {
-              ws.setTime(currentTimeSeconds);
-            }
-          }}
-          onDestroy={() => {
-            wsRef.current = null;
-          }}
-        />
+        {renderWaveform ? (
+          <WavesurferPlayer
+            peaks={clip.peaks}
+            duration={clip.duration}
+            waveColor={theme.palette.text.secondary}
+            progressColor={theme.palette.text.primary}
+            cursorColor="transparent"
+            cursorWidth={0}
+            barWidth={0.5}
+            barGap={0.5}
+            height={60}
+            interact={false}
+            onReady={(ws) => {
+              wsRef.current = ws;
+              ws.setOptions({
+                cursorColor: clip.isAudioPlaying
+                  ? theme.palette.error.main
+                  : 'transparent',
+                cursorWidth: clip.isAudioPlaying ? PLAYING_CURSOR_WIDTH_PX : 0,
+              });
+              if (clip.isAudioPlaying && currentTimeSeconds !== undefined) {
+                ws.setTime(currentTimeSeconds);
+              }
+            }}
+            onDestroy={() => {
+              wsRef.current = null;
+            }}
+          />
+        ) : (
+          <Box
+            sx={{
+              position: 'absolute',
+              top: '50%',
+              left: 0,
+              right: 0,
+              height: '2px',
+              transform: 'translateY(-50%)',
+              bgcolor: 'text.secondary',
+              opacity: 0.35,
+            }}
+          />
+        )}
       </Box>
     );
   },
@@ -176,6 +200,8 @@ const TimelineClip = React.memo(
       prevProps.clip.isAudioPlaying === nextProps.clip.isAudioPlaying &&
       prevProps.clip.isHighlighted === nextProps.clip.isHighlighted &&
       prevProps.clip.hasAlert === nextProps.clip.hasAlert &&
+      prevProps.clip.peaks === nextProps.clip.peaks &&
+      prevProps.clip.duration === nextProps.clip.duration &&
       prevProps.isDarkTheme === nextProps.isDarkTheme &&
       prevProps.theme === nextProps.theme &&
       prevProps.currentTimeSeconds === nextProps.currentTimeSeconds
@@ -201,6 +227,8 @@ export function AudioDisplay({
 }: AudioDisplayProps) {
   const theme = useTheme();
   const isDarkTheme = theme.palette.mode === 'dark';
+
+  const { enqueueDecode, clearPending, getPeaks } = usePeaksDecodeQueue();
 
   const [localCurrentTimeSeconds, setLocalCurrentTimeSeconds] = useState(0);
 
@@ -277,6 +305,18 @@ export function AudioDisplay({
     windowDurationMs,
   ]);
 
+  // Decode peaks for the clips in view (bounded, off-screen). A new window drops
+  // the prior window's pending decodes so scrubbing past windows doesn't fetch
+  // their audio; in-flight decodes finish and cache. Keyed on the url set so a
+  // poll that doesn't change the window doesn't re-trigger.
+  const clipUrlsKey = clips.map((c) => c.url).join('|');
+  useEffect(() => {
+    const urls = clipUrlsKey.split('|').filter(Boolean);
+    if (urls.length === 0) return;
+    clearPending();
+    enqueueDecode(urls, true);
+  }, [clipUrlsKey, clearPending, enqueueDecode]);
+
   return (
     <Box
       sx={{ display: 'flex', alignItems: 'flex-start', width: '100%', mb: 1 }}
@@ -304,21 +344,28 @@ export function AudioDisplay({
             position: 'relative',
           }}
         >
-          {clips.map((clip) => (
-            <TimelineClip
-              key={clip.id}
-              clip={clip}
-              onClipClick={onClipClick}
-              isDarkTheme={isDarkTheme}
-              theme={theme}
-              currentTimeSeconds={
-                clip.isAudioPlaying
-                  ? (currentTimeSeconds ??
-                    (currentAudioRef ? localCurrentTimeSeconds : undefined))
-                  : undefined
-              }
-            />
-          ))}
+          {clips.map((clip) => {
+            const cached = getPeaks(clip.url);
+            return (
+              <TimelineClip
+                key={clip.id}
+                clip={{
+                  ...clip,
+                  peaks: cached?.peaks,
+                  duration: cached?.duration,
+                }}
+                onClipClick={onClipClick}
+                isDarkTheme={isDarkTheme}
+                theme={theme}
+                currentTimeSeconds={
+                  clip.isAudioPlaying
+                    ? (currentTimeSeconds ??
+                      (currentAudioRef ? localCurrentTimeSeconds : undefined))
+                    : undefined
+                }
+              />
+            );
+          })}
           {audioSegments.length === 0 && (
             <Box
               sx={{

@@ -5,14 +5,12 @@ import { listAudioSegments } from '../service/listAudioSegments';
 import { TIMELINE_RANGE_DURATION_MS } from '../utils/timeUtils';
 import type { AlertFilter } from './useAudioSegments';
 
-// Pulled in bulk for the timeline overview; the JSON is light next to audio, so
-// a few large pages cover 24h cheaply.
-const HEATMAP_PAGE_SIZE = 2000;
-// Backstop against an unexpectedly dense feed looping forever.
-const MAX_HEATMAP_PAGES = 30;
 // Pick this up via a long interval so the overview backfills with newly archived
 // segments; live-edge freshness is handled by unioning with the polling list.
 const SUMMARY_REFETCH_INTERVAL_MS = 5 * 60 * 1000;
+// High enough to return every segment in a 24h window in one response; the time
+// window, not this count, is the real bound.
+const SUMMARY_ROW_LIMIT = 100000;
 
 interface UseAudioTimelineSummaryOptions {
   token: string | null;
@@ -21,8 +19,10 @@ interface UseAudioTimelineSummaryOptions {
   isFeedsSuccess: boolean;
 }
 
-// Loads the most recent 24h of segments for the timeline overview, independent
-// of the transcript list's lazy pagination. Always anchored to the live edge.
+// Loads the last 24h of segments for the timeline overview in a single
+// window-scoped request (start = now − 24h, no end), independent of the
+// transcript list's lazy pagination and kicked off first so the mini-map can
+// fill before the clips do.
 export function useAudioTimelineSummary({
   token,
   searchedFeedId,
@@ -36,60 +36,18 @@ export function useAudioTimelineSummary({
   } = useQuery<AudioSegment[], Error>({
     queryKey: ['audioTimelineSummary', token, searchedFeedId, alertFilter],
     queryFn: async () => {
-      const segments: AudioSegment[] = [];
-      let nextToken: string | undefined = undefined;
-      let liveEdge: number | null = null;
-      // Temporary instrumentation for tuning HEATMAP_PAGE_SIZE; remove once tuned.
-      const loadStart = performance.now();
-
-      for (let page = 0; page < MAX_HEATMAP_PAGES; page++) {
-        const pageStart = performance.now();
-        const response = await listAudioSegments(
-          searchedFeedId ?? '',
-          token ?? '',
-          HEATMAP_PAGE_SIZE,
-          nextToken,
-          /*startTime=*/ undefined,
-          /*endTime=*/ undefined,
-          /*order=*/ 'desc',
-          alertFilter === 'alerts' ? true : undefined
-        );
-        const pageMs = Math.round(performance.now() - pageStart);
-
-        if (response.segments.length === 0) break;
-        segments.push(...response.segments);
-
-        // First (newest) page establishes the live edge we measure 24h back from.
-        liveEdge ??= new Date(response.segments[0].endTimestamp).getTime();
-        const oldestStart = Math.min(
-          ...response.segments.map((s) => new Date(s.startTimestamp).getTime())
-        );
-        const hoursCovered = (liveEdge - oldestStart) / (60 * 60 * 1000);
-        console.info(
-          `[heatmap] page ${page}: ${response.segments.length} segments in ${pageMs}ms ` +
-            `(${segments.length} total, ${hoursCovered.toFixed(1)}h covered)`
-        );
-
-        nextToken = response.nextToken;
-        if (
-          !nextToken ||
-          oldestStart <= liveEdge - TIMELINE_RANGE_DURATION_MS
-        ) {
-          break;
-        }
-
-        if (page === MAX_HEATMAP_PAGES - 1) {
-          console.warn(
-            `useAudioTimelineSummary hit the ${MAX_HEATMAP_PAGES}-page cap before covering 24h; overview may be truncated.`
-          );
-        }
-      }
-
-      console.info(
-        `[heatmap] done: ${segments.length} segments in ${Math.round(performance.now() - loadStart)}ms ` +
-          `@ ${HEATMAP_PAGE_SIZE}/page`
+      const startTime = Date.now() - TIMELINE_RANGE_DURATION_MS;
+      const response = await listAudioSegments(
+        searchedFeedId ?? '',
+        token ?? '',
+        SUMMARY_ROW_LIMIT,
+        /*nextToken=*/ undefined,
+        startTime,
+        /*endTime=*/ undefined,
+        /*order=*/ 'desc',
+        alertFilter === 'alerts' ? true : undefined
       );
-      return segments;
+      return response.segments;
     },
     enabled: !!token && !!searchedFeedId && isFeedsSuccess,
     refetchOnWindowFocus: false,

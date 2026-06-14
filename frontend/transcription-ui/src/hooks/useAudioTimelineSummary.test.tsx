@@ -15,6 +15,7 @@ const mockListAudioSegments = vi.mocked(listAudioSegments);
 
 const MIN = 60 * 1000;
 const HOUR = 60 * MIN;
+const DAY = 24 * HOUR;
 const LIVE = new Date('2026-04-20T12:00:00Z').getTime();
 
 const seg = (id: string, startMs: number, endMs: number): AudioSegment => ({
@@ -53,54 +54,31 @@ const render = () =>
 
 beforeEach(() => {
   mockListAudioSegments.mockReset();
+  vi.spyOn(Date, 'now').mockReturnValue(LIVE);
 });
-afterEach(cleanup);
+afterEach(() => {
+  vi.restoreAllMocks();
+  cleanup();
+});
 
 describe('useAudioTimelineSummary', () => {
-  it('keeps paging until 24h back from the live edge is covered', async () => {
-    mockListAudioSegments
-      .mockResolvedValueOnce({
-        segments: [seg('a', LIVE - 5 * MIN, LIVE)],
-        nextToken: 't1',
-      })
-      .mockResolvedValueOnce({
-        segments: [seg('b', LIVE - 13 * HOUR, LIVE - 12 * HOUR)],
-        nextToken: 't2',
-      })
-      .mockResolvedValueOnce({
-        segments: [seg('c', LIVE - 25 * HOUR, LIVE - 24 * HOUR)],
-        nextToken: 't3',
-      })
-      .mockResolvedValueOnce({
-        segments: [seg('d', LIVE - 30 * HOUR, LIVE - 29 * HOUR)],
-        nextToken: undefined,
-      });
-
-    const { result } = render();
-
-    await waitFor(() => expect(result.current.summarySegments).toHaveLength(3));
-    // Stops once a page reaches past the 24h cutoff; never fetches the 4th page.
-    expect(mockListAudioSegments).toHaveBeenCalledTimes(3);
-    expect(result.current.summarySegments.map((s) => s.id)).toEqual([
-      'a',
-      'b',
-      'c',
-    ]);
-  });
-
-  it('stops when the server runs out of pages', async () => {
+  it('fetches the whole 24h window in a single request', async () => {
     mockListAudioSegments.mockResolvedValueOnce({
-      segments: [seg('a', LIVE - 5 * MIN, LIVE)],
+      segments: [
+        seg('a', LIVE - 5 * MIN, LIVE),
+        seg('b', LIVE - 13 * HOUR, LIVE - 12 * HOUR),
+      ],
       nextToken: undefined,
     });
 
     const { result } = render();
 
-    await waitFor(() => expect(result.current.summarySegments).toHaveLength(1));
+    await waitFor(() => expect(result.current.summarySegments).toHaveLength(2));
     expect(mockListAudioSegments).toHaveBeenCalledTimes(1);
+    expect(result.current.summarySegments.map((s) => s.id)).toEqual(['a', 'b']);
   });
 
-  it('requests large desc pages and forwards the alerts filter', async () => {
+  it('requests start = now − 24h with a high row limit and desc order', async () => {
     mockListAudioSegments.mockResolvedValue({
       segments: [seg('a', LIVE - 5 * MIN, LIVE)],
       nextToken: undefined,
@@ -112,9 +90,12 @@ describe('useAudioTimelineSummary', () => {
     );
 
     await waitFor(() => expect(result.current.summarySegments).toHaveLength(1));
-    const [, , limit, , , , order, isAlert] =
+    const [, , limit, nextToken, startTime, endTime, order, isAlert] =
       mockListAudioSegments.mock.calls[0];
-    expect(limit).toBe(2000);
+    expect(limit).toBeGreaterThanOrEqual(100000);
+    expect(nextToken).toBeUndefined();
+    expect(startTime).toBe(LIVE - DAY);
+    expect(endTime).toBeUndefined();
     expect(order).toBe('desc');
     expect(isAlert).toBe(true);
   });

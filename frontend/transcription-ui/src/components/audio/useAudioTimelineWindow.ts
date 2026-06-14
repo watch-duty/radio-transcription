@@ -60,7 +60,6 @@ export function useAudioTimelineWindow({
   windowDurationMs = DEFAULT_AUDIO_WINDOW_DURATION_MS,
 }: UseAudioTimelineWindowParams): AudioTimelineWindow {
   const [windowEndTime, setWindowEndTime] = useState<number | null>(null);
-  const [isScrubbed, setIsScrubbed] = useState(false);
 
   // Previous-value trackers for the render-time follow/recenter transitions.
   const [prevFirstId, setPrevFirstId] = useState<string | null>(null);
@@ -73,52 +72,6 @@ export function useAudioTimelineWindow({
   const firstSegment = audioSegments[0];
   const firstId = firstSegment?.id ?? null;
   const firstEnd = firstSegment?.endTimestamp ?? null;
-
-  // Follow the live edge as new audio arrives, or as the head segment extends
-  // (e.g. an ongoing silence bundle keeps the same id but a later end), unless
-  // the user has scrubbed away.
-  if (firstId !== prevFirstId || firstEnd !== prevFirstEnd) {
-    const pinned = isPinnedToLiveEdge(
-      windowEndTime,
-      prevFirstEnd,
-      !prevFirstId
-    );
-    setPrevFirstId(firstId);
-    setPrevFirstEnd(firstEnd);
-    if (pinned) {
-      setWindowEndTime(firstEnd ? new Date(firstEnd).getTime() : null);
-    }
-    setPrevPlayingId(null); // re-check bounds below
-  }
-
-  // Recenter on the playing/highlighted segment when it leaves the window. While
-  // scrubbed, playback advancing must not yank the window — only an explicit
-  // highlight (clicking a clip/row) recenters, which also exits scrub mode.
-  if (
-    currentlyPlayingSegmentId !== prevPlayingId ||
-    highlightedSegmentId !== prevHighlightedId
-  ) {
-    const highlightChanged = highlightedSegmentId !== prevHighlightedId;
-    setPrevPlayingId(currentlyPlayingSegmentId);
-    setPrevHighlightedId(highlightedSegmentId);
-    if (highlightChanged && isScrubbed) setIsScrubbed(false);
-
-    const allowRecenter = !isScrubbed || highlightChanged;
-    const targetId = highlightedSegmentId || currentlyPlayingSegmentId;
-    if (allowRecenter && targetId) {
-      const target = audioSegments.find((t) => t.id === targetId);
-      if (target) {
-        const tStart = new Date(target.startTimestamp).getTime();
-        const tEnd = new Date(target.endTimestamp).getTime();
-        const newestEnd = firstEnd ? new Date(firstEnd).getTime() : 0;
-        const currentEnd = windowEndTime || newestEnd;
-        const currentStart = currentEnd - windowDurationMs;
-        if (tStart < currentStart || tEnd > currentEnd) {
-          setWindowEndTime(Math.min(tStart + windowDurationMs / 2, newestEnd));
-        }
-      }
-    }
-  }
 
   // Overview of the mini-map's range (a fixed 24h ending at the live edge):
   // per-segment timing + alert, plus the span bounds. maxEnd is the live edge —
@@ -153,13 +106,70 @@ export function useAudioTimelineWindow({
     };
   }, [audioSegments, windowDurationMs]);
 
+  // Derived, not stored: scrubbed iff the window's right edge sits meaningfully
+  // before the live edge. Deriving it keeps the chip in sync however the window
+  // moved (mini-map scrub, clicking an old clip, jump-to-live) — separate state
+  // drifted out of sync with where the window actually was.
+  const isScrubbed =
+    windowEndTime != null &&
+    maxEnd != null &&
+    windowEndTime < maxEnd - LIVE_EDGE_EPS_MS;
+
+  // Follow the live edge as new audio arrives, or as the head segment extends
+  // (e.g. an ongoing silence bundle keeps the same id but a later end), unless
+  // the user has scrubbed away.
+  if (firstId !== prevFirstId || firstEnd !== prevFirstEnd) {
+    const pinned = isPinnedToLiveEdge(
+      windowEndTime,
+      prevFirstEnd,
+      !prevFirstId
+    );
+    setPrevFirstId(firstId);
+    setPrevFirstEnd(firstEnd);
+    if (pinned) {
+      setWindowEndTime(firstEnd ? new Date(firstEnd).getTime() : null);
+    }
+    setPrevPlayingId(null); // re-check bounds below
+  }
+
+  // Recenter on the playing/highlighted segment when it leaves the window. While
+  // scrubbed, playback advancing must not yank the window — only an explicit
+  // highlight (clicking a clip/row) recenters. The recenter moves windowEndTime,
+  // so isScrubbed re-derives to match (e.g. clicking an old clip → scrubbed).
+  if (
+    currentlyPlayingSegmentId !== prevPlayingId ||
+    highlightedSegmentId !== prevHighlightedId
+  ) {
+    const highlightChanged = highlightedSegmentId !== prevHighlightedId;
+    setPrevPlayingId(currentlyPlayingSegmentId);
+    setPrevHighlightedId(highlightedSegmentId);
+
+    const allowRecenter = !isScrubbed || highlightChanged;
+    // Follow whichever signal moved: an explicit highlight, else playback.
+    const targetId = highlightChanged
+      ? highlightedSegmentId
+      : currentlyPlayingSegmentId;
+    if (allowRecenter && targetId) {
+      const target = audioSegments.find((t) => t.id === targetId);
+      if (target) {
+        const tStart = new Date(target.startTimestamp).getTime();
+        const tEnd = new Date(target.endTimestamp).getTime();
+        const newestEnd = firstEnd ? new Date(firstEnd).getTime() : 0;
+        const currentEnd = windowEndTime || newestEnd;
+        const currentStart = currentEnd - windowDurationMs;
+        if (tStart < currentStart || tEnd > currentEnd) {
+          setWindowEndTime(Math.min(tStart + windowDurationMs / 2, newestEnd));
+        }
+      }
+    }
+  }
+
   const scrubToCenter = useCallback(
     (centerMs: number): string | null => {
       if (minEnd == null || maxEnd == null) return null;
       const half = windowDurationMs / 2;
       const end = clamp(centerMs + half, minEnd, maxEnd);
       setWindowEndTime(end);
-      setIsScrubbed(end < maxEnd - LIVE_EDGE_EPS_MS);
       return representativeSegmentId(miniMapTimes, end - half);
     },
     [minEnd, maxEnd, windowDurationMs, miniMapTimes]
@@ -167,7 +177,6 @@ export function useAudioTimelineWindow({
 
   const jumpToLive = useCallback(() => {
     setWindowEndTime(null);
-    setIsScrubbed(false);
   }, []);
 
   return {

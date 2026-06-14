@@ -130,9 +130,11 @@ export function TranscriptView({
     };
   }, []);
 
-  // Play and pause audio from a URL.
+  // Play and pause audio from a URL. `shouldHighlight` is false for automatic
+  // playback (polling latest / auto-advance) so it doesn't read as an explicit
+  // navigation that would pull the timeline back to live while the user scrubs.
   const toggleAudio = useCallback(
-    (segmentId: string, audioUri: string) => {
+    (segmentId: string, audioUri: string, shouldHighlight = true) => {
       const newAudio = currentlyPlayingSegmentId !== segmentId;
 
       if (newAudio) {
@@ -142,7 +144,7 @@ export function TranscriptView({
           currentAudio.current = null;
         }
         setCurrentlyPlayingSegmentId(segmentId);
-        setHighlightedSegmentId(segmentId);
+        if (shouldHighlight) setHighlightedSegmentId(segmentId);
       }
 
       if (!currentAudio.current) {
@@ -245,6 +247,15 @@ export function TranscriptView({
     };
   }, []);
 
+  // Full last-24h overview for the heatmap, loaded independently of the list's
+  // lazy pagination. Kicked off before the list so the mini-map fills first.
+  const { summarySegments } = useAudioTimelineSummary({
+    token,
+    searchedFeedId,
+    alertFilter,
+    isFeedsSuccess,
+  });
+
   const {
     rawAudioSegments,
     loadOlderAudioSegments: fetchOlderAudioSegments,
@@ -274,15 +285,6 @@ export function TranscriptView({
       : null;
 
   const audioSegments = useConsolidatedAudioSegments(rawAudioSegments);
-
-  // Full last-24h overview for the heatmap, loaded independently of the list's
-  // lazy pagination.
-  const { summarySegments } = useAudioTimelineSummary({
-    token,
-    searchedFeedId,
-    alertFilter,
-    isFeedsSuccess,
-  });
 
   // The summary query doesn't poll, so union it with the polling list to keep the
   // live edge fresh while the summary backfills history. Newest-first, deduped.
@@ -345,7 +347,7 @@ export function TranscriptView({
           (s) => s.id === nextSegmentId
         );
         if (nextSegment && nextSegment.playbackAudioUri) {
-          toggleAudio(nextSegment.id, nextSegment.playbackAudioUri);
+          toggleAudio(nextSegment.id, nextSegment.playbackAudioUri, false);
           setPlaybackEndedForId(null);
           return;
         }
@@ -371,12 +373,16 @@ export function TranscriptView({
           const firstId = nextAudioSegment.bundledSegmentIds[0];
           const firstSegment = rawAudioSegments.find((s) => s.id === firstId);
           if (firstSegment && firstSegment.playbackAudioUri) {
-            toggleAudio(firstSegment.id, firstSegment.playbackAudioUri);
+            toggleAudio(firstSegment.id, firstSegment.playbackAudioUri, false);
             setPlaybackEndedForId(null);
             return;
           }
         }
-        toggleAudio(nextAudioSegment.id, nextAudioSegment.playbackAudioUri);
+        toggleAudio(
+          nextAudioSegment.id,
+          nextAudioSegment.playbackAudioUri,
+          false
+        );
       }
     }
 
@@ -479,7 +485,7 @@ export function TranscriptView({
           const audioToPlay =
             cachedAudioSegments[cachedAudioSegments.length - 1];
           if (audioToPlay.playbackAudioUri) {
-            toggleAudio(audioToPlay.id, audioToPlay.playbackAudioUri);
+            toggleAudio(audioToPlay.id, audioToPlay.playbackAudioUri, false);
           }
         }
       } catch (error) {
@@ -613,8 +619,26 @@ export function TranscriptView({
 
   const handleClipClick = (segmentId: string) => {
     followPlaybackRef.current = true;
-    scrollListToSegment(segmentId, 'smooth');
     setHighlightedSegmentId(segmentId);
+
+    const inList = audioSegmentsRef.current.some(
+      (t) => t.id === segmentId || t.bundledSegmentIds?.includes(segmentId)
+    );
+    if (inList) {
+      scrollListToSegment(segmentId, 'smooth');
+      return;
+    }
+
+    // The clip is from the 24h overview, older than the lazily-loaded list.
+    // Navigate the list to its time so it loads and the deep-link effect scrolls
+    // to it (the timeline already shows it via the summary union).
+    const clip = timelineSegments.find((s) => s.id === segmentId);
+    if (!clip) return;
+    setSearchParams((prev) => {
+      prev.set('segmentId', segmentId);
+      prev.set('timestamp', new Date(clip.startTimestamp).getTime().toString());
+      return prev;
+    });
   };
 
   const handleScrubToCenter = (centerMs: number) => {
@@ -632,7 +656,11 @@ export function TranscriptView({
         audioSegments[0]?.id;
     if (!targetId) return;
 
-    const specificSegment = rawAudioSegments.find((s) => s.id === targetId);
+    // The timeline can highlight clips from the 24h overview that the lazy list
+    // hasn't loaded, so fall back to the union before the consolidated list.
+    const specificSegment =
+      rawAudioSegments.find((s) => s.id === targetId) ??
+      timelineSegments.find((s) => s.id === targetId);
     if (specificSegment && specificSegment.playbackAudioUri) {
       toggleAudio(specificSegment.id, specificSegment.playbackAudioUri);
       return;
@@ -770,7 +798,7 @@ export function TranscriptView({
       </Box>
 
       <AudioDisplay
-        audioSegments={rawAudioSegments}
+        audioSegments={timelineSegments}
         currentlyPlayingSegmentId={currentlyPlayingSegmentId}
         highlightedSegmentId={highlightedSegmentId}
         onClipClick={handleClipClick}
