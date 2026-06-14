@@ -4,6 +4,7 @@ import asyncio
 import datetime
 import logging
 import uuid
+from http import HTTPStatus
 from typing import TYPE_CHECKING, TypedDict
 
 import aiohttp
@@ -25,6 +26,9 @@ from tenacity import (
 from backend.pipeline.common import tracing_utils
 from backend.pipeline.common.constants import (
     GCS_DOWNLOAD_TIMEOUT_SEC,
+    GCS_RETRY_MAX_ATTEMPTS,
+    GCS_RETRY_MAX_WAIT_SEC,
+    GCS_RETRY_MIN_WAIT_SEC,
     GCS_UPLOAD_TIMEOUT_SEC,
 )
 from backend.pipeline.schema_types.continuous_audio_pb2 import ContinuousAudio
@@ -210,26 +214,38 @@ def parse_gcs_uri(gcs_uri: str) -> tuple[str, str]:
     return bucket, object_name
 
 
+_NON_RETRYABLE_HTTP_STATUSES = {
+    HTTPStatus.NOT_FOUND,  # 404
+    HTTPStatus.FORBIDDEN,  # 403
+    HTTPStatus.PRECONDITION_FAILED,  # 412
+}
+
+
 def _should_retry_gcs(exc: BaseException) -> bool:
     if isinstance(exc, aiohttp.ClientResponseError):
-        # Do not retry on missing objects (404), authentication issues (403), or existing objects (412)
-        return exc.status not in (404, 403, 412)
+        # Do not retry on missing objects, authentication issues, or existing objects
+        return exc.status not in _NON_RETRYABLE_HTTP_STATUSES
     return isinstance(exc, (aiohttp.ClientError, asyncio.TimeoutError))
 
 
 def _log_gcs_retry(retry_state: RetryCallState) -> None:
     exc = retry_state.outcome.exception() if retry_state.outcome else None
     logger.warning(
-        "GCS operation failed (attempt %d/5): %s. Retrying...",
+        "GCS operation failed (attempt %d/%d): %s. Retrying...",
         retry_state.attempt_number,
+        GCS_RETRY_MAX_ATTEMPTS,
         exc,
     )
 
 
 gcs_async_retry = retry(
     retry=retry_if_exception(_should_retry_gcs),
-    stop=stop_after_attempt(5),
-    wait=wait_exponential(multiplier=1, min=1, max=15),
+    stop=stop_after_attempt(GCS_RETRY_MAX_ATTEMPTS),
+    wait=wait_exponential(
+        multiplier=GCS_RETRY_MIN_WAIT_SEC,
+        min=GCS_RETRY_MIN_WAIT_SEC,
+        max=GCS_RETRY_MAX_WAIT_SEC,
+    ),
     before_sleep=_log_gcs_retry,
     reraise=True,
 )
