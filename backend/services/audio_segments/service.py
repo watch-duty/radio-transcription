@@ -59,7 +59,7 @@ class AudioSegmentService:
     async def list_audio_segment_summaries(
         self,
         start_time: datetime.datetime,
-        end_time: datetime.datetime,
+        end_time: datetime.datetime | None = None,
         feed_ids: list[str] | None = None,
         limit: int = 100,
         next_token: str | None = None,

@@ -116,10 +116,10 @@ class TestAudioSegmentsAPI(unittest.TestCase):
             is_alert=True,
         )
 
-    def test_list_audio_segment_summaries_defaults_end_time_to_now(
+    def test_list_audio_segment_summaries_omitted_end_time_is_open_ended(
         self,
     ) -> None:
-        """end_time defaults to 'now' server-side when omitted."""
+        """An omitted end_time is forwarded as None (no upper bound)."""
         summary = AudioSegmentSummary(
             id=_SEGMENT_ID,
             feed_id=_FEED_ID,
@@ -134,7 +134,6 @@ class TestAudioSegmentsAPI(unittest.TestCase):
             ListAudioSegmentSummariesResponse(segments=[summary])
         )
 
-        before = datetime.datetime.now(datetime.UTC)
         response = self.client.get(
             "/v1/audio_segment_summaries",
             params={
@@ -142,7 +141,6 @@ class TestAudioSegmentsAPI(unittest.TestCase):
                 "start_time": "2026-01-01T00:00:00Z",
             },
         )
-        after = datetime.datetime.now(datetime.UTC)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data = response.json()
@@ -157,7 +155,7 @@ class TestAudioSegmentsAPI(unittest.TestCase):
             datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
         )
         self.assertIsNone(kwargs["is_alert"])
-        self.assertTrue(before <= kwargs["end_time"] <= after)
+        self.assertIsNone(kwargs["end_time"])
 
     def test_list_audio_segment_summaries_with_filters(self) -> None:
         """Explicit window and is_alert are forwarded as given."""

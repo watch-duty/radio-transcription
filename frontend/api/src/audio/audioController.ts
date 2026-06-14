@@ -130,7 +130,7 @@ export class ListAudioSegmentsQueryParams {
 
 export class ListAudioSegmentSummariesQueryParams {
   startTime!: string;
-  /** ISO-8601; defaults to "now" server-side when omitted. */
+  /** ISO-8601; open-ended (no upper bound) when omitted. */
   endTime?: string;
   /**
    * @isInt

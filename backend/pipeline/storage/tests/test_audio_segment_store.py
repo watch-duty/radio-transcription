@@ -317,6 +317,24 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             101,
         )
 
+    async def test_list_audio_segment_summaries_open_ended(self) -> None:
+        """An omitted end_time is passed as None (no upper bound)."""
+        self.pool.fetch.return_value = [_SUMMARY_ROW]
+        start = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
+
+        await self.store.list_audio_segment_summaries(start_time=start)
+
+        self.pool.fetch.assert_called_once_with(
+            audio_segment_queries.LIST_AUDIO_SEGMENT_SUMMARIES_IN_WINDOW_SQL,
+            None,
+            None,
+            None,
+            start,
+            None,
+            None,
+            101,
+        )
+
     async def test_list_audio_segment_summaries_resume(self) -> None:
         self.pool.fetch.return_value = [_SUMMARY_ROW]
         start = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)

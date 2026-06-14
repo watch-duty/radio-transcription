@@ -105,7 +105,7 @@ LEFT JOIN LATERAL (
 WHERE ($1::uuid[] IS NULL OR s.feed_id = ANY($1))
   AND ($2::timestamptz IS NULL OR s.end_timestamp < $2 OR (s.end_timestamp = $2 AND s.id < $3))
   AND s.end_timestamp >= $4
-  AND s.end_timestamp <= $5
+  AND ($5::timestamptz IS NULL OR s.end_timestamp <= $5)
   AND ($6::boolean IS NULL OR COALESCE(a.is_alert, False) = $6::boolean)
 ORDER BY s.end_timestamp DESC, s.id DESC
 LIMIT $7

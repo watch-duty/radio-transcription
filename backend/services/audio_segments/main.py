@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import datetime
+import datetime  # noqa: TC003
 import logging
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Annotated
@@ -107,11 +107,9 @@ async def list_audio_segment_summaries(
     """List lightweight segment summaries in a time window (newest first).
 
     Paginated like /v1/audio_segments: a non-null next_token in the response
-    resumes the next page. end_time defaults to now when omitted.
+    resumes the next page. Omit end_time for an open-ended upper bound.
     """
     service: AudioSegmentService = request.app.state.audio_segment_service
-    if end_time is None:
-        end_time = datetime.datetime.now(datetime.UTC)
     try:
         return await service.list_audio_segment_summaries(
             start_time=start_time,

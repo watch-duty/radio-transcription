@@ -217,7 +217,7 @@ class AudioSegmentStore:
     async def list_audio_segment_summaries(
         self,
         start_time: datetime.datetime,
-        end_time: datetime.datetime,
+        end_time: datetime.datetime | None = None,
         feed_ids: list[str] | None = None,
         limit: int = 100,
         next_token: str | None = None,
@@ -226,16 +226,17 @@ class AudioSegmentStore:
     ) -> AudioSegmentSummaryWindow:
         """Fetch lightweight summaries in a window.
 
+        A None end_time leaves the window open-ended (no upper bound).
         Paginated like list_audio_segments: a non-null next_token resumes
         from the last returned row.
         """
         # Normalize naive inputs to UTC; mixing aware/naive raises TypeError.
         if start_time.tzinfo is None:
             start_time = start_time.replace(tzinfo=datetime.UTC)
-        if end_time.tzinfo is None:
+        if end_time is not None and end_time.tzinfo is None:
             end_time = end_time.replace(tzinfo=datetime.UTC)
 
-        if end_time < start_time:
+        if end_time is not None and end_time < start_time:
             msg = "end_time must not be before start_time."
             raise ValueError(msg)
 

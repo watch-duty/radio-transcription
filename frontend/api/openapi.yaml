@@ -580,7 +580,7 @@ components:
           type: string
         endTime:
           type: string
-          description: ISO-8601; defaults to "now" server-side when omitted.
+          description: ISO-8601; open-ended (no upper bound) when omitted.
         limit:
           type: integer
           format: int32
@@ -1819,7 +1819,7 @@ paths:
           required: true
           schema:
             type: string
-        - description: ISO-8601; defaults to "now" server-side when omitted.
+        - description: ISO-8601; open-ended (no upper bound) when omitted.
           in: query
           name: endTime
           required: false
