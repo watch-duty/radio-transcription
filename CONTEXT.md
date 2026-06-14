@@ -47,9 +47,18 @@ editable model package install.
 
 ### Canonical Manifest
 
-The row-per-audio-segment JSONL contract used before provider-specific model
-input conversion. Rows include fields such as `audio_filepath`, `text`,
-`offset`, and `duration`.
+The unified strict train/eval input contract used before provider-specific
+model input conversion. Each row is row-per-audio-segment JSONL with required
+`audio_filepath`, `text`, `offset`, `duration`, `example_id`, and `segment_id`
+fields. Strict `audio_filepath` values are model-ready `gs://...flac` clip
+URIs, and `(example_id, segment_id)` is the logical row identity, unique within
+one manifest.
+
+Optional shallow metadata may include `split`, `lang`, `dataset`,
+`source_audio`, and `audio_processing`. Strict validation through
+`validate_canonical_manifest(...)` ignores unknown row fields, unknown metadata
+keys, and prediction-enriched fields such as `pred_text_*`. See
+`model/data/manifests/README.md` for the detailed contract.
 
 ### Train, Validation, And Eval Splits
 
@@ -91,6 +100,15 @@ tune` can resume polling the same paid job after a local process exit.
 Evaluation outputs that let maintainers inspect or recalculate model quality,
 including local `wer_summary.{json,md}`, ledger rows, and GCS paths to raw
 Vertex batch inference results.
+
+### Normalized Inference Manifest
+
+A scorer-ready eval artifact that preserves canonical manifest rows and adds
+model prediction fields. It requires reference transcription text on every row;
+a single row owns a single inference input; prediction records must belong to
+that manifest's rows. A `pred_text_*` field is present only when a prediction
+record existed for that row, and an empty string value means the prediction
+record existed and contained empty text.
 
 ## Ingestion Context
 
@@ -137,6 +155,15 @@ episodes drive quarantine.
 
 The current canonical abnormal-condition label for a feed. It says whether the
 likely owner is the source/provider or the ingestion system.
+
+### Quarantine Reason
+
+The detailed diagnostic message persisted when a feed failure episode
+crosses the quarantine threshold. It describes that threshold-crossing episode
+for debugging; it is not the lifecycle owner label and does not summarize the
+full failure budget history. It is not a stable machine-readable code and
+should not drive control flow. Ingestion keeps the full useful diagnostic in
+memory; storage caps it only at the database persistence boundary.
 
 ### Quarantine
 

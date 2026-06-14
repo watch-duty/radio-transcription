@@ -6,7 +6,6 @@ import dataclasses
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
-from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.storage import feed_store
 
 if TYPE_CHECKING:
@@ -27,15 +26,11 @@ class HTTPStatusPolicy:
     exact: Mapping[int, feed_store.FeedStatusReason | None] = dataclasses.field(
         default_factory=dict
     )
-    default_4xx: feed_store.FeedStatusReason | None = (
-        feed_store.FeedStatusReason.SOURCE_UNREACHABLE
-    )
+    default_4xx: feed_store.FeedStatusReason | None = None
     default_5xx: feed_store.FeedStatusReason | None = (
         feed_store.FeedStatusReason.SOURCE_UNREACHABLE
     )
-    default_other_failure: feed_store.FeedStatusReason | None = (
-        feed_store.FeedStatusReason.SOURCE_UNREACHABLE
-    )
+    default_other_failure: feed_store.FeedStatusReason | None = None
 
 
 DEFAULT_HTTP_STATUS_POLICY = HTTPStatusPolicy(
@@ -43,24 +38,30 @@ DEFAULT_HTTP_STATUS_POLICY = HTTPStatusPolicy(
         {
             401: feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
             403: feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+            408: feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
             429: feed_store.FeedStatusReason.SOURCE_RATE_LIMITED,
         }
     ),
 )
 
-# Default terminal HTTP policy for source-owned endpoints. Auth and rate-limit
-# statuses have stable cross-source meaning. Other terminal 4xx/5xx statuses
-# default to source_unreachable through HTTPStatusPolicy family defaults unless
-# a collector narrows the endpoint semantics locally.
+_RETRYABLE_HTTP_STATUSES = frozenset({408, 429})
+
+# Default terminal HTTP policy for evidence with stable cross-collector meaning.
+# Ambiguous 4xx and nonstandard statuses intentionally return None so endpoint
+# code must choose the item/feed semantics locally.
+
+
+def is_retryable_http_status(status: int) -> bool:
+    """Return whether a terminal HTTP status should be retried first."""
+    return status in _RETRYABLE_HTTP_STATUSES or 500 <= status <= 599
 
 
 def classify_http_status(
     status: int,
     *,
-    reason_prefix: str,
     policy: HTTPStatusPolicy = DEFAULT_HTTP_STATUS_POLICY,
-) -> failure_classification.FailureClassification | None:
-    """Classify a terminal HTTP status using an explicit source policy."""
+) -> feed_store.FeedStatusReason | None:
+    """Classify terminal HTTP status evidence using an explicit source policy."""
     if 100 <= status < 400:
         return None
 
@@ -73,10 +74,4 @@ def classify_http_status(
     else:
         status_reason = policy.default_other_failure
 
-    if status_reason is None:
-        return None
-
-    return failure_classification.FailureClassification(
-        status_reason,
-        f"{reason_prefix}_{status}",
-    )
+    return status_reason

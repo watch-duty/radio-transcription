@@ -1,9 +1,10 @@
-"""Shared collector failure classification primitives.
+"""Shared collector failure information primitives.
 
 The helper functions here encode policy that is easier to miss from an
-individual collector: feed-level classification should be bounded,
-source-aware, and promoted only at a source-specific observation boundary.
-See README.md in this directory for the operator-facing rationale.
+individual collector: feed-level ownership should be bounded, source-aware,
+and promoted only at a source-specific observation boundary. Quarantine
+reasons remain diagnostic text. See README.md in this directory for the
+operator-facing rationale.
 """
 
 from __future__ import annotations
@@ -18,8 +19,8 @@ MISSING_SOURCE_FEED_ID_REASON = "missing_source_feed_id"
 
 
 @dataclasses.dataclass(frozen=True)
-class FailureClassification:
-    """Neutral classified evidence before item or feed scope is applied."""
+class FailureInfo:
+    """Feed status plus quarantine-reason text before scope is applied."""
 
     status_reason: FeedStatusReason
     reason: str
@@ -37,17 +38,6 @@ class ItemFailure:
 
     status_reason: FeedStatusReason
     reason: str
-
-    @classmethod
-    def from_classification(
-        cls,
-        classification: FailureClassification,
-    ) -> ItemFailure:
-        """Apply item scope to neutral classified evidence."""
-        return cls(
-            classification.status_reason,
-            classification.reason,
-        )
 
 
 @dataclasses.dataclass
@@ -68,7 +58,7 @@ class ItemBatchOutcome:
         self._attempted_count += 1
 
     def record_failure(self, failure: ItemFailure) -> None:
-        """Record a classified failure for an attempted source item."""
+        """Record a failed attempted source item with status/quarantine text."""
         self._failures.append(failure)
 
     def record_chunk_produced(self) -> None:
