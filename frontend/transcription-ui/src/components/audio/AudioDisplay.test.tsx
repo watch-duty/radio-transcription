@@ -214,21 +214,21 @@ describe('AudioDisplay', () => {
     expect(screen.getByLabelText('pause')).toBeTruthy();
   });
 
-  it('seeks the playing clip cursor when currentTimeSeconds is provided', () => {
-    // The cursor lives on the waveform, which only renders once peaks are cached.
+  it('positions the playing cursor at currentTimeSeconds within the clip', () => {
+    // Primed peaks give the clip a 1s duration, so 0.5s is halfway.
     __primePeaksCacheForTest(getAudioUrl('1.m4a'));
     renderDisplay({
       audioSegments: [seg('1', '09:00')],
       currentlyPlayingSegmentId: '1',
       isAudioPlaying: true,
-      currentTimeSeconds: 3.5,
+      currentTimeSeconds: 0.5,
     });
-    expect(mockSetTime).toHaveBeenCalledWith(3.5);
+    expect(screen.getByTestId('playing-cursor').style.left).toBe('50%');
   });
 
-  it('polls currentAudioRef to seek the playing clip cursor', async () => {
+  it('polls currentAudioRef to position the playing cursor', async () => {
     __primePeaksCacheForTest(getAudioUrl('1.m4a'));
-    const mockHowl = { seek: vi.fn().mockReturnValue(2.5) };
+    const mockHowl = { seek: vi.fn().mockReturnValue(0.5) };
     renderDisplay({
       audioSegments: [seg('1', '09:00')],
       currentlyPlayingSegmentId: '1',
@@ -238,7 +238,7 @@ describe('AudioDisplay', () => {
 
     await waitFor(() => {
       expect(mockHowl.seek).toHaveBeenCalled();
-      expect(mockSetTime).toHaveBeenCalledWith(2.5);
+      expect(screen.getByTestId('playing-cursor').style.left).toBe('50%');
     });
   });
 });

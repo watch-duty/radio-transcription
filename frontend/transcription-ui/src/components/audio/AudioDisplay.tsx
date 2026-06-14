@@ -1,7 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 import type { Howl } from 'howler';
-import type WaveSurfer from 'wavesurfer.js';
 
 import PauseIcon from '@mui/icons-material/PauseCircleFilledOutlined';
 import PlayArrowIcon from '@mui/icons-material/PlayCircleFilledOutlined';
@@ -38,18 +37,7 @@ interface AudioDisplayProps {
   onScrubToCenter: (centerMs: number) => void;
 }
 
-const PLAYING_CURSOR_WIDTH_PX = 1;
-
-function applyPlayingCursor(
-  ws: WaveSurfer,
-  isPlaying: boolean,
-  playingColor: string
-) {
-  ws.setOptions({
-    cursorColor: isPlaying ? playingColor : 'transparent',
-    cursorWidth: isPlaying ? PLAYING_CURSOR_WIDTH_PX : 0,
-  });
-}
+const PLAYING_CURSOR_WIDTH_PX = 2;
 
 interface TimelineClipProps {
   clip: {
@@ -78,34 +66,16 @@ const TimelineClip = React.memo(
     theme,
     currentTimeSeconds,
   }: TimelineClipProps) => {
-    const wsRef = useRef<WaveSurfer | null>(null);
     // Render from cached peaks, never a url: 50+ clips each fetching+decoding
     // their own audio never finishes. The queue decodes once; until then, a
     // placeholder.
     const renderWaveform = !!clip.peaks;
 
-    // Reflect play state on the cursor without recreating the player.
-    useEffect(() => {
-      if (wsRef.current) {
-        applyPlayingCursor(
-          wsRef.current,
-          clip.isAudioPlaying,
-          theme.palette.error.main
-        );
-      }
-    }, [clip.isAudioPlaying, theme.palette.error.main]);
-
-    useEffect(() => {
-      if (
-        clip.isAudioPlaying &&
-        wsRef.current &&
-        currentTimeSeconds !== undefined
-      ) {
-        wsRef.current.setTime(currentTimeSeconds);
-      } else if (!clip.isAudioPlaying && wsRef.current) {
-        wsRef.current.setTime(0);
-      }
-    }, [clip.isAudioPlaying, currentTimeSeconds]);
+    // Playback position within the clip, for the cursor overlay.
+    const cursorLeftPct =
+      clip.isAudioPlaying && currentTimeSeconds !== undefined && clip.duration
+        ? Math.min(100, Math.max(0, (currentTimeSeconds / clip.duration) * 100))
+        : null;
 
     return (
       <Box
@@ -132,12 +102,6 @@ const TimelineClip = React.memo(
                   ? 'rgba(255, 255, 255, 0.03)'
                   : 'rgba(0, 0, 0, 0.03)',
           },
-          /* Wavesurfer cursor subpixel anti-aliasing / shimmering optimizations */
-          '& div::part(cursor)': {
-            willChange: 'left',
-            transform: 'translateZ(0)',
-            backfaceVisibility: 'hidden',
-          },
         }}
       >
         {clip.hasAlert && (
@@ -162,26 +126,11 @@ const TimelineClip = React.memo(
             duration={clip.duration}
             waveColor={theme.palette.text.secondary}
             progressColor={theme.palette.text.primary}
-            cursorColor="transparent"
             cursorWidth={0}
             barWidth={0.5}
             barGap={0.5}
             height={60}
             interact={false}
-            onReady={(ws) => {
-              wsRef.current = ws;
-              applyPlayingCursor(
-                ws,
-                clip.isAudioPlaying,
-                theme.palette.error.main
-              );
-              if (clip.isAudioPlaying && currentTimeSeconds !== undefined) {
-                ws.setTime(currentTimeSeconds);
-              }
-            }}
-            onDestroy={() => {
-              wsRef.current = null;
-            }}
           />
         ) : (
           <Box
@@ -194,6 +143,21 @@ const TimelineClip = React.memo(
               transform: 'translateY(-50%)',
               bgcolor: 'text.secondary',
               opacity: 0.35,
+            }}
+          />
+        )}
+        {cursorLeftPct !== null && (
+          <Box
+            data-testid="playing-cursor"
+            // Inline style: the position updates every animation frame.
+            style={{ left: `${cursorLeftPct}%` }}
+            sx={{
+              position: 'absolute',
+              top: 0,
+              bottom: 0,
+              width: `${PLAYING_CURSOR_WIDTH_PX}px`,
+              bgcolor: 'error.main',
+              pointerEvents: 'none',
             }}
           />
         )}
