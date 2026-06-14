@@ -130,14 +130,13 @@ export class ListAudioSegmentsQueryParams {
 
 export class ListAudioSegmentSummariesQueryParams {
   startTime!: string;
-  /** ISO-8601; open-ended (no upper bound) when omitted. */
+  /** Open-ended upper bound when omitted. */
   endTime?: string;
   /**
    * @isInt
    */
   limit: number = 100;
   isAlert?: boolean;
-  /** Resume cursor from a prior page's nextToken. */
   nextToken?: string;
 }
 
@@ -191,7 +190,7 @@ export class AudioController extends Controller {
     }
   }
 
-  /** List audio segments without annotations, across a time window. */
+  /** List audio segments without annotations, in a time window. */
   @Get('{feedId}/summaries')
   @Security('google_id_token')
   @Extension('x-google-backend', 'radio-transcription-api')

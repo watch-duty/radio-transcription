@@ -384,14 +384,9 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(cursor_uid, _SEGMENT_ID)
 
     def test_summaries_keyset_order_and_resume_stay_coupled(self) -> None:
-        """Guards keyset determinism across same-timestamp ties.
-
-        end_timestamp is not unique, so the sort needs the unique id as a
-        tiebreaker and the resume predicate must skip strictly past the
-        cursor's (end_timestamp, id) in that same direction. If the ORDER BY
-        and the predicate ever drift apart, tied rows can straddle a page
-        boundary and be dropped or duplicated. The cursor packs those same
-        two columns (asserted in the overflow test above).
+        """Guards keyset determinism: the ORDER BY tiebreaker and the resume
+        predicate must stay coupled, or same-timestamp rows can straddle a
+        page boundary and be dropped or duplicated.
         """
         sql = audio_segment_queries.LIST_AUDIO_SEGMENT_SUMMARIES_IN_WINDOW_SQL
         # Total order: timestamp, then unique id tiebreaker, both DESC.

@@ -66,7 +66,7 @@ class AudioSegmentService:
         *,
         is_alert: bool | None = None,
     ) -> ListAudioSegmentSummariesResponse:
-        """List lightweight segment summaries in a time window."""
+        """Lists audio segments without annotations, in a time window."""
         result = await self._store.list_audio_segment_summaries(
             start_time=start_time,
             end_time=end_time,

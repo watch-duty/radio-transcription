@@ -84,10 +84,8 @@ ORDER BY s.end_timestamp ASC, s.id ASC
 LIMIT $7
 """
 
-# Filters on end_timestamp; with feed_ids this rides
-# idx_audio_segments_feed_pagination. Cursor ($2,$3) resumes the next page.
-# is_alert uses a LATERAL aggregate scoped to each in-window segment via the
-# annotations PK, not a full-table GROUP BY.
+# is_alert uses a LATERAL aggregate (annotations PK), not a full-table
+# GROUP BY; the end_timestamp window rides idx_audio_segments_feed_pagination.
 LIST_AUDIO_SEGMENT_SUMMARIES_IN_WINDOW_SQL = """
 SELECT
     s.id,

@@ -126,7 +126,7 @@ class ListAudioSegmentsResponse(BaseModel):
 
 
 class AudioSegmentSummary(BaseModel):
-    """Lightweight audio segment for the timeline (no annotations/text/URIs)."""
+    """Model for an audio segment without its annotations."""
 
     id: str
     feed_id: str
@@ -137,7 +137,7 @@ class AudioSegmentSummary(BaseModel):
 
 
 class ListAudioSegmentSummariesResponse(BaseModel):
-    """Response model for a windowed list of audio segment summaries."""
+    """Response model for listing audio segment summaries."""
 
     segments: list[AudioSegmentSummary]
     next_token: str | None = None
