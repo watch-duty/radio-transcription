@@ -2,26 +2,22 @@
 
 from __future__ import annotations
 
-import json
 import logging
-import tempfile
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from common.gcs_utils import (
-    download_blob_to_file,
+    download_json_text,
     download_jsonl_manifest,
-    parse_gcs_uri,
-    upload_file_to_blob,
+    gcs_uri_exists,
 )
+from common.gemini.batch import BatchPredictionMap, run_batch_audio_inference
 from common.gemini.prompts import GEMINI_TRANSCRIBE_KEYWORDS
-from common.gemini.vertex import (
-    build_request,
-    parse_batch_output,
-    submit_batch_inference,
+from common.gemini.vertex import submit_batch_inference
+from common.inference_manifest import (
+    model_family_slug_from_model_id,
+    upload_inference_manifest,
 )
-from common.manifest import rows_from_manifest
 from common.scoring import (
     bootstrap_paired,
     build_normalizer,
@@ -35,14 +31,13 @@ from google.cloud import storage
 
 from gemini_sft.artifacts import (
     DEFAULT_RESULTS_DIR,
-    download_json_text,
-    gcs_uri_exists,
+    canonical_rows_from_entries,
     write_and_upload_config,
 )
 from gemini_sft.config import (
     RunConfig,
     RunConfigError,
-    load_run_config,
+    load_eval_run_config,
     require_config_int,
     require_config_str,
 )
@@ -58,7 +53,7 @@ RESULTS_DIR = DEFAULT_RESULTS_DIR
 def evaluate(args: argparse.Namespace) -> int:
     """CLI handler for ``gemini-sft eval``."""
     try:
-        run_cfg = load_run_config(args.config)
+        run_cfg = load_eval_run_config(args.config)
         storage_client = storage.Client(project=run_cfg.gcp_project)
         if not gcs_uri_exists(storage_client, run_cfg.paths.config_uri):
             logger.error(
@@ -94,6 +89,10 @@ def evaluate_run(
     location = require_config_str(config, "location")
     run_gcs_prefix = require_config_str(config, "run_gcs_prefix")
     dataset = require_config_str(config, "dataset")
+    inference_dataset_slug = require_config_str(
+        config, "inference_dataset_slug"
+    )
+    gcs_bucket = require_config_str(config, "gcs_bucket")
     epoch_count = require_config_int(config, "epoch_count")
     tuned_endpoint = config.get("endpoint")
     base_only = bool(getattr(args, "base_only", False))
@@ -107,10 +106,12 @@ def evaluate_run(
         base_only = True
 
     eval_entries = download_jsonl_manifest(storage_client, eval_manifest_uri)
-    eval_rows = rows_from_manifest(eval_entries)
-    if not eval_rows:
-        logger.error("Eval manifest has no parsed rows: %s", eval_manifest_uri)
-        return 1
+    source_rows, eval_rows = canonical_rows_from_entries(
+        eval_entries,
+        split="eval",
+        source=eval_manifest_uri,
+    )
+    model_family_slug = model_family_slug_from_model_id(base_model)
 
     base_preds = batch_infer(
         storage_client=storage_client,
@@ -144,6 +145,16 @@ def evaluate_run(
     # Store raw batch output locations alongside metrics so future reviewers can
     # recalculate WER from Vertex responses without rerunning inference.
     metrics["base_batch_output_uri"] = base_preds.output_uri
+    metrics["base_inference_manifest_uri"] = upload_inference_manifest(
+        storage_client,
+        bucket_name=gcs_bucket,
+        inference_dataset_slug=inference_dataset_slug,
+        model_family_slug=model_family_slug,
+        run_id=run_cfg.round_id,
+        artifact_label="base",
+        source_rows=source_rows,
+        predictions_by_audio_uri=base_preds,
+    )
 
     if not base_only and tuned_endpoint:
         tuned_preds = batch_infer(
@@ -166,6 +177,16 @@ def evaluate_run(
             metrics, refs, durations, base_hyps, tuned_hyps, normalizer
         )
         metrics["tuned_batch_output_uri"] = tuned_preds.output_uri
+        metrics["tuned_inference_manifest_uri"] = upload_inference_manifest(
+            storage_client,
+            bucket_name=gcs_bucket,
+            inference_dataset_slug=inference_dataset_slug,
+            model_family_slug=model_family_slug,
+            run_id=run_cfg.round_id,
+            artifact_label="tuned",
+            source_rows=source_rows,
+            predictions_by_audio_uri=tuned_preds,
+        )
 
     write_wer_summary(RESULTS_DIR, run_cfg.round_id, metrics)
     config.update(
@@ -199,10 +220,7 @@ def evaluate_run(
     return 0
 
 
-class PredictionMap(dict[str, str]):
-    """Prediction map with the GCS output URI attached for provenance."""
-
-    output_uri: str
+PredictionMap = BatchPredictionMap
 
 
 def batch_infer(
@@ -218,108 +236,23 @@ def batch_infer(
     user_prompt: str,
 ) -> PredictionMap | None:
     """Build batch input JSONL, submit, download outputs, and parse predictions."""
-    with tempfile.TemporaryDirectory() as tmp:
-        batch_input_gcs, batch_output_gcs = build_batch_jsonl(
-            storage_client=storage_client,
-            run_gcs_prefix=run_gcs_prefix,
-            label=label,
-            eval_rows=eval_rows,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            tmp_dir=Path(tmp),
-        )
-        try:
-            output_loc = submit_batch_inference(
-                input_uri=batch_input_gcs,
-                output_uri=batch_output_gcs,
-                model=model_id,
-                project=gcp_project,
-                location=location,
-            )
-        except (RuntimeError, TimeoutError) as exc:
-            _log_batch_error(label, exc)
-            return None
-
-        out_bucket, out_prefix = parse_gcs_uri(output_loc.rstrip("/") + "/")
-        pred_blobs = [
-            blob
-            for blob in storage_client.bucket(out_bucket).list_blobs(
-                prefix=out_prefix
-            )
-            if blob.name.endswith(".jsonl")
-        ]
-        if not pred_blobs:
-            logger.error(
-                "[%s] no .jsonl prediction output under %s.",
-                label,
-                output_loc,
-            )
-            return None
-        preds = PredictionMap()
-        for i, blob in enumerate(pred_blobs):
-            local_path = Path(tmp) / f"predictions_{i}.jsonl"
-            download_blob_to_file(
-                storage_client, out_bucket, blob.name, str(local_path)
-            )
-            preds.update(
-                parse_batch_output(local_path.read_text(encoding="utf-8"))
-            )
-        expected_count = len({row.audio_filepath for row in eval_rows})
-        # Predictions are keyed by audio URI. Duplicate eval rows intentionally
-        # share one prediction, so completeness is measured over unique URIs.
-        missing = max(0, expected_count - len(preds))
-        if missing > 0:
-            logger.warning(
-                "[%s] %s/%s unique segments returned no prediction; they "
-                "score as full deletions.",
-                label,
-                missing,
-                expected_count,
-            )
-        preds.output_uri = output_loc
-        return preds
+    return run_batch_audio_inference(
+        storage_client=storage_client,
+        run_gcs_prefix=run_gcs_prefix,
+        gcp_project=gcp_project,
+        location=location,
+        model_id=model_id,
+        label=label,
+        audio_uris=[str(row.audio_filepath) for row in eval_rows],
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        submit_fn=submit_batch_inference,
+    )
 
 
 def _log_cli_error(exc: Exception) -> int:
     logger.error(str(exc))
     return 1
-
-
-def _log_batch_error(label: str, exc: Exception) -> None:
-    logger.error("[%s] Batch inference failed: %s", label, exc)
-
-
-def build_batch_jsonl(
-    *,
-    storage_client: storage.Client,
-    run_gcs_prefix: str,
-    label: str,
-    eval_rows: list[Any],
-    system_prompt: str,
-    user_prompt: str,
-    tmp_dir: Path,
-) -> tuple[str, str]:
-    """Write and upload a Vertex batch input JSONL file."""
-    batch_input_path = tmp_dir / f"batch_input_{label}.jsonl"
-    with batch_input_path.open("w", encoding="utf-8") as fh:
-        for row in eval_rows:
-            fh.write(
-                json.dumps(
-                    build_request(
-                        row.audio_filepath,
-                        system_prompt=system_prompt,
-                        user_prompt=user_prompt,
-                    )
-                )
-                + "\n"
-            )
-    batch_input_gcs = f"{run_gcs_prefix}/evals/{label}/input.jsonl"
-    batch_output_gcs = f"{run_gcs_prefix}/evals/{label}/output/"
-    in_bucket, in_blob = parse_gcs_uri(batch_input_gcs)
-    upload_file_to_blob(
-        storage_client, in_bucket, in_blob, str(batch_input_path)
-    )
-    return batch_input_gcs, batch_output_gcs
 
 
 def build_metrics(

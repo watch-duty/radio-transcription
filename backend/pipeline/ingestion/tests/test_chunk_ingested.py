@@ -311,7 +311,8 @@ class TestChunkIngestedEmit(unittest.IsolatedAsyncioTestCase):
         store.update_feed_progress.assert_awaited_once()
         store.report_feed_failure.assert_awaited_once()
         kwargs = store.report_feed_failure.await_args.kwargs
-        self.assertEqual(kwargs["reason"], "pubsub_publish_failed")
+        self.assertIn("Pub/Sub publish failed", kwargs["reason"])
+        self.assertIn("pubsub boom", kwargs["reason"])
         self.assertIs(
             kwargs["status_reason"],
             FeedStatusReason.SYSTEM_PIPELINE_ERROR,

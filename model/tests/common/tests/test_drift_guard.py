@@ -52,6 +52,7 @@ class TestDriftGuard(unittest.TestCase):
                 """
 round_id = "round"
 dataset = "wd"
+inference_dataset_slug = "echo/eval"
 train_manifest_uri = "gs://bucket/train.jsonl"
 validation_manifest_uri = "gs://bucket/validation.jsonl"
 eval_manifest_uri = "gs://bucket/eval.jsonl"

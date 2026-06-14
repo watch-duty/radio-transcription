@@ -6,6 +6,12 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+from common.gcs_utils import (
+    download_gcs_uri,
+    gcs_prefix_has_any_blob,
+    gcs_uri_exists,
+    upload_local_file,
+)
 from common.gemini.tuning_data import (
     build_audio_tuning_example,
     validate_audio_tuning_example,
@@ -16,13 +22,9 @@ from gemini_sft.artifacts import (
     DEFAULT_RESULTS_DIR,
     EVALS_README_TEXT,
     PreparedRunArtifacts,
-    download_gcs_uri,
-    gcs_prefix_has_any_blob,
-    gcs_uri_exists,
     load_canonical_rows,
     local_run_dir,
     reject_split_overlap,
-    upload_local_file,
     utc_now,
     write_and_upload_config,
     write_json_artifact,
@@ -149,6 +151,13 @@ def prepare_artifacts(
     run_dir: Path,
 ) -> PreparedRunArtifacts:
     """Build canonical and Gemini model-input artifacts locally."""
+    if (
+        run_cfg.train_manifest_uri is None
+        or run_cfg.validation_manifest_uri is None
+    ):
+        msg = "prepare requires train_manifest_uri and validation_manifest_uri"
+        raise ValueError(msg)
+
     canonical_dir = run_dir / "manifests" / "canonical"
     model_inputs_dir = run_dir / "model_inputs" / "gemini"
     preflight_dir = run_dir / "preflight"

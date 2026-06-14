@@ -13,8 +13,10 @@ if TYPE_CHECKING:
 from curl_cffi.requests.websockets import WebSocketClosed, WebSocketTimeout
 
 from backend.pipeline.ingestion.collectors.openmhz._ws_transport import (
+    _await_or_shutdown,
     _parse_eio_open,
     _parse_sio_event,
+    _recv_str_or_shutdown,
     websocket_transport,
 )
 
@@ -183,7 +185,6 @@ class TestWebsocketTransport(unittest.IsolatedAsyncioTestCase):
         mock_session_cls.return_value = mock_session
 
         shutdown = asyncio.Event()
-        shutdown.set()
         async with websocket_transport(
             "mySystem", "https://api.openmhz.com/", shutdown
         ) as events:
@@ -317,7 +318,6 @@ class TestWebsocketTransport(unittest.IsolatedAsyncioTestCase):
         mock_session_cls.return_value = mock_session
 
         shutdown = asyncio.Event()
-        shutdown.set()
         async with websocket_transport(
             "wmata", "https://api.openmhz.com/", shutdown
         ) as events:
@@ -343,7 +343,6 @@ class TestWebsocketTransport(unittest.IsolatedAsyncioTestCase):
         mock_session_cls.return_value = mock_session
 
         shutdown = asyncio.Event()
-        shutdown.set()
         async with websocket_transport(
             "wmata", "http://localhost:8080/", shutdown
         ) as events:
@@ -367,12 +366,264 @@ class TestWebsocketTransport(unittest.IsolatedAsyncioTestCase):
         mock_session_cls.return_value = mock_session
 
         shutdown = asyncio.Event()
-        shutdown.set()
         async with websocket_transport(
             "wmata", "https://api.openmhz.com/", shutdown
         ) as events:
             async for _ in events:
                 pass
 
+        self.assertTrue(mock_ws._closed)
+        mock_session.close.assert_awaited_once()
+
+    @patch(f"{_WS_MOD}.AsyncSession")
+    async def test_pre_set_shutdown_exits_before_setup_completes(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        mock_session = AsyncMock()
+        mock_session.ws_connect = AsyncMock(
+            return_value=_MockWebSocket([*_make_handshake_frames()])
+        )
+        mock_session_cls.return_value = mock_session
+        shutdown = asyncio.Event()
+        shutdown.set()
+
+        with self.assertRaises(asyncio.CancelledError):
+            async with websocket_transport(
+                "wmata", "https://api.openmhz.com/", shutdown
+            ) as events:
+                async for _ in events:
+                    pass
+
+        mock_session.ws_connect.assert_called_once()
+        mock_session.close.assert_awaited_once()
+
+    @patch(f"{_WS_MOD}.AsyncSession")
+    async def test_pending_ws_connect_exits_on_shutdown(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def _blocked_connect(*_args: object, **_kwargs: object) -> object:
+            started.set()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            msg = "unreachable"
+            raise AssertionError(msg)
+
+        mock_session = AsyncMock()
+        mock_session.ws_connect = AsyncMock(side_effect=_blocked_connect)
+        mock_session_cls.return_value = mock_session
+        shutdown = asyncio.Event()
+
+        async def _connect() -> None:
+            async with websocket_transport(
+                "wmata", "https://api.openmhz.com/", shutdown
+            ) as events:
+                async for _ in events:
+                    pass
+
+        task = asyncio.create_task(_connect())
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+        shutdown.set()
+
+        with self.assertRaises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=1.0)
+        await asyncio.wait_for(cancelled.wait(), timeout=1.0)
+        mock_session.close.assert_awaited_once()
+
+    async def test_await_or_shutdown_returns_successful_operation_when_shutdown_also_set(
+        self,
+    ) -> None:
+        shutdown = asyncio.Event()
+
+        async def _complete_and_shutdown() -> str:
+            shutdown.set()
+            await shutdown.wait()
+            return "connected"
+
+        result = await _await_or_shutdown(_complete_and_shutdown(), shutdown)
+
+        self.assertEqual(result, "connected")
+
+    async def test_recv_str_result_wins_when_shutdown_also_set(self) -> None:
+        shutdown = asyncio.Event()
+
+        class _CompletingWebSocket:
+            async def recv_str(self, **_kwargs: object) -> str:
+                shutdown.set()
+                await shutdown.wait()
+                return "42[]"
+
+        result = await _recv_str_or_shutdown(
+            _CompletingWebSocket(),
+            shutdown,
+            10.0,
+        )
+
+        self.assertEqual(result, "42[]")
+
+    @patch(f"{_WS_MOD}.AsyncSession")
+    async def test_pending_eio_open_exits_on_shutdown(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        class _BlockingOpenWebSocket:
+            def __init__(self) -> None:
+                self._closed = False
+
+            async def recv_str(self, **_kwargs: object) -> str:
+                started.set()
+                try:
+                    await asyncio.Future()
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+                msg = "unreachable"
+                raise AssertionError(msg)
+
+            async def close(self) -> None:
+                self._closed = True
+
+        mock_ws = _BlockingOpenWebSocket()
+        mock_session = AsyncMock()
+        mock_session.ws_connect = AsyncMock(return_value=mock_ws)
+        mock_session_cls.return_value = mock_session
+        shutdown = asyncio.Event()
+
+        async def _connect() -> None:
+            async with websocket_transport(
+                "wmata", "https://api.openmhz.com/", shutdown
+            ) as events:
+                async for _ in events:
+                    pass
+
+        task = asyncio.create_task(_connect())
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+        shutdown.set()
+
+        with self.assertRaises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=1.0)
+        await asyncio.wait_for(cancelled.wait(), timeout=1.0)
+        self.assertTrue(mock_ws._closed)
+        mock_session.close.assert_awaited_once()
+
+    @patch(f"{_WS_MOD}.AsyncSession")
+    async def test_pending_sio_ack_exits_on_shutdown(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        class _BlockingAckWebSocket:
+            def __init__(self) -> None:
+                self.sent: list[str] = []
+                self._closed = False
+                self._recv_count = 0
+
+            async def recv_str(self, **_kwargs: object) -> str:
+                self._recv_count += 1
+                if self._recv_count == 1:
+                    return _make_handshake_frames()[0]
+
+                started.set()
+                try:
+                    await asyncio.Future()
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+                msg = "unreachable"
+                raise AssertionError(msg)
+
+            async def send_str(self, payload: str) -> None:
+                self.sent.append(payload)
+
+            async def close(self) -> None:
+                self._closed = True
+
+        mock_ws = _BlockingAckWebSocket()
+        mock_session = AsyncMock()
+        mock_session.ws_connect = AsyncMock(return_value=mock_ws)
+        mock_session_cls.return_value = mock_session
+        shutdown = asyncio.Event()
+
+        async def _connect() -> None:
+            async with websocket_transport(
+                "wmata", "https://api.openmhz.com/", shutdown
+            ) as events:
+                async for _ in events:
+                    pass
+
+        task = asyncio.create_task(_connect())
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+        shutdown.set()
+
+        with self.assertRaises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=1.0)
+        await asyncio.wait_for(cancelled.wait(), timeout=1.0)
+        self.assertEqual(mock_ws.sent, ["40"])
+        self.assertTrue(mock_ws._closed)
+        mock_session.close.assert_awaited_once()
+
+    @patch(f"{_WS_MOD}.AsyncSession")
+    async def test_pending_receive_exits_on_shutdown(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        class _BlockingAfterHandshakeWebSocket:
+            def __init__(self) -> None:
+                self.sent: list[str] = []
+                self._closed = False
+                self._recv_count = 0
+
+            async def recv_str(self, **_kwargs: object) -> str:
+                self._recv_count += 1
+                if self._recv_count == 1:
+                    return _make_handshake_frames()[0]
+                if self._recv_count == 2:
+                    return _make_handshake_frames()[1]
+
+                started.set()
+                try:
+                    await asyncio.Future()
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+                msg = "unreachable"
+                raise AssertionError(msg)
+
+            async def send_str(self, payload: str) -> None:
+                self.sent.append(payload)
+
+            async def close(self) -> None:
+                self._closed = True
+
+        mock_ws = _BlockingAfterHandshakeWebSocket()
+        mock_session = AsyncMock()
+        mock_session.ws_connect = AsyncMock(return_value=mock_ws)
+        mock_session_cls.return_value = mock_session
+
+        shutdown = asyncio.Event()
+
+        async def _consume() -> None:
+            async with websocket_transport(
+                "wmata", "https://api.openmhz.com/", shutdown
+            ) as events:
+                async for _ in events:
+                    pass
+
+        task = asyncio.create_task(_consume())
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+        shutdown.set()
+
+        await asyncio.wait_for(task, timeout=1.0)
+        await asyncio.wait_for(cancelled.wait(), timeout=1.0)
         self.assertTrue(mock_ws._closed)
         mock_session.close.assert_awaited_once()

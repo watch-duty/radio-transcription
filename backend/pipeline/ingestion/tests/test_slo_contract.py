@@ -8,9 +8,14 @@ an `event_type` string, metric type URL, or logger path WILL fail here first.
 
 from __future__ import annotations
 
+import json
+import pathlib
 import unittest
 
 from backend.pipeline.ingestion import slo_contract
+from backend.pipeline.ingestion.collectors import telemetry
+
+_GOLDEN_DIR = pathlib.Path(__file__).resolve().parent / "golden"
 
 
 class TestSloContractLiterals(unittest.TestCase):
@@ -87,6 +92,35 @@ class TestSloContractDriftCanary(unittest.TestCase):
         """
         self.assertEqual(
             slo_contract.EVENT_TYPE_FEED_QUARANTINED, "feed_quarantined"
+        )
+
+
+class TestCallDownloadFailedGolden(unittest.TestCase):
+    """Pin helper-owned call_download_failed payload shape."""
+
+    def test_golden_expected_keys_match_helper_payload(self) -> None:
+        golden = json.loads(
+            (_GOLDEN_DIR / "call_download_failed.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        payload = telemetry._call_download_failed_json_fields(
+            feed_id="feed-123",
+            source_type="openmhz",
+        )
+
+        self.assertEqual(
+            golden["event"],
+            slo_contract.EVENT_TYPE_CALL_DOWNLOAD_FAILED,
+        )
+        self.assertEqual(
+            golden["expected_keys"],
+            ["event_type", "feed_id", "source_type"],
+        )
+        self.assertEqual(set(payload.keys()), set(golden["expected_keys"]))
+        self.assertEqual(
+            payload["event_type"],
+            slo_contract.EVENT_TYPE_CALL_DOWNLOAD_FAILED,
         )
 
 
