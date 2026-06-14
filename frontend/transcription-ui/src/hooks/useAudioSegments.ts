@@ -20,6 +20,11 @@ export type ListAudioSegmentsData = {
 
 export type AlertFilter = 'all' | 'alerts';
 
+// The list endpoint wants `is_alert` true to filter, or omitted for everything.
+export function isAlert(alertFilter: AlertFilter): boolean | undefined {
+  return alertFilter === 'alerts' ? true : undefined;
+}
+
 const MAX_AUDIO_SEGMENTS_POLLING_ITERATIONS = 10;
 
 interface UseAudioSegmentsOptions {
@@ -85,7 +90,7 @@ export function useAudioSegments({
         /*startTime=*/ order === 'asc' ? originalTimestampMs : undefined,
         /*endTime=*/ order === 'desc' ? originalTimestampMs : undefined,
         order,
-        alertFilter === 'alerts' ? true : undefined
+        isAlert(alertFilter)
       );
 
       if (order === 'asc' && response.segments) {
@@ -169,7 +174,7 @@ export function useAudioSegments({
             /*startTime=*/ new Date(newestTimestamp).getTime(),
             /*endTime=*/ undefined,
             /*order=*/ 'asc',
-            alertFilter === 'alerts' ? true : undefined
+            isAlert(alertFilter)
           );
 
           if (response.segments && response.segments.length > 0) {
@@ -193,7 +198,7 @@ export function useAudioSegments({
           /*startTime=*/ undefined,
           /*endTime=*/ undefined,
           /*order=*/ 'desc',
-          alertFilter === 'alerts' ? true : undefined
+          isAlert(alertFilter)
         );
         return response.segments || [];
       } catch (error) {

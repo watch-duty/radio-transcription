@@ -6,7 +6,7 @@ import {
   computeGridLineTimes,
   msToPct,
   pickGridIntervalMs,
-  representativeSegmentId,
+  segmentIdAt,
 } from './timelineMath';
 
 const MINUTE = 60 * 1000;
@@ -65,7 +65,7 @@ describe('computeGridLineTimes', () => {
   });
 });
 
-describe('representativeSegmentId', () => {
+describe('segmentIdAt', () => {
   // Newest-first, like the loaded audio-segment list.
   const times = [
     time(120 * MINUTE, 121 * MINUTE),
@@ -74,14 +74,14 @@ describe('representativeSegmentId', () => {
   ];
 
   it('returns the right-most segment starting at or before the window end', () => {
-    expect(representativeSegmentId(times, 65 * MINUTE)).toBe(times[1].id);
+    expect(segmentIdAt(times, 65 * MINUTE)).toBe(times[1].id);
   });
 
   it('falls back to the oldest when the end precedes every segment', () => {
-    expect(representativeSegmentId(times, 5 * MINUTE)).toBe(times[2].id);
+    expect(segmentIdAt(times, 5 * MINUTE)).toBe(times[2].id);
   });
 
   it('returns null when there are no segments', () => {
-    expect(representativeSegmentId([], 0)).toBeNull();
+    expect(segmentIdAt([], 0)).toBeNull();
   });
 });

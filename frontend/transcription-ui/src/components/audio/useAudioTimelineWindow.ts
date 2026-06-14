@@ -2,16 +2,12 @@ import { useCallback, useMemo, useState } from 'react';
 
 import { type AudioSegment } from '@transcription/common';
 
-import { findEvaluationAnnotationData } from '../../utils/annotationUtils';
+import { segmentHasAlert } from '../../utils/annotationUtils';
 import {
   DEFAULT_AUDIO_WINDOW_DURATION_MS,
   TIMELINE_RANGE_DURATION_MS,
 } from '../../utils/timeUtils';
-import {
-  type TranscriptTime,
-  clamp,
-  representativeSegmentId,
-} from './timelineMath';
+import { type TranscriptTime, clamp, segmentIdAt } from './timelineMath';
 
 // A scrubbed window end within this of the live edge still counts as "live".
 const LIVE_EDGE_EPS_MS = 1000;
@@ -73,9 +69,8 @@ export function useAudioTimelineWindow({
   const firstId = firstSegment?.id ?? null;
   const firstEnd = firstSegment?.endTimestamp ?? null;
 
-  // Overview of the mini-map's range (a fixed 24h ending at the live edge):
-  // per-segment timing + alert, plus the span bounds. maxEnd is the live edge —
-  // the value the window follows.
+  // The mini-map's fixed-24h range (ending at the live edge) and per-segment
+  // marks; maxEnd is the live edge the window follows.
   const { miniMapTimes, rangeStartMs, maxEnd, minEnd } = useMemo(() => {
     if (audioSegments.length === 0) {
       return {
@@ -85,17 +80,14 @@ export function useAudioTimelineWindow({
         minEnd: null as number | null,
       };
     }
-    const miniMapTimes = audioSegments.map((t): TranscriptTime => {
-      const startMs = new Date(t.startTimestamp).getTime();
-      const endMs = new Date(t.endTimestamp).getTime();
-      const evaluation = findEvaluationAnnotationData(t.annotations);
-      return {
+    const miniMapTimes = audioSegments.map(
+      (t): TranscriptTime => ({
         id: t.id,
-        startMs,
-        endMs,
-        hasAlert: !!evaluation && evaluation.decisions.length > 0,
-      };
-    });
+        startMs: new Date(t.startTimestamp).getTime(),
+        endMs: new Date(t.endTimestamp).getTime(),
+        hasAlert: segmentHasAlert(t.annotations),
+      })
+    );
     const liveEdge = new Date(audioSegments[0].endTimestamp).getTime();
     const rangeStart = liveEdge - TIMELINE_RANGE_DURATION_MS;
     return {
@@ -106,10 +98,9 @@ export function useAudioTimelineWindow({
     };
   }, [audioSegments, windowDurationMs]);
 
-  // Derived, not stored: scrubbed iff the window's right edge sits meaningfully
-  // before the live edge. Deriving it keeps the chip in sync however the window
-  // moved (mini-map scrub, clicking an old clip, jump-to-live) — separate state
-  // drifted out of sync with where the window actually was.
+  // Derived, not stored, so it stays correct however the window moved (scrub,
+  // clicking an old clip, jump-to-live): scrubbed iff the right edge sits before
+  // the live edge.
   const isScrubbed =
     windowEndTime != null &&
     maxEnd != null &&
@@ -132,21 +123,22 @@ export function useAudioTimelineWindow({
     setPrevPlayingId(null); // re-check bounds below
   }
 
-  // Recenter on the playing/highlighted segment when it leaves the window. While
-  // scrubbed, playback advancing must not yank the window — only an explicit
-  // highlight (clicking a clip/row) recenters. The recenter moves windowEndTime,
-  // so isScrubbed re-derives to match (e.g. clicking an old clip → scrubbed).
+  // Recenter when the playing/highlighted segment leaves the window. A highlight
+  // differing from the playing clip is an explicit pick (clicking a clip/row); one
+  // equal to it is just playback (which also moves the highlight, so the list
+  // follows). Only an explicit pick recenters while scrubbed.
   if (
     currentlyPlayingSegmentId !== prevPlayingId ||
     highlightedSegmentId !== prevHighlightedId
   ) {
-    const highlightChanged = highlightedSegmentId !== prevHighlightedId;
+    const explicitPick =
+      highlightedSegmentId !== prevHighlightedId &&
+      highlightedSegmentId !== currentlyPlayingSegmentId;
     setPrevPlayingId(currentlyPlayingSegmentId);
     setPrevHighlightedId(highlightedSegmentId);
 
-    const allowRecenter = !isScrubbed || highlightChanged;
-    // Follow whichever signal moved: an explicit highlight, else playback.
-    const targetId = highlightChanged
+    const allowRecenter = !isScrubbed || explicitPick;
+    const targetId = explicitPick
       ? highlightedSegmentId
       : currentlyPlayingSegmentId;
     if (allowRecenter && targetId) {
@@ -170,7 +162,7 @@ export function useAudioTimelineWindow({
       const half = windowDurationMs / 2;
       const end = clamp(centerMs + half, minEnd, maxEnd);
       setWindowEndTime(end);
-      return representativeSegmentId(miniMapTimes, end - half);
+      return segmentIdAt(miniMapTimes, end - half);
     },
     [minEnd, maxEnd, windowDurationMs, miniMapTimes]
   );

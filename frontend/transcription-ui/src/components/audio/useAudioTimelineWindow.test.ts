@@ -119,6 +119,54 @@ describe('useAudioTimelineWindow', () => {
     expect(result.current.windowEndTime).toBe(scrubbedEnd);
   });
 
+  it('does not exit scrub when the highlight follows the playing clip', () => {
+    const a = seg('a', '10:00:00', '10:00:05');
+    const b = seg('b', '08:00:00', '08:00:05');
+    const { result, rerender } = renderHook(
+      (props: Parameters<typeof useAudioTimelineWindow>[0]) =>
+        useAudioTimelineWindow(props),
+      { initialProps: { ...base, audioSegments: [a, b] } }
+    );
+    act(() => {
+      result.current.scrubToCenter(ms('08:00:02'));
+    });
+    const scrubbedEnd = result.current.windowEndTime;
+
+    // Playback advancing sets both the playing and highlighted ids to the same
+    // clip; that must not yank the scrubbed window.
+    rerender({
+      ...base,
+      audioSegments: [a, b],
+      currentlyPlayingSegmentId: 'a',
+      highlightedSegmentId: 'a',
+    });
+    expect(result.current.windowEndTime).toBe(scrubbedEnd);
+    expect(result.current.isScrubbed).toBe(true);
+  });
+
+  it('recenters on an explicitly highlighted (non-playing) clip while scrubbed', () => {
+    const a = seg('a', '10:00:00', '10:00:05');
+    const b = seg('b', '08:00:00', '08:00:05');
+    const { result, rerender } = renderHook(
+      (props: Parameters<typeof useAudioTimelineWindow>[0]) =>
+        useAudioTimelineWindow(props),
+      { initialProps: { ...base, audioSegments: [a, b] } }
+    );
+    act(() => {
+      result.current.scrubToCenter(ms('08:00:02'));
+    });
+    expect(result.current.isScrubbed).toBe(true);
+
+    // Clicking a clip that isn't playing is an explicit pick: recenter to it.
+    rerender({
+      ...base,
+      audioSegments: [a, b],
+      highlightedSegmentId: 'a',
+    });
+    expect(result.current.windowEndTime).toBe(ms('10:00:05'));
+    expect(result.current.isScrubbed).toBe(false);
+  });
+
   it('jumpToLive returns to the live edge', () => {
     const a = seg('a', '10:00:00', '10:00:05');
     const b = seg('b', '08:00:00', '08:00:05');

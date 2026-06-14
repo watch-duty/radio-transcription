@@ -16,6 +16,11 @@ export function findEvaluationAnnotationData(
   return null;
 }
 
+export function segmentHasAlert(annotations: Annotation[]): boolean {
+  const evaluation = findEvaluationAnnotationData(annotations);
+  return !!evaluation && evaluation.decisions.length > 0;
+}
+
 export function findTranscriptAnnotationData(
   annotations: Annotation[]
 ): TranscriptAnnotationData | null {

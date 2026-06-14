@@ -13,7 +13,7 @@ import { type Theme, useTheme } from '@mui/material/styles';
 import { type AudioSegment } from '@transcription/common';
 import WavesurferPlayer from '@wavesurfer/react';
 
-import { findEvaluationAnnotationData } from '../../utils/annotationUtils';
+import { segmentHasAlert } from '../../utils/annotationUtils';
 import { getAudioUrl } from '../../utils/audioUtils';
 import { formatClockTime } from '../../utils/timeUtils';
 import { CustomAlertIcon } from '../common/AlertIcon';
@@ -39,6 +39,17 @@ interface AudioDisplayProps {
 }
 
 const PLAYING_CURSOR_WIDTH_PX = 1;
+
+function applyPlayingCursor(
+  ws: WaveSurfer,
+  isPlaying: boolean,
+  playingColor: string
+) {
+  ws.setOptions({
+    cursorColor: isPlaying ? playingColor : 'transparent',
+    cursorWidth: isPlaying ? PLAYING_CURSOR_WIDTH_PX : 0,
+  });
+}
 
 interface TimelineClipProps {
   clip: {
@@ -68,20 +79,19 @@ const TimelineClip = React.memo(
     currentTimeSeconds,
   }: TimelineClipProps) => {
     const wsRef = useRef<WaveSurfer | null>(null);
-    // Render from cached peaks only — never a url — so clips don't each fetch
-    // and decode their own audio (50+ at once never finish). The queue decodes
-    // once, off-screen and bounded; until then the clip is a cheap placeholder.
+    // Render from cached peaks, never a url: 50+ clips each fetching+decoding
+    // their own audio never finishes. The queue decodes once; until then, a
+    // placeholder.
     const renderWaveform = !!clip.peaks;
 
-    // Update the cursor (color/width) without recreating the player.
+    // Reflect play state on the cursor without recreating the player.
     useEffect(() => {
       if (wsRef.current) {
-        wsRef.current.setOptions({
-          cursorColor: clip.isAudioPlaying
-            ? theme.palette.error.main
-            : 'transparent',
-          cursorWidth: clip.isAudioPlaying ? PLAYING_CURSOR_WIDTH_PX : 0,
-        });
+        applyPlayingCursor(
+          wsRef.current,
+          clip.isAudioPlaying,
+          theme.palette.error.main
+        );
       }
     }, [clip.isAudioPlaying, theme.palette.error.main]);
 
@@ -160,12 +170,11 @@ const TimelineClip = React.memo(
             interact={false}
             onReady={(ws) => {
               wsRef.current = ws;
-              ws.setOptions({
-                cursorColor: clip.isAudioPlaying
-                  ? theme.palette.error.main
-                  : 'transparent',
-                cursorWidth: clip.isAudioPlaying ? PLAYING_CURSOR_WIDTH_PX : 0,
-              });
+              applyPlayingCursor(
+                ws,
+                clip.isAudioPlaying,
+                theme.palette.error.main
+              );
               if (clip.isAudioPlaying && currentTimeSeconds !== undefined) {
                 ws.setTime(currentTimeSeconds);
               }
@@ -284,7 +293,6 @@ export function AudioDisplay({
         const tEnd = new Date(t.endTimestamp).getTime();
         const visibleStart = Math.max(tStart, startTime);
         const visibleEnd = Math.min(tEnd, windowEnd);
-        const evaluation = findEvaluationAnnotationData(t.annotations);
         return {
           id: t.id,
           url: t.playbackAudioUri ? getAudioUrl(t.playbackAudioUri) : '',
@@ -292,7 +300,7 @@ export function AudioDisplay({
           width: ((visibleEnd - visibleStart) / windowDurationMs) * 100,
           isAudioPlaying: t.id === currentlyPlayingSegmentId,
           isHighlighted: t.id === highlightedSegmentId,
-          hasAlert: !!evaluation && evaluation.decisions.length > 0,
+          hasAlert: segmentHasAlert(t.annotations),
         };
       });
 
@@ -305,16 +313,15 @@ export function AudioDisplay({
     windowDurationMs,
   ]);
 
-  // Decode peaks for the clips in view (bounded, off-screen). A new window drops
-  // the prior window's pending decodes so scrubbing past windows doesn't fetch
-  // their audio; in-flight decodes finish and cache. Keyed on the url set so a
-  // poll that doesn't change the window doesn't re-trigger.
+  // Decode the in-view clips' peaks (bounded, off-screen). A new window drops the
+  // prior pending decodes so scrubbing past windows doesn't fetch them; keyed on
+  // the url set so polls that don't move the window don't refire.
   const clipUrlsKey = clips.map((c) => c.url).join('|');
   useEffect(() => {
     const urls = clipUrlsKey.split('|').filter(Boolean);
     if (urls.length === 0) return;
     clearPending();
-    enqueueDecode(urls, true);
+    enqueueDecode(urls);
   }, [clipUrlsKey, clearPending, enqueueDecode]);
 
   return (
@@ -400,7 +407,7 @@ export function AudioDisplay({
           ))}
         </Box>
         <TimelineMiniMap
-          transcriptTimes={miniMapTimes}
+          miniMapTimes={miniMapTimes}
           rangeStartMs={rangeStartMs}
           maxEnd={maxEnd}
           windowEndTime={windowEndTime}

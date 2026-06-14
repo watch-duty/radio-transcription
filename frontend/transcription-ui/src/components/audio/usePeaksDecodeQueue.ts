@@ -4,10 +4,9 @@ import WaveSurfer from 'wavesurfer.js';
 
 type CachedPeaks = { peaks: (Float32Array | number[])[]; duration: number };
 
-// Decoded peaks per URL; WaveSurfer is display-only (Howler plays), so cached
-// peaks let a revisited clip render instantly without re-decoding. The cache is
-// an external store: subscribers re-render via useSyncExternalStore when it
-// changes, and the version bumps on every mutation.
+// Decoded peaks per URL (WaveSurfer is display-only), so a revisited clip renders
+// without re-decoding. An external store so subscribers re-render via
+// useSyncExternalStore when a decode lands.
 const MAX_PEAKS_CACHE = 500;
 const peaksCache = new Map<string, CachedPeaks>();
 const listeners = new Set<() => void>();
@@ -91,17 +90,15 @@ const decodePeaksHeadless = (url: string): Promise<boolean> =>
   });
 
 export interface PeaksDecodeQueue {
-  // priority puts URLs ahead of hover prefetch so the visible window wins.
-  enqueueDecode: (urls: string[], priority: boolean) => void;
+  enqueueDecode: (urls: string[]) => void;
   // Drop everything queued-but-not-started; in-flight decodes finish and cache.
   // Lets a new window abandon a window the user scrubbed past without fetching it.
   clearPending: () => void;
   getPeaks: (url: string) => CachedPeaks | undefined;
 }
 
-// A single concurrency-limited decode queue shared by clips and hover prefetch.
-// Decoded peaks land in the cache above; subscribing here re-renders the caller
-// so getPeaks returns the new peaks once a decode completes.
+// A single concurrency-limited decode queue. Subscribing re-renders the caller
+// so getPeaks returns the new peaks once a decode lands.
 export function usePeaksDecodeQueue(): PeaksDecodeQueue {
   useSyncExternalStore(subscribeCache, getCacheVersion);
 
@@ -138,7 +135,7 @@ export function usePeaksDecodeQueue(): PeaksDecodeQueue {
   }, [pump]);
 
   const enqueueDecode = useCallback(
-    (urls: string[], priority: boolean) => {
+    (urls: string[]) => {
       let added = 0;
       for (const url of urls) {
         if (
@@ -149,8 +146,7 @@ export function usePeaksDecodeQueue(): PeaksDecodeQueue {
           continue;
         }
         queuedRef.current.add(url);
-        if (priority) queueRef.current.unshift(url);
-        else queueRef.current.push(url);
+        queueRef.current.push(url);
         added += 1;
       }
       if (added > 0) pump();

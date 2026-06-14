@@ -41,8 +41,9 @@ interface TranscriptViewProps {
 
 const DEFAULT_REFRESH_INTERVAL = 10000;
 const FEED_POLLING_INTERVAL_MS = 15000; // 15 seconds
-// A list scroll within this of one we triggered is ours, not the user's.
-const PROGRAMMATIC_SCROLL_WINDOW_MS = 300;
+// Safety bound: clear the programmatic-scroll flag if Virtuoso never reports the
+// scroll settling, so a no-op scroll can't wedge it on (also caps a long smooth one).
+const PROGRAMMATIC_SCROLL_MAX_MS = 1500;
 
 export function TranscriptView({
   triggerSnackbar,
@@ -109,8 +110,11 @@ export function TranscriptView({
   // Auto-scroll the list to the playing clip, suspended once the user scrolls the
   // list away (to read) and resumed on an explicit navigation.
   const followPlaybackRef = useRef(true);
-  // When we last scrolled the list ourselves, to tell our scrolls from the user's.
-  const programmaticListScrollAtRef = useRef(0);
+  // True while a scroll we triggered is still animating (incl. a smooth one), so
+  // handleListScrolling doesn't mistake its events for the user scrolling away.
+  const programmaticScrollRef = useRef(false);
+  const programmaticScrollTimerRef =
+    useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const currentAudio = useRef<Howl>(null);
   const [playbackEndedForId, setPlaybackEndedForId] = useState<string | null>(
@@ -130,11 +134,11 @@ export function TranscriptView({
     };
   }, []);
 
-  // Play and pause audio from a URL. `shouldHighlight` is false for automatic
-  // playback (polling latest / auto-advance) so it doesn't read as an explicit
-  // navigation that would pull the timeline back to live while the user scrubs.
+  // Play and pause audio from a URL. The highlight tracks the playing clip so the
+  // list selection follows playback; the timeline ignores playback-driven
+  // highlight moves (see useAudioTimelineWindow) so they don't yank a scrub.
   const toggleAudio = useCallback(
-    (segmentId: string, audioUri: string, shouldHighlight = true) => {
+    (segmentId: string, audioUri: string) => {
       const newAudio = currentlyPlayingSegmentId !== segmentId;
 
       if (newAudio) {
@@ -144,7 +148,7 @@ export function TranscriptView({
           currentAudio.current = null;
         }
         setCurrentlyPlayingSegmentId(segmentId);
-        if (shouldHighlight) setHighlightedSegmentId(segmentId);
+        setHighlightedSegmentId(segmentId);
       }
 
       if (!currentAudio.current) {
@@ -254,6 +258,7 @@ export function TranscriptView({
     searchedFeedId,
     alertFilter,
     isFeedsSuccess,
+    searchedTimestamp,
   });
 
   const {
@@ -347,7 +352,7 @@ export function TranscriptView({
           (s) => s.id === nextSegmentId
         );
         if (nextSegment && nextSegment.playbackAudioUri) {
-          toggleAudio(nextSegment.id, nextSegment.playbackAudioUri, false);
+          toggleAudio(nextSegment.id, nextSegment.playbackAudioUri);
           setPlaybackEndedForId(null);
           return;
         }
@@ -373,16 +378,12 @@ export function TranscriptView({
           const firstId = nextAudioSegment.bundledSegmentIds[0];
           const firstSegment = rawAudioSegments.find((s) => s.id === firstId);
           if (firstSegment && firstSegment.playbackAudioUri) {
-            toggleAudio(firstSegment.id, firstSegment.playbackAudioUri, false);
+            toggleAudio(firstSegment.id, firstSegment.playbackAudioUri);
             setPlaybackEndedForId(null);
             return;
           }
         }
-        toggleAudio(
-          nextAudioSegment.id,
-          nextAudioSegment.playbackAudioUri,
-          false
-        );
+        toggleAudio(nextAudioSegment.id, nextAudioSegment.playbackAudioUri);
       }
     }
 
@@ -485,7 +486,7 @@ export function TranscriptView({
           const audioToPlay =
             cachedAudioSegments[cachedAudioSegments.length - 1];
           if (audioToPlay.playbackAudioUri) {
-            toggleAudio(audioToPlay.id, audioToPlay.playbackAudioUri, false);
+            toggleAudio(audioToPlay.id, audioToPlay.playbackAudioUri);
           }
         }
       } catch (error) {
@@ -534,6 +535,20 @@ export function TranscriptView({
     return new Map(rules.map((rule) => [rule.ruleId, rule.ruleName]));
   }, [rules]);
 
+  // Center the list on a row index, flagging the scroll (and its smooth
+  // animation) as programmatic so handleListScrolling doesn't read it as the user.
+  const scrollListToIndex = useCallback(
+    (index: number, behavior: 'auto' | 'smooth' = 'auto') => {
+      programmaticScrollRef.current = true;
+      clearTimeout(programmaticScrollTimerRef.current);
+      programmaticScrollTimerRef.current = setTimeout(() => {
+        programmaticScrollRef.current = false;
+      }, PROGRAMMATIC_SCROLL_MAX_MS);
+      virtuosoRef.current?.scrollToIndex({ index, align: 'center', behavior });
+    },
+    []
+  );
+
   useEffect(() => {
     hasScrolledToTarget.current = false;
   }, [targetSegmentId]);
@@ -552,18 +567,18 @@ export function TranscriptView({
       );
       if (index !== -1) {
         const timer = setTimeout(() => {
-          programmaticListScrollAtRef.current = Date.now();
-          virtuosoRef.current?.scrollToIndex({
-            index,
-            align: 'center',
-            behavior: 'auto',
-          });
+          scrollListToIndex(index);
           hasScrolledToTarget.current = true;
         }, 100);
         return () => clearTimeout(timer);
       }
     }
-  }, [isAudioSegmentsSuccess, targetSegmentId, audioSegments]);
+  }, [
+    isAudioSegmentsSuccess,
+    targetSegmentId,
+    audioSegments,
+    scrollListToIndex,
+  ]);
 
   // Shared list-follow: resolve a raw segment id to its consolidated row and
   // center it. Reads the ref so effect callers don't depend on the segment list.
@@ -572,28 +587,20 @@ export function TranscriptView({
       const index = audioSegmentsRef.current.findIndex(
         (t) => t.id === segmentId || t.bundledSegmentIds?.includes(segmentId)
       );
-      if (index !== -1) {
-        programmaticListScrollAtRef.current = Date.now();
-        virtuosoRef.current?.scrollToIndex({
-          index,
-          align: 'center',
-          behavior,
-        });
-      }
+      if (index !== -1) scrollListToIndex(index, behavior);
     },
-    []
+    [scrollListToIndex]
   );
 
   // A scroll we didn't trigger means the user is reading elsewhere; stop
-  // auto-following playback until they navigate explicitly again.
+  // auto-following playback until they navigate explicitly again. The flag stays
+  // set through a programmatic scroll's whole animation and clears when it settles.
   const handleListScrolling = (isScrolling: boolean) => {
-    if (
-      isScrolling &&
-      Date.now() - programmaticListScrollAtRef.current >
-        PROGRAMMATIC_SCROLL_WINDOW_MS
-    ) {
-      followPlaybackRef.current = false;
+    if (!isScrolling) {
+      programmaticScrollRef.current = false;
+      return;
     }
+    if (!programmaticScrollRef.current) followPlaybackRef.current = false;
   };
 
   // Mirror of isScrubbed so the playback-follow effect can read the latest value
@@ -634,6 +641,9 @@ export function TranscriptView({
     // to it (the timeline already shows it via the summary union).
     const clip = timelineSegments.find((s) => s.id === segmentId);
     if (!clip) return;
+    // Re-arm the scroll even when segmentId is unchanged (e.g. re-clicking the
+    // same clip after jumping to live), since the [targetSegmentId] reset won't.
+    hasScrolledToTarget.current = false;
     setSearchParams((prev) => {
       prev.set('segmentId', segmentId);
       prev.set('timestamp', new Date(clip.startTimestamp).getTime().toString());
@@ -647,13 +657,33 @@ export function TranscriptView({
     if (segmentId) scrollListToSegment(segmentId);
   };
 
+  // The oldest clip with audio overlapping the visible window (its left edge),
+  // falling back to the newest loaded clip when the window has none.
+  const windowFirstPlayableId = (): string | undefined => {
+    const windowEnd = windowEndTime ?? maxEnd;
+    if (windowEnd != null) {
+      const windowStart = windowEnd - windowDurationMs;
+      // timelineSegments is newest-first, so scan from the end for the oldest.
+      for (let i = timelineSegments.length - 1; i >= 0; i--) {
+        const s = timelineSegments[i];
+        if (!s.playbackAudioUri) continue;
+        const start = new Date(s.startTimestamp).getTime();
+        const end = new Date(s.endTimestamp).getTime();
+        if (start < windowEnd && end > windowStart) return s.id;
+      }
+    }
+    return audioSegments[0]?.id;
+  };
+
   const handleTogglePlayPause = () => {
     followPlaybackRef.current = true;
+    // Fallback (nothing highlighted/playing): start at the window's left edge so
+    // playback walks forward through what's shown — live, scrubbed, or filtered.
     const targetId = isAudioPlaying
       ? currentlyPlayingSegmentId || highlightedSegmentId
       : highlightedSegmentId ||
         currentlyPlayingSegmentId ||
-        audioSegments[0]?.id;
+        windowFirstPlayableId();
     if (!targetId) return;
 
     // The timeline can highlight clips from the 24h overview that the lazy list
@@ -685,6 +715,8 @@ export function TranscriptView({
         prev.set('timestamp', date.getTime().toString());
       } else {
         prev.delete('timestamp');
+        // Drop the stale target so a later re-click of the same clip re-navigates.
+        prev.delete('segmentId');
       }
       return prev;
     });
@@ -695,14 +727,7 @@ export function TranscriptView({
     if (date === null) {
       jumpToLive();
       followPlaybackRef.current = true;
-      setTimeout(() => {
-        programmaticListScrollAtRef.current = Date.now();
-        virtuosoRef.current?.scrollToIndex({
-          index: 0,
-          align: 'center',
-          behavior: 'auto',
-        });
-      }, 100);
+      setTimeout(() => scrollListToIndex(0), 100);
       hasScrolledToTarget.current = false;
     }
   };

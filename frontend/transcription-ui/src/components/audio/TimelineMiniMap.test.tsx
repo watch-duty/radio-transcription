@@ -15,7 +15,7 @@ const times: TranscriptTime[] = [
 const renderMiniMap = (rangeStartMs: number, maxEnd: number) =>
   render(
     <TimelineMiniMap
-      transcriptTimes={times}
+      miniMapTimes={times}
       rangeStartMs={rangeStartMs}
       maxEnd={maxEnd}
       windowEndTime={null}

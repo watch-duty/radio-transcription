@@ -45,6 +45,7 @@ const baseOptions = {
   searchedFeedId: 'feed1',
   alertFilter: 'all' as const,
   isFeedsSuccess: true,
+  searchedTimestamp: null,
 };
 
 const render = () =>
@@ -98,6 +99,25 @@ describe('useAudioTimelineSummary', () => {
     expect(endTime).toBeUndefined();
     expect(order).toBe('desc');
     expect(isAlert).toBe(true);
+  });
+
+  it('anchors the 24h window to searchedTimestamp when filtered', async () => {
+    const anchor = new Date(LIVE - 10 * HOUR);
+    mockListAudioSegments.mockResolvedValue({
+      segments: [seg('a', LIVE - 11 * HOUR, LIVE - 10 * HOUR)],
+      nextToken: undefined,
+    });
+
+    const { result } = renderHook(
+      () =>
+        useAudioTimelineSummary({ ...baseOptions, searchedTimestamp: anchor }),
+      { wrapper: createWrapper() }
+    );
+
+    await waitFor(() => expect(result.current.summarySegments).toHaveLength(1));
+    const [, , , , startTime, endTime] = mockListAudioSegments.mock.calls[0];
+    expect(endTime).toBe(anchor.getTime());
+    expect(startTime).toBe(anchor.getTime() - DAY);
   });
 
   it('does not run until a feed and token are present', () => {

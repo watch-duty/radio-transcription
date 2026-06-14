@@ -19,7 +19,7 @@ const EDGE_LABEL_MARGIN_PCT = 4;
 const MIN_LABEL_GAP_PCT = 8;
 
 interface TimelineMiniMapProps {
-  transcriptTimes: TranscriptTime[];
+  miniMapTimes: TranscriptTime[];
   rangeStartMs: number | null;
   maxEnd: number | null;
   windowEndTime: number | null;
@@ -29,7 +29,7 @@ interface TimelineMiniMapProps {
 }
 
 export function TimelineMiniMap({
-  transcriptTimes,
+  miniMapTimes,
   rangeStartMs,
   maxEnd,
   windowEndTime,
@@ -46,10 +46,8 @@ export function TimelineMiniMap({
   // Alerted segments paint last so their tint stays visible where marks overlap.
   const segmentMarks = useMemo(
     () =>
-      [...transcriptTimes].sort(
-        (a, b) => Number(a.hasAlert) - Number(b.hasAlert)
-      ),
-    [transcriptTimes]
+      [...miniMapTimes].sort((a, b) => Number(a.hasAlert) - Number(b.hasAlert)),
+    [miniMapTimes]
   );
   const gridLineTimes = useMemo(() => {
     if (!showMiniMap || rangeStartMs == null || maxEnd == null) return [];
@@ -58,10 +56,9 @@ export function TimelineMiniMap({
 
   const pctOf = (ms: number) => msToPct(ms, rangeStartMs ?? 0, rangeTotalMs);
 
-  // Labels sit on round gridline boundaries. The date shows only when it
-  // changes (a day boundary) so it isn't repeated; those labels are always
-  // kept and anchored if near an edge. Interior time-only labels are dropped
-  // when they would crowd a day-boundary label.
+  // Labels sit on round gridline boundaries. The date shows only on a day change
+  // (never repeated); day-boundary labels are always kept and edge-anchored, and
+  // interior time labels that would crowd one are dropped.
   const gridLabels = useMemo(() => {
     if (rangeStartMs == null || rangeTotalMs <= 0) return [];
     let prevDate = '';

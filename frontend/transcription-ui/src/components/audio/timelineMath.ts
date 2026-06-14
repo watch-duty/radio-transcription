@@ -43,10 +43,9 @@ export function pickGridIntervalMs(totalMs: number): number {
   return NICE_INTERVALS_MS[NICE_INTERVALS_MS.length - 1];
 }
 
-// Round-interval gridline timestamps spanning [rangeStartMs, maxEnd], aligned to
-// round *local* boundaries (e.g. local midnight) rather than UTC, so day
-// boundaries land on a mark. Uses the offset at rangeStartMs; a DST change
-// mid-range can shift later marks by an hour, which is fine for an overview.
+// Round-interval gridline timestamps over [rangeStartMs, maxEnd], aligned to
+// local boundaries (e.g. local midnight) not UTC so day boundaries land on a
+// mark. Uses the offset at rangeStartMs; a mid-range DST shift is fine here.
 export function computeGridLineTimes(
   rangeStartMs: number,
   maxEnd: number,
@@ -66,15 +65,14 @@ export function computeGridLineTimes(
   return times;
 }
 
-// The segment at the window's right edge, for scrolling the list to match.
-// `times` is newest-first, so the first starting at/before `end` is it; falls
-// back to the oldest, else null.
-export function representativeSegmentId(
+// The newest segment starting at or before `at`, for syncing the list to a
+// window position. `times` is newest-first; falls back to the oldest, else null.
+export function segmentIdAt(
   times: TranscriptTime[],
-  end: number
+  at: number
 ): string | null {
   for (const t of times) {
-    if (t.startMs <= end) return t.id;
+    if (t.startMs <= at) return t.id;
   }
   return times[times.length - 1]?.id ?? null;
 }
