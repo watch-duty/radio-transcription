@@ -624,10 +624,10 @@ export function TranscriptView({
     scrollListToSegment(currentlyPlayingSegmentId);
   }, [currentlyPlayingSegmentId, scrollListToSegment]);
 
-  const handleClipClick = (segmentId: string) => {
-    followPlaybackRef.current = true;
-    setHighlightedSegmentId(segmentId);
-
+  // Bring the transcript list to a segment: scroll if it's already loaded, else
+  // load the list around its time (the deep-link scroll effect reveals it once
+  // loaded) — for clips from the 24h overview the lazy list hasn't reached.
+  const navigateListToSegment = (segmentId: string) => {
     const inList = audioSegmentsRef.current.some(
       (t) => t.id === segmentId || t.bundledSegmentIds?.includes(segmentId)
     );
@@ -635,13 +635,9 @@ export function TranscriptView({
       scrollListToSegment(segmentId, 'smooth');
       return;
     }
-
-    // The clip is from the 24h overview, older than the lazily-loaded list.
-    // Navigate the list to its time so it loads and the deep-link effect scrolls
-    // to it (the timeline already shows it via the summary union).
     const clip = timelineSegments.find((s) => s.id === segmentId);
     if (!clip) return;
-    // Re-arm the scroll even when segmentId is unchanged (e.g. re-clicking the
+    // Re-arm the scroll even when segmentId is unchanged (e.g. re-selecting the
     // same clip after jumping to live), since the [targetSegmentId] reset won't.
     hasScrolledToTarget.current = false;
     setSearchParams((prev) => {
@@ -649,6 +645,12 @@ export function TranscriptView({
       prev.set('timestamp', new Date(clip.startTimestamp).getTime().toString());
       return prev;
     });
+  };
+
+  const handleClipClick = (segmentId: string) => {
+    followPlaybackRef.current = true;
+    setHighlightedSegmentId(segmentId);
+    navigateListToSegment(segmentId);
   };
 
   const handleScrubToCenter = (centerMs: number) => {
@@ -677,6 +679,7 @@ export function TranscriptView({
 
   const handleTogglePlayPause = () => {
     followPlaybackRef.current = true;
+    const startingPlayback = !isAudioPlaying;
     // Fallback (nothing highlighted/playing): start at the window's left edge so
     // playback walks forward through what's shown — live, scrubbed, or filtered.
     const targetId = isAudioPlaying
@@ -686,13 +689,15 @@ export function TranscriptView({
         windowFirstPlayableId();
     if (!targetId) return;
 
-    // The timeline can highlight clips from the 24h overview that the lazy list
+    // The timeline can target clips from the 24h overview that the lazy list
     // hasn't loaded, so fall back to the union before the consolidated list.
+    // When starting playback, bring the list to the clip so its row highlights.
     const specificSegment =
       rawAudioSegments.find((s) => s.id === targetId) ??
       timelineSegments.find((s) => s.id === targetId);
     if (specificSegment && specificSegment.playbackAudioUri) {
       toggleAudio(specificSegment.id, specificSegment.playbackAudioUri);
+      if (startingPlayback) navigateListToSegment(specificSegment.id);
       return;
     }
 
@@ -701,6 +706,7 @@ export function TranscriptView({
     );
     if (audioSegment && audioSegment.playbackAudioUri) {
       toggleAudio(audioSegment.id, audioSegment.playbackAudioUri);
+      if (startingPlayback) navigateListToSegment(audioSegment.id);
     }
   };
 
