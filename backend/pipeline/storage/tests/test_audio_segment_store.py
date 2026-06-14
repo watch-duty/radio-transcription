@@ -3,13 +3,11 @@ from __future__ import annotations
 import datetime
 import unittest
 import uuid
-from unittest import mock
 
 import asyncpg
 
-from backend.pipeline.storage import audio_segment_queries, audio_segment_store
+from backend.pipeline.storage import audio_segment_queries
 from backend.pipeline.storage.audio_segment_store import (
-    MAX_SUMMARY_ROWS,
     AudioSegmentStore,
 )
 from backend.pipeline.storage.pagination_utils import (
@@ -296,31 +294,6 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             await self.store.list_audio_segments(ids=["invalid-uuid"])
         self.assertIn("Invalid id UUID in list", str(cm.exception))
 
-    async def test_get_audio_segment_success(self) -> None:
-        self.pool.fetchrow.return_value = _AUDIO_SEGMENT_ROW
-
-        result = await self.store.get_audio_segment(str(_SEGMENT_ID))
-
-        self.assertIsNotNone(result)
-        assert result is not None
-        self.assertEqual(result.id, str(_SEGMENT_ID))
-        self.pool.fetchrow.assert_called_once_with(
-            audio_segment_queries.GET_AUDIO_SEGMENT_BY_ID_SQL,
-            _SEGMENT_ID,
-        )
-
-    async def test_get_audio_segment_not_found(self) -> None:
-        self.pool.fetchrow.return_value = None
-
-        result = await self.store.get_audio_segment(str(_SEGMENT_ID))
-
-        self.assertIsNone(result)
-
-    async def test_get_audio_segment_invalid_uuid(self) -> None:
-        with self.assertRaises(ValueError) as cm:
-            await self.store.get_audio_segment("invalid-uuid")
-        self.assertIn("Invalid segment_id UUID", str(cm.exception))
-
     async def test_list_audio_segment_summaries(self) -> None:
         self.pool.fetch.return_value = [_SUMMARY_ROW]
         start = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
@@ -342,7 +315,7 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             start,
             end,
             None,
-            MAX_SUMMARY_ROWS + 1,
+            101,
         )
 
     async def test_list_audio_segment_summaries_feed_and_alert(self) -> None:
@@ -366,7 +339,7 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             start,
             end,
             is_alert,
-            MAX_SUMMARY_ROWS + 1,
+            101,
         )
 
     async def test_list_audio_segment_summaries_resume(self) -> None:
@@ -388,7 +361,7 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             start,
             end,
             None,
-            MAX_SUMMARY_ROWS + 1,
+            101,
         )
 
     async def test_list_audio_segment_summaries_end_before_start(self) -> None:
@@ -432,22 +405,42 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             )
         self.assertIn("Invalid feed_id UUID in list", str(cm.exception))
 
-    async def test_list_audio_segment_summaries_overflow_returns_token(
+    async def test_list_audio_segment_summaries_full_page_returns_token(
         self,
     ) -> None:
         start = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
         end = datetime.datetime(2026, 1, 2, tzinfo=datetime.UTC)
-        with mock.patch.object(audio_segment_store, "MAX_SUMMARY_ROWS", 2):
-            self.pool.fetch.return_value = [_SUMMARY_ROW] * 3
-            result = await self.store.list_audio_segment_summaries(
-                start_time=start, end_time=end
-            )
+        # limit+1 rows fetched => a next page exists.
+        self.pool.fetch.return_value = [_SUMMARY_ROW] * 3
+        result = await self.store.list_audio_segment_summaries(
+            start_time=start, end_time=end, limit=2
+        )
 
         assert result.next_token is not None
         self.assertEqual(len(result.summaries), 2)
         cursor_ts, cursor_uid = decode_cursor(result.next_token)
         self.assertEqual(cursor_ts, _SUMMARY_ROW["end_timestamp"])
         self.assertEqual(cursor_uid, _SEGMENT_ID)
+
+    def test_summaries_keyset_order_and_resume_stay_coupled(self) -> None:
+        """Guards keyset determinism across same-timestamp ties.
+
+        end_timestamp is not unique, so the sort needs the unique id as a
+        tiebreaker and the resume predicate must skip strictly past the
+        cursor's (end_timestamp, id) in that same direction. If the ORDER BY
+        and the predicate ever drift apart, tied rows can straddle a page
+        boundary and be dropped or duplicated. The cursor packs those same
+        two columns (asserted in the overflow test above).
+        """
+        sql = audio_segment_queries.LIST_AUDIO_SEGMENT_SUMMARIES_IN_WINDOW_SQL
+        # Total order: timestamp, then unique id tiebreaker, both DESC.
+        self.assertIn("ORDER BY s.end_timestamp DESC, s.id DESC", sql)
+        # Resume must match that DESC order: strictly-less comparators on the
+        # same (end_timestamp, id) the cursor binds to $2/$3.
+        self.assertIn(
+            "s.end_timestamp < $2 OR (s.end_timestamp = $2 AND s.id < $3)",
+            sql,
+        )
 
 
 if __name__ == "__main__":

@@ -140,51 +140,6 @@ class TestAudioSegmentsAPI(unittest.TestCase):
             is_alert=None,
         )
 
-    def test_get_audio_segment_success(self) -> None:
-        """Fetch a single audio segment by id."""
-        mock_segment = AudioSegment(
-            id=_SEGMENT_ID,
-            feed_id=_FEED_ID,
-            classification=AudioClassification.SPEECH,
-            start_timestamp=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
-            end_timestamp=datetime.datetime(
-                2026, 1, 1, 0, 1, tzinfo=datetime.UTC
-            ),
-            missing_prior_context=False,
-            missing_post_context=False,
-            source_audio_uris=["gs://bucket/audio1.ogg"],
-            canonical_audio_uri="gs://bucket/canonical.ogg",
-            start_audio_offset=datetime.timedelta(seconds=5),
-            end_audio_offset=datetime.timedelta(seconds=10),
-            playback_audio_uri=None,
-            created_at=datetime.datetime(2026, 1, 1, 0, 2, tzinfo=datetime.UTC),
-            annotations=[],
-        )
-        self.mock_service.get_audio_segment.return_value = mock_segment
-
-        response = self.client.get(f"/v1/audio_segments/{_SEGMENT_ID}")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.json()["id"], _SEGMENT_ID)
-        self.mock_service.get_audio_segment.assert_called_once_with(_SEGMENT_ID)
-
-    def test_get_audio_segment_not_found(self) -> None:
-        """A missing segment surfaces as a 404."""
-        self.mock_service.get_audio_segment.return_value = None
-
-        response = self.client.get(f"/v1/audio_segments/{_SEGMENT_ID}")
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-        self.assertIn("not found", response.json()["detail"])
-
-    def test_get_audio_segment_invalid_uuid(self) -> None:
-        """An invalid id surfaces as a 400."""
-        self.mock_service.get_audio_segment.side_effect = ValueError(
-            "Invalid segment_id UUID: not-a-uuid"
-        )
-
-        response = self.client.get("/v1/audio_segments/not-a-uuid")
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("Invalid segment_id UUID", response.json()["detail"])
-
     def test_list_audio_segment_summaries_defaults_end_time_to_now(
         self,
     ) -> None:
@@ -217,7 +172,7 @@ class TestAudioSegmentsAPI(unittest.TestCase):
         data = response.json()
         self.assertEqual(len(data["segments"]), 1)
         self.assertEqual(data["segments"][0]["id"], _SEGMENT_ID)
-        self.assertFalse(data["truncated"])
+        self.assertIsNone(data["next_token"])
 
         kwargs = self.mock_service.list_audio_segment_summaries.call_args.kwargs
         self.assertEqual(kwargs["feed_ids"], [_FEED_ID])
@@ -249,15 +204,16 @@ class TestAudioSegmentsAPI(unittest.TestCase):
             start_time=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
             end_time=datetime.datetime(2026, 1, 1, 1, tzinfo=datetime.UTC),
             feed_ids=[_FEED_ID],
+            limit=100,
             next_token=None,
             is_alert=True,
         )
 
-    def test_list_audio_segment_summaries_overflow_returns_token(self) -> None:
-        """An overflowed window sets truncated to the resume cursor."""
+    def test_list_audio_segment_summaries_full_page_returns_token(self) -> None:
+        """A full page returns next_token for the next page."""
         self.mock_service.list_audio_segment_summaries.return_value = (
             ListAudioSegmentSummariesResponse(
-                segments=[], truncated="cursor-123"
+                segments=[], next_token="cursor-123"
             )
         )
 
@@ -270,7 +226,7 @@ class TestAudioSegmentsAPI(unittest.TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data = response.json()
-        self.assertEqual(data["truncated"], "cursor-123")
+        self.assertEqual(data["next_token"], "cursor-123")
 
     def test_list_audio_segment_summaries_resume_forwards_token(self) -> None:
         """A supplied next_token is forwarded to resume the window."""

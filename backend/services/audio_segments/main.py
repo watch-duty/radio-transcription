@@ -92,32 +92,6 @@ async def list_audio_segments(
 
 
 @app.get(
-    "/v1/audio_segments/{audio_segment_id}",
-    response_model=AudioSegment,
-    tags=["audio_segments"],
-)
-async def get_audio_segment(
-    request: Request,
-    audio_segment_id: str,
-) -> AudioSegment:
-    """Fetch a single audio segment with its annotations by id."""
-    service: AudioSegmentService = request.app.state.audio_segment_service
-    try:
-        segment = await service.get_audio_segment(audio_segment_id)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-    if segment is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Audio segment {audio_segment_id} not found.",
-        )
-    return segment
-
-
-@app.get(
     "/v1/audio_segment_summaries",
     response_model=ListAudioSegmentSummariesResponse,
     tags=["audio_segments"],
@@ -127,16 +101,15 @@ async def list_audio_segment_summaries(
     start_time: datetime.datetime,
     feed_ids: Annotated[list[str] | None, Query()] = None,
     end_time: datetime.datetime | None = None,
+    limit: int = 100,
     next_token: str | None = None,
     *,
     is_alert: bool | None = None,
 ) -> ListAudioSegmentSummariesResponse:
-    """Return lightweight segment summaries in a time window.
+    """List lightweight segment summaries in a time window (newest first).
 
-    Returns the whole [start_time, end_time] window (newest first) in one
-    response unless it overflows the row cap, in which case truncated carries a
-    resume cursor to pass back as next_token. end_time defaults to now when
-    omitted.
+    Paginated like /v1/audio_segments: a non-null next_token in the response
+    resumes the next page. end_time defaults to now when omitted.
     """
     service: AudioSegmentService = request.app.state.audio_segment_service
     if end_time is None:
@@ -146,6 +119,7 @@ async def list_audio_segment_summaries(
             start_time=start_time,
             end_time=end_time,
             feed_ids=feed_ids,
+            limit=limit,
             next_token=next_token,
             is_alert=is_alert,
         )

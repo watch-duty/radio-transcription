@@ -137,13 +137,7 @@ class AudioSegmentSummary(BaseModel):
 
 
 class ListAudioSegmentSummariesResponse(BaseModel):
-    """Response model for a windowed list of audio segment summaries.
-
-    truncated is False when the whole window fit, or a resume cursor
-    (a timestamp+id token) when it overflowed the row cap -- truthy/falsy
-    for legacy clients, while carrying the cursor to pass back as the
-    next_token query parameter.
-    """
+    """Response model for a windowed list of audio segment summaries."""
 
     segments: list[AudioSegmentSummary]
-    truncated: bool | str = False
+    next_token: str | None = None

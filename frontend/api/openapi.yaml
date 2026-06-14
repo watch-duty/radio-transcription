@@ -586,11 +586,15 @@ components:
         endTime:
           type: string
           description: ISO-8601; defaults to "now" server-side when omitted.
+        limit:
+          type: integer
+          format: int32
+          default: 100
         isAlert:
           type: boolean
         nextToken:
           type: string
-          description: Resume cursor returned when a prior window was truncated.
+          description: Resume cursor from a prior page's nextToken.
       required:
         - startTime
       type: object
@@ -1756,16 +1760,13 @@ paths:
             application/json:
               schema:
                 properties:
-                  truncated:
-                    anyOf:
-                      - type: boolean
-                      - type: string
+                  nextToken:
+                    type: string
                   segments:
                     items:
                       $ref: "#/components/schemas/AudioSegmentSummary"
                     type: array
                 required:
-                  - truncated
                   - segments
                 type: object
         "401":
@@ -1814,9 +1815,8 @@ paths:
                 type: object
       description: |-
         Lightweight segment summaries across a time window, for timeline rendering.
-        Returns the whole window in one response unless it overflows the row cap,
-        in which case truncated carries a resume cursor; pass it back as nextToken
-        to fetch the next page.
+        Paginated like listAudioSegments: a non-null nextToken in the response
+        resumes the next page.
       tags:
         - Audio Segments
       security:
@@ -1839,85 +1839,21 @@ paths:
           schema:
             type: string
         - in: query
+          name: limit
+          required: false
+          schema:
+            default: 100
+            format: int32
+            type: integer
+        - in: query
           name: isAlert
           required: false
           schema:
             type: boolean
-        - description: Resume cursor returned when a prior window was truncated.
+        - description: Resume cursor from a prior page's nextToken.
           in: query
           name: nextToken
           required: false
-          schema:
-            type: string
-      x-google-backend: radio-transcription-api
-  /api/v1/audioSegments/{feedId}/{audioSegmentId}:
-    get:
-      operationId: GetAudioSegment
-      responses:
-        "200":
-          description: Ok
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AudioSegment"
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                properties:
-                  message:
-                    type: string
-                required:
-                  - message
-                type: object
-        "403":
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                properties:
-                  message:
-                    type: string
-                required:
-                  - message
-                type: object
-        "404":
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                properties:
-                  message:
-                    type: string
-                required:
-                  - message
-                type: object
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                properties:
-                  message:
-                    type: string
-                required:
-                  - message
-                type: object
-      description: Fetch a single audio segment, with its annotations, by id.
-      tags:
-        - Audio Segments
-      security:
-        - google_id_token: []
-      parameters:
-        - in: path
-          name: feedId
-          required: true
-          schema:
-            type: string
-        - in: path
-          name: audioSegmentId
-          required: true
           schema:
             type: string
       x-google-backend: radio-transcription-api

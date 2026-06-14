@@ -201,58 +201,12 @@ describe('listAudioSegments', () => {
   });
 });
 
-describe('getAudioSegment', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('should fetch and convert a single segment by id', async () => {
-    const mockBackendResponse = {
-      id: 'segment-1',
-      feed_id: 'feed-1',
-      classification: 'SPEECH',
-      start_timestamp: '2026-01-01T10:00:00Z',
-      end_timestamp: '2026-01-01T10:01:00Z',
-      missing_prior_context: false,
-      missing_post_context: false,
-      source_audio_uris: ['gs://bucket/audio.ogg'],
-      canonical_audio_uri: 'gs://bucket/canonical.ogg',
-      start_audio_offset: 'PT5S',
-      end_audio_offset: 'PT10S',
-      playback_audio_uri: 'https://example.com/playback.mp3',
-      external_audio_segment_id: 'test-external-id',
-      created_at: '2026-01-01T10:02:00Z',
-      annotations: [],
-    };
-    mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
-
-    const controller = new AudioController();
-    const result = await controller.getAudioSegment('feed-1', 'segment-1');
-
-    expect(result.id).toBe('segment-1');
-    expect(result.canonicalAudioUri).toBe('gs://bucket/canonical.ogg');
-    expect(mockRequest).toHaveBeenCalledWith({
-      url: 'http://audio-segments.example.com/v1/audio_segments/segment-1',
-      method: 'GET',
-    });
-  });
-
-  it('should throw error on API failure', async () => {
-    mockRequest.mockRejectedValueOnce(new Error('Not Found'));
-    const controller = new AudioController();
-
-    await expect(
-      controller.getAudioSegment('feed-1', 'missing')
-    ).rejects.toThrow(/Not Found/);
-  });
-});
-
 describe('listAudioSegmentSummaries', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('should convert summaries and default truncated to false', async () => {
+  it('should convert summaries and leave nextToken undefined', async () => {
     const mockBackendResponse = {
       segments: [
         {
@@ -270,6 +224,7 @@ describe('listAudioSegmentSummaries', () => {
     const controller = new AudioController();
     const result = await controller.listAudioSegmentSummaries('test', {
       startTime: '2026-01-01T00:00:00Z',
+      limit: 100,
     });
 
     expect(result).toEqual({
@@ -283,18 +238,18 @@ describe('listAudioSegmentSummaries', () => {
           isAlert: true,
         },
       ],
-      truncated: false,
+      nextToken: undefined,
     });
     expect(mockRequest).toHaveBeenCalledWith({
-      url: 'http://audio-segments.example.com/v1/audio_segment_summaries?feed_ids=test&start_time=2026-01-01T00%3A00%3A00Z',
+      url: 'http://audio-segments.example.com/v1/audio_segment_summaries?feed_ids=test&start_time=2026-01-01T00%3A00%3A00Z&limit=100',
       method: 'GET',
     });
   });
 
-  it('should set truncated to the cursor and forward optional params', async () => {
+  it('should set nextToken from the cursor and forward optional params', async () => {
     const mockBackendResponse = {
       segments: [],
-      truncated: 'cursor-123',
+      next_token: 'cursor-123',
     };
     mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
 
@@ -302,13 +257,14 @@ describe('listAudioSegmentSummaries', () => {
     const result = await controller.listAudioSegmentSummaries('test', {
       startTime: '2026-01-01T00:00:00Z',
       endTime: '2026-01-02T00:00:00Z',
+      limit: 100,
       isAlert: false,
       nextToken: 'prev-cursor',
     });
 
-    expect(result.truncated).toBe('cursor-123');
+    expect(result.nextToken).toBe('cursor-123');
     expect(mockRequest).toHaveBeenCalledWith({
-      url: 'http://audio-segments.example.com/v1/audio_segment_summaries?feed_ids=test&start_time=2026-01-01T00%3A00%3A00Z&end_time=2026-01-02T00%3A00%3A00Z&is_alert=false&next_token=prev-cursor',
+      url: 'http://audio-segments.example.com/v1/audio_segment_summaries?feed_ids=test&start_time=2026-01-01T00%3A00%3A00Z&end_time=2026-01-02T00%3A00%3A00Z&limit=100&is_alert=false&next_token=prev-cursor',
       method: 'GET',
     });
   });
@@ -320,6 +276,7 @@ describe('listAudioSegmentSummaries', () => {
     await expect(
       controller.listAudioSegmentSummaries('test', {
         startTime: '2026-01-01T00:00:00Z',
+        limit: 100,
       })
     ).rejects.toThrow(/Backend Connection Failed/);
   });

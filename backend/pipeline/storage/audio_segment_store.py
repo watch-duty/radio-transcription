@@ -25,7 +25,6 @@ from backend.services.audio_segments.models import (
 annotation_adapter = TypeAdapter(Annotation)
 
 MAX_SUMMARY_WINDOW = datetime.timedelta(days=7)
-MAX_SUMMARY_ROWS = 50_000
 
 
 @dataclass
@@ -163,22 +162,6 @@ class AudioSegmentStore:
 
         return AudioSegment.model_validate(self._prepare_audio_segment(row))
 
-    async def get_audio_segment(self, segment_id: str) -> AudioSegment | None:
-        """Fetch a single audio segment with its annotations, or None."""
-        try:
-            seg_uuid = uuid.UUID(segment_id)
-        except ValueError as e:
-            msg = f"Invalid segment_id UUID: {segment_id}"
-            raise ValueError(msg) from e
-
-        row = await self._pool.fetchrow(
-            audio_segment_queries.GET_AUDIO_SEGMENT_BY_ID_SQL, seg_uuid
-        )
-        if row is None:
-            return None
-
-        return AudioSegment.model_validate(self._prepare_audio_segment(row))
-
     async def list_audio_segments(
         self,
         feed_ids: list[str] | None = None,
@@ -253,13 +236,15 @@ class AudioSegmentStore:
         start_time: datetime.datetime,
         end_time: datetime.datetime,
         feed_ids: list[str] | None = None,
+        limit: int = 100,
         next_token: str | None = None,
         *,
         is_alert: bool | None = None,
     ) -> AudioSegmentSummaryWindow:
         """Fetch lightweight summaries in a window.
 
-        Row-capped; a non-null next_token resumes from the last returned row.
+        Paginated like list_audio_segments: a non-null next_token resumes
+        from the last returned row.
         """
         # Normalize naive inputs to UTC; mixing aware/naive raises TypeError.
         if start_time.tzinfo is None:
@@ -296,12 +281,11 @@ class AudioSegmentStore:
             start_time,
             end_time,
             is_alert,
-            MAX_SUMMARY_ROWS + 1,
+            limit + 1,
         )
 
-        # Non-null token = window overflowed; keysets the last returned row.
         rows, new_next_token = get_paginated_results(
-            rows, MAX_SUMMARY_ROWS, "end_timestamp", "id"
+            rows, limit, "end_timestamp", "id"
         )
 
         summaries = [
