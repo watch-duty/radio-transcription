@@ -17,3 +17,22 @@ local test commands have previously exhausted developer machines.
   `mise run test:e2e`, `mise run test:component`, and
   `docker compose ... integration-tests` unless explicitly approved.
 - Prefer GitHub Actions for full E2E/resource-stack validation.
+
+## GSD Project Context
+
+This worktree has GSD planning artifacts for the Evidence-Based Quarantine
+Policy project:
+
+- [.planning/PROJECT.md](.planning/PROJECT.md) — project context, core value,
+  constraints, and decisions.
+- [.planning/REQUIREMENTS.md](.planning/REQUIREMENTS.md) — checkable v1
+  requirements and traceability.
+- [.planning/ROADMAP.md](.planning/ROADMAP.md) — three-phase implementation
+  roadmap.
+- [.planning/STATE.md](.planning/STATE.md) — current phase and session state.
+- [.planning/codebase/](.planning/codebase/) — codebase map.
+
+Before planned implementation work, read `.planning/STATE.md`, then the
+relevant project, requirements, roadmap, and codebase-map sections. Prefer GSD
+entry points such as `$gsd-plan-phase`, `$gsd-execute-phase`, `$gsd-quick`, or
+`$gsd-debug` so planning artifacts and execution context stay in sync.
