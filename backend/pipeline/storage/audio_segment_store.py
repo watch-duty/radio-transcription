@@ -168,7 +168,6 @@ class AudioSegmentStore:
         start_time: datetime.datetime | None = None,
         end_time: datetime.datetime | None = None,
         order: SortOrder = SortOrder.DESC,
-        ids: list[str] | None = None,
         *,
         is_alert: bool | None = None,
     ) -> PaginatedAudioSegments:
@@ -179,14 +178,6 @@ class AudioSegmentStore:
                 feed_uuids = [uuid.UUID(fid) for fid in feed_ids]
             except ValueError as e:
                 msg = f"Invalid feed_id UUID in list: {feed_ids}"
-                raise ValueError(msg) from e
-
-        id_uuids = None
-        if ids:
-            try:
-                id_uuids = [uuid.UUID(i) for i in ids]
-            except ValueError as e:
-                msg = f"Invalid id UUID in list: {ids}"
                 raise ValueError(msg) from e
 
         cursor_ts = None
@@ -201,8 +192,6 @@ class AudioSegmentStore:
             else audio_segment_queries.LIST_AUDIO_SEGMENTS_DESC_SQL
         )
 
-        # Specific-id hydration returns all rows: LIMIT NULL, no pagination.
-        fetch_limit = None if id_uuids else limit + 1
         rows = await self._pool.fetch(
             query,
             feed_uuids,
@@ -211,16 +200,12 @@ class AudioSegmentStore:
             start_time,
             end_time,
             is_alert,
-            id_uuids,
-            fetch_limit,
+            limit + 1,
         )
 
-        if id_uuids:
-            new_next_token = None
-        else:
-            rows, new_next_token = get_paginated_results(
-                rows, limit, "end_timestamp", "id"
-            )
+        rows, new_next_token = get_paginated_results(
+            rows, limit, "end_timestamp", "id"
+        )
 
         segments = [
             AudioSegment.model_validate(self._prepare_audio_segment(row))

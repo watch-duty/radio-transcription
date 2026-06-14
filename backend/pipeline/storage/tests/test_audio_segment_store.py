@@ -246,7 +246,6 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             None,
             None,
             None,
-            None,
             101,
         )
 
@@ -262,37 +261,13 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             None,
             None,
             None,
-            None,
             101,
-        )
-
-    async def test_list_audio_segments_with_ids(self) -> None:
-        result = await self.store.list_audio_segments(ids=[str(_SEGMENT_ID)])
-
-        self.assertEqual(len(result.segments), 1)
-        # An id request ignores limit/pagination: LIMIT NULL, no next_token.
-        self.assertIsNone(result.next_token)
-        self.pool.fetch.assert_called_once_with(
-            audio_segment_queries.LIST_AUDIO_SEGMENTS_DESC_SQL,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            [_SEGMENT_ID],
-            None,
         )
 
     async def test_list_audio_segments_invalid_feed_id(self) -> None:
         with self.assertRaises(ValueError) as cm:
             await self.store.list_audio_segments(["invalid-uuid"])
         self.assertIn("Invalid feed_id UUID in list", str(cm.exception))
-
-    async def test_list_audio_segments_invalid_id(self) -> None:
-        with self.assertRaises(ValueError) as cm:
-            await self.store.list_audio_segments(ids=["invalid-uuid"])
-        self.assertIn("Invalid id UUID in list", str(cm.exception))
 
     async def test_list_audio_segment_summaries(self) -> None:
         self.pool.fetch.return_value = [_SUMMARY_ROW]

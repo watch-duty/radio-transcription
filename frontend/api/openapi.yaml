@@ -546,11 +546,6 @@ components:
             - desc
         isAlert:
           type: boolean
-        ids:
-          items:
-            type: string
-          type: array
-          description: Hydrate specific segments by id; combines with the other filters.
       type: object
       additionalProperties: false
     AudioSegmentSummary:
@@ -1741,14 +1736,6 @@ paths:
           required: false
           schema:
             type: boolean
-        - description: Hydrate specific segments by id; combines with the other filters.
-          in: query
-          name: ids
-          required: false
-          schema:
-            type: array
-            items:
-              type: string
       x-google-backend: radio-transcription-api
   /api/v1/audioSegments/{feedId}/summaries:
     get:

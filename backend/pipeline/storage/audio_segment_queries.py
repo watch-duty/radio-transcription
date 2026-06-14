@@ -38,9 +38,8 @@ WHERE ($1::uuid[] IS NULL OR s.feed_id = ANY($1))
   AND ($4::timestamptz IS NULL OR s.end_timestamp >= $4)
   AND ($5::timestamptz IS NULL OR s.end_timestamp <= $5)
   AND ($6::boolean IS NULL OR COALESCE(a.is_alert, False) = $6::boolean)
-  AND ($7::uuid[] IS NULL OR s.id = ANY($7))
 ORDER BY s.end_timestamp DESC, s.id DESC
-LIMIT $8
+LIMIT $7
 """
 
 LIST_AUDIO_SEGMENTS_ASC_SQL = """
@@ -81,9 +80,8 @@ WHERE ($1::uuid[] IS NULL OR s.feed_id = ANY($1))
   AND ($4::timestamptz IS NULL OR s.end_timestamp >= $4)
   AND ($5::timestamptz IS NULL OR s.end_timestamp <= $5)
   AND ($6::boolean IS NULL OR COALESCE(a.is_alert, False) = $6::boolean)
-  AND ($7::uuid[] IS NULL OR s.id = ANY($7))
 ORDER BY s.end_timestamp ASC, s.id ASC
-LIMIT $8
+LIMIT $7
 """
 
 # Filters on end_timestamp; with feed_ids this rides

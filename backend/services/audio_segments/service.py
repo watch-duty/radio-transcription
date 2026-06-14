@@ -39,7 +39,6 @@ class AudioSegmentService:
         start_time: datetime.datetime | None = None,
         end_time: datetime.datetime | None = None,
         order: SortOrder = SortOrder.DESC,
-        ids: list[str] | None = None,
         *,
         is_alert: bool | None = None,
     ) -> ListAudioSegmentsResponse:
@@ -51,7 +50,6 @@ class AudioSegmentService:
             start_time=start_time,
             end_time=end_time,
             order=order,
-            ids=ids,
             is_alert=is_alert,
         )
         return ListAudioSegmentsResponse(

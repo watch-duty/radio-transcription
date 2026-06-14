@@ -174,22 +174,6 @@ describe('listAudioSegments', () => {
     });
   });
 
-  it('should forward repeated ids for batch hydration', async () => {
-    const mockBackendResponse = { segments: [] };
-    mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
-
-    const controller = new AudioController();
-    await controller.listAudioSegments('test', {
-      limit: 100,
-      ids: ['seg-1', 'seg-2'],
-    });
-
-    expect(mockRequest).toHaveBeenCalledWith({
-      url: 'http://audio-segments.example.com/v1/audio_segments?feed_ids=test&limit=100&ids=seg-1&ids=seg-2',
-      method: 'GET',
-    });
-  });
-
   it('should throw error on API failure with error message', async () => {
     const errorMessage = 'Backend Connection Failed';
     mockRequest.mockRejectedValueOnce(new Error(errorMessage));

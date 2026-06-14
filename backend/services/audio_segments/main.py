@@ -67,7 +67,6 @@ async def list_audio_segments(
     start_time: datetime.datetime | None = None,
     end_time: datetime.datetime | None = None,
     order: SortOrder = SortOrder.DESC,
-    ids: Annotated[list[str] | None, Query()] = None,
     *,
     is_alert: bool | None = None,
 ) -> ListAudioSegmentsResponse:
@@ -81,7 +80,6 @@ async def list_audio_segments(
             start_time=start_time,
             end_time=end_time,
             order=order,
-            ids=ids,
             is_alert=is_alert,
         )
     except ValueError as e:

@@ -126,8 +126,6 @@ export class ListAudioSegmentsQueryParams {
   endTime?: string;
   order?: 'asc' | 'desc';
   isAlert?: boolean;
-  /** Hydrate specific segments by id; combines with the other filters. */
-  ids?: string[];
 }
 
 export class ListAudioSegmentSummariesQueryParams {
@@ -168,9 +166,6 @@ export class AudioController extends Controller {
       // Can be true/false, just not undefined.
       if (query.isAlert !== undefined) {
         queryParams.append('is_alert', query.isAlert.toString());
-      }
-      for (const id of query.ids ?? []) {
-        queryParams.append('ids', id);
       }
 
       const client = await getServiceClient(AUDIO_SEGMENTS_API_URL);

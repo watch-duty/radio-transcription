@@ -81,7 +81,6 @@ class TestAudioSegmentsAPI(unittest.TestCase):
             start_time=None,
             end_time=None,
             order=SortOrder.DESC,
-            ids=None,
             is_alert=None,
         )
 
@@ -114,30 +113,7 @@ class TestAudioSegmentsAPI(unittest.TestCase):
             start_time=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
             end_time=datetime.datetime(2026, 1, 1, 1, tzinfo=datetime.UTC),
             order=SortOrder.ASC,
-            ids=None,
             is_alert=True,
-        )
-
-    def test_list_audio_segments_with_ids(self) -> None:
-        """The ids filter is forwarded for batch hydration."""
-        self.mock_service.list_audio_segments.return_value = (
-            ListAudioSegmentsResponse(segments=[])
-        )
-        other_id = "cccccccc-dddd-eeee-ffff-000000000000"
-
-        response = self.client.get(
-            "/v1/audio_segments", params={"ids": [_SEGMENT_ID, other_id]}
-        )
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.mock_service.list_audio_segments.assert_called_once_with(
-            feed_ids=None,
-            limit=100,
-            next_token=None,
-            start_time=None,
-            end_time=None,
-            order=SortOrder.DESC,
-            ids=[_SEGMENT_ID, other_id],
-            is_alert=None,
         )
 
     def test_list_audio_segment_summaries_defaults_end_time_to_now(
