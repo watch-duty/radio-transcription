@@ -13,6 +13,7 @@ jobs:
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
       requires_backend: ${{ steps.filter.outputs.requires_backend }}
+      requires_model: ${{ steps.filter.outputs.requires_model }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -39,13 +40,30 @@ jobs:
         id: filter
         if: steps.check.outputs.should_run == 'true'
         run: |
-          git fetch origin main || true
-          FILES=$(git diff --name-only origin/main HEAD 2>/dev/null || git diff --name-only HEAD~1 HEAD)
+          # 1. Fetch upstream base commit cleanly without entirely suppressing network exit codes
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          if [ -n "$BASE_SHA" ]; then
+            git fetch origin "${{ github.event.pull_request.base.ref }}" 2>/dev/null
+            FILES=$(git diff --name-only "$BASE_SHA" "${{ github.event.pull_request.head.sha }}" 2>/dev/null)
+          else
+            git fetch origin main 2>/dev/null
+            FILES=$(git diff --name-only origin/main HEAD 2>/dev/null || git diff --name-only HEAD~1 HEAD)
+          fi
           echo "Modified files: $FILES"
+
+          # 2. Filter A: requires_backend. If any modified file falls OUTSIDE model/ and .md, we require backend runs.
+          # Note: grep -v inverts match per line. If any modified file is not a model/ or .md file, it returns true (exit 0).
           if echo "$FILES" | grep -qvE '^(model/|.*\.md)'; then
             echo "requires_backend=true" >> $GITHUB_OUTPUT
           else
             echo "requires_backend=false" >> $GITHUB_OUTPUT
+          fi
+
+          # 3. Filter B: requires_model. If any modified file touches model/ or .github/workflows/, we require model runs.
+          if echo "$FILES" | grep -qE '^(model/|\.github/workflows/)'; then
+            echo "requires_model=true" >> $GITHUB_OUTPUT
+          else
+            echo "requires_model=false" >> $GITHUB_OUTPUT
           fi
       - name: Validate merge with main (fail fast on conflicts)
         if: steps.check.outputs.should_run == 'true'
@@ -57,7 +75,8 @@ jobs:
 
   code-quality-checks-python:
     needs: [setup]
-    if: needs.setup.outputs.should_run == 'true'
+    # Gated on both backend and model changes to ensure Colab notebook JSON schemas and Ruff Python formatting are strictly enforced across all ML and API PRs
+    if: needs.setup.outputs.should_run == 'true' && (needs.setup.outputs.requires_backend == 'true' || needs.setup.outputs.requires_model == 'true')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -82,7 +101,7 @@ jobs:
 
   run-model-tests:
     needs: [setup]
-    if: needs.setup.outputs.should_run == 'true'
+    if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_model == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
