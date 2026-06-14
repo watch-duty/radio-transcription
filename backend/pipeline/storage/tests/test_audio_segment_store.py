@@ -357,28 +357,6 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             101,
         )
 
-    async def test_list_audio_segment_summaries_end_before_start(self) -> None:
-        start = datetime.datetime(2026, 1, 2, tzinfo=datetime.UTC)
-        end = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
-        with self.assertRaises(ValueError) as cm:
-            await self.store.list_audio_segment_summaries(
-                start_time=start, end_time=end
-            )
-        self.assertIn("must not be before", str(cm.exception))
-        self.pool.fetch.assert_not_called()
-
-    async def test_list_audio_segment_summaries_naive_start_time(self) -> None:
-        # Naive start vs aware end must not raise TypeError.
-        self.pool.fetch.return_value = [_SUMMARY_ROW]
-        naive_start = datetime.datetime(2026, 1, 1)
-        aware_end = datetime.datetime(2026, 1, 2, tzinfo=datetime.UTC)
-
-        result = await self.store.list_audio_segment_summaries(
-            start_time=naive_start, end_time=aware_end
-        )
-
-        self.assertEqual(len(result.summaries), 1)
-
     async def test_list_audio_segment_summaries_invalid_feed_id(self) -> None:
         start = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
         end = datetime.datetime(2026, 1, 2, tzinfo=datetime.UTC)

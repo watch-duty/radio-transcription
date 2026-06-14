@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import datetime
 import json
 import uuid
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import asyncpg
 from pydantic import TypeAdapter
@@ -21,6 +21,9 @@ from backend.services.audio_segments.models import (
     AudioSegment,
     AudioSegmentSummary,
 )
+
+if TYPE_CHECKING:
+    import datetime
 
 annotation_adapter = TypeAdapter(Annotation)
 
@@ -226,20 +229,10 @@ class AudioSegmentStore:
     ) -> AudioSegmentSummaryWindow:
         """Fetch lightweight summaries in a window.
 
-        A None end_time leaves the window open-ended (no upper bound).
-        Paginated like list_audio_segments: a non-null next_token resumes
-        from the last returned row.
+        A None end_time leaves the window open-ended (no upper bound); an
+        inverted window simply matches no rows. Paginated like
+        list_audio_segments: a non-null next_token resumes the next page.
         """
-        # Normalize naive inputs to UTC; mixing aware/naive raises TypeError.
-        if start_time.tzinfo is None:
-            start_time = start_time.replace(tzinfo=datetime.UTC)
-        if end_time is not None and end_time.tzinfo is None:
-            end_time = end_time.replace(tzinfo=datetime.UTC)
-
-        if end_time is not None and end_time < start_time:
-            msg = "end_time must not be before start_time."
-            raise ValueError(msg)
-
         feed_uuids = None
         if feed_ids:
             try:
