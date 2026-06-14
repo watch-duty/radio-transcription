@@ -227,12 +227,7 @@ class AudioSegmentStore:
         *,
         is_alert: bool | None = None,
     ) -> AudioSegmentSummaryWindow:
-        """Fetch lightweight summaries in a window.
-
-        A None end_time leaves the window open-ended (no upper bound); an
-        inverted window simply matches no rows. Paginated like
-        list_audio_segments: a non-null next_token resumes the next page.
-        """
+        """List audio segments without annotations, in a time window."""
         feed_uuids = None
         if feed_ids:
             try:

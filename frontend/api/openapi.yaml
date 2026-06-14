@@ -1800,10 +1800,7 @@ paths:
                 required:
                   - message
                 type: object
-      description: |-
-        Lightweight segment summaries across a time window, for timeline rendering.
-        Paginated like listAudioSegments: a non-null nextToken in the response
-        resumes the next page.
+      description: List audio segments without annotations, across a time window.
       tags:
         - Audio Segments
       security:

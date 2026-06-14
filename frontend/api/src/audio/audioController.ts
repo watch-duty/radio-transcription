@@ -191,11 +191,7 @@ export class AudioController extends Controller {
     }
   }
 
-  /**
-   * Lightweight segment summaries across a time window, for timeline rendering.
-   * Paginated like listAudioSegments: a non-null nextToken in the response
-   * resumes the next page.
-   */
+  /** List audio segments without annotations, across a time window. */
   @Get('{feedId}/summaries')
   @Security('google_id_token')
   @Extension('x-google-backend', 'radio-transcription-api')

@@ -104,11 +104,7 @@ async def list_audio_segment_summaries(
     *,
     is_alert: bool | None = None,
 ) -> ListAudioSegmentSummariesResponse:
-    """List lightweight segment summaries in a time window (newest first).
-
-    Paginated like /v1/audio_segments: a non-null next_token in the response
-    resumes the next page. Omit end_time for an open-ended upper bound.
-    """
+    """List audio segments without annotations, in a time window."""
     service: AudioSegmentService = request.app.state.audio_segment_service
     try:
         return await service.list_audio_segment_summaries(
