@@ -1,7 +1,31 @@
 import RelativeTimeFormat from 'relative-time-format';
 import en from 'relative-time-format/locale/en';
 
-export const MAX_WINDOW_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+// Default span of the audio-timeline window; overridable per useAudioTimelineWindow call.
+export const DEFAULT_AUDIO_WINDOW_DURATION_MS = 30 * 60 * 1000;
+
+// How far back the timeline overview (mini-map / heatmap) reaches from the live edge.
+export const TIMELINE_RANGE_DURATION_MS = 24 * 60 * 60 * 1000;
+
+// HH:MM, 24-hour.
+export function formatClockTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
+// Month/day + HH:MM, 24-hour, for axis labels that can span multiple days.
+export function formatDateTimeShort(timestamp: number): string {
+  return new Date(timestamp).toLocaleString([], {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
 
 RelativeTimeFormat.addLocale(en);
 const rtf = new RelativeTimeFormat('en');

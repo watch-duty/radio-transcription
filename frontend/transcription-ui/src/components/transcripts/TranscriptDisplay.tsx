@@ -24,6 +24,7 @@ export interface TranscriptDisplayProps {
   groupCounts: number[];
   groupTitles: string[];
   setIsViewAtTopOfAudioSegments: (atTop: boolean) => void;
+  onScrollingChange?: (isScrolling: boolean) => void;
   hasNewerAudioSegments: boolean;
   isFetchingNewerAudioSegments: boolean;
   fetchNewerAudioSegments: () => Promise<
@@ -55,6 +56,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
   groupCounts,
   groupTitles,
   setIsViewAtTopOfAudioSegments,
+  onScrollingChange,
   hasNewerAudioSegments,
   isFetchingNewerAudioSegments,
   fetchNewerAudioSegments,
@@ -89,6 +91,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
         ref={ref}
         groupCounts={groupCounts}
         atTopStateChange={(atTop) => setIsViewAtTopOfAudioSegments(atTop)}
+        isScrolling={onScrollingChange}
         groupContent={(index) => {
           const title = groupTitles[index];
           return (

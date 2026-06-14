@@ -11,19 +11,24 @@ import FormControlLabel from '@mui/material/FormControlLabel';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import { useQuery } from '@tanstack/react-query';
-import { AudioClassification, type AudioSegment } from '@transcription/common';
+import { AudioClassification } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import {
   type AlertFilter,
   useAudioSegments,
 } from '../../hooks/useAudioSegments';
-import { useConsolidatedAudioSegments } from '../../hooks/useConsolidatedAudioSegments';
+import { useAudioTimelineSummary } from '../../hooks/useAudioTimelineSummary';
+import {
+  type RenderableAudioSegment,
+  useConsolidatedAudioSegments,
+} from '../../hooks/useConsolidatedAudioSegments';
 import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { getAudioUrl } from '../../utils/audioUtils';
 import AudioDisplay from '../audio/AudioDisplay';
+import { useAudioTimelineWindow } from '../audio/useAudioTimelineWindow';
 import FeedSearchView from '../feeds/FeedSearchView';
 import FeedHeader from './FeedHeader';
 import TranscriptActionsBar from './TranscriptActionsBar';
@@ -36,6 +41,8 @@ interface TranscriptViewProps {
 
 const DEFAULT_REFRESH_INTERVAL = 10000;
 const FEED_POLLING_INTERVAL_MS = 15000; // 15 seconds
+// A list scroll within this of one we triggered is ours, not the user's.
+const PROGRAMMATIC_SCROLL_WINDOW_MS = 300;
 
 export function TranscriptView({
   triggerSnackbar,
@@ -99,6 +106,11 @@ export function TranscriptView({
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const hasScrolledToTarget = useRef(false);
+  // Auto-scroll the list to the playing clip, suspended once the user scrolls the
+  // list away (to read) and resumed on an explicit navigation.
+  const followPlaybackRef = useRef(true);
+  // When we last scrolled the list ourselves, to tell our scrolls from the user's.
+  const programmaticListScrollAtRef = useRef(0);
 
   const currentAudio = useRef<Howl>(null);
   const [playbackEndedForId, setPlaybackEndedForId] = useState<string | null>(
@@ -109,7 +121,7 @@ export function TranscriptView({
   // A mutable reference to the latest list of audio segments. This prevents stale closures
   // inside the Howl audio lifecycle callbacks (like onend), ensuring continuous playback logic
   // always evaluates against the most up-to-date audio segments list even if it updates mid-playback.
-  const audioSegmentsRef = useRef<AudioSegment[]>([]);
+  const audioSegmentsRef = useRef<RenderableAudioSegment[]>([]);
 
   // Cleanup effect to ensure audio is unloaded when component unmounts
   useEffect(() => {
@@ -262,6 +274,48 @@ export function TranscriptView({
       : null;
 
   const audioSegments = useConsolidatedAudioSegments(rawAudioSegments);
+
+  // Full last-24h overview for the heatmap, loaded independently of the list's
+  // lazy pagination.
+  const { summarySegments } = useAudioTimelineSummary({
+    token,
+    searchedFeedId,
+    alertFilter,
+    isFeedsSuccess,
+  });
+
+  // The summary query doesn't poll, so union it with the polling list to keep the
+  // live edge fresh while the summary backfills history. Newest-first, deduped.
+  const timelineSegments = useMemo(() => {
+    const seenIds = new Set<string>();
+    return [...rawAudioSegments, ...summarySegments]
+      .filter((segment) => {
+        if (seenIds.has(segment.id)) return false;
+        seenIds.add(segment.id);
+        return true;
+      })
+      .sort(
+        (a, b) =>
+          new Date(b.startTimestamp).getTime() -
+          new Date(a.startTimestamp).getTime()
+      );
+  }, [rawAudioSegments, summarySegments]);
+
+  const {
+    windowEndTime,
+    windowDurationMs,
+    isScrubbed,
+    rangeStartMs,
+    maxEnd,
+    miniMapTimes,
+    scrubToCenter,
+    jumpToLive,
+  } = useAudioTimelineWindow({
+    audioSegments: timelineSegments,
+    currentlyPlayingSegmentId,
+    highlightedSegmentId,
+  });
+  const activeWindowTime = isScrubbed ? windowEndTime : null;
 
   // Keep the ref in sync with the audio segments so that audio lifecycle callbacks can access the latest list.
   useEffect(() => {
@@ -492,6 +546,7 @@ export function TranscriptView({
       );
       if (index !== -1) {
         const timer = setTimeout(() => {
+          programmaticListScrollAtRef.current = Date.now();
           virtuosoRef.current?.scrollToIndex({
             index,
             align: 'center',
@@ -504,21 +559,72 @@ export function TranscriptView({
     }
   }, [isAudioSegmentsSuccess, targetSegmentId, audioSegments]);
 
-  const handleClipClick = (segmentId: string) => {
-    const index = audioSegments.findIndex(
-      (t) => t.id === segmentId || t.bundledSegmentIds?.includes(segmentId)
-    );
-    if (index !== -1) {
-      virtuosoRef.current?.scrollToIndex({
-        index,
-        align: 'center',
-        behavior: 'smooth',
-      });
+  // Shared list-follow: resolve a raw segment id to its consolidated row and
+  // center it. Reads the ref so effect callers don't depend on the segment list.
+  const scrollListToSegment = useCallback(
+    (segmentId: string, behavior: 'auto' | 'smooth' = 'auto') => {
+      const index = audioSegmentsRef.current.findIndex(
+        (t) => t.id === segmentId || t.bundledSegmentIds?.includes(segmentId)
+      );
+      if (index !== -1) {
+        programmaticListScrollAtRef.current = Date.now();
+        virtuosoRef.current?.scrollToIndex({
+          index,
+          align: 'center',
+          behavior,
+        });
+      }
+    },
+    []
+  );
+
+  // A scroll we didn't trigger means the user is reading elsewhere; stop
+  // auto-following playback until they navigate explicitly again.
+  const handleListScrolling = (isScrolling: boolean) => {
+    if (
+      isScrolling &&
+      Date.now() - programmaticListScrollAtRef.current >
+        PROGRAMMATIC_SCROLL_WINDOW_MS
+    ) {
+      followPlaybackRef.current = false;
     }
+  };
+
+  // Mirror of isScrubbed so the playback-follow effect can read the latest value
+  // without it being a dependency (which would re-fire on scrub / jump-to-live).
+  const isScrubbedRef = useRef(isScrubbed);
+  useEffect(() => {
+    isScrubbedRef.current = isScrubbed;
+  }, [isScrubbed]);
+
+  // Keep the playing transcript in view as playback auto-advances — unless the
+  // user has scrubbed the timeline or scrolled the list away to read. Keyed on
+  // the playing id alone so polling new segments doesn't re-fire.
+  useEffect(() => {
+    if (
+      !currentlyPlayingSegmentId ||
+      isScrubbedRef.current ||
+      !followPlaybackRef.current
+    ) {
+      return;
+    }
+    scrollListToSegment(currentlyPlayingSegmentId);
+  }, [currentlyPlayingSegmentId, scrollListToSegment]);
+
+  const handleClipClick = (segmentId: string) => {
+    followPlaybackRef.current = true;
+    scrollListToSegment(segmentId, 'smooth');
     setHighlightedSegmentId(segmentId);
   };
 
+  const handleScrubToCenter = (centerMs: number) => {
+    followPlaybackRef.current = true;
+    const segmentId = scrubToCenter(centerMs);
+    if (segmentId) scrollListToSegment(segmentId);
+  };
+
   const handleTogglePlayPause = () => {
+    followPlaybackRef.current = true;
     const targetId = isAudioPlaying
       ? currentlyPlayingSegmentId || highlightedSegmentId
       : highlightedSegmentId ||
@@ -557,9 +663,12 @@ export function TranscriptView({
 
     // Given that clearing the date effectively jumps to live, we will
     // navigate to the top of the table in case the user is scrolled
-    // down in the table.
+    // down in the table, and snap the audio timeline back to the live edge.
     if (date === null) {
+      jumpToLive();
+      followPlaybackRef.current = true;
       setTimeout(() => {
+        programmaticListScrollAtRef.current = Date.now();
         virtuosoRef.current?.scrollToIndex({
           index: 0,
           align: 'center',
@@ -668,6 +777,12 @@ export function TranscriptView({
         isAudioPlaying={isAudioPlaying}
         onTogglePlayPause={handleTogglePlayPause}
         currentAudioRef={currentAudio}
+        windowEndTime={windowEndTime}
+        windowDurationMs={windowDurationMs}
+        rangeStartMs={rangeStartMs}
+        maxEnd={maxEnd}
+        miniMapTimes={miniMapTimes}
+        onScrubToCenter={handleScrubToCenter}
       />
 
       <Box
@@ -681,6 +796,7 @@ export function TranscriptView({
         <TranscriptActionsBar
           searchedTimestamp={searchedTimestamp}
           hasNewerAudioSegments={hasNewerAudioSegments}
+          activeWindowTime={activeWindowTime}
           redactTranscripts={redactTranscripts}
           setRedactTranscripts={setRedactTranscripts}
           dateTime={searchedTimestamp}
@@ -696,6 +812,7 @@ export function TranscriptView({
             groupCounts={groupCounts}
             groupTitles={groupTitles}
             setIsViewAtTopOfAudioSegments={setIsViewAtTopOfAudioSegments}
+            onScrollingChange={handleListScrolling}
             hasNewerAudioSegments={hasNewerAudioSegments}
             isFetchingNewerAudioSegments={isFetchingNewerAudioSegments}
             fetchNewerAudioSegments={fetchNewerAudioSegments}
