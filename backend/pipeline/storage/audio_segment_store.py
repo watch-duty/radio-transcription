@@ -24,8 +24,6 @@ from backend.services.audio_segments.models import (
 
 annotation_adapter = TypeAdapter(Annotation)
 
-MAX_SUMMARY_WINDOW = datetime.timedelta(days=7)
-
 
 @dataclass
 class PaginatedAudioSegments:
@@ -254,10 +252,6 @@ class AudioSegmentStore:
 
         if end_time < start_time:
             msg = "end_time must not be before start_time."
-            raise ValueError(msg)
-        if end_time - start_time > MAX_SUMMARY_WINDOW:
-            max_days = MAX_SUMMARY_WINDOW.days
-            msg = f"Requested window exceeds the maximum of {max_days} days."
             raise ValueError(msg)
 
         feed_uuids = None

@@ -246,25 +246,25 @@ class TestAudioSegmentsAPI(unittest.TestCase):
         kwargs = self.mock_service.list_audio_segment_summaries.call_args.kwargs
         self.assertEqual(kwargs["next_token"], "cursor-123")
 
-    def test_list_audio_segment_summaries_absurd_window_returns_400(
+    def test_list_audio_segment_summaries_invalid_window_returns_400(
         self,
     ) -> None:
         """A window the service rejects surfaces as a 400."""
         self.mock_service.list_audio_segment_summaries.side_effect = ValueError(
-            "Requested window exceeds the maximum of 7 days."
+            "end_time must not be before start_time."
         )
 
         response = self.client.get(
             "/v1/audio_segment_summaries",
             params={
                 "feed_ids": [_FEED_ID],
-                "start_time": "2020-01-01T00:00:00Z",
+                "start_time": "2026-01-02T00:00:00Z",
                 "end_time": "2026-01-01T00:00:00Z",
             },
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("exceeds the maximum", response.json()["detail"])
+        self.assertIn("must not be before", response.json()["detail"])
 
     def test_list_audio_segment_summaries_requires_start_time(self) -> None:
         """start_time is a required query parameter."""

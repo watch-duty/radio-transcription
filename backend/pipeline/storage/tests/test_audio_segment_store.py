@@ -386,16 +386,6 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(result.summaries), 1)
 
-    async def test_list_audio_segment_summaries_window_too_large(self) -> None:
-        start = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
-        end = start + datetime.timedelta(days=30)
-        with self.assertRaises(ValueError) as cm:
-            await self.store.list_audio_segment_summaries(
-                start_time=start, end_time=end
-            )
-        self.assertIn("exceeds the maximum", str(cm.exception))
-        self.pool.fetch.assert_not_called()
-
     async def test_list_audio_segment_summaries_invalid_feed_id(self) -> None:
         start = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
         end = datetime.datetime(2026, 1, 2, tzinfo=datetime.UTC)
