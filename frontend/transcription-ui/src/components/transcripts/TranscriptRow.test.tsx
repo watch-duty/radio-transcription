@@ -297,6 +297,48 @@ describe('TranscriptRow', () => {
     expect(screen.queryByLabelText('copy transcript')).toBeNull();
   });
 
+  it('shows the playing border on a silence bundle whose bundled segment is playing', () => {
+    const mockSilenceBundle: RenderableAudioSegment = {
+      id: 'silence-123',
+      feedId: 'feed-123',
+      classification: AudioClassification.OTHER,
+      startTimestamp: '2026-04-15T16:00:00Z',
+      endTimestamp: '2026-04-15T16:00:10Z',
+      playbackAudioUri: 'https://watchduty.example/silence.m4a',
+      isSilenceBundle: true,
+      bundledSegmentIds: ['silence-123', 'silence-124'],
+      createdAt: '2026-04-15T16:00:00Z',
+      annotations: [],
+      missingPriorContext: false,
+      missingPostContext: false,
+      sourceAudioUris: [],
+    };
+
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          audioSegment={mockSilenceBundle}
+          index={0}
+          totalAudioSegments={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onToggleAudio={mockOnToggleAudio}
+          isAudioPlaying={true}
+          onRowClick={mockOnRowClick}
+          currentlyPlayingSegmentId="silence-124"
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+        />
+      </MemoryRouter>
+    );
+
+    const row = document.getElementById('transcript-silence-123');
+    // primary.main (playing) rather than grey[200] (silence).
+    expect(row && window.getComputedStyle(row).borderLeftColor).toBe(
+      'rgb(25, 118, 210)'
+    );
+  });
+
   it('hides duration when silence row is at the live edge (ongoing silence)', () => {
     const mockSilenceBundle: RenderableAudioSegment = {
       id: 'silence-123',
