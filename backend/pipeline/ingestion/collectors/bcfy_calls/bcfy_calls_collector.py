@@ -192,13 +192,9 @@ async def _get_shared_jwt_token(
             if _jwt_state.refresh_task is task:
                 _jwt_state.refresh_task = None
                 should_log = True
-        is_config_failure = (
-            isinstance(e, FeedFailure)
-            and e.status_reason
-            in (
-                FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-                FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
-            )
+        is_config_failure = isinstance(e, FeedFailure) and e.status_reason in (
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
         )
         if should_log and not is_config_failure:
             logger.warning(

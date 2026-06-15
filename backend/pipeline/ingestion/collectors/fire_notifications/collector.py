@@ -381,10 +381,7 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
                     try:
                         data = resp.json()
                     except ValueError as exc:
-                        status_reason = (
-                            feed_store.FeedStatusReason
-                            .SYSTEM_SOURCE_PAYLOAD_INVALID
-                        )
+                        status_reason = feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID
                         raise collector_failure(
                             status_reason,
                             "fn_api_payload_malformed: "

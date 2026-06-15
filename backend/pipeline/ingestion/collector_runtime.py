@@ -780,7 +780,7 @@ class CollectorRuntime:
     ) -> dict[str, object]:
         """Convert policy decision data to JSON-log-safe primitive fields."""
         evidence = decision.evidence
-        fields = {
+        fields: dict[str, object] = {
             "owner_scope": evidence.owner_scope.value,
             "failure_scope": evidence.failure_scope.value,
             "endpoint_kind": evidence.endpoint_kind.value,

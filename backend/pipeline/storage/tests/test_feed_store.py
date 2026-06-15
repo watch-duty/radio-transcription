@@ -30,6 +30,24 @@ _STATUS_REASON_UPDATED_AT = datetime.datetime(
     2026, 5, 29, 12, 0, tzinfo=datetime.UTC
 )
 
+_PUBLIC_FEED_STATUS_REASON_VALUES = {
+    "source_offline",
+    "source_unreachable",
+    "source_rate_limited",
+    "system_authentication_failed",
+    "system_configuration_invalid",
+    "system_collector_error",
+    "system_pipeline_error",
+    "system_unexpected_error",
+}
+
+_BACKEND_ONLY_FEED_STATUS_REASON_VALUES = {
+    "pipeline_publish_after_bookmark_failed",
+    "system_runtime_configuration_invalid",
+    "system_credential_access_failed",
+    "system_source_payload_invalid",
+}
+
 _LEASE_ROW = {
     "id": _FEED_ID,
     "name": "My Feed",
@@ -125,20 +143,8 @@ class TestFeedStatusReason(unittest.TestCase):
     def test_canonical_reason_values(self) -> None:
         self.assertEqual(
             {reason.value for reason in FeedStatusReason},
-            {
-                "pipeline_publish_after_bookmark_failed",
-                "source_offline",
-                "source_unreachable",
-                "source_rate_limited",
-                "system_authentication_failed",
-                "system_configuration_invalid",
-                "system_runtime_configuration_invalid",
-                "system_credential_access_failed",
-                "system_source_payload_invalid",
-                "system_collector_error",
-                "system_pipeline_error",
-                "system_unexpected_error",
-            },
+            _PUBLIC_FEED_STATUS_REASON_VALUES
+            | _BACKEND_ONLY_FEED_STATUS_REASON_VALUES,
         )
 
     def test_matches_openapi_spec(self) -> None:
@@ -158,14 +164,15 @@ class TestFeedStatusReason(unittest.TestCase):
             "enum", []
         )
 
-        python_reasons = {reason.value for reason in FeedStatusReason}
-        expected_openapi_reasons = python_reasons | {"unknown"}
+        expected_openapi_reasons = _PUBLIC_FEED_STATUS_REASON_VALUES | {
+            "unknown"
+        }
 
         self.assertEqual(
             set(backend_reasons),
             expected_openapi_reasons,
-            "The status reasons in backend.pipeline.storage.feed_store.FeedStatusReason "
-            "do not match BackendFeedStatusReason in frontend/api/openapi.yaml. "
+            "The public status reasons exposed by frontend/api/openapi.yaml "
+            "do not match the backend compatibility subset. "
             "Please run `yarn generate-spec` in frontend/api to sync the spec after updating TypeScript types.",
         )
 

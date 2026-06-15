@@ -36,9 +36,8 @@ choosing the budgeted or non-budgeted store path. GCS upload and bookmark-write
 failures retain `system_pipeline_error` and remain non-budgeted. Pub/Sub
 publish failures after a successful bookmark use
 `pipeline_publish_after_bookmark_failed`, record `replay_missing=true` and
-`data_gap_known=true`, and can consume feed quarantine budget after the existing
-threshold because retry cannot repair the already-advanced bookmark/publish
-gap.
+`data_gap_known=true`, and remain outside the feed quarantine budget because
+the source feed did not cause the already-advanced bookmark/publish gap.
 
 Echo is the exception to the VM runtime shape: it runs as a synchronous Cloud
 Function. It still writes the same status-reason fields through
@@ -85,7 +84,7 @@ work belongs to a replay/hold lane, not to feed health:
 
 | Reason | Use when |
 |--------|----------|
-| `pipeline_publish_after_bookmark_failed` | The runtime bookmarked captured audio but could not publish the corresponding Pub/Sub message. This records a known downstream gap, sets `replay_missing=true` and `data_gap_known=true`, and in v1.1 can consume feed quarantine budget after the existing threshold because durable replay is not yet available. |
+| `pipeline_publish_after_bookmark_failed` | The runtime bookmarked captured audio but could not publish the corresponding Pub/Sub message. This records a known downstream gap, sets `replay_missing=true` and `data_gap_known=true`, and does not consume feed quarantine budget. |
 
 ## Observation Boundaries
 

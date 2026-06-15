@@ -150,7 +150,7 @@ class FeedFailure(Exception):
             failure_policy.FailurePolicyEvidence,
         ):
             msg = "FeedFailure.policy_evidence must be FailurePolicyEvidence"
-            raise ValueError(msg)
+            raise TypeError(msg)
 
         # Exception instances must remain runtime-mutable: Python sets
         # __traceback__, __context__, and __cause__ while propagating them.

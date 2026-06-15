@@ -70,7 +70,12 @@ def _retry_config(
     )
 
 
-def _json_evidence_kwargs() -> dict[str, object]:
+class _JsonEvidenceKwargs(typing.TypedDict):
+    failure_scope: failure_policy.FailureScope
+    endpoint_kind: failure_policy.EndpointKind
+
+
+def _json_evidence_kwargs() -> _JsonEvidenceKwargs:
     return {
         "failure_scope": failure_policy.FailureScope.FEED,
         "endpoint_kind": failure_policy.EndpointKind.CALLS_API,
