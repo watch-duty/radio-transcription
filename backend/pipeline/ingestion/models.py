@@ -157,7 +157,7 @@ class FeedFailure(Exception):
         # A frozen dataclass breaks that machinery, so keep only the payload
         # normalized.
         self.status_reason = normalized_status_reason
-        self.reason = reason[:200]
+        self.reason = reason
         self.policy_evidence = policy_evidence
         Exception.__init__(self, self.reason)
 

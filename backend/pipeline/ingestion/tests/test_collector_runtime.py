@@ -104,6 +104,18 @@ class TestFeedFailureContract(unittest.TestCase):
         self.assertEqual(exc.reason, "source_offline")
         self.assertEqual(str(exc), "source_offline")
 
+    def test_preserves_diagnostic_reason_until_storage(self) -> None:
+        """FeedFailure preserves diagnostics for the storage boundary cap."""
+        reason = "ffmpeg_exit_1 " + ("x" * 3000)
+        exc = FeedFailure(
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            reason,
+            policy_evidence=self._feed_config_evidence(),
+        )
+
+        self.assertEqual(exc.reason, reason)
+        self.assertEqual(str(exc), reason)
+
     def test_normalizes_status_reason_values(self) -> None:
         """FeedFailure accepts canonical DB text values at the boundary."""
         exc = FeedFailure(
