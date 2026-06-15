@@ -101,7 +101,7 @@ focused backend checks prove the milestone is ready for code review.
 **Plans**: 2 plans
 
 Plans:
-- [ ] 06-01: Update backend collector documentation for final v1.1 semantics.
+- [x] 06-01: Update backend collector documentation for final v1.1 semantics.
 - [ ] 06-02: Run focused verification and update implementation summary/docs.
 
 ## Progress

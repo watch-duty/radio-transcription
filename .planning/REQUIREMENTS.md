@@ -30,7 +30,7 @@
 
 ### Backend Closeout
 
-- [ ] **DOC-11**: Collector authoring documentation reflects final v1.1
+- [x] **DOC-11**: Collector authoring documentation reflects final v1.1
   Pub/Sub post-bookmark publish semantics.
 - [ ] **VER-11**: Phase 6 closeout records that API/UI/generated
   compatibility is deferred from this backend-only milestone.
@@ -103,7 +103,7 @@
 | RUN-14 | Phase 5 | Complete |
 | RUN-15 | Phase 5 | Complete |
 | RUN-16 | Phase 5 | Complete |
-| DOC-11 | Phase 6 | Pending |
+| DOC-11 | Phase 6 | Complete |
 | VER-11 | Phase 6 | Pending |
 | TEST-11 | Phase 4 | Complete |
 | TEST-12 | Phase 4 | Complete |
