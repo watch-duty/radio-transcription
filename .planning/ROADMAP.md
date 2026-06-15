@@ -36,10 +36,10 @@ for suppressed retry states that cannot consume quarantine budget.
 **Plans**: 4 plans
 
 Plans:
-- [ ] 01-01: Add policy evidence and status reason primitives.
-- [ ] 01-02: Wire collector failure policy evidence at all current call sites.
-- [ ] 01-03: Add non-budgeted storage SQL and FeedStore method.
-- [ ] 01-04: Add foundation storage tests and preserve recovery semantics.
+- [x] 01-01: Add policy evidence and status reason primitives.
+- [x] 01-02: Wire collector failure policy evidence at all current call sites.
+- [x] 01-03: Add non-budgeted storage SQL and FeedStore method.
+- [x] 01-04: Add foundation storage tests and preserve recovery semantics.
 
 ### Phase 2: Runtime Routing And Telemetry
 **Goal**: Runtime failure handling routes each failure to a policy decision,
@@ -84,10 +84,10 @@ Phases execute in numeric order: 1 -> 2 -> 3
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Policy And Storage Foundation | 0/4 | Not started | - |
+| 1. Policy And Storage Foundation | 4/4 | Complete | 2026-06-15 |
 | 2. Runtime Routing And Telemetry | 0/3 | Not started | - |
 | 3. Verification And Compatibility | 0/3 | Not started | - |
 
 ---
 *Roadmap created: 2026-06-14*
-*Last updated: 2026-06-14 after initialization*
+*Last updated: 2026-06-15 after Phase 1 execution*

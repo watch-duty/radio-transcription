@@ -7,19 +7,19 @@
 
 ### Policy Evidence
 
-- [ ] **POL-01**: Runtime failure routing uses structured policy evidence fields rather than `quarantine_reason` or raw reason text for quarantine and alert decisions.
-- [ ] **POL-02**: The policy evidence model includes `owner_scope`, `failure_scope`, `endpoint_kind`, `policy_intent`, and `executed_action`.
-- [ ] **POL-03**: The policy evidence model includes pipeline stage detail for pipeline-owned failures.
+- [x] **POL-01**: Runtime failure routing uses structured policy evidence fields rather than `quarantine_reason` or raw reason text for quarantine and alert decisions.
+- [x] **POL-02**: The policy evidence model includes `owner_scope`, `failure_scope`, `endpoint_kind`, `policy_intent`, and `executed_action`.
+- [x] **POL-03**: The policy evidence model includes pipeline stage detail for pipeline-owned failures.
 - [ ] **POL-04**: Unannotated `FeedFailure` instances route to a non-budgeted telemetry-gap decision.
 
 ### Storage State
 
-- [ ] **STORE-01**: Storage exposes a non-budgeted failure release method that releases the lease and writes `status='failing'`.
-- [ ] **STORE-02**: The non-budgeted failure release method always writes `failure_count=0`.
-- [ ] **STORE-03**: The non-budgeted failure release method writes `retry_after` and `status_reason`.
-- [ ] **STORE-04**: The non-budgeted failure release method never writes `quarantine_reason`.
-- [ ] **STORE-05**: `report_feed_failure(...)` remains the only path that increments the feed quarantine budget.
-- [ ] **STORE-06**: Successful chunk progress and `SourceObservation` continue to clear stale failure count and status reason state.
+- [x] **STORE-01**: Storage exposes a non-budgeted failure release method that releases the lease and writes `status='failing'`.
+- [x] **STORE-02**: The non-budgeted failure release method always writes `failure_count=0`.
+- [x] **STORE-03**: The non-budgeted failure release method writes `retry_after` and `status_reason`.
+- [x] **STORE-04**: The non-budgeted failure release method never writes `quarantine_reason`.
+- [x] **STORE-05**: `report_feed_failure(...)` remains the only path that increments the feed quarantine budget.
+- [x] **STORE-06**: Successful chunk progress and `SourceObservation` continue to clear stale failure count and status reason state.
 
 ### Runtime Routing
 
@@ -33,7 +33,7 @@
 
 ### Status Reasons
 
-- [ ] **STAT-01**: Backend status reason enum includes `pipeline_publish_after_bookmark_failed`.
+- [x] **STAT-01**: Backend status reason enum includes `pipeline_publish_after_bookmark_failed`.
 - [ ] **STAT-02**: API/UI/shared status handling is updated only where necessary to tolerate the new status reason while preserving existing lifecycle status behavior.
 
 ### Telemetry
@@ -94,16 +94,16 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| POL-01 | Phase 1 | Pending |
-| POL-02 | Phase 1 | Pending |
-| POL-03 | Phase 1 | Pending |
+| POL-01 | Phase 1 | Complete |
+| POL-02 | Phase 1 | Complete |
+| POL-03 | Phase 1 | Complete |
 | POL-04 | Phase 2 | Pending |
-| STORE-01 | Phase 1 | Pending |
-| STORE-02 | Phase 1 | Pending |
-| STORE-03 | Phase 1 | Pending |
-| STORE-04 | Phase 1 | Pending |
-| STORE-05 | Phase 1 | Pending |
-| STORE-06 | Phase 1 | Pending |
+| STORE-01 | Phase 1 | Complete |
+| STORE-02 | Phase 1 | Complete |
+| STORE-03 | Phase 1 | Complete |
+| STORE-04 | Phase 1 | Complete |
+| STORE-05 | Phase 1 | Complete |
+| STORE-06 | Phase 1 | Complete |
 | RUN-01 | Phase 2 | Pending |
 | RUN-02 | Phase 2 | Pending |
 | RUN-03 | Phase 2 | Pending |
@@ -111,7 +111,7 @@
 | RUN-05 | Phase 2 | Pending |
 | RUN-06 | Phase 2 | Pending |
 | RUN-07 | Phase 2 | Pending |
-| STAT-01 | Phase 1 | Pending |
+| STAT-01 | Phase 1 | Complete |
 | STAT-02 | Phase 3 | Pending |
 | TEL-01 | Phase 2 | Pending |
 | TEL-02 | Phase 2 | Pending |
