@@ -24,7 +24,7 @@
 - [x] **RUN-11**: `_PipelineFailure` uses the same policy branch as collector `FeedFailure`.
 - [x] **RUN-12**: `pipeline_publish_after_bookmark_failed` with Pub/Sub publish evidence increments the quarantine budget through `report_feed_failure(...)`.
 - [x] **RUN-13**: GCS upload and bookmark-write pipeline failures remain non-budgeted.
-- [ ] **RUN-14**: Non-budgeted failures continue to reset stale `failure_count` and release with `retry_after`.
+- [x] **RUN-14**: Non-budgeted failures continue to reset stale `failure_count` and release with `retry_after`.
 - [x] **RUN-15**: Budgeted failures still use the existing feed failure threshold; they do not immediately quarantine before threshold.
 - [x] **RUN-16**: The old special `post_bookmark_publish_failure` telemetry event is not required for v1.1 routing.
 
@@ -40,7 +40,7 @@
 - [x] **TEST-11**: Policy tests cover every current status reason's intended budget route.
 - [x] **TEST-12**: Policy tests prove unmatched combinations fall back to telemetry-gap non-budgeted release.
 - [x] **TEST-13**: Runtime tests prove Pub/Sub publish-after-bookmark failure calls `report_feed_failure(...)`.
-- [ ] **TEST-14**: Runtime tests prove non-budgeted source, ambiguous collector, GCS/bookmark, credential-access, and telemetry-gap cases do not call `report_feed_failure(...)`.
+- [x] **TEST-14**: Runtime tests prove non-budgeted source, ambiguous collector, GCS/bookmark, credential-access, and telemetry-gap cases do not call `report_feed_failure(...)`.
 - [x] **TEST-15**: Collector tests prove the new split enum values are produced by Calls, Fire Notifications, Icecast, and OpenMHz where applicable.
 - [ ] **TEST-16**: API/UI/storage tests prove enum compatibility surfaces are synchronized.
 
@@ -90,7 +90,7 @@
 | RUN-11 | Phase 5 | Complete |
 | RUN-12 | Phase 5 | Complete |
 | RUN-13 | Phase 5 | Complete |
-| RUN-14 | Phase 5 | Pending |
+| RUN-14 | Phase 5 | Complete |
 | RUN-15 | Phase 5 | Complete |
 | RUN-16 | Phase 5 | Complete |
 | COMP-11 | Phase 6 | Pending |
@@ -100,7 +100,7 @@
 | TEST-11 | Phase 4 | Complete |
 | TEST-12 | Phase 4 | Complete |
 | TEST-13 | Phase 5 | Complete |
-| TEST-14 | Phase 5 | Pending |
+| TEST-14 | Phase 5 | Complete |
 | TEST-15 | Phase 5 | Complete |
 | TEST-16 | Phase 6 | Pending |
 

@@ -77,7 +77,7 @@ TEST-14, TEST-15
 Plans:
 - [x] 05-01: Split source producer mappings and update collector tests.
 - [x] 05-02: Route `_PipelineFailure` through policy and update runtime tests.
-- [ ] 05-03: Verify non-budgeted reset semantics and quarantine telemetry
+- [x] 05-03: Verify non-budgeted reset semantics and quarantine telemetry
   boundaries.
 
 ### Phase 6: Compatibility And Verification
