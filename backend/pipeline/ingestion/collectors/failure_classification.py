@@ -26,6 +26,29 @@ _SOURCE_STATUS_REASONS = frozenset(
         FeedStatusReason.SOURCE_RATE_LIMITED,
     }
 )
+_STATUS_OWNER_SCOPES = {
+    **dict.fromkeys(
+        _SOURCE_STATUS_REASONS,
+        failure_policy.OwnerScope.SOURCE_CLASS,
+    ),
+    FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED: (
+        failure_policy.OwnerScope.CREDENTIAL_SCOPE
+    ),
+    FeedStatusReason.SYSTEM_CONFIGURATION_INVALID: failure_policy.OwnerScope.FEED,
+    FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID: (
+        failure_policy.OwnerScope.SOURCE_CLASS
+    ),
+    FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED: (
+        failure_policy.OwnerScope.CREDENTIAL_SCOPE
+    ),
+    FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID: (
+        failure_policy.OwnerScope.SOURCE_CLASS
+    ),
+    FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED: (
+        failure_policy.OwnerScope.PIPELINE
+    ),
+    FeedStatusReason.SYSTEM_PIPELINE_ERROR: failure_policy.OwnerScope.PIPELINE,
+}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -117,24 +140,10 @@ def owner_scope_for_status_reason(
     status_reason: FeedStatusReason,
 ) -> failure_policy.OwnerScope:
     """Map a status enum to the broad owner scope for collector evidence."""
-    if status_reason in _SOURCE_STATUS_REASONS:
-        return failure_policy.OwnerScope.SOURCE_CLASS
-    if status_reason is FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED:
-        return failure_policy.OwnerScope.CREDENTIAL_SCOPE
-    if status_reason is FeedStatusReason.SYSTEM_CONFIGURATION_INVALID:
-        return failure_policy.OwnerScope.FEED
-    if status_reason is FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID:
-        return failure_policy.OwnerScope.SOURCE_CLASS
-    if status_reason is FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED:
-        return failure_policy.OwnerScope.CREDENTIAL_SCOPE
-    if status_reason is FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID:
-        return failure_policy.OwnerScope.SOURCE_CLASS
-    if status_reason in {
-        FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
-        FeedStatusReason.SYSTEM_PIPELINE_ERROR,
-    }:
-        return failure_policy.OwnerScope.PIPELINE
-    return failure_policy.OwnerScope.UNKNOWN
+    return _STATUS_OWNER_SCOPES.get(
+        status_reason,
+        failure_policy.OwnerScope.UNKNOWN,
+    )
 
 
 def policy_evidence_for_status_reason(
