@@ -14,10 +14,10 @@
 
 ### Status Reason Splits
 
-- [ ] **STAT-11**: Backend status reason enum includes `system_runtime_configuration_invalid`.
-- [ ] **STAT-12**: Backend status reason enum includes `system_credential_access_failed`.
-- [ ] **STAT-13**: Backend status reason enum includes `system_source_payload_invalid`.
-- [ ] **STAT-14**: Existing producer mappings are split only for current root causes that need clear routing.
+- [x] **STAT-11**: Backend status reason enum includes `system_runtime_configuration_invalid`.
+- [x] **STAT-12**: Backend status reason enum includes `system_credential_access_failed`.
+- [x] **STAT-13**: Backend status reason enum includes `system_source_payload_invalid`.
+- [x] **STAT-14**: Existing producer mappings are split only for current root causes that need clear routing.
 
 ### Runtime Behavior
 
@@ -83,10 +83,10 @@
 | POL-12 | Phase 4 | Complete |
 | POL-13 | Phase 4 | Complete |
 | POL-14 | Phase 4 | Complete |
-| STAT-11 | Phase 4 | Pending |
-| STAT-12 | Phase 4 | Pending |
-| STAT-13 | Phase 4 | Pending |
-| STAT-14 | Phase 4 | Pending |
+| STAT-11 | Phase 4 | Complete |
+| STAT-12 | Phase 4 | Complete |
+| STAT-13 | Phase 4 | Complete |
+| STAT-14 | Phase 4 | Complete |
 | RUN-11 | Phase 5 | Pending |
 | RUN-12 | Phase 5 | Pending |
 | RUN-13 | Phase 5 | Pending |
