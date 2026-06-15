@@ -12,12 +12,11 @@ from typing import Any, TypeVar, cast
 
 import aiohttp
 
-from backend.pipeline.ingestion import failure_policy, models, quarantine_reason
+from backend.pipeline.ingestion import models, quarantine_reason
 from backend.pipeline.ingestion.collectors import control_flow
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemFailure,
     collector_failure,
-    policy_evidence_for_status_reason,
 )
 from backend.pipeline.ingestion.failure_classifiers import (
     http_status,
@@ -148,8 +147,6 @@ async def fetch_json_with_retries(  # noqa: UP047
     invalid_payload_reason: str,
     transport_status_reason: feed_store.FeedStatusReason,
     transport_reason: str,
-    failure_scope: failure_policy.FailureScope,
-    endpoint_kind: failure_policy.EndpointKind,
 ) -> _JSON:
     """Fetch and validate JSON for a feed-scoped endpoint.
 
@@ -182,11 +179,6 @@ async def fetch_json_with_retries(  # noqa: UP047
                             invalid_payload_status_reason,
                             f"{invalid_payload_reason}: "
                             f"{quarantine_reason.exception_text(exc)}",
-                            policy_evidence=policy_evidence_for_status_reason(
-                                invalid_payload_status_reason,
-                                failure_scope=failure_scope,
-                                endpoint_kind=endpoint_kind,
-                            ),
                         ) from exc
 
                 if _is_retryable_status(
@@ -210,12 +202,6 @@ async def fetch_json_with_retries(  # noqa: UP047
                     status_reason
                     or feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
                     f"{reason_prefix}_{response.status}",
-                    policy_evidence=policy_evidence_for_status_reason(
-                        status_reason
-                        or feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-                        failure_scope=failure_scope,
-                        endpoint_kind=endpoint_kind,
-                    ),
                 )
         except models.FeedFailure:
             raise
@@ -235,11 +221,6 @@ async def fetch_json_with_retries(  # noqa: UP047
             raise collector_failure(
                 transport_status_reason,
                 f"{transport_reason}: {quarantine_reason.exception_text(exc)}",
-                policy_evidence=policy_evidence_for_status_reason(
-                    transport_status_reason,
-                    failure_scope=failure_scope,
-                    endpoint_kind=endpoint_kind,
-                ),
             ) from exc
 
     msg = "unreachable retry loop exit"

@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import unittest
-from typing import Any, TypedDict, cast
+from typing import Any, cast
 
-from backend.pipeline.ingestion import failure_policy, slo_contract
+from backend.pipeline.ingestion import slo_contract
 from backend.pipeline.ingestion.collectors import (
     control_flow,
     item_downloads,
@@ -16,18 +16,6 @@ from backend.pipeline.ingestion.collectors import (
 )
 from backend.pipeline.ingestion.models import FeedFailure
 from backend.pipeline.storage import feed_store
-
-
-class _PayloadEvidenceKwargs(TypedDict):
-    failure_scope: failure_policy.FailureScope
-    endpoint_kind: failure_policy.EndpointKind
-
-
-def _payload_evidence_kwargs() -> _PayloadEvidenceKwargs:
-    return {
-        "failure_scope": failure_policy.FailureScope.OBSERVATION,
-        "endpoint_kind": failure_policy.EndpointKind.FIRE_POLL,
-    }
 
 
 class _CaptureHandler(logging.Handler):
@@ -187,7 +175,6 @@ class TestPayloadHelpers(unittest.TestCase):
                 {},
                 "files",
                 malformed_reason="payload_malformed",
-                **_payload_evidence_kwargs(),
             ),
             [],
         )
@@ -200,7 +187,6 @@ class TestPayloadHelpers(unittest.TestCase):
                 {"files": files},
                 "files",
                 malformed_reason="payload_malformed",
-                **_payload_evidence_kwargs(),
             ),
             files,
         )
@@ -211,7 +197,6 @@ class TestPayloadHelpers(unittest.TestCase):
                 {"files": {}},
                 "files",
                 malformed_reason="payload_malformed",
-                **_payload_evidence_kwargs(),
             )
 
         self.assertIs(

@@ -25,11 +25,10 @@ from backend.pipeline.common.constants import (
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
 )
-from backend.pipeline.ingestion import failure_policy, quarantine_reason
+from backend.pipeline.ingestion import quarantine_reason
 from backend.pipeline.ingestion.collectors.failure_classification import (
     collector_failure,
     missing_source_feed_id_failure,
-    policy_evidence_for_status_reason,
 )
 from backend.pipeline.ingestion.failure_classifiers import (
     ffmpeg as ffmpeg_classifier,
@@ -92,11 +91,6 @@ def _build_auth_header() -> str:
         raise collector_failure(
             FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
             "missing_broadcastify_credentials",
-            policy_evidence=failure_policy.FailurePolicyEvidence(
-                owner_scope=failure_policy.OwnerScope.SOURCE_CLASS,
-                failure_scope=failure_policy.FailureScope.FEED,
-                endpoint_kind=failure_policy.EndpointKind.FEED_CONFIGURATION,
-            ),
         )
     credentials = f"{user}:{password}"
     encoded = base64.b64encode(credentials.encode()).decode()
@@ -124,11 +118,6 @@ def _classify_stream_http_status(
     return collector_failure(
         status_reason,
         http_diagnostic,
-        policy_evidence=policy_evidence_for_status_reason(
-            status_reason,
-            failure_scope=failure_policy.FailureScope.OBSERVATION,
-            endpoint_kind=failure_policy.EndpointKind.STREAM,
-        ),
     )
 
 
@@ -140,11 +129,6 @@ def _feed_failure_from_ffmpeg_info(
     return collector_failure(
         info.status_reason,
         ffmpeg_classifier.render_ffmpeg_diagnostic(info, diagnostic_text),
-        policy_evidence=policy_evidence_for_status_reason(
-            info.status_reason,
-            failure_scope=failure_policy.FailureScope.OBSERVATION,
-            endpoint_kind=failure_policy.EndpointKind.STREAM,
-        ),
     )
 
 
@@ -202,11 +186,6 @@ async def _probe_stream_once(
             collector_failure(
                 FeedStatusReason.SOURCE_UNREACHABLE,
                 f"stream_probe_failed: {quarantine_reason.exception_text(exc)}",
-                policy_evidence=policy_evidence_for_status_reason(
-                    FeedStatusReason.SOURCE_UNREACHABLE,
-                    failure_scope=failure_policy.FailureScope.OBSERVATION,
-                    endpoint_kind=failure_policy.EndpointKind.STREAM,
-                ),
             ),
         )
 
@@ -232,11 +211,6 @@ async def _build_stream_capture_failure(
         return collector_failure(
             FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
             "ffmpeg failed without classifiable terminal evidence",
-            policy_evidence=policy_evidence_for_status_reason(
-                FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-                failure_scope=failure_policy.FailureScope.OBSERVATION,
-                endpoint_kind=failure_policy.EndpointKind.STREAM,
-            ),
         )
 
     if not _is_raw_ffmpeg_failure(info):

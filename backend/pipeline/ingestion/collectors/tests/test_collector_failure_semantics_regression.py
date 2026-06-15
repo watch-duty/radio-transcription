@@ -6,10 +6,9 @@ import asyncio
 import logging
 import pathlib
 import unittest
-from typing import Any, TypedDict, cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.ingestion.collectors import (
     item_downloads,
     payloads,
@@ -30,18 +29,6 @@ from backend.pipeline.ingestion.collectors.openmhz import (
 )
 from backend.pipeline.ingestion.models import FeedFailure
 from backend.pipeline.storage.feed_store import FeedStatusReason
-
-
-class _PayloadEvidenceKwargs(TypedDict):
-    failure_scope: failure_policy.FailureScope
-    endpoint_kind: failure_policy.EndpointKind
-
-
-def _payload_evidence_kwargs() -> _PayloadEvidenceKwargs:
-    return {
-        "failure_scope": failure_policy.FailureScope.OBSERVATION,
-        "endpoint_kind": failure_policy.EndpointKind.FIRE_POLL,
-    }
 
 
 class _CaptureHandler(logging.Handler):
@@ -255,7 +242,6 @@ class TestPollingPayloadRegression(unittest.TestCase):
                 {},
                 "files",
                 malformed_reason="fn_api_payload_malformed",
-                **_payload_evidence_kwargs(),
             ),
             [],
         )
@@ -268,7 +254,6 @@ class TestPollingPayloadRegression(unittest.TestCase):
                 {"files": []},
                 "files",
                 malformed_reason="fn_api_payload_malformed",
-                **_payload_evidence_kwargs(),
             ),
             [],
         )
@@ -279,7 +264,6 @@ class TestPollingPayloadRegression(unittest.TestCase):
                 {"files": {}},
                 "files",
                 malformed_reason="fn_api_payload_malformed",
-                **_payload_evidence_kwargs(),
             )
 
         self.assertIs(

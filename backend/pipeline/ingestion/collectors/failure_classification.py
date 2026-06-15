@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import dataclasses
 
-from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.ingestion.models import (
     FeedFailure,
 )
@@ -19,36 +18,6 @@ from backend.pipeline.storage.feed_store import FeedStatusReason
 
 MIXED_ITEM_FAILURE_REASON = "mixed_item_failures"
 MISSING_SOURCE_FEED_ID_REASON = "missing_source_feed_id"
-_SOURCE_STATUS_REASONS = frozenset(
-    {
-        FeedStatusReason.SOURCE_OFFLINE,
-        FeedStatusReason.SOURCE_UNREACHABLE,
-        FeedStatusReason.SOURCE_RATE_LIMITED,
-    }
-)
-_STATUS_OWNER_SCOPES = {
-    **dict.fromkeys(
-        _SOURCE_STATUS_REASONS,
-        failure_policy.OwnerScope.SOURCE_CLASS,
-    ),
-    FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED: (
-        failure_policy.OwnerScope.CREDENTIAL_SCOPE
-    ),
-    FeedStatusReason.SYSTEM_CONFIGURATION_INVALID: failure_policy.OwnerScope.FEED,
-    FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID: (
-        failure_policy.OwnerScope.SOURCE_CLASS
-    ),
-    FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED: (
-        failure_policy.OwnerScope.CREDENTIAL_SCOPE
-    ),
-    FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID: (
-        failure_policy.OwnerScope.SOURCE_CLASS
-    ),
-    FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED: (
-        failure_policy.OwnerScope.PIPELINE
-    ),
-    FeedStatusReason.SYSTEM_PIPELINE_ERROR: failure_policy.OwnerScope.PIPELINE,
-}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -136,36 +105,14 @@ class ItemBatchOutcome:
         )
 
 
-def policy_evidence_for_status_reason(
-    status_reason: FeedStatusReason,
-    *,
-    failure_scope: failure_policy.FailureScope,
-    endpoint_kind: failure_policy.EndpointKind,
-    pipeline_stage: failure_policy.PipelineStage | None = None,
-) -> failure_policy.FailurePolicyEvidence:
-    """Build facts-only collector evidence from a typed status enum."""
-    return failure_policy.FailurePolicyEvidence(
-        owner_scope=_STATUS_OWNER_SCOPES.get(
-            status_reason,
-            failure_policy.OwnerScope.UNKNOWN,
-        ),
-        failure_scope=failure_scope,
-        endpoint_kind=endpoint_kind,
-        pipeline_stage=pipeline_stage,
-    )
-
-
 def collector_failure(
     status_reason: FeedStatusReason,
     reason: str,
-    *,
-    policy_evidence: failure_policy.FailurePolicyEvidence,
 ) -> FeedFailure:
     """Build a typed feed-level collector failure."""
     return FeedFailure(
         status_reason=status_reason,
         reason=reason,
-        policy_evidence=policy_evidence,
     )
 
 
@@ -174,9 +121,4 @@ def missing_source_feed_id_failure() -> FeedFailure:
     return collector_failure(
         FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
         MISSING_SOURCE_FEED_ID_REASON,
-        policy_evidence=failure_policy.FailurePolicyEvidence(
-            owner_scope=failure_policy.OwnerScope.FEED,
-            failure_scope=failure_policy.FailureScope.FEED,
-            endpoint_kind=failure_policy.EndpointKind.FEED_CONFIGURATION,
-        ),
     )

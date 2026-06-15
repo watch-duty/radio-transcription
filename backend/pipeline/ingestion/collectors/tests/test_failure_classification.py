@@ -5,17 +5,13 @@ from __future__ import annotations
 import ast
 import pathlib
 import unittest
-from typing import Any, cast
 
-from backend.pipeline.ingestion import failure_policy
-from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.collectors.failure_classification import (
     FailureInfo,
     ItemBatchOutcome,
     ItemFailure,
     collector_failure,
     missing_source_feed_id_failure,
-    policy_evidence_for_status_reason,
 )
 from backend.pipeline.ingestion.models import FeedFailure
 from backend.pipeline.storage.feed_store import FeedStatusReason
@@ -36,14 +32,6 @@ def _require_item_failure(value: ItemFailure | None) -> ItemFailure:
         msg = "Expected ItemFailure, got None"
         raise AssertionError(msg)
     return value
-
-
-def _feed_config_evidence() -> failure_policy.FailurePolicyEvidence:
-    return failure_policy.FailurePolicyEvidence(
-        owner_scope=failure_policy.OwnerScope.FEED,
-        failure_scope=failure_policy.FailureScope.FEED,
-        endpoint_kind=failure_policy.EndpointKind.FEED_CONFIGURATION,
-    )
 
 
 class TestItemBatchOutcome(unittest.TestCase):
@@ -153,12 +141,9 @@ class TestItemBatchOutcome(unittest.TestCase):
         self.assertEqual(result.reason, "mixed_item_failures")
 
     def test_collector_failure_helper_returns_typed_exception(self) -> None:
-        evidence = _feed_config_evidence()
-
         result = collector_failure(
             FeedStatusReason.SOURCE_UNREACHABLE,
             "source_unreachable",
-            policy_evidence=evidence,
         )
 
         self.assertIsInstance(result, FeedFailure)
@@ -167,15 +152,6 @@ class TestItemBatchOutcome(unittest.TestCase):
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
         self.assertEqual(str(result), "source_unreachable")
-        self.assertIs(result.policy_evidence, evidence)
-
-    def test_collector_failure_helper_requires_policy_evidence(self) -> None:
-        collector_failure_func = cast("Any", collector_failure)
-        with self.assertRaises(TypeError):
-            collector_failure_func(
-                FeedStatusReason.SOURCE_UNREACHABLE,
-                "source_unreachable",
-            )
 
     def test_missing_source_feed_id_failure(self) -> None:
         result = missing_source_feed_id_failure()
@@ -186,94 +162,15 @@ class TestItemBatchOutcome(unittest.TestCase):
             FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
         )
         self.assertEqual(str(result), "missing_source_feed_id")
-        self.assertEqual(
-            result.policy_evidence,
-            failure_policy.FailurePolicyEvidence(
-                owner_scope=failure_policy.OwnerScope.FEED,
-                failure_scope=failure_policy.FailureScope.FEED,
-                endpoint_kind=failure_policy.EndpointKind.FEED_CONFIGURATION,
-            ),
-        )
-
-    def test_module_does_not_export_owner_scope_only_helper(self) -> None:
-        """Evidence construction is the public helper, not partial facts."""
-        self.assertFalse(
-            hasattr(
-                failure_classification,
-                "owner_scope_for_status_reason",
-            )
-        )
-
-    def test_policy_evidence_for_status_reason_preserves_endpoint_facts(
-        self,
-    ) -> None:
-        result = policy_evidence_for_status_reason(
-            FeedStatusReason.SOURCE_UNREACHABLE,
-            failure_scope=failure_policy.FailureScope.ITEM,
-            endpoint_kind=failure_policy.EndpointKind.CALLS_MEDIA,
-        )
-
-        self.assertEqual(
-            result,
-            failure_policy.FailurePolicyEvidence(
-                owner_scope=failure_policy.OwnerScope.SOURCE_CLASS,
-                failure_scope=failure_policy.FailureScope.ITEM,
-                endpoint_kind=failure_policy.EndpointKind.CALLS_MEDIA,
-            ),
-        )
-
-    def test_policy_evidence_for_status_reason_sets_owner_scope(
-        self,
-    ) -> None:
-        cases = (
-            (
-                FeedStatusReason.SOURCE_UNREACHABLE,
-                failure_policy.OwnerScope.SOURCE_CLASS,
-            ),
-            (
-                FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-                failure_policy.OwnerScope.CREDENTIAL_SCOPE,
-            ),
-            (
-                FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-                failure_policy.OwnerScope.FEED,
-            ),
-            (
-                FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
-                failure_policy.OwnerScope.SOURCE_CLASS,
-            ),
-            (
-                FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED,
-                failure_policy.OwnerScope.CREDENTIAL_SCOPE,
-            ),
-            (
-                FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
-                failure_policy.OwnerScope.SOURCE_CLASS,
-            ),
-            (
-                FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-                failure_policy.OwnerScope.UNKNOWN,
-            ),
-        )
-
-        for status_reason, owner_scope in cases:
-            with self.subTest(status_reason=status_reason.value):
-                result = policy_evidence_for_status_reason(
-                    status_reason,
-                    failure_scope=failure_policy.FailureScope.OBSERVATION,
-                    endpoint_kind=failure_policy.EndpointKind.CALLS_API,
-                )
-
-                self.assertIs(result.owner_scope, owner_scope)
 
 
 class TestCollectorFailureCallSites(unittest.TestCase):
-    """All current collector_failure calls must carry policy evidence."""
+    """All current collector_failure calls should use status plus reason only."""
 
-    def test_current_collector_failure_calls_supply_policy_evidence(
+    def test_current_collector_failure_calls_do_not_supply_policy_evidence(
         self,
     ) -> None:
-        missing: list[str] = []
+        offenders: list[str] = []
         for path in _COLLECTOR_FAILURE_CALLSITE_FILES:
             tree = ast.parse(path.read_text(encoding="utf-8"))
             for node in ast.walk(tree):
@@ -285,12 +182,11 @@ class TestCollectorFailureCallSites(unittest.TestCase):
                     keyword.arg == "policy_evidence"
                     for keyword in node.keywords
                 ):
-                    continue
-                missing.append(
-                    f"{path.relative_to(_COLLECTOR_ROOT)}:{node.lineno}"
-                )
+                    offenders.append(
+                        f"{path.relative_to(_COLLECTOR_ROOT)}:{node.lineno}"
+                    )
 
-        self.assertEqual(missing, [])
+        self.assertEqual(offenders, [])
 
 
 def _is_collector_failure_call(node: ast.Call) -> bool:

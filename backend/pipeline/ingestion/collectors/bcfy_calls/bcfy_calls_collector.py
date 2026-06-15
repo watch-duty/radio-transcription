@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, cast
 
 from google.cloud import secretmanager
 
-from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.ingestion.collectors import (
     aiohttp_requests,
     control_flow,
@@ -24,7 +23,6 @@ from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemFailure,
     collector_failure,
     missing_source_feed_id_failure,
-    policy_evidence_for_status_reason,
 )
 from backend.pipeline.ingestion.failure_classifiers import (
     http_status,
@@ -71,7 +69,7 @@ _TRANSIENT_CALLS_API_FAILURES = frozenset(
 _CALLS_API_HTTP_POLICY = http_status.HTTPStatusPolicy(
     exact={
         **http_status.DEFAULT_HTTP_STATUS_POLICY.exact,
-        404: FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        404: FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID,
     },
 )
 
@@ -111,11 +109,6 @@ def _get_jwt_token() -> str:
         raise collector_failure(
             FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
             "calls_jwt_config_missing",
-            policy_evidence=failure_policy.FailurePolicyEvidence(
-                owner_scope=failure_policy.OwnerScope.SOURCE_CLASS,
-                failure_scope=failure_policy.FailureScope.FEED,
-                endpoint_kind=failure_policy.EndpointKind.CALLS_API,
-            ),
         )
 
     client = secretmanager.SecretManagerServiceClient()
@@ -128,11 +121,6 @@ def _get_jwt_token() -> str:
         raise collector_failure(
             FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED,
             "calls_jwt_secret_access_failed",
-            policy_evidence=failure_policy.FailurePolicyEvidence(
-                owner_scope=failure_policy.OwnerScope.CREDENTIAL_SCOPE,
-                failure_scope=failure_policy.FailureScope.FEED,
-                endpoint_kind=failure_policy.EndpointKind.CALLS_API,
-            ),
         ) from e
 
 
@@ -320,8 +308,6 @@ async def _fetch_calls(
         invalid_payload_reason="calls_api_response_invalid",
         transport_status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
         transport_reason="calls_api_http_transport_failed",
-        failure_scope=failure_policy.FailureScope.FEED,
-        endpoint_kind=failure_policy.EndpointKind.CALLS_API,
     )
 
 
@@ -361,8 +347,6 @@ def _extract_calls_from_response(
         bcfy_calls,
         "calls",
         malformed_reason="calls_api_payload_malformed",
-        failure_scope=failure_policy.FailureScope.OBSERVATION,
-        endpoint_kind=failure_policy.EndpointKind.CALLS_API,
     )
 
 
@@ -493,11 +477,6 @@ def _raise_item_failure(failure: ItemFailure) -> None:
     raise collector_failure(
         failure.status_reason,
         failure.reason,
-        policy_evidence=policy_evidence_for_status_reason(
-            failure.status_reason,
-            failure_scope=failure_policy.FailureScope.ITEM,
-            endpoint_kind=failure_policy.EndpointKind.CALLS_MEDIA,
-        ),
     )
 
 
@@ -514,11 +493,6 @@ async def _handle_loop_failure(
         raise collector_failure(
             failure.status_reason,
             failure.reason,
-            policy_evidence=policy_evidence_for_status_reason(
-                failure.status_reason,
-                failure_scope=failure_policy.FailureScope.ITEM,
-                endpoint_kind=failure_policy.EndpointKind.CALLS_MEDIA,
-            ),
         )
     await control_flow.sleep_or_cancel(shutdown_event, _POLL_INTERVAL_SEC)
     return consecutive_failures

@@ -12,14 +12,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 
-from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     bcfy_calls_collector,
 )
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemFailure,
     collector_failure,
-    policy_evidence_for_status_reason,
 )
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
@@ -43,17 +41,6 @@ def _require_item_failure(value: object) -> ItemFailure:
         msg = f"Expected ItemFailure, got {value!r}"
         raise TypeError(msg)
     return value
-
-
-def _calls_api_evidence(
-    status_reason: FeedStatusReason,
-) -> failure_policy.FailurePolicyEvidence:
-    """Build Calls API feed-scope evidence for mocked typed failures."""
-    return policy_evidence_for_status_reason(
-        status_reason,
-        failure_scope=failure_policy.FailureScope.FEED,
-        endpoint_kind=failure_policy.EndpointKind.CALLS_API,
-    )
 
 
 def _fetch_payload(
@@ -119,10 +106,6 @@ class TestGetJwtToken(unittest.TestCase):
             FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
         )
         self.assertEqual(str(ctx.exception), "calls_jwt_config_missing")
-        self.assertIs(
-            ctx.exception.policy_evidence.owner_scope,
-            failure_policy.OwnerScope.SOURCE_CLASS,
-        )
 
     @patch.dict(
         os.environ,
@@ -143,10 +126,6 @@ class TestGetJwtToken(unittest.TestCase):
             FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED,
         )
         self.assertEqual(str(ctx.exception), "calls_jwt_secret_access_failed")
-        self.assertIs(
-            ctx.exception.policy_evidence.owner_scope,
-            failure_policy.OwnerScope.CREDENTIAL_SCOPE,
-        )
 
 
 class TestSharedJwtToken(unittest.IsolatedAsyncioTestCase):
@@ -1470,9 +1449,6 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             collector_failure(
                 FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
                 "calls_api_http_401",
-                policy_evidence=_calls_api_evidence(
-                    FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED
-                ),
             ),
             _fetch_payload({"calls": []}),
         ]
@@ -1575,9 +1551,6 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
                 raise collector_failure(
                     FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
                     "calls_api_http_401",
-                    policy_evidence=_calls_api_evidence(
-                        FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED
-                    ),
                 )
             self.shutdown.set()
             return _fetch_payload({"calls": []})
@@ -1710,9 +1683,6 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         mock_fetch.side_effect = collector_failure(
             FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
             "calls_api_http_401",
-            policy_evidence=_calls_api_evidence(
-                FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED
-            ),
         )
         mock_sleep.return_value = False
 
@@ -1751,9 +1721,6 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         mock_fetch.side_effect = collector_failure(
             FeedStatusReason.SOURCE_RATE_LIMITED,
             "calls_api_http_429",
-            policy_evidence=_calls_api_evidence(
-                FeedStatusReason.SOURCE_RATE_LIMITED
-            ),
         )
 
         with self.assertRaises(FeedFailure) as ctx:
@@ -1798,9 +1765,6 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         mock_fetch.side_effect = collector_failure(
             FeedStatusReason.SOURCE_UNREACHABLE,
             "calls_api_http_503",
-            policy_evidence=_calls_api_evidence(
-                FeedStatusReason.SOURCE_UNREACHABLE
-            ),
         )
 
         with self.assertRaises(FeedFailure) as ctx:

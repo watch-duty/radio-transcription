@@ -112,6 +112,7 @@ class FeedStatusReason(enum.StrEnum):
     SOURCE_RATE_LIMITED = "source_rate_limited"
     SYSTEM_AUTHENTICATION_FAILED = "system_authentication_failed"
     SYSTEM_CONFIGURATION_INVALID = "system_configuration_invalid"
+    SYSTEM_SOURCE_CONFIGURATION_INVALID = "system_source_configuration_invalid"
     SYSTEM_RUNTIME_CONFIGURATION_INVALID = (
         "system_runtime_configuration_invalid"
     )

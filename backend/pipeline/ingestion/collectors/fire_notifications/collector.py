@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 from curl_cffi.requests import AsyncSession
 
 from backend.pipeline.common.audio import get_audio_duration
-from backend.pipeline.ingestion import failure_policy, quarantine_reason
+from backend.pipeline.ingestion import quarantine_reason
 from backend.pipeline.ingestion.collectors import (
     control_flow,
     failure_classification,
@@ -26,7 +26,6 @@ from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemFailure,
     collector_failure,
     missing_source_feed_id_failure,
-    policy_evidence_for_status_reason,
 )
 from backend.pipeline.ingestion.failure_classifiers import (
     http_status,
@@ -59,7 +58,9 @@ _MAX_CONSECUTIVE_FAILURES = 10
 # default item policy instead because one stale object should not blame the feed.
 _FN_POLL_HTTP_POLICY = http_status.HTTPStatusPolicy(
     exact=http_status.DEFAULT_HTTP_STATUS_POLICY.exact,
-    default_4xx=(feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID),
+    default_4xx=(
+        feed_store.FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID
+    ),
     default_5xx=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
     default_other_failure=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
 )
@@ -297,11 +298,6 @@ async def _process_file_list(
         raise collector_failure(
             promoted.status_reason,
             promoted.reason,
-            policy_evidence=policy_evidence_for_status_reason(
-                promoted.status_reason,
-                failure_scope=failure_policy.FailureScope.ITEM,
-                endpoint_kind=failure_policy.EndpointKind.FIRE_POLL,
-            ),
         )
 
 
@@ -322,11 +318,6 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
         raise collector_failure(
             feed_store.FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
             "missing_fire_notifications_s3_base",
-            policy_evidence=failure_policy.FailurePolicyEvidence(
-                owner_scope=failure_policy.OwnerScope.SOURCE_CLASS,
-                failure_scope=failure_policy.FailureScope.FEED,
-                endpoint_kind=failure_policy.EndpointKind.FIRE_POLL,
-            ),
         ) from e
     try:
         headers = _build_auth_headers()
@@ -334,11 +325,6 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
         raise collector_failure(
             feed_store.FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
             "missing_fire_notifications_auth_config",
-            policy_evidence=failure_policy.FailurePolicyEvidence(
-                owner_scope=failure_policy.OwnerScope.SOURCE_CLASS,
-                failure_scope=failure_policy.FailureScope.FEED,
-                endpoint_kind=failure_policy.EndpointKind.FIRE_POLL,
-            ),
         ) from e
 
     source_feed_id = feed.get("source_feed_id")
@@ -386,20 +372,11 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
                             status_reason,
                             "fn_api_payload_malformed: "
                             f"{quarantine_reason.exception_text(exc)}",
-                            policy_evidence=policy_evidence_for_status_reason(
-                                status_reason,
-                                failure_scope=(
-                                    failure_policy.FailureScope.OBSERVATION
-                                ),
-                                endpoint_kind=failure_policy.EndpointKind.FIRE_POLL,
-                            ),
                         ) from exc
                     files = payloads.extract_optional_item_list(
                         data,
                         "files",
                         malformed_reason="fn_api_payload_malformed",
-                        failure_scope=failure_policy.FailureScope.OBSERVATION,
-                        endpoint_kind=failure_policy.EndpointKind.FIRE_POLL,
                     )
 
                     if files == []:
@@ -453,13 +430,6 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
                     raise collector_failure(
                         last_poll_failure.status_reason,
                         last_poll_failure.reason,
-                        policy_evidence=policy_evidence_for_status_reason(
-                            last_poll_failure.status_reason,
-                            failure_scope=(
-                                failure_policy.FailureScope.OBSERVATION
-                            ),
-                            endpoint_kind=failure_policy.EndpointKind.FIRE_POLL,
-                        ),
                     )
 
             # Sleep before next poll, with a small jitter

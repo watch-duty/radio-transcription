@@ -7,7 +7,6 @@ from unittest import mock
 
 import aiohttp
 
-from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.ingestion.collectors import aiohttp_requests, control_flow
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemFailure,
@@ -70,18 +69,6 @@ def _retry_config(
     )
 
 
-class _JsonEvidenceKwargs(typing.TypedDict):
-    failure_scope: failure_policy.FailureScope
-    endpoint_kind: failure_policy.EndpointKind
-
-
-def _json_evidence_kwargs() -> _JsonEvidenceKwargs:
-    return {
-        "failure_scope": failure_policy.FailureScope.FEED,
-        "endpoint_kind": failure_policy.EndpointKind.CALLS_API,
-    }
-
-
 class TestFetchJsonWithRetries(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.session = mock.MagicMock()
@@ -107,7 +94,6 @@ class TestFetchJsonWithRetries(unittest.IsolatedAsyncioTestCase):
                 feed_store.FeedStatusReason.SOURCE_UNREACHABLE
             ),
             transport_reason="test_api_transport_failed",
-            **_json_evidence_kwargs(),
         )
 
         self.assertEqual(result, {"ok": True})
@@ -136,7 +122,6 @@ class TestFetchJsonWithRetries(unittest.IsolatedAsyncioTestCase):
                 feed_store.FeedStatusReason.SOURCE_UNREACHABLE
             ),
             transport_reason="test_api_transport_failed",
-            **_json_evidence_kwargs(),
         )
 
         self.assertEqual(result, {"ok": True})
@@ -169,7 +154,6 @@ class TestFetchJsonWithRetries(unittest.IsolatedAsyncioTestCase):
                     feed_store.FeedStatusReason.SOURCE_UNREACHABLE
                 ),
                 transport_reason="test_api_transport_failed",
-                **_json_evidence_kwargs(),
             )
 
         self.assertIs(
@@ -211,7 +195,6 @@ class TestFetchJsonWithRetries(unittest.IsolatedAsyncioTestCase):
                     feed_store.FeedStatusReason.SOURCE_UNREACHABLE
                 ),
                 transport_reason="test_api_transport_failed",
-                **_json_evidence_kwargs(),
             )
 
         self.assertIs(
@@ -243,7 +226,6 @@ class TestFetchJsonWithRetries(unittest.IsolatedAsyncioTestCase):
                     feed_store.FeedStatusReason.SOURCE_UNREACHABLE
                 ),
                 transport_reason="test_api_transport_failed",
-                **_json_evidence_kwargs(),
             )
 
     async def test_shutdown_is_set_raises_cancelled_error(self) -> None:
@@ -267,7 +249,6 @@ class TestFetchJsonWithRetries(unittest.IsolatedAsyncioTestCase):
                     feed_store.FeedStatusReason.SOURCE_UNREACHABLE
                 ),
                 transport_reason="test_api_transport_failed",
-                **_json_evidence_kwargs(),
             )
 
         self.session.get.assert_not_called()

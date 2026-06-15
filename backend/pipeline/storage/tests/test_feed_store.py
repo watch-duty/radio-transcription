@@ -43,6 +43,7 @@ _PUBLIC_FEED_STATUS_REASON_VALUES = {
 
 _BACKEND_ONLY_FEED_STATUS_REASON_VALUES = {
     "pipeline_publish_after_bookmark_failed",
+    "system_source_configuration_invalid",
     "system_runtime_configuration_invalid",
     "system_credential_access_failed",
     "system_source_payload_invalid",

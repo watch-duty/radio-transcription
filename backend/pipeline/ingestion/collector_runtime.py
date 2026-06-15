@@ -83,12 +83,10 @@ class _PipelineFailure(Exception):
         reason: str,
         *,
         status_reason: FeedStatusReason,
-        policy_evidence: failure_policy.FailurePolicyEvidence,
     ) -> None:
         super().__init__(reason)
         self.reason = reason
         self.status_reason = status_reason
-        self.policy_evidence = policy_evidence
 
 
 class CollectorRuntime:
@@ -775,36 +773,6 @@ class CollectorRuntime:
         return resolve_topic_path(feed["source_type"], self._collector_settings)
 
     @staticmethod
-    def _policy_evidence_fields(
-        evidence: failure_policy.FailurePolicyEvidence,
-        action: failure_policy.ExecutedAction,
-    ) -> dict[str, object]:
-        """Convert policy decision data to JSON-log-safe primitive fields."""
-        fields: dict[str, object] = {
-            "owner_scope": evidence.owner_scope.value,
-            "failure_scope": evidence.failure_scope.value,
-            "endpoint_kind": evidence.endpoint_kind.value,
-            "executed_action": action.value,
-        }
-        if evidence.pipeline_stage is not None:
-            fields["pipeline_stage"] = evidence.pipeline_stage.value
-        return fields
-
-    @staticmethod
-    def _pipeline_policy_evidence(
-        *,
-        endpoint_kind: failure_policy.EndpointKind,
-        pipeline_stage: failure_policy.PipelineStage,
-    ) -> failure_policy.FailurePolicyEvidence:
-        """Build standard post-capture pipeline policy evidence."""
-        return failure_policy.FailurePolicyEvidence(
-            owner_scope=failure_policy.OwnerScope.PIPELINE,
-            failure_scope=failure_policy.FailureScope.PIPELINE,
-            endpoint_kind=endpoint_kind,
-            pipeline_stage=pipeline_stage,
-        )
-
-    @staticmethod
     def _non_budgeted_retry_after() -> datetime.datetime:
         """Return the retry time for non-budgeted failure lanes."""
         jitter_sec = random.uniform(  # noqa: S311 -- scheduling jitter
@@ -821,16 +789,12 @@ class CollectorRuntime:
         *,
         reason: str,
         status_reason: FeedStatusReason,
-        evidence: failure_policy.FailurePolicyEvidence,
         retry_after: datetime.datetime | None = None,
         replay_missing: bool = False,
         data_gap_known: bool = False,
     ) -> None:
         """Emit the canonical policy-decision telemetry event."""
-        action = failure_policy.classify_failure_policy(
-            status_reason,
-            evidence,
-        )
+        action = failure_policy.classify_failure_policy(status_reason)
         payload: dict[str, object] = {
             "event_type": "feed_failure_policy_decision",
             "feed_id": str(feed["id"]),
@@ -839,7 +803,7 @@ class CollectorRuntime:
             "status_reason": status_reason.value,
             "replay_missing": replay_missing,
             "data_gap_known": data_gap_known,
-            **self._policy_evidence_fields(evidence, action),
+            "executed_action": action.value,
         }
         if retry_after is not None:
             payload["retry_after"] = retry_after.isoformat()
@@ -853,13 +817,9 @@ class CollectorRuntime:
         *,
         reason: str,
         status_reason: FeedStatusReason,
-        evidence: failure_policy.FailurePolicyEvidence,
     ) -> None:
         """Emit explicit evidence that capture/bookmark succeeded but publish did not."""
-        action = failure_policy.classify_failure_policy(
-            status_reason,
-            evidence,
-        )
+        action = failure_policy.classify_failure_policy(status_reason)
         payload: dict[str, object] = {
             "event_type": "post_bookmark_publish_failure",
             "feed_id": str(feed["id"]),
@@ -868,7 +828,7 @@ class CollectorRuntime:
             "status_reason": status_reason.value,
             "replay_missing": True,
             "data_gap_known": True,
-            **self._policy_evidence_fields(evidence, action),
+            "executed_action": action.value,
         }
         logger.error(
             "Post-bookmark publish failure",
@@ -917,10 +877,6 @@ class CollectorRuntime:
             raise _PipelineFailure(
                 _PIPELINE_GCS_UPLOAD_FAILED,
                 status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
-                policy_evidence=self._pipeline_policy_evidence(
-                    endpoint_kind=failure_policy.EndpointKind.GCS_UPLOAD,
-                    pipeline_stage=failure_policy.PipelineStage.GCS_UPLOAD,
-                ),
             ) from exc
 
         duration_ms = int(
@@ -957,10 +913,6 @@ class CollectorRuntime:
             raise _PipelineFailure(
                 _PIPELINE_BOOKMARK_WRITE_FAILED,
                 status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
-                policy_evidence=self._pipeline_policy_evidence(
-                    endpoint_kind=failure_policy.EndpointKind.BOOKMARK_WRITE,
-                    pipeline_stage=failure_policy.PipelineStage.BOOKMARK_WRITE,
-                ),
             ) from exc
 
         if not ok:
@@ -1020,10 +972,6 @@ class CollectorRuntime:
                 status_reason=(
                     FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
                 ),
-                policy_evidence=self._pipeline_policy_evidence(
-                    endpoint_kind=failure_policy.EndpointKind.PUBSUB_PUBLISH,
-                    pipeline_stage=failure_policy.PipelineStage.PUBSUB_PUBLISH,
-                ),
             ) from exc
 
         logger.info(
@@ -1061,7 +1009,6 @@ class CollectorRuntime:
         *,
         reason: str,
         status_reason: FeedStatusReason,
-        evidence: failure_policy.FailurePolicyEvidence,
         replay_missing: bool = False,
         data_gap_known: bool = False,
     ) -> None:
@@ -1070,7 +1017,6 @@ class CollectorRuntime:
             feed,
             reason=reason,
             status_reason=status_reason,
-            evidence=evidence,
             replay_missing=replay_missing,
             data_gap_known=data_gap_known,
         )
@@ -1145,7 +1091,6 @@ class CollectorRuntime:
         *,
         reason: str,
         status_reason: FeedStatusReason,
-        evidence: failure_policy.FailurePolicyEvidence,
         replay_missing: bool = False,
         data_gap_known: bool = False,
     ) -> None:
@@ -1155,7 +1100,6 @@ class CollectorRuntime:
             feed,
             reason=reason,
             status_reason=status_reason,
-            evidence=evidence,
             retry_after=retry_after,
             replay_missing=replay_missing,
             data_gap_known=data_gap_known,
@@ -1165,7 +1109,6 @@ class CollectorRuntime:
                 feed,
                 reason=reason,
                 status_reason=status_reason,
-                evidence=evidence,
             )
         if status_reason.value.startswith("source_"):
             logger.info(
@@ -1441,10 +1384,7 @@ class CollectorRuntime:
             return
 
         except FeedFailure as e:
-            action = failure_policy.classify_failure_policy(
-                e.status_reason,
-                e.policy_evidence,
-            )
+            action = failure_policy.classify_failure_policy(e.status_reason)
             if (
                 action
                 is failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
@@ -1455,7 +1395,6 @@ class CollectorRuntime:
                     fencing_token,
                     reason=e.reason,
                     status_reason=e.status_reason,
-                    evidence=e.policy_evidence,
                 )
             else:
                 await self._record_non_budgeted_failure(
@@ -1464,15 +1403,11 @@ class CollectorRuntime:
                     fencing_token,
                     reason=e.reason,
                     status_reason=e.status_reason,
-                    evidence=e.policy_evidence,
                 )
             return
 
         except _PipelineFailure as e:
-            action = failure_policy.classify_failure_policy(
-                e.status_reason,
-                e.policy_evidence,
-            )
+            action = failure_policy.classify_failure_policy(e.status_reason)
             replay_missing = (
                 action
                 is failure_policy.ExecutedAction.RECORD_POST_BOOKMARK_PUBLISH_GAP
@@ -1487,7 +1422,6 @@ class CollectorRuntime:
                     fencing_token,
                     reason=e.reason,
                     status_reason=e.status_reason,
-                    evidence=e.policy_evidence,
                     replay_missing=replay_missing,
                     data_gap_known=replay_missing,
                 )
@@ -1498,7 +1432,6 @@ class CollectorRuntime:
                     fencing_token,
                     reason=e.reason,
                     status_reason=e.status_reason,
-                    evidence=e.policy_evidence,
                     replay_missing=replay_missing,
                     data_gap_known=replay_missing,
                 )
@@ -1515,11 +1448,6 @@ class CollectorRuntime:
                 fencing_token,
                 reason=reason,
                 status_reason=FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
-                evidence=failure_policy.FailurePolicyEvidence(
-                    owner_scope=failure_policy.OwnerScope.UNKNOWN,
-                    failure_scope=failure_policy.FailureScope.UNKNOWN,
-                    endpoint_kind=failure_policy.EndpointKind.UNKNOWN,
-                ),
             )
             return
 

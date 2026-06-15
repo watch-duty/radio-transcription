@@ -9,7 +9,6 @@ import unittest
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemBatchOutcome,
     ItemFailure,
@@ -270,14 +269,14 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
 
 
 class TestPollStatusClassification(unittest.TestCase):
-    def test_poll_4xx_maps_to_configuration_invalid(self) -> None:
+    def test_poll_4xx_maps_to_source_configuration_invalid(self) -> None:
         for status in (400, 404):
             with self.subTest(status=status):
                 classification = collector._classify_poll_status(status)
 
                 self.assertIs(
                     classification.status_reason,
-                    FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+                    FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID,
                 )
                 self.assertEqual(
                     classification.reason,
@@ -797,10 +796,6 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             str(ctx.exception), "missing_fire_notifications_s3_base"
         )
-        self.assertIs(
-            ctx.exception.policy_evidence.owner_scope,
-            failure_policy.OwnerScope.SOURCE_CLASS,
-        )
 
     async def test_missing_auth_env_raises_typed_configuration_failure(
         self,
@@ -826,10 +821,6 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             str(ctx.exception), "missing_fire_notifications_auth_config"
         )
-        self.assertIs(
-            ctx.exception.policy_evidence.owner_scope,
-            failure_policy.OwnerScope.SOURCE_CLASS,
-        )
 
     @patch(
         "backend.pipeline.ingestion.collectors.fire_notifications.collector._MAX_CONSECUTIVE_FAILURES",
@@ -845,7 +836,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         cases = [
             (
                 400,
-                FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+                FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID,
                 "fn_api_http_400",
             ),
             (
@@ -860,7 +851,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
             ),
             (
                 404,
-                FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+                FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID,
                 "fn_api_http_404",
             ),
             (429, FeedStatusReason.SOURCE_RATE_LIMITED, "fn_api_http_429"),
@@ -918,10 +909,6 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             str(ctx.exception),
             "fn_api_payload_malformed: ValueError: bad json",
-        )
-        self.assertIs(
-            ctx.exception.policy_evidence.owner_scope,
-            failure_policy.OwnerScope.SOURCE_CLASS,
         )
 
     @patch(

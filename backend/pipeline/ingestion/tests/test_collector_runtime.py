@@ -15,7 +15,6 @@ from google.api_core import exceptions as google_exceptions
 from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
-from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.ingestion.collector_runtime import CollectorRuntime
 from backend.pipeline.ingestion.collectors.failure_classification import (
     missing_source_feed_id_failure,
@@ -81,21 +80,11 @@ _PUBLISH_EXTERNAL_AUDIO_ID_ARG_INDEX = 9
 class TestFeedFailureContract(unittest.TestCase):
     """Tests for the typed collector failure boundary contract."""
 
-    @staticmethod
-    def _feed_config_evidence() -> failure_policy.FailurePolicyEvidence:
-        """Build feed-actionable config evidence for boundary tests."""
-        return failure_policy.FailurePolicyEvidence(
-            owner_scope=failure_policy.OwnerScope.FEED,
-            failure_scope=failure_policy.FailureScope.FEED,
-            endpoint_kind=failure_policy.EndpointKind.FEED_CONFIGURATION,
-        )
-
     def test_carries_status_reason_and_reason(self) -> None:
         """FeedFailure exposes canonical and raw failure data."""
         exc = FeedFailure(
             FeedStatusReason.SOURCE_OFFLINE,
             "source_offline",
-            policy_evidence=self._feed_config_evidence(),
         )
 
         self.assertIs(exc.status_reason, FeedStatusReason.SOURCE_OFFLINE)
@@ -108,7 +97,6 @@ class TestFeedFailureContract(unittest.TestCase):
         exc = FeedFailure(
             FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
             reason,
-            policy_evidence=self._feed_config_evidence(),
         )
 
         self.assertEqual(exc.reason, reason)
@@ -119,7 +107,6 @@ class TestFeedFailureContract(unittest.TestCase):
         exc = FeedFailure(
             "source_offline",
             "source_offline",
-            policy_evidence=self._feed_config_evidence(),
         )
 
         self.assertIs(exc.status_reason, FeedStatusReason.SOURCE_OFFLINE)
@@ -130,30 +117,21 @@ class TestFeedFailureContract(unittest.TestCase):
         exc = FeedFailure(
             FeedStatusReason.SOURCE_OFFLINE,
             "source_offline",
-            policy_evidence=self._feed_config_evidence(),
         )
 
         exc.__traceback__ = None
 
-    def test_rejects_missing_policy_evidence(self) -> None:
-        """Typed FeedFailure requires structured policy evidence."""
-        feed_failure = cast("Any", FeedFailure)
-        with self.assertRaises(TypeError):
-            feed_failure(
-                FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-                "missing_source_feed_id",
-            )
-
-    def test_carries_policy_evidence(self) -> None:
-        """FeedFailure can carry structured policy evidence."""
-        evidence = self._feed_config_evidence()
+    def test_does_not_require_policy_evidence(self) -> None:
+        """Typed FeedFailure only requires status reason and diagnostic text."""
         exc = FeedFailure(
             FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
             "missing_source_feed_id",
-            policy_evidence=evidence,
         )
 
-        self.assertEqual(exc.policy_evidence, evidence)
+        self.assertIs(
+            exc.status_reason,
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        )
 
 
 def _mock_pubsub_publish(message_id: str = "test-message-id") -> mock._patch:
@@ -2042,10 +2020,10 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
             {"policy_intent", "feed_budget_eligible", "quarantine_feed"}
             & policy_record.keys()
         )
-        self.assertEqual(policy_record["owner_scope"], "pipeline")
-        self.assertEqual(policy_record["failure_scope"], "pipeline")
-        self.assertEqual(policy_record["endpoint_kind"], "pubsub_publish")
-        self.assertEqual(policy_record["pipeline_stage"], "pubsub_publish")
+        self.assertFalse(
+            {"owner_scope", "failure_scope", "endpoint_kind", "pipeline_stage"}
+            & policy_record.keys()
+        )
 
 
 class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
@@ -2108,15 +2086,16 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             policy_record["status_reason"],
             "system_configuration_invalid",
         )
-        self.assertEqual(policy_record["owner_scope"], "feed")
-        self.assertEqual(policy_record["failure_scope"], "feed")
-        self.assertEqual(policy_record["endpoint_kind"], "feed_configuration")
         self.assertEqual(
             policy_record["executed_action"],
             "increment_feed_failure_budget",
         )
         self.assertFalse(
             {"policy_intent", "feed_budget_eligible", "quarantine_feed"}
+            & policy_record.keys()
+        )
+        self.assertFalse(
+            {"owner_scope", "failure_scope", "endpoint_kind", "pipeline_stage"}
             & policy_record.keys()
         )
         self.assertNotIn("retry_after", policy_record)
@@ -2243,15 +2222,16 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(len(policy_records), 1)
         policy_record = policy_records[0]
-        self.assertEqual(policy_record["owner_scope"], "unknown")
-        self.assertEqual(policy_record["failure_scope"], "unknown")
-        self.assertEqual(policy_record["endpoint_kind"], "unknown")
         self.assertEqual(
             policy_record["executed_action"],
             "retry_without_feed_budget",
         )
         self.assertFalse(
             {"policy_intent", "feed_budget_eligible", "quarantine_feed"}
+            & policy_record.keys()
+        )
+        self.assertFalse(
+            {"owner_scope", "failure_scope", "endpoint_kind", "pipeline_stage"}
             & policy_record.keys()
         )
 
@@ -2265,11 +2245,6 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             raise FeedFailure(
                 status_reason,
                 "source_offline",
-                policy_evidence=failure_policy.FailurePolicyEvidence(
-                    owner_scope=failure_policy.OwnerScope.SOURCE_CLASS,
-                    failure_scope=failure_policy.FailureScope.FEED,
-                    endpoint_kind=failure_policy.EndpointKind.STREAM,
-                ),
             )
             yield _make_captured_chunk(b"audio")
 
@@ -2304,65 +2279,35 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
                 "source_offline",
                 FeedStatusReason.SOURCE_OFFLINE,
                 "source_offline",
-                failure_policy.FailurePolicyEvidence(
-                    owner_scope=failure_policy.OwnerScope.FEED,
-                    failure_scope=failure_policy.FailureScope.OBSERVATION,
-                    endpoint_kind=failure_policy.EndpointKind.STREAM,
-                ),
             ),
             (
                 "rate_limited",
                 FeedStatusReason.SOURCE_RATE_LIMITED,
                 "source_rate_limited",
-                failure_policy.FailurePolicyEvidence(
-                    owner_scope=failure_policy.OwnerScope.SOURCE_CLASS,
-                    failure_scope=failure_policy.FailureScope.CLASS,
-                    endpoint_kind=failure_policy.EndpointKind.CALLS_API,
-                ),
             ),
             (
                 "capture_timeout",
                 FeedStatusReason.SOURCE_UNREACHABLE,
                 "capture_timeout",
-                failure_policy.FailurePolicyEvidence(
-                    owner_scope=failure_policy.OwnerScope.FEED,
-                    failure_scope=failure_policy.FailureScope.OBSERVATION,
-                    endpoint_kind=failure_policy.EndpointKind.STREAM,
-                ),
             ),
             (
                 "source_class",
                 FeedStatusReason.SOURCE_OFFLINE,
                 "provider_offline",
-                failure_policy.FailurePolicyEvidence(
-                    owner_scope=failure_policy.OwnerScope.SOURCE_CLASS,
-                    failure_scope=failure_policy.FailureScope.CLASS,
-                    endpoint_kind=failure_policy.EndpointKind.STREAM,
-                ),
             ),
             (
                 "credential_access",
                 FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED,
                 "calls_jwt_secret_access_failed",
-                failure_policy.FailurePolicyEvidence(
-                    owner_scope=failure_policy.OwnerScope.CREDENTIAL_SCOPE,
-                    failure_scope=failure_policy.FailureScope.FEED,
-                    endpoint_kind=failure_policy.EndpointKind.CALLS_API,
-                ),
             ),
             (
                 "collector_error",
                 FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
                 "collector_error",
-                failure_policy.FailurePolicyEvidence(
-                    owner_scope=failure_policy.OwnerScope.UNKNOWN,
-                    failure_scope=failure_policy.FailureScope.UNKNOWN,
-                    endpoint_kind=failure_policy.EndpointKind.UNKNOWN,
-                ),
             ),
         )
 
-        for name, status_reason, reason, evidence in cases:
+        for name, status_reason, reason in cases:
             with self.subTest(name=name):
 
                 async def _failing_capture(
@@ -2371,12 +2316,10 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
                     _resources,
                     _status_reason=status_reason,
                     _reason=reason,
-                    _evidence=evidence,
                 ):
                     raise FeedFailure(
                         _status_reason,
                         _reason,
-                        policy_evidence=_evidence,
                     )
                     yield _make_captured_chunk(b"audio")
 
@@ -2537,16 +2480,16 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             policy_record["status_reason"],
             "pipeline_publish_after_bookmark_failed",
         )
-        self.assertEqual(policy_record["owner_scope"], "pipeline")
-        self.assertEqual(policy_record["failure_scope"], "pipeline")
-        self.assertEqual(policy_record["endpoint_kind"], "pubsub_publish")
-        self.assertEqual(policy_record["pipeline_stage"], "pubsub_publish")
         self.assertEqual(
             policy_record["executed_action"],
             "record_post_bookmark_publish_gap",
         )
         self.assertFalse(
             {"policy_intent", "feed_budget_eligible", "quarantine_feed"}
+            & policy_record.keys()
+        )
+        self.assertFalse(
+            {"owner_scope", "failure_scope", "endpoint_kind", "pipeline_stage"}
             & policy_record.keys()
         )
         self.assertTrue(policy_record["replay_missing"])
@@ -2649,15 +2592,16 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             json_fields["event_type"],
             "feed_failure_policy_decision",
         )
-        self.assertEqual(json_fields["owner_scope"], "unknown")
-        self.assertEqual(json_fields["failure_scope"], "unknown")
-        self.assertEqual(json_fields["endpoint_kind"], "unknown")
         self.assertEqual(
             json_fields["executed_action"],
             "retry_without_feed_budget",
         )
         self.assertFalse(
             {"policy_intent", "feed_budget_eligible", "quarantine_feed"}
+            & json_fields.keys()
+        )
+        self.assertFalse(
+            {"owner_scope", "failure_scope", "endpoint_kind", "pipeline_stage"}
             & json_fields.keys()
         )
         self.assertIn("retry_after", json_fields)

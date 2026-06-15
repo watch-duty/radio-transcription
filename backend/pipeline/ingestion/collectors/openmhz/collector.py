@@ -13,7 +13,6 @@ from urllib.parse import urlparse
 
 from curl_cffi.requests import AsyncSession
 
-from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.ingestion.collectors import (
     control_flow,
     item_downloads,
@@ -24,7 +23,6 @@ from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemFailure,
     collector_failure,
     missing_source_feed_id_failure,
-    policy_evidence_for_status_reason,
 )
 from backend.pipeline.ingestion.collectors.openmhz._ws_transport import (
     OpenMHzTransportError,
@@ -74,11 +72,6 @@ def _get_transport(name: str) -> TransportFactory:
     raise collector_failure(
         FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
         "invalid_openmhz_transport",
-        policy_evidence=failure_policy.FailurePolicyEvidence(
-            owner_scope=failure_policy.OwnerScope.FEED,
-            failure_scope=failure_policy.FailureScope.FEED,
-            endpoint_kind=failure_policy.EndpointKind.FEED_CONFIGURATION,
-        ),
     )
 
 
@@ -100,11 +93,6 @@ def _transport_failure_from_exception(exc: Exception) -> FeedFailure | None:
         status_reason,
         f"OpenMHz WebSocket upgrade failed with HTTP {status}; "
         f"{exception_text}",
-        policy_evidence=policy_evidence_for_status_reason(
-            status_reason,
-            failure_scope=failure_policy.FailureScope.FEED,
-            endpoint_kind=failure_policy.EndpointKind.OPENMHZ_WS_UPGRADE,
-        ),
     )
 
 
@@ -326,11 +314,6 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                     raise collector_failure(
                         pending_item_failure.status_reason,
                         pending_item_failure.reason,
-                        policy_evidence=policy_evidence_for_status_reason(
-                            pending_item_failure.status_reason,
-                            failure_scope=failure_policy.FailureScope.ITEM,
-                            endpoint_kind=failure_policy.EndpointKind.UNKNOWN,
-                        ),
                     )
             except FeedFailure:
                 raise
@@ -380,13 +363,6 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                     "OpenMHz transport reconnect exhausted "
                     f"after {MAX_RECONNECT_FAILURES} consecutive failures"
                     f"{exception_context}",
-                    policy_evidence=failure_policy.FailurePolicyEvidence(
-                        owner_scope=failure_policy.OwnerScope.SOURCE_CLASS,
-                        failure_scope=failure_policy.FailureScope.FEED,
-                        endpoint_kind=(
-                            failure_policy.EndpointKind.OPENMHZ_WS_UPGRADE
-                        ),
-                    ),
                 )
 
             reconnect_attempt = max(consecutive_ws_failures, 1)

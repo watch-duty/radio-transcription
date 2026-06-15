@@ -76,7 +76,6 @@ from typing import TYPE_CHECKING
 
 import aiohttp  # noqa: TC002 — runtime use: CaptureResources holds aiohttp.ClientSession
 
-from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.storage.feed_store import FeedStatusReason
 
 if TYPE_CHECKING:
@@ -126,14 +125,11 @@ class FeedFailure(Exception):
 
     status_reason: FeedStatusReason
     reason: str
-    policy_evidence: failure_policy.FailurePolicyEvidence
 
     def __init__(
         self,
         status_reason: FeedStatusReason | str,
         reason: str,
-        *,
-        policy_evidence: failure_policy.FailurePolicyEvidence,
     ) -> None:
         """Normalize collector-provided values before the runtime sees them."""
         try:
@@ -145,12 +141,6 @@ class FeedFailure(Exception):
         if not isinstance(reason, str) or not reason:
             msg = "FeedFailure.reason must be a non-empty string"
             raise ValueError(msg)
-        if not isinstance(
-            policy_evidence,
-            failure_policy.FailurePolicyEvidence,
-        ):
-            msg = "FeedFailure.policy_evidence must be FailurePolicyEvidence"
-            raise TypeError(msg)
 
         # Exception instances must remain runtime-mutable: Python sets
         # __traceback__, __context__, and __cause__ while propagating them.
@@ -158,7 +148,6 @@ class FeedFailure(Exception):
         # normalized.
         self.status_reason = normalized_status_reason
         self.reason = reason
-        self.policy_evidence = policy_evidence
         Exception.__init__(self, self.reason)
 
     def __str__(self) -> str:
