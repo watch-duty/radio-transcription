@@ -1,93 +1,116 @@
-# Roadmap: Evidence-Based Quarantine Policy
+# Roadmap: Evidence-Based Quarantine Policy v1.1
 
 ## Overview
 
-This roadmap turns the quarantine redesign into a narrow v1 implementation:
-first add the policy contract and non-budgeted storage primitive, then route
-runtime failures through explicit policy decisions and telemetry, then close
-the work with focused tests and compatibility checks. The v1 scope avoids a DB
-migration, durable replay, and actual source-class breaker state.
+This milestone merges the latest strict quarantine policy design into the
+current codebase. The work keeps the existing database schema, preserves
+collector-owned source classification, and makes one central policy table decide
+which `status_reason + evidence` combinations may consume feed quarantine
+budget.
+
+The roadmap continues numbering from the completed v1.0 phases. Phases 1-3 are
+complete and retained in the project history; this milestone starts at Phase 4.
 
 ## Phases
 
-**Phase Numbering:**
-- Integer phases (1, 2, 3): Planned v1 work.
-- Decimal phases: Urgent insertions, if needed later.
-
-- [x] **Phase 1: Policy And Storage Foundation** - Add structured policy
-  primitives, status reason support, and the non-budgeted storage path.
-- [x] **Phase 2: Runtime Routing And Telemetry** - Route non-actionable
-  failures away from quarantine and emit explicit policy/data-gap events.
-- [x] **Phase 3: Verification And Compatibility** - Prove behavior with narrow (completed 2026-06-15)
-  tests and update compatibility surfaces only where needed.
+- [ ] **Phase 4: Strict Policy Table And Status Vocabulary** - Replace broad
+  routing defaults with explicit policy rows and add the currently needed
+  status reason split values.
+- [ ] **Phase 5: Producer And Runtime Routing Merge** - Update collector/runtime
+  producers and route `_PipelineFailure` through the same budgeted/non-budgeted
+  policy branch as collector failures.
+- [ ] **Phase 6: Compatibility And Verification** - Synchronize API/UI status
+  surfaces and run focused verification for the merged behavior.
 
 ## Phase Details
 
-### Phase 1: Policy And Storage Foundation
-**Goal**: The codebase has explicit policy evidence types and a storage method
-for suppressed retry states that cannot consume quarantine budget.
-**Depends on**: Nothing (first phase)
-**Requirements**: POL-01, POL-02, POL-03, STORE-01, STORE-02, STORE-03, STORE-04, STORE-05, STORE-06, STAT-01
-**Success Criteria** (what must be TRUE):
-  1. Runtime-facing failure decisions can be represented without parsing raw reason text.
-  2. Storage can release a feed into `failing` with `failure_count=0`, `retry_after`, and status reason.
-  3. The non-budgeted storage path never writes `quarantine_reason`.
-  4. Existing progress and `SourceObservation` recovery semantics remain intact.
-**Plans**: 4 plans
+### Phase 4: Strict Policy Table And Status Vocabulary
+
+**Goal**: The policy module has explicit, fail-closed routing rows and the
+backend status enum can express the split root-cause categories needed for
+v1.1.
+
+**Depends on**: Completed v1.0 Phase 3
+
+**Requirements**: POL-11, POL-12, POL-13, POL-14, STAT-11, STAT-12, STAT-13,
+STAT-14, TEST-11, TEST-12
+
+**Success Criteria**:
+1. Policy tests prove every current status reason has an intended route.
+2. Unmatched status/evidence combinations return telemetry-gap non-budgeted
+   release.
+3. New enum values exist only for currently needed routing clarity.
+4. No `reason_family` field or routing dependency is introduced.
+
+**Plans**: 2 plans
 
 Plans:
-- [x] 01-01: Add policy evidence and status reason primitives.
-- [x] 01-02: Wire collector failure policy evidence at all current call sites.
-- [x] 01-03: Add non-budgeted storage SQL and FeedStore method.
-- [x] 01-04: Add foundation storage tests and preserve recovery semantics.
+- [ ] 04-01: Add policy-table tests and implement explicit fail-closed routing.
+- [ ] 04-02: Add split backend status reasons and update status/evidence owner
+  mapping tests.
 
-### Phase 2: Runtime Routing And Telemetry
-**Goal**: Runtime failure handling routes each failure to a policy decision,
-uses the non-budgeted path for non-feed-actionable conditions, and records
-post-bookmark publish gaps explicitly.
-**Depends on**: Phase 1
-**Requirements**: POL-04, RUN-01, RUN-02, RUN-03, RUN-04, RUN-05, RUN-06, RUN-07, TEL-01, TEL-02, TEL-03, TEL-04, TEL-05
-**Success Criteria** (what must be TRUE):
-  1. Only feed-owned `quarantine_feed` decisions can call `report_feed_failure(...)`.
-  2. Pipeline-owned, source-class, shared-auth, source-offline, rate-limit, unknown, and telemetry-gap decisions use the non-budgeted path.
-  3. Post-bookmark Pub/Sub publish failure records both hold-for-replay intent and v1 replay-missing reality.
-  4. Non-budgeted decisions never emit `feed_quarantined`.
+### Phase 5: Producer And Runtime Routing Merge
+
+**Goal**: Current producers emit the more precise status reasons, and runtime
+uses policy decisions consistently for collector and pipeline failures.
+
+**Depends on**: Phase 4
+
+**Requirements**: RUN-11, RUN-12, RUN-13, RUN-14, RUN-15, RUN-16, TEST-13,
+TEST-14, TEST-15
+
+**Success Criteria**:
+1. Calls, Fire Notifications, Icecast, and OpenMHz produce the split enum values
+   for the agreed root causes.
+2. `pipeline_publish_after_bookmark_failed` calls `report_feed_failure(...)`
+   and respects the existing failure threshold.
+3. GCS upload, bookmark write, source observations, ambiguous collector errors,
+   credential-access failures, and telemetry gaps remain non-budgeted.
+4. The old special post-bookmark publish telemetry event is not required for
+   v1.1 behavior.
+
 **Plans**: 3 plans
 
 Plans:
-- [x] 02-01: Add runtime policy routing helper and budgeted-quarantine guard.
-- [x] 02-02: Route pipeline and non-actionable source/system failures through suppressed retry.
-- [x] 02-03: Emit policy decision and post-bookmark publish-gap telemetry.
+- [ ] 05-01: Split source producer mappings and update collector tests.
+- [ ] 05-02: Route `_PipelineFailure` through policy and update runtime tests.
+- [ ] 05-03: Verify non-budgeted reset semantics and quarantine telemetry
+  boundaries.
 
-### Phase 3: Verification And Compatibility
-**Goal**: The behavior is covered by focused tests and any affected API/UI/doc
-surfaces tolerate the new status reason without broad lifecycle changes.
-**Depends on**: Phase 2
-**Requirements**: STAT-02, TEST-01, TEST-02, TEST-03, TEST-04, TEST-05, TEST-06, TEST-07, TEST-08
-**Success Criteria** (what must be TRUE):
-  1. Storage and runtime tests prove non-budgeted paths cannot increment quarantine budget.
-  2. Tests prove post-bookmark publish gaps emit both policy and data-gap telemetry.
-  3. Tests prove feed-config quarantine-eligible failures still use the budgeted path.
-  4. Shared status/API/UI surfaces tolerate `pipeline_publish_after_bookmark_failed`.
-  5. Narrow verification commands pass without running broad local stacks.
-**Plans**: 3 plans
+### Phase 6: Compatibility And Verification
+
+**Goal**: External status surfaces understand the new reason values, generated
+API metadata is synchronized, and focused checks prove the milestone is ready
+for code review.
+
+**Depends on**: Phase 5
+
+**Requirements**: COMP-11, COMP-12, COMP-13, COMP-14, TEST-16
+
+**Success Criteria**:
+1. Backend enum, OpenAPI, generated API route metadata, shared TypeScript types,
+   and frontend status reason allowlists are synchronized.
+2. UI status indicator renders readable labels for all new status reasons.
+3. Focused backend and frontend tests pass.
+4. Docs reflect the final v1.1 policy semantics.
+
+**Plans**: 2 plans
 
 Plans:
-- [x] 03-01: Complete focused storage and runtime tests.
-- [x] 03-02: Update status compatibility surfaces and documentation if required.
-- [x] 03-03: Run narrow verification and prepare implementation summary.
+- [ ] 06-01: Sync API/UI status compatibility surfaces.
+- [ ] 06-02: Run focused verification and update implementation summary/docs.
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 -> 2 -> 3
+Phases execute in numeric order: 4 -> 5 -> 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Policy And Storage Foundation | 4/4 | Complete | 2026-06-15 |
-| 2. Runtime Routing And Telemetry | 3/3 | Complete | 2026-06-15 |
-| 3. Verification And Compatibility | 3/3 | Complete   | 2026-06-15 |
+| 4. Strict Policy Table And Status Vocabulary | 0/2 | Pending | — |
+| 5. Producer And Runtime Routing Merge | 0/3 | Pending | — |
+| 6. Compatibility And Verification | 0/2 | Pending | — |
 
 ---
-*Roadmap created: 2026-06-14*
-*Last updated: 2026-06-15 after Phase 3 completion*
+*Roadmap created: 2026-06-15*
+*Last updated: 2026-06-15 after v1.1 milestone initialization*

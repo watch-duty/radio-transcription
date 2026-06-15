@@ -1,17 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: milestone_complete
-stopped_at: Completed 03-03-PLAN.md
-last_updated: "2026-06-15T06:17:51Z"
+milestone: v1.1
+milestone_name: Policy Merge
+status: planning
+last_updated: "2026-06-15T16:14:18.227Z"
 last_activity: 2026-06-15
 progress:
   total_phases: 3
-  completed_phases: 3
-  total_plans: 10
-  completed_plans: 10
-  percent: 100
+  completed_phases: 0
+  total_plans: 7
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -20,19 +19,17 @@ progress:
 
 See: `.planning/PROJECT.md` (updated 2026-06-15)
 
-**Core value:** On-call should be alerted only when the quarantined feed is
-likely something a human can fix at feed scope.
-**Current focus:** Milestone complete — v1 quarantine policy redesign
+**Core value:** On-call should be alerted only when retry is not expected to
+fix the ingestion failure and a human/operator repair is required.
+**Current focus:** v1.1 Policy Merge — strict status/evidence quarantine
+policy routing
 
 ## Current Position
 
-Phase: 03
-Plan: Not started
-Status: Milestone complete
-Last activity: 2026-06-15
-roadmap initialized.
-
-Progress: [██████████] 100%
+Phase: 04
+Plan: —
+Status: Roadmap ready; phase discussion not started
+Last activity: 2026-06-15 — Milestone v1.1 roadmap initialized
 
 ## Performance Metrics
 
@@ -73,6 +70,14 @@ Recent decisions affecting current work:
 - [Phase 03]: No feed lifecycle status was added; pipeline_publish_after_bookmark_failed remains a status reason only. — STAT-02 compatibility is satisfied without changing scheduler or UI lifecycle semantics.
 - [Phase 03]: Post-plan code-review findings were resolved before final verification, including diagnostic preservation, duplicate model definitions, clean source-observation cursor persistence, and focused frontend status reason tests.
 - [Phase 03]: Incident taxonomy traceability is documented only in 03-03-SUMMARY.md, not in a new durable taxonomy document.
+- [Milestone v1.1]: Strict routing uses explicit `status_reason + evidence`
+  policy rows with telemetry-gap fallback for unmatched combinations.
+- [Milestone v1.1]: `pipeline_publish_after_bookmark_failed` is
+  quarantine-budgeted in v1.1 because retry alone cannot repair the
+  bookmark/publish consistency issue.
+- [Milestone v1.1]: New status enum values are limited to current routing
+  needs: runtime configuration invalid, credential access failed, and source
+  payload invalid.
 
 ### Pending Todos
 

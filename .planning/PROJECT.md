@@ -3,21 +3,33 @@
 ## What This Is
 
 This project redesigns radio transcription feed quarantine so quarantine means
-only a narrow, high-confidence, feed-actionable state. The existing brownfield
-system already has a collector/runtime contract, feed lifecycle storage,
-source-specific collectors, and operator-facing feed status, but post-capture
-pipeline failures and non-feed-actionable source/system failures can still
-consume the same persisted feed quarantine budget.
+retry is not expected to restore progress and an operator repair is required.
+The existing brownfield system already has a collector/runtime contract, feed
+lifecycle storage, source-specific collectors, and operator-facing feed status,
+but broad status reasons and post-capture failures can still be routed too
+coarsely.
 
-The v1 implementation makes the runtime decide from structured policy
-evidence, route non-quarantine conditions through a non-budgeted suppressed
-retry path, and preserve current schema compatibility with minimal code
-changes.
+The v1.1 implementation merges the strict policy design with the latest
+codebase by making explicit `status_reason + evidence` rows decide whether a
+failure consumes feed quarantine budget, while keeping current schema and UI
+compatibility.
 
 ## Core Value
 
-On-call should be alerted only when the quarantined feed is likely something a
-human can fix at feed scope.
+On-call should be alerted only when retry is not expected to fix the ingestion
+failure and a human/operator repair is required.
+
+## Current Milestone: v1.1 Policy Merge
+
+**Goal:** Implement the strict status/evidence quarantine policy merge.
+
+**Target features:**
+- Explicit `status_reason + evidence` policy rows with telemetry-gap fallback.
+- Split status reasons for runtime configuration, credential access, and source
+  payload contract failures.
+- Runtime policy routing for `_PipelineFailure`, including budgeted
+  `pipeline_publish_after_bookmark_failed`.
+- API/UI/status compatibility updates and focused tests.
 
 ## Requirements
 
@@ -54,7 +66,15 @@ human can fix at feed scope.
 
 ### Active
 
-No active v1 requirements remain.
+- [ ] Implement explicit policy rows so only covered combinations can consume
+  quarantine budget.
+- [ ] Split overloaded status reasons into the currently needed enum values.
+- [ ] Route post-bookmark Pub/Sub publish failures through the budgeted policy
+  path.
+- [ ] Keep non-budgeted retry/reset behavior for source, ambiguous collector,
+  GCS/bookmark, credential-access, and telemetry-gap cases.
+- [ ] Sync backend, OpenAPI, shared frontend types, generated API metadata, and
+  UI labels.
 
 ### Out of Scope
 
@@ -89,7 +109,7 @@ Incident and design context from the conversation:
 - GOO-618 showed transient auth-related feed quarantine and inconsistent
   catch-up after reset.
 - GOO-557 summarized retained quarantine categories; many were not truly
-  feed-actionable.
+  operator-actionable.
 - Pub/Sub schema validation failures and paused ordering keys are downstream
   pipeline failures, not source/feed health.
 - Broadcastify Calls and Fire Notifications 401 failures are usually shared
@@ -106,6 +126,21 @@ The agreed v1 compatibility decision:
   `retry_after`, but v1 does not replay the already-bookmarked message.
 - Logs must explicitly mark `replay_missing=true` and `data_gap_known=true`.
 
+The agreed v1.1 policy merge decision:
+
+- Route from explicit `status_reason + evidence` policy rows.
+- Unknown or unsupported combinations fail closed to a telemetry-gap
+  non-budgeted release.
+- `system_authentication_failed`, `system_configuration_invalid`,
+  `system_runtime_configuration_invalid`, `system_source_payload_invalid`, and
+  `pipeline_publish_after_bookmark_failed` are quarantine-budgeted when their
+  required evidence row matches.
+- `source_*`, `system_credential_access_failed`, broad
+  `system_collector_error`, broad `system_pipeline_error`, and
+  `system_unexpected_error` remain non-budgeted in v1.1.
+- No `reason_family`, database migration, durable replay/outbox, source-class
+  breaker state, or ADR is part of this milestone.
+
 ## Constraints
 
 - **Minimal Code Change**: Prefer runtime policy routing, one storage method,
@@ -114,8 +149,9 @@ The agreed v1 compatibility decision:
 - **Current Schema Compatibility**: Do not add DB migrations for v1 unless a
   code path cannot be implemented safely without one — v1 persists only
   current-schema fields.
-- **Operational Semantics**: Do not alert on feed quarantine unless on-call can
-  take meaningful feed-specific action — this is the core policy constraint.
+- **Operational Semantics**: Do not alert on feed quarantine unless retry is
+  not expected to fix the ingestion failure and an operator repair is required
+  — this is the core policy constraint.
 - **Data Integrity**: Post-bookmark publish gaps must be explicitly logged as
   known data gaps; do not silently treat delayed future ingestion as replay.
 - **Test Safety**: Use narrow local tests and `safe-run --`; avoid broad local
@@ -127,7 +163,7 @@ The agreed v1 compatibility decision:
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Keep quarantine narrow and feed-actionable | Prevents shared system/provider/pipeline incidents from becoming many feed-level pages | Complete through Phase 2 routing |
+| Keep quarantine narrow and operator-actionable | Prevents shared system/provider/pipeline incidents from becoming many feed-level pages | Complete through Phase 2 routing |
 | Use structured policy evidence, not raw reason strings | Raw reason text is for investigation and is not stable enough for policy | Complete through Phase 1/2 policy and runtime tests |
 | Reuse `status='failing'` for v1 suppressed retry | Avoids DB lifecycle migration and keeps scheduler compatibility | Complete through Phase 1 storage path |
 | Add a non-budgeted release path | Most non-actionable failures need retry/backoff without consuming quarantine budget | Complete through Phase 1 storage and Phase 2 routing |
@@ -135,6 +171,9 @@ The agreed v1 compatibility decision:
 | No v1 source-class breaker state | Breakers are needed later, but v1 should first stop feed-budget damage | Complete: v1 records intent only |
 | No ADR for the `failing` compatibility choice | User explicitly chose no ADR for this v1 decision | Complete |
 | Phase 3 compatibility stays narrow | The new pipeline status reason is a status reason only, not a lifecycle redesign | Complete through focused tests and typechecks |
+| Use explicit status/evidence policy rows | Prevents new or mismatched combinations from inheriting quarantine behavior accidentally | Pending in v1.1 |
+| Treat post-bookmark publish failure as budgeted in v1.1 | Retry alone cannot repair the already-advanced bookmark/publish consistency issue | Pending in v1.1 |
+| Split overloaded system status reasons only where needed | Clear routing for current producers without introducing unused enum values | Pending in v1.1 |
 
 ## Evolution
 
@@ -154,4 +193,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-15 after Phase 3 completion*
+*Last updated: 2026-06-15 after v1.1 milestone initialization*
