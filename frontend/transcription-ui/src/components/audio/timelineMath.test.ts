@@ -5,7 +5,6 @@ import {
   computeGridLineTimes,
   msToPct,
   opacityForCount,
-  pickGridIntervalMs,
 } from './timelineMath';
 
 const MINUTE = 60 * 1000;
@@ -27,27 +26,16 @@ describe('msToPct', () => {
   });
 });
 
-describe('pickGridIntervalMs', () => {
-  it('picks the smallest interval keeping the count under the target', () => {
-    expect(pickGridIntervalMs(4 * MINUTE)).toBe(MINUTE);
-    expect(pickGridIntervalMs(50 * MINUTE)).toBe(10 * MINUTE);
-  });
-
-  it('caps at the largest interval for very wide ranges', () => {
-    expect(pickGridIntervalMs(1000 * HOUR)).toBe(24 * HOUR);
-  });
-});
-
 describe('computeGridLineTimes', () => {
-  it('emits evenly spaced marks aligned to round local boundaries', () => {
-    const interval = pickGridIntervalMs(6 * HOUR);
-    const marks = computeGridLineTimes(0, 6 * HOUR, 6 * HOUR);
+  it('emits 6h-spaced marks aligned to round local boundaries', () => {
+    const interval = 6 * HOUR;
+    const marks = computeGridLineTimes(0, 24 * HOUR);
 
     expect(marks.length).toBeGreaterThan(0);
     for (const m of marks) {
       expect(m).toBeGreaterThanOrEqual(0);
-      expect(m).toBeLessThanOrEqual(6 * HOUR);
-      // Each mark is a round boundary in local time.
+      expect(m).toBeLessThanOrEqual(24 * HOUR);
+      // Each mark is a round 6h boundary in local time.
       const offsetMs = new Date(m).getTimezoneOffset() * 60 * 1000;
       expect((m - offsetMs) % interval).toBe(0);
     }

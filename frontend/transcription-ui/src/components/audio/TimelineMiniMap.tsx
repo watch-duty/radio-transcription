@@ -60,8 +60,8 @@ export function TimelineMiniMap({
   );
   const gridLineTimes = useMemo(() => {
     if (!showMiniMap || rangeStartMs == null || maxEnd == null) return [];
-    return computeGridLineTimes(rangeStartMs, maxEnd, rangeTotalMs);
-  }, [showMiniMap, rangeStartMs, maxEnd, rangeTotalMs]);
+    return computeGridLineTimes(rangeStartMs, maxEnd);
+  }, [showMiniMap, rangeStartMs, maxEnd]);
 
   const pctOf = (ms: number) => msToPct(ms, rangeStartMs ?? 0, rangeTotalMs);
 

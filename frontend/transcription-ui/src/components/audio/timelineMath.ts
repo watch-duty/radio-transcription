@@ -11,24 +11,9 @@ export function opacityForCount(count: number): number {
   return clamp(0.5 + (0.5 * (count - 1)) / 4, 0.5, 1);
 }
 
-const MINUTE_MS = 60 * 1000;
-const HOUR_MS = 60 * MINUTE_MS;
-// Candidate gridline spacings; the smallest one under the target count wins.
-const NICE_INTERVALS_MS = [
-  MINUTE_MS,
-  2 * MINUTE_MS,
-  5 * MINUTE_MS,
-  10 * MINUTE_MS,
-  15 * MINUTE_MS,
-  30 * MINUTE_MS,
-  HOUR_MS,
-  2 * HOUR_MS,
-  3 * HOUR_MS,
-  6 * HOUR_MS,
-  12 * HOUR_MS,
-  24 * HOUR_MS,
-];
-const GRID_TARGET_COUNT = 5;
+// The overview is a fixed 24h range, so a 6h grid yields ~4 marks at local
+// 00:00/06:00/12:00/18:00. Revisit if TIMELINE_RANGE_DURATION_MS becomes variable.
+const GRID_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -42,28 +27,21 @@ export function msToPct(
   return ((ms - rangeStartMs) / rangeTotalMs) * 100;
 }
 
-export function pickGridIntervalMs(totalMs: number): number {
-  for (const interval of NICE_INTERVALS_MS) {
-    if (totalMs / interval <= GRID_TARGET_COUNT) return interval;
-  }
-  return NICE_INTERVALS_MS[NICE_INTERVALS_MS.length - 1];
-}
-
 // Gridline times aligned to local boundaries (not UTC) so day boundaries land
 // on a mark. Uses the offset at rangeStartMs; a mid-range DST shift is fine.
 export function computeGridLineTimes(
   rangeStartMs: number,
-  maxEnd: number,
-  rangeTotalMs: number
+  maxEnd: number
 ): number[] {
-  const interval = pickGridIntervalMs(rangeTotalMs);
   const offsetMs = new Date(rangeStartMs).getTimezoneOffset() * 60 * 1000;
   const times: number[] = [];
   // Step through local-epoch space (utc - offset) so multiples fall on local rounds.
   for (
-    let local = Math.ceil((rangeStartMs - offsetMs) / interval) * interval;
+    let local =
+      Math.ceil((rangeStartMs - offsetMs) / GRID_INTERVAL_MS) *
+      GRID_INTERVAL_MS;
     local + offsetMs <= maxEnd;
-    local += interval
+    local += GRID_INTERVAL_MS
   ) {
     times.push(local + offsetMs);
   }
