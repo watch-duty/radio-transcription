@@ -10,7 +10,11 @@ from backend.pipeline.common.exceptions import (
     FeedAlreadyExistsError,
     FeedNameAlreadyExistsError,
 )
-from backend.pipeline.storage.feed_store import FeedStatus, SourceType
+from backend.pipeline.storage.feed_store import (
+    FeedStatus,
+    FeedStatusReason,
+    SourceType,
+)
 from backend.pipeline.storage.pagination_utils import SortOrder
 from backend.services.feeds.main import app
 from backend.services.feeds.models import Feed, ListFeedsResponse, Tag
@@ -33,6 +37,27 @@ class TestFeedsAPI(unittest.TestCase):
     def tearDown(self) -> None:
         """Clean up after each test."""
         app.dependency_overrides.clear()
+
+    def test_backend_only_status_reason_serializes_as_unknown(self) -> None:
+        """Backend-only status reasons do not leak through the public API."""
+        feed = Feed.model_validate(
+            {
+                "id": uuid.uuid4(),
+                "name": "Test Feed",
+                "source_type": SourceType.BCFY_FEEDS,
+                "source_feed_id": "123",
+                "status": FeedStatus.FAILING,
+                "last_heartbeat": None,
+                "status_reason": (
+                    FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
+                ),
+            }
+        )
+
+        self.assertEqual(
+            feed.model_dump(mode="json")["status_reason"],
+            "unknown",
+        )
 
     def test_create_feed_success(self) -> None:
         """Test creating a feed successfully."""

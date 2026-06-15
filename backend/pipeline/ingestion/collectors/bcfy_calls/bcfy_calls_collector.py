@@ -371,27 +371,6 @@ def _last_pos_to_resume_position(
         return None
 
 
-def _last_pos_to_resume_position(
-    bcfy_calls: dict[str, Any] | None,
-) -> datetime.datetime | None:
-    """Convert a Broadcastify Calls ``lastPos`` cursor to UTC datetime."""
-    if not bcfy_calls or bcfy_calls.get("lastPos") is None:
-        return None
-    try:
-        return datetime.datetime.fromtimestamp(
-            int(float(bcfy_calls["lastPos"])),
-            datetime.UTC,
-        )
-    except (TypeError, ValueError, OSError, OverflowError):
-        logger.warning(
-            "bcfy_calls response contained invalid lastPos",
-            extra={
-                "json_fields": {"event_type": "bcfy_calls_invalid_last_pos"}
-            },
-        )
-        return None
-
-
 async def _create_chunk_from_call(
     session: aiohttp.ClientSession,
     result: dict[str, Any],

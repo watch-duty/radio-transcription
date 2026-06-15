@@ -1110,7 +1110,21 @@ class CollectorRuntime:
                 reason=reason,
                 status_reason=status_reason,
             )
-        if status_reason.value.startswith("source_"):
+        if (
+            status_reason
+            is FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
+        ):
+            logger.info(
+                "Feed post-bookmark publish gap suppressed from quarantine "
+                "budget: feed=%s reason=%s",
+                feed["name"],
+                reason,
+            )
+        elif (
+            status_reason.value.startswith("source_")
+            or status_reason
+            is FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID
+        ):
             logger.info(
                 "Feed source failure suppressed from quarantine budget: "
                 "feed=%s reason=%s",

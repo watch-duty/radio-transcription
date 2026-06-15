@@ -238,25 +238,31 @@ promotes it to a more precise operator-actionable failure.
 ### Status Reason
 
 The current canonical abnormal-condition label for a feed. It is visible to
-operators and can be one input to routing policy, but routing requires policy
-evidence and must not use status reason alone.
+operators and is the v1 routing key for failure policy decisions.
 
-### Policy Evidence
+### Failure Policy Action
 
-Structured ownership, scope, and stage facts used with status reason to decide
-whether an ingestion failure is quarantine-budgeted, non-budgeted,
-pipeline-owned, or unknown.
+The side-effect-free runtime action selected from a `FeedStatusReason`.
+Current actions are:
+
+- `increment_feed_failure_budget`: call `report_feed_failure`, which can move
+  a feed toward quarantine.
+- `retry_without_feed_budget`: release the feed for retry without consuming
+  feed quarantine budget.
+- `record_post_bookmark_publish_gap`: use the non-budgeted retry lane while
+  emitting explicit post-bookmark publish-gap telemetry.
 
 ### Routing Policy
 
-The canonical decision for a status reason plus policy evidence combination. It
-decides whether the ingestion failure is quarantine-budgeted or non-budgeted.
+The canonical `FeedStatusReason -> failure policy action` mapping in
+`backend/pipeline/ingestion/failure_policy.py`. The mapping is intentionally
+status-only in v1 so routing changes are localized to one policy table.
 
 ### Unexpected System Failure
 
 The residual fallback for untyped bugs or missing classification evidence. It
 is non-budgeted until a future change replaces it with a more precise status
-reason and policy evidence.
+reason or switches its action in the policy table.
 
 ### Quarantine Reason
 

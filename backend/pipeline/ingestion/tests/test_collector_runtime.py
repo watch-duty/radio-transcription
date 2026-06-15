@@ -2322,6 +2322,49 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(kwargs["retry_after"], retry_after)
                 mock_telemetry.emit_quarantine_event.assert_not_awaited()
 
+    async def test_non_budgeted_source_config_failure_is_not_error_logged(
+        self,
+    ) -> None:
+        """Expected non-budgeted config observations avoid traceback spam."""
+        retry_after = datetime.datetime(2026, 6, 15, tzinfo=datetime.UTC)
+
+        async def _failing_capture(feed, shutdown, _resources):
+            raise FeedFailure(
+                FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID,
+                "calls_api_http_404",
+            )
+            yield _make_captured_chunk(b"audio")
+
+        rt = CollectorRuntime(
+            capture_fn=_failing_capture,
+            settings=_make_settings(),
+        )
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.release_non_budgeted_failure.return_value = "failing"
+        rt._releasing_feeds = set()
+
+        with (
+            mock.patch.object(
+                CollectorRuntime,
+                "_non_budgeted_retry_after",
+                return_value=retry_after,
+            ),
+            self.assertLogs(
+                "backend.pipeline.ingestion.collector_runtime",
+                level=logging.INFO,
+            ) as cm,
+        ):
+            await rt._process_feed(_FEED)
+
+        rt._store.report_feed_failure.assert_not_awaited()
+        rt._store.release_non_budgeted_failure.assert_awaited_once()
+        self.assertFalse(
+            [record for record in cm.records if record.levelno >= logging.ERROR]
+        )
+
     async def test_gcs_upload_failure_records_pipeline_error(self) -> None:
         """Upload failures after a valid chunk use the GCS stage tag."""
 
@@ -2437,6 +2480,13 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         event_types = {r["event_type"] for r in records}
         self.assertIn("feed_failure_policy_decision", event_types)
         self.assertIn("post_bookmark_publish_failure", event_types)
+        error_records = [
+            record for record in cm.records if record.levelno >= logging.ERROR
+        ]
+        self.assertEqual(
+            [record.getMessage() for record in error_records],
+            ["Post-bookmark publish failure"],
+        )
         policy_record = next(
             r
             for r in records
