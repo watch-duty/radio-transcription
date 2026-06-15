@@ -37,8 +37,8 @@ class TestFailurePolicyEvidence(unittest.TestCase):
             hasattr(failure_policy.FailurePolicyEvidence, forbidden_field)
         )
 
-    def test_decision_contains_policy_verdict_fields(self) -> None:
-        """Decision owns policy intent, action, and budget verdicts."""
+    def test_decision_contains_only_policy_action(self) -> None:
+        """Decision owns the action; derived helpers own boolean views."""
         fields = {
             field.name
             for field in dataclasses.fields(
@@ -51,10 +51,7 @@ class TestFailurePolicyEvidence(unittest.TestCase):
             {
                 "status_reason",
                 "evidence",
-                "policy_intent",
                 "executed_action",
-                "feed_budget_eligible",
-                "quarantine_feed",
             },
         )
 
@@ -67,33 +64,35 @@ class TestClassifyFailurePolicy(unittest.TestCase):
         *,
         status_reason: feed_store.FeedStatusReason,
         evidence: failure_policy.FailurePolicyEvidence,
-        policy_intent: failure_policy.PolicyIntent,
         executed_action: failure_policy.ExecutedAction,
-        feed_budget_eligible: bool,
-        quarantine_feed: bool,
     ) -> None:
         decision = failure_policy.classify_failure_policy(
             status_reason,
             evidence,
         )
+        quarantine_feed = (
+            executed_action
+            is failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
+        )
+        pipeline_hold = (
+            executed_action
+            is failure_policy.ExecutedAction.SUPPRESS_FEED_QUARANTINE_RECORD_PUBLISH_GAP
+        )
 
         self.assertIs(decision.status_reason, status_reason)
         self.assertIs(decision.evidence, evidence)
-        self.assertIs(decision.policy_intent, policy_intent)
         self.assertIs(decision.executed_action, executed_action)
-        self.assertIs(decision.feed_budget_eligible, feed_budget_eligible)
-        self.assertIs(decision.quarantine_feed, quarantine_feed)
         self.assertIs(
             failure_policy.is_feed_quarantine(decision),
             quarantine_feed,
         )
         self.assertIs(
             failure_policy.is_feed_budget_eligible(decision),
-            feed_budget_eligible,
+            quarantine_feed,
         )
         self.assertIs(
             failure_policy.is_pipeline_hold(decision),
-            policy_intent is failure_policy.PolicyIntent.HOLD_FOR_REPLAY,
+            pipeline_hold,
         )
 
     def test_current_status_reasons_have_explicit_policy_routes(
@@ -162,98 +161,62 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
                 pipeline_publish_evidence,
-                failure_policy.PolicyIntent.HOLD_FOR_REPLAY,
                 failure_policy.ExecutedAction.SUPPRESS_FEED_QUARANTINE_RECORD_PUBLISH_GAP,
-                False,
-                False,
             ),
             (
                 feed_store.FeedStatusReason.SOURCE_OFFLINE,
                 source_stream_evidence,
-                failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                 failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
-                False,
-                False,
             ),
             (
                 feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
                 source_api_evidence,
-                failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                 failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
-                False,
-                False,
             ),
             (
                 feed_store.FeedStatusReason.SOURCE_RATE_LIMITED,
                 source_class_evidence,
-                failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                 failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
-                False,
-                False,
             ),
             (
                 feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
                 auth_evidence,
-                failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                 failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
-                False,
-                False,
             ),
             (
                 feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
                 feed_config_evidence,
-                failure_policy.PolicyIntent.QUARANTINE_FEED,
                 failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
-                True,
-                True,
             ),
             (
                 feed_store.FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
                 runtime_config_evidence,
-                failure_policy.PolicyIntent.QUARANTINE_FEED,
                 failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
-                True,
-                True,
             ),
             (
                 feed_store.FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED,
                 credential_access_evidence,
-                failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                 failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
-                False,
-                False,
             ),
             (
                 feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
                 source_payload_evidence,
-                failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                 failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
-                False,
-                False,
             ),
             (
                 feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
                 unknown_evidence,
-                failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                 failure_policy.ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP,
-                False,
-                False,
             ),
             (
                 feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
                 pipeline_gcs_evidence,
-                failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                 failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
-                False,
-                False,
             ),
             (
                 feed_store.FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
                 unknown_evidence,
-                failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                 failure_policy.ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP,
-                False,
-                False,
             ),
         )
 
@@ -264,19 +227,13 @@ class TestClassifyFailurePolicy(unittest.TestCase):
         for (
             status_reason,
             evidence,
-            policy_intent,
             executed_action,
-            feed_budget_eligible,
-            quarantine_feed,
         ) in cases:
             with self.subTest(status_reason=status_reason.value):
                 self._assert_decision(
                     status_reason=status_reason,
                     evidence=evidence,
-                    policy_intent=policy_intent,
                     executed_action=executed_action,
-                    feed_budget_eligible=feed_budget_eligible,
-                    quarantine_feed=quarantine_feed,
                 )
 
     def test_system_pipeline_error_bookmark_write_is_non_budgeted(
@@ -293,12 +250,9 @@ class TestClassifyFailurePolicy(unittest.TestCase):
         self._assert_decision(
             status_reason=feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
             evidence=evidence,
-            policy_intent=failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
             executed_action=(
                 failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE
             ),
-            feed_budget_eligible=False,
-            quarantine_feed=False,
         )
 
     def test_provider_control_config_failures_are_non_budgeted(
@@ -322,12 +276,9 @@ class TestClassifyFailurePolicy(unittest.TestCase):
                         feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID
                     ),
                     evidence=evidence,
-                    policy_intent=failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                     executed_action=(
                         failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE
                     ),
-                    feed_budget_eligible=False,
-                    quarantine_feed=False,
                 )
 
     def test_promoted_item_scope_source_and_auth_routes_are_explicit(
@@ -349,53 +300,35 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
                 item_source_evidence,
-                failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                 failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
-                False,
-                False,
             ),
             (
                 feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
                 item_auth_evidence,
-                failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                 failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
-                False,
-                False,
             ),
             (
                 feed_store.FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED,
                 item_auth_evidence,
-                failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                 failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
-                False,
-                False,
             ),
             (
                 feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
                 item_source_evidence,
-                failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                 failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
-                False,
-                False,
             ),
         )
 
         for (
             status_reason,
             evidence,
-            policy_intent,
             executed_action,
-            feed_budget_eligible,
-            quarantine_feed,
         ) in cases:
             with self.subTest(status_reason=status_reason.value):
                 self._assert_decision(
                     status_reason=status_reason,
                     evidence=evidence,
-                    policy_intent=policy_intent,
                     executed_action=executed_action,
-                    feed_budget_eligible=feed_budget_eligible,
-                    quarantine_feed=quarantine_feed,
                 )
 
     def test_wrong_evidence_combinations_fail_closed_to_telemetry_gap(
@@ -468,10 +401,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
                 self._assert_decision(
                     status_reason=status_reason,
                     evidence=evidence,
-                    policy_intent=failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                     executed_action=(
                         failure_policy.ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP
                     ),
-                    feed_budget_eligible=False,
-                    quarantine_feed=False,
                 )

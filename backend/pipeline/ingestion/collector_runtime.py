@@ -784,10 +784,7 @@ class CollectorRuntime:
             "owner_scope": evidence.owner_scope.value,
             "failure_scope": evidence.failure_scope.value,
             "endpoint_kind": evidence.endpoint_kind.value,
-            "policy_intent": decision.policy_intent.value,
             "executed_action": decision.executed_action.value,
-            "feed_budget_eligible": decision.feed_budget_eligible,
-            "quarantine_feed": decision.quarantine_feed,
         }
         if evidence.pipeline_stage is not None:
             fields["pipeline_stage"] = evidence.pipeline_stage.value

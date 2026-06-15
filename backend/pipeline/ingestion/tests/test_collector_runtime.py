@@ -2035,12 +2035,12 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(policy_record["data_gap_known"])
         self.assertEqual(policy_record["reason"], expected_reason)
         self.assertEqual(
-            policy_record["policy_intent"],
-            "hold_for_replay",
-        )
-        self.assertEqual(
             policy_record["executed_action"],
             "suppress_feed_quarantine_record_publish_gap",
+        )
+        self.assertFalse(
+            {"policy_intent", "feed_budget_eligible", "quarantine_feed"}
+            & policy_record.keys()
         )
         self.assertEqual(policy_record["owner_scope"], "pipeline")
         self.assertEqual(policy_record["failure_scope"], "pipeline")
@@ -2111,10 +2111,13 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(policy_record["owner_scope"], "feed")
         self.assertEqual(policy_record["failure_scope"], "feed")
         self.assertEqual(policy_record["endpoint_kind"], "feed_configuration")
-        self.assertEqual(policy_record["policy_intent"], "quarantine_feed")
         self.assertEqual(
             policy_record["executed_action"],
             "increment_feed_failure_budget",
+        )
+        self.assertFalse(
+            {"policy_intent", "feed_budget_eligible", "quarantine_feed"}
+            & policy_record.keys()
         )
         self.assertNotIn("retry_after", policy_record)
         # _releasing_feeds cleaned up
@@ -2243,10 +2246,13 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(policy_record["owner_scope"], "unknown")
         self.assertEqual(policy_record["failure_scope"], "unknown")
         self.assertEqual(policy_record["endpoint_kind"], "unknown")
-        self.assertEqual(policy_record["policy_intent"], "non_budgeted_retry")
         self.assertEqual(
             policy_record["executed_action"],
             "suppress_feed_quarantine_telemetry_gap",
+        )
+        self.assertFalse(
+            {"policy_intent", "feed_budget_eligible", "quarantine_feed"}
+            & policy_record.keys()
         )
 
     async def test_collector_failure_string_status_reason_persists(
@@ -2535,10 +2541,13 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(policy_record["failure_scope"], "pipeline")
         self.assertEqual(policy_record["endpoint_kind"], "pubsub_publish")
         self.assertEqual(policy_record["pipeline_stage"], "pubsub_publish")
-        self.assertEqual(policy_record["policy_intent"], "hold_for_replay")
         self.assertEqual(
             policy_record["executed_action"],
             "suppress_feed_quarantine_record_publish_gap",
+        )
+        self.assertFalse(
+            {"policy_intent", "feed_budget_eligible", "quarantine_feed"}
+            & policy_record.keys()
         )
         self.assertTrue(policy_record["replay_missing"])
         self.assertTrue(policy_record["data_gap_known"])
@@ -2643,13 +2652,14 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json_fields["owner_scope"], "unknown")
         self.assertEqual(json_fields["failure_scope"], "unknown")
         self.assertEqual(json_fields["endpoint_kind"], "unknown")
-        self.assertEqual(json_fields["policy_intent"], "non_budgeted_retry")
         self.assertEqual(
             json_fields["executed_action"],
             "suppress_feed_quarantine_telemetry_gap",
         )
-        self.assertFalse(json_fields["feed_budget_eligible"])
-        self.assertFalse(json_fields["quarantine_feed"])
+        self.assertFalse(
+            {"policy_intent", "feed_budget_eligible", "quarantine_feed"}
+            & json_fields.keys()
+        )
         self.assertIn("retry_after", json_fields)
 
 
