@@ -10,7 +10,7 @@
 - [x] **POL-01**: Runtime failure routing uses structured policy evidence fields rather than `quarantine_reason` or raw reason text for quarantine and alert decisions.
 - [x] **POL-02**: The policy evidence model includes `owner_scope`, `failure_scope`, `endpoint_kind`, `policy_intent`, and `executed_action`.
 - [x] **POL-03**: The policy evidence model includes pipeline stage detail for pipeline-owned failures.
-- [ ] **POL-04**: Unannotated `FeedFailure` instances route to a non-budgeted telemetry-gap decision.
+- [x] **POL-04**: Unannotated `FeedFailure` instances route to a non-budgeted telemetry-gap decision.
 
 ### Storage State
 
@@ -23,13 +23,13 @@
 
 ### Runtime Routing
 
-- [ ] **RUN-01**: Runtime calls `report_feed_failure(...)` only when policy intent is `quarantine_feed` and owner scope is `feed`.
+- [x] **RUN-01**: Runtime calls `report_feed_failure(...)` only when policy intent is `quarantine_feed` and owner scope is `feed`.
 - [ ] **RUN-02**: Runtime routes source-offline, shared-auth, rate-limit, capture-timeout, unknown, source-class, and pipeline-owned decisions through the non-budgeted path.
 - [ ] **RUN-03**: Pub/Sub publish failure after bookmark uses the non-budgeted path with status reason `pipeline_publish_after_bookmark_failed`.
 - [ ] **RUN-04**: Pub/Sub publish failure after bookmark records `policy_intent=hold_for_replay`.
 - [ ] **RUN-05**: Pub/Sub publish failure after bookmark records `executed_action=suppress_feed_quarantine_record_publish_gap`.
 - [ ] **RUN-06**: Pub/Sub publish failure after bookmark explicitly records that replay is not available in v1.
-- [ ] **RUN-07**: Budgeted feed quarantine remains available for feed-owned, feed-actionable configuration failures.
+- [x] **RUN-07**: Budgeted feed quarantine remains available for feed-owned, feed-actionable configuration failures.
 
 ### Status Reasons
 
@@ -97,20 +97,20 @@
 | POL-01 | Phase 1 | Complete |
 | POL-02 | Phase 1 | Complete |
 | POL-03 | Phase 1 | Complete |
-| POL-04 | Phase 2 | Pending |
+| POL-04 | Phase 2 | Complete |
 | STORE-01 | Phase 1 | Complete |
 | STORE-02 | Phase 1 | Complete |
 | STORE-03 | Phase 1 | Complete |
 | STORE-04 | Phase 1 | Complete |
 | STORE-05 | Phase 1 | Complete |
 | STORE-06 | Phase 1 | Complete |
-| RUN-01 | Phase 2 | Pending |
+| RUN-01 | Phase 2 | Complete |
 | RUN-02 | Phase 2 | Pending |
 | RUN-03 | Phase 2 | Pending |
 | RUN-04 | Phase 2 | Pending |
 | RUN-05 | Phase 2 | Pending |
 | RUN-06 | Phase 2 | Pending |
-| RUN-07 | Phase 2 | Pending |
+| RUN-07 | Phase 2 | Complete |
 | STAT-01 | Phase 1 | Complete |
 | STAT-02 | Phase 3 | Pending |
 | TEL-01 | Phase 2 | Pending |

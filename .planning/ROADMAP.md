@@ -55,7 +55,7 @@ post-bookmark publish gaps explicitly.
 **Plans**: 3 plans
 
 Plans:
-- [ ] 02-01: Add runtime policy routing helper and budgeted-quarantine guard.
+- [x] 02-01: Add runtime policy routing helper and budgeted-quarantine guard.
 - [ ] 02-02: Route pipeline and non-actionable source/system failures through suppressed retry.
 - [ ] 02-03: Emit policy decision and post-bookmark publish-gap telemetry.
 
