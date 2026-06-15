@@ -30,6 +30,10 @@ def get_gcs_client(project_id: str | None = None) -> storage.Client:
     """Universal GCS Client factory configured with our authoritative connection pooling and resilient ADC CI fallbacks.
 
     Completely consolidates all HTTPAdapter mounting logic into this single, absolute source of truth.
+
+    Note: This is a synchronous GCS client required for Dataflow's multi-threaded worker model.
+    We cannot use the common async GcsClient (common/clients/gcs_client.py) here, as managing
+    asynchronous resources inside synchronous Beam DoFns adds significant overhead and complexity.
     """
     try:
         credentials, project = google.auth.default()
