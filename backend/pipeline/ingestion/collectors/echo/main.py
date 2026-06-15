@@ -24,6 +24,7 @@ from backend.pipeline.common.audio import get_audio_duration
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.gcp_helper import publish_audio_chunk_sync
 from backend.pipeline.common.log_helper import setup_logging
+from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.settings import _require_env
 from backend.pipeline.storage.feed_store import FeedStatusReason
@@ -233,12 +234,25 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
             FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
             _unexpected_failure_reason(exc),
         )
+        action = failure_policy.classify_failure_policy(
+            classification.status_reason,
+        )
         try:
-            feed_store.record_failure(
-                feed["id"],
-                reason=classification.reason,
-                status_reason=classification.status_reason,
-            )
+            if (
+                action
+                is failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
+            ):
+                feed_store.record_failure(
+                    feed["id"],
+                    reason=classification.reason,
+                    status_reason=classification.status_reason,
+                )
+            else:
+                feed_store.release_non_budgeted_failure(
+                    feed["id"],
+                    reason=classification.reason,
+                    status_reason=classification.status_reason,
+                )
         except Exception:
             logger.exception("Failed to record failure for feed %s", feed["id"])
         raise

@@ -15,6 +15,7 @@ from google.api_core import exceptions as google_exceptions
 from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
+from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.ingestion.collector_runtime import CollectorRuntime
 from backend.pipeline.ingestion.collectors.failure_classification import (
     missing_source_feed_id_failure,
@@ -2201,6 +2202,43 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             "retry_without_feed_budget",
         )
 
+    async def test_untyped_runtime_exception_routes_through_policy(
+        self,
+    ) -> None:
+        """Catch-all runtime failures honor the central policy action."""
+
+        async def _failing_capture(feed, shutdown, _resources):
+            msg = "capture_failed"
+            raise RuntimeError(msg)
+            yield _make_captured_chunk(b"audio")
+
+        rt = CollectorRuntime(
+            capture_fn=_failing_capture,
+            settings=_make_settings(),
+        )
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.report_feed_failure.return_value = "failing"
+        rt._releasing_feeds = set()
+
+        with mock.patch(
+            "backend.pipeline.ingestion.collector_runtime.failure_policy.classify_failure_policy",
+            return_value=(
+                failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
+            ),
+        ):
+            await rt._process_feed(_FEED)
+
+        rt._store.report_feed_failure.assert_awaited_once()
+        rt._store.release_non_budgeted_failure.assert_not_awaited()
+        kwargs = rt._store.report_feed_failure.await_args.kwargs
+        self.assertIs(
+            kwargs["status_reason"],
+            FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
+        )
+
     async def test_collector_failure_string_status_reason_persists(
         self,
     ) -> None:
@@ -2499,6 +2537,60 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             policy_record["executed_action"],
             "record_post_bookmark_publish_gap",
+        )
+        self.assertTrue(policy_record["replay_missing"])
+        self.assertTrue(policy_record["data_gap_known"])
+
+    async def test_publish_gap_telemetry_uses_status_identity(
+        self,
+    ) -> None:
+        """Publish-gap telemetry does not depend on the routing action."""
+
+        async def _one_chunk(feed, shutdown, _resources):
+            yield _make_captured_chunk(b"audio")
+
+        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.report_feed_failure.return_value = "failing"
+        rt._releasing_feeds = set()
+
+        with (
+            _mock_upload_audio(),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.gcp_helper.publish_audio_chunk",
+                mock.AsyncMock(side_effect=RuntimeError("pubsub boom")),
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.failure_policy.classify_failure_policy",
+                return_value=(
+                    failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
+                ),
+            ),
+            self.assertLogs(
+                "backend.pipeline.ingestion.collector_runtime",
+                level=logging.INFO,
+            ) as cm,
+        ):
+            await rt._process_feed(_FEED)
+
+        rt._store.report_feed_failure.assert_awaited_once()
+        rt._store.release_non_budgeted_failure.assert_not_awaited()
+        records = [
+            cast("dict[str, Any]", r.__dict__.get("json_fields"))
+            for r in cm.records
+            if getattr(r, "json_fields", {}).get("event_type")
+        ]
+        policy_record = next(
+            r
+            for r in records
+            if r["event_type"] == "feed_failure_policy_decision"
+        )
+        self.assertEqual(
+            policy_record["status_reason"],
+            "pipeline_publish_after_bookmark_failed",
         )
         self.assertTrue(policy_record["replay_missing"])
         self.assertTrue(policy_record["data_gap_known"])

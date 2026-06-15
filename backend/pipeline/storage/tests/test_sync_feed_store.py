@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from unittest.mock import MagicMock, patch
 
-from backend.pipeline.storage import quarantine_reason
+from backend.pipeline.storage import quarantine_reason, sync_feed_store
 from backend.pipeline.storage.feed_store import FeedStatusReason
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
 
@@ -100,6 +100,7 @@ class TestRecordFailure:
             5,
             "echo_pubsub_publish_failed",
             "system_pipeline_error",
+            "system_pipeline_error",
             feed_id,
         )
 
@@ -128,6 +129,7 @@ class TestRecordFailure:
             10,
             "echo_heartbeat_write_failed",
             "system_pipeline_error",
+            "system_pipeline_error",
             feed_id,
         )
 
@@ -147,6 +149,7 @@ class TestRecordFailure:
             15,
             5,
             "raw",
+            None,
             None,
             feed_id,
         )
@@ -176,3 +179,46 @@ class TestRecordFailure:
         mock_logger.warning.assert_called_once()
         extra = mock_logger.warning.call_args[1]["extra"]
         assert extra["feed_id"] == str(feed_id)
+
+    def test_record_failure_preserves_reason_change_time(self) -> None:
+        sql = sync_feed_store._RECORD_FAILURE_SQL
+
+        assert "status_reason_updated_at = CASE" in sql
+        assert (
+            "WHEN status_reason IS DISTINCT FROM "
+            "COALESCE(%s, 'system_unexpected_error')"
+        ) in sql
+        assert "ELSE status_reason_updated_at" in sql
+
+
+class TestReleaseNonBudgetedFailure:
+    def test_executes_non_budgeted_release_sql_with_status_reason(self) -> None:
+        conn = _make_mock_conn()
+        store = _make_store(conn)
+        feed_id = uuid.uuid4()
+
+        store.release_non_budgeted_failure(
+            feed_id,
+            reason="echo_pubsub_publish_failed",
+            status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        )
+
+        conn.execute.assert_called_once()
+        assert conn.execute.call_args[0][0] is sync_feed_store._RELEASE_NON_BUDGETED_FAILURE_SQL  # fmt: skip
+        assert conn.execute.call_args[0][1] == (
+            300,
+            900,
+            300,
+            "system_pipeline_error",
+            "system_pipeline_error",
+            feed_id,
+        )
+
+    def test_non_budgeted_release_sql_does_not_increment_budget(self) -> None:
+        sql = sync_feed_store._RELEASE_NON_BUDGETED_FAILURE_SQL
+
+        assert "failure_count = 0" in sql
+        assert "failure_count + 1" not in sql
+        assert "quarantine_reason" not in sql
+        assert "status_reason_updated_at = CASE" in sql
+        assert "WHEN status_reason IS DISTINCT FROM %s THEN NOW()" in sql

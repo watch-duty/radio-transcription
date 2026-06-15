@@ -1423,8 +1423,8 @@ class CollectorRuntime:
         except _PipelineFailure as e:
             action = failure_policy.classify_failure_policy(e.status_reason)
             replay_missing = (
-                action
-                is failure_policy.ExecutedAction.RECORD_POST_BOOKMARK_PUBLISH_GAP
+                e.status_reason
+                is FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
             )
             if (
                 action
@@ -1456,13 +1456,27 @@ class CollectorRuntime:
             # Source-specific attribution belongs in collectors that raise
             # FeedFailure; the runtime only records the explicit fallback.
             reason = quarantine_reason.exception_text(e)
-            await self._record_non_budgeted_failure(
-                feed,
-                worker_id,
-                fencing_token,
-                reason=reason,
-                status_reason=FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
-            )
+            status_reason = FeedStatusReason.SYSTEM_UNEXPECTED_ERROR
+            action = failure_policy.classify_failure_policy(status_reason)
+            if (
+                action
+                is failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
+            ):
+                await self._record_feed_failure(
+                    feed,
+                    worker_id,
+                    fencing_token,
+                    reason=reason,
+                    status_reason=status_reason,
+                )
+            else:
+                await self._record_non_budgeted_failure(
+                    feed,
+                    worker_id,
+                    fencing_token,
+                    reason=reason,
+                    status_reason=status_reason,
+                )
             return
 
         # Normal completion (capture generator exhausted)

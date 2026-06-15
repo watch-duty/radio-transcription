@@ -118,7 +118,7 @@ class TestHandle:
         """Configure mock_store to return a feed row from resolve."""
         mock_store.resolve_echo_feed.return_value = feed
 
-    def _assert_failure_recorded(
+    def _assert_non_budgeted_failure_released(
         self,
         mock_store: MagicMock,
         feed_id: uuid.UUID,
@@ -126,11 +126,12 @@ class TestHandle:
         reason: str,
         status_reason: FeedStatusReason,
     ) -> None:
-        mock_store.record_failure.assert_called_once_with(
+        mock_store.release_non_budgeted_failure.assert_called_once_with(
             feed_id,
             reason=reason,
             status_reason=status_reason,
         )
+        mock_store.record_failure.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_skips_non_mp3(self, mock_store) -> None:
@@ -334,7 +335,7 @@ class TestHandle:
         with pytest.raises(Exception, match="GCS error"):
             _handle(self._make_event())
 
-        self._assert_failure_recorded(
+        self._assert_non_budgeted_failure_released(
             mock_store,
             feed_id,
             reason="echo_recording_download_failed",
@@ -361,7 +362,7 @@ class TestHandle:
         with pytest.raises(Exception, match="duration error"):
             _handle(self._make_event())
 
-        self._assert_failure_recorded(
+        self._assert_non_budgeted_failure_released(
             mock_store,
             feed_id,
             reason="echo_duration_probe_failed",
@@ -391,7 +392,7 @@ class TestHandle:
         with pytest.raises(Exception, match="upload error"):
             _handle(self._make_event())
 
-        self._assert_failure_recorded(
+        self._assert_non_budgeted_failure_released(
             mock_store,
             feed_id,
             reason="echo_staging_upload_failed",
@@ -418,7 +419,9 @@ class TestHandle:
             "Original error"
         )
 
-        mock_store.record_failure.side_effect = Exception("DB error")
+        mock_store.release_non_budgeted_failure.side_effect = Exception(
+            "DB error"
+        )
 
         with patch(
             "backend.pipeline.ingestion.collectors.echo.main.logger"
@@ -426,7 +429,7 @@ class TestHandle:
             with pytest.raises(Exception, match="Original error"):
                 _handle(self._make_event())
 
-        self._assert_failure_recorded(
+        self._assert_non_budgeted_failure_released(
             mock_store,
             feed_id,
             reason="echo_recording_download_failed",
@@ -498,7 +501,7 @@ class TestHandle:
         with pytest.raises(Exception, match="Pub/Sub error"):
             _handle(self._make_event())
 
-        self._assert_failure_recorded(
+        self._assert_non_budgeted_failure_released(
             mock_store,
             feed_id,
             reason="echo_pubsub_publish_failed",
@@ -527,7 +530,7 @@ class TestHandle:
         with pytest.raises(Exception, match="publisher error"):
             _handle(self._make_event())
 
-        self._assert_failure_recorded(
+        self._assert_non_budgeted_failure_released(
             mock_store,
             feed_id,
             reason="echo_pubsub_publish_failed",
@@ -554,7 +557,7 @@ class TestHandle:
         with pytest.raises(Exception, match="heartbeat error"):
             _handle(self._make_event())
 
-        self._assert_failure_recorded(
+        self._assert_non_budgeted_failure_released(
             mock_store,
             feed_id,
             reason="echo_heartbeat_write_failed",
@@ -582,7 +585,7 @@ class TestHandle:
             with pytest.raises(RuntimeError, match="unexpected bug"):
                 _handle(self._make_event())
 
-        self._assert_failure_recorded(
+        self._assert_non_budgeted_failure_released(
             mock_store,
             feed_id,
             reason="unexpected bug",
@@ -613,7 +616,7 @@ class TestHandle:
             with pytest.raises(RuntimeError, match=message):
                 _handle(self._make_event())
 
-        self._assert_failure_recorded(
+        self._assert_non_budgeted_failure_released(
             mock_store,
             feed_id,
             reason=message,
