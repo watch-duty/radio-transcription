@@ -16,9 +16,6 @@ from backend.pipeline.storage import quarantine_reason
 
 logger = logging.getLogger(__name__)
 
-_NON_BUDGETED_RETRY_MIN_SEC = 5 * 60
-_NON_BUDGETED_RETRY_MAX_SEC = 15 * 60
-
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Callable
@@ -69,26 +66,7 @@ SET status = CASE WHEN failure_count + 1 >= %s
                        ELSE NULL END,
     quarantine_reason = CASE WHEN failure_count + 1 >= %s THEN COALESCE(%s, quarantine_reason) ELSE quarantine_reason END,
     status_reason = COALESCE(%s, 'system_unexpected_error'),
-    status_reason_updated_at = CASE
-        WHEN status_reason IS DISTINCT FROM COALESCE(%s, 'system_unexpected_error')
-            THEN NOW()
-        ELSE status_reason_updated_at
-    END
-WHERE id = %s
-"""
-
-_RELEASE_NON_BUDGETED_FAILURE_SQL = """\
-UPDATE feeds
-SET status = 'failing'::feed_status,
-    failure_count = 0,
-    retry_after = NOW() + (
-        %s + RANDOM() * (%s - %s)
-    ) * INTERVAL '1 second',
-    status_reason = %s,
-    status_reason_updated_at = CASE
-        WHEN status_reason IS DISTINCT FROM %s THEN NOW()
-        ELSE status_reason_updated_at
-    END
+    status_reason_updated_at = NOW()
 WHERE id = %s
 """
 
@@ -178,41 +156,10 @@ class SyncFeedStore:
                     self._failure_threshold,
                     stored_reason,
                     status_reason_value,
-                    status_reason_value,
                     feed_id,
                 ),
             )
             logger.warning(
                 "Feed failure recorded",
                 extra={"feed_id": str(feed_id)},
-            )
-
-    def release_non_budgeted_failure(
-        self,
-        feed_id: uuid.UUID,
-        *,
-        reason: str | None = None,
-        status_reason: FeedStatusReason,
-    ) -> None:
-        """Record a retryable failure without consuming quarantine budget."""
-        status_reason_value = status_reason.value
-        with self._connect_db() as conn:
-            conn.execute(
-                _RELEASE_NON_BUDGETED_FAILURE_SQL,
-                (
-                    _NON_BUDGETED_RETRY_MIN_SEC,
-                    _NON_BUDGETED_RETRY_MAX_SEC,
-                    _NON_BUDGETED_RETRY_MIN_SEC,
-                    status_reason_value,
-                    status_reason_value,
-                    feed_id,
-                ),
-            )
-            logger.info(
-                "Feed failure released without quarantine budget",
-                extra={
-                    "feed_id": str(feed_id),
-                    "status_reason": status_reason_value,
-                    "reason": reason,
-                },
             )
