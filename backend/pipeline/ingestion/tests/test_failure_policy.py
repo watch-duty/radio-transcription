@@ -62,132 +62,267 @@ class TestFailurePolicyEvidence(unittest.TestCase):
 class TestClassifyFailurePolicy(unittest.TestCase):
     """Tests for pure policy classification."""
 
-    def test_feed_configuration_failure_is_quarantine_eligible(self) -> None:
-        """Feed-owned config evidence maps to the feed budget lane."""
-        evidence = failure_policy.FailurePolicyEvidence(
-            owner_scope=failure_policy.OwnerScope.FEED,
-            failure_scope=failure_policy.FailureScope.FEED,
-            endpoint_kind=failure_policy.EndpointKind.FEED_CONFIGURATION,
-        )
-
+    def _assert_decision(
+        self,
+        *,
+        status_reason: feed_store.FeedStatusReason,
+        evidence: failure_policy.FailurePolicyEvidence,
+        policy_intent: failure_policy.PolicyIntent,
+        executed_action: failure_policy.ExecutedAction,
+        feed_budget_eligible: bool,
+        quarantine_feed: bool,
+    ) -> None:
         decision = failure_policy.classify_failure_policy(
-            feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            status_reason,
             evidence,
         )
 
+        self.assertIs(decision.status_reason, status_reason)
+        self.assertIs(decision.evidence, evidence)
+        self.assertIs(decision.policy_intent, policy_intent)
+        self.assertIs(decision.executed_action, executed_action)
+        self.assertIs(decision.feed_budget_eligible, feed_budget_eligible)
+        self.assertIs(decision.quarantine_feed, quarantine_feed)
         self.assertIs(
-            decision.policy_intent,
-            failure_policy.PolicyIntent.QUARANTINE_FEED,
+            failure_policy.is_feed_quarantine(decision),
+            quarantine_feed,
         )
         self.assertIs(
-            decision.executed_action,
-            failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
+            failure_policy.is_feed_budget_eligible(decision),
+            feed_budget_eligible,
         )
-        self.assertTrue(decision.feed_budget_eligible)
-        self.assertTrue(decision.quarantine_feed)
-        self.assertTrue(failure_policy.is_feed_quarantine(decision))
-        self.assertTrue(failure_policy.is_feed_budget_eligible(decision))
-        self.assertFalse(failure_policy.is_pipeline_hold(decision))
-        self.assertFalse(failure_policy.is_source_class_breaker(decision))
+        self.assertIs(
+            failure_policy.is_pipeline_hold(decision),
+            policy_intent is failure_policy.PolicyIntent.HOLD_FOR_REPLAY,
+        )
+        self.assertIs(
+            failure_policy.is_source_class_breaker(decision),
+            policy_intent is failure_policy.PolicyIntent.OPEN_BREAKER,
+        )
 
-    def test_pipeline_publish_gap_is_hold_for_replay(self) -> None:
-        """Post-bookmark publish failures never consume feed budget."""
-        evidence = failure_policy.FailurePolicyEvidence(
+    def test_current_status_reasons_have_explicit_policy_routes(
+        self,
+    ) -> None:
+        """Every current status reason has an intended policy route."""
+        pipeline_publish_evidence = failure_policy.FailurePolicyEvidence(
             owner_scope=failure_policy.OwnerScope.PIPELINE,
             failure_scope=failure_policy.FailureScope.PIPELINE,
             endpoint_kind=failure_policy.EndpointKind.PUBSUB_PUBLISH,
             pipeline_stage=failure_policy.PipelineStage.PUBSUB_PUBLISH,
         )
-
-        decision = failure_policy.classify_failure_policy(
-            feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
-            evidence,
+        source_stream_evidence = failure_policy.FailurePolicyEvidence(
+            owner_scope=failure_policy.OwnerScope.SOURCE_CLASS,
+            failure_scope=failure_policy.FailureScope.OBSERVATION,
+            endpoint_kind=failure_policy.EndpointKind.STREAM,
         )
-
-        self.assertIs(
-            decision.policy_intent,
-            failure_policy.PolicyIntent.HOLD_FOR_REPLAY,
+        source_api_evidence = failure_policy.FailurePolicyEvidence(
+            owner_scope=failure_policy.OwnerScope.SOURCE_CLASS,
+            failure_scope=failure_policy.FailureScope.OBSERVATION,
+            endpoint_kind=failure_policy.EndpointKind.CALLS_API,
         )
-        self.assertIs(
-            decision.executed_action,
-            failure_policy.ExecutedAction.SUPPRESS_FEED_QUARANTINE_RECORD_PUBLISH_GAP,
+        source_class_evidence = failure_policy.FailurePolicyEvidence(
+            owner_scope=failure_policy.OwnerScope.SOURCE_CLASS,
+            failure_scope=failure_policy.FailureScope.CLASS,
+            endpoint_kind=failure_policy.EndpointKind.CALLS_API,
         )
-        self.assertFalse(decision.feed_budget_eligible)
-        self.assertFalse(decision.quarantine_feed)
-        self.assertFalse(failure_policy.is_feed_quarantine(decision))
-        self.assertFalse(failure_policy.is_feed_budget_eligible(decision))
-        self.assertTrue(failure_policy.is_pipeline_hold(decision))
-        self.assertFalse(failure_policy.is_source_class_breaker(decision))
-
-    def test_shared_auth_failure_opens_source_class_lane(self) -> None:
-        """Shared auth evidence routes outside the per-feed budget."""
-        cases = (
-            (
-                failure_policy.OwnerScope.CREDENTIAL_SCOPE,
-                failure_policy.EndpointKind.CALLS_API,
-            ),
-            (
-                failure_policy.OwnerScope.SOURCE_CLASS,
-                failure_policy.EndpointKind.STREAM,
-            ),
+        auth_evidence = failure_policy.FailurePolicyEvidence(
+            owner_scope=failure_policy.OwnerScope.CREDENTIAL_SCOPE,
+            failure_scope=failure_policy.FailureScope.CLASS,
+            endpoint_kind=failure_policy.EndpointKind.CALLS_API,
         )
-
-        for owner_scope, endpoint_kind in cases:
-            with self.subTest(owner_scope=owner_scope.value):
-                evidence = failure_policy.FailurePolicyEvidence(
-                    owner_scope=owner_scope,
-                    failure_scope=failure_policy.FailureScope.CLASS,
-                    endpoint_kind=endpoint_kind,
-                )
-
-                decision = failure_policy.classify_failure_policy(
-                    feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-                    evidence,
-                )
-
-                self.assertIs(
-                    decision.policy_intent,
-                    failure_policy.PolicyIntent.OPEN_BREAKER,
-                )
-                self.assertIs(
-                    decision.executed_action,
-                    failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
-                )
-                self.assertFalse(decision.feed_budget_eligible)
-                self.assertFalse(decision.quarantine_feed)
-                self.assertFalse(failure_policy.is_feed_quarantine(decision))
-                self.assertFalse(
-                    failure_policy.is_feed_budget_eligible(decision)
-                )
-                self.assertFalse(failure_policy.is_pipeline_hold(decision))
-                self.assertTrue(
-                    failure_policy.is_source_class_breaker(decision)
-                )
-
-    def test_unknown_evidence_routes_to_telemetry_gap(self) -> None:
-        """Unknown runtime evidence is non-budgeted telemetry gap intent."""
-        evidence = failure_policy.FailurePolicyEvidence(
+        feed_config_evidence = failure_policy.FailurePolicyEvidence(
+            owner_scope=failure_policy.OwnerScope.FEED,
+            failure_scope=failure_policy.FailureScope.FEED,
+            endpoint_kind=failure_policy.EndpointKind.FEED_CONFIGURATION,
+        )
+        pipeline_gcs_evidence = failure_policy.FailurePolicyEvidence(
+            owner_scope=failure_policy.OwnerScope.PIPELINE,
+            failure_scope=failure_policy.FailureScope.PIPELINE,
+            endpoint_kind=failure_policy.EndpointKind.GCS_UPLOAD,
+            pipeline_stage=failure_policy.PipelineStage.GCS_UPLOAD,
+        )
+        unknown_evidence = failure_policy.FailurePolicyEvidence(
             owner_scope=failure_policy.OwnerScope.UNKNOWN,
             failure_scope=failure_policy.FailureScope.UNKNOWN,
             endpoint_kind=failure_policy.EndpointKind.UNKNOWN,
         )
 
-        decision = failure_policy.classify_failure_policy(
-            feed_store.FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
-            evidence,
+        cases = (
+            (
+                feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
+                pipeline_publish_evidence,
+                failure_policy.PolicyIntent.QUARANTINE_FEED,
+                failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
+                True,
+                True,
+            ),
+            (
+                feed_store.FeedStatusReason.SOURCE_OFFLINE,
+                source_stream_evidence,
+                failure_policy.PolicyIntent.SUPPRESS_RETRY,
+                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                False,
+                False,
+            ),
+            (
+                feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+                source_api_evidence,
+                failure_policy.PolicyIntent.SUPPRESS_RETRY,
+                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                False,
+                False,
+            ),
+            (
+                feed_store.FeedStatusReason.SOURCE_RATE_LIMITED,
+                source_class_evidence,
+                failure_policy.PolicyIntent.SUPPRESS_RETRY,
+                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                False,
+                False,
+            ),
+            (
+                feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+                auth_evidence,
+                failure_policy.PolicyIntent.QUARANTINE_FEED,
+                failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
+                True,
+                True,
+            ),
+            (
+                feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+                feed_config_evidence,
+                failure_policy.PolicyIntent.QUARANTINE_FEED,
+                failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
+                True,
+                True,
+            ),
+            (
+                feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                unknown_evidence,
+                failure_policy.PolicyIntent.TELEMETRY_GAP,
+                failure_policy.ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP,
+                False,
+                False,
+            ),
+            (
+                feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+                pipeline_gcs_evidence,
+                failure_policy.PolicyIntent.SUPPRESS_RETRY,
+                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                False,
+                False,
+            ),
+            (
+                feed_store.FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
+                unknown_evidence,
+                failure_policy.PolicyIntent.TELEMETRY_GAP,
+                failure_policy.ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP,
+                False,
+                False,
+            ),
         )
 
-        self.assertIs(
-            decision.policy_intent,
-            failure_policy.PolicyIntent.TELEMETRY_GAP,
+        self.assertEqual(
+            {case[0] for case in cases},
+            set(feed_store.FeedStatusReason),
         )
-        self.assertIs(
-            decision.executed_action,
-            failure_policy.ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP,
+        for (
+            status_reason,
+            evidence,
+            policy_intent,
+            executed_action,
+            feed_budget_eligible,
+            quarantine_feed,
+        ) in cases:
+            with self.subTest(status_reason=status_reason.value):
+                self._assert_decision(
+                    status_reason=status_reason,
+                    evidence=evidence,
+                    policy_intent=policy_intent,
+                    executed_action=executed_action,
+                    feed_budget_eligible=feed_budget_eligible,
+                    quarantine_feed=quarantine_feed,
+                )
+
+    def test_system_pipeline_error_bookmark_write_is_non_budgeted(
+        self,
+    ) -> None:
+        """Bookmark pipeline evidence stays outside feed quarantine budget."""
+        evidence = failure_policy.FailurePolicyEvidence(
+            owner_scope=failure_policy.OwnerScope.PIPELINE,
+            failure_scope=failure_policy.FailureScope.PIPELINE,
+            endpoint_kind=failure_policy.EndpointKind.BOOKMARK_WRITE,
+            pipeline_stage=failure_policy.PipelineStage.BOOKMARK_WRITE,
         )
-        self.assertFalse(decision.feed_budget_eligible)
-        self.assertFalse(decision.quarantine_feed)
-        self.assertFalse(failure_policy.is_feed_quarantine(decision))
-        self.assertFalse(failure_policy.is_feed_budget_eligible(decision))
-        self.assertFalse(failure_policy.is_pipeline_hold(decision))
-        self.assertFalse(failure_policy.is_source_class_breaker(decision))
+
+        self._assert_decision(
+            status_reason=feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            evidence=evidence,
+            policy_intent=failure_policy.PolicyIntent.SUPPRESS_RETRY,
+            executed_action=(
+                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE
+            ),
+            feed_budget_eligible=False,
+            quarantine_feed=False,
+        )
+
+    def test_wrong_evidence_combinations_fail_closed_to_telemetry_gap(
+        self,
+    ) -> None:
+        """Mismatched status/evidence pairs fail closed, not by owner scope."""
+        wrong_feed_evidence = failure_policy.FailurePolicyEvidence(
+            owner_scope=failure_policy.OwnerScope.FEED,
+            failure_scope=failure_policy.FailureScope.FEED,
+            endpoint_kind=failure_policy.EndpointKind.FEED_CONFIGURATION,
+        )
+        wrong_pipeline_evidence = failure_policy.FailurePolicyEvidence(
+            owner_scope=failure_policy.OwnerScope.PIPELINE,
+            failure_scope=failure_policy.FailureScope.PIPELINE,
+            endpoint_kind=failure_policy.EndpointKind.GCS_UPLOAD,
+            pipeline_stage=failure_policy.PipelineStage.GCS_UPLOAD,
+        )
+        wrong_source_evidence = failure_policy.FailurePolicyEvidence(
+            owner_scope=failure_policy.OwnerScope.SOURCE_CLASS,
+            failure_scope=failure_policy.FailureScope.CLASS,
+            endpoint_kind=failure_policy.EndpointKind.STREAM,
+        )
+        wrong_unknown_evidence = failure_policy.FailurePolicyEvidence(
+            owner_scope=failure_policy.OwnerScope.UNKNOWN,
+            failure_scope=failure_policy.FailureScope.UNKNOWN,
+            endpoint_kind=failure_policy.EndpointKind.UNKNOWN,
+        )
+
+        cases = (
+            (
+                feed_store.FeedStatusReason.SOURCE_OFFLINE,
+                wrong_feed_evidence,
+            ),
+            (
+                feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
+                wrong_pipeline_evidence,
+            ),
+            (
+                feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+                wrong_source_evidence,
+            ),
+            (
+                feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+                wrong_unknown_evidence,
+            ),
+        )
+
+        for status_reason, evidence in cases:
+            with self.subTest(
+                status_reason=status_reason.value,
+                owner_scope=evidence.owner_scope.value,
+            ):
+                self._assert_decision(
+                    status_reason=status_reason,
+                    evidence=evidence,
+                    policy_intent=failure_policy.PolicyIntent.TELEMETRY_GAP,
+                    executed_action=(
+                        failure_policy.ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP
+                    ),
+                    feed_budget_eligible=False,
+                    quarantine_feed=False,
+                )
