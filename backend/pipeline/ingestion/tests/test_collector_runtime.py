@@ -1987,6 +1987,10 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             mock.patch(
                 "backend.pipeline.ingestion.collector_runtime.quarantine_telemetry"
             ) as mock_telemetry,
+            self.assertLogs(
+                "backend.pipeline.ingestion.collector_runtime",
+                level=logging.INFO,
+            ) as cm,
         ):
             mock_telemetry.emit_quarantine_event = mock.AsyncMock()
             await rt._process_feed(_FEED)
@@ -2000,6 +2004,31 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             reason="missing_source_feed_id",
             status_reason="system_configuration_invalid",
         )
+        records = [
+            cast("dict[str, Any]", r.__dict__.get("json_fields"))
+            for r in cm.records
+            if getattr(r, "json_fields", None)
+        ]
+        policy_record = next(
+            r
+            for r in records
+            if r["event_type"] == "feed_failure_policy_decision"
+        )
+        self.assertEqual(policy_record["feed_id"], str(_FEED_ID))
+        self.assertEqual(policy_record["source_type"], "bcfy_feeds")
+        self.assertEqual(
+            policy_record["status_reason"],
+            "system_configuration_invalid",
+        )
+        self.assertEqual(policy_record["owner_scope"], "feed")
+        self.assertEqual(policy_record["failure_scope"], "feed")
+        self.assertEqual(policy_record["endpoint_kind"], "feed_configuration")
+        self.assertEqual(policy_record["policy_intent"], "quarantine_feed")
+        self.assertEqual(
+            policy_record["executed_action"],
+            "increment_feed_failure_budget",
+        )
+        self.assertNotIn("retry_after", policy_record)
         # _releasing_feeds cleaned up
         self.assertEqual(rt._releasing_feeds, set())
 
@@ -2308,17 +2337,34 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
                 "_non_budgeted_retry_after",
                 return_value=retry_after,
             ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.quarantine_telemetry"
+            ) as mock_telemetry,
+            self.assertLogs(
+                "backend.pipeline.ingestion.collector_runtime",
+                level=logging.INFO,
+            ) as cm,
         ):
+            mock_telemetry.emit_quarantine_event = mock.AsyncMock()
             await rt._process_feed(_FEED)
 
         rt._store.report_feed_failure.assert_not_awaited()
         rt._store.release_non_budgeted_failure.assert_awaited_once()
+        mock_telemetry.emit_quarantine_event.assert_not_awaited()
         kwargs = rt._store.release_non_budgeted_failure.await_args.kwargs
         self.assertIs(
             kwargs["status_reason"],
             FeedStatusReason.SYSTEM_PIPELINE_ERROR,
         )
         self.assertEqual(kwargs["retry_after"], retry_after)
+        records = [
+            cast("dict[str, Any]", r.__dict__.get("json_fields"))
+            for r in cm.records
+            if getattr(r, "json_fields", None)
+        ]
+        event_types = {r["event_type"] for r in records}
+        self.assertIn("feed_failure_policy_decision", event_types)
+        self.assertNotIn("post_bookmark_publish_failure", event_types)
 
     async def test_pubsub_publish_failure_records_pipeline_error(self) -> None:
         """Pub/Sub failures after a valid chunk use the publish stage tag."""
@@ -2346,6 +2392,10 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
                 "_non_budgeted_retry_after",
                 return_value=retry_after,
             ),
+            self.assertLogs(
+                "backend.pipeline.ingestion.collector_runtime",
+                level=logging.INFO,
+            ) as cm,
         ):
             await rt._process_feed(_FEED)
 
@@ -2359,6 +2409,34 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(kwargs["retry_after"], retry_after)
         rt._store.release_feed.assert_not_awaited()
+        records = [
+            cast("dict[str, Any]", r.__dict__.get("json_fields"))
+            for r in cm.records
+            if getattr(r, "json_fields", None)
+        ]
+        event_types = {r["event_type"] for r in records}
+        self.assertIn("feed_failure_policy_decision", event_types)
+        self.assertIn("post_bookmark_publish_failure", event_types)
+        gap_record = next(
+            r
+            for r in records
+            if r["event_type"] == "post_bookmark_publish_failure"
+        )
+        self.assertEqual(
+            gap_record["status_reason"],
+            "pipeline_publish_after_bookmark_failed",
+        )
+        self.assertEqual(gap_record["owner_scope"], "pipeline")
+        self.assertEqual(gap_record["failure_scope"], "pipeline")
+        self.assertEqual(gap_record["endpoint_kind"], "pubsub_publish")
+        self.assertEqual(gap_record["pipeline_stage"], "pubsub_publish")
+        self.assertEqual(gap_record["policy_intent"], "hold_for_replay")
+        self.assertEqual(
+            gap_record["executed_action"],
+            "suppress_feed_quarantine_record_publish_gap",
+        )
+        self.assertTrue(gap_record["replay_missing"])
+        self.assertTrue(gap_record["data_gap_known"])
 
     async def test_bookmark_write_failure_records_pipeline_error(self) -> None:
         """Bookmark failures after a valid chunk use the bookmark stage tag."""
@@ -2389,6 +2467,10 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
                 "_non_budgeted_retry_after",
                 return_value=retry_after,
             ),
+            self.assertLogs(
+                "backend.pipeline.ingestion.collector_runtime",
+                level=logging.INFO,
+            ) as cm,
         ):
             await rt._process_feed(_FEED)
 
@@ -2400,6 +2482,14 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             FeedStatusReason.SYSTEM_PIPELINE_ERROR,
         )
         self.assertEqual(kwargs["retry_after"], retry_after)
+        records = [
+            cast("dict[str, Any]", r.__dict__.get("json_fields"))
+            for r in cm.records
+            if getattr(r, "json_fields", None)
+        ]
+        event_types = {r["event_type"] for r in records}
+        self.assertIn("feed_failure_policy_decision", event_types)
+        self.assertNotIn("post_bookmark_publish_failure", event_types)
 
     async def test_failure_log_includes_runtime_reason_fields(self) -> None:
         """Runtime failure logs include canonical and raw reason fields."""
@@ -2445,6 +2535,17 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             json_fields["event_type"],
             "feed_failure_policy_decision",
         )
+        self.assertEqual(json_fields["owner_scope"], "unknown")
+        self.assertEqual(json_fields["failure_scope"], "unknown")
+        self.assertEqual(json_fields["endpoint_kind"], "unknown")
+        self.assertEqual(json_fields["policy_intent"], "telemetry_gap")
+        self.assertEqual(
+            json_fields["executed_action"],
+            "suppress_feed_quarantine_telemetry_gap",
+        )
+        self.assertFalse(json_fields["feed_budget_eligible"])
+        self.assertFalse(json_fields["quarantine_feed"])
+        self.assertIn("retry_after", json_fields)
 
 
 class TestProcessFeedPublishAttributes(unittest.IsolatedAsyncioTestCase):
