@@ -1,10 +1,11 @@
 -- Demo seed: four feeds with distinct 24h density profiles, for exercising the
 -- timeline overview / histogram locally (the default test_data.sql has no
--- segments). All timestamps are relative to now() so the data always lands in
--- the live 24h window, whenever this is applied. Re-runnable: it clears its own
--- segments first. Apply with either:
---   docker compose exec -T postgres psql -U postgres -d postgres < local_dev/seed_demo_segments.sql
--- or mount it after test_data.sql and recreate the postgres volume.
+-- segments). Unlike test_data.sql this is NOT auto-loaded at DB init; apply it
+-- on demand against a running dev stack (mise dev:start):
+--   docker compose exec -T postgres psql -U postgres -d postgres \
+--     < local_dev/seed_timeline_demo_segments.sql
+-- All timestamps are relative to now() so the data always lands in the live 24h
+-- window, whenever this is applied. Re-runnable: it clears its own segments first.
 --
 -- classification 'OTHER' = silence (consolidated into bundles in the UI);
 -- 'SPEECH' = active, given a TRANSCRIPT annotation; a subset of SPEECH segments
