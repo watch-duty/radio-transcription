@@ -11,7 +11,7 @@ from google.cloud import storage
 
 from backend.pipeline.common.constants import MS_PER_SECOND, SAMPLE_RATE_HZ
 from backend.pipeline.schema_types import streaming_state as bp_state
-from backend.pipeline.segmentation.audio import storage as audio_storage
+from backend.pipeline.segmentation import storage as audio_storage
 from backend.pipeline.segmentation.audio import vad
 from backend.pipeline.segmentation.constants import (
     MONO_CHANNEL_COUNT,

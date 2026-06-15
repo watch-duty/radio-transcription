@@ -100,14 +100,14 @@ from backend.pipeline.segmentation import coders as trans_coders
 from backend.pipeline.segmentation import constants as trans_constants
 from backend.pipeline.segmentation import datatypes
 from backend.pipeline.segmentation.audio import vad
-from backend.pipeline.segmentation.audio.storage import (
-    acquire_shared_gcs_client,
-)
 from backend.pipeline.segmentation.constants import (
     MAX_CHUNKS_PER_WINDMILL_BUNDLE,
     WINDMILL_TIMER_MIN_ADVANCE_SECS,
 )
 from backend.pipeline.segmentation.state import sequence_buffer
+from backend.pipeline.segmentation.storage import (
+    acquire_shared_gcs_client,
+)
 from backend.pipeline.segmentation.transforms import stitcher_engine
 
 SHARED_RESOURCE_HANDLE = Shared()

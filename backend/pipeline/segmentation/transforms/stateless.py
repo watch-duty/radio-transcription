@@ -37,9 +37,6 @@ from backend.pipeline.schema_types.continuous_audio_pb2 import (
 from backend.pipeline.schema_types.segmented_audio_pb2 import (
     SegmentedAudio,
 )
-from backend.pipeline.segmentation.audio.storage import (
-    acquire_shared_gcs_client,
-)
 from backend.pipeline.segmentation.constants import (
     DEAD_LETTER_QUEUE_TAG,
 )
@@ -51,6 +48,9 @@ from backend.pipeline.segmentation.datatypes import (
 from backend.pipeline.segmentation.options import (
     DataflowSystemOptions,  # noqa: F401
     SegmentationOptions,  # noqa: F401
+)
+from backend.pipeline.segmentation.storage import (
+    acquire_shared_gcs_client,
 )
 
 logger = get_task_logger(
