@@ -16,10 +16,7 @@ from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
 from backend.pipeline.ingestion import failure_policy
-from backend.pipeline.ingestion.collector_runtime import (
-    CollectorRuntime,
-    _PipelineFailure,
-)
+from backend.pipeline.ingestion.collector_runtime import CollectorRuntime
 from backend.pipeline.ingestion.collectors.failure_classification import (
     missing_source_feed_id_failure,
 )
