@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import soundfile as sf
+from google.api_core import exceptions as api_exceptions
 
 from backend.pipeline.segmentation.audio.processor import (
     SegmentationAudioProcessor,
@@ -24,9 +25,13 @@ if shutil.which("ffmpeg") is None:
 
 class AudioProcessorTest(unittest.TestCase):
     def setUp(self) -> None:
+        self.mock_blob_class = patch("google.cloud.storage.Blob").start()
         self.processor = SegmentationAudioProcessor(
             gcs_client_instance=MagicMock()
         )
+
+    def tearDown(self) -> None:
+        patch.stopall()
 
     @patch("backend.pipeline.segmentation.audio.processor.get_vad_engine")
     def test_setup_initializes_vad_and_gcs(
@@ -70,7 +75,6 @@ class AudioProcessorTest(unittest.TestCase):
             vad_factory=mock_get_vad,
         )
         processor.setup()
-        mock_bucket = MagicMock()
         mock_blob = MagicMock()
 
         # Create a tiny valid FLAC (100ms -> 1600 samples)
@@ -83,8 +87,7 @@ class AudioProcessorTest(unittest.TestCase):
             f.write(flac_bytes)
 
         mock_blob.download_to_file = download_to_file
-        mock_bucket.get_blob.return_value = mock_blob
-        mock_gcs.bucket.return_value = mock_bucket
+        self.mock_blob_class.return_value = mock_blob
 
         # Act
         result = processor.download_audio_and_detect(
@@ -107,9 +110,9 @@ class AudioProcessorTest(unittest.TestCase):
             vad_factory=mock_get_vad,
         )
         processor.setup()
-        mock_bucket = MagicMock()
-        mock_bucket.get_blob.return_value = None
-        mock_gcs.bucket.return_value = mock_bucket
+        mock_blob = MagicMock()
+        mock_blob.download_to_file.side_effect = api_exceptions.NotFound("404")
+        self.mock_blob_class.return_value = mock_blob
 
         # Act & Assert
         with self.assertRaises(FileNotFoundError):

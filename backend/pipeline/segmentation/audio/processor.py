@@ -1,21 +1,19 @@
 """Segmentation-specific audio processing with neural Voice Activity Detection (VAD)."""
 
 import io
+import json
 import logging
-import urllib.parse
 from collections.abc import Callable
 
 import av
 import numpy as np
-import requests.adapters
 from google.cloud import storage
 
 from backend.pipeline.common.constants import MS_PER_SECOND, SAMPLE_RATE_HZ
+from backend.pipeline.schema_types import streaming_state as bp_state
+from backend.pipeline.segmentation import storage as audio_storage
 from backend.pipeline.segmentation.audio import vad
 from backend.pipeline.segmentation.constants import (
-    GCS_CONNECTION_MAX_RETRIES,
-    GCS_CONNECTION_POOL_SIZE,
-    GCS_DOWNLOAD_TIMEOUT_SEC,
     MONO_CHANNEL_COUNT,
     PRIMARY_AUDIO_STREAM_INDEX,
 )
@@ -25,9 +23,6 @@ logger = logging.getLogger(__name__)
 
 
 def get_vad_engine(config_json: str) -> vad.VoiceActivityDetector:
-    """Creates a VoiceActivityDetector engine using optional JSON config."""
-    import json  # noqa: PLC0415
-
     try:
         config = json.loads(config_json) if config_json else {}
     except Exception:
@@ -52,26 +47,23 @@ class SegmentationAudioProcessor:
         self.vad_config = vad_config
         self.vad_factory = vad_factory
         self.vad = vad_instance
-        self.gcs_client = gcs_client_instance
-        # If gcs_factory is omitted, default to storage.Client, which acquires
-        # Application Default Credentials (ADC) implicitly from the active execution environment.
-        self.gcs_factory = gcs_factory or storage.Client
+        self.fetcher = audio_storage.GcsAudioFetcher(
+            gcs_client_instance=gcs_client_instance,
+            gcs_factory=gcs_factory,
+        )
+
+    # Compatibility shim to avoid breaking legacy pipeline callers or tests that set processor.gcs_client directly.
+    @property
+    def gcs_client(self) -> storage.Client | None:
+        return self.fetcher.client
+
+    @gcs_client.setter
+    def gcs_client(self, val: storage.Client | None) -> None:
+        self.fetcher.client = val
 
     def setup(self) -> None:
         """Initializes the GCS Client and triggers VAD ONNX session warmup."""
-        if self.gcs_client is None:
-            self.gcs_client = self.gcs_factory()
-            # If the client was constructed via the default ADC factory, mount a custom HTTPAdapter
-            # to guarantee robust connection pooling and retry resiliency under high intra-process concurrency.
-            if (
-                hasattr(self.gcs_client, "_http") and self.gcs_client._http  # noqa: SLF001
-            ):
-                adapter = requests.adapters.HTTPAdapter(
-                    pool_connections=GCS_CONNECTION_POOL_SIZE,
-                    pool_maxsize=GCS_CONNECTION_POOL_SIZE,
-                    max_retries=GCS_CONNECTION_MAX_RETRIES,
-                )
-                self.gcs_client._http.mount("https://", adapter)  # noqa: SLF001
+        self.fetcher.setup()
 
         active_vad_factory = self.vad_factory or get_vad_engine
         if self.vad is None:
@@ -86,27 +78,8 @@ class SegmentationAudioProcessor:
         prior_audio: bytes | None = None,
     ) -> AudioChunkData:
         """Downloads audio bytes from GCS and runs the speech segment detection natively."""
-        if not self.gcs_client:
-            msg = "GCS client not initialized. Call setup() first."
-            raise RuntimeError(msg)
-        if self.vad is None:
-            msg = "VAD engine not initialized. Call setup() first."
-            raise RuntimeError(msg)
+        in_mem_file = self.fetcher.download_audio_to_memory(gcs_path)
 
-        parsed_uri = urllib.parse.urlparse(gcs_path)
-        bucket_name = parsed_uri.netloc
-        blob_name = parsed_uri.path.lstrip("/")
-
-        blob = self.gcs_client.bucket(bucket_name).get_blob(
-            blob_name, timeout=GCS_DOWNLOAD_TIMEOUT_SEC
-        )
-        if not blob:
-            err_msg = f"GCS object not found: {gcs_path}"
-            logger.error(err_msg)
-            raise FileNotFoundError(err_msg)
-
-        in_mem_file = io.BytesIO()
-        blob.download_to_file(in_mem_file, timeout=GCS_DOWNLOAD_TIMEOUT_SEC)
         in_mem_file.seek(0)
 
         samples, sr = self._decode_audio_in_memory(in_mem_file)
@@ -135,15 +108,15 @@ class SegmentationAudioProcessor:
                 else:
                     prior_samples = prior_arr
 
+            if self.vad is None:
+                msg = "VAD engine not initialized. Call setup() first."
+                raise RuntimeError(msg)
+
             speech_segments = self.vad.detect_speech_segments(
                 mono_samples,
                 sample_rate=sr,
                 prior_audio=prior_samples,
             )
-
-        from backend.pipeline.schema_types import (  # noqa: PLC0415
-            streaming_state as bp_state,
-        )
 
         speech_segments_proto = [
             bp_state.TimeRangeProto(
