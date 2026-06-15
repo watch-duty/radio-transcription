@@ -9,9 +9,10 @@ source-specific collectors, and operator-facing feed status, but post-capture
 pipeline failures and non-feed-actionable source/system failures can still
 consume the same persisted feed quarantine budget.
 
-The v1 goal is to make the runtime decide from structured policy evidence,
-route non-quarantine conditions through a non-budgeted suppressed retry path,
-and preserve current schema compatibility with minimal code changes.
+The v1 implementation makes the runtime decide from structured policy
+evidence, route non-quarantine conditions through a non-budgeted suppressed
+retry path, and preserve current schema compatibility with minimal code
+changes.
 
 ## Core Value
 
@@ -44,14 +45,16 @@ human can fix at feed scope.
 - ✓ Runtime emits policy decision telemetry and post-bookmark publish-gap
   telemetry with `replay_missing=true` and `data_gap_known=true` — validated
   in Phase 2.
+- ✓ Focused storage and runtime compatibility tests prove non-budgeted paths
+  do not increment quarantine budget or emit `feed_quarantined` — validated in
+  Phase 3.
+- ✓ Shared API/UI/status surfaces tolerate
+  `pipeline_publish_after_bookmark_failed`, including controller and tooltip
+  coverage, without adding a new lifecycle status — validated in Phase 3.
 
 ### Active
 
-- [ ] Complete focused storage and runtime compatibility tests proving
-  non-budgeted paths never increment quarantine budget or emit
-  `feed_quarantined`.
-- [ ] Update shared API/UI/status surfaces only where required to tolerate
-  `pipeline_publish_after_bookmark_failed`.
+No active v1 requirements remain.
 
 ### Out of Scope
 
@@ -131,6 +134,7 @@ The agreed v1 compatibility decision:
 | Post-bookmark publish failure records a data gap, not replay | Bookmark already advanced, and v1 has no durable outbox | Complete through Phase 2 telemetry |
 | No v1 source-class breaker state | Breakers are needed later, but v1 should first stop feed-budget damage | Complete: v1 records intent only |
 | No ADR for the `failing` compatibility choice | User explicitly chose no ADR for this v1 decision | Complete |
+| Phase 3 compatibility stays narrow | The new pipeline status reason is a status reason only, not a lifecycle redesign | Complete through focused tests and typechecks |
 
 ## Evolution
 
@@ -150,4 +154,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-15 after Phase 2 completion*
+*Last updated: 2026-06-15 after Phase 3 completion*
