@@ -305,6 +305,74 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             quarantine_feed=False,
         )
 
+    def test_promoted_item_scope_source_and_auth_routes_are_explicit(
+        self,
+    ) -> None:
+        """All-items-failed item promotions keep their intended route."""
+        item_source_evidence = failure_policy.FailurePolicyEvidence(
+            owner_scope=failure_policy.OwnerScope.SOURCE_CLASS,
+            failure_scope=failure_policy.FailureScope.ITEM,
+            endpoint_kind=failure_policy.EndpointKind.CALLS_MEDIA,
+        )
+        item_auth_evidence = failure_policy.FailurePolicyEvidence(
+            owner_scope=failure_policy.OwnerScope.CREDENTIAL_SCOPE,
+            failure_scope=failure_policy.FailureScope.ITEM,
+            endpoint_kind=failure_policy.EndpointKind.CALLS_MEDIA,
+        )
+
+        cases = (
+            (
+                feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+                item_source_evidence,
+                failure_policy.PolicyIntent.SUPPRESS_RETRY,
+                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                False,
+                False,
+            ),
+            (
+                feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+                item_auth_evidence,
+                failure_policy.PolicyIntent.QUARANTINE_FEED,
+                failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
+                True,
+                True,
+            ),
+            (
+                feed_store.FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED,
+                item_auth_evidence,
+                failure_policy.PolicyIntent.SUPPRESS_RETRY,
+                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                False,
+                False,
+            ),
+            (
+                feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
+                item_source_evidence,
+                failure_policy.PolicyIntent.QUARANTINE_FEED,
+                failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
+                True,
+                True,
+            ),
+        )
+
+        for (
+            status_reason,
+            evidence,
+            policy_intent,
+            executed_action,
+            feed_budget_eligible,
+            quarantine_feed,
+        ) in cases:
+            with self.subTest(status_reason=status_reason.value):
+                self._assert_decision(
+                    status_reason=status_reason,
+                    evidence=evidence,
+                    policy_intent=policy_intent,
+                    executed_action=executed_action,
+                    feed_budget_eligible=feed_budget_eligible,
+                    quarantine_feed=quarantine_feed,
+                )
+
     def test_wrong_evidence_combinations_fail_closed_to_telemetry_gap(
         self,
     ) -> None:
