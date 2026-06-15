@@ -1,4 +1,4 @@
-import { SourceType, convertFeedStatusReason } from '@transcription/common';
+import { SourceType } from '@transcription/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FeedsController } from './feedsController.js';
@@ -50,12 +50,6 @@ describe('FeedsController', () => {
     lastHeartbeat: '2024-01-01T00:00:00Z',
   };
 
-  it('preserves pipeline publish status reason during conversion', () => {
-    expect(
-      convertFeedStatusReason('pipeline_publish_after_bookmark_failed')
-    ).toBe('pipeline_publish_after_bookmark_failed');
-  });
-
   describe('listFeeds', () => {
     it('should return converted feeds on success', async () => {
       mockRequest.mockResolvedValueOnce({ data: [mockBackendFeed] });
@@ -68,6 +62,30 @@ describe('FeedsController', () => {
         url: 'http://feeds-api.example.com',
         method: 'GET',
       });
+    });
+
+    it('should preserve pipeline publish status reason from backend feeds', async () => {
+      mockRequest.mockResolvedValueOnce({
+        data: [
+          {
+            ...mockBackendFeed,
+            status: 'failing',
+            status_reason: 'pipeline_publish_after_bookmark_failed',
+          },
+        ],
+      });
+
+      const controller = new FeedsController();
+      const result = await controller.listFeeds();
+
+      expect(result).toEqual([
+        {
+          ...expectedFrontendFeed,
+          status: 'error',
+          substatus: 'failing',
+          statusReason: 'pipeline_publish_after_bookmark_failed',
+        },
+      ]);
     });
 
     it('should return feeds with tags on success', async () => {
