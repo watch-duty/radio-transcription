@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.collectors.failure_classification import (
     policy_evidence_for_status_reason,
 )
 from backend.pipeline.storage import feed_store
+
+if TYPE_CHECKING:
+    from backend.pipeline.ingestion import failure_policy
 
 
 def extract_optional_item_list(

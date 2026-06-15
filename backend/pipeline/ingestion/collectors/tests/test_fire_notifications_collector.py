@@ -1073,7 +1073,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
     @patch(
         "backend.pipeline.ingestion.collectors.fire_notifications.collector.AsyncSession",
     )
-    async def test_all_seen_files_yield_source_observation(
+    async def test_repeated_seen_files_yield_source_observation(
         self,
         mock_session_cls: MagicMock,
         mock_download: AsyncMock,

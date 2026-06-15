@@ -13,8 +13,7 @@ from zoneinfo import ZoneInfo
 from curl_cffi.requests import AsyncSession
 
 from backend.pipeline.common.audio import get_audio_duration
-from backend.pipeline.ingestion import failure_policy
-from backend.pipeline.ingestion import quarantine_reason
+from backend.pipeline.ingestion import failure_policy, quarantine_reason
 from backend.pipeline.ingestion.collectors import (
     control_flow,
     failure_classification,

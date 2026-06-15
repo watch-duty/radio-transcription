@@ -23,8 +23,8 @@ from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.common.log_helper import setup_asyncio_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
-from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.ingestion import (
+    failure_policy,
     health_server,
     quarantine_reason,
     quarantine_telemetry,

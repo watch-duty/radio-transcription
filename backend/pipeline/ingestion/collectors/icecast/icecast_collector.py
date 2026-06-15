@@ -18,7 +18,6 @@ from urllib.parse import urlencode, urljoin
 
 import aiohttp
 
-from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.common.constants import (
     AUDIO_FORMAT,
     CHUNK_DURATION_SECONDS,
@@ -26,7 +25,7 @@ from backend.pipeline.common.constants import (
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
 )
-from backend.pipeline.ingestion import quarantine_reason
+from backend.pipeline.ingestion import failure_policy, quarantine_reason
 from backend.pipeline.ingestion.collectors.failure_classification import (
     collector_failure,
     missing_source_feed_id_failure,
