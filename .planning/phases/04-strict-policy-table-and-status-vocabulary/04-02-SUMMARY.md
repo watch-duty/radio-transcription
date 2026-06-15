@@ -10,6 +10,7 @@ provides:
   - "backend FeedStatusReason values for runtime configuration, credential access, and source payload failures"
   - "owner-scope mapping for the new split status reasons"
   - "policy rows and tests for the split status reasons"
+  - "promoted item-scope evidence remains explicitly routed for source/auth failures"
 affects: [phase-05-producer-runtime-routing, phase-06-compatibility]
 tech-stack:
   added: []
@@ -34,7 +35,7 @@ patterns-established:
   - "Split enum additions require canonical backend tests, owner mapping tests, and policy route tests."
   - "Non-budgeted credential access remains a single policy row for easy future route changes."
 requirements-completed: [STAT-11, STAT-12, STAT-13, STAT-14, TEST-11, TEST-12]
-duration: 5 min
+duration: 8 min
 completed: 2026-06-15
 ---
 
@@ -44,9 +45,9 @@ completed: 2026-06-15
 
 ## Performance
 
-- **Duration:** 5 min
+- **Duration:** 8 min
 - **Started:** 2026-06-15T16:45:39Z
-- **Completed:** 2026-06-15T16:50:16Z
+- **Completed:** 2026-06-15T16:53:44Z
 - **Tasks:** 4
 - **Files modified:** 6
 
@@ -56,13 +57,14 @@ completed: 2026-06-15
 - Updated collector owner-scope mapping for the new statuses.
 - Extended policy route tests and `_POLICY_RULES` for the split statuses.
 - Verified backend-only scope without touching frontend/OpenAPI/generated compatibility files.
+- Fixed a review-found gap where promoted all-items-failed source/auth evidence used `FailureScope.ITEM`.
 
 ## Task Commits
 
 1. **Task 1: Add failing tests for backend enum and owner mapping splits** - `f62d9d46` (test)
 2. **Task 2: Add backend enum values and owner mapping** - `8cef80d4` (feat)
 3. **Task 3: Extend policy-table tests and rows for split reasons** - `65eb5ea1` (test), `c0b4a29c` (feat)
-4. **Task 4: Verify backend-only scope and known compatibility deferral** - verified by focused pytest and diff inspection; no code commit needed
+4. **Task 4: Verify backend-only scope and known compatibility deferral** - `cf83fba0` (test), `11791cc9` (fix)
 
 ## Files Created/Modified
 
@@ -81,7 +83,21 @@ completed: 2026-06-15
 
 ## Deviations from Plan
 
-None - plan executed exactly as written.
+### Auto-fixed Issues
+
+**1. [Rule 1 - Bug] Preserve promoted item-scope policy routes**
+
+- **Found during:** Code review gate after Task 4
+- **Issue:** Existing collectors can promote all-items-failed source/auth failures with `FailureScope.ITEM`; the new policy rows omitted `ITEM`, so those failures would fall through to telemetry gap.
+- **Fix:** Added an item-scope regression test and included `FailureScope.ITEM` in the relevant explicit source-class and credential-scope policy rows.
+- **Files modified:** `backend/pipeline/ingestion/tests/test_failure_policy.py`, `backend/pipeline/ingestion/failure_policy.py`
+- **Verification:** `safe-run -- uv run python -m pytest backend/pipeline/ingestion/tests/test_failure_policy.py backend/pipeline/ingestion/collectors/tests/test_failure_classification.py backend/pipeline/storage/tests/test_feed_store.py::TestFeedStatusReason::test_canonical_reason_values -q -n 0`
+- **Committed in:** `cf83fba0`, `11791cc9`
+
+---
+
+**Total deviations:** 1 auto-fixed (1 bug)
+**Impact on plan:** Keeps the explicit policy table aligned with existing collector evidence shapes without expanding Phase 4 beyond backend policy.
 
 ## Issues Encountered
 
@@ -97,7 +113,7 @@ None - no external service configuration required.
 safe-run -- uv run python -m pytest backend/pipeline/ingestion/tests/test_failure_policy.py backend/pipeline/ingestion/collectors/tests/test_failure_classification.py backend/pipeline/storage/tests/test_feed_store.py::TestFeedStatusReason::test_canonical_reason_values -q -n 0
 ```
 
-Result: `19 passed, 19 subtests passed in 0.04s`.
+Result: `20 passed, 23 subtests passed in 0.04s`.
 
 ## Next Phase Readiness
 
