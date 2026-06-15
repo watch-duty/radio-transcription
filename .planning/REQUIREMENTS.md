@@ -24,8 +24,8 @@
 ### Runtime Routing
 
 - [x] **RUN-01**: Runtime calls `report_feed_failure(...)` only when policy intent is `quarantine_feed` and owner scope is `feed`.
-- [ ] **RUN-02**: Runtime routes source-offline, shared-auth, rate-limit, capture-timeout, unknown, source-class, and pipeline-owned decisions through the non-budgeted path.
-- [ ] **RUN-03**: Pub/Sub publish failure after bookmark uses the non-budgeted path with status reason `pipeline_publish_after_bookmark_failed`.
+- [x] **RUN-02**: Runtime routes source-offline, shared-auth, rate-limit, capture-timeout, unknown, source-class, and pipeline-owned decisions through the non-budgeted path.
+- [x] **RUN-03**: Pub/Sub publish failure after bookmark uses the non-budgeted path with status reason `pipeline_publish_after_bookmark_failed`.
 - [ ] **RUN-04**: Pub/Sub publish failure after bookmark records `policy_intent=hold_for_replay`.
 - [ ] **RUN-05**: Pub/Sub publish failure after bookmark records `executed_action=suppress_feed_quarantine_record_publish_gap`.
 - [ ] **RUN-06**: Pub/Sub publish failure after bookmark explicitly records that replay is not available in v1.
@@ -105,8 +105,8 @@
 | STORE-05 | Phase 1 | Complete |
 | STORE-06 | Phase 1 | Complete |
 | RUN-01 | Phase 2 | Complete |
-| RUN-02 | Phase 2 | Pending |
-| RUN-03 | Phase 2 | Pending |
+| RUN-02 | Phase 2 | Complete |
+| RUN-03 | Phase 2 | Complete |
 | RUN-04 | Phase 2 | Pending |
 | RUN-05 | Phase 2 | Pending |
 | RUN-06 | Phase 2 | Pending |
