@@ -259,11 +259,10 @@ export class FeedsController extends Controller {
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async createFeed(
-    @Request() request: ExpressRequest,
+    @Request() request: AuthenticatedRequest,
     @Body() requestBody: FeedCreate
   ): Promise<Feed> {
-    const user = (request as AuthenticatedRequest).user;
-    if (!user?.isAdmin) {
+    if (!request.user?.isAdmin) {
       throw new HttpError(403, 'Forbidden');
     }
 
@@ -293,12 +292,11 @@ export class FeedsController extends Controller {
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async updateFeed(
-    @Request() request: ExpressRequest,
+    @Request() request: AuthenticatedRequest,
     @Path() feedId: string,
     @Body() requestBody: FeedUpdate
   ): Promise<Feed> {
-    const user = (request as AuthenticatedRequest).user;
-    if (!user?.isAdmin) {
+    if (!request.user?.isAdmin) {
       throw new HttpError(403, 'Forbidden');
     }
 
@@ -328,10 +326,9 @@ export class FeedsController extends Controller {
   @Extension('x-google-backend', 'radio-transcription-api')
   public async resetFeed(
     @Path() feedId: string,
-    @Request() request: ExpressRequest
+    @Request() request: AuthenticatedRequest
   ): Promise<Feed> {
-    const user = (request as AuthenticatedRequest).user;
-    if (!user?.isAdmin) {
+    if (!request.user?.isAdmin) {
       throw new HttpError(403, 'Forbidden');
     }
 
@@ -365,10 +362,9 @@ export class FeedsController extends Controller {
   @Extension('x-google-backend', 'radio-transcription-api')
   public async deactivateFeed(
     @Path() feedId: string,
-    @Request() request: ExpressRequest
+    @Request() request: AuthenticatedRequest
   ): Promise<void> {
-    const user = (request as AuthenticatedRequest).user;
-    if (!user?.isAdmin) {
+    if (!request.user?.isAdmin) {
       throw new HttpError(403, 'Forbidden');
     }
 
@@ -401,10 +397,9 @@ export class FeedsController extends Controller {
   @Extension('x-google-backend', 'radio-transcription-api')
   public async deleteFeed(
     @Path() feedId: string,
-    @Request() request: ExpressRequest
+    @Request() request: AuthenticatedRequest
   ): Promise<void> {
-    const user = (request as AuthenticatedRequest).user;
-    if (!user?.isAdmin) {
+    if (!request.user?.isAdmin) {
       throw new HttpError(403, 'Forbidden');
     }
 

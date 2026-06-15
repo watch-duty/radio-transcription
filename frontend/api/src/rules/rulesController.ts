@@ -290,11 +290,10 @@ export class RulesController extends Controller {
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async createRule(
-    @Request() request: ExpressRequest,
+    @Request() request: AuthenticatedRequest,
     @Body() requestBody: RuleCreate
   ): Promise<Rule> {
-    const user = (request as AuthenticatedRequest).user;
-    if (!user?.isAdmin) {
+    if (!request.user?.isAdmin) {
       throw new HttpError(403, 'Forbidden');
     }
     try {
@@ -319,12 +318,11 @@ export class RulesController extends Controller {
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async updateRule(
-    @Request() request: ExpressRequest,
+    @Request() request: AuthenticatedRequest,
     @Path() ruleId: string,
     @Body() requestBody: RuleUpdate
   ): Promise<Rule> {
-    const user = (request as AuthenticatedRequest).user;
-    if (!user?.isAdmin) {
+    if (!request.user?.isAdmin) {
       throw new HttpError(403, 'Forbidden');
     }
     try {
@@ -353,11 +351,10 @@ export class RulesController extends Controller {
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async deleteRule(
-    @Request() request: ExpressRequest,
+    @Request() request: AuthenticatedRequest,
     @Path() ruleId: string
   ): Promise<void> {
-    const user = (request as AuthenticatedRequest).user;
-    if (!user?.isAdmin) {
+    if (!request.user?.isAdmin) {
       throw new HttpError(403, 'Forbidden');
     }
     try {

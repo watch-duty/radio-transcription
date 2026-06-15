@@ -40,11 +40,7 @@ export async function expressAuthentication(
       return Promise.reject(new Error('Invalid JWT token'));
     }
 
-    if (decoded.email) {
-      decoded.isAdmin = await checkIsAdmin(decoded.email);
-    } else {
-      decoded.isAdmin = false;
-    }
+    decoded.isAdmin = decoded.email ? await checkIsAdmin(decoded.email) : false;
 
     // The resolved value is what gets injected into your controllers
     return Promise.resolve(decoded);
