@@ -124,6 +124,11 @@ class ParseAndKeyFn(beam.DoFn):
                     if element.attributes
                     else None
                 )
+                baggage = (
+                    element.attributes.get("baggage")
+                    if element.attributes
+                    else None
+                )
                 start_ms = (
                     (
                         chunk_proto.start_timestamp.seconds * MS_PER_SECOND
@@ -142,6 +147,7 @@ class ParseAndKeyFn(beam.DoFn):
                     ),
                     is_continuous=True,
                     traceparent=traceparent,
+                    baggage=baggage,
                     timestamp_ms=start_ms,
                 )
                 logger.debug(
@@ -272,6 +278,8 @@ class UploadRawSegmentFn(beam.DoFn):
             attrs: dict[str, str] = {}
             if request.traceparent:
                 attrs["traceparent"] = request.traceparent
+            if getattr(request, "baggage", None):
+                attrs["baggage"] = request.baggage
 
             yield PubsubMessage(
                 data=proto.SerializeToString(),

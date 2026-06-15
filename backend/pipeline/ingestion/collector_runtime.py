@@ -16,9 +16,8 @@ import uvloop
 from aiohttp import web
 from google.api_core import exceptions as google_exceptions
 from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
-from opentelemetry import trace
 
-from backend.pipeline.common import gcp_helper
+from backend.pipeline.common import gcp_helper, tracing_utils
 from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.common.log_helper import setup_asyncio_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
@@ -1163,8 +1162,20 @@ class CollectorRuntime:
                     )
                     raise TypeError(msg)  # noqa: TRY301
                 captured_chunk = capture_event
-                tracer = trace.get_tracer(__name__)
-                with tracer.start_as_current_span("process_captured_chunk"):
+                ingest_time_ms = str(
+                    int(
+                        (
+                            captured_chunk.receipt_time
+                            or datetime.datetime.now(datetime.UTC)
+                        ).timestamp()
+                        * 1000
+                    )
+                )
+                with tracing_utils.with_baggage_and_span(
+                    {"ingest_time_ms": ingest_time_ms},
+                    "process_captured_chunk",
+                    __name__,
+                ):
                     chunk_extension = extension
                     chunk_content_type = content_type
 

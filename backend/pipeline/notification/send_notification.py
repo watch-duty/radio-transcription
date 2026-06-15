@@ -177,9 +177,8 @@ def convert_to_notification(
 def send_notification(cloud_event: CloudEvent) -> None:
     pubsub_message = cloud_event.data.get("message", {})
     attributes = pubsub_message.get("attributes", {}) or {}
-    traceparent = attributes.get("traceparent", "")
 
-    with with_tracer_context(traceparent, "send_notification", __name__):
+    with with_tracer_context(attributes, "send_notification", __name__):
         # Process the incoming CloudEvent message
         evaluated_transcribed_audio = parse_cloud_event(cloud_event)
         if not evaluated_transcribed_audio:

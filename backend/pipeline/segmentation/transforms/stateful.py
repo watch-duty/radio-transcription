@@ -249,6 +249,7 @@ def process_ordering(
             order_timer_active=curr_context.order_timer_active,
             traceparent=metadata.traceparent
             or tracing_utils.get_current_traceparent(),
+            baggage=metadata.baggage,
         )
         session_changed = True
         out_of_order_timer.clear()
@@ -263,6 +264,7 @@ def process_ordering(
             feed_metadata=metadata.feed_metadata,
             traceparent=metadata.traceparent
             or tracing_utils.get_current_traceparent(),
+            baggage=metadata.baggage,
         )
 
     seq_buf = sequence_buffer.SequenceBuffer(order_config)
@@ -514,11 +516,15 @@ class OrderedStitchAudioFn(beam.DoFn):
     ]:
         """Intercepts chunk arrival, resolves chronological ordering, and delegates to StitcherEngine."""
         feed_id, metadata = element
-        traceparent = metadata.traceparent or ""
+        trace_attrs = {}
+        if metadata.traceparent:
+            trace_attrs["traceparent"] = metadata.traceparent
+        if metadata.baggage:
+            trace_attrs["baggage"] = metadata.baggage
 
         results = []
         with tracing_utils.with_tracer_context(
-            traceparent, "stitching_process", __name__
+            trace_attrs, "stitching_process", __name__
         ):
             current_ts_ms = int(
                 float(timestamp) * common_constants.MS_PER_SECOND
@@ -583,6 +589,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                             out_of_order_buffer=curr_context.out_of_order_buffer,
                             order_timer_active=curr_context.order_timer_active,
                             traceparent=metadata.traceparent,
+                            baggage=metadata.baggage,
                         )
                     outputs, next_expected_ts = (
                         self.engine.process_ordering_chunk(
@@ -622,14 +629,19 @@ class OrderedStitchAudioFn(beam.DoFn):
         )
         if isinstance(curr_context, datatypes.IdleFeedState):
             return
-        traceparent = curr_context.traceparent or ""
+        trace_attrs: dict[str, str] = {}
+        if curr_context.traceparent:
+            trace_attrs["traceparent"] = curr_context.traceparent
+        if curr_context.baggage:
+            trace_attrs["baggage"] = curr_context.baggage
         active_session_id = curr_context.session_id
         active_feed_metadata = curr_context.feed_metadata
         active_traceparent = curr_context.traceparent
+        active_baggage = curr_context.baggage
 
         results = []
         with tracing_utils.with_tracer_context(
-            traceparent, "handle_audio_gap", __name__
+            trace_attrs, "handle_audio_gap", __name__
         ):
             curr_context = replace(curr_context, order_timer_active=False)
             _write_transmission_context(
@@ -721,6 +733,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                                 out_of_order_buffer=curr_context.out_of_order_buffer,
                                 order_timer_active=curr_context.order_timer_active,
                                 traceparent=active_traceparent,
+                                baggage=active_baggage,
                             )
                         outputs, next_expected_ts = (
                             self.engine.process_ordering_chunk(

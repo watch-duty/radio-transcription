@@ -12,9 +12,6 @@ from google.cloud.pubsub_v1.publisher.exceptions import (
     PublishToPausedOrderingKeyException,
 )
 from opentelemetry import trace
-from opentelemetry.trace.propagation.tracecontext import (
-    TraceContextTextMapPropagator,
-)
 from tenacity import (
     RetryCallState,
     retry,
@@ -358,10 +355,7 @@ def publish_audio_chunk_sync(
         if source_type is not None:
             attrs["source_type"] = source_type
 
-        carrier: dict[str, str] = {}
-        TraceContextTextMapPropagator().inject(carrier)
-        if "traceparent" in carrier:
-            attrs["traceparent"] = carrier["traceparent"]
+        tracing_utils.inject_otel_context(attrs)
 
         max_retries = 1
         for attempt in range(max_retries + 1):
@@ -452,10 +446,7 @@ async def publish_audio_chunk(
         if source_type is not None:
             attrs["source_type"] = source_type
 
-        carrier: dict[str, str] = {}
-        TraceContextTextMapPropagator().inject(carrier)
-        if "traceparent" in carrier:
-            attrs["traceparent"] = carrier["traceparent"]
+        tracing_utils.inject_otel_context(attrs)
 
         max_retries = 1
         for attempt in range(max_retries + 1):

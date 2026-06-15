@@ -89,12 +89,13 @@ class TestEvaluationEventProcessor(unittest.TestCase):
                 "errors": [],
             },
         )
-        self.mock_raw_publisher.publish.assert_called_once_with(
-            self.output_topic_path,
-            self.evaluated_payload.SerializeToString(),
-            ordering_key="1234",
-            traceparent="",
+        self.mock_raw_publisher.publish.assert_called_once()
+        call_args = self.mock_raw_publisher.publish.call_args
+        self.assertEqual(call_args.args[0], self.output_topic_path)
+        self.assertEqual(
+            call_args.args[1], self.evaluated_payload.SerializeToString()
         )
+        self.assertEqual(call_args.kwargs["ordering_key"], "1234")
 
     def test_process_event_not_flagged_skips_publish(self) -> None:
         # Setup
@@ -215,12 +216,13 @@ class TestEvaluationEventProcessor(unittest.TestCase):
             self.evaluated_payload
         )
         # Should still publish because it was flagged
-        self.mock_raw_publisher.publish.assert_called_once_with(
-            self.output_topic_path,
-            self.evaluated_payload.SerializeToString(),
-            ordering_key="1234",
-            traceparent="",
+        self.mock_raw_publisher.publish.assert_called_once()
+        call_args = self.mock_raw_publisher.publish.call_args
+        self.assertEqual(call_args.args[0], self.output_topic_path)
+        self.assertEqual(
+            call_args.args[1], self.evaluated_payload.SerializeToString()
         )
+        self.assertEqual(call_args.kwargs["ordering_key"], "1234")
 
     @patch("backend.pipeline.evaluation.processor.with_tracer_context")
     def test_process_event_uses_traceparent(
@@ -250,7 +252,7 @@ class TestEvaluationEventProcessor(unittest.TestCase):
 
         # Verify
         mock_with_tracer_context.assert_called_once_with(
-            traceparent_val,
+            attrs,
             "evaluate_rules",
             "backend.pipeline.evaluation.processor",
         )
@@ -277,7 +279,7 @@ class TestEvaluationEventProcessor(unittest.TestCase):
 
         # Verify
         mock_with_tracer_context.assert_called_once_with(
-            "", "evaluate_rules", "backend.pipeline.evaluation.processor"
+            {}, "evaluate_rules", "backend.pipeline.evaluation.processor"
         )
 
     def test_process_event_add_annotation_failure_continues(self) -> None:

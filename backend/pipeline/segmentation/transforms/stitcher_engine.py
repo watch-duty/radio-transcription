@@ -269,6 +269,7 @@ class StitcherEngine:
                         sample_rate=curr_ctx.sample_rate
                         or common_constants.SAMPLE_RATE_HZ,
                         traceparent=curr_ctx.traceparent,
+                        baggage=curr_ctx.baggage,
                         audio_classification=audio_classification,
                     ),
                 )
@@ -375,6 +376,7 @@ class StitcherEngine:
                     or (chunk_data.sample_rate if chunk_data else None)
                     or common_constants.SAMPLE_RATE_HZ,
                     traceparent=action.traceparent,
+                    baggage=action.baggage,
                     audio_classification=datatypes.AudioClassification(
                         action.audio_classification
                     ),
@@ -442,7 +444,12 @@ class StitcherEngine:
             with_tracer_context,
         )
 
-        traceparent = chunk.traceparent or ""
+        trace_attrs: dict[str, str] = {}
+        if chunk.traceparent:
+            trace_attrs["traceparent"] = chunk.traceparent
+        baggage_val = getattr(chunk, "baggage", None)
+        if baggage_val:
+            trace_attrs["baggage"] = str(baggage_val)
 
         if curr_context.session_id is None:
             msg = "Session ID cannot be None in _process_single_stitch_chunk"
@@ -455,7 +462,7 @@ class StitcherEngine:
 
         try:
             with with_tracer_context(
-                traceparent,
+                trace_attrs,
                 "stitching_single_chunk",
                 "backend.pipeline.segmentation.transforms.stateful",
             ):
@@ -505,6 +512,8 @@ class StitcherEngine:
                     traceparent=chunk.traceparent
                     or curr_context.traceparent
                     or get_current_traceparent(),
+                    baggage=getattr(chunk, "baggage", None)
+                    or curr_context.baggage,
                     prior_audio_tail=curr_context.prior_audio_tail,
                 )
 
@@ -546,7 +555,7 @@ class StitcherEngine:
                 "gcs_uri": chunk.gcs_uri,
                 "session_id": curr_context.session_id or "unknown",
                 "error_message": str(e),
-                "traceparent": traceparent,
+                "traceparent": curr_context.traceparent,
             }
             fallback_expected = previous_expected_ts or (
                 chunk.timestamp_ms + common_constants.MS_PER_SECOND
@@ -627,6 +636,7 @@ class StitcherEngine:
                             ),
                             order_timer_active=new_context.order_timer_active,
                             traceparent=ctx.traceparent,
+                            baggage=ctx.baggage,
                             sample_rate=active_sample_rate
                             or chunk_data.sample_rate,
                         )
