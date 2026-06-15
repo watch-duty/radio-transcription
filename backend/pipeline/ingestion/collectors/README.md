@@ -40,8 +40,9 @@ publish failures after a successful bookmark use
 the source feed did not cause the already-advanced bookmark/publish gap.
 
 Echo is the exception to the VM runtime shape: it runs as a synchronous Cloud
-Function. It still writes the same status-reason fields through
-`SyncFeedStore`, so admin-facing semantics stay consistent.
+Function. It writes the same canonical status-reason field through
+`SyncFeedStore`, but the non-budgeted VM routing in this change does not yet
+apply to Echo; sync-store policy parity is a follow-up.
 
 ## Status Reason Policy
 
@@ -74,7 +75,7 @@ the likely owner:
 | `system_configuration_invalid` | The feed row is missing or has an invalid source-specific identifier, URL, or required configuration. |
 | `system_runtime_configuration_invalid` | Shared runtime, deployment, environment, source-class, or transport configuration is invalid and retry is not expected to repair it. |
 | `system_credential_access_failed` | Watch Duty could not retrieve or access internal credentials, such as Secret Manager access failure; this is not the same as upstream provider credential rejection. |
-| `system_source_payload_invalid` | A successful source response violates the collector payload contract and repeating the same request is not expected to help. |
+| `system_source_payload_invalid` | A successful source response violates the collector payload contract, but v1 keeps it non-budgeted because the response may be transient, provider-owned, or later auto-recovered by a deploy. |
 | `system_collector_error` | The collector cannot turn apparently available source data into a chunk, or all item failures are mixed/ambiguous. |
 | `system_pipeline_error` | Runtime or Echo post-capture processing fails after source data was obtained, such as GCS upload, bookmark writes, staging, duration probing, or heartbeat writes. |
 | `system_unexpected_error` | Defensive fallback for bugs or untyped exceptions that should become typed in a future collector fix. |
