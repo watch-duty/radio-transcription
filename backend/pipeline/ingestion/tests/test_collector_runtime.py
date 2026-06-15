@@ -1895,6 +1895,7 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         rt._store.update_feed_progress = mock.AsyncMock(side_effect=_bookmark)
         rt._store.release_non_budgeted_failure.return_value = "failing"
         rt._releasing_feeds = set()
+        retry_after = datetime.datetime(2026, 6, 15, tzinfo=datetime.UTC)
 
         with (
             mock.patch(
@@ -1909,6 +1910,11 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
                 "backend.pipeline.ingestion.collector_runtime",
                 level=logging.INFO,
             ) as cm,
+            mock.patch.object(
+                CollectorRuntime,
+                "_non_budgeted_retry_after",
+                return_value=retry_after,
+            ),
         ):
             await rt._process_feed(_FEED)
 
@@ -1921,6 +1927,7 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
             nb_kwargs["status_reason"],
             FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
         )
+        self.assertEqual(nb_kwargs["retry_after"], retry_after)
         rt._store.release_feed.assert_not_awaited()
         records = [
             cast("dict[str, Any]", r.__dict__.get("json_fields"))
@@ -2164,6 +2171,115 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             FeedStatusReason.SOURCE_OFFLINE,
         )
 
+    async def test_non_actionable_collector_failures_use_non_budgeted_release(
+        self,
+    ) -> None:
+        """Typed non-actionable collector decisions do not burn feed budget."""
+        retry_after = datetime.datetime(2026, 6, 15, tzinfo=datetime.UTC)
+        cases = (
+            (
+                "source_offline",
+                FeedStatusReason.SOURCE_OFFLINE,
+                "source_offline",
+                failure_policy.FailurePolicyEvidence(
+                    owner_scope=failure_policy.OwnerScope.FEED,
+                    failure_scope=failure_policy.FailureScope.OBSERVATION,
+                    endpoint_kind=failure_policy.EndpointKind.STREAM,
+                ),
+            ),
+            (
+                "rate_limited",
+                FeedStatusReason.SOURCE_RATE_LIMITED,
+                "source_rate_limited",
+                failure_policy.FailurePolicyEvidence(
+                    owner_scope=failure_policy.OwnerScope.SOURCE_CLASS,
+                    failure_scope=failure_policy.FailureScope.CLASS,
+                    endpoint_kind=failure_policy.EndpointKind.CALLS_API,
+                ),
+            ),
+            (
+                "capture_timeout",
+                FeedStatusReason.SOURCE_UNREACHABLE,
+                "capture_timeout",
+                failure_policy.FailurePolicyEvidence(
+                    owner_scope=failure_policy.OwnerScope.FEED,
+                    failure_scope=failure_policy.FailureScope.OBSERVATION,
+                    endpoint_kind=failure_policy.EndpointKind.STREAM,
+                ),
+            ),
+            (
+                "shared_auth",
+                FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+                "auth_failed",
+                failure_policy.FailurePolicyEvidence(
+                    owner_scope=failure_policy.OwnerScope.CREDENTIAL_SCOPE,
+                    failure_scope=failure_policy.FailureScope.CLASS,
+                    endpoint_kind=failure_policy.EndpointKind.CALLS_API,
+                ),
+            ),
+            (
+                "source_class",
+                FeedStatusReason.SOURCE_OFFLINE,
+                "provider_offline",
+                failure_policy.FailurePolicyEvidence(
+                    owner_scope=failure_policy.OwnerScope.SOURCE_CLASS,
+                    failure_scope=failure_policy.FailureScope.CLASS,
+                    endpoint_kind=failure_policy.EndpointKind.STREAM,
+                ),
+            ),
+        )
+
+        for name, status_reason, reason, evidence in cases:
+            with self.subTest(name=name):
+
+                async def _failing_capture(
+                    feed,
+                    shutdown,
+                    _resources,
+                    _status_reason=status_reason,
+                    _reason=reason,
+                    _evidence=evidence,
+                ):
+                    raise FeedFailure(
+                        _status_reason,
+                        _reason,
+                        policy_evidence=_evidence,
+                    )
+                    yield _make_captured_chunk(b"audio")
+
+                rt = CollectorRuntime(
+                    capture_fn=_failing_capture,
+                    settings=_make_settings(),
+                )
+                rt._shutdown = asyncio.Event()
+                rt._lease_lost = asyncio.Event()
+                rt._capture_resources = _default_resources()
+                rt._store = mock.AsyncMock()
+                rt._store.release_non_budgeted_failure.return_value = "failing"
+                rt._releasing_feeds = set()
+
+                with (
+                    mock.patch.object(
+                        CollectorRuntime,
+                        "_non_budgeted_retry_after",
+                        return_value=retry_after,
+                    ),
+                    mock.patch(
+                        "backend.pipeline.ingestion.collector_runtime.quarantine_telemetry"
+                    ) as mock_telemetry,
+                ):
+                    mock_telemetry.emit_quarantine_event = mock.AsyncMock()
+                    await rt._process_feed(_FEED)
+
+                rt._store.report_feed_failure.assert_not_awaited()
+                rt._store.release_non_budgeted_failure.assert_awaited_once()
+                kwargs = (
+                    rt._store.release_non_budgeted_failure.await_args.kwargs
+                )
+                self.assertIs(kwargs["status_reason"], status_reason)
+                self.assertEqual(kwargs["retry_after"], retry_after)
+                mock_telemetry.emit_quarantine_event.assert_not_awaited()
+
     async def test_gcs_upload_failure_records_pipeline_error(self) -> None:
         """Upload failures after a valid chunk use the GCS stage tag."""
 
@@ -2180,10 +2296,18 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         rt._store = mock.AsyncMock()
         rt._store.release_non_budgeted_failure.return_value = "failing"
         rt._releasing_feeds = set()
+        retry_after = datetime.datetime(2026, 6, 15, tzinfo=datetime.UTC)
 
-        with mock.patch(
-            "backend.pipeline.ingestion.collector_runtime.gcp_helper.upload_staged_audio",
-            mock.AsyncMock(side_effect=RuntimeError("gcs boom")),
+        with (
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.gcp_helper.upload_staged_audio",
+                mock.AsyncMock(side_effect=RuntimeError("gcs boom")),
+            ),
+            mock.patch.object(
+                CollectorRuntime,
+                "_non_budgeted_retry_after",
+                return_value=retry_after,
+            ),
         ):
             await rt._process_feed(_FEED)
 
@@ -2194,6 +2318,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             kwargs["status_reason"],
             FeedStatusReason.SYSTEM_PIPELINE_ERROR,
         )
+        self.assertEqual(kwargs["retry_after"], retry_after)
 
     async def test_pubsub_publish_failure_records_pipeline_error(self) -> None:
         """Pub/Sub failures after a valid chunk use the publish stage tag."""
@@ -2208,12 +2333,18 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         rt._store = mock.AsyncMock()
         rt._store.release_non_budgeted_failure.return_value = "failing"
         rt._releasing_feeds = set()
+        retry_after = datetime.datetime(2026, 6, 15, tzinfo=datetime.UTC)
 
         with (
             _mock_upload_audio(),
             mock.patch(
                 "backend.pipeline.ingestion.collector_runtime.gcp_helper.publish_audio_chunk",
                 mock.AsyncMock(side_effect=RuntimeError("pubsub boom")),
+            ),
+            mock.patch.object(
+                CollectorRuntime,
+                "_non_budgeted_retry_after",
+                return_value=retry_after,
             ),
         ):
             await rt._process_feed(_FEED)
@@ -2226,6 +2357,8 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             kwargs["status_reason"],
             FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
         )
+        self.assertEqual(kwargs["retry_after"], retry_after)
+        rt._store.release_feed.assert_not_awaited()
 
     async def test_bookmark_write_failure_records_pipeline_error(self) -> None:
         """Bookmark failures after a valid chunk use the bookmark stage tag."""
@@ -2246,8 +2379,17 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         )
         rt._store.release_non_budgeted_failure.return_value = "failing"
         rt._releasing_feeds = set()
+        retry_after = datetime.datetime(2026, 6, 15, tzinfo=datetime.UTC)
 
-        with _mock_upload_audio(), _mock_pubsub_publish():
+        with (
+            _mock_upload_audio(),
+            _mock_pubsub_publish(),
+            mock.patch.object(
+                CollectorRuntime,
+                "_non_budgeted_retry_after",
+                return_value=retry_after,
+            ),
+        ):
             await rt._process_feed(_FEED)
 
         rt._store.report_feed_failure.assert_not_awaited()
@@ -2257,6 +2399,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             kwargs["status_reason"],
             FeedStatusReason.SYSTEM_PIPELINE_ERROR,
         )
+        self.assertEqual(kwargs["retry_after"], retry_after)
 
     async def test_failure_log_includes_runtime_reason_fields(self) -> None:
         """Runtime failure logs include canonical and raw reason fields."""
