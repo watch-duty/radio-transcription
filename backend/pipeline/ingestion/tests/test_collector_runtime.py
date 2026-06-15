@@ -2106,10 +2106,12 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         rt._store.report_feed_failure.assert_not_awaited()
         rt._store.release_non_budgeted_failure.assert_awaited_once()
 
-    async def test_reason_caps_at_200_chars(self) -> None:
-        """Catch-all exception diagnostics are bounded before policy logging."""
+    async def test_untyped_runtime_exception_preserves_full_reason(
+        self,
+    ) -> None:
+        """Catch-all exception diagnostics stay intact before storage."""
         long_message = "x" * 250
-        expected_reason = f"RuntimeError: {long_message}"[:200]
+        expected_reason = f"RuntimeError: {long_message}"
 
         async def _failing_capture(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")

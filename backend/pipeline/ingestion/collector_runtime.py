@@ -1441,7 +1441,7 @@ class CollectorRuntime:
             # Transitional catch-all for bugs or untyped collector failures.
             # Source-specific attribution belongs in collectors that raise
             # FeedFailure; the runtime only records the explicit fallback.
-            reason = quarantine_reason.exception_text(e)[:200]
+            reason = quarantine_reason.exception_text(e)
             await self._record_non_budgeted_failure(
                 feed,
                 worker_id,
