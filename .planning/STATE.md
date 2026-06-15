@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Policy Merge
-status: milestone_complete
+status: completed
 stopped_at: Completed Phase 06 backend-only closeout
-last_updated: "2026-06-15T19:35:06.231Z"
+last_updated: "2026-06-15T19:40:26.294Z"
 last_activity: 2026-06-15
 progress:
   total_phases: 3

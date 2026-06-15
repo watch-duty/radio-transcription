@@ -19,17 +19,34 @@ deferring broader API/UI/generated compatibility to follow-up work.
 On-call should be alerted only when retry is not expected to fix the ingestion
 failure and a human/operator repair is required.
 
-## Current Milestone: v1.1 Policy Merge
+## Current State
 
-**Goal:** Implement the strict status/evidence quarantine policy merge.
+**Shipped milestone:** v1.1 Policy Merge on 2026-06-15.
 
-**Target features:**
+The backend policy merge is complete:
+
 - Explicit `status_reason + evidence` policy rows with telemetry-gap fallback.
 - Split status reasons for runtime configuration, credential access, and source
   payload contract failures.
 - Runtime policy routing for `_PipelineFailure`, including budgeted
   `pipeline_publish_after_bookmark_failed`.
 - Backend documentation closeout and focused backend verification.
+
+Milestone archives:
+
+- `.planning/milestones/v1.1-ROADMAP.md`
+- `.planning/milestones/v1.1-REQUIREMENTS.md`
+- `.planning/milestones/v1.1-MILESTONE-AUDIT.md`
+
+## Next Milestone Candidates
+
+- API/UI/generated compatibility: OpenAPI enum synchronization, shared
+  frontend status reason types, generated API route metadata, readable UI
+  labels, and compatibility tests.
+- Durable replay/outbox for post-bookmark publish gaps.
+- Source-class or credential-scope breaker state.
+- Persistent structured policy audit/event table.
+- Echo ingestion parity.
 
 ## Requirements
 
@@ -66,14 +83,9 @@ failure and a human/operator repair is required.
 
 ### Active
 
-- [ ] Implement explicit policy rows so only covered combinations can consume
-  quarantine budget.
-- [ ] Split overloaded status reasons into the currently needed enum values.
-- [ ] Route post-bookmark Pub/Sub publish failures through the budgeted policy
-  path.
-- [ ] Keep non-budgeted retry/reset behavior for source, ambiguous collector,
-  GCS/bookmark, credential-access, and telemetry-gap cases.
-- [ ] Update backend documentation and run final focused backend verification.
+None. v1.1 shipped and requirements were archived to
+`.planning/milestones/v1.1-REQUIREMENTS.md`. Start the next milestone with
+fresh requirements.
 
 ### Out of Scope
 
@@ -172,9 +184,9 @@ The agreed v1.1 policy merge decision:
 | No v1 source-class breaker state | Breakers are needed later, but v1 should first stop feed-budget damage | Complete: v1 records intent only |
 | No ADR for the `failing` compatibility choice | User explicitly chose no ADR for this v1 decision | Complete |
 | Phase 3 compatibility stays narrow | The new pipeline status reason is a status reason only, not a lifecycle redesign | Complete through focused tests and typechecks |
-| Use explicit status/evidence policy rows | Prevents new or mismatched combinations from inheriting quarantine behavior accidentally | Pending in v1.1 |
-| Treat post-bookmark publish failure as budgeted in v1.1 | Retry alone cannot repair the already-advanced bookmark/publish consistency issue | Pending in v1.1 |
-| Split overloaded system status reasons only where needed | Clear routing for current producers without introducing unused enum values | Pending in v1.1 |
+| Use explicit status/evidence policy rows | Prevents new or mismatched combinations from inheriting quarantine behavior accidentally | Complete in v1.1 |
+| Treat post-bookmark publish failure as budgeted in v1.1 | Retry alone cannot repair the already-advanced bookmark/publish consistency issue | Complete in v1.1 |
+| Split overloaded system status reasons only where needed | Clear routing for current producers without introducing unused enum values | Complete in v1.1 |
 
 ## Evolution
 
@@ -194,4 +206,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-15 after v1.1 milestone initialization*
+*Last updated: 2026-06-15 after v1.1 milestone completion*
