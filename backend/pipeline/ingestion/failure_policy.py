@@ -182,6 +182,28 @@ _FEED_CONFIG_ENDPOINTS = frozenset(
     }
 )
 
+_RUNTIME_CONFIG_ENDPOINTS = frozenset(
+    {
+        EndpointKind.FEED_CONFIGURATION,
+        EndpointKind.STREAM,
+        EndpointKind.CALLS_API,
+        EndpointKind.FIRE_POLL,
+        EndpointKind.OPENMHZ_WS_UPGRADE,
+        EndpointKind.UNKNOWN,
+    }
+)
+
+_SOURCE_PAYLOAD_ENDPOINTS = frozenset(
+    {
+        EndpointKind.CALLS_API,
+        EndpointKind.CALLS_METADATA,
+        EndpointKind.CALLS_MEDIA,
+        EndpointKind.FIRE_POLL,
+        EndpointKind.OPENMHZ_WS_UPGRADE,
+        EndpointKind.UNKNOWN,
+    }
+)
+
 _POLICY_RULES = (
     _FailurePolicyRule(
         status_reason=(
@@ -251,6 +273,49 @@ _POLICY_RULES = (
         owner_scopes=frozenset({OwnerScope.FEED}),
         failure_scopes=frozenset({FailureScope.FEED}),
         endpoint_kinds=_FEED_CONFIG_ENDPOINTS,
+        pipeline_stages=frozenset({None}),
+        policy_intent=PolicyIntent.QUARANTINE_FEED,
+        executed_action=ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
+        feed_budget_eligible=True,
+        quarantine_feed=True,
+    ),
+    _FailurePolicyRule(
+        status_reason=(
+            feed_store.FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID
+        ),
+        owner_scopes=frozenset({OwnerScope.SOURCE_CLASS}),
+        failure_scopes=_SOURCE_FAILURE_SCOPES,
+        endpoint_kinds=_RUNTIME_CONFIG_ENDPOINTS,
+        pipeline_stages=frozenset({None}),
+        policy_intent=PolicyIntent.QUARANTINE_FEED,
+        executed_action=ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
+        feed_budget_eligible=True,
+        quarantine_feed=True,
+    ),
+    _FailurePolicyRule(
+        status_reason=(
+            feed_store.FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED
+        ),
+        owner_scopes=frozenset({OwnerScope.CREDENTIAL_SCOPE}),
+        failure_scopes=frozenset(
+            {
+                FailureScope.OBSERVATION,
+                FailureScope.FEED,
+                FailureScope.CLASS,
+            }
+        ),
+        endpoint_kinds=_AUTH_ENDPOINTS,
+        pipeline_stages=frozenset({None}),
+        policy_intent=PolicyIntent.SUPPRESS_RETRY,
+        executed_action=ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+        feed_budget_eligible=False,
+        quarantine_feed=False,
+    ),
+    _FailurePolicyRule(
+        status_reason=feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
+        owner_scopes=frozenset({OwnerScope.SOURCE_CLASS}),
+        failure_scopes=_SOURCE_FAILURE_SCOPES,
+        endpoint_kinds=_SOURCE_PAYLOAD_ENDPOINTS,
         pipeline_stages=frozenset({None}),
         policy_intent=PolicyIntent.QUARANTINE_FEED,
         executed_action=ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
