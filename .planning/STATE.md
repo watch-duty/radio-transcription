@@ -2,9 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Policy Merge
-status: planning
-last_updated: "2026-06-15T16:14:18.227Z"
-last_activity: 2026-06-15
+status: Roadmap ready; phase discussion not started
+stopped_at: Phase 4 context gathered
+last_updated: "2026-06-15T16:24:06.444Z"
+last_activity: 2026-06-15 — Milestone v1.1 roadmap initialized
 progress:
   total_phases: 3
   completed_phases: 0
@@ -72,9 +73,11 @@ Recent decisions affecting current work:
 - [Phase 03]: Incident taxonomy traceability is documented only in 03-03-SUMMARY.md, not in a new durable taxonomy document.
 - [Milestone v1.1]: Strict routing uses explicit `status_reason + evidence`
   policy rows with telemetry-gap fallback for unmatched combinations.
+
 - [Milestone v1.1]: `pipeline_publish_after_bookmark_failed` is
   quarantine-budgeted in v1.1 because retry alone cannot repair the
   bookmark/publish consistency issue.
+
 - [Milestone v1.1]: New status enum values are limited to current routing
   needs: runtime configuration invalid, credential access failed, and source
   payload invalid.
@@ -102,6 +105,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-15T05:12:35.109Z
-Stopped at: Completed 03-03-PLAN.md
-Resume file: None
+Last session: 2026-06-15T16:24:06.439Z
+Stopped at: Phase 4 context gathered
+Resume file: .planning/phases/04-strict-policy-table-and-status-vocabulary/04-CONTEXT.md
