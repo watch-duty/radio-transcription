@@ -121,21 +121,73 @@ class TestClassifyFailurePolicy(unittest.TestCase):
 
     def test_shared_auth_failure_opens_source_class_lane(self) -> None:
         """Shared auth evidence routes outside the per-feed budget."""
+        cases = (
+            (
+                failure_policy.OwnerScope.CREDENTIAL_SCOPE,
+                failure_policy.EndpointKind.CALLS_API,
+            ),
+            (
+                failure_policy.OwnerScope.SOURCE_CLASS,
+                failure_policy.EndpointKind.STREAM,
+            ),
+        )
+
+        for owner_scope, endpoint_kind in cases:
+            with self.subTest(owner_scope=owner_scope.value):
+                evidence = failure_policy.FailurePolicyEvidence(
+                    owner_scope=owner_scope,
+                    failure_scope=failure_policy.FailureScope.CLASS,
+                    endpoint_kind=endpoint_kind,
+                )
+
+                decision = failure_policy.classify_failure_policy(
+                    feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+                    evidence,
+                )
+
+                self.assertIs(
+                    decision.policy_intent,
+                    failure_policy.PolicyIntent.OPEN_BREAKER,
+                )
+                self.assertIs(
+                    decision.executed_action,
+                    failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                )
+                self.assertFalse(decision.feed_budget_eligible)
+                self.assertFalse(decision.quarantine_feed)
+                self.assertFalse(failure_policy.is_feed_quarantine(decision))
+                self.assertFalse(
+                    failure_policy.is_feed_budget_eligible(decision)
+                )
+                self.assertFalse(failure_policy.is_pipeline_hold(decision))
+                self.assertTrue(
+                    failure_policy.is_source_class_breaker(decision)
+                )
+
+    def test_unknown_evidence_routes_to_telemetry_gap(self) -> None:
+        """Unknown runtime evidence is non-budgeted telemetry gap intent."""
         evidence = failure_policy.FailurePolicyEvidence(
-            owner_scope=failure_policy.OwnerScope.CREDENTIAL_SCOPE,
-            failure_scope=failure_policy.FailureScope.CLASS,
-            endpoint_kind=failure_policy.EndpointKind.CALLS_API,
+            owner_scope=failure_policy.OwnerScope.UNKNOWN,
+            failure_scope=failure_policy.FailureScope.UNKNOWN,
+            endpoint_kind=failure_policy.EndpointKind.UNKNOWN,
         )
 
         decision = failure_policy.classify_failure_policy(
-            feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+            feed_store.FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
             evidence,
         )
 
         self.assertIs(
             decision.policy_intent,
-            failure_policy.PolicyIntent.OPEN_BREAKER,
+            failure_policy.PolicyIntent.TELEMETRY_GAP,
+        )
+        self.assertIs(
+            decision.executed_action,
+            failure_policy.ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP,
         )
         self.assertFalse(decision.feed_budget_eligible)
         self.assertFalse(decision.quarantine_feed)
-        self.assertTrue(failure_policy.is_source_class_breaker(decision))
+        self.assertFalse(failure_policy.is_feed_quarantine(decision))
+        self.assertFalse(failure_policy.is_feed_budget_eligible(decision))
+        self.assertFalse(failure_policy.is_pipeline_hold(decision))
+        self.assertFalse(failure_policy.is_source_class_breaker(decision))
