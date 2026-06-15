@@ -792,6 +792,7 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         )
 
         args = pool.fetchrow.call_args[0]
+        self.assertIs(args[0], feed_queries.REPORT_FAILURE_SQL)
         self.assertEqual(
             args[1:],
             (
@@ -928,6 +929,7 @@ class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
         )
 
         args = pool.fetchrow.call_args[0]
+        self.assertIs(args[0], feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL)
         self.assertEqual(
             args[1:],
             (
