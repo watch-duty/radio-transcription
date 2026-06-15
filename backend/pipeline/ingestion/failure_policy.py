@@ -155,6 +155,7 @@ _SOURCE_CLASS_ENDPOINTS = frozenset(
 
 _SOURCE_FAILURE_SCOPES = frozenset(
     {
+        FailureScope.ITEM,
         FailureScope.OBSERVATION,
         FailureScope.FEED,
         FailureScope.CLASS,
@@ -256,6 +257,7 @@ _POLICY_RULES = (
         owner_scopes=frozenset({OwnerScope.CREDENTIAL_SCOPE}),
         failure_scopes=frozenset(
             {
+                FailureScope.ITEM,
                 FailureScope.OBSERVATION,
                 FailureScope.FEED,
                 FailureScope.CLASS,
@@ -299,6 +301,7 @@ _POLICY_RULES = (
         owner_scopes=frozenset({OwnerScope.CREDENTIAL_SCOPE}),
         failure_scopes=frozenset(
             {
+                FailureScope.ITEM,
                 FailureScope.OBSERVATION,
                 FailureScope.FEED,
                 FailureScope.CLASS,
