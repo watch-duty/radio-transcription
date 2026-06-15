@@ -73,6 +73,51 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes cache TTL
 // Cache for group resource name (groups/{group_id}) to avoid repeating the lookup
 let cachedGroupId: string | null = null;
 
+async function getGoogleAccessToken(): Promise<string> {
+  const auth = new GoogleAuth({
+    scopes: ['https://www.googleapis.com/auth/cloud-platform'],
+  });
+  const client = await auth.getClient();
+  const tokenResponse = await client.getAccessToken();
+  const token = tokenResponse.token;
+  if (!token) {
+    throw new Error('Failed to obtain Google OAuth token');
+  }
+  return token;
+}
+
+async function getCloudIdentityGroupId(
+  groupEmail: string,
+  token: string
+): Promise<string> {
+  const lookupUrl = `https://cloudidentity.googleapis.com/v1/groups:lookup?groupKey.id=${encodeURIComponent(
+    groupEmail
+  )}`;
+  const lookupResponse = await axios.get(lookupUrl, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const groupName = lookupResponse.data.name;
+  if (!groupName) {
+    throw new Error(`Failed to resolve group ID for ${groupEmail}`);
+  }
+  return groupName;
+}
+
+async function checkCloudIdentityMembership(
+  groupId: string,
+  memberEmail: string,
+  token: string
+): Promise<boolean> {
+  const checkUrl = `https://cloudidentity.googleapis.com/v1/${groupId}/memberships:checkTransitiveMembership`;
+  const checkResponse = await axios.get(checkUrl, {
+    headers: { Authorization: `Bearer ${token}` },
+    params: {
+      query: `member_key_id == '${memberEmail}'`,
+    },
+  });
+  return !!checkResponse.data.hasMembership;
+}
+
 export async function checkIsAdmin(email: string): Promise<boolean> {
   const normalizedEmail = email.trim().toLowerCase();
   const now = Date.now();
@@ -91,45 +136,22 @@ export async function checkIsAdmin(email: string): Promise<boolean> {
   }
 
   try {
-    const auth = new GoogleAuth({
-      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
-    });
-
-    const client = await auth.getClient();
-    const tokenResponse = await client.getAccessToken();
-    const token = tokenResponse.token;
-
-    if (!token) {
-      throw new Error('Failed to obtain Google OAuth token');
-    }
+    const token = await getGoogleAccessToken();
 
     // Step 1: Look up the group unique ID if not already cached
     if (!cachedGroupId) {
-      const lookupUrl = `https://cloudidentity.googleapis.com/v1/groups:lookup?groupKey.id=${encodeURIComponent(
-        WORKSPACE_ADMIN_GROUP_EMAIL
-      )}`;
-      const lookupResponse = await axios.get(lookupUrl, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const groupName = lookupResponse.data.name;
-      if (!groupName) {
-        throw new Error(
-          `Failed to resolve group ID for ${WORKSPACE_ADMIN_GROUP_EMAIL}`
-        );
-      }
-      cachedGroupId = groupName;
+      cachedGroupId = await getCloudIdentityGroupId(
+        WORKSPACE_ADMIN_GROUP_EMAIL,
+        token
+      );
     }
 
     // Step 2: Check transitive membership
-    const checkUrl = `https://cloudidentity.googleapis.com/v1/${cachedGroupId}/memberships:checkTransitiveMembership`;
-    const checkResponse = await axios.get(checkUrl, {
-      headers: { Authorization: `Bearer ${token}` },
-      params: {
-        query: `member_key_id == '${normalizedEmail}'`,
-      },
-    });
-
-    const isAdmin = !!checkResponse.data.hasMembership;
+    const isAdmin = await checkCloudIdentityMembership(
+      cachedGroupId,
+      normalizedEmail,
+      token
+    );
 
     // Save in cache
     adminCache.set(normalizedEmail, {
@@ -151,7 +173,8 @@ export async function checkIsAdmin(email: string): Promise<boolean> {
       message
     );
 
-    // Fail closed, or fallback to expired cache entry if available
+    // Fall back to expired cache (stale-on-error) if available to prevent lockout during API outages.
+    // Otherwise, deny admin access by defaulting to false.
     return cached ? cached.isAdmin : false;
   }
 }
