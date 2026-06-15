@@ -2248,7 +2248,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(policy_record["endpoint_kind"], "unknown")
         self.assertEqual(
             policy_record["executed_action"],
-            "release_non_budgeted_failure",
+            "retry_without_feed_budget",
         )
         self.assertFalse(
             {"policy_intent", "feed_budget_eligible", "quarantine_feed"}
@@ -2654,7 +2654,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json_fields["endpoint_kind"], "unknown")
         self.assertEqual(
             json_fields["executed_action"],
-            "release_non_budgeted_failure",
+            "retry_without_feed_budget",
         )
         self.assertFalse(
             {"policy_intent", "feed_budget_eligible", "quarantine_feed"}

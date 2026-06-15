@@ -50,7 +50,7 @@ class ExecutedAction(StrEnum):
     """Policy action selected for runtime/store execution."""
 
     INCREMENT_FEED_FAILURE_BUDGET = "increment_feed_failure_budget"
-    RELEASE_NON_BUDGETED_FAILURE = "release_non_budgeted_failure"
+    RETRY_WITHOUT_FEED_BUDGET = "retry_without_feed_budget"
     RECORD_POST_BOOKMARK_PUBLISH_GAP = "record_post_bookmark_publish_gap"
 
 
@@ -134,7 +134,7 @@ class _FailurePolicyRule:
 
 
 _QUARANTINE_FEED_ACTION = ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
-_NON_BUDGETED_RETRY_ACTION = ExecutedAction.RELEASE_NON_BUDGETED_FAILURE
+_NON_BUDGETED_RETRY_ACTION = ExecutedAction.RETRY_WITHOUT_FEED_BUDGET
 _PIPELINE_GAP_ACTION = ExecutedAction.RECORD_POST_BOOKMARK_PUBLISH_GAP
 
 
@@ -242,7 +242,7 @@ _POLICY_RULES = (
     ),
     _policy_rule(
         status_reason=feed_store.FeedStatusReason.SOURCE_OFFLINE,
-        executed_action=ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+        executed_action=ExecutedAction.RETRY_WITHOUT_FEED_BUDGET,
         owner_scopes=frozenset({OwnerScope.SOURCE_CLASS}),
         failure_scopes=_SOURCE_FAILURE_SCOPES,
         endpoint_kinds=_SOURCE_CLASS_ENDPOINTS,
@@ -250,7 +250,7 @@ _POLICY_RULES = (
     ),
     _policy_rule(
         status_reason=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
-        executed_action=ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+        executed_action=ExecutedAction.RETRY_WITHOUT_FEED_BUDGET,
         owner_scopes=frozenset({OwnerScope.SOURCE_CLASS}),
         failure_scopes=_SOURCE_FAILURE_SCOPES,
         endpoint_kinds=_SOURCE_CLASS_ENDPOINTS,
@@ -258,7 +258,7 @@ _POLICY_RULES = (
     ),
     _policy_rule(
         status_reason=feed_store.FeedStatusReason.SOURCE_RATE_LIMITED,
-        executed_action=ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+        executed_action=ExecutedAction.RETRY_WITHOUT_FEED_BUDGET,
         owner_scopes=frozenset({OwnerScope.SOURCE_CLASS}),
         failure_scopes=_SOURCE_FAILURE_SCOPES,
         endpoint_kinds=_SOURCE_CLASS_ENDPOINTS,
@@ -374,7 +374,7 @@ def classify_failure_policy(
     for rule in _POLICY_RULES:
         if rule.matches(status_reason, evidence):
             return rule.executed_action
-    return ExecutedAction.RELEASE_NON_BUDGETED_FAILURE
+    return ExecutedAction.RETRY_WITHOUT_FEED_BUDGET
 
 
 def _iter_concrete_policy_evidence() -> tuple[FailurePolicyEvidence, ...]:

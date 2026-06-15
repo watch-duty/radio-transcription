@@ -179,22 +179,22 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.SOURCE_OFFLINE,
                 source_stream_evidence,
-                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                failure_policy.ExecutedAction.RETRY_WITHOUT_FEED_BUDGET,
             ),
             (
                 feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
                 source_api_evidence,
-                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                failure_policy.ExecutedAction.RETRY_WITHOUT_FEED_BUDGET,
             ),
             (
                 feed_store.FeedStatusReason.SOURCE_RATE_LIMITED,
                 source_class_evidence,
-                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                failure_policy.ExecutedAction.RETRY_WITHOUT_FEED_BUDGET,
             ),
             (
                 feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
                 auth_evidence,
-                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                failure_policy.ExecutedAction.RETRY_WITHOUT_FEED_BUDGET,
             ),
             (
                 feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
@@ -209,27 +209,27 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED,
                 credential_access_evidence,
-                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                failure_policy.ExecutedAction.RETRY_WITHOUT_FEED_BUDGET,
             ),
             (
                 feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
                 source_payload_evidence,
-                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                failure_policy.ExecutedAction.RETRY_WITHOUT_FEED_BUDGET,
             ),
             (
                 feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
                 unknown_evidence,
-                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                failure_policy.ExecutedAction.RETRY_WITHOUT_FEED_BUDGET,
             ),
             (
                 feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
                 pipeline_gcs_evidence,
-                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                failure_policy.ExecutedAction.RETRY_WITHOUT_FEED_BUDGET,
             ),
             (
                 feed_store.FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
                 unknown_evidence,
-                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                failure_policy.ExecutedAction.RETRY_WITHOUT_FEED_BUDGET,
             ),
         )
 
@@ -264,7 +264,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             status_reason=feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
             evidence=evidence,
             executed_action=(
-                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE
+                failure_policy.ExecutedAction.RETRY_WITHOUT_FEED_BUDGET
             ),
         )
 
@@ -290,7 +290,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
                     ),
                     evidence=evidence,
                     executed_action=(
-                        failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE
+                        failure_policy.ExecutedAction.RETRY_WITHOUT_FEED_BUDGET
                     ),
                 )
 
@@ -313,22 +313,22 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
                 item_source_evidence,
-                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                failure_policy.ExecutedAction.RETRY_WITHOUT_FEED_BUDGET,
             ),
             (
                 feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
                 item_auth_evidence,
-                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                failure_policy.ExecutedAction.RETRY_WITHOUT_FEED_BUDGET,
             ),
             (
                 feed_store.FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED,
                 item_auth_evidence,
-                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                failure_policy.ExecutedAction.RETRY_WITHOUT_FEED_BUDGET,
             ),
             (
                 feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
                 item_source_evidence,
-                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                failure_policy.ExecutedAction.RETRY_WITHOUT_FEED_BUDGET,
             ),
         )
 
@@ -415,7 +415,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
                     status_reason=status_reason,
                     evidence=evidence,
                     executed_action=(
-                        failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE
+                        failure_policy.ExecutedAction.RETRY_WITHOUT_FEED_BUDGET
                     ),
                 )
 
@@ -455,7 +455,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
                     pipeline_stages=frozenset({None}),
                 ),
                 executed_action=(
-                    failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE
+                    failure_policy.ExecutedAction.RETRY_WITHOUT_FEED_BUDGET
                 ),
             ),
         )
@@ -474,7 +474,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             frozenset(
                 {
                     failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
-                    failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                    failure_policy.ExecutedAction.RETRY_WITHOUT_FEED_BUDGET,
                 }
             ),
         )
