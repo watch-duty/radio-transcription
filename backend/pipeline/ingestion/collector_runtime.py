@@ -805,29 +805,6 @@ class CollectorRuntime:
         )
 
     @staticmethod
-    def _unknown_policy_evidence() -> failure_policy.FailurePolicyEvidence:
-        """Build conservative evidence for unannotated failures."""
-        return failure_policy.FailurePolicyEvidence(
-            owner_scope=failure_policy.OwnerScope.UNKNOWN,
-            failure_scope=failure_policy.FailureScope.UNKNOWN,
-            endpoint_kind=failure_policy.EndpointKind.UNKNOWN,
-        )
-
-    @staticmethod
-    def _is_feed_quarantine_decision(
-        action: failure_policy.ExecutedAction,
-    ) -> bool:
-        """Return whether a decision is explicitly feed-actionable."""
-        return failure_policy.is_feed_quarantine(action)
-
-    @staticmethod
-    def _is_post_bookmark_publish_gap(
-        action: failure_policy.ExecutedAction,
-    ) -> bool:
-        """Return whether a pipeline decision represents a publish data gap."""
-        return failure_policy.is_pipeline_hold(action)
-
-    @staticmethod
     def _non_budgeted_retry_after() -> datetime.datetime:
         """Return the retry time for non-budgeted failure lanes."""
         jitter_sec = random.uniform(  # noqa: S311 -- scheduling jitter
@@ -1468,7 +1445,10 @@ class CollectorRuntime:
                 e.status_reason,
                 e.policy_evidence,
             )
-            if self._is_feed_quarantine_decision(action):
+            if (
+                action
+                is failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
+            ):
                 await self._record_feed_failure(
                     feed,
                     worker_id,
@@ -1493,8 +1473,14 @@ class CollectorRuntime:
                 e.status_reason,
                 e.policy_evidence,
             )
-            replay_missing = self._is_post_bookmark_publish_gap(action)
-            if self._is_feed_quarantine_decision(action):
+            replay_missing = (
+                action
+                is failure_policy.ExecutedAction.RECORD_POST_BOOKMARK_PUBLISH_GAP
+            )
+            if (
+                action
+                is failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
+            ):
                 await self._record_feed_failure(
                     feed,
                     worker_id,
@@ -1529,7 +1515,11 @@ class CollectorRuntime:
                 fencing_token,
                 reason=reason,
                 status_reason=FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
-                evidence=self._unknown_policy_evidence(),
+                evidence=failure_policy.FailurePolicyEvidence(
+                    owner_scope=failure_policy.OwnerScope.UNKNOWN,
+                    failure_scope=failure_policy.FailureScope.UNKNOWN,
+                    endpoint_kind=failure_policy.EndpointKind.UNKNOWN,
+                ),
             )
             return
 

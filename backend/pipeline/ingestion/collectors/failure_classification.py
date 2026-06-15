@@ -136,16 +136,6 @@ class ItemBatchOutcome:
         )
 
 
-def owner_scope_for_status_reason(
-    status_reason: FeedStatusReason,
-) -> failure_policy.OwnerScope:
-    """Map a status enum to the broad owner scope for collector evidence."""
-    return _STATUS_OWNER_SCOPES.get(
-        status_reason,
-        failure_policy.OwnerScope.UNKNOWN,
-    )
-
-
 def policy_evidence_for_status_reason(
     status_reason: FeedStatusReason,
     *,
@@ -155,7 +145,10 @@ def policy_evidence_for_status_reason(
 ) -> failure_policy.FailurePolicyEvidence:
     """Build facts-only collector evidence from a typed status enum."""
     return failure_policy.FailurePolicyEvidence(
-        owner_scope=owner_scope_for_status_reason(status_reason),
+        owner_scope=_STATUS_OWNER_SCOPES.get(
+            status_reason,
+            failure_policy.OwnerScope.UNKNOWN,
+        ),
         failure_scope=failure_scope,
         endpoint_kind=endpoint_kind,
         pipeline_stage=pipeline_stage,

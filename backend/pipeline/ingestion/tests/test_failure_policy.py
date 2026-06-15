@@ -70,6 +70,14 @@ class TestFailurePolicyEvidence(unittest.TestCase):
             },
         )
 
+    def test_policy_module_does_not_export_boolean_action_wrappers(
+        self,
+    ) -> None:
+        """Routing branches should compare ExecutedAction values directly."""
+        self.assertFalse(hasattr(failure_policy, "is_feed_quarantine"))
+        self.assertFalse(hasattr(failure_policy, "is_feed_budget_eligible"))
+        self.assertFalse(hasattr(failure_policy, "is_pipeline_hold"))
+
 
 class TestClassifyFailurePolicy(unittest.TestCase):
     """Tests for pure policy classification."""
@@ -85,28 +93,8 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             status_reason,
             evidence,
         )
-        quarantine_feed = (
-            executed_action
-            is failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
-        )
-        pipeline_hold = (
-            executed_action
-            is failure_policy.ExecutedAction.RECORD_POST_BOOKMARK_PUBLISH_GAP
-        )
 
         self.assertIs(action, executed_action)
-        self.assertIs(
-            failure_policy.is_feed_quarantine(action),
-            quarantine_feed,
-        )
-        self.assertIs(
-            failure_policy.is_feed_budget_eligible(action),
-            quarantine_feed,
-        )
-        self.assertIs(
-            failure_policy.is_pipeline_hold(action),
-            pipeline_hold,
-        )
 
     def test_current_status_reasons_have_explicit_policy_routes(
         self,

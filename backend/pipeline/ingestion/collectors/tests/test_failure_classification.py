@@ -8,13 +8,13 @@ import unittest
 from typing import Any, cast
 
 from backend.pipeline.ingestion import failure_policy
+from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.collectors.failure_classification import (
     FailureInfo,
     ItemBatchOutcome,
     ItemFailure,
     collector_failure,
     missing_source_feed_id_failure,
-    owner_scope_for_status_reason,
     policy_evidence_for_status_reason,
 )
 from backend.pipeline.ingestion.models import FeedFailure
@@ -195,46 +195,13 @@ class TestItemBatchOutcome(unittest.TestCase):
             ),
         )
 
-    def test_owner_scope_for_status_reason_uses_status_enum(self) -> None:
-        self.assertIs(
-            owner_scope_for_status_reason(FeedStatusReason.SOURCE_UNREACHABLE),
-            failure_policy.OwnerScope.SOURCE_CLASS,
-        )
-        self.assertIs(
-            owner_scope_for_status_reason(
-                FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED
-            ),
-            failure_policy.OwnerScope.CREDENTIAL_SCOPE,
-        )
-        self.assertIs(
-            owner_scope_for_status_reason(
-                FeedStatusReason.SYSTEM_CONFIGURATION_INVALID
-            ),
-            failure_policy.OwnerScope.FEED,
-        )
-        self.assertIs(
-            owner_scope_for_status_reason(
-                FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID
-            ),
-            failure_policy.OwnerScope.SOURCE_CLASS,
-        )
-        self.assertIs(
-            owner_scope_for_status_reason(
-                FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED
-            ),
-            failure_policy.OwnerScope.CREDENTIAL_SCOPE,
-        )
-        self.assertIs(
-            owner_scope_for_status_reason(
-                FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID
-            ),
-            failure_policy.OwnerScope.SOURCE_CLASS,
-        )
-        self.assertIs(
-            owner_scope_for_status_reason(
-                FeedStatusReason.SYSTEM_COLLECTOR_ERROR
-            ),
-            failure_policy.OwnerScope.UNKNOWN,
+    def test_module_does_not_export_owner_scope_only_helper(self) -> None:
+        """Evidence construction is the public helper, not partial facts."""
+        self.assertFalse(
+            hasattr(
+                failure_classification,
+                "owner_scope_for_status_reason",
+            )
         )
 
     def test_policy_evidence_for_status_reason_preserves_endpoint_facts(
@@ -254,6 +221,50 @@ class TestItemBatchOutcome(unittest.TestCase):
                 endpoint_kind=failure_policy.EndpointKind.CALLS_MEDIA,
             ),
         )
+
+    def test_policy_evidence_for_status_reason_sets_owner_scope(
+        self,
+    ) -> None:
+        cases = (
+            (
+                FeedStatusReason.SOURCE_UNREACHABLE,
+                failure_policy.OwnerScope.SOURCE_CLASS,
+            ),
+            (
+                FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+                failure_policy.OwnerScope.CREDENTIAL_SCOPE,
+            ),
+            (
+                FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+                failure_policy.OwnerScope.FEED,
+            ),
+            (
+                FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
+                failure_policy.OwnerScope.SOURCE_CLASS,
+            ),
+            (
+                FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED,
+                failure_policy.OwnerScope.CREDENTIAL_SCOPE,
+            ),
+            (
+                FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
+                failure_policy.OwnerScope.SOURCE_CLASS,
+            ),
+            (
+                FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                failure_policy.OwnerScope.UNKNOWN,
+            ),
+        )
+
+        for status_reason, owner_scope in cases:
+            with self.subTest(status_reason=status_reason.value):
+                result = policy_evidence_for_status_reason(
+                    status_reason,
+                    failure_scope=failure_policy.FailureScope.OBSERVATION,
+                    endpoint_kind=failure_policy.EndpointKind.CALLS_API,
+                )
+
+                self.assertIs(result.owner_scope, owner_scope)
 
 
 class TestCollectorFailureCallSites(unittest.TestCase):

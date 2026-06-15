@@ -133,11 +133,6 @@ class _FailurePolicyRule:
         return self.evidence_pattern.matches(evidence)
 
 
-_QUARANTINE_FEED_ACTION = ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
-_NON_BUDGETED_RETRY_ACTION = ExecutedAction.RETRY_WITHOUT_FEED_BUDGET
-_PIPELINE_GAP_ACTION = ExecutedAction.RECORD_POST_BOOKMARK_PUBLISH_GAP
-
-
 def _policy_rule(
     *,
     status_reason: feed_store.FeedStatusReason,
@@ -234,7 +229,7 @@ _POLICY_RULES = (
         status_reason=(
             feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
         ),
-        executed_action=_PIPELINE_GAP_ACTION,
+        executed_action=ExecutedAction.RECORD_POST_BOOKMARK_PUBLISH_GAP,
         owner_scopes=frozenset({OwnerScope.PIPELINE}),
         failure_scopes=frozenset({FailureScope.PIPELINE}),
         endpoint_kinds=frozenset({EndpointKind.PUBSUB_PUBLISH}),
@@ -266,7 +261,7 @@ _POLICY_RULES = (
     ),
     _policy_rule(
         status_reason=feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-        executed_action=_NON_BUDGETED_RETRY_ACTION,
+        executed_action=ExecutedAction.RETRY_WITHOUT_FEED_BUDGET,
         owner_scopes=frozenset({OwnerScope.CREDENTIAL_SCOPE}),
         failure_scopes=frozenset(
             {
@@ -281,7 +276,7 @@ _POLICY_RULES = (
     ),
     _policy_rule(
         status_reason=feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-        executed_action=_QUARANTINE_FEED_ACTION,
+        executed_action=ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
         owner_scopes=frozenset({OwnerScope.FEED}),
         failure_scopes=frozenset({FailureScope.FEED}),
         endpoint_kinds=_FEED_CONFIG_ENDPOINTS,
@@ -289,7 +284,7 @@ _POLICY_RULES = (
     ),
     _policy_rule(
         status_reason=feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-        executed_action=_NON_BUDGETED_RETRY_ACTION,
+        executed_action=ExecutedAction.RETRY_WITHOUT_FEED_BUDGET,
         owner_scopes=frozenset({OwnerScope.FEED}),
         failure_scopes=frozenset(
             {
@@ -304,7 +299,7 @@ _POLICY_RULES = (
         status_reason=(
             feed_store.FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID
         ),
-        executed_action=_QUARANTINE_FEED_ACTION,
+        executed_action=ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
         owner_scopes=frozenset({OwnerScope.SOURCE_CLASS}),
         failure_scopes=_SOURCE_FAILURE_SCOPES,
         endpoint_kinds=_RUNTIME_CONFIG_ENDPOINTS,
@@ -314,7 +309,7 @@ _POLICY_RULES = (
         status_reason=(
             feed_store.FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED
         ),
-        executed_action=_NON_BUDGETED_RETRY_ACTION,
+        executed_action=ExecutedAction.RETRY_WITHOUT_FEED_BUDGET,
         owner_scopes=frozenset({OwnerScope.CREDENTIAL_SCOPE}),
         failure_scopes=frozenset(
             {
@@ -329,7 +324,7 @@ _POLICY_RULES = (
     ),
     _policy_rule(
         status_reason=feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
-        executed_action=_NON_BUDGETED_RETRY_ACTION,
+        executed_action=ExecutedAction.RETRY_WITHOUT_FEED_BUDGET,
         owner_scopes=frozenset({OwnerScope.SOURCE_CLASS}),
         failure_scopes=_SOURCE_FAILURE_SCOPES,
         endpoint_kinds=_SOURCE_PAYLOAD_ENDPOINTS,
@@ -337,12 +332,12 @@ _POLICY_RULES = (
     ),
     _policy_rule(
         status_reason=feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-        executed_action=_NON_BUDGETED_RETRY_ACTION,
+        executed_action=ExecutedAction.RETRY_WITHOUT_FEED_BUDGET,
         owner_scopes=frozenset({OwnerScope.UNKNOWN}),
     ),
     _policy_rule(
         status_reason=feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
-        executed_action=_NON_BUDGETED_RETRY_ACTION,
+        executed_action=ExecutedAction.RETRY_WITHOUT_FEED_BUDGET,
         owner_scopes=frozenset({OwnerScope.PIPELINE}),
         failure_scopes=frozenset({FailureScope.PIPELINE}),
         endpoint_kinds=frozenset(
@@ -360,7 +355,7 @@ _POLICY_RULES = (
     ),
     _policy_rule(
         status_reason=feed_store.FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
-        executed_action=_NON_BUDGETED_RETRY_ACTION,
+        executed_action=ExecutedAction.RETRY_WITHOUT_FEED_BUDGET,
         owner_scopes=frozenset({OwnerScope.UNKNOWN}),
     ),
 )
@@ -430,18 +425,3 @@ def find_policy_rule_conflicts(
                 )
             )
     return tuple(conflicts)
-
-
-def is_feed_quarantine(action: ExecutedAction) -> bool:
-    """Return whether an action should quarantine a feed."""
-    return action is ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
-
-
-def is_feed_budget_eligible(action: ExecutedAction) -> bool:
-    """Return whether an action may increment the feed failure budget."""
-    return is_feed_quarantine(action)
-
-
-def is_pipeline_hold(action: ExecutedAction) -> bool:
-    """Return whether an action belongs in a pipeline hold/replay lane."""
-    return action is ExecutedAction.RECORD_POST_BOOKMARK_PUBLISH_GAP
