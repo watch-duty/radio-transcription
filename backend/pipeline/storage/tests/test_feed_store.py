@@ -30,23 +30,20 @@ _STATUS_REASON_UPDATED_AT = datetime.datetime(
     2026, 5, 29, 12, 0, tzinfo=datetime.UTC
 )
 
-_PUBLIC_FEED_STATUS_REASON_VALUES = {
+_FEED_STATUS_REASON_VALUES = {
+    "pipeline_publish_after_bookmark_failed",
     "source_offline",
     "source_unreachable",
     "source_rate_limited",
     "system_authentication_failed",
     "system_configuration_invalid",
-    "system_collector_error",
-    "system_pipeline_error",
-    "system_unexpected_error",
-}
-
-_BACKEND_ONLY_FEED_STATUS_REASON_VALUES = {
-    "pipeline_publish_after_bookmark_failed",
     "system_source_configuration_invalid",
     "system_runtime_configuration_invalid",
     "system_credential_access_failed",
     "system_source_payload_invalid",
+    "system_collector_error",
+    "system_pipeline_error",
+    "system_unexpected_error",
 }
 
 _LEASE_ROW = {
@@ -144,8 +141,7 @@ class TestFeedStatusReason(unittest.TestCase):
     def test_canonical_reason_values(self) -> None:
         self.assertEqual(
             {reason.value for reason in FeedStatusReason},
-            _PUBLIC_FEED_STATUS_REASON_VALUES
-            | _BACKEND_ONLY_FEED_STATUS_REASON_VALUES,
+            _FEED_STATUS_REASON_VALUES,
         )
 
     def test_matches_openapi_spec(self) -> None:
@@ -165,15 +161,13 @@ class TestFeedStatusReason(unittest.TestCase):
             "enum", []
         )
 
-        expected_openapi_reasons = _PUBLIC_FEED_STATUS_REASON_VALUES | {
-            "unknown"
-        }
+        expected_openapi_reasons = _FEED_STATUS_REASON_VALUES | {"unknown"}
 
         self.assertEqual(
             set(backend_reasons),
             expected_openapi_reasons,
-            "The public status reasons exposed by frontend/api/openapi.yaml "
-            "do not match the backend compatibility subset. "
+            "The status reasons exposed by frontend/api/openapi.yaml "
+            "do not match the canonical backend vocabulary. "
             "Please run `yarn generate-spec` in frontend/api to sync the spec after updating TypeScript types.",
         )
 
@@ -373,7 +367,14 @@ class TestReportFailureSqlStatusReason(unittest.TestCase):
             "status_reason = COALESCE($8, 'system_unexpected_error')",
             sql,
         )
-        self.assertIn("status_reason_updated_at = NOW()", sql)
+        self.assertRegex(
+            sql,
+            r"status_reason_updated_at = CASE\s+"
+            r"WHEN status_reason IS DISTINCT FROM COALESCE"
+            r"\(\$8, 'system_unexpected_error'\)\s+"
+            r"THEN NOW\(\)\s+"
+            r"ELSE status_reason_updated_at\s+END",
+        )
         self.assertIn(
             "WHERE id = $1 AND worker_id = $2 AND fencing_token = $4",
             sql,
@@ -425,6 +426,20 @@ class TestNonBudgetedFailureSql(unittest.TestCase):
         )
 
         self.assertIn("RETURNING status::text, failure_count, retry_after", sql)
+
+    def test_non_budgeted_failure_sql_preserves_reason_change_time(
+        self,
+    ) -> None:
+        sql = _sql_without_comments(
+            feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL
+        )
+
+        self.assertRegex(
+            sql,
+            r"status_reason_updated_at = CASE\s+"
+            r"WHEN status_reason IS DISTINCT FROM \$5 THEN NOW\(\)\s+"
+            r"ELSE status_reason_updated_at\s+END",
+        )
 
     def test_failure_count_increment_isolated_to_report_failure_sql(
         self,

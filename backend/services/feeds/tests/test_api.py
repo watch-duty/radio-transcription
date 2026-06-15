@@ -38,8 +38,31 @@ class TestFeedsAPI(unittest.TestCase):
         """Clean up after each test."""
         app.dependency_overrides.clear()
 
-    def test_backend_only_status_reason_serializes_as_unknown(self) -> None:
-        """Backend-only status reasons do not leak through the public API."""
+    def test_status_reason_serializes_as_public_api_value(
+        self,
+    ) -> None:
+        """Every stored status reason is a public API status reason."""
+        for status_reason in FeedStatusReason:
+            with self.subTest(status_reason=status_reason.value):
+                feed = Feed.model_validate(
+                    {
+                        "id": uuid.uuid4(),
+                        "name": "Test Feed",
+                        "source_type": SourceType.BCFY_FEEDS,
+                        "source_feed_id": "123",
+                        "status": FeedStatus.FAILING,
+                        "last_heartbeat": None,
+                        "status_reason": status_reason.value,
+                    }
+                )
+
+                self.assertEqual(
+                    feed.model_dump(mode="json")["status_reason"],
+                    status_reason.value,
+                )
+
+    def test_unrecognized_status_reason_serializes_as_unknown(self) -> None:
+        """Unknown raw status reasons still use the public unknown fallback."""
         feed = Feed.model_validate(
             {
                 "id": uuid.uuid4(),
@@ -48,9 +71,7 @@ class TestFeedsAPI(unittest.TestCase):
                 "source_feed_id": "123",
                 "status": FeedStatus.FAILING,
                 "last_heartbeat": None,
-                "status_reason": (
-                    FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
-                ),
+                "status_reason": "backend_reason_added_without_mapping",
             }
         )
 

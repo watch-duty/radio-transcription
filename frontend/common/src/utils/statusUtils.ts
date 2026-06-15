@@ -5,11 +5,16 @@ import type {
 } from '../types/feeds.js';
 
 const BACKEND_FEED_STATUS_REASONS = new Set<BackendFeedStatusReason>([
+  'pipeline_publish_after_bookmark_failed',
   'source_offline',
   'source_unreachable',
   'source_rate_limited',
   'system_authentication_failed',
   'system_configuration_invalid',
+  'system_source_configuration_invalid',
+  'system_runtime_configuration_invalid',
+  'system_credential_access_failed',
+  'system_source_payload_invalid',
   'system_collector_error',
   'system_pipeline_error',
   'system_unexpected_error',

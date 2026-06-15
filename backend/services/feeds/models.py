@@ -18,11 +18,20 @@ class BackendFeedStatusReason(enum.StrEnum):
     """Public feed status reasons exposed through the feed service API."""
 
     UNKNOWN = "unknown"
+    PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED = (
+        "pipeline_publish_after_bookmark_failed"
+    )
     SOURCE_OFFLINE = "source_offline"
     SOURCE_UNREACHABLE = "source_unreachable"
     SOURCE_RATE_LIMITED = "source_rate_limited"
     SYSTEM_AUTHENTICATION_FAILED = "system_authentication_failed"
     SYSTEM_CONFIGURATION_INVALID = "system_configuration_invalid"
+    SYSTEM_SOURCE_CONFIGURATION_INVALID = "system_source_configuration_invalid"
+    SYSTEM_RUNTIME_CONFIGURATION_INVALID = (
+        "system_runtime_configuration_invalid"
+    )
+    SYSTEM_CREDENTIAL_ACCESS_FAILED = "system_credential_access_failed"
+    SYSTEM_SOURCE_PAYLOAD_INVALID = "system_source_payload_invalid"
     SYSTEM_COLLECTOR_ERROR = "system_collector_error"
     SYSTEM_PIPELINE_ERROR = "system_pipeline_error"
     SYSTEM_UNEXPECTED_ERROR = "system_unexpected_error"
