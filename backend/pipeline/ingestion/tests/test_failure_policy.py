@@ -166,10 +166,10 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
                 pipeline_publish_evidence,
-                failure_policy.PolicyIntent.QUARANTINE_FEED,
-                failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
-                True,
-                True,
+                failure_policy.PolicyIntent.HOLD_FOR_REPLAY,
+                failure_policy.ExecutedAction.SUPPRESS_FEED_QUARANTINE_RECORD_PUBLISH_GAP,
+                False,
+                False,
             ),
             (
                 feed_store.FeedStatusReason.SOURCE_OFFLINE,
@@ -198,10 +198,10 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
                 auth_evidence,
-                failure_policy.PolicyIntent.QUARANTINE_FEED,
-                failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
-                True,
-                True,
+                failure_policy.PolicyIntent.SUPPRESS_RETRY,
+                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                False,
+                False,
             ),
             (
                 feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
@@ -230,10 +230,10 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
                 source_payload_evidence,
-                failure_policy.PolicyIntent.QUARANTINE_FEED,
-                failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
-                True,
-                True,
+                failure_policy.PolicyIntent.SUPPRESS_RETRY,
+                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                False,
+                False,
             ),
             (
                 feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
@@ -305,6 +305,35 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             quarantine_feed=False,
         )
 
+    def test_provider_control_config_failures_are_non_budgeted(
+        self,
+    ) -> None:
+        """Provider/API config-looking failures stay retryable for v1."""
+        for endpoint_kind in (
+            failure_policy.EndpointKind.CALLS_API,
+            failure_policy.EndpointKind.FIRE_POLL,
+            failure_policy.EndpointKind.OPENMHZ_WS_UPGRADE,
+        ):
+            with self.subTest(endpoint_kind=endpoint_kind.value):
+                evidence = failure_policy.FailurePolicyEvidence(
+                    owner_scope=failure_policy.OwnerScope.FEED,
+                    failure_scope=failure_policy.FailureScope.FEED,
+                    endpoint_kind=endpoint_kind,
+                )
+
+                self._assert_decision(
+                    status_reason=(
+                        feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID
+                    ),
+                    evidence=evidence,
+                    policy_intent=failure_policy.PolicyIntent.SUPPRESS_RETRY,
+                    executed_action=(
+                        failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE
+                    ),
+                    feed_budget_eligible=False,
+                    quarantine_feed=False,
+                )
+
     def test_promoted_item_scope_source_and_auth_routes_are_explicit(
         self,
     ) -> None:
@@ -332,10 +361,10 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
                 item_auth_evidence,
-                failure_policy.PolicyIntent.QUARANTINE_FEED,
-                failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
-                True,
-                True,
+                failure_policy.PolicyIntent.SUPPRESS_RETRY,
+                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                False,
+                False,
             ),
             (
                 feed_store.FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED,
@@ -348,10 +377,10 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
                 item_source_evidence,
-                failure_policy.PolicyIntent.QUARANTINE_FEED,
-                failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
-                True,
-                True,
+                failure_policy.PolicyIntent.SUPPRESS_RETRY,
+                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                False,
+                False,
             ),
         )
 

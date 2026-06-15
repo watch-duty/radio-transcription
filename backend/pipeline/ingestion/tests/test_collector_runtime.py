@@ -1937,10 +1937,10 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         rt._store.report_feed_failure.assert_not_awaited()
         rt._store.release_feed.assert_awaited_once()
 
-    async def test_non_retryable_pubsub_failure_records_budgeted_publish_gap(
+    async def test_non_retryable_pubsub_failure_records_non_budgeted_publish_gap(
         self,
     ) -> None:
-        """Non-retryable Pub/Sub errors after bookmark use feed budget."""
+        """Pub/Sub errors after bookmark preserve gap telemetry without budget."""
 
         async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
@@ -1975,8 +1975,9 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress = mock.AsyncMock(side_effect=_bookmark)
-        rt._store.report_feed_failure.return_value = "failing"
+        rt._store.release_non_budgeted_failure.return_value = "failing"
         rt._releasing_feeds = set()
+        retry_after = datetime.datetime(2026, 6, 15, tzinfo=datetime.UTC)
 
         with (
             mock.patch(
@@ -1986,6 +1987,11 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
             mock.patch(
                 "backend.pipeline.ingestion.collector_runtime.gcp_helper.publish_audio_chunk",
                 mock.AsyncMock(side_effect=_publish),
+            ),
+            mock.patch.object(
+                CollectorRuntime,
+                "_non_budgeted_retry_after",
+                return_value=retry_after,
             ),
             self.assertLogs(
                 "backend.pipeline.ingestion.collector_runtime",
@@ -2000,20 +2006,15 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(call_order, ["upload", "bookmark", "publish"])
         rt._store.update_feed_progress.assert_awaited_once()
-        rt._store.report_feed_failure.assert_awaited_once()
-        rt._store.release_non_budgeted_failure.assert_not_awaited()
+        rt._store.report_feed_failure.assert_not_awaited()
+        rt._store.release_non_budgeted_failure.assert_awaited_once()
         mock_telemetry.emit_quarantine_event.assert_not_awaited()
-        ff_args = rt._store.report_feed_failure.await_args.args
-        ff_kwargs = rt._store.report_feed_failure.await_args.kwargs
-        self.assertEqual(
-            ff_args[3],
-            rt._collector_settings.feed_failure_threshold,
-        )
+        ff_kwargs = rt._store.release_non_budgeted_failure.await_args.kwargs
         self.assertIs(
             ff_kwargs["status_reason"],
             FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
         )
-        self.assertEqual(ff_kwargs["reason"], expected_reason)
+        self.assertEqual(ff_kwargs["retry_after"], retry_after)
         rt._store.release_feed.assert_not_awaited()
         records = [
             cast("dict[str, Any]", r.__dict__.get("json_fields"))
@@ -2022,21 +2023,23 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         ]
         event_types = {r["event_type"] for r in records}
         self.assertIn("feed_failure_policy_decision", event_types)
+        self.assertIn("post_bookmark_publish_failure", event_types)
         policy_record = next(
             r
             for r in records
             if r["event_type"] == "feed_failure_policy_decision"
         )
-        self.assertNotIn("retry_after", policy_record)
+        self.assertEqual(policy_record["retry_after"], retry_after.isoformat())
         self.assertTrue(policy_record["replay_missing"])
         self.assertTrue(policy_record["data_gap_known"])
+        self.assertEqual(policy_record["reason"], expected_reason)
         self.assertEqual(
             policy_record["policy_intent"],
-            "quarantine_feed",
+            "hold_for_replay",
         )
         self.assertEqual(
             policy_record["executed_action"],
-            "increment_feed_failure_budget",
+            "suppress_feed_quarantine_record_publish_gap",
         )
         self.assertEqual(policy_record["owner_scope"], "pipeline")
         self.assertEqual(policy_record["failure_scope"], "pipeline")
@@ -2460,10 +2463,10 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         self.assertIn("feed_failure_policy_decision", event_types)
         self.assertNotIn("post_bookmark_publish_failure", event_types)
 
-    async def test_pubsub_publish_failure_emits_quarantine_after_threshold(
+    async def test_pubsub_publish_failure_records_non_budgeted_publish_gap(
         self,
     ) -> None:
-        """Threshold-crossed Pub/Sub publish failures emit quarantine telemetry."""
+        """Pub/Sub publish failures do not emit quarantine telemetry."""
 
         async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
@@ -2473,14 +2476,20 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
-        rt._store.report_feed_failure.return_value = "quarantined"
+        rt._store.release_non_budgeted_failure.return_value = "failing"
         rt._releasing_feeds = set()
+        retry_after = datetime.datetime(2026, 6, 15, tzinfo=datetime.UTC)
 
         with (
             _mock_upload_audio(),
             mock.patch(
                 "backend.pipeline.ingestion.collector_runtime.gcp_helper.publish_audio_chunk",
                 mock.AsyncMock(side_effect=RuntimeError("pubsub boom")),
+            ),
+            mock.patch.object(
+                CollectorRuntime,
+                "_non_budgeted_retry_after",
+                return_value=retry_after,
             ),
             self.assertLogs(
                 "backend.pipeline.ingestion.collector_runtime",
@@ -2494,20 +2503,15 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             await rt._process_feed(_FEED)
 
         rt._store.update_feed_progress.assert_awaited_once()
-        rt._store.report_feed_failure.assert_awaited_once()
-        rt._store.release_non_budgeted_failure.assert_not_awaited()
-        kwargs = rt._store.report_feed_failure.await_args.kwargs
+        rt._store.report_feed_failure.assert_not_awaited()
+        rt._store.release_non_budgeted_failure.assert_awaited_once()
+        kwargs = rt._store.release_non_budgeted_failure.await_args.kwargs
         self.assertIs(
             kwargs["status_reason"],
             FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
         )
-        mock_telemetry.emit_quarantine_event.assert_awaited_once_with(
-            feed_id=str(_FEED_ID),
-            feed_name="Test Feed",
-            source_type="bcfy_feeds",
-            reason=kwargs["reason"],
-            status_reason="pipeline_publish_after_bookmark_failed",
-        )
+        self.assertEqual(kwargs["retry_after"], retry_after)
+        mock_telemetry.emit_quarantine_event.assert_not_awaited()
         rt._store.release_feed.assert_not_awaited()
         records = [
             cast("dict[str, Any]", r.__dict__.get("json_fields"))
@@ -2516,6 +2520,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         ]
         event_types = {r["event_type"] for r in records}
         self.assertIn("feed_failure_policy_decision", event_types)
+        self.assertIn("post_bookmark_publish_failure", event_types)
         policy_record = next(
             r
             for r in records
@@ -2529,10 +2534,10 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(policy_record["failure_scope"], "pipeline")
         self.assertEqual(policy_record["endpoint_kind"], "pubsub_publish")
         self.assertEqual(policy_record["pipeline_stage"], "pubsub_publish")
-        self.assertEqual(policy_record["policy_intent"], "quarantine_feed")
+        self.assertEqual(policy_record["policy_intent"], "hold_for_replay")
         self.assertEqual(
             policy_record["executed_action"],
-            "increment_feed_failure_budget",
+            "suppress_feed_quarantine_record_publish_gap",
         )
         self.assertTrue(policy_record["replay_missing"])
         self.assertTrue(policy_record["data_gap_known"])

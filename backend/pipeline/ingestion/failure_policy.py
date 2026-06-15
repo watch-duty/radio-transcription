@@ -99,6 +99,16 @@ class FailurePolicyDecision:
 
 
 @dataclasses.dataclass(frozen=True)
+class _PolicyRoute:
+    """Reusable verdict bundle for switching policy lanes deliberately."""
+
+    policy_intent: PolicyIntent
+    executed_action: ExecutedAction
+    feed_budget_eligible: bool
+    quarantine_feed: bool
+
+
+@dataclasses.dataclass(frozen=True)
 class _FailurePolicyRule:
     """One explicit status/evidence policy route."""
 
@@ -141,6 +151,45 @@ class _FailurePolicyRule:
         )
 
 
+_QUARANTINE_FEED_ROUTE = _PolicyRoute(
+    policy_intent=PolicyIntent.QUARANTINE_FEED,
+    executed_action=ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
+    feed_budget_eligible=True,
+    quarantine_feed=True,
+)
+
+_NON_BUDGETED_RETRY_ROUTE = _PolicyRoute(
+    policy_intent=PolicyIntent.SUPPRESS_RETRY,
+    executed_action=ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+    feed_budget_eligible=False,
+    quarantine_feed=False,
+)
+
+_PIPELINE_GAP_ROUTE = _PolicyRoute(
+    policy_intent=PolicyIntent.HOLD_FOR_REPLAY,
+    executed_action=ExecutedAction.SUPPRESS_FEED_QUARANTINE_RECORD_PUBLISH_GAP,
+    feed_budget_eligible=False,
+    quarantine_feed=False,
+)
+
+_TELEMETRY_GAP_ROUTE = _PolicyRoute(
+    policy_intent=PolicyIntent.TELEMETRY_GAP,
+    executed_action=ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP,
+    feed_budget_eligible=False,
+    quarantine_feed=False,
+)
+
+
+def _route_kwargs(route: _PolicyRoute) -> dict[str, object]:
+    """Return constructor kwargs for a reusable policy route."""
+    return {
+        "policy_intent": route.policy_intent,
+        "executed_action": route.executed_action,
+        "feed_budget_eligible": route.feed_budget_eligible,
+        "quarantine_feed": route.quarantine_feed,
+    }
+
+
 _SOURCE_CLASS_ENDPOINTS = frozenset(
     {
         EndpointKind.STREAM,
@@ -177,6 +226,11 @@ _AUTH_ENDPOINTS = frozenset(
 _FEED_CONFIG_ENDPOINTS = frozenset(
     {
         EndpointKind.FEED_CONFIGURATION,
+    }
+)
+
+_PROVIDER_CONTROL_CONFIG_ENDPOINTS = frozenset(
+    {
         EndpointKind.CALLS_API,
         EndpointKind.FIRE_POLL,
         EndpointKind.OPENMHZ_WS_UPGRADE,
@@ -214,10 +268,7 @@ _POLICY_RULES = (
         failure_scopes=frozenset({FailureScope.PIPELINE}),
         endpoint_kinds=frozenset({EndpointKind.PUBSUB_PUBLISH}),
         pipeline_stages=frozenset({PipelineStage.PUBSUB_PUBLISH}),
-        policy_intent=PolicyIntent.QUARANTINE_FEED,
-        executed_action=ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
-        feed_budget_eligible=True,
-        quarantine_feed=True,
+        **_route_kwargs(_PIPELINE_GAP_ROUTE),
     ),
     _FailurePolicyRule(
         status_reason=feed_store.FeedStatusReason.SOURCE_OFFLINE,
@@ -265,10 +316,7 @@ _POLICY_RULES = (
         ),
         endpoint_kinds=_AUTH_ENDPOINTS,
         pipeline_stages=frozenset({None}),
-        policy_intent=PolicyIntent.QUARANTINE_FEED,
-        executed_action=ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
-        feed_budget_eligible=True,
-        quarantine_feed=True,
+        **_route_kwargs(_NON_BUDGETED_RETRY_ROUTE),
     ),
     _FailurePolicyRule(
         status_reason=feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
@@ -276,10 +324,20 @@ _POLICY_RULES = (
         failure_scopes=frozenset({FailureScope.FEED}),
         endpoint_kinds=_FEED_CONFIG_ENDPOINTS,
         pipeline_stages=frozenset({None}),
-        policy_intent=PolicyIntent.QUARANTINE_FEED,
-        executed_action=ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
-        feed_budget_eligible=True,
-        quarantine_feed=True,
+        **_route_kwargs(_QUARANTINE_FEED_ROUTE),
+    ),
+    _FailurePolicyRule(
+        status_reason=feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        owner_scopes=frozenset({OwnerScope.FEED}),
+        failure_scopes=frozenset(
+            {
+                FailureScope.FEED,
+                FailureScope.OBSERVATION,
+            }
+        ),
+        endpoint_kinds=_PROVIDER_CONTROL_CONFIG_ENDPOINTS,
+        pipeline_stages=frozenset({None}),
+        **_route_kwargs(_NON_BUDGETED_RETRY_ROUTE),
     ),
     _FailurePolicyRule(
         status_reason=(
@@ -289,10 +347,7 @@ _POLICY_RULES = (
         failure_scopes=_SOURCE_FAILURE_SCOPES,
         endpoint_kinds=_RUNTIME_CONFIG_ENDPOINTS,
         pipeline_stages=frozenset({None}),
-        policy_intent=PolicyIntent.QUARANTINE_FEED,
-        executed_action=ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
-        feed_budget_eligible=True,
-        quarantine_feed=True,
+        **_route_kwargs(_QUARANTINE_FEED_ROUTE),
     ),
     _FailurePolicyRule(
         status_reason=(
@@ -309,10 +364,7 @@ _POLICY_RULES = (
         ),
         endpoint_kinds=_AUTH_ENDPOINTS,
         pipeline_stages=frozenset({None}),
-        policy_intent=PolicyIntent.SUPPRESS_RETRY,
-        executed_action=ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
-        feed_budget_eligible=False,
-        quarantine_feed=False,
+        **_route_kwargs(_NON_BUDGETED_RETRY_ROUTE),
     ),
     _FailurePolicyRule(
         status_reason=feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
@@ -320,18 +372,12 @@ _POLICY_RULES = (
         failure_scopes=_SOURCE_FAILURE_SCOPES,
         endpoint_kinds=_SOURCE_PAYLOAD_ENDPOINTS,
         pipeline_stages=frozenset({None}),
-        policy_intent=PolicyIntent.QUARANTINE_FEED,
-        executed_action=ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
-        feed_budget_eligible=True,
-        quarantine_feed=True,
+        **_route_kwargs(_NON_BUDGETED_RETRY_ROUTE),
     ),
     _FailurePolicyRule(
         status_reason=feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
         owner_scopes=frozenset({OwnerScope.UNKNOWN}),
-        policy_intent=PolicyIntent.TELEMETRY_GAP,
-        executed_action=ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP,
-        feed_budget_eligible=False,
-        quarantine_feed=False,
+        **_route_kwargs(_TELEMETRY_GAP_ROUTE),
     ),
     _FailurePolicyRule(
         status_reason=feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
@@ -349,18 +395,12 @@ _POLICY_RULES = (
                 PipelineStage.BOOKMARK_WRITE,
             }
         ),
-        policy_intent=PolicyIntent.SUPPRESS_RETRY,
-        executed_action=ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
-        feed_budget_eligible=False,
-        quarantine_feed=False,
+        **_route_kwargs(_NON_BUDGETED_RETRY_ROUTE),
     ),
     _FailurePolicyRule(
         status_reason=feed_store.FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
         owner_scopes=frozenset({OwnerScope.UNKNOWN}),
-        policy_intent=PolicyIntent.TELEMETRY_GAP,
-        executed_action=ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP,
-        feed_budget_eligible=False,
-        quarantine_feed=False,
+        **_route_kwargs(_TELEMETRY_GAP_ROUTE),
     ),
 )
 
