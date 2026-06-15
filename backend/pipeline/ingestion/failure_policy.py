@@ -51,12 +51,7 @@ class ExecutedAction(StrEnum):
 
     INCREMENT_FEED_FAILURE_BUDGET = "increment_feed_failure_budget"
     RELEASE_NON_BUDGETED_FAILURE = "release_non_budgeted_failure"
-    SUPPRESS_FEED_QUARANTINE_RECORD_PUBLISH_GAP = (
-        "suppress_feed_quarantine_record_publish_gap"
-    )
-    SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP = (
-        "suppress_feed_quarantine_telemetry_gap"
-    )
+    RECORD_POST_BOOKMARK_PUBLISH_GAP = "record_post_bookmark_publish_gap"
 
 
 class PipelineStage(StrEnum):
@@ -140,12 +135,7 @@ class _FailurePolicyRule:
 
 _QUARANTINE_FEED_ACTION = ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
 _NON_BUDGETED_RETRY_ACTION = ExecutedAction.RELEASE_NON_BUDGETED_FAILURE
-_PIPELINE_GAP_ACTION = (
-    ExecutedAction.SUPPRESS_FEED_QUARANTINE_RECORD_PUBLISH_GAP
-)
-_NON_BUDGETED_TELEMETRY_ACTION = (
-    ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP
-)
+_PIPELINE_GAP_ACTION = ExecutedAction.RECORD_POST_BOOKMARK_PUBLISH_GAP
 
 
 def _policy_rule(
@@ -347,7 +337,7 @@ _POLICY_RULES = (
     ),
     _policy_rule(
         status_reason=feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-        executed_action=_NON_BUDGETED_TELEMETRY_ACTION,
+        executed_action=_NON_BUDGETED_RETRY_ACTION,
         owner_scopes=frozenset({OwnerScope.UNKNOWN}),
     ),
     _policy_rule(
@@ -370,7 +360,7 @@ _POLICY_RULES = (
     ),
     _policy_rule(
         status_reason=feed_store.FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
-        executed_action=_NON_BUDGETED_TELEMETRY_ACTION,
+        executed_action=_NON_BUDGETED_RETRY_ACTION,
         owner_scopes=frozenset({OwnerScope.UNKNOWN}),
     ),
 )
@@ -384,7 +374,7 @@ def classify_failure_policy(
     for rule in _POLICY_RULES:
         if rule.matches(status_reason, evidence):
             return rule.executed_action
-    return ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP
+    return ExecutedAction.RELEASE_NON_BUDGETED_FAILURE
 
 
 def _iter_concrete_policy_evidence() -> tuple[FailurePolicyEvidence, ...]:
@@ -454,4 +444,4 @@ def is_feed_budget_eligible(action: ExecutedAction) -> bool:
 
 def is_pipeline_hold(action: ExecutedAction) -> bool:
     """Return whether an action belongs in a pipeline hold/replay lane."""
-    return action is ExecutedAction.SUPPRESS_FEED_QUARANTINE_RECORD_PUBLISH_GAP
+    return action is ExecutedAction.RECORD_POST_BOOKMARK_PUBLISH_GAP

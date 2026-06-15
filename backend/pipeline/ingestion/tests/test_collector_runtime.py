@@ -2036,7 +2036,7 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(policy_record["reason"], expected_reason)
         self.assertEqual(
             policy_record["executed_action"],
-            "suppress_feed_quarantine_record_publish_gap",
+            "record_post_bookmark_publish_gap",
         )
         self.assertFalse(
             {"policy_intent", "feed_budget_eligible", "quarantine_feed"}
@@ -2200,7 +2200,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(policy_records[0]["reason"], expected_reason)
 
-    async def test_untyped_runtime_exception_routes_to_telemetry_gap(
+    async def test_untyped_runtime_exception_uses_unknown_evidence(
         self,
     ) -> None:
         """Untyped runtime failures use UNKNOWN evidence and no feed budget."""
@@ -2248,7 +2248,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(policy_record["endpoint_kind"], "unknown")
         self.assertEqual(
             policy_record["executed_action"],
-            "suppress_feed_quarantine_telemetry_gap",
+            "release_non_budgeted_failure",
         )
         self.assertFalse(
             {"policy_intent", "feed_budget_eligible", "quarantine_feed"}
@@ -2543,7 +2543,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(policy_record["pipeline_stage"], "pubsub_publish")
         self.assertEqual(
             policy_record["executed_action"],
-            "suppress_feed_quarantine_record_publish_gap",
+            "record_post_bookmark_publish_gap",
         )
         self.assertFalse(
             {"policy_intent", "feed_budget_eligible", "quarantine_feed"}
@@ -2654,7 +2654,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json_fields["endpoint_kind"], "unknown")
         self.assertEqual(
             json_fields["executed_action"],
-            "suppress_feed_quarantine_telemetry_gap",
+            "release_non_budgeted_failure",
         )
         self.assertFalse(
             {"policy_intent", "feed_budget_eligible", "quarantine_feed"}

@@ -537,7 +537,7 @@ class FeedStore:
 
         This fenced path is for failures that should not consume the feed
         quarantine budget: post-capture pipeline failures, unannotated
-        collector failures, source-class incidents, and telemetry gaps. It
+        collector failures, source-class incidents, and unknown evidence. It
         leaves ``quarantine_reason`` untouched, resets any previous
         consecutive feed budget, and releases the lease for later retry.
         """

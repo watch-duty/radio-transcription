@@ -91,7 +91,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
         )
         pipeline_hold = (
             executed_action
-            is failure_policy.ExecutedAction.SUPPRESS_FEED_QUARANTINE_RECORD_PUBLISH_GAP
+            is failure_policy.ExecutedAction.RECORD_POST_BOOKMARK_PUBLISH_GAP
         )
 
         self.assertIs(action, executed_action)
@@ -174,7 +174,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
                 pipeline_publish_evidence,
-                failure_policy.ExecutedAction.SUPPRESS_FEED_QUARANTINE_RECORD_PUBLISH_GAP,
+                failure_policy.ExecutedAction.RECORD_POST_BOOKMARK_PUBLISH_GAP,
             ),
             (
                 feed_store.FeedStatusReason.SOURCE_OFFLINE,
@@ -219,7 +219,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
                 unknown_evidence,
-                failure_policy.ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP,
+                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
             ),
             (
                 feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
@@ -229,7 +229,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
                 unknown_evidence,
-                failure_policy.ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP,
+                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
             ),
         )
 
@@ -344,7 +344,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
                     executed_action=executed_action,
                 )
 
-    def test_wrong_evidence_combinations_fail_closed_to_telemetry_gap(
+    def test_wrong_evidence_combinations_fail_closed_to_non_budgeted_release(
         self,
     ) -> None:
         """Mismatched status/evidence pairs fail closed, not by owner scope."""
@@ -415,7 +415,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
                     status_reason=status_reason,
                     evidence=evidence,
                     executed_action=(
-                        failure_policy.ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP
+                        failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE
                     ),
                 )
 

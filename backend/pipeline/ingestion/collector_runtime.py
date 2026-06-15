@@ -805,7 +805,7 @@ class CollectorRuntime:
         )
 
     @staticmethod
-    def _telemetry_gap_evidence() -> failure_policy.FailurePolicyEvidence:
+    def _unknown_policy_evidence() -> failure_policy.FailurePolicyEvidence:
         """Build conservative evidence for unannotated failures."""
         return failure_policy.FailurePolicyEvidence(
             owner_scope=failure_policy.OwnerScope.UNKNOWN,
@@ -1529,7 +1529,7 @@ class CollectorRuntime:
                 fencing_token,
                 reason=reason,
                 status_reason=FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
-                evidence=self._telemetry_gap_evidence(),
+                evidence=self._unknown_policy_evidence(),
             )
             return
 
