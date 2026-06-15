@@ -63,10 +63,6 @@ _WS_UPGRADE_STATUS_RE = re.compile(
     r"Refused WebSockets upgrade:\s*(\d{3})",
     re.IGNORECASE,
 )
-_SENSITIVE_DIAGNOSTIC_VALUE_RE = re.compile(
-    r"\b(token|password|secret|api[_-]?key|authorization)=([^\s;]+)",
-    re.IGNORECASE,
-)
 _OPENMHZ_MEDIA_HOSTS = frozenset({"media.openmhz.com", "media2.openmhz.com"})
 _INVALID_OPENMHZ_MEDIA_URL_REASON = "invalid_openmhz_media_url"
 
@@ -103,7 +99,7 @@ def _transport_failure_from_exception(exc: Exception) -> FeedFailure | None:
     return collector_failure(
         status_reason,
         f"OpenMHz WebSocket upgrade failed with HTTP {status}; "
-        f"{_redact_diagnostic_text(exception_text)}",
+        f"{exception_text}",
         policy_evidence=policy_evidence_for_status_reason(
             status_reason,
             failure_scope=failure_policy.FailureScope.FEED,
@@ -122,11 +118,6 @@ def _exception_chain_text(exc: BaseException) -> str:
         parts.append(f"{type(current).__name__}: {current}")
         current = current.__cause__ or current.__context__
     return "; ".join(parts)
-
-
-def _redact_diagnostic_text(text: str) -> str:
-    """Redact credential-like values from OpenMHz transport diagnostics."""
-    return _SENSITIVE_DIAGNOSTIC_VALUE_RE.sub(r"\1=<redacted>", text)
 
 
 def _is_openmhz_media_url(url: str) -> bool:
@@ -381,8 +372,8 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                     raise last_transport_failure
                 exception_context = ""
                 if last_transport_exception is not None:
-                    exception_context = "; " + _redact_diagnostic_text(
-                        _exception_chain_text(last_transport_exception)
+                    exception_context = "; " + _exception_chain_text(
+                        last_transport_exception
                     )
                 raise collector_failure(
                     FeedStatusReason.SOURCE_UNREACHABLE,
