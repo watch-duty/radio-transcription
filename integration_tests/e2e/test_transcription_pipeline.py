@@ -7,7 +7,7 @@ from google.cloud import pubsub_v1
 
 from backend.pipeline.schema_types.continuous_audio_pb2 import ContinuousAudio
 from integration_tests.feed_utils import create_test_bcfy_feed  # noqa: F401
-from integration_tests.test_utils import verify_transcript_in_db
+from integration_tests.test_utils import verify_audio_segments_via_api
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,13 @@ def _publish_and_verify(
     )
     future.result()
 
-    return verify_transcript_in_db(feed_id)
+    return verify_audio_segments_via_api(
+        feed_id,
+        lambda s: (
+            any(ann["type"] == "TRANSCRIPT" for ann in s.get("annotations", []))
+            and any(ann["type"] == "EVALUATION" for ann in s.get("annotations", []))
+        ),
+    )
 
 
 def test_continuous_pipeline_flow(

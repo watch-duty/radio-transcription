@@ -20,7 +20,6 @@ from backend.services.audio_segments.models import AnnotationType
 class TestEvaluationEventProcessor(unittest.TestCase):
     def setUp(self) -> None:
         self.mock_service = MagicMock()
-        self.mock_transcripts_client = MagicMock()
         self.mock_publisher = MagicMock(spec=PubSubClient)
         self.mock_raw_publisher = MagicMock()
         self.mock_publisher.get_publisher.return_value = self.mock_raw_publisher
@@ -29,7 +28,6 @@ class TestEvaluationEventProcessor(unittest.TestCase):
 
         self.processor = EvaluationEventProcessor(
             evaluation_service=self.mock_service,
-            transcripts_client=self.mock_transcripts_client,
             publisher=self.mock_publisher,
             output_topic_path=self.output_topic_path,
             audio_segments_client=self.mock_audio_segments_client,
@@ -78,9 +76,6 @@ class TestEvaluationEventProcessor(unittest.TestCase):
 
         # Verify
         self.mock_service.evaluate.assert_called_once()
-        self.mock_transcripts_client.create_transcript.assert_called_once_with(
-            self.evaluated_payload
-        )
         self.mock_audio_segments_client.add_audio_segment_annotation.assert_called_once_with(
             audio_segment_id="12345",
             annotation_type=AnnotationType.EVALUATION,
@@ -114,9 +109,6 @@ class TestEvaluationEventProcessor(unittest.TestCase):
 
         # Verify
         self.mock_service.evaluate.assert_called_once()
-        self.mock_transcripts_client.create_transcript.assert_called_once_with(
-            self.evaluated_payload
-        )
         self.mock_audio_segments_client.add_audio_segment_annotation.assert_called_once_with(
             audio_segment_id="12345",
             annotation_type=AnnotationType.EVALUATION,
@@ -181,48 +173,6 @@ class TestEvaluationEventProcessor(unittest.TestCase):
         self.mock_service.evaluate.assert_called_once()
         self.mock_raw_publisher.publish.assert_not_called()
 
-    def test_process_event_create_transcript_exists_continues(
-        self,
-    ) -> None:
-        # Setup
-        self.evaluated_payload.evaluation_decisions.append("test_rule")
-        self.mock_service.evaluate.return_value = self.evaluated_payload
-
-        # Mock create_transcript to raise AlreadyExistsError
-
-        self.mock_transcripts_client.create_transcript.side_effect = (
-            AlreadyExistsError("12345")
-        )
-
-        # Encode proto to base64
-        serialized_audio = self.transcribed_audio.SerializeToString()
-        base64_audio = base64.b64encode(serialized_audio).decode("utf-8")
-
-        cloud_event = self._create_mock_event(
-            {"message": {"data": base64_audio}}
-        )
-
-        # Mock publisher build future
-        mock_future = MagicMock()
-        mock_future.result.return_value = "msg-123"
-        self.mock_raw_publisher.publish.return_value = mock_future
-
-        # Execute
-        self.processor.process_event(cloud_event)
-
-        # Verify
-        self.mock_service.evaluate.assert_called_once()
-        self.mock_transcripts_client.create_transcript.assert_called_once_with(
-            self.evaluated_payload
-        )
-        # Should still publish because it was flagged
-        self.mock_raw_publisher.publish.assert_called_once()
-        call_args = self.mock_raw_publisher.publish.call_args
-        self.assertEqual(call_args.args[0], self.output_topic_path)
-        self.assertEqual(
-            call_args.args[1], self.evaluated_payload.SerializeToString()
-        )
-        self.assertEqual(call_args.kwargs["ordering_key"], "1234")
 
     @patch("backend.pipeline.evaluation.processor.with_tracer_context")
     def test_process_event_uses_traceparent(
@@ -307,44 +257,9 @@ class TestEvaluationEventProcessor(unittest.TestCase):
 
         # Verify
         self.mock_service.evaluate.assert_called_once()
-        self.mock_transcripts_client.create_transcript.assert_called_once_with(
-            self.evaluated_payload
-        )
         # Should still publish because it was flagged, despite DB error
         self.mock_raw_publisher.publish.assert_called_once()
 
-    def test_process_event_with_none_audio_segments_client_succeeds(
-        self,
-    ) -> None:
-        # Setup
-        self.evaluated_payload.evaluation_decisions.append("test_rule")
-        self.mock_service.evaluate.return_value = self.evaluated_payload
-
-        # Set client to None
-        self.processor.audio_segments_client = None
-
-        # Encode proto to base64
-        serialized_audio = self.transcribed_audio.SerializeToString()
-        base64_audio = base64.b64encode(serialized_audio).decode("utf-8")
-
-        cloud_event = self._create_mock_event(
-            {"message": {"data": base64_audio}}
-        )
-
-        # Mock publisher build future
-        mock_future = MagicMock()
-        mock_future.result.return_value = "msg-123"
-        self.mock_raw_publisher.publish.return_value = mock_future
-
-        # Execute
-        self.processor.process_event(cloud_event)
-
-        # Verify
-        self.mock_service.evaluate.assert_called_once()
-        self.mock_transcripts_client.create_transcript.assert_called_once_with(
-            self.evaluated_payload
-        )
-        self.mock_raw_publisher.publish.assert_called_once()
 
 
 if __name__ == "__main__":
