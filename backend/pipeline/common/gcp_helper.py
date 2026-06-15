@@ -28,6 +28,7 @@ from backend.pipeline.common.constants import (
     GCS_RETRY_MIN_WAIT_SEC,
     GCS_UPLOAD_TIMEOUT_SEC,
 )
+from backend.pipeline.common.utils import generate_segment_id
 from backend.pipeline.schema_types.continuous_audio_pb2 import ContinuousAudio
 from backend.pipeline.schema_types.segmented_audio_pb2 import SegmentedAudio
 
@@ -317,8 +318,13 @@ def publish_audio_chunk_sync(
         if "segmented" in topic_path or (
             source_type and "bcfy_feeds" not in source_type.lower()
         ):
+            resolved_segment_id = (
+                generate_segment_id(feed_id, external_audio_segment_id)
+                if external_audio_segment_id
+                else (session_id or str(uuid.uuid4()))
+            )
             s_msg = SegmentedAudio(
-                segment_id=session_id or str(uuid.uuid4()),
+                segment_id=resolved_segment_id,
                 feed_id=feed_id,
                 feed_name=feed_name,
                 raw_audio_uri=gcs_uri,
@@ -408,8 +414,13 @@ async def publish_audio_chunk(
         if "segmented" in topic_path or (
             source_type and "bcfy_feeds" not in source_type.lower()
         ):
+            resolved_segment_id = (
+                generate_segment_id(feed_id, external_audio_segment_id)
+                if external_audio_segment_id
+                else (session_id or str(uuid.uuid4()))
+            )
             s_msg = SegmentedAudio(
-                segment_id=session_id or str(uuid.uuid4()),
+                segment_id=resolved_segment_id,
                 feed_id=feed_id,
                 feed_name=feed_name,
                 raw_audio_uri=gcs_uri,
