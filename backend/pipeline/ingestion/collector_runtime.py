@@ -776,15 +776,15 @@ class CollectorRuntime:
 
     @staticmethod
     def _policy_evidence_fields(
-        decision: failure_policy.FailurePolicyDecision,
+        evidence: failure_policy.FailurePolicyEvidence,
+        action: failure_policy.ExecutedAction,
     ) -> dict[str, object]:
         """Convert policy decision data to JSON-log-safe primitive fields."""
-        evidence = decision.evidence
         fields: dict[str, object] = {
             "owner_scope": evidence.owner_scope.value,
             "failure_scope": evidence.failure_scope.value,
             "endpoint_kind": evidence.endpoint_kind.value,
-            "executed_action": decision.executed_action.value,
+            "executed_action": action.value,
         }
         if evidence.pipeline_stage is not None:
             fields["pipeline_stage"] = evidence.pipeline_stage.value
@@ -815,25 +815,17 @@ class CollectorRuntime:
 
     @staticmethod
     def _is_feed_quarantine_decision(
-        decision: failure_policy.FailurePolicyDecision,
+        action: failure_policy.ExecutedAction,
     ) -> bool:
         """Return whether a decision is explicitly feed-actionable."""
-        return failure_policy.is_feed_quarantine(decision)
+        return failure_policy.is_feed_quarantine(action)
 
     @staticmethod
     def _is_post_bookmark_publish_gap(
-        decision: failure_policy.FailurePolicyDecision,
+        action: failure_policy.ExecutedAction,
     ) -> bool:
         """Return whether a pipeline decision represents a publish data gap."""
-        evidence = decision.evidence
-        return (
-            evidence.owner_scope is failure_policy.OwnerScope.PIPELINE
-            and evidence.failure_scope is failure_policy.FailureScope.PIPELINE
-            and evidence.endpoint_kind
-            is failure_policy.EndpointKind.PUBSUB_PUBLISH
-            and evidence.pipeline_stage
-            is failure_policy.PipelineStage.PUBSUB_PUBLISH
-        )
+        return failure_policy.is_pipeline_hold(action)
 
     @staticmethod
     def _non_budgeted_retry_after() -> datetime.datetime:
@@ -858,7 +850,7 @@ class CollectorRuntime:
         data_gap_known: bool = False,
     ) -> None:
         """Emit the canonical policy-decision telemetry event."""
-        decision = failure_policy.classify_failure_policy(
+        action = failure_policy.classify_failure_policy(
             status_reason,
             evidence,
         )
@@ -870,7 +862,7 @@ class CollectorRuntime:
             "status_reason": status_reason.value,
             "replay_missing": replay_missing,
             "data_gap_known": data_gap_known,
-            **self._policy_evidence_fields(decision),
+            **self._policy_evidence_fields(evidence, action),
         }
         if retry_after is not None:
             payload["retry_after"] = retry_after.isoformat()
@@ -887,7 +879,7 @@ class CollectorRuntime:
         evidence: failure_policy.FailurePolicyEvidence,
     ) -> None:
         """Emit explicit evidence that capture/bookmark succeeded but publish did not."""
-        decision = failure_policy.classify_failure_policy(
+        action = failure_policy.classify_failure_policy(
             status_reason,
             evidence,
         )
@@ -899,7 +891,7 @@ class CollectorRuntime:
             "status_reason": status_reason.value,
             "replay_missing": True,
             "data_gap_known": True,
-            **self._policy_evidence_fields(decision),
+            **self._policy_evidence_fields(evidence, action),
         }
         logger.error(
             "Post-bookmark publish failure",
@@ -1472,11 +1464,11 @@ class CollectorRuntime:
             return
 
         except FeedFailure as e:
-            decision = failure_policy.classify_failure_policy(
+            action = failure_policy.classify_failure_policy(
                 e.status_reason,
                 e.policy_evidence,
             )
-            if self._is_feed_quarantine_decision(decision):
+            if self._is_feed_quarantine_decision(action):
                 await self._record_feed_failure(
                     feed,
                     worker_id,
@@ -1497,12 +1489,12 @@ class CollectorRuntime:
             return
 
         except _PipelineFailure as e:
-            decision = failure_policy.classify_failure_policy(
+            action = failure_policy.classify_failure_policy(
                 e.status_reason,
                 e.policy_evidence,
             )
-            replay_missing = self._is_post_bookmark_publish_gap(decision)
-            if self._is_feed_quarantine_decision(decision):
+            replay_missing = self._is_post_bookmark_publish_gap(action)
+            if self._is_feed_quarantine_decision(action):
                 await self._record_feed_failure(
                     feed,
                     worker_id,

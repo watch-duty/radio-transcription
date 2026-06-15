@@ -78,43 +78,16 @@ class FailurePolicyEvidence:
 
 
 @dataclasses.dataclass(frozen=True)
-class FailurePolicyDecision:
-    """Pure policy decision derived from status reason plus evidence."""
+class _EvidencePattern:
+    """Rule-side matcher for concrete failure policy evidence."""
 
-    status_reason: feed_store.FeedStatusReason
-    evidence: FailurePolicyEvidence
-    executed_action: ExecutedAction
-
-
-@dataclasses.dataclass(frozen=True)
-class PolicyRuleConflict:
-    """Concrete evidence that matches multiple policy actions."""
-
-    status_reason: feed_store.FeedStatusReason
-    evidence: FailurePolicyEvidence
-    executed_actions: frozenset[ExecutedAction]
-    matching_rule_indexes: tuple[int, ...]
-
-
-@dataclasses.dataclass(frozen=True)
-class _FailurePolicyRule:
-    """One explicit status/evidence policy route."""
-
-    status_reason: feed_store.FeedStatusReason
-    executed_action: ExecutedAction
     owner_scopes: frozenset[OwnerScope] | None = None
     failure_scopes: frozenset[FailureScope] | None = None
     endpoint_kinds: frozenset[EndpointKind] | None = None
     pipeline_stages: frozenset[PipelineStage | None] | None = None
 
-    def matches(
-        self,
-        status_reason: feed_store.FeedStatusReason,
-        evidence: FailurePolicyEvidence,
-    ) -> bool:
-        """Return whether this rule explicitly covers the evidence."""
-        if status_reason is not self.status_reason:
-            return False
+    def matches(self, evidence: FailurePolicyEvidence) -> bool:
+        """Return whether concrete evidence satisfies this pattern."""
         if (
             self.owner_scopes is not None
             and evidence.owner_scope not in self.owner_scopes
@@ -134,6 +107,35 @@ class _FailurePolicyRule:
             self.pipeline_stages is not None
             and evidence.pipeline_stage not in self.pipeline_stages
         )
+
+
+@dataclasses.dataclass(frozen=True)
+class PolicyRuleConflict:
+    """Concrete evidence that matches multiple policy actions."""
+
+    status_reason: feed_store.FeedStatusReason
+    evidence: FailurePolicyEvidence
+    executed_actions: frozenset[ExecutedAction]
+    matching_rule_indexes: tuple[int, ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class _FailurePolicyRule:
+    """One explicit status/evidence policy route."""
+
+    status_reason: feed_store.FeedStatusReason
+    evidence_pattern: _EvidencePattern
+    executed_action: ExecutedAction
+
+    def matches(
+        self,
+        status_reason: feed_store.FeedStatusReason,
+        evidence: FailurePolicyEvidence,
+    ) -> bool:
+        """Return whether this rule explicitly covers the evidence."""
+        if status_reason is not self.status_reason:
+            return False
+        return self.evidence_pattern.matches(evidence)
 
 
 _QUARANTINE_FEED_ACTION = ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
@@ -158,11 +160,13 @@ def _policy_rule(
     """Build a rule without losing field types."""
     return _FailurePolicyRule(
         status_reason=status_reason,
+        evidence_pattern=_EvidencePattern(
+            owner_scopes=owner_scopes,
+            failure_scopes=failure_scopes,
+            endpoint_kinds=endpoint_kinds,
+            pipeline_stages=pipeline_stages,
+        ),
         executed_action=executed_action,
-        owner_scopes=owner_scopes,
-        failure_scopes=failure_scopes,
-        endpoint_kinds=endpoint_kinds,
-        pipeline_stages=pipeline_stages,
     )
 
 
@@ -246,29 +250,29 @@ _POLICY_RULES = (
         endpoint_kinds=frozenset({EndpointKind.PUBSUB_PUBLISH}),
         pipeline_stages=frozenset({PipelineStage.PUBSUB_PUBLISH}),
     ),
-    _FailurePolicyRule(
+    _policy_rule(
         status_reason=feed_store.FeedStatusReason.SOURCE_OFFLINE,
+        executed_action=ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
         owner_scopes=frozenset({OwnerScope.SOURCE_CLASS}),
         failure_scopes=_SOURCE_FAILURE_SCOPES,
         endpoint_kinds=_SOURCE_CLASS_ENDPOINTS,
         pipeline_stages=frozenset({None}),
-        executed_action=ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
     ),
-    _FailurePolicyRule(
+    _policy_rule(
         status_reason=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+        executed_action=ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
         owner_scopes=frozenset({OwnerScope.SOURCE_CLASS}),
         failure_scopes=_SOURCE_FAILURE_SCOPES,
         endpoint_kinds=_SOURCE_CLASS_ENDPOINTS,
         pipeline_stages=frozenset({None}),
-        executed_action=ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
     ),
-    _FailurePolicyRule(
+    _policy_rule(
         status_reason=feed_store.FeedStatusReason.SOURCE_RATE_LIMITED,
+        executed_action=ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
         owner_scopes=frozenset({OwnerScope.SOURCE_CLASS}),
         failure_scopes=_SOURCE_FAILURE_SCOPES,
         endpoint_kinds=_SOURCE_CLASS_ENDPOINTS,
         pipeline_stages=frozenset({None}),
-        executed_action=ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
     ),
     _policy_rule(
         status_reason=feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
@@ -372,38 +376,15 @@ _POLICY_RULES = (
 )
 
 
-def _decision_from_rule(
-    status_reason: feed_store.FeedStatusReason,
-    evidence: FailurePolicyEvidence,
-    rule: _FailurePolicyRule,
-) -> FailurePolicyDecision:
-    return FailurePolicyDecision(
-        status_reason=status_reason,
-        evidence=evidence,
-        executed_action=rule.executed_action,
-    )
-
-
-def _non_budgeted_telemetry_decision(
-    status_reason: feed_store.FeedStatusReason,
-    evidence: FailurePolicyEvidence,
-) -> FailurePolicyDecision:
-    return FailurePolicyDecision(
-        status_reason=status_reason,
-        evidence=evidence,
-        executed_action=ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP,
-    )
-
-
 def classify_failure_policy(
     status_reason: feed_store.FeedStatusReason,
     evidence: FailurePolicyEvidence,
-) -> FailurePolicyDecision:
-    """Classify structured evidence into a side-effect-free policy decision."""
+) -> ExecutedAction:
+    """Classify structured evidence into a side-effect-free policy action."""
     for rule in _POLICY_RULES:
         if rule.matches(status_reason, evidence):
-            return _decision_from_rule(status_reason, evidence, rule)
-    return _non_budgeted_telemetry_decision(status_reason, evidence)
+            return rule.executed_action
+    return ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP
 
 
 def _iter_concrete_policy_evidence() -> tuple[FailurePolicyEvidence, ...]:
@@ -461,21 +442,16 @@ def find_policy_rule_conflicts(
     return tuple(conflicts)
 
 
-def is_feed_quarantine(decision: FailurePolicyDecision) -> bool:
-    """Return whether a decision should quarantine a feed."""
-    return (
-        decision.executed_action is ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
-    )
+def is_feed_quarantine(action: ExecutedAction) -> bool:
+    """Return whether an action should quarantine a feed."""
+    return action is ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
 
 
-def is_feed_budget_eligible(decision: FailurePolicyDecision) -> bool:
-    """Return whether a decision may increment the feed failure budget."""
-    return is_feed_quarantine(decision)
+def is_feed_budget_eligible(action: ExecutedAction) -> bool:
+    """Return whether an action may increment the feed failure budget."""
+    return is_feed_quarantine(action)
 
 
-def is_pipeline_hold(decision: FailurePolicyDecision) -> bool:
-    """Return whether a decision belongs in a pipeline hold/replay lane."""
-    return (
-        decision.executed_action
-        is ExecutedAction.SUPPRESS_FEED_QUARANTINE_RECORD_PUBLISH_GAP
-    )
+def is_pipeline_hold(action: ExecutedAction) -> bool:
+    """Return whether an action belongs in a pipeline hold/replay lane."""
+    return action is ExecutedAction.SUPPRESS_FEED_QUARANTINE_RECORD_PUBLISH_GAP

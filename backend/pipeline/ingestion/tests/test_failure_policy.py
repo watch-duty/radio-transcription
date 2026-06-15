@@ -37,20 +37,35 @@ class TestFailurePolicyEvidence(unittest.TestCase):
             hasattr(failure_policy.FailurePolicyEvidence, forbidden_field)
         )
 
-    def test_decision_contains_only_policy_action(self) -> None:
-        """Decision owns the action; derived helpers own boolean views."""
+    def test_evidence_pattern_contains_only_matcher_fields(self) -> None:
+        """Rule patterns keep wildcard matching separate from facts."""
         fields = {
             field.name
-            for field in dataclasses.fields(
-                failure_policy.FailurePolicyDecision
-            )
+            for field in dataclasses.fields(failure_policy._EvidencePattern)
+        }
+
+        self.assertEqual(
+            fields,
+            {
+                "owner_scopes",
+                "failure_scopes",
+                "endpoint_kinds",
+                "pipeline_stages",
+            },
+        )
+
+    def test_rule_contains_status_pattern_and_action(self) -> None:
+        """Rules own status, evidence pattern, and action."""
+        fields = {
+            field.name
+            for field in dataclasses.fields(failure_policy._FailurePolicyRule)
         }
 
         self.assertEqual(
             fields,
             {
                 "status_reason",
-                "evidence",
+                "evidence_pattern",
                 "executed_action",
             },
         )
@@ -59,14 +74,14 @@ class TestFailurePolicyEvidence(unittest.TestCase):
 class TestClassifyFailurePolicy(unittest.TestCase):
     """Tests for pure policy classification."""
 
-    def _assert_decision(
+    def _assert_action(
         self,
         *,
         status_reason: feed_store.FeedStatusReason,
         evidence: failure_policy.FailurePolicyEvidence,
         executed_action: failure_policy.ExecutedAction,
     ) -> None:
-        decision = failure_policy.classify_failure_policy(
+        action = failure_policy.classify_failure_policy(
             status_reason,
             evidence,
         )
@@ -79,19 +94,17 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             is failure_policy.ExecutedAction.SUPPRESS_FEED_QUARANTINE_RECORD_PUBLISH_GAP
         )
 
-        self.assertIs(decision.status_reason, status_reason)
-        self.assertIs(decision.evidence, evidence)
-        self.assertIs(decision.executed_action, executed_action)
+        self.assertIs(action, executed_action)
         self.assertIs(
-            failure_policy.is_feed_quarantine(decision),
+            failure_policy.is_feed_quarantine(action),
             quarantine_feed,
         )
         self.assertIs(
-            failure_policy.is_feed_budget_eligible(decision),
+            failure_policy.is_feed_budget_eligible(action),
             quarantine_feed,
         )
         self.assertIs(
-            failure_policy.is_pipeline_hold(decision),
+            failure_policy.is_pipeline_hold(action),
             pipeline_hold,
         )
 
@@ -230,7 +243,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             executed_action,
         ) in cases:
             with self.subTest(status_reason=status_reason.value):
-                self._assert_decision(
+                self._assert_action(
                     status_reason=status_reason,
                     evidence=evidence,
                     executed_action=executed_action,
@@ -247,7 +260,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             pipeline_stage=failure_policy.PipelineStage.BOOKMARK_WRITE,
         )
 
-        self._assert_decision(
+        self._assert_action(
             status_reason=feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
             evidence=evidence,
             executed_action=(
@@ -271,7 +284,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
                     endpoint_kind=endpoint_kind,
                 )
 
-                self._assert_decision(
+                self._assert_action(
                     status_reason=(
                         feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID
                     ),
@@ -325,7 +338,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             executed_action,
         ) in cases:
             with self.subTest(status_reason=status_reason.value):
-                self._assert_decision(
+                self._assert_action(
                     status_reason=status_reason,
                     evidence=evidence,
                     executed_action=executed_action,
@@ -398,7 +411,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
                 status_reason=status_reason.value,
                 owner_scope=evidence.owner_scope.value,
             ):
-                self._assert_decision(
+                self._assert_action(
                     status_reason=status_reason,
                     evidence=evidence,
                     executed_action=(
@@ -413,29 +426,37 @@ class TestClassifyFailurePolicy(unittest.TestCase):
                 status_reason=(
                     feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID
                 ),
+                evidence_pattern=failure_policy._EvidencePattern(
+                    owner_scopes=frozenset({failure_policy.OwnerScope.FEED}),
+                    failure_scopes=frozenset(
+                        {failure_policy.FailureScope.FEED}
+                    ),
+                    endpoint_kinds=frozenset(
+                        {failure_policy.EndpointKind.FEED_CONFIGURATION}
+                    ),
+                    pipeline_stages=frozenset({None}),
+                ),
                 executed_action=(
                     failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
                 ),
-                owner_scopes=frozenset({failure_policy.OwnerScope.FEED}),
-                failure_scopes=frozenset({failure_policy.FailureScope.FEED}),
-                endpoint_kinds=frozenset(
-                    {failure_policy.EndpointKind.FEED_CONFIGURATION}
-                ),
-                pipeline_stages=frozenset({None}),
             ),
             failure_policy._FailurePolicyRule(
                 status_reason=(
                     feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID
                 ),
+                evidence_pattern=failure_policy._EvidencePattern(
+                    owner_scopes=frozenset({failure_policy.OwnerScope.FEED}),
+                    failure_scopes=frozenset(
+                        {failure_policy.FailureScope.FEED}
+                    ),
+                    endpoint_kinds=frozenset(
+                        {failure_policy.EndpointKind.FEED_CONFIGURATION}
+                    ),
+                    pipeline_stages=frozenset({None}),
+                ),
                 executed_action=(
                     failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE
                 ),
-                owner_scopes=frozenset({failure_policy.OwnerScope.FEED}),
-                failure_scopes=frozenset({failure_policy.FailureScope.FEED}),
-                endpoint_kinds=frozenset(
-                    {failure_policy.EndpointKind.FEED_CONFIGURATION}
-                ),
-                pipeline_stages=frozenset({None}),
             ),
         )
 
