@@ -20,6 +20,7 @@ from backend.pipeline.ingestion.collector_runtime import CollectorRuntime
 from backend.pipeline.ingestion.collectors.failure_classification import (
     missing_source_feed_id_failure,
 )
+from backend.pipeline.ingestion.failure_classifiers import pubsub
 from backend.pipeline.ingestion.models import (
     CapturedChunk,
     CaptureResources,
@@ -1936,10 +1937,10 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         rt._store.report_feed_failure.assert_not_awaited()
         rt._store.release_feed.assert_awaited_once()
 
-    async def test_non_retryable_pubsub_failure_records_publish_gap_without_feed_budget(
+    async def test_non_retryable_pubsub_failure_records_budgeted_publish_gap(
         self,
     ) -> None:
-        """Non-retryable Pub/Sub errors after bookmark do not burn feed budget."""
+        """Non-retryable Pub/Sub errors after bookmark use feed budget."""
 
         async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
@@ -1954,16 +1955,19 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
             call_order.append("bookmark")
             return True
 
+        msg = (
+            "400 Invalid data in message: Message failed schema "
+            'validation. [reason: "INVALID_BINARY_PROTO_MESSAGE" '
+            'metadata { key: "message" value: "Message failed '
+            'schema validation" } metadata { key: "revisionInfo" '
+            'value: "Could not parse binary message." }]'
+        )
+        publish_error = google_exceptions.InvalidArgument(msg)
+        expected_reason = pubsub.publish_failure_reason(publish_error)
+
         async def _publish(*_args: object, **_kwargs: object) -> str:
             call_order.append("publish")
-            msg = (
-                "400 Invalid data in message: Message failed schema "
-                'validation. [reason: "INVALID_BINARY_PROTO_MESSAGE" '
-                'metadata { key: "message" value: "Message failed '
-                'schema validation" } metadata { key: "revisionInfo" '
-                'value: "Could not parse binary message." }]'
-            )
-            raise google_exceptions.InvalidArgument(msg)
+            raise publish_error
 
         rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._shutdown = asyncio.Event()
@@ -1971,9 +1975,8 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress = mock.AsyncMock(side_effect=_bookmark)
-        rt._store.release_non_budgeted_failure.return_value = "failing"
+        rt._store.report_feed_failure.return_value = "failing"
         rt._releasing_feeds = set()
-        retry_after = datetime.datetime(2026, 6, 15, tzinfo=datetime.UTC)
 
         with (
             mock.patch(
@@ -1988,11 +1991,6 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
                 "backend.pipeline.ingestion.collector_runtime",
                 level=logging.INFO,
             ) as cm,
-            mock.patch.object(
-                CollectorRuntime,
-                "_non_budgeted_retry_after",
-                return_value=retry_after,
-            ),
             mock.patch(
                 "backend.pipeline.ingestion.collector_runtime.quarantine_telemetry"
             ) as mock_telemetry,
@@ -2002,15 +2000,20 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(call_order, ["upload", "bookmark", "publish"])
         rt._store.update_feed_progress.assert_awaited_once()
-        rt._store.report_feed_failure.assert_not_awaited()
-        rt._store.release_non_budgeted_failure.assert_awaited_once()
+        rt._store.report_feed_failure.assert_awaited_once()
+        rt._store.release_non_budgeted_failure.assert_not_awaited()
         mock_telemetry.emit_quarantine_event.assert_not_awaited()
-        nb_kwargs = rt._store.release_non_budgeted_failure.await_args.kwargs
+        ff_args = rt._store.report_feed_failure.await_args.args
+        ff_kwargs = rt._store.report_feed_failure.await_args.kwargs
+        self.assertEqual(
+            ff_args[3],
+            rt._collector_settings.feed_failure_threshold,
+        )
         self.assertIs(
-            nb_kwargs["status_reason"],
+            ff_kwargs["status_reason"],
             FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
         )
-        self.assertEqual(nb_kwargs["retry_after"], retry_after)
+        self.assertEqual(ff_kwargs["reason"], expected_reason)
         rt._store.release_feed.assert_not_awaited()
         records = [
             cast("dict[str, Any]", r.__dict__.get("json_fields"))
@@ -2019,38 +2022,26 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         ]
         event_types = {r["event_type"] for r in records}
         self.assertIn("feed_failure_policy_decision", event_types)
-        self.assertIn("post_bookmark_publish_failure", event_types)
-        gap_record = next(
-            r
-            for r in records
-            if r["event_type"] == "post_bookmark_publish_failure"
-        )
         policy_record = next(
             r
             for r in records
             if r["event_type"] == "feed_failure_policy_decision"
         )
-        self.assertIn("retry_after", policy_record)
+        self.assertNotIn("retry_after", policy_record)
         self.assertTrue(policy_record["replay_missing"])
         self.assertTrue(policy_record["data_gap_known"])
         self.assertEqual(
             policy_record["policy_intent"],
-            "hold_for_replay",
+            "quarantine_feed",
         )
         self.assertEqual(
             policy_record["executed_action"],
-            "suppress_feed_quarantine_record_publish_gap",
+            "increment_feed_failure_budget",
         )
-        self.assertTrue(gap_record["replay_missing"])
-        self.assertTrue(gap_record["data_gap_known"])
-        self.assertEqual(
-            gap_record["policy_intent"],
-            "hold_for_replay",
-        )
-        self.assertEqual(
-            gap_record["executed_action"],
-            "suppress_feed_quarantine_record_publish_gap",
-        )
+        self.assertEqual(policy_record["owner_scope"], "pipeline")
+        self.assertEqual(policy_record["failure_scope"], "pipeline")
+        self.assertEqual(policy_record["endpoint_kind"], "pubsub_publish")
+        self.assertEqual(policy_record["pipeline_stage"], "pubsub_publish")
 
 
 class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
@@ -2330,16 +2321,6 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
             (
-                "shared_auth",
-                FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-                "auth_failed",
-                failure_policy.FailurePolicyEvidence(
-                    owner_scope=failure_policy.OwnerScope.CREDENTIAL_SCOPE,
-                    failure_scope=failure_policy.FailureScope.CLASS,
-                    endpoint_kind=failure_policy.EndpointKind.CALLS_API,
-                ),
-            ),
-            (
                 "source_class",
                 FeedStatusReason.SOURCE_OFFLINE,
                 "provider_offline",
@@ -2459,8 +2440,10 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         self.assertIn("feed_failure_policy_decision", event_types)
         self.assertNotIn("post_bookmark_publish_failure", event_types)
 
-    async def test_pubsub_publish_failure_records_pipeline_error(self) -> None:
-        """Pub/Sub failures after a valid chunk use the publish stage tag."""
+    async def test_pubsub_publish_failure_emits_quarantine_after_threshold(
+        self,
+    ) -> None:
+        """Threshold-crossed Pub/Sub publish failures emit quarantine telemetry."""
 
         async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
@@ -2470,9 +2453,8 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
-        rt._store.release_non_budgeted_failure.return_value = "failing"
+        rt._store.report_feed_failure.return_value = "quarantined"
         rt._releasing_feeds = set()
-        retry_after = datetime.datetime(2026, 6, 15, tzinfo=datetime.UTC)
 
         with (
             _mock_upload_audio(),
@@ -2480,27 +2462,32 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
                 "backend.pipeline.ingestion.collector_runtime.gcp_helper.publish_audio_chunk",
                 mock.AsyncMock(side_effect=RuntimeError("pubsub boom")),
             ),
-            mock.patch.object(
-                CollectorRuntime,
-                "_non_budgeted_retry_after",
-                return_value=retry_after,
-            ),
             self.assertLogs(
                 "backend.pipeline.ingestion.collector_runtime",
                 level=logging.INFO,
             ) as cm,
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.quarantine_telemetry"
+            ) as mock_telemetry,
         ):
+            mock_telemetry.emit_quarantine_event = mock.AsyncMock()
             await rt._process_feed(_FEED)
 
         rt._store.update_feed_progress.assert_awaited_once()
-        rt._store.report_feed_failure.assert_not_awaited()
-        rt._store.release_non_budgeted_failure.assert_awaited_once()
-        kwargs = rt._store.release_non_budgeted_failure.await_args.kwargs
+        rt._store.report_feed_failure.assert_awaited_once()
+        rt._store.release_non_budgeted_failure.assert_not_awaited()
+        kwargs = rt._store.report_feed_failure.await_args.kwargs
         self.assertIs(
             kwargs["status_reason"],
             FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
         )
-        self.assertEqual(kwargs["retry_after"], retry_after)
+        mock_telemetry.emit_quarantine_event.assert_awaited_once_with(
+            feed_id=str(_FEED_ID),
+            feed_name="Test Feed",
+            source_type="bcfy_feeds",
+            reason=kwargs["reason"],
+            status_reason="pipeline_publish_after_bookmark_failed",
+        )
         rt._store.release_feed.assert_not_awaited()
         records = [
             cast("dict[str, Any]", r.__dict__.get("json_fields"))
@@ -2509,27 +2496,26 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         ]
         event_types = {r["event_type"] for r in records}
         self.assertIn("feed_failure_policy_decision", event_types)
-        self.assertIn("post_bookmark_publish_failure", event_types)
-        gap_record = next(
+        policy_record = next(
             r
             for r in records
-            if r["event_type"] == "post_bookmark_publish_failure"
+            if r["event_type"] == "feed_failure_policy_decision"
         )
         self.assertEqual(
-            gap_record["status_reason"],
+            policy_record["status_reason"],
             "pipeline_publish_after_bookmark_failed",
         )
-        self.assertEqual(gap_record["owner_scope"], "pipeline")
-        self.assertEqual(gap_record["failure_scope"], "pipeline")
-        self.assertEqual(gap_record["endpoint_kind"], "pubsub_publish")
-        self.assertEqual(gap_record["pipeline_stage"], "pubsub_publish")
-        self.assertEqual(gap_record["policy_intent"], "hold_for_replay")
+        self.assertEqual(policy_record["owner_scope"], "pipeline")
+        self.assertEqual(policy_record["failure_scope"], "pipeline")
+        self.assertEqual(policy_record["endpoint_kind"], "pubsub_publish")
+        self.assertEqual(policy_record["pipeline_stage"], "pubsub_publish")
+        self.assertEqual(policy_record["policy_intent"], "quarantine_feed")
         self.assertEqual(
-            gap_record["executed_action"],
-            "suppress_feed_quarantine_record_publish_gap",
+            policy_record["executed_action"],
+            "increment_feed_failure_budget",
         )
-        self.assertTrue(gap_record["replay_missing"])
-        self.assertTrue(gap_record["data_gap_known"])
+        self.assertTrue(policy_record["replay_missing"])
+        self.assertTrue(policy_record["data_gap_known"])
 
     async def test_bookmark_write_failure_records_pipeline_error(self) -> None:
         """Bookmark failures after a valid chunk use the bookmark stage tag."""
