@@ -189,19 +189,19 @@ configuration problem that prevents ingestion from operating correctly. It is
 not specific to one feed row, even when first observed while processing one
 feed.
 
-### Pipeline-Owned Quarantine
+### Pipeline-Owned Failure
 
-A quarantine caused by a deterministic post-capture ingestion failure that retry
-is not expected to repair, such as an internal publish/schema consistency
-problem. The source feed may be healthy; the quarantine exists to stop repeated
-claiming until the pipeline repair is made.
+A post-capture ingestion failure after source capture has succeeded or
+partially succeeded. The source feed may be healthy, so v1 keeps these failures
+outside the feed quarantine budget while preserving visibility for repair and
+replay work.
 
 ### Post-Bookmark Publish Failure
 
 A pipeline-owned failure where captured audio was uploaded and the feed cursor
-was advanced, but the corresponding publish did not complete. It is
-quarantine-budgeted in v1 because normal retry no longer represents the full
-recovery workflow.
+was advanced, but the corresponding publish did not complete. It records
+pipeline-gap telemetry and releases the feed through the non-budgeted retry
+path in v1.
 
 ### Retryable Pipeline Failure
 
@@ -212,8 +212,9 @@ operator intervention. It remains visible but does not count toward quarantine.
 
 An explicit authentication or authorization refusal that remains after
 collector-local retry, token refresh, or reconnect policy has been exhausted.
-It is quarantine-budgeted when the evidence shows retry alone is not expected
-to restore progress.
+It remains non-budgeted in v1 because credential/session/provider state can
+recover outside feed-row action, and policy can later move the route if a
+specific terminal auth family proves deterministic.
 
 ### Credential Access Failure
 
@@ -224,9 +225,9 @@ has not necessarily rejected the credential.
 ### Source Payload Contract Failure
 
 A failure where the source returned apparently successful data, but its shape or
-encoding does not match the collector contract. It is quarantine-budgeted when
-repeating the same request is not expected to produce processable data.
-Avoid: ambiguous collector error, item failure.
+encoding does not match the collector contract. It remains non-budgeted in v1
+because malformed provider responses can be transient or source-side. Avoid:
+ambiguous collector error, item failure.
 
 ### Ambiguous Item Failure
 
