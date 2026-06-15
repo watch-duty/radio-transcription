@@ -46,7 +46,7 @@ STAT-14, TEST-11, TEST-12
 
 Plans:
 **Wave 1**
-- [ ] 04-01: Add policy-table tests and implement explicit fail-closed routing.
+- [x] 04-01: Add policy-table tests and implement explicit fail-closed routing.
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 04-02: Add split backend status reasons and update status/evidence owner

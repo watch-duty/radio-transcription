@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Policy Merge
-status: Ready to execute
-stopped_at: Phase 4 planning complete
-last_updated: "2026-06-15T16:30:49.674Z"
-last_activity: 2026-06-15 -- Phase 4 planning complete
+status: executing
+stopped_at: Phase 4 context gathered
+last_updated: "2026-06-15T16:45:39.413Z"
+last_activity: 2026-06-15
 progress:
   total_phases: 3
   completed_phases: 0
-  total_plans: 7
-  completed_plans: 0
-  percent: 0
+  total_plans: 2
+  completed_plans: 1
+  percent: 50
 ---
 
 # Project State
@@ -22,15 +22,15 @@ See: `.planning/PROJECT.md` (updated 2026-06-15)
 
 **Core value:** On-call should be alerted only when retry is not expected to
 fix the ingestion failure and a human/operator repair is required.
-**Current focus:** v1.1 Policy Merge — strict status/evidence quarantine
+**Current focus:** Phase 04 — strict-policy-table-and-status-vocabulary
 policy routing
 
 ## Current Position
 
-Phase: 04
-Plan: —
+Phase: 04 (strict-policy-table-and-status-vocabulary) — EXECUTING
+Plan: 2 of 2
 Status: Ready to execute
-Last activity: 2026-06-15 -- Phase 4 planning complete
+Last activity: 2026-06-15
 
 ## Performance Metrics
 
@@ -56,6 +56,7 @@ Last activity: 2026-06-15 -- Phase 4 planning complete
 | Phase 03 P01 | 3min | 2 tasks | 3 files |
 | Phase 03 P02 | 5min | 2 tasks | 5 files |
 | Phase 03 P03 | 6 min | 2 tasks | 1 files |
+| Phase 04 P01 | 6 min | 3 tasks | 2 files |
 
 ## Accumulated Context
 

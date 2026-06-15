@@ -7,10 +7,10 @@
 
 ### Policy Routing
 
-- [ ] **POL-11**: Failure policy routing is encoded as explicit `status_reason + evidence` rows.
-- [ ] **POL-12**: Only explicit quarantine-budgeted rows can return `INCREMENT_FEED_FAILURE_BUDGET`.
-- [ ] **POL-13**: Unmatched or unsupported `status_reason + evidence` combinations route to telemetry-gap non-budgeted release.
-- [ ] **POL-14**: Routing continues to use structured status/evidence fields and does not add `reason_family`.
+- [x] **POL-11**: Failure policy routing is encoded as explicit `status_reason + evidence` rows.
+- [x] **POL-12**: Only explicit quarantine-budgeted rows can return `INCREMENT_FEED_FAILURE_BUDGET`.
+- [x] **POL-13**: Unmatched or unsupported `status_reason + evidence` combinations route to telemetry-gap non-budgeted release.
+- [x] **POL-14**: Routing continues to use structured status/evidence fields and does not add `reason_family`.
 
 ### Status Reason Splits
 
@@ -37,8 +37,8 @@
 
 ### Verification
 
-- [ ] **TEST-11**: Policy tests cover every current status reason's intended budget route.
-- [ ] **TEST-12**: Policy tests prove unmatched combinations fall back to telemetry-gap non-budgeted release.
+- [x] **TEST-11**: Policy tests cover every current status reason's intended budget route.
+- [x] **TEST-12**: Policy tests prove unmatched combinations fall back to telemetry-gap non-budgeted release.
 - [ ] **TEST-13**: Runtime tests prove Pub/Sub publish-after-bookmark failure calls `report_feed_failure(...)`.
 - [ ] **TEST-14**: Runtime tests prove non-budgeted source, ambiguous collector, GCS/bookmark, credential-access, and telemetry-gap cases do not call `report_feed_failure(...)`.
 - [ ] **TEST-15**: Collector tests prove the new split enum values are produced by Calls, Fire Notifications, Icecast, and OpenMHz where applicable.
@@ -79,10 +79,10 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| POL-11 | Phase 4 | Pending |
-| POL-12 | Phase 4 | Pending |
-| POL-13 | Phase 4 | Pending |
-| POL-14 | Phase 4 | Pending |
+| POL-11 | Phase 4 | Complete |
+| POL-12 | Phase 4 | Complete |
+| POL-13 | Phase 4 | Complete |
+| POL-14 | Phase 4 | Complete |
 | STAT-11 | Phase 4 | Pending |
 | STAT-12 | Phase 4 | Pending |
 | STAT-13 | Phase 4 | Pending |
@@ -97,8 +97,8 @@
 | COMP-12 | Phase 6 | Pending |
 | COMP-13 | Phase 6 | Pending |
 | COMP-14 | Phase 6 | Pending |
-| TEST-11 | Phase 4 | Pending |
-| TEST-12 | Phase 4 | Pending |
+| TEST-11 | Phase 4 | Complete |
+| TEST-12 | Phase 4 | Complete |
 | TEST-13 | Phase 5 | Pending |
 | TEST-14 | Phase 5 | Pending |
 | TEST-15 | Phase 5 | Pending |
