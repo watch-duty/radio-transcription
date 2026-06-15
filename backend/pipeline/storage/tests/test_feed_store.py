@@ -401,6 +401,16 @@ class TestNonBudgetedFailureSql(unittest.TestCase):
         self.assertNotIn("quarantine_reason", sql)
         self.assertNotIn("failure_count + 1", sql)
 
+    def test_non_budgeted_failure_sql_does_not_write_quarantine_reason(
+        self,
+    ) -> None:
+        sql = _sql_without_comments(
+            feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL
+        )
+
+        self.assertNotIn("quarantine_reason =", sql)
+        self.assertNotIn("COALESCE", sql)
+
     def test_non_budgeted_failure_sql_returns_status_diagnostics(self) -> None:
         sql = _sql_without_comments(
             feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL

@@ -2330,6 +2330,26 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
                     endpoint_kind=failure_policy.EndpointKind.STREAM,
                 ),
             ),
+            (
+                "credential_access",
+                FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED,
+                "calls_jwt_secret_access_failed",
+                failure_policy.FailurePolicyEvidence(
+                    owner_scope=failure_policy.OwnerScope.CREDENTIAL_SCOPE,
+                    failure_scope=failure_policy.FailureScope.FEED,
+                    endpoint_kind=failure_policy.EndpointKind.CALLS_API,
+                ),
+            ),
+            (
+                "collector_error",
+                FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                "collector_error",
+                failure_policy.FailurePolicyEvidence(
+                    owner_scope=failure_policy.OwnerScope.UNKNOWN,
+                    failure_scope=failure_policy.FailureScope.UNKNOWN,
+                    endpoint_kind=failure_policy.EndpointKind.UNKNOWN,
+                ),
+            ),
         )
 
         for name, status_reason, reason, evidence in cases:
