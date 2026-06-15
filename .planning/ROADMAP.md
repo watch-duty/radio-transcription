@@ -102,7 +102,7 @@ focused backend checks prove the milestone is ready for code review.
 
 Plans:
 - [x] 06-01: Update backend collector documentation for final v1.1 semantics.
-- [ ] 06-02: Run focused verification and update implementation summary/docs.
+- [x] 06-02: Run focused verification and update implementation summary/docs.
 
 ## Progress
 
@@ -113,7 +113,7 @@ Phases execute in numeric order: 4 -> 5 -> 6
 |-------|----------------|--------|-----------|
 | 4. Strict Policy Table And Status Vocabulary | 2/2 | Complete | 2026-06-15 |
 | 5. Producer And Runtime Routing Merge | 3/3 | Complete | 2026-06-15 |
-| 6. Compatibility And Verification | 0/2 | Pending | — |
+| 6. Compatibility And Verification | 2/2 | Complete | 2026-06-15 |
 
 ---
 *Roadmap created: 2026-06-15*

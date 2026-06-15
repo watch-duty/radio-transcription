@@ -32,7 +32,7 @@
 
 - [x] **DOC-11**: Collector authoring documentation reflects final v1.1
   Pub/Sub post-bookmark publish semantics.
-- [ ] **VER-11**: Phase 6 closeout records that API/UI/generated
+- [x] **VER-11**: Phase 6 closeout records that API/UI/generated
   compatibility is deferred from this backend-only milestone.
 
 ### Verification
@@ -42,7 +42,7 @@
 - [x] **TEST-13**: Runtime tests prove Pub/Sub publish-after-bookmark failure calls `report_feed_failure(...)`.
 - [x] **TEST-14**: Runtime tests prove non-budgeted source, ambiguous collector, GCS/bookmark, credential-access, and telemetry-gap cases do not call `report_feed_failure(...)`.
 - [x] **TEST-15**: Collector tests prove the new split enum values are produced by Calls, Fire Notifications, Icecast, and OpenMHz where applicable.
-- [ ] **TEST-17**: Final focused backend verification and diff hygiene pass
+- [x] **TEST-17**: Final focused backend verification and diff hygiene pass
   after documentation closeout.
 
 ## Future Requirements
@@ -104,13 +104,13 @@
 | RUN-15 | Phase 5 | Complete |
 | RUN-16 | Phase 5 | Complete |
 | DOC-11 | Phase 6 | Complete |
-| VER-11 | Phase 6 | Pending |
+| VER-11 | Phase 6 | Complete |
 | TEST-11 | Phase 4 | Complete |
 | TEST-12 | Phase 4 | Complete |
 | TEST-13 | Phase 5 | Complete |
 | TEST-14 | Phase 5 | Complete |
 | TEST-15 | Phase 5 | Complete |
-| TEST-17 | Phase 6 | Pending |
+| TEST-17 | Phase 6 | Complete |
 | COMP-11 | Follow-up | Deferred |
 | COMP-12 | Follow-up | Deferred |
 | COMP-13 | Follow-up | Deferred |
