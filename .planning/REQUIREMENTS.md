@@ -46,14 +46,14 @@
 
 ### Tests
 
-- [ ] **TEST-01**: Storage tests prove non-budgeted release writes `status='failing'`, `failure_count=0`, `retry_after`, and status reason.
-- [ ] **TEST-02**: Storage tests prove non-budgeted release does not write `quarantine_reason`.
-- [ ] **TEST-03**: Runtime tests prove Pub/Sub post-bookmark publish failure does not call `report_feed_failure(...)`.
-- [ ] **TEST-04**: Runtime tests prove Pub/Sub post-bookmark publish failure emits both policy and publish-gap telemetry.
-- [ ] **TEST-05**: Runtime tests prove source-offline/auth/rate-limit/unknown cases use the non-budgeted path.
-- [ ] **TEST-06**: Runtime tests prove unannotated failures route to telemetry gap.
-- [ ] **TEST-07**: Runtime tests prove feed-config quarantine-eligible failures still use the budgeted path.
-- [ ] **TEST-08**: Runtime tests prove non-budgeted paths never emit `feed_quarantined`.
+- [x] **TEST-01**: Storage tests prove non-budgeted release writes `status='failing'`, `failure_count=0`, `retry_after`, and status reason.
+- [x] **TEST-02**: Storage tests prove non-budgeted release does not write `quarantine_reason`.
+- [x] **TEST-03**: Runtime tests prove Pub/Sub post-bookmark publish failure does not call `report_feed_failure(...)`.
+- [x] **TEST-04**: Runtime tests prove Pub/Sub post-bookmark publish failure emits both policy and publish-gap telemetry.
+- [x] **TEST-05**: Runtime tests prove source-offline/auth/rate-limit/unknown cases use the non-budgeted path.
+- [x] **TEST-06**: Runtime tests prove unannotated failures route to telemetry gap.
+- [x] **TEST-07**: Runtime tests prove feed-config quarantine-eligible failures still use the budgeted path.
+- [x] **TEST-08**: Runtime tests prove non-budgeted paths never emit `feed_quarantined`.
 
 ## v2 Requirements
 
@@ -118,14 +118,14 @@
 | TEL-03 | Phase 2 | Complete |
 | TEL-04 | Phase 2 | Complete |
 | TEL-05 | Phase 2 | Complete |
-| TEST-01 | Phase 3 | Pending |
-| TEST-02 | Phase 3 | Pending |
-| TEST-03 | Phase 3 | Pending |
-| TEST-04 | Phase 3 | Pending |
-| TEST-05 | Phase 3 | Pending |
-| TEST-06 | Phase 3 | Pending |
-| TEST-07 | Phase 3 | Pending |
-| TEST-08 | Phase 3 | Pending |
+| TEST-01 | Phase 3 | Complete |
+| TEST-02 | Phase 3 | Complete |
+| TEST-03 | Phase 3 | Complete |
+| TEST-04 | Phase 3 | Complete |
+| TEST-05 | Phase 3 | Complete |
+| TEST-06 | Phase 3 | Complete |
+| TEST-07 | Phase 3 | Complete |
+| TEST-08 | Phase 3 | Complete |
 
 **Coverage:**
 - v1 requirements: 32 total
