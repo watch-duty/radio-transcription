@@ -97,16 +97,16 @@ async def list_audio_segments(
 async def get_audio_segment_histogram(
     request: Request,
     start_time: datetime.datetime,
+    end_time: datetime.datetime,
     feed_ids: Annotated[list[str] | None, Query()] = None,
-    end_time: datetime.datetime | None = None,
     buckets: int = 288,
     *,
     is_alert: bool | None = None,
 ) -> AudioSegmentHistogramResponse:
     """Clip-density histogram over a time window.
 
-    start_time is required; omit end_time for an open-ended upper bound
-    (defaults to now). buckets defaults to 288 equal-width bins.
+    start_time and end_time are required; buckets defaults to 288 equal-width
+    bins.
     """
     service: AudioSegmentService = request.app.state.audio_segment_service
     try:

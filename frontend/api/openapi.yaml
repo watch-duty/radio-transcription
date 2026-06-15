@@ -585,7 +585,6 @@ components:
           type: string
         endTime:
           type: string
-          description: ISO-8601; open-ended (defaults to now) when omitted.
         buckets:
           type: integer
           format: int32
@@ -594,6 +593,7 @@ components:
           type: boolean
       required:
         - startTime
+        - endTime
       type: object
       additionalProperties: false
   securitySchemes:
@@ -1856,10 +1856,9 @@ paths:
           required: true
           schema:
             type: string
-        - description: ISO-8601; open-ended (defaults to now) when omitted.
-          in: query
+        - in: query
           name: endTime
-          required: false
+          required: true
           schema:
             type: string
         - in: query

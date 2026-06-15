@@ -70,7 +70,7 @@ describe('useAudioSegmentHistogram', () => {
     expect(result.current.bucketDurationMs).toBe(5 * MIN);
   });
 
-  it('requests start = now − 24h with no end and 288 buckets when live', async () => {
+  it('requests [now − 24h, now] with 288 buckets when live', async () => {
     mockGetHistogram.mockResolvedValue({ buckets: [] });
 
     renderHook(
@@ -82,7 +82,7 @@ describe('useAudioSegmentHistogram', () => {
     const [, , startTime, endTime, buckets, isAlert] =
       mockGetHistogram.mock.calls[0];
     expect(startTime).toBe(LIVE - DAY);
-    expect(endTime).toBeUndefined();
+    expect(endTime).toBe(LIVE);
     expect(buckets).toBe(288);
     expect(isAlert).toBe(true);
   });

@@ -56,7 +56,7 @@ class AudioSegmentService:
     async def get_audio_segment_histogram(
         self,
         start_time: datetime.datetime,
-        end_time: datetime.datetime | None = None,
+        end_time: datetime.datetime,
         feed_ids: list[str] | None = None,
         buckets: int = 288,
         *,

@@ -50,7 +50,7 @@ export function useAudioSegmentHistogram({
         searchedFeedId ?? '',
         token ?? '',
         startMs,
-        anchorMs ?? undefined,
+        endMs,
         HISTOGRAM_BUCKETS,
         isAlert(alertFilter)
       );

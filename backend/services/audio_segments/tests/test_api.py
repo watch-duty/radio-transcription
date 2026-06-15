@@ -117,7 +117,7 @@ class TestAudioSegmentsAPI(unittest.TestCase):
         )
 
     def test_get_audio_segment_histogram_defaults(self) -> None:
-        """start_time only: end_time/buckets/is_alert default through."""
+        """start_time + end_time only: feed_ids/buckets/is_alert default through."""
         self.mock_service.get_audio_segment_histogram.return_value = (
             AudioSegmentHistogramResponse(
                 buckets=[
@@ -134,7 +134,10 @@ class TestAudioSegmentsAPI(unittest.TestCase):
 
         response = self.client.get(
             "/v1/audio_segment_histogram",
-            params={"start_time": "2026-01-01T00:00:00Z"},
+            params={
+                "start_time": "2026-01-01T00:00:00Z",
+                "end_time": "2026-01-02T00:00:00Z",
+            },
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -144,7 +147,7 @@ class TestAudioSegmentsAPI(unittest.TestCase):
         self.assertTrue(data["buckets"][0]["is_alert"])
         self.mock_service.get_audio_segment_histogram.assert_called_once_with(
             start_time=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
-            end_time=None,
+            end_time=datetime.datetime(2026, 1, 2, tzinfo=datetime.UTC),
             feed_ids=None,
             buckets=288,
             is_alert=None,
@@ -176,11 +179,21 @@ class TestAudioSegmentsAPI(unittest.TestCase):
             is_alert=True,
         )
 
-    def test_get_audio_segment_histogram_requires_start_time(self) -> None:
-        """Omitting start_time is a 422 validation error."""
-        response = self.client.get("/v1/audio_segment_histogram")
+    def test_get_audio_segment_histogram_requires_start_and_end_time(
+        self,
+    ) -> None:
+        """start_time and end_time are both required (422 if either is absent)."""
+        no_params = self.client.get("/v1/audio_segment_histogram")
         self.assertEqual(
-            response.status_code, status.HTTP_422_UNPROCESSABLE_CONTENT
+            no_params.status_code, status.HTTP_422_UNPROCESSABLE_CONTENT
+        )
+
+        no_end = self.client.get(
+            "/v1/audio_segment_histogram",
+            params={"start_time": "2026-01-01T00:00:00Z"},
+        )
+        self.assertEqual(
+            no_end.status_code, status.HTTP_422_UNPROCESSABLE_CONTENT
         )
 
     def test_get_audio_segment_histogram_value_error_is_400(self) -> None:
@@ -191,7 +204,11 @@ class TestAudioSegmentsAPI(unittest.TestCase):
 
         response = self.client.get(
             "/v1/audio_segment_histogram",
-            params={"start_time": "2026-01-01T00:00:00Z", "buckets": 0},
+            params={
+                "start_time": "2026-01-01T00:00:00Z",
+                "end_time": "2026-01-02T00:00:00Z",
+                "buckets": 0,
+            },
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 

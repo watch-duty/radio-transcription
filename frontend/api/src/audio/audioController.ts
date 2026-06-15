@@ -124,8 +124,7 @@ export class ListAudioSegmentsQueryParams {
 
 export class AudioSegmentHistogramQueryParams {
   startTime!: string;
-  /** ISO-8601; open-ended (defaults to now) when omitted. */
-  endTime?: string;
+  endTime!: string;
   /**
    * @isInt
    */
@@ -198,7 +197,7 @@ export class AudioController extends Controller {
       const queryParams = new URLSearchParams();
       queryParams.append('feed_ids', [feedId].toString());
       queryParams.append('start_time', query.startTime);
-      if (query.endTime) queryParams.append('end_time', query.endTime);
+      queryParams.append('end_time', query.endTime);
       if (query.buckets) {
         queryParams.append('buckets', query.buckets.toString());
       }

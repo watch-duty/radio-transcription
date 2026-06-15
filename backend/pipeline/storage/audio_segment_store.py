@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import datetime
 import json
 import uuid
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import asyncpg
 from pydantic import TypeAdapter
@@ -21,6 +21,9 @@ from backend.services.audio_segments.models import (
     AudioSegment,
     HistogramBucket,
 )
+
+if TYPE_CHECKING:
+    import datetime
 
 annotation_adapter = TypeAdapter(Annotation)
 
@@ -211,7 +214,7 @@ class AudioSegmentStore:
     async def get_audio_segment_histogram(
         self,
         start_time: datetime.datetime,
-        end_time: datetime.datetime | None = None,
+        end_time: datetime.datetime,
         feed_ids: list[str] | None = None,
         buckets: int = 288,
         *,
@@ -219,16 +222,13 @@ class AudioSegmentStore:
     ) -> list[HistogramBucket]:
         """Clip-density histogram over [start_time, end_time) by start_timestamp.
 
-        end_time defaults to now (UTC); the window is split into `buckets`
-        equal-width bins. Empty bins are omitted. Each bucket's is_alert is true
-        if any clip in it is an alert. An inverted window matches no rows.
+        The window is split into `buckets` equal-width bins. Empty bins are
+        omitted. Each bucket's is_alert is true if any clip in it is an alert.
+        An inverted window matches no rows.
         """
         if buckets < 1:
             msg = f"buckets must be >= 1, got {buckets}"
             raise ValueError(msg)
-
-        if end_time is None:
-            end_time = datetime.datetime.now(datetime.UTC)
 
         feed_uuids = None
         if feed_ids:

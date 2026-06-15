@@ -6,22 +6,16 @@ export async function getAudioSegmentHistogram(
   feedId: string,
   token: string,
   startTime: number | string,
-  endTime?: number | string,
+  endTime: number | string,
   buckets?: number,
   isAlert?: boolean
 ): Promise<{ buckets: HistogramBucket[] }> {
   let url = `${import.meta.env.VITE_API_BASE_URL}/api/v1/audioSegments/${feedId}/histogram`;
   const params = new URLSearchParams();
-  const startStr =
-    typeof startTime === 'number'
-      ? new Date(startTime).toISOString()
-      : startTime;
-  params.append('startTime', startStr);
-  if (endTime) {
-    const endStr =
-      typeof endTime === 'number' ? new Date(endTime).toISOString() : endTime;
-    params.append('endTime', endStr);
-  }
+  const toIso = (t: number | string) =>
+    typeof t === 'number' ? new Date(t).toISOString() : t;
+  params.append('startTime', toIso(startTime));
+  params.append('endTime', toIso(endTime));
   if (buckets) params.append('buckets', buckets.toString());
   // Can be true/false, just not undefined.
   if (isAlert !== undefined) params.append('isAlert', isAlert.toString());

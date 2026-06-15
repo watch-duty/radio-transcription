@@ -190,7 +190,7 @@ describe('getAudioSegmentHistogram', () => {
     vi.clearAllMocks();
   });
 
-  it('should convert buckets and forward start_time and buckets', async () => {
+  it('should convert buckets and forward start_time, end_time, and buckets', async () => {
     mockRequest.mockResolvedValueOnce({
       data: {
         buckets: [
@@ -203,6 +203,7 @@ describe('getAudioSegmentHistogram', () => {
     const controller = new AudioController();
     const result = await controller.getAudioSegmentHistogram('test', {
       startTime: '2026-01-01T00:00:00Z',
+      endTime: '2026-01-02T00:00:00Z',
       buckets: 288,
     });
 
@@ -213,12 +214,12 @@ describe('getAudioSegmentHistogram', () => {
       ],
     });
     expect(mockRequest).toHaveBeenCalledWith({
-      url: 'http://audio-segments.example.com?feed_ids=test&start_time=2026-01-01T00%3A00%3A00Z&buckets=288',
+      url: 'http://audio-segments.example.com?feed_ids=test&start_time=2026-01-01T00%3A00%3A00Z&end_time=2026-01-02T00%3A00%3A00Z&buckets=288',
       method: 'GET',
     });
   });
 
-  it('should forward optional endTime and isAlert', async () => {
+  it('should forward endTime and isAlert', async () => {
     mockRequest.mockResolvedValueOnce({ data: { buckets: [] } });
 
     const controller = new AudioController();
@@ -242,6 +243,7 @@ describe('getAudioSegmentHistogram', () => {
     await expect(
       controller.getAudioSegmentHistogram('test', {
         startTime: '2026-01-01T00:00:00Z',
+        endTime: '2026-01-02T00:00:00Z',
         buckets: 288,
       })
     ).rejects.toThrow(/Backend Connection Failed/);
