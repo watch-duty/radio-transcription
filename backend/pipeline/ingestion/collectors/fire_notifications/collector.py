@@ -13,12 +13,14 @@ from zoneinfo import ZoneInfo
 from curl_cffi.requests import AsyncSession
 
 from backend.pipeline.common.audio import get_audio_duration
+from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemBatchOutcome,
     ItemFailure,
     collector_failure,
     missing_source_feed_id_failure,
+    policy_evidence_for_status_reason,
 )
 from backend.pipeline.ingestion.collectors.failure_classifiers import (
     http_status,
@@ -324,7 +326,15 @@ async def _process_file_list(
 
     promoted = outcome.promoted_failure()
     if promoted is not None:
-        raise collector_failure(promoted.status_reason, promoted.reason)
+        raise collector_failure(
+            promoted.status_reason,
+            promoted.reason,
+            policy_evidence=policy_evidence_for_status_reason(
+                promoted.status_reason,
+                failure_scope=failure_policy.FailureScope.ITEM,
+                endpoint_kind=failure_policy.EndpointKind.FIRE_POLL,
+            ),
+        )
 
 
 async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
@@ -344,6 +354,11 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
         raise collector_failure(
             feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
             "missing_fire_notifications_s3_base",
+            policy_evidence=failure_policy.FailurePolicyEvidence(
+                owner_scope=failure_policy.OwnerScope.CREDENTIAL_SCOPE,
+                failure_scope=failure_policy.FailureScope.FEED,
+                endpoint_kind=failure_policy.EndpointKind.FIRE_POLL,
+            ),
         ) from e
     try:
         headers = _build_auth_headers()
@@ -351,6 +366,11 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
         raise collector_failure(
             feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
             "missing_fire_notifications_auth_config",
+            policy_evidence=failure_policy.FailurePolicyEvidence(
+                owner_scope=failure_policy.OwnerScope.CREDENTIAL_SCOPE,
+                failure_scope=failure_policy.FailureScope.FEED,
+                endpoint_kind=failure_policy.EndpointKind.FIRE_POLL,
+            ),
         ) from e
 
     source_feed_id = feed.get("source_feed_id")
@@ -445,6 +465,13 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
                     raise collector_failure(
                         last_poll_failure.status_reason,
                         last_poll_failure.reason,
+                        policy_evidence=policy_evidence_for_status_reason(
+                            last_poll_failure.status_reason,
+                            failure_scope=(
+                                failure_policy.FailureScope.OBSERVATION
+                            ),
+                            endpoint_kind=failure_policy.EndpointKind.FIRE_POLL,
+                        ),
                     )
 
             # Sleep before next poll, with a small jitter

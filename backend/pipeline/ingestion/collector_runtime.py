@@ -4,6 +4,7 @@ import datetime
 import logging
 import os
 import pathlib
+import random
 import signal
 import threading
 import time
@@ -21,10 +22,9 @@ from opentelemetry import trace
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.common.tracing_utils import setup_tracing
-from backend.pipeline.ingestion import (
-    health_server,
-    quarantine_telemetry,
-)
+from backend.pipeline.ingestion import failure_policy
+from backend.pipeline.ingestion import health_server
+from backend.pipeline.ingestion import quarantine_telemetry
 from backend.pipeline.ingestion.health_server import HealthState
 from backend.pipeline.ingestion.models import (
     AudioMimeType,
@@ -67,14 +67,24 @@ logger = logging.getLogger(__name__)
 _PIPELINE_GCS_UPLOAD_FAILED = "gcs_upload_failed"
 _PIPELINE_PUBSUB_PUBLISH_FAILED = "pubsub_publish_failed"
 _PIPELINE_BOOKMARK_WRITE_FAILED = "bookmark_write_failed"
+_NON_BUDGETED_RETRY_MIN_SEC = 5 * 60
+_NON_BUDGETED_RETRY_MAX_SEC = 15 * 60
 
 
 class _PipelineFailure(Exception):
     """Post-capture runtime side-effect failure with a stable stage tag."""
 
-    def __init__(self, reason: str) -> None:
+    def __init__(
+        self,
+        reason: str,
+        *,
+        status_reason: FeedStatusReason,
+        policy_evidence: failure_policy.FailurePolicyEvidence,
+    ) -> None:
         super().__init__(reason)
         self.reason = reason
+        self.status_reason = status_reason
+        self.policy_evidence = policy_evidence
 
 
 class CollectorRuntime:
@@ -630,8 +640,8 @@ class CollectorRuntime:
         warning at garbage collection time. ``.exception()`` on a cancelled
         task raises ``CancelledError``, hence the guard.
 
-        The catch-and-quarantine handler in ``_process_feed`` (D-01, v1.1)
-        is the primary fault-response path. The reaper exists to drain
+        The policy-routing handler in ``_process_feed`` is the primary
+        fault-response path. The reaper exists to drain
         ``task.exception()`` so asyncio does not emit
         "Task exception was never retrieved" warnings, and to log meta-bugs
         where the catch handler itself raised -- which would indicate the
@@ -759,6 +769,126 @@ class CollectorRuntime:
         """Determines the Pub/Sub topic path based on the feed source type."""
         return resolve_topic_path(feed["source_type"], self._collector_settings)
 
+    @staticmethod
+    def _policy_evidence_fields(
+        decision: failure_policy.FailurePolicyDecision,
+    ) -> dict[str, object]:
+        """Convert policy decision data to JSON-log-safe primitive fields."""
+        evidence = decision.evidence
+        fields = {
+            "owner_scope": evidence.owner_scope.value,
+            "failure_scope": evidence.failure_scope.value,
+            "endpoint_kind": evidence.endpoint_kind.value,
+            "policy_intent": decision.policy_intent.value,
+            "executed_action": decision.executed_action.value,
+            "feed_budget_eligible": decision.feed_budget_eligible,
+            "quarantine_feed": decision.quarantine_feed,
+        }
+        if evidence.pipeline_stage is not None:
+            fields["pipeline_stage"] = evidence.pipeline_stage.value
+        return fields
+
+    @staticmethod
+    def _pipeline_policy_evidence(
+        *,
+        endpoint_kind: failure_policy.EndpointKind,
+        pipeline_stage: failure_policy.PipelineStage,
+    ) -> failure_policy.FailurePolicyEvidence:
+        """Build standard post-capture pipeline policy evidence."""
+        return failure_policy.FailurePolicyEvidence(
+            owner_scope=failure_policy.OwnerScope.PIPELINE,
+            failure_scope=failure_policy.FailureScope.PIPELINE,
+            endpoint_kind=endpoint_kind,
+            pipeline_stage=pipeline_stage,
+        )
+
+    @staticmethod
+    def _telemetry_gap_evidence() -> failure_policy.FailurePolicyEvidence:
+        """Build conservative evidence for unannotated failures."""
+        return failure_policy.FailurePolicyEvidence(
+            owner_scope=failure_policy.OwnerScope.UNKNOWN,
+            failure_scope=failure_policy.FailureScope.UNKNOWN,
+            endpoint_kind=failure_policy.EndpointKind.UNKNOWN,
+        )
+
+    @staticmethod
+    def _is_feed_quarantine_decision(
+        decision: failure_policy.FailurePolicyDecision,
+    ) -> bool:
+        """Return whether a decision is explicitly feed-actionable."""
+        return failure_policy.is_feed_quarantine(decision)
+
+    @staticmethod
+    def _non_budgeted_retry_after() -> datetime.datetime:
+        """Return the retry time for non-budgeted failure lanes."""
+        jitter_sec = random.uniform(  # noqa: S311 -- scheduling jitter
+            _NON_BUDGETED_RETRY_MIN_SEC,
+            _NON_BUDGETED_RETRY_MAX_SEC,
+        )
+        return datetime.datetime.now(datetime.UTC) + datetime.timedelta(
+            seconds=jitter_sec,
+        )
+
+    def _emit_policy_decision(
+        self,
+        feed: LeasedFeed,
+        *,
+        reason: str,
+        status_reason: FeedStatusReason,
+        evidence: failure_policy.FailurePolicyEvidence,
+        retry_after: datetime.datetime | None = None,
+        replay_missing: bool = False,
+        data_gap_known: bool = False,
+    ) -> None:
+        """Emit the canonical policy-decision telemetry event."""
+        decision = failure_policy.classify_failure_policy(
+            status_reason,
+            evidence,
+        )
+        payload: dict[str, object] = {
+            "event_type": "feed_failure_policy_decision",
+            "feed_id": str(feed["id"]),
+            "source_type": str(feed["source_type"]),
+            "reason": reason,
+            "status_reason": status_reason.value,
+            "replay_missing": replay_missing,
+            "data_gap_known": data_gap_known,
+            **self._policy_evidence_fields(decision),
+        }
+        if retry_after is not None:
+            payload["retry_after"] = retry_after.isoformat()
+        logger.info(
+            "Feed failure policy decision", extra={"json_fields": payload}
+        )
+
+    def _emit_post_bookmark_publish_failure(
+        self,
+        feed: LeasedFeed,
+        *,
+        reason: str,
+        status_reason: FeedStatusReason,
+        evidence: failure_policy.FailurePolicyEvidence,
+    ) -> None:
+        """Emit explicit evidence that capture/bookmark succeeded but publish did not."""
+        decision = failure_policy.classify_failure_policy(
+            status_reason,
+            evidence,
+        )
+        payload: dict[str, object] = {
+            "event_type": "post_bookmark_publish_failure",
+            "feed_id": str(feed["id"]),
+            "source_type": str(feed["source_type"]),
+            "reason": reason,
+            "status_reason": status_reason.value,
+            "replay_missing": True,
+            "data_gap_known": True,
+            **self._policy_evidence_fields(decision),
+        }
+        logger.error(
+            "Post-bookmark publish failure",
+            extra={"json_fields": payload},
+        )
+
     async def _process_captured_chunk(
         self,
         feed: LeasedFeed,
@@ -798,7 +928,14 @@ class CollectorRuntime:
         except (asyncio.CancelledError, LeaseExpiredError):
             raise
         except Exception as exc:
-            raise _PipelineFailure(_PIPELINE_GCS_UPLOAD_FAILED) from exc
+            raise _PipelineFailure(
+                _PIPELINE_GCS_UPLOAD_FAILED,
+                status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+                policy_evidence=self._pipeline_policy_evidence(
+                    endpoint_kind=failure_policy.EndpointKind.GCS_UPLOAD,
+                    pipeline_stage=failure_policy.PipelineStage.GCS_UPLOAD,
+                ),
+            ) from exc
 
         duration_ms = int(
             (
@@ -831,7 +968,14 @@ class CollectorRuntime:
         except (asyncio.CancelledError, LeaseExpiredError):
             raise
         except Exception as exc:
-            raise _PipelineFailure(_PIPELINE_BOOKMARK_WRITE_FAILED) from exc
+            raise _PipelineFailure(
+                _PIPELINE_BOOKMARK_WRITE_FAILED,
+                status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+                policy_evidence=self._pipeline_policy_evidence(
+                    endpoint_kind=failure_policy.EndpointKind.BOOKMARK_WRITE,
+                    pipeline_stage=failure_policy.PipelineStage.BOOKMARK_WRITE,
+                ),
+            ) from exc
 
         if not ok:
             # If the batched heartbeat is healthy (renewing every 15s),
@@ -884,7 +1028,16 @@ class CollectorRuntime:
         except (asyncio.CancelledError, LeaseExpiredError):
             raise
         except Exception as exc:
-            raise _PipelineFailure(_PIPELINE_PUBSUB_PUBLISH_FAILED) from exc
+            raise _PipelineFailure(
+                _PIPELINE_PUBSUB_PUBLISH_FAILED,
+                status_reason=(
+                    FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
+                ),
+                policy_evidence=self._pipeline_policy_evidence(
+                    endpoint_kind=failure_policy.EndpointKind.PUBSUB_PUBLISH,
+                    pipeline_stage=failure_policy.PipelineStage.PUBSUB_PUBLISH,
+                ),
+            ) from exc
 
         logger.info(
             "Published message %s for feed %s",
@@ -921,20 +1074,19 @@ class CollectorRuntime:
         *,
         reason: str,
         status_reason: FeedStatusReason,
+        evidence: failure_policy.FailurePolicyEvidence,
     ) -> None:
         """Persist a classified feed failure through the fenced store path."""
+        self._emit_policy_decision(
+            feed,
+            reason=reason,
+            status_reason=status_reason,
+            evidence=evidence,
+        )
         logger.exception(
             "Feed processing error: feed=%s reason=%s",
             feed["name"],
             reason,
-            extra={
-                "json_fields": {
-                    "feed_id": str(feed["id"]),
-                    "source_type": str(feed["source_type"]),
-                    "reason": reason,
-                    "status_reason": status_reason.value,
-                },
-            },
         )
         # SAFETY: _releasing_feeds invariant -- add BEFORE the first await
         # that drops the lease (report_feed_failure sets worker_id=NULL).
@@ -966,6 +1118,72 @@ class CollectorRuntime:
             # SAFETY: No await between discard() and return. This ensures
             # _heartbeat_cycle cannot observe a state where the feed is
             # absent from _releasing_feeds but the task is not yet .done().
+            self._releasing_feeds.discard(feed["id"])
+
+    async def _record_non_budgeted_failure(
+        self,
+        feed: LeasedFeed,
+        worker_id: uuid.UUID,
+        fencing_token: int,
+        *,
+        reason: str,
+        status_reason: FeedStatusReason,
+        evidence: failure_policy.FailurePolicyEvidence,
+        replay_missing: bool = False,
+        data_gap_known: bool = False,
+    ) -> None:
+        """Release a failure that must not consume the feed quarantine budget."""
+        retry_after = self._non_budgeted_retry_after()
+        self._emit_policy_decision(
+            feed,
+            reason=reason,
+            status_reason=status_reason,
+            evidence=evidence,
+            retry_after=retry_after,
+            replay_missing=replay_missing,
+            data_gap_known=data_gap_known,
+        )
+        if replay_missing and data_gap_known:
+            self._emit_post_bookmark_publish_failure(
+                feed,
+                reason=reason,
+                status_reason=status_reason,
+                evidence=evidence,
+            )
+        if status_reason.value.startswith("source_"):
+            logger.info(
+                "Feed source failure suppressed from quarantine budget: "
+                "feed=%s reason=%s",
+                feed["name"],
+                reason,
+            )
+        else:
+            logger.exception(
+                "Feed processing error suppressed from quarantine budget: "
+                "feed=%s reason=%s",
+                feed["name"],
+                reason,
+            )
+        # SAFETY: _releasing_feeds invariant -- add BEFORE the first await
+        # that drops the lease (release_non_budgeted_failure sets
+        # worker_id=NULL).
+        self._releasing_feeds.add(feed["id"])
+        try:
+            await self._store.release_non_budgeted_failure(
+                feed["id"],
+                worker_id,
+                fencing_token,
+                retry_after=retry_after,
+                status_reason=status_reason,
+            )
+        except Exception:
+            # 60s abandonment window is the safety net if this fails.
+            logger.exception(
+                "Failed to record non-budgeted failure for feed %s",
+                feed["name"],
+            )
+        finally:
+            # SAFETY: No await between discard() and return.
             self._releasing_feeds.discard(feed["id"])
 
     @staticmethod
@@ -1203,22 +1421,48 @@ class CollectorRuntime:
             return
 
         except FeedFailure as e:
-            await self._record_feed_failure(
+            decision = failure_policy.classify_failure_policy(
+                e.status_reason,
+                e.policy_evidence,
+            )
+            if self._is_feed_quarantine_decision(decision):
+                await self._record_feed_failure(
+                    feed,
+                    worker_id,
+                    fencing_token,
+                    reason=e.reason,
+                    status_reason=e.status_reason,
+                    evidence=e.policy_evidence,
+                )
+            else:
+                await self._record_non_budgeted_failure(
+                    feed,
+                    worker_id,
+                    fencing_token,
+                    reason=e.reason,
+                    status_reason=e.status_reason,
+                    evidence=e.policy_evidence,
+                )
+            return
+
+        except _PipelineFailure as e:
+            decision = failure_policy.classify_failure_policy(
+                e.status_reason,
+                e.policy_evidence,
+            )
+            replay_missing = (
+                decision.executed_action
+                is failure_policy.ExecutedAction.SUPPRESS_FEED_QUARANTINE_RECORD_PUBLISH_GAP
+            )
+            await self._record_non_budgeted_failure(
                 feed,
                 worker_id,
                 fencing_token,
                 reason=e.reason,
                 status_reason=e.status_reason,
-            )
-            return
-
-        except _PipelineFailure as e:
-            await self._record_feed_failure(
-                feed,
-                worker_id,
-                fencing_token,
-                reason=e.reason,
-                status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+                evidence=e.policy_evidence,
+                replay_missing=replay_missing,
+                data_gap_known=replay_missing,
             )
             return
 
@@ -1227,12 +1471,13 @@ class CollectorRuntime:
             # Source-specific attribution belongs in collectors that raise
             # FeedFailure; the runtime only records the explicit fallback.
             reason = str(e)[:200] if str(e) else type(e).__name__
-            await self._record_feed_failure(
+            await self._record_non_budgeted_failure(
                 feed,
                 worker_id,
                 fencing_token,
                 reason=reason,
                 status_reason=FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
+                evidence=self._telemetry_gap_evidence(),
             )
             return
 
@@ -1486,8 +1731,9 @@ class CollectorRuntime:
         # of which can happen while our last_heartbeat stays < 60 s old.
         # Fenced writes on the task side are the authoritative lease-lost
         # detection at write time; they call update_feed_progress /
-        # release_feed / report_feed_failure with WHERE worker_id=$1 AND
-        # fencing_token=$2 and return False if our lease was taken. The
+        # release_feed / report_feed_failure / release_non_budgeted_failure
+        # with WHERE worker_id=$1 AND fencing_token=$2 and return False if
+        # our lease was taken. The
         # existing retry_with_lease_check wrapper + _lease_lost event
         # gracefully handles that outcome without depending on the
         # heartbeat's retained_ids observation.

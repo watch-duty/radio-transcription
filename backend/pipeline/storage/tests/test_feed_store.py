@@ -124,6 +124,7 @@ class TestFeedStatusReason(unittest.TestCase):
         self.assertEqual(
             {reason.value for reason in FeedStatusReason},
             {
+                "pipeline_publish_after_bookmark_failed",
                 "source_offline",
                 "source_unreachable",
                 "source_rate_limited",
@@ -136,16 +137,11 @@ class TestFeedStatusReason(unittest.TestCase):
         )
 
     def test_reason_values_encode_source_or_system_ownership(self) -> None:
-        prefixes = {
-            reason.value.split("_", 1)[0] for reason in FeedStatusReason
-        }
-
         for reason in FeedStatusReason:
             self.assertTrue(
-                reason.value.startswith(("source_", "system_")),
+                reason.value.startswith(("source_", "system_", "pipeline_")),
                 reason.value,
             )
-        self.assertEqual(prefixes, {"source", "system"})
 
 
 class TestStatusReasonRowMapping(unittest.TestCase):
@@ -293,6 +289,47 @@ class TestReportFailureSqlStatusReason(unittest.TestCase):
         self.assertNotIn("COALESCE($8, quarantine_reason)", sql)
 
 
+class TestNonBudgetedFailureSql(unittest.TestCase):
+    """Tests for non-quarantine suppressed retry SQL."""
+
+    def test_non_budgeted_failure_sql_releases_without_quarantine_budget(
+        self,
+    ) -> None:
+        sql = _sql_without_comments(
+            feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL
+        )
+
+        self.assertIn("status = 'failing'::feed_status", sql)
+        self.assertIn("failure_count = 0", sql)
+        self.assertIn("retry_after = $4", sql)
+        self.assertIn("status_reason = $5", sql)
+        self.assertIn("worker_id = NULL", sql)
+        self.assertIn("WHERE id = $1 AND worker_id = $2", sql)
+        self.assertIn("AND fencing_token = $3", sql)
+        self.assertIn("AND status = 'active'::feed_status", sql)
+        self.assertNotIn("quarantine_reason", sql)
+        self.assertNotIn("failure_count + 1", sql)
+
+    def test_non_budgeted_failure_sql_returns_status_diagnostics(self) -> None:
+        sql = _sql_without_comments(
+            feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL
+        )
+
+        self.assertIn("RETURNING status::text, failure_count, retry_after", sql)
+
+    def test_failure_count_increment_isolated_to_report_failure_sql(
+        self,
+    ) -> None:
+        for name, value in vars(feed_queries).items():
+            if not name.endswith("_SQL") or not isinstance(value, str):
+                continue
+            stripped = _sql_without_comments(value)
+            if name == "REPORT_FAILURE_SQL":
+                self.assertIn("failure_count + 1", stripped)
+                continue
+            self.assertNotIn("failure_count + 1", stripped, name)
+
+
 class TestStatusReasonClearSql(unittest.TestCase):
     """Tests for stale canonical reason clearing SQL."""
 
@@ -341,6 +378,12 @@ class TestStatusReasonClearSql(unittest.TestCase):
             sql,
         )
         self.assertIn("status_reason = NULL", sql)
+        self.assertRegex(
+            sql,
+            r"status_reason_updated_at = CASE\s+"
+            r"WHEN status_reason IS NOT NULL THEN NOW\(\)\s+"
+            r"ELSE status_reason_updated_at\s+END",
+        )
         self.assertIn("current_state.worker_id = $2", sql)
         self.assertIn("current_state.fencing_token = $3", sql)
         self.assertIn("current_state.status = 'active'::feed_status", sql)
@@ -697,6 +740,88 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
 
         args = pool.fetchrow.call_args[0]
         self.assertIsNone(args[-1])
+
+
+class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.release_non_budgeted_failure."""
+
+    async def test_returns_status_when_lease_held(self) -> None:
+        """Status string is returned when the non-budgeted update succeeds."""
+        retry_after = datetime.datetime(
+            2026, 6, 14, 12, 15, tzinfo=datetime.UTC
+        )
+        pool = make_mock_pool(
+            fetchrow_result={
+                "status": "failing",
+                "failure_count": 0,
+                "retry_after": retry_after,
+            },
+        )
+        store = FeedStore(pool)
+
+        result = await store.release_non_budgeted_failure(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            retry_after=retry_after,
+            status_reason=(
+                FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
+            ),
+        )
+
+        self.assertEqual(result, "failing")
+
+    async def test_returns_none_when_lease_lost(self) -> None:
+        """None is returned when no active lease matches."""
+        retry_after = datetime.datetime(
+            2026, 6, 14, 12, 15, tzinfo=datetime.UTC
+        )
+        pool = make_mock_pool(fetchrow_result=None)
+        store = FeedStore(pool)
+
+        result = await store.release_non_budgeted_failure(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            retry_after=retry_after,
+            status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        )
+
+        self.assertIsNone(result)
+
+    async def test_passes_correct_parameters(self) -> None:
+        """Parameters are passed in the correct order."""
+        retry_after = datetime.datetime(
+            2026, 6, 14, 12, 15, tzinfo=datetime.UTC
+        )
+        pool = make_mock_pool(
+            fetchrow_result={
+                "status": "failing",
+                "failure_count": 0,
+                "retry_after": retry_after,
+            },
+        )
+        store = FeedStore(pool)
+
+        await store.release_non_budgeted_failure(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            retry_after=retry_after,
+            status_reason=FeedStatusReason.SOURCE_OFFLINE,
+        )
+
+        args = pool.fetchrow.call_args[0]
+        self.assertEqual(
+            args[1:],
+            (
+                _FEED_ID,
+                _WORKER_ID,
+                1,
+                retry_after,
+                "source_offline",
+            ),
+        )
 
 
 class TestReleaseFeed(unittest.IsolatedAsyncioTestCase):

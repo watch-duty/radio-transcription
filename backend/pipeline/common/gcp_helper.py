@@ -314,10 +314,10 @@ async def publish_audio_chunk(
         try:
             return await asyncio.wrap_future(future)
         except PublishToPausedOrderingKeyException:
-            # Clear the local Publisher pause flag so a post-un-quarantine
-            # re-lease on the same worker can publish. The exception still
-            # propagates to _process_feed's catch-all, which will quarantine
-            # the feed after threshold strikes.
+            # Clear the local Publisher pause flag so a later retry on the
+            # same worker can publish. The exception still propagates to the
+            # runtime, which records a non-budgeted post-bookmark publish gap
+            # rather than treating the feed itself as unhealthy.
             # Defensive try/except: resume_publish is documented to raise
             # RuntimeError (publisher stopped) or ValueError (unseen key).
             # Neither should occur here in normal operation, but a crash on

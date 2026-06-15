@@ -370,6 +370,21 @@ WHERE id = $1 AND worker_id = $2 AND fencing_token = $4
 RETURNING status::text, failure_count, retry_after
 """
 
+RELEASE_NON_BUDGETED_FAILURE_SQL = """\
+UPDATE feeds
+SET status = 'failing'::feed_status,
+    failure_count = 0,
+    worker_id = NULL,
+    retry_after = $4,
+    unclaimed_since = NOW(),
+    status_reason = $5,
+    status_reason_updated_at = NOW()
+WHERE id = $1 AND worker_id = $2
+  AND fencing_token = $3
+  AND status = 'active'::feed_status
+RETURNING status::text, failure_count, retry_after
+"""
+
 CREATE_FEED_SQL = """\
 WITH new_feed AS (
     INSERT INTO feeds (name, source_type)

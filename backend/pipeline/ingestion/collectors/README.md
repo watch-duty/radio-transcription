@@ -31,7 +31,11 @@ valid capture events or report source-specific feed failure evidence through
 
 Runtime-side `_PipelineFailure` is separate from `FeedFailure`. It represents
 post-capture system failures after the collector already obtained source data,
-and the runtime records those as `system_pipeline_error`.
+and the runtime routes those through non-budgeted pipeline policy lanes instead
+of incrementing the feed quarantine counter. GCS and bookmark failures retain
+`system_pipeline_error`; Pub/Sub failures after a successful bookmark use
+`pipeline_publish_after_bookmark_failed` because capture already advanced and a
+publish replay gap is known.
 
 Echo is the exception to the VM runtime shape: it runs as a synchronous Cloud
 Function. It still writes the same status-reason fields through
@@ -66,8 +70,15 @@ the likely owner:
 | `system_authentication_failed` | Configured credentials, tokens, or partner auth are rejected. |
 | `system_configuration_invalid` | The feed row is missing or has an invalid source-specific identifier, URL, or required configuration. |
 | `system_collector_error` | The collector cannot turn apparently available source data into a chunk, or all item failures are mixed/ambiguous. |
-| `system_pipeline_error` | Runtime or Echo post-capture processing fails after source data was obtained, such as GCS upload, Pub/Sub publish, staging, duration probing, or heartbeat writes. |
+| `system_pipeline_error` | Runtime or Echo post-capture processing fails after source data was obtained, such as GCS upload, bookmark writes, staging, duration probing, or heartbeat writes. |
 | `system_unexpected_error` | Defensive fallback for bugs or untyped exceptions that should become typed in a future collector fix. |
+
+Use pipeline-owned reasons when capture has already succeeded and the remaining
+work belongs to a replay/hold lane, not to feed health:
+
+| Reason | Use when |
+|--------|----------|
+| `pipeline_publish_after_bookmark_failed` | The runtime bookmarked captured audio but could not publish the corresponding Pub/Sub message. This records a known downstream gap and must not quarantine the feed. |
 
 ## Observation Boundaries
 

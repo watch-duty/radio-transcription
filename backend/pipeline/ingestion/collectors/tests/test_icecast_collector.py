@@ -8,6 +8,7 @@ from typing import Any, Self, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
+from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.ingestion.collectors.icecast import icecast_collector
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
@@ -89,9 +90,19 @@ def _assert_collector_failure(
     exc: FeedFailure,
     status_reason: FeedStatusReason,
     reason: str,
+    *,
+    owner_scope: failure_policy.OwnerScope | None = None,
+    failure_scope: failure_policy.FailureScope | None = None,
+    endpoint_kind: failure_policy.EndpointKind | None = None,
 ) -> None:
     testcase.assertIs(exc.status_reason, status_reason)
     testcase.assertEqual(str(exc), reason)
+    if owner_scope is not None:
+        testcase.assertIs(exc.policy_evidence.owner_scope, owner_scope)
+    if failure_scope is not None:
+        testcase.assertIs(exc.policy_evidence.failure_scope, failure_scope)
+    if endpoint_kind is not None:
+        testcase.assertIs(exc.policy_evidence.endpoint_kind, endpoint_kind)
 
 
 def _make_process_factory(
@@ -379,6 +390,9 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             context.exception,
             FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
             "missing_broadcastify_credentials",
+            owner_scope=failure_policy.OwnerScope.CREDENTIAL_SCOPE,
+            failure_scope=failure_policy.FailureScope.FEED,
+            endpoint_kind=failure_policy.EndpointKind.FEED_CONFIGURATION,
         )
 
     async def test_invalid_input_none_source_feed_id_raises_value_error(
@@ -537,6 +551,9 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             context.exception,
             FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
             "ffmpeg_exit_8",
+            owner_scope=failure_policy.OwnerScope.UNKNOWN,
+            failure_scope=failure_policy.FailureScope.OBSERVATION,
+            endpoint_kind=failure_policy.EndpointKind.STREAM,
         )
         formatted = _formatted_error_calls(self.mock_logger)
         self.assertIn("ffmpeg exited with code 8", formatted)
@@ -574,6 +591,9 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             context.exception,
             FeedStatusReason.SOURCE_OFFLINE,
             "stream_http_404",
+            owner_scope=failure_policy.OwnerScope.SOURCE_CLASS,
+            failure_scope=failure_policy.FailureScope.OBSERVATION,
+            endpoint_kind=failure_policy.EndpointKind.STREAM,
         )
 
     @patch(

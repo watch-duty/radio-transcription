@@ -15,11 +15,13 @@ from urllib.parse import urlparse
 import aiohttp
 from google.cloud import secretmanager
 
+from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemBatchOutcome,
     ItemFailure,
     collector_failure,
     missing_source_feed_id_failure,
+    policy_evidence_for_status_reason,
 )
 from backend.pipeline.ingestion.collectors.failure_classifiers import (
     http_status,
@@ -113,6 +115,11 @@ def _get_jwt_token() -> str:
         raise collector_failure(
             FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
             "calls_jwt_config_missing",
+            policy_evidence=failure_policy.FailurePolicyEvidence(
+                owner_scope=failure_policy.OwnerScope.CREDENTIAL_SCOPE,
+                failure_scope=failure_policy.FailureScope.FEED,
+                endpoint_kind=failure_policy.EndpointKind.CALLS_API,
+            ),
         )
 
     client = secretmanager.SecretManagerServiceClient()
@@ -125,6 +132,11 @@ def _get_jwt_token() -> str:
         raise collector_failure(
             FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
             "calls_jwt_secret_access_failed",
+            policy_evidence=failure_policy.FailurePolicyEvidence(
+                owner_scope=failure_policy.OwnerScope.CREDENTIAL_SCOPE,
+                failure_scope=failure_policy.FailureScope.FEED,
+                endpoint_kind=failure_policy.EndpointKind.CALLS_API,
+            ),
         ) from e
 
 
@@ -274,7 +286,15 @@ def _raise_for_fatal_status(
             "Feed not found from Broadcastify Calls API (feed %s)",
             feed_id,
         )
-    raise collector_failure(classification.status_reason, classification.reason)
+    raise collector_failure(
+        classification.status_reason,
+        classification.reason,
+        policy_evidence=policy_evidence_for_status_reason(
+            classification.status_reason,
+            failure_scope=failure_policy.FailureScope.FEED,
+            endpoint_kind=failure_policy.EndpointKind.CALLS_API,
+        ),
+    )
 
 
 async def _fetch_calls(  # noqa: PLR0911, PLR0912
@@ -650,7 +670,15 @@ async def _create_chunk_from_call(
 
 def _raise_item_failure(failure: ItemFailure) -> None:
     """Raise a typed collector failure from an item aggregation result."""
-    raise collector_failure(failure.status_reason, failure.reason)
+    raise collector_failure(
+        failure.status_reason,
+        failure.reason,
+        policy_evidence=policy_evidence_for_status_reason(
+            failure.status_reason,
+            failure_scope=failure_policy.FailureScope.ITEM,
+            endpoint_kind=failure_policy.EndpointKind.CALLS_MEDIA,
+        ),
+    )
 
 
 async def _handle_loop_failure(
@@ -663,7 +691,15 @@ async def _handle_loop_failure(
     del feed_id
     consecutive_failures += 1
     if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
-        raise collector_failure(failure.status_reason, failure.reason)
+        raise collector_failure(
+            failure.status_reason,
+            failure.reason,
+            policy_evidence=policy_evidence_for_status_reason(
+                failure.status_reason,
+                failure_scope=failure_policy.FailureScope.ITEM,
+                endpoint_kind=failure_policy.EndpointKind.CALLS_MEDIA,
+            ),
+        )
     await _sleep_or_shutdown(shutdown_event, _POLL_INTERVAL_SEC)
     return consecutive_failures
 

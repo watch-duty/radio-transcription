@@ -15,7 +15,11 @@ from google.api_core import exceptions as google_exceptions
 from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
+from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.ingestion.collector_runtime import CollectorRuntime
+from backend.pipeline.ingestion.collectors.failure_classification import (
+    missing_source_feed_id_failure,
+)
 from backend.pipeline.ingestion.models import (
     CapturedChunk,
     CaptureResources,
@@ -75,11 +79,21 @@ _PUBLISH_SOURCE_TYPE_ARG_INDEX = 8
 class TestFeedFailureContract(unittest.TestCase):
     """Tests for the typed collector failure boundary contract."""
 
+    @staticmethod
+    def _feed_config_evidence() -> failure_policy.FailurePolicyEvidence:
+        """Build feed-actionable config evidence for boundary tests."""
+        return failure_policy.FailurePolicyEvidence(
+            owner_scope=failure_policy.OwnerScope.FEED,
+            failure_scope=failure_policy.FailureScope.FEED,
+            endpoint_kind=failure_policy.EndpointKind.FEED_CONFIGURATION,
+        )
+
     def test_carries_status_reason_and_reason(self) -> None:
         """FeedFailure exposes canonical and raw failure data."""
         exc = FeedFailure(
             FeedStatusReason.SOURCE_OFFLINE,
             "source_offline",
+            policy_evidence=self._feed_config_evidence(),
         )
 
         self.assertIs(exc.status_reason, FeedStatusReason.SOURCE_OFFLINE)
@@ -91,6 +105,7 @@ class TestFeedFailureContract(unittest.TestCase):
         exc = FeedFailure(
             "source_offline",
             "source_offline",
+            policy_evidence=self._feed_config_evidence(),
         )
 
         self.assertIs(exc.status_reason, FeedStatusReason.SOURCE_OFFLINE)
@@ -101,9 +116,29 @@ class TestFeedFailureContract(unittest.TestCase):
         exc = FeedFailure(
             FeedStatusReason.SOURCE_OFFLINE,
             "source_offline",
+            policy_evidence=self._feed_config_evidence(),
         )
 
         exc.__traceback__ = None
+
+    def test_rejects_missing_policy_evidence(self) -> None:
+        """Typed FeedFailure requires structured policy evidence."""
+        with self.assertRaises(TypeError):
+            FeedFailure(  # type: ignore[call-arg]
+                FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+                "missing_source_feed_id",
+            )
+
+    def test_carries_policy_evidence(self) -> None:
+        """FeedFailure can carry structured policy evidence."""
+        evidence = self._feed_config_evidence()
+        exc = FeedFailure(
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            "missing_source_feed_id",
+            policy_evidence=evidence,
+        )
+
+        self.assertEqual(exc.policy_evidence, evidence)
 
 
 def _mock_pubsub_publish(message_id: str = "test-message-id") -> mock._patch:
@@ -1829,10 +1864,10 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         rt._store.report_feed_failure.assert_not_awaited()
         rt._store.release_feed.assert_awaited_once()
 
-    async def test_non_retryable_pubsub_failure_records_pipeline_error_once_after_bookmark(
+    async def test_non_retryable_pubsub_failure_records_publish_gap_without_feed_budget(
         self,
     ) -> None:
-        """Non-retryable Pub/Sub errors record pipeline failure once."""
+        """Non-retryable Pub/Sub errors after bookmark do not burn feed budget."""
 
         async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
@@ -1858,7 +1893,7 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress = mock.AsyncMock(side_effect=_bookmark)
-        rt._store.report_feed_failure.return_value = "failing"
+        rt._store.release_non_budgeted_failure.return_value = "failing"
         rt._releasing_feeds = set()
 
         with (
@@ -1870,31 +1905,63 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
                 "backend.pipeline.ingestion.collector_runtime.gcp_helper.publish_audio_chunk",
                 mock.AsyncMock(side_effect=_publish),
             ),
+            self.assertLogs(
+                "backend.pipeline.ingestion.collector_runtime",
+                level=logging.INFO,
+            ) as cm,
         ):
             await rt._process_feed(_FEED)
 
         self.assertEqual(call_order, ["upload", "bookmark", "publish"])
         rt._store.update_feed_progress.assert_awaited_once()
-        rt._store.report_feed_failure.assert_awaited_once()
-        kwargs = rt._store.report_feed_failure.await_args.kwargs
-        self.assertEqual(kwargs["reason"], "pubsub_publish_failed")
+        rt._store.report_feed_failure.assert_not_awaited()
+        rt._store.release_non_budgeted_failure.assert_awaited_once()
+        nb_kwargs = rt._store.release_non_budgeted_failure.await_args.kwargs
         self.assertIs(
-            kwargs["status_reason"],
-            FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            nb_kwargs["status_reason"],
+            FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
         )
         rt._store.release_feed.assert_not_awaited()
+        records = [
+            cast("dict[str, Any]", r.__dict__.get("json_fields"))
+            for r in cm.records
+            if getattr(r, "json_fields", None)
+        ]
+        event_types = {r["event_type"] for r in records}
+        self.assertIn("feed_failure_policy_decision", event_types)
+        self.assertIn("post_bookmark_publish_failure", event_types)
+        gap_record = next(
+            r
+            for r in records
+            if r["event_type"] == "post_bookmark_publish_failure"
+        )
+        policy_record = next(
+            r
+            for r in records
+            if r["event_type"] == "feed_failure_policy_decision"
+        )
+        self.assertIn("retry_after", policy_record)
+        self.assertTrue(gap_record["replay_missing"])
+        self.assertTrue(gap_record["data_gap_known"])
+        self.assertEqual(
+            gap_record["policy_intent"],
+            "hold_for_replay",
+        )
+        self.assertEqual(
+            gap_record["executed_action"],
+            "suppress_feed_quarantine_record_publish_gap",
+        )
 
 
 class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
     """Tests for _process_feed quarantine telemetry emission."""
 
-    async def test_quarantine_emits_telemetry(self) -> None:
-        """When report_feed_failure returns 'quarantined', telemetry fires."""
+    async def test_feed_config_quarantine_emits_telemetry(self) -> None:
+        """Annotated feed-actionable config failures can quarantine."""
 
         async def _failing_capture(feed, shutdown, _resources):
+            raise missing_source_feed_id_failure()
             yield _make_captured_chunk(b"audio")
-            msg = "capture_failed"
-            raise RuntimeError(msg)
 
         rt = CollectorRuntime(
             capture_fn=_failing_capture, settings=_make_settings()
@@ -1921,19 +1988,21 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             feed_id=str(_FEED_ID),
             feed_name="Test Feed",
             source_type="bcfy_feeds",
-            reason="capture_failed",
-            status_reason="system_unexpected_error",
+            reason="missing_source_feed_id",
+            status_reason="system_configuration_invalid",
         )
         # _releasing_feeds cleaned up
         self.assertEqual(rt._releasing_feeds, set())
 
-    async def test_failing_status_does_not_emit_telemetry(self) -> None:
-        """When report_feed_failure returns 'failing', no telemetry fires."""
+    async def test_non_budgeted_failure_does_not_emit_quarantine_telemetry(
+        self,
+    ) -> None:
+        """Non-budgeted failures never emit feed_quarantined telemetry."""
 
         async def _failing_capture(feed, shutdown, _resources):
-            yield _make_captured_chunk(b"audio")
             msg = "capture_failed"
             raise RuntimeError(msg)
+            yield _make_captured_chunk(b"audio")
 
         rt = CollectorRuntime(
             capture_fn=_failing_capture, settings=_make_settings()
@@ -1942,13 +2011,10 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
-        rt._store.update_feed_progress.return_value = True
-        rt._store.report_feed_failure.return_value = "failing"
+        rt._store.release_non_budgeted_failure.return_value = "failing"
         rt._releasing_feeds = set()
 
         with (
-            _mock_upload_audio(),
-            _mock_pubsub_publish(),
             mock.patch(
                 "backend.pipeline.ingestion.collector_runtime.quarantine_telemetry"
             ) as mock_telemetry,
@@ -1957,6 +2023,8 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             await rt._process_feed(_FEED)
 
         mock_telemetry.emit_quarantine_event.assert_not_awaited()
+        rt._store.report_feed_failure.assert_not_awaited()
+        rt._store.release_non_budgeted_failure.assert_awaited_once()
 
     async def test_reason_caps_at_200_chars(self) -> None:
         """Catch-all truncates exception messages longer than 200 chars.
@@ -1988,53 +2056,76 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             rt._capture_resources = _default_resources()
             rt._store = mock.AsyncMock()
             rt._store.update_feed_progress.return_value = True
-            rt._store.report_feed_failure.return_value = "failing"
+            rt._store.release_non_budgeted_failure.return_value = "failing"
             rt._releasing_feeds = set()
 
             with _mock_upload_audio(), _mock_pubsub_publish():
                 await rt._process_feed(_FEED)
 
-            rt._store.report_feed_failure.assert_awaited_once()
-            kwargs = rt._store.report_feed_failure.await_args.kwargs
-            self.assertEqual(kwargs["reason"], expected_reason)
+            rt._store.report_feed_failure.assert_not_awaited()
+            rt._store.release_non_budgeted_failure.assert_awaited_once()
+            kwargs = rt._store.release_non_budgeted_failure.await_args.kwargs
             self.assertIs(
                 kwargs["status_reason"],
                 FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
             )
 
-    async def test_typed_collector_failure_persists_carried_status_reason(
+    async def test_unknown_owner_collector_failure_routes_to_telemetry_gap(
         self,
     ) -> None:
-        """FeedFailure carries canonical and raw reasons to storage."""
-
-        async def _failing_capture(feed, shutdown, _resources):
-            raise FeedFailure(
-                FeedStatusReason.SOURCE_OFFLINE,
-                "source_offline",
-            )
-            yield _make_captured_chunk(b"audio")
-
-        rt = CollectorRuntime(
-            capture_fn=_failing_capture,
-            settings=_make_settings(),
+        """Unknown-owner FeedFailure does not use legacy quarantine."""
+        cases = (
+            (FeedStatusReason.SOURCE_OFFLINE, "source_offline"),
+            (FeedStatusReason.SOURCE_RATE_LIMITED, "source_rate_limited"),
+            (
+                FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+                "auth_failed",
+            ),
         )
-        rt._shutdown = asyncio.Event()
-        rt._lease_lost = asyncio.Event()
-        rt._capture_resources = _default_resources()
-        rt._store = mock.AsyncMock()
-        rt._store.update_feed_progress.return_value = True
-        rt._store.report_feed_failure.return_value = "failing"
-        rt._releasing_feeds = set()
+        for status_reason, reason in cases:
+            with self.subTest(status_reason=status_reason.value):
 
-        await rt._process_feed(_FEED)
+                async def _failing_capture(
+                    feed,
+                    shutdown,
+                    _resources,
+                    _status_reason=status_reason,
+                    _reason=reason,
+                ):
+                    raise FeedFailure(
+                        _status_reason,
+                        _reason,
+                        policy_evidence=failure_policy.FailurePolicyEvidence(
+                            owner_scope=failure_policy.OwnerScope.UNKNOWN,
+                            failure_scope=failure_policy.FailureScope.UNKNOWN,
+                            endpoint_kind=failure_policy.EndpointKind.UNKNOWN,
+                        ),
+                    )
+                    yield _make_captured_chunk(b"audio")
 
-        rt._store.report_feed_failure.assert_awaited_once()
-        kwargs = rt._store.report_feed_failure.await_args.kwargs
-        self.assertEqual(kwargs["reason"], "source_offline")
-        self.assertIs(
-            kwargs["status_reason"],
-            FeedStatusReason.SOURCE_OFFLINE,
-        )
+                rt = CollectorRuntime(
+                    capture_fn=_failing_capture,
+                    settings=_make_settings(),
+                )
+                rt._shutdown = asyncio.Event()
+                rt._lease_lost = asyncio.Event()
+                rt._capture_resources = _default_resources()
+                rt._store = mock.AsyncMock()
+                rt._store.update_feed_progress.return_value = True
+                rt._store.release_non_budgeted_failure.return_value = "failing"
+                rt._releasing_feeds = set()
+
+                await rt._process_feed(_FEED)
+
+                rt._store.report_feed_failure.assert_not_awaited()
+                rt._store.release_non_budgeted_failure.assert_awaited_once()
+                kwargs = (
+                    rt._store.release_non_budgeted_failure.await_args.kwargs
+                )
+                self.assertIs(
+                    kwargs["status_reason"],
+                    status_reason,
+                )
 
     async def test_collector_failure_string_status_reason_persists(
         self,
@@ -2046,6 +2137,11 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             raise FeedFailure(
                 status_reason,
                 "source_offline",
+                policy_evidence=failure_policy.FailurePolicyEvidence(
+                    owner_scope=failure_policy.OwnerScope.SOURCE_CLASS,
+                    failure_scope=failure_policy.FailureScope.FEED,
+                    endpoint_kind=failure_policy.EndpointKind.STREAM,
+                ),
             )
             yield _make_captured_chunk(b"audio")
 
@@ -2057,14 +2153,14 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
-        rt._store.report_feed_failure.return_value = "failing"
+        rt._store.release_non_budgeted_failure.return_value = "failing"
         rt._releasing_feeds = set()
 
         await rt._process_feed(_FEED)
 
-        rt._store.report_feed_failure.assert_awaited_once()
-        kwargs = rt._store.report_feed_failure.await_args.kwargs
-        self.assertEqual(kwargs["reason"], "source_offline")
+        rt._store.report_feed_failure.assert_not_awaited()
+        rt._store.release_non_budgeted_failure.assert_awaited_once()
+        kwargs = rt._store.release_non_budgeted_failure.await_args.kwargs
         self.assertIs(
             kwargs["status_reason"],
             FeedStatusReason.SOURCE_OFFLINE,
@@ -2084,7 +2180,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
-        rt._store.report_feed_failure.return_value = "failing"
+        rt._store.release_non_budgeted_failure.return_value = "failing"
         rt._releasing_feeds = set()
 
         with mock.patch(
@@ -2093,9 +2189,9 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         ):
             await rt._process_feed(_FEED)
 
-        rt._store.report_feed_failure.assert_awaited_once()
-        kwargs = rt._store.report_feed_failure.await_args.kwargs
-        self.assertEqual(kwargs["reason"], "gcs_upload_failed")
+        rt._store.report_feed_failure.assert_not_awaited()
+        rt._store.release_non_budgeted_failure.assert_awaited_once()
+        kwargs = rt._store.release_non_budgeted_failure.await_args.kwargs
         self.assertIs(
             kwargs["status_reason"],
             FeedStatusReason.SYSTEM_PIPELINE_ERROR,
@@ -2112,7 +2208,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
-        rt._store.report_feed_failure.return_value = "failing"
+        rt._store.release_non_budgeted_failure.return_value = "failing"
         rt._releasing_feeds = set()
 
         with (
@@ -2125,12 +2221,12 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             await rt._process_feed(_FEED)
 
         rt._store.update_feed_progress.assert_awaited_once()
-        rt._store.report_feed_failure.assert_awaited_once()
-        kwargs = rt._store.report_feed_failure.await_args.kwargs
-        self.assertEqual(kwargs["reason"], "pubsub_publish_failed")
+        rt._store.report_feed_failure.assert_not_awaited()
+        rt._store.release_non_budgeted_failure.assert_awaited_once()
+        kwargs = rt._store.release_non_budgeted_failure.await_args.kwargs
         self.assertIs(
             kwargs["status_reason"],
-            FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
         )
 
     async def test_bookmark_write_failure_records_pipeline_error(self) -> None:
@@ -2150,15 +2246,15 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         rt._store.update_feed_progress.side_effect = RuntimeError(
             "bookmark boom"
         )
-        rt._store.report_feed_failure.return_value = "failing"
+        rt._store.release_non_budgeted_failure.return_value = "failing"
         rt._releasing_feeds = set()
 
         with _mock_upload_audio(), _mock_pubsub_publish():
             await rt._process_feed(_FEED)
 
-        rt._store.report_feed_failure.assert_awaited_once()
-        kwargs = rt._store.report_feed_failure.await_args.kwargs
-        self.assertEqual(kwargs["reason"], "bookmark_write_failed")
+        rt._store.report_feed_failure.assert_not_awaited()
+        rt._store.release_non_budgeted_failure.assert_awaited_once()
+        kwargs = rt._store.release_non_budgeted_failure.await_args.kwargs
         self.assertIs(
             kwargs["status_reason"],
             FeedStatusReason.SYSTEM_PIPELINE_ERROR,
@@ -2180,12 +2276,12 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
-        rt._store.report_feed_failure.return_value = "failing"
+        rt._store.release_non_budgeted_failure.return_value = "failing"
         rt._releasing_feeds = set()
 
         with self.assertLogs(
             "backend.pipeline.ingestion.collector_runtime",
-            level=logging.ERROR,
+            level=logging.INFO,
         ) as cm:
             await rt._process_feed(_FEED)
 
@@ -2203,6 +2299,10 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             json_fields["status_reason"],
             "system_unexpected_error",
+        )
+        self.assertEqual(
+            json_fields["event_type"],
+            "feed_failure_policy_decision",
         )
 
 

@@ -10,11 +10,13 @@ from typing import TYPE_CHECKING
 
 from curl_cffi.requests import AsyncSession
 
+from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemBatchOutcome,
     ItemFailure,
     collector_failure,
     missing_source_feed_id_failure,
+    policy_evidence_for_status_reason,
 )
 from backend.pipeline.ingestion.collectors.failure_classifiers import (
     http_status,
@@ -59,6 +61,11 @@ def _get_transport(name: str) -> TransportFactory:
     raise collector_failure(
         FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
         "invalid_openmhz_transport",
+        policy_evidence=failure_policy.FailurePolicyEvidence(
+            owner_scope=failure_policy.OwnerScope.FEED,
+            failure_scope=failure_policy.FailureScope.FEED,
+            endpoint_kind=failure_policy.EndpointKind.FEED_CONFIGURATION,
+        ),
     )
 
 
@@ -264,6 +271,11 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                     raise collector_failure(  # noqa: TRY301 -- promotion happens after leaving the transport loop.
                         pending_item_failure.status_reason,
                         pending_item_failure.reason,
+                        policy_evidence=policy_evidence_for_status_reason(
+                            pending_item_failure.status_reason,
+                            failure_scope=failure_policy.FailureScope.ITEM,
+                            endpoint_kind=failure_policy.EndpointKind.UNKNOWN,
+                        ),
                     )
             except FeedFailure:
                 raise
@@ -288,6 +300,13 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                 raise collector_failure(
                     FeedStatusReason.SOURCE_UNREACHABLE,
                     "source_unreachable",
+                    policy_evidence=failure_policy.FailurePolicyEvidence(
+                        owner_scope=failure_policy.OwnerScope.SOURCE_CLASS,
+                        failure_scope=failure_policy.FailureScope.FEED,
+                        endpoint_kind=(
+                            failure_policy.EndpointKind.OPENMHZ_WS_UPGRADE
+                        ),
+                    ),
                 )
 
             backoff = min(

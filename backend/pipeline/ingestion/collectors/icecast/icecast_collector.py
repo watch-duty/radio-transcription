@@ -16,6 +16,7 @@ from urllib.parse import urlencode, urljoin
 
 import aiohttp
 
+from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.common.constants import (
     AUDIO_FORMAT,
     CHUNK_DURATION_SECONDS,
@@ -27,6 +28,7 @@ from backend.pipeline.ingestion.collectors.failure_classification import (
     FailureClassification,
     collector_failure,
     missing_source_feed_id_failure,
+    policy_evidence_for_status_reason,
 )
 from backend.pipeline.ingestion.collectors.failure_classifiers import (
     ffmpeg as ffmpeg_classifier,
@@ -77,6 +79,11 @@ def _build_auth_header() -> str:
         raise collector_failure(
             FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
             "missing_broadcastify_credentials",
+            policy_evidence=failure_policy.FailurePolicyEvidence(
+                owner_scope=failure_policy.OwnerScope.CREDENTIAL_SCOPE,
+                failure_scope=failure_policy.FailureScope.FEED,
+                endpoint_kind=failure_policy.EndpointKind.FEED_CONFIGURATION,
+            ),
         )
     credentials = f"{user}:{password}"
     encoded = base64.b64encode(credentials.encode()).decode()
@@ -87,7 +94,11 @@ def _now_utc() -> datetime.datetime:
     return datetime.datetime.now(tz=datetime.UTC)
 
 
-def _classify_stream_http_status(status: int) -> FeedFailure | None:
+def _classify_stream_http_status(
+    status: int,
+    *,
+    failure_scope: failure_policy.FailureScope,
+) -> FeedFailure | None:
     """Classify stream endpoint HTTP status into a typed feed failure."""
     classification = http_status.classify_http_status(
         status,
@@ -99,16 +110,28 @@ def _classify_stream_http_status(status: int) -> FeedFailure | None:
     return collector_failure(
         classification.status_reason,
         classification.reason,
+        policy_evidence=policy_evidence_for_status_reason(
+            classification.status_reason,
+            failure_scope=failure_scope,
+            endpoint_kind=failure_policy.EndpointKind.STREAM,
+        ),
     )
 
 
 def _feed_failure_from_classification(
     classification: FailureClassification,
+    *,
+    failure_scope: failure_policy.FailureScope,
 ) -> FeedFailure:
     """Convert neutral classifier output into an Icecast feed failure."""
     return collector_failure(
         classification.status_reason,
         classification.reason,
+        policy_evidence=policy_evidence_for_status_reason(
+            classification.status_reason,
+            failure_scope=failure_scope,
+            endpoint_kind=failure_policy.EndpointKind.STREAM,
+        ),
     )
 
 
@@ -154,23 +177,41 @@ async def _probe_stream_once(
             headers=_headers_from_ffmpeg_auth_header(auth_header),
             timeout=aiohttp.ClientTimeout(total=_STREAM_PROBE_TIMEOUT_SEC),
         ) as response:
-            classified = _classify_stream_http_status(response.status)
+            classified = _classify_stream_http_status(
+                response.status,
+                failure_scope=failure_policy.FailureScope.OBSERVATION,
+            )
             if classified is not None:
                 return classified
             if response.status == 200:
                 return collector_failure(
                     FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
                     "stream_available",
+                    policy_evidence=policy_evidence_for_status_reason(
+                        FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                        failure_scope=failure_policy.FailureScope.OBSERVATION,
+                        endpoint_kind=failure_policy.EndpointKind.STREAM,
+                    ),
                 )
             return collector_failure(
                 FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
                 "stream_probe_inconclusive",
+                policy_evidence=policy_evidence_for_status_reason(
+                    FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                    failure_scope=failure_policy.FailureScope.OBSERVATION,
+                    endpoint_kind=failure_policy.EndpointKind.STREAM,
+                ),
             )
     except Exception:
         logger.warning("stream probe failed", exc_info=True)
         return collector_failure(
             FeedStatusReason.SOURCE_UNREACHABLE,
             "stream_probe_failed",
+            policy_evidence=policy_evidence_for_status_reason(
+                FeedStatusReason.SOURCE_UNREACHABLE,
+                failure_scope=failure_policy.FailureScope.OBSERVATION,
+                endpoint_kind=failure_policy.EndpointKind.STREAM,
+            ),
         )
 
 
@@ -387,7 +428,10 @@ async def capture_icecast_stream(  # noqa: PLR0912, PLR0915
                             raise RuntimeError(msg)
                         if not _is_raw_ffmpeg_failure(classification):
                             raise _feed_failure_from_classification(
-                                classification
+                                classification,
+                                failure_scope=(
+                                    failure_policy.FailureScope.OBSERVATION
+                                ),
                             )
                         probe_failure = await _probe_stream_once(
                             resources,
@@ -398,7 +442,10 @@ async def capture_icecast_stream(  # noqa: PLR0912, PLR0915
                             probe_failure
                         ):
                             raise _feed_failure_from_classification(
-                                classification
+                                classification,
+                                failure_scope=(
+                                    failure_policy.FailureScope.OBSERVATION
+                                ),
                             )
                         raise probe_failure
                     logger.info(
@@ -436,7 +483,12 @@ async def capture_icecast_stream(  # noqa: PLR0912, PLR0915
                         msg = "capture_timeout"
                         raise RuntimeError(msg)
                     if not _is_raw_ffmpeg_failure(classification):
-                        raise _feed_failure_from_classification(classification)
+                        raise _feed_failure_from_classification(
+                            classification,
+                            failure_scope=(
+                                failure_policy.FailureScope.OBSERVATION
+                            ),
+                        )
                     probe_failure = await _probe_stream_once(
                         resources,
                         url,
@@ -445,7 +497,12 @@ async def capture_icecast_stream(  # noqa: PLR0912, PLR0915
                     if probe_failure is None or _probe_keeps_raw_reason(
                         probe_failure
                     ):
-                        raise _feed_failure_from_classification(classification)
+                        raise _feed_failure_from_classification(
+                            classification,
+                            failure_scope=(
+                                failure_policy.FailureScope.OBSERVATION
+                            ),
+                        )
                     raise probe_failure
 
                 await asyncio.sleep(POLL_INTERVAL_SEC)
