@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import itertools
 from enum import StrEnum
 
 from backend.pipeline.storage import feed_store
@@ -83,6 +84,16 @@ class FailurePolicyDecision:
     status_reason: feed_store.FeedStatusReason
     evidence: FailurePolicyEvidence
     executed_action: ExecutedAction
+
+
+@dataclasses.dataclass(frozen=True)
+class PolicyRuleConflict:
+    """Concrete evidence that matches multiple policy actions."""
+
+    status_reason: feed_store.FeedStatusReason
+    evidence: FailurePolicyEvidence
+    executed_actions: frozenset[ExecutedAction]
+    matching_rule_indexes: tuple[int, ...]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -393,6 +404,61 @@ def classify_failure_policy(
         if rule.matches(status_reason, evidence):
             return _decision_from_rule(status_reason, evidence, rule)
     return _non_budgeted_telemetry_decision(status_reason, evidence)
+
+
+def _iter_concrete_policy_evidence() -> tuple[FailurePolicyEvidence, ...]:
+    """Return every concrete evidence tuple covered by policy dimensions."""
+    pipeline_stages = (None, *tuple(PipelineStage))
+    return tuple(
+        FailurePolicyEvidence(
+            owner_scope=owner_scope,
+            failure_scope=failure_scope,
+            endpoint_kind=endpoint_kind,
+            pipeline_stage=pipeline_stage,
+        )
+        for (
+            owner_scope,
+            failure_scope,
+            endpoint_kind,
+            pipeline_stage,
+        ) in itertools.product(
+            tuple(OwnerScope),
+            tuple(FailureScope),
+            tuple(EndpointKind),
+            pipeline_stages,
+        )
+    )
+
+
+def find_policy_rule_conflicts(
+    rules: tuple[_FailurePolicyRule, ...] = _POLICY_RULES,
+) -> tuple[PolicyRuleConflict, ...]:
+    """Return concrete rule overlaps that route to different actions."""
+    conflicts: list[PolicyRuleConflict] = []
+    for status_reason, evidence in itertools.product(
+        tuple(feed_store.FeedStatusReason),
+        _iter_concrete_policy_evidence(),
+    ):
+        matching_rules = tuple(
+            (index, rule)
+            for index, rule in enumerate(rules)
+            if rule.matches(status_reason, evidence)
+        )
+        executed_actions = frozenset(
+            rule.executed_action for _, rule in matching_rules
+        )
+        if len(executed_actions) > 1:
+            conflicts.append(
+                PolicyRuleConflict(
+                    status_reason=status_reason,
+                    evidence=evidence,
+                    executed_actions=executed_actions,
+                    matching_rule_indexes=tuple(
+                        index for index, _ in matching_rules
+                    ),
+                )
+            )
+    return tuple(conflicts)
 
 
 def is_feed_quarantine(decision: FailurePolicyDecision) -> bool:

@@ -405,3 +405,67 @@ class TestClassifyFailurePolicy(unittest.TestCase):
                         failure_policy.ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP
                     ),
                 )
+
+    def test_conflict_detector_finds_conflicting_policy_rules(self) -> None:
+        """Overlapping rules with different actions are reported."""
+        rules = (
+            failure_policy._FailurePolicyRule(
+                status_reason=(
+                    feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID
+                ),
+                executed_action=(
+                    failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
+                ),
+                owner_scopes=frozenset({failure_policy.OwnerScope.FEED}),
+                failure_scopes=frozenset({failure_policy.FailureScope.FEED}),
+                endpoint_kinds=frozenset(
+                    {failure_policy.EndpointKind.FEED_CONFIGURATION}
+                ),
+                pipeline_stages=frozenset({None}),
+            ),
+            failure_policy._FailurePolicyRule(
+                status_reason=(
+                    feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID
+                ),
+                executed_action=(
+                    failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE
+                ),
+                owner_scopes=frozenset({failure_policy.OwnerScope.FEED}),
+                failure_scopes=frozenset({failure_policy.FailureScope.FEED}),
+                endpoint_kinds=frozenset(
+                    {failure_policy.EndpointKind.FEED_CONFIGURATION}
+                ),
+                pipeline_stages=frozenset({None}),
+            ),
+        )
+
+        conflicts = failure_policy.find_policy_rule_conflicts(rules)
+
+        self.assertEqual(len(conflicts), 1)
+        conflict = conflicts[0]
+        self.assertIs(
+            conflict.status_reason,
+            feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        )
+        self.assertEqual(conflict.matching_rule_indexes, (0, 1))
+        self.assertEqual(
+            conflict.executed_actions,
+            frozenset(
+                {
+                    failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
+                    failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                }
+            ),
+        )
+        self.assertEqual(
+            conflict.evidence,
+            failure_policy.FailurePolicyEvidence(
+                owner_scope=failure_policy.OwnerScope.FEED,
+                failure_scope=failure_policy.FailureScope.FEED,
+                endpoint_kind=failure_policy.EndpointKind.FEED_CONFIGURATION,
+            ),
+        )
+
+    def test_policy_rules_do_not_have_conflicting_actions(self) -> None:
+        """No concrete evidence can route to two different actions."""
+        self.assertEqual(failure_policy.find_policy_rule_conflicts(), ())
