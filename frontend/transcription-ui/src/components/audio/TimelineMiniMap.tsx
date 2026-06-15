@@ -65,9 +65,8 @@ export function TimelineMiniMap({
 
   const pctOf = (ms: number) => msToPct(ms, rangeStartMs ?? 0, rangeTotalMs);
 
-  // Labels sit on round gridline boundaries. The date shows only on a day change
-  // (never repeated); day-boundary labels are always kept and edge-anchored, and
-  // interior time labels that would crowd one are dropped.
+  // Day-boundary labels are always kept (the date shows once per day); interior
+  // time labels that would crowd one are dropped.
   const gridLabels = useMemo(() => {
     if (rangeStartMs == null || rangeTotalMs <= 0) return [];
     let prevDate = '';

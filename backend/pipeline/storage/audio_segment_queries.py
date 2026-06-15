@@ -52,11 +52,10 @@ LIST_AUDIO_SEGMENTS_ASC_SQL = _BASE_LIST_AUDIO_SEGMENTS_SQL.format(
     direction="ASC",
 )
 
-# Clip-density histogram: bucket in-window segments by start_timestamp into $4
-# equal-width buckets and count them, flagging any bucket containing an alert.
-# is_alert uses a LATERAL aggregate scoped to each segment via the annotations
-# PK, not a full-table GROUP BY. width_bucket returns 1..$4 since the WHERE
-# constrains start_timestamp to [$2, $3). Empty buckets produce no row.
+# Clip-density histogram bucketed by start_timestamp. is_alert uses a LATERAL
+# aggregate scoped to each segment via the annotations PK, not a full-table
+# GROUP BY. width_bucket returns 1..$4 since the WHERE constrains
+# start_timestamp to [$2, $3); empty buckets produce no row.
 AUDIO_SEGMENT_HISTOGRAM_SQL = """
 SELECT
     width_bucket(

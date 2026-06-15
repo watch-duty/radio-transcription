@@ -75,7 +75,6 @@ export function useAudioTimelineWindow({
   const firstId = firstSegment?.id ?? null;
   const firstEnd = firstSegment?.endTimestamp ?? null;
 
-  // Live edge of loaded audio — drives follow-live and the scrubbed check.
   const liveEnd = firstEnd ? new Date(firstEnd).getTime() : null;
 
   // Fixed 24h overview range, decoupled from the lazy list so scrubs don't shift it.
@@ -84,17 +83,15 @@ export function useAudioTimelineWindow({
   const maxEnd = rangeEndMs;
   const minEnd = rangeStartMs + windowDurationMs;
 
-  // Derived, not stored, so it stays correct however the window moved (scrub,
-  // clicking an old clip, jump-to-live): scrubbed iff the right edge sits before
-  // the live edge of loaded audio.
+  // Derived so it stays correct however the window moved: scrubbed iff the
+  // right edge sits before the live edge of loaded audio.
   const isScrubbed =
     windowEndTime != null &&
     liveEnd != null &&
     windowEndTime < liveEnd - LIVE_EDGE_EPS_MS;
 
-  // Follow the live edge as new audio arrives, or as the head segment extends
-  // (e.g. an ongoing silence bundle keeps the same id but a later end), unless
-  // the user has scrubbed away.
+  // Follow the live edge as new audio arrives or the head segment extends (an
+  // ongoing silence bundle keeps its id but gets a later end), unless scrubbed.
   // Skip empty lists: a refetch blank must not read as a fresh initial load.
   if (
     firstId !== null &&
@@ -114,9 +111,8 @@ export function useAudioTimelineWindow({
   }
 
   // Recenter when the playing/highlighted segment leaves the window. A highlight
-  // differing from the playing clip is an explicit pick (clicking a clip/row); one
-  // equal to it is just playback (which also moves the highlight, so the list
-  // follows). Only an explicit pick recenters while scrubbed.
+  // differing from the playing clip is an explicit pick (clicking a clip/row),
+  // which alone may recenter while scrubbed; a matching one is just playback.
   if (
     currentlyPlayingSegmentId !== prevPlayingId ||
     highlightedSegmentId !== prevHighlightedId

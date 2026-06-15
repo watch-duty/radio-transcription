@@ -41,7 +41,7 @@ interface TranscriptViewProps {
 }
 
 const DEFAULT_REFRESH_INTERVAL = 10000;
-const FEED_POLLING_INTERVAL_MS = 15000; // 15 seconds
+const FEED_POLLING_INTERVAL_MS = 15000;
 // Safety bound: clear the programmatic-scroll flag if Virtuoso never reports the
 // scroll settling, so a no-op scroll can't wedge it on (also caps a long smooth one).
 const PROGRAMMATIC_SCROLL_MAX_MS = 1500;
@@ -75,7 +75,6 @@ export function TranscriptView({
   const [newMessageCount, setNewMessageCount] = useState(0);
   const [playLatestAudio, setPlayLatestAudio] = useState(true);
 
-  // Effect which sets the searched feed ID based on the search params changing.
   useEffect(() => {
     if (targetFeedId) {
       setSearchedFeedId(targetFeedId);
@@ -84,7 +83,6 @@ export function TranscriptView({
     }
   }, [targetFeedId]);
 
-  // Effect which sets the searched timestamp based on the search params changing.
   useEffect(() => {
     if (targetTimestamp) {
       setSearchedTimestamp(targetTimestamp);
@@ -123,12 +121,9 @@ export function TranscriptView({
   );
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
 
-  // A mutable reference to the latest list of audio segments. This prevents stale closures
-  // inside the Howl audio lifecycle callbacks (like onend), ensuring continuous playback logic
-  // always evaluates against the most up-to-date audio segments list even if it updates mid-playback.
+  // Latest list, read by the Howl onend callback to avoid a stale closure.
   const audioSegmentsRef = useRef<RenderableAudioSegment[]>([]);
 
-  // Cleanup effect to ensure audio is unloaded when component unmounts
   useEffect(() => {
     return () => {
       currentAudio.current?.unload();
@@ -180,7 +175,6 @@ export function TranscriptView({
         currentAudio.current = sound;
       }
 
-      // Play is no current audio or changing audio
       if (!isAudioPlaying || newAudio) {
         currentAudio.current.play();
       } else {
@@ -218,7 +212,6 @@ export function TranscriptView({
     }
   }, [feedsError, onError]);
 
-  // Memoizing the feed ID to feed map so we don't have to recreate it on every render.
   const feedIdToFeedMap = useMemo(() => {
     if (!feeds) {
       return new Map<string, NonNullable<typeof feeds>[number]>();
@@ -240,7 +233,6 @@ export function TranscriptView({
     }
   }, [searchedFeed, newMessageCount]);
 
-  // Clear the unread message indicator when the user focuses back on the page
   useEffect(() => {
     const handleFocus = () => {
       setNewMessageCount(0);
@@ -303,7 +295,6 @@ export function TranscriptView({
 
   const audioSegments = useConsolidatedAudioSegments(rawAudioSegments);
 
-  // Histogram buckets as positioned overview cells spanning bucketDurationMs.
   const histogramMarks = useMemo(
     () =>
       histogramBuckets.map((b) => {
@@ -334,17 +325,16 @@ export function TranscriptView({
   });
   const activeWindowTime = isScrubbed ? windowEndTime : null;
 
-  // Keep the ref in sync with the audio segments so that audio lifecycle callbacks can access the latest list.
   useEffect(() => {
     audioSegmentsRef.current = audioSegments;
   }, [audioSegments]);
 
-  // Handles continuous auto-play by advancing to the next newer audio segment when the current audio finishes.
-  // Since the audio segment list is sorted newest-first, the next transmission in time is at `currentIndex - 1`.
+  // Continuous auto-play: on finish, advance to the next newer segment. The list
+  // is newest-first, so the next transmission in time is at `currentIndex - 1`.
   useEffect(() => {
     if (!playbackEndedForId) return;
 
-    // 1. First check if the ended segment was part of a silence bundle, and if there is a next newer segment in that same bundle!
+    // Within a silence bundle, advance to the next bundled segment first.
     const parentBundle = audioSegments.find(
       (t) =>
         t.isSilenceBundle && t.bundledSegmentIds?.includes(playbackEndedForId)
@@ -369,7 +359,7 @@ export function TranscriptView({
       }
     }
 
-    // 2. If it was a Speech segment, or the last segment in a silence bundle, advance to the next newer audio segment row
+    // Otherwise advance to the next newer row (speech, or end of a bundle).
     const currentIndex = audioSegments.findIndex(
       (t) =>
         t.id === playbackEndedForId ||
@@ -379,7 +369,6 @@ export function TranscriptView({
     if (currentIndex > 0) {
       const nextAudioSegment = audioSegments[currentIndex - 1];
       if (nextAudioSegment.playbackAudioUri) {
-        // If the next audio segment is a silence bundle, play its first segment
         if (
           nextAudioSegment.isSilenceBundle &&
           nextAudioSegment.bundledSegmentIds &&
@@ -400,9 +389,7 @@ export function TranscriptView({
     setPlaybackEndedForId(null);
   }, [playbackEndedForId, audioSegments, rawAudioSegments, toggleAudio]);
 
-  // This is used to group audio segments by date and display them in the UI.
-  // groupCounts is an array of numbers representing the number of audio segments in each group.
-  // groupTitles is an array of strings representing the title of each group.
+  // Virtuoso grouped-list inputs: per-date row counts and their titles.
   const { groupCounts, groupTitles } = useMemo(() => {
     const counts: number[] = [];
     const titles: string[] = [];
@@ -436,20 +423,12 @@ export function TranscriptView({
     return { groupCounts: counts, groupTitles: titles };
   }, [audioSegments]);
 
-  /**
-   * Background polling effect.
-   * Automatically fetches new audio segments every 15 seconds, provided the user is:
-   * 1. Scrolled to the top of the view.
-   * 2. Looking at the "live" head of the stream (no more un-fetched newer pages available).
-   */
+  // Poll for new segments only while the user is at the top of the list and at
+  // the live head; otherwise the additions wouldn't be visible anyway.
   useEffect(() => {
     if (
-      // Skip polling if the initial audio segments load hasn't completed yet
       !isAudioSegmentsSuccess ||
-      // Skip polling if not viewing at the top of the audio segments to prevent fetching data when the user would not see it.
-      // User can always click refresh button if they want to.
       !isViewAtTopOfAudioSegments ||
-      // Skip polling if there are older historical pages ahead of us to load.
       hasNewerAudioSegments ||
       !searchedFeedId
     ) {
@@ -464,7 +443,6 @@ export function TranscriptView({
           return;
         }
 
-        // Add the audio segments to cache
         const cachedAudioSegments =
           updateCacheWithNewAudioSegments(newAudioSegments);
         if (cachedAudioSegments.length === 0) {
@@ -476,14 +454,12 @@ export function TranscriptView({
         );
 
         if (cachedSpeechAudioSegments.length > 0) {
-          // Display snackbar indicator that new audio segments were received
           const message =
             cachedSpeechAudioSegments.length === 1
               ? 'New transcript received'
               : `${cachedSpeechAudioSegments.length} new transcripts received`;
           triggerSnackbar(message);
 
-          // Update the new message count if the user is not viewing the screen
           if (!document.hasFocus()) {
             setNewMessageCount(
               (prevCount) => prevCount + cachedSpeechAudioSegments.length
@@ -491,7 +467,6 @@ export function TranscriptView({
           }
         }
 
-        // Trigger the new audio to play if no audio is currently playing
         if (!isAudioPlaying && playLatestAudio) {
           const audioToPlay =
             cachedAudioSegments[cachedAudioSegments.length - 1];
@@ -537,7 +512,6 @@ export function TranscriptView({
     }
   }, [rulesError, onError]);
 
-  // Memoizing the rule ID to name map so we don't have to recreate it on every render.
   const ruleIdToNameMap: Map<string, string> = useMemo(() => {
     if (!rules) {
       return new Map<string, string>();
@@ -734,9 +708,7 @@ export function TranscriptView({
       return prev;
     });
 
-    // Given that clearing the date effectively jumps to live, we will
-    // navigate to the top of the table in case the user is scrolled
-    // down in the table, and snap the audio timeline back to the live edge.
+    // Clearing the date jumps to live: snap the timeline and list back to the top.
     if (date === null) {
       jumpToLive();
       followPlaybackRef.current = true;
@@ -747,10 +719,8 @@ export function TranscriptView({
 
   const handleFeedSelect = (feedId: string) => {
     setSearchedFeedId(feedId);
-    // Stop audio
     currentAudio.current?.stop();
     currentAudio.current?.unload();
-    // Reset all state
     handleFilterByDateTime(null);
     setNewMessageCount(0);
     setCurrentlyPlayingSegmentId(null);
@@ -758,7 +728,6 @@ export function TranscriptView({
     setIsViewAtTopOfAudioSegments(true);
     setPlaybackEndedForId(null);
     setIsAudioPlaying(false);
-    // Update URL params
     setSearchParams((prev) => {
       prev.set('feedId', feedId);
       prev.delete('segmentId');

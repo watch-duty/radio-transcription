@@ -67,12 +67,10 @@ const TimelineClip = React.memo(
     theme,
     currentTimeSeconds,
   }: TimelineClipProps) => {
-    // Render from cached peaks, never a url: 50+ clips each fetching+decoding
-    // their own audio never finishes. The queue decodes once; until then, a
-    // placeholder.
+    // Render from cached peaks, not a url: 50+ clips each streaming their own
+    // audio never finishes. Until the queue's decode lands, show a placeholder.
     const renderWaveform = !!clip.peaks;
 
-    // Playback position within the clip, for the cursor overlay.
     const cursorLeftPct =
       clip.isAudioPlaying && currentTimeSeconds !== undefined && clip.duration
         ? Math.min(100, Math.max(0, (currentTimeSeconds / clip.duration) * 100))
@@ -112,9 +110,8 @@ const TimelineClip = React.memo(
             data-testid="warning-icon"
             sx={{
               position: 'absolute',
-              // This centers the icon over the audio start, rather than left-aligned at the audio start.
+              // Offset so the icon sits centered above the clip's start, not on it.
               left: -11,
-              // This provides enough buffer to move the icon on top of the clip view rather than on it.
               top: -25,
               zIndex: 1,
               borderRadius: '50%',
@@ -279,9 +276,9 @@ export function AudioDisplay({
     windowDurationMs,
   ]);
 
-  // Decode the in-view clips' peaks (bounded, off-screen). A new window drops the
-  // prior pending decodes so scrubbing past windows doesn't fetch them; keyed on
-  // the url set so polls that don't move the window don't refire.
+  // Decode the in-view clips' peaks. Dropping prior pending decodes keeps a
+  // fast scrub from fetching windows it passed; keyed on the url set so polls
+  // that don't move the window don't refire.
   const clipUrlsKey = clips.map((c) => c.url).join('|');
   useEffect(() => {
     const urls = clipUrlsKey.split('|').filter(Boolean);

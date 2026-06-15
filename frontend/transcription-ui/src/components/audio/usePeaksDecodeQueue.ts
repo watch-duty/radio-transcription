@@ -45,7 +45,6 @@ export const __resetPeaksCacheForTest = () => {
   emitCacheChange();
 };
 
-// Max concurrent downloads.
 const FETCH_CONCURRENCY = 20;
 // Peaks are signed max-abs per bucket — the format the display player expects.
 // Bucket count scales with clip length (~one per rendered pixel) with a floor.
@@ -105,9 +104,8 @@ export interface PeaksDecodeQueue {
   getPeaks: (url: string) => CachedPeaks | undefined;
 }
 
-// Fetch-bounded peaks pipeline: at most FETCH_CONCURRENCY downloads at once, each
-// freeing its slot when the bytes arrive and decoding in the background.
-// Subscribing re-renders the caller when a decode lands.
+// Caps simultaneous downloads; each frees its slot once the bytes arrive and
+// decodes in the background. Subscribers re-render when a decode lands.
 export function usePeaksDecodeQueue(): PeaksDecodeQueue {
   useSyncExternalStore(subscribeCache, getCacheVersion);
 
@@ -133,8 +131,7 @@ export function usePeaksDecodeQueue(): PeaksDecodeQueue {
       fetch(url)
         .then((res) => res.arrayBuffer())
         .then((buffer) => {
-          // Decode in the background; keep the url in queuedRef until it
-          // resolves so it isn't re-fetched.
+          // Hold the url in queuedRef until decode resolves so it isn't re-fetched.
           void decodePeaks(url, buffer).finally(() =>
             queuedRef.current.delete(url)
           );

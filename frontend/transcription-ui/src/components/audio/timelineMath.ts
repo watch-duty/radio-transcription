@@ -1,4 +1,3 @@
-// A single overview histogram bucket positioned in wall-clock time.
 export interface HistogramMark {
   startMs: number;
   endMs: number;
@@ -14,7 +13,7 @@ export function opacityForCount(count: number): number {
 
 const MINUTE_MS = 60 * 1000;
 const HOUR_MS = 60 * MINUTE_MS;
-// Overview time-marker spacings; the smallest one under the target count is used.
+// Candidate gridline spacings; the smallest one under the target count wins.
 const NICE_INTERVALS_MS = [
   MINUTE_MS,
   2 * MINUTE_MS,
@@ -50,9 +49,8 @@ export function pickGridIntervalMs(totalMs: number): number {
   return NICE_INTERVALS_MS[NICE_INTERVALS_MS.length - 1];
 }
 
-// Round-interval gridline timestamps over [rangeStartMs, maxEnd], aligned to
-// local boundaries (e.g. local midnight) not UTC so day boundaries land on a
-// mark. Uses the offset at rangeStartMs; a mid-range DST shift is fine here.
+// Gridline times aligned to local boundaries (not UTC) so day boundaries land
+// on a mark. Uses the offset at rangeStartMs; a mid-range DST shift is fine.
 export function computeGridLineTimes(
   rangeStartMs: number,
   maxEnd: number,
