@@ -65,12 +65,13 @@ export const AUTH_BACKEND = process.env.AUTH_BACKEND || 'google';
 
 export const WORKSPACE_ADMIN_GROUP_EMAIL =
   process.env.WORKSPACE_ADMIN_GROUP_EMAIL;
-export const WORKSPACE_IMPERSONATION_EMAIL =
-  process.env.WORKSPACE_IMPERSONATION_EMAIL;
 
 // Cache structure for user admin status
 const adminCache = new Map<string, { isAdmin: boolean; expiresAt: number }>();
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes cache TTL
+
+// Cache for group resource name (groups/{group_id}) to avoid repeating the lookup
+let cachedGroupId: string | null = null;
 
 export async function checkIsAdmin(email: string): Promise<boolean> {
   const normalizedEmail = email.trim().toLowerCase();
@@ -89,21 +90,9 @@ export async function checkIsAdmin(email: string): Promise<boolean> {
     return true;
   }
 
-  if (!WORKSPACE_IMPERSONATION_EMAIL) {
-    console.error(
-      'WORKSPACE_IMPERSONATION_EMAIL environment variable is not set, but WORKSPACE_ADMIN_GROUP_EMAIL is configured. Cannot perform group membership lookup.'
-    );
-    return false;
-  }
-
   try {
     const auth = new GoogleAuth({
-      scopes: [
-        'https://www.googleapis.com/auth/admin.directory.group.member.readonly',
-      ],
-      clientOptions: {
-        subject: WORKSPACE_IMPERSONATION_EMAIL, // Impersonate the workspace admin
-      },
+      scopes: ['https://www.googleapis.com/auth/cloud-platform'],
     });
 
     const client = await auth.getClient();
@@ -114,15 +103,33 @@ export async function checkIsAdmin(email: string): Promise<boolean> {
       throw new Error('Failed to obtain Google OAuth token');
     }
 
-    const url = `https://admin.googleapis.com/admin/directory/v1/groups/${encodeURIComponent(
-      WORKSPACE_ADMIN_GROUP_EMAIL
-    )}/hasMember/${encodeURIComponent(normalizedEmail)}`;
+    // Step 1: Look up the group unique ID if not already cached
+    if (!cachedGroupId) {
+      const lookupUrl = `https://cloudidentity.googleapis.com/v1/groups:lookup?groupKey.id=${encodeURIComponent(
+        WORKSPACE_ADMIN_GROUP_EMAIL
+      )}`;
+      const lookupResponse = await axios.get(lookupUrl, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const groupName = lookupResponse.data.name;
+      if (!groupName) {
+        throw new Error(
+          `Failed to resolve group ID for ${WORKSPACE_ADMIN_GROUP_EMAIL}`
+        );
+      }
+      cachedGroupId = groupName;
+    }
 
-    const response = await axios.get(url, {
+    // Step 2: Check transitive membership
+    const checkUrl = `https://cloudidentity.googleapis.com/v1/${cachedGroupId}/memberships:checkTransitiveMembership`;
+    const checkResponse = await axios.get(checkUrl, {
       headers: { Authorization: `Bearer ${token}` },
+      params: {
+        query: `member_key_id == '${normalizedEmail}'`,
+      },
     });
 
-    const isAdmin = !!response.data.isMember;
+    const isAdmin = !!checkResponse.data.hasMembership;
 
     // Save in cache
     adminCache.set(normalizedEmail, {
@@ -132,22 +139,15 @@ export async function checkIsAdmin(email: string): Promise<boolean> {
 
     return isAdmin;
   } catch (error: unknown) {
-    // Note: the hasMember API returns 404 if the user is not found or not a member.
-    if (
-      axios.isAxiosError(error) &&
-      error.response &&
-      error.response.status === 404
-    ) {
-      adminCache.set(normalizedEmail, {
-        isAdmin: false,
-        expiresAt: Date.now() + CACHE_TTL_MS,
-      });
-      return false;
-    }
+    const message =
+      axios.isAxiosError(error) && error.response?.data
+        ? JSON.stringify(error.response.data)
+        : error instanceof Error
+          ? error.message
+          : String(error);
 
-    const message = error instanceof Error ? error.message : String(error);
     console.error(
-      `Error querying Google Directory API for ${normalizedEmail}:`,
+      `Error querying Cloud Identity API for ${normalizedEmail}:`,
       message
     );
 

@@ -67,7 +67,9 @@ describe('expressAuthentication', () => {
       },
     } as unknown as express.Request;
 
-    vi.mocked(jose.decodeJwt).mockReturnValueOnce(null as any);
+    vi.mocked(jose.decodeJwt).mockReturnValueOnce(
+      null as unknown as jose.JWTPayload
+    );
 
     await expect(
       expressAuthentication(mockReq, 'google_id_token')
@@ -89,7 +91,9 @@ describe('expressAuthentication', () => {
       iss: 'https://accounts.google.com',
     };
 
-    vi.mocked(jose.decodeJwt).mockReturnValueOnce(decodedPayload as any);
+    vi.mocked(jose.decodeJwt).mockReturnValueOnce(
+      decodedPayload as unknown as jose.JWTPayload
+    );
 
     const user = await expressAuthentication(mockReq, 'google_id_token');
 
@@ -114,7 +118,9 @@ describe('expressAuthentication', () => {
       iss: 'https://accounts.google.com',
     };
 
-    vi.mocked(jose.decodeJwt).mockReturnValueOnce(decodedPayload as any);
+    vi.mocked(jose.decodeJwt).mockReturnValueOnce(
+      decodedPayload as unknown as jose.JWTPayload
+    );
 
     const user = await expressAuthentication(mockReq, 'google_id_token');
 
@@ -138,7 +144,9 @@ describe('expressAuthentication', () => {
       iss: 'https://accounts.google.com',
     };
 
-    vi.mocked(jose.decodeJwt).mockReturnValueOnce(decodedPayload as any);
+    vi.mocked(jose.decodeJwt).mockReturnValueOnce(
+      decodedPayload as unknown as jose.JWTPayload
+    );
 
     const user = await expressAuthentication(mockReq, 'google_id_token');
 
