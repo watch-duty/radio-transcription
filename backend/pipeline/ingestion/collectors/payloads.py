@@ -24,10 +24,10 @@ def extract_optional_item_list(
     """Return an optional source item list or raise a bounded feed failure."""
     if not isinstance(payload, Mapping):
         raise failure_classification.collector_failure(
-            feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
             malformed_reason,
             policy_evidence=policy_evidence_for_status_reason(
-                feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
                 failure_scope=failure_scope,
                 endpoint_kind=endpoint_kind,
             ),
@@ -41,10 +41,10 @@ def extract_optional_item_list(
         return value
 
     raise failure_classification.collector_failure(
-        feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
         malformed_reason,
         policy_evidence=policy_evidence_for_status_reason(
-            feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
             failure_scope=failure_scope,
             endpoint_kind=endpoint_kind,
         ),

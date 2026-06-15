@@ -321,10 +321,10 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
         s3_base_url = _require_env("FIRE_NOTIFICATIONS_S3_BASE")
     except ValueError as e:
         raise collector_failure(
-            feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            feed_store.FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
             "missing_fire_notifications_s3_base",
             policy_evidence=failure_policy.FailurePolicyEvidence(
-                owner_scope=failure_policy.OwnerScope.CREDENTIAL_SCOPE,
+                owner_scope=failure_policy.OwnerScope.SOURCE_CLASS,
                 failure_scope=failure_policy.FailureScope.FEED,
                 endpoint_kind=failure_policy.EndpointKind.FIRE_POLL,
             ),
@@ -333,10 +333,10 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
         headers = _build_auth_headers()
     except ValueError as e:
         raise collector_failure(
-            feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            feed_store.FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
             "missing_fire_notifications_auth_config",
             policy_evidence=failure_policy.FailurePolicyEvidence(
-                owner_scope=failure_policy.OwnerScope.CREDENTIAL_SCOPE,
+                owner_scope=failure_policy.OwnerScope.SOURCE_CLASS,
                 failure_scope=failure_policy.FailureScope.FEED,
                 endpoint_kind=failure_policy.EndpointKind.FIRE_POLL,
             ),
@@ -382,12 +382,16 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
                     try:
                         data = resp.json()
                     except ValueError as exc:
+                        status_reason = (
+                            feed_store.FeedStatusReason
+                            .SYSTEM_SOURCE_PAYLOAD_INVALID
+                        )
                         raise collector_failure(
-                            feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                            status_reason,
                             "fn_api_payload_malformed: "
                             f"{quarantine_reason.exception_text(exc)}",
                             policy_evidence=policy_evidence_for_status_reason(
-                                feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                                status_reason,
                                 failure_scope=(
                                     failure_policy.FailureScope.OBSERVATION
                                 ),

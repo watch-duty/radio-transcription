@@ -211,7 +211,7 @@ class TestPayloadHelpers(unittest.TestCase):
 
         self.assertIs(
             cm.exception.status_reason,
-            feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
         )
         self.assertEqual(cm.exception.reason, "payload_malformed")
 
