@@ -26,9 +26,9 @@
 - [x] **RUN-01**: Runtime calls `report_feed_failure(...)` only when policy intent is `quarantine_feed` and owner scope is `feed`.
 - [x] **RUN-02**: Runtime routes source-offline, shared-auth, rate-limit, capture-timeout, unknown, source-class, and pipeline-owned decisions through the non-budgeted path.
 - [x] **RUN-03**: Pub/Sub publish failure after bookmark uses the non-budgeted path with status reason `pipeline_publish_after_bookmark_failed`.
-- [ ] **RUN-04**: Pub/Sub publish failure after bookmark records `policy_intent=hold_for_replay`.
-- [ ] **RUN-05**: Pub/Sub publish failure after bookmark records `executed_action=suppress_feed_quarantine_record_publish_gap`.
-- [ ] **RUN-06**: Pub/Sub publish failure after bookmark explicitly records that replay is not available in v1.
+- [x] **RUN-04**: Pub/Sub publish failure after bookmark records `policy_intent=hold_for_replay`.
+- [x] **RUN-05**: Pub/Sub publish failure after bookmark records `executed_action=suppress_feed_quarantine_record_publish_gap`.
+- [x] **RUN-06**: Pub/Sub publish failure after bookmark explicitly records that replay is not available in v1.
 - [x] **RUN-07**: Budgeted feed quarantine remains available for feed-owned, feed-actionable configuration failures.
 
 ### Status Reasons
@@ -38,11 +38,11 @@
 
 ### Telemetry
 
-- [ ] **TEL-01**: Runtime emits `feed_failure_policy_decision` for every routed failure.
-- [ ] **TEL-02**: `feed_failure_policy_decision` includes status reason, owner scope, failure scope, endpoint kind, policy intent, executed action, retry delay, and source type when available.
-- [ ] **TEL-03**: Runtime emits `post_bookmark_publish_failure` for post-bookmark Pub/Sub publish gaps.
-- [ ] **TEL-04**: `post_bookmark_publish_failure` includes `replay_missing=true` and `data_gap_known=true`.
-- [ ] **TEL-05**: Non-budgeted policy decisions never emit `feed_quarantined`.
+- [x] **TEL-01**: Runtime emits `feed_failure_policy_decision` for every routed failure.
+- [x] **TEL-02**: `feed_failure_policy_decision` includes status reason, owner scope, failure scope, endpoint kind, policy intent, executed action, retry delay, and source type when available.
+- [x] **TEL-03**: Runtime emits `post_bookmark_publish_failure` for post-bookmark Pub/Sub publish gaps.
+- [x] **TEL-04**: `post_bookmark_publish_failure` includes `replay_missing=true` and `data_gap_known=true`.
+- [x] **TEL-05**: Non-budgeted policy decisions never emit `feed_quarantined`.
 
 ### Tests
 
@@ -107,17 +107,17 @@
 | RUN-01 | Phase 2 | Complete |
 | RUN-02 | Phase 2 | Complete |
 | RUN-03 | Phase 2 | Complete |
-| RUN-04 | Phase 2 | Pending |
-| RUN-05 | Phase 2 | Pending |
-| RUN-06 | Phase 2 | Pending |
+| RUN-04 | Phase 2 | Complete |
+| RUN-05 | Phase 2 | Complete |
+| RUN-06 | Phase 2 | Complete |
 | RUN-07 | Phase 2 | Complete |
 | STAT-01 | Phase 1 | Complete |
 | STAT-02 | Phase 3 | Pending |
-| TEL-01 | Phase 2 | Pending |
-| TEL-02 | Phase 2 | Pending |
-| TEL-03 | Phase 2 | Pending |
-| TEL-04 | Phase 2 | Pending |
-| TEL-05 | Phase 2 | Pending |
+| TEL-01 | Phase 2 | Complete |
+| TEL-02 | Phase 2 | Complete |
+| TEL-03 | Phase 2 | Complete |
+| TEL-04 | Phase 2 | Complete |
+| TEL-05 | Phase 2 | Complete |
 | TEST-01 | Phase 3 | Pending |
 | TEST-02 | Phase 3 | Pending |
 | TEST-03 | Phase 3 | Pending |
