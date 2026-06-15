@@ -465,22 +465,19 @@ This test shape is appropriate for Phase 1 because it validates the SQL contract
 
 No `[ASSUMED]` claims were intentionally introduced; all recommendations above are based on local project artifacts, local code inspection, local environment probes, or cited OWASP documentation. [VERIFIED: research command outputs; CITED: https://owasp.org/www-project-application-security-verification-standard/]
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **How should the planner handle the dirty prior implementation?**
-   - What we know: uncommitted code already added some storage/runtime/policy pieces, but at least `failure_policy.py` ownership and strict evidence are not aligned with locked decisions. [VERIFIED: git status --short; backend/pipeline/ingestion/models.py; 01-CONTEXT.md]
-   - What's unclear: whether the executor should refactor the dirty attempt in place or discard/rebuild pieces. [VERIFIED: git status --short]
-   - Recommendation: plan explicit reconciliation tasks and never blindly duplicate the existing additions. [VERIFIED: 01-CONTEXT.md]
+1. **RESOLVED: How should the planner handle the dirty prior implementation?**
+   - Resolution: reconcile the dirty implementation in place. Executors should read current diffs, preserve useful edits that align with D-IDs, and refactor mismatched pieces rather than discarding the whole attempt or duplicating constants/classes. [VERIFIED: git status --short; backend/pipeline/ingestion/models.py; 01-CONTEXT.md]
+   - Planning impact: Phase 1 plans explicitly call out reconciliation tasks for policy ownership, strict evidence, collector call sites, and storage primitives. [VERIFIED: 01-CONTEXT.md]
 
-2. **Does POL-02 require wording cleanup later?**
-   - What we know: POL-02 names `policy_intent` and `executed_action` as part of the "policy evidence model", while D-04 moves them to `FailurePolicyDecision`. [VERIFIED: .planning/REQUIREMENTS.md; 01-CONTEXT.md]
-   - What's unclear: whether requirements should be amended after implementation to say "policy contract" instead of "policy evidence model". [VERIFIED: .planning/REQUIREMENTS.md]
-   - Recommendation: implement D-04 as the locked decision and note the interpretation in plan traceability. [VERIFIED: 01-CONTEXT.md]
+2. **RESOLVED: Does POL-02 require wording cleanup later?**
+   - Resolution: interpret POL-02 as the overall policy contract per D-04. `owner_scope`, `failure_scope`, `endpoint_kind`, and optional `pipeline_stage` live on `FailurePolicyEvidence`; `policy_intent` and `executed_action` live on `FailurePolicyDecision`. [VERIFIED: .planning/REQUIREMENTS.md; 01-CONTEXT.md]
+   - Planning impact: implementation must honor D-04 even though the requirement uses the older phrase "policy evidence model"; plans should trace POL-02 through both evidence and decision artifacts. [VERIFIED: 01-CONTEXT.md]
 
-3. **Should runtime telemetry tests remain in Phase 1 plans?**
-   - What we know: current dirty tests already cover `feed_failure_policy_decision` and `post_bookmark_publish_failure`, but roadmap assigns runtime telemetry to Phase 2. [VERIFIED: backend/pipeline/ingestion/tests/test_collector_runtime.py; .planning/ROADMAP.md]
-   - What's unclear: whether those tests should be retained as pre-existing work or deferred from the Phase 1 plan. [VERIFIED: git status --short; .planning/ROADMAP.md]
-   - Recommendation: Phase 1 should only plan foundation tests needed for policy/storage primitives; leave end-to-end runtime routing/telemetry acceptance to Phase 2/3 unless reconciling existing edits requires test movement. [VERIFIED: .planning/ROADMAP.md; 01-CONTEXT.md]
+3. **RESOLVED: Should runtime telemetry tests remain in Phase 1 plans?**
+   - Resolution: keep Phase 1 runtime telemetry coverage only where needed to reconcile existing dirty edits and maintain compilation around the new policy contract. End-to-end runtime routing and telemetry behavior remain Phase 2/3 scope. [VERIFIED: backend/pipeline/ingestion/tests/test_collector_runtime.py; .planning/ROADMAP.md]
+   - Planning impact: Phase 1 verification should focus on policy/storage primitives, strict `FeedFailure` evidence, and local import/call-site reconciliation; it should not add broad runtime routing or telemetry acceptance gates beyond what existing edits require. [VERIFIED: .planning/ROADMAP.md; 01-CONTEXT.md]
 
 ## Environment Availability
 
