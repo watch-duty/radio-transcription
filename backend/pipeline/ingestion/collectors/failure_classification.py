@@ -123,6 +123,12 @@ def owner_scope_for_status_reason(
         return failure_policy.OwnerScope.CREDENTIAL_SCOPE
     if status_reason is FeedStatusReason.SYSTEM_CONFIGURATION_INVALID:
         return failure_policy.OwnerScope.FEED
+    if status_reason is FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID:
+        return failure_policy.OwnerScope.SOURCE_CLASS
+    if status_reason is FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED:
+        return failure_policy.OwnerScope.CREDENTIAL_SCOPE
+    if status_reason is FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID:
+        return failure_policy.OwnerScope.SOURCE_CLASS
     if status_reason in {
         FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
         FeedStatusReason.SYSTEM_PIPELINE_ERROR,
