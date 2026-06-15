@@ -1242,12 +1242,15 @@ class CollectorRuntime:
         worker_id: uuid.UUID,
         fencing_token: int,
     ) -> bool:
-        """Record a non-audio source success when persisted state is dirty.
+        """Record a non-audio source success when persisted state needs it.
 
         Returns ``True`` when processing may continue, ``False`` when the task
         should stop because the row is no longer owned by this active lease.
         """
-        if not self._leased_feed_has_failure_state(feed):
+        if (
+            not self._leased_feed_has_failure_state(feed)
+            and observation.resume_position is None
+        ):
             return True
 
         try:

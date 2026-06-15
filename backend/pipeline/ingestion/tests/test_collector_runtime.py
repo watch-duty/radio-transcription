@@ -612,6 +612,54 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
         mock_publish.assert_not_called()
         rt._store.release_feed.assert_awaited_once()
 
+    async def test_clean_observation_with_resume_position_records_cursor(
+        self,
+    ) -> None:
+        """Clean leased rows still persist observation resume positions."""
+        resume_position = datetime.datetime(
+            2026,
+            6,
+            8,
+            12,
+            0,
+            tzinfo=datetime.UTC,
+        )
+
+        async def _one_observation(feed, shutdown, _resources):
+            yield SourceObservation(resume_position=resume_position)
+
+        feed = cast("LeasedFeed", dict(_FEED))
+        rt = CollectorRuntime(
+            capture_fn=_one_observation,
+            settings=_make_settings(),
+        )
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.record_source_observation.return_value = {
+            "id": _FEED_ID,
+            "current_worker": _WORKER_ID,
+            "current_status": "active",
+            "current_fencing_token": 1,
+            "recorded": True,
+        }
+        rt._releasing_feeds = set()
+
+        with _mock_upload_audio(), _mock_pubsub_publish():
+            await rt._process_feed(feed)
+
+        rt._store.record_source_observation.assert_awaited_once_with(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            resume_position,
+        )
+        self.assertEqual(feed["failure_count"], 0)
+        self.assertIsNone(feed["status_reason"])
+        self.assertEqual(feed["last_bookmark_time"], resume_position)
+        rt._store.release_feed.assert_awaited_once()
+
     async def test_dirty_observation_records_reset_and_updates_lease_copy(
         self,
     ) -> None:
