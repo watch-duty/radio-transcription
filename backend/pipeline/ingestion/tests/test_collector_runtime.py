@@ -1936,13 +1936,18 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
                 "_non_budgeted_retry_after",
                 return_value=retry_after,
             ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.quarantine_telemetry"
+            ) as mock_telemetry,
         ):
+            mock_telemetry.emit_quarantine_event = mock.AsyncMock()
             await rt._process_feed(_FEED)
 
         self.assertEqual(call_order, ["upload", "bookmark", "publish"])
         rt._store.update_feed_progress.assert_awaited_once()
         rt._store.report_feed_failure.assert_not_awaited()
         rt._store.release_non_budgeted_failure.assert_awaited_once()
+        mock_telemetry.emit_quarantine_event.assert_not_awaited()
         nb_kwargs = rt._store.release_non_budgeted_failure.await_args.kwargs
         self.assertIs(
             nb_kwargs["status_reason"],
@@ -1969,6 +1974,16 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
             if r["event_type"] == "feed_failure_policy_decision"
         )
         self.assertIn("retry_after", policy_record)
+        self.assertTrue(policy_record["replay_missing"])
+        self.assertTrue(policy_record["data_gap_known"])
+        self.assertEqual(
+            policy_record["policy_intent"],
+            "hold_for_replay",
+        )
+        self.assertEqual(
+            policy_record["executed_action"],
+            "suppress_feed_quarantine_record_publish_gap",
+        )
         self.assertTrue(gap_record["replay_missing"])
         self.assertTrue(gap_record["data_gap_known"])
         self.assertEqual(
