@@ -321,7 +321,7 @@ def publish_audio_chunk_sync(
             resolved_segment_id = (
                 generate_segment_id(feed_id, external_audio_segment_id)
                 if external_audio_segment_id
-                else (session_id or str(uuid.uuid4()))
+                else str(uuid.uuid4())
             )
             s_msg = SegmentedAudio(
                 segment_id=resolved_segment_id,
@@ -417,7 +417,7 @@ async def publish_audio_chunk(
             resolved_segment_id = (
                 generate_segment_id(feed_id, external_audio_segment_id)
                 if external_audio_segment_id
-                else (session_id or str(uuid.uuid4()))
+                else str(uuid.uuid4())
             )
             s_msg = SegmentedAudio(
                 segment_id=resolved_segment_id,
