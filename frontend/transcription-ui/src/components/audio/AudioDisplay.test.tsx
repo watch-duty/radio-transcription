@@ -1,8 +1,14 @@
 // @vitest-environment jsdom
-import React from 'react';
-
 import type { Howl } from 'howler';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 
 import {
   cleanup,
@@ -20,40 +26,40 @@ import {
 import { getAudioUrl } from '../../utils/audioUtils';
 import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { AudioDisplay } from './AudioDisplay';
+import {
+  __primePeaksCacheForTest,
+  __resetPeaksCacheForTest,
+} from './usePeaksDecodeQueue';
 
-const mockSetTime = vi.fn();
-const mockSetOptions = vi.fn();
-
+// Display-only: the player renders from cached peaks/duration, not a url.
 vi.mock('@wavesurfer/react', () => {
   const MockWavesurferPlayer = (props: {
-    url: string;
-    onReady?: (ws: {
-      setTime: (time: number) => void;
-      setOptions: (opts: unknown) => void;
-    }) => void;
-    onDestroy?: () => void;
-  }) => {
-    const { onReady, onDestroy } = props;
-    React.useEffect(() => {
-      if (onReady) {
-        onReady({
-          setTime: mockSetTime,
-          setOptions: mockSetOptions,
-        });
-      }
-      return () => {
-        if (onDestroy) {
-          onDestroy();
-        }
-      };
-    }, [onReady, onDestroy]);
-
-    return <div data-testid="wavesurfer-player" data-url={props.url} />;
-  };
+    peaks?: (number[] | Float32Array)[];
+    duration?: number;
+  }) => (
+    <div
+      data-testid="wavesurfer-player"
+      data-peaks-len={props.peaks?.[0]?.length}
+      data-duration={props.duration}
+    />
+  );
 
   return {
     default: MockWavesurferPlayer,
   };
+});
+
+// The decode queue's pump calls fetch(); stub it so jsdom never hits the network.
+// Tests prime the peaks cache directly instead of relying on a real decode.
+beforeAll(() => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(() => Promise.reject(new Error('no network in tests')))
+  );
+});
+
+afterAll(() => {
+  vi.unstubAllGlobals();
 });
 
 function makeMockAudioSegment(
@@ -107,8 +113,7 @@ function makeMockAudioSegment(
 describe('AudioDisplay', () => {
   afterEach(() => {
     cleanup();
-    mockSetTime.mockClear();
-    mockSetOptions.mockClear();
+    __resetPeaksCacheForTest();
   });
 
   it('should render empty state when no transcripts', () => {
@@ -352,7 +357,7 @@ describe('AudioDisplay', () => {
     });
   });
 
-  it('passes playbackAudioUri to WavesurferPlayer (transformed via getAudioUrl)', () => {
+  it('renders the waveform from peaks cached under the getAudioUrl-transformed playbackAudioUri', () => {
     const mockAudioSegments: AudioSegment[] = [
       makeMockAudioSegment(
         '1',
@@ -363,6 +368,12 @@ describe('AudioDisplay', () => {
         'gs://bucket/audio1.m4a'
       ),
     ];
+
+    // The player only appears when peaks are found under the getAudioUrl key, so
+    // its presence (with peaks) proves the playbackAudioUri transform is the key.
+    __primePeaksCacheForTest(
+      getAudioUrl(mockAudioSegments[0].playbackAudioUri ?? '')
+    );
 
     render(
       <AudioDisplay
@@ -377,10 +388,7 @@ describe('AudioDisplay', () => {
 
     const wavesurfer = screen.getByTestId('wavesurfer-player');
     expect(wavesurfer).toBeTruthy();
-    expect(wavesurfer.getAttribute('data-url')).toBe(
-      getAudioUrl(mockAudioSegments[0].playbackAudioUri ?? '')
-    );
-    expect(wavesurfer.getAttribute('data-url')).toContain('.m4a');
+    expect(wavesurfer.getAttribute('data-peaks-len')).toBe('3');
   });
 
   it('should render play button and call onTogglePlayPause when clicked', () => {
@@ -500,7 +508,7 @@ describe('AudioDisplay', () => {
     });
   });
 
-  it('should call setTime on wavesurfer player when progress is provided', () => {
+  it('positions the playing cursor at currentTimeSeconds within the clip', () => {
     const mockAudioSegments: AudioSegment[] = [
       makeMockAudioSegment(
         '1',
@@ -511,6 +519,9 @@ describe('AudioDisplay', () => {
         'audio1.m4a'
       ),
     ];
+
+    // Primed peaks give the clip a 1s duration, so 0.5s is halfway.
+    __primePeaksCacheForTest(getAudioUrl('audio1.m4a'));
 
     render(
       <AudioDisplay
@@ -520,14 +531,14 @@ describe('AudioDisplay', () => {
         isAudioPlaying={true}
         onTogglePlayPause={vi.fn()}
         highlightedSegmentId={null}
-        currentTimeSeconds={3.5}
+        currentTimeSeconds={0.5}
       />
     );
 
-    expect(mockSetTime).toHaveBeenCalledWith(3.5);
+    expect(screen.getByTestId('playing-cursor').style.left).toBe('50%');
   });
 
-  it('should poll progress from currentAudioRef and seek wavesurfer player', async () => {
+  it('polls currentAudioRef to position the playing cursor', async () => {
     const mockAudioSegments: AudioSegment[] = [
       makeMockAudioSegment(
         '1',
@@ -539,8 +550,11 @@ describe('AudioDisplay', () => {
       ),
     ];
 
+    // Primed peaks give the clip a 1s duration, so a 0.5s seek is halfway.
+    __primePeaksCacheForTest(getAudioUrl('audio1.m4a'));
+
     const mockHowl = {
-      seek: vi.fn().mockReturnValue(2.5),
+      seek: vi.fn().mockReturnValue(0.5),
     };
 
     const currentAudioRef = {
@@ -561,8 +575,7 @@ describe('AudioDisplay', () => {
 
     await waitFor(() => {
       expect(mockHowl.seek).toHaveBeenCalled();
+      expect(screen.getByTestId('playing-cursor').style.left).toBe('50%');
     });
-
-    expect(mockSetTime).toHaveBeenCalledWith(2.5);
   });
 });
