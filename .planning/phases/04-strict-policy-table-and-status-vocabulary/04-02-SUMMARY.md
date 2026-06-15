@@ -64,7 +64,7 @@ completed: 2026-06-15
 1. **Task 1: Add failing tests for backend enum and owner mapping splits** - `f62d9d46` (test)
 2. **Task 2: Add backend enum values and owner mapping** - `8cef80d4` (feat)
 3. **Task 3: Extend policy-table tests and rows for split reasons** - `65eb5ea1` (test), `c0b4a29c` (feat)
-4. **Task 4: Verify backend-only scope and known compatibility deferral** - `cf83fba0` (test), `11791cc9` (fix)
+4. **Task 4: Verify backend-only scope and known compatibility deferral** - `cf83fba0` (test), `11791cc9` (fix), `460c3431` (refactor)
 
 ## Files Created/Modified
 
@@ -94,9 +94,18 @@ completed: 2026-06-15
 - **Verification:** `safe-run -- uv run python -m pytest backend/pipeline/ingestion/tests/test_failure_policy.py backend/pipeline/ingestion/collectors/tests/test_failure_classification.py backend/pipeline/storage/tests/test_feed_store.py::TestFeedStatusReason::test_canonical_reason_values -q -n 0`
 - **Committed in:** `cf83fba0`, `11791cc9`
 
+**2. [Rule 3 - Blocking] Keep owner-scope mapping lint-clean**
+
+- **Found during:** Phase-level lint gate
+- **Issue:** Adding the split status branches pushed `owner_scope_for_status_reason(...)` past the configured return-count limit.
+- **Fix:** Replaced the branch chain with `_STATUS_OWNER_SCOPES`.
+- **Files modified:** `backend/pipeline/ingestion/collectors/failure_classification.py`
+- **Verification:** `safe-run -- uv run ruff check backend/pipeline/ingestion/failure_policy.py backend/pipeline/ingestion/tests/test_failure_policy.py backend/pipeline/ingestion/collectors/failure_classification.py backend/pipeline/ingestion/collectors/tests/test_failure_classification.py backend/pipeline/storage/feed_store.py backend/pipeline/storage/tests/test_feed_store.py`
+- **Committed in:** `460c3431`
+
 ---
 
-**Total deviations:** 1 auto-fixed (1 bug)
+**Total deviations:** 2 auto-fixed (1 bug, 1 blocking)
 **Impact on plan:** Keeps the explicit policy table aligned with existing collector evidence shapes without expanding Phase 4 beyond backend policy.
 
 ## Issues Encountered
