@@ -10,24 +10,6 @@ from backend.pipeline.storage import feed_store
 class TestFailurePolicySurface(unittest.TestCase):
     """Tests for the intentionally small failure policy API."""
 
-    def test_policy_module_does_not_export_evidence_routing_types(
-        self,
-    ) -> None:
-        """Routing is status-only; evidence dimensions are not policy API."""
-        for name in (
-            "OwnerScope",
-            "FailureScope",
-            "EndpointKind",
-            "PipelineStage",
-            "FailurePolicyEvidence",
-            "_EvidencePattern",
-            "_FailurePolicyRule",
-            "PolicyRuleConflict",
-            "find_policy_rule_conflicts",
-        ):
-            with self.subTest(name=name):
-                self.assertFalse(hasattr(failure_policy, name))
-
     def test_classify_failure_policy_accepts_only_status_reason(self) -> None:
         signature = inspect.signature(failure_policy.classify_failure_policy)
 

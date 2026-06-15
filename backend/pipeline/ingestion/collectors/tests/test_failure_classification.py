@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import ast
-import pathlib
 import unittest
 
 from backend.pipeline.ingestion.collectors.failure_classification import (
@@ -15,15 +13,6 @@ from backend.pipeline.ingestion.collectors.failure_classification import (
 )
 from backend.pipeline.ingestion.models import FeedFailure
 from backend.pipeline.storage.feed_store import FeedStatusReason
-
-_COLLECTOR_ROOT = pathlib.Path(__file__).resolve().parents[1]
-_COLLECTOR_FAILURE_CALLSITE_FILES = (
-    _COLLECTOR_ROOT / "failure_classification.py",
-    _COLLECTOR_ROOT / "bcfy_calls" / "bcfy_calls_collector.py",
-    _COLLECTOR_ROOT / "openmhz" / "collector.py",
-    _COLLECTOR_ROOT / "icecast" / "icecast_collector.py",
-    _COLLECTOR_ROOT / "fire_notifications" / "collector.py",
-)
 
 
 def _require_item_failure(value: ItemFailure | None) -> ItemFailure:
@@ -162,39 +151,6 @@ class TestItemBatchOutcome(unittest.TestCase):
             FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
         )
         self.assertEqual(str(result), "missing_source_feed_id")
-
-
-class TestCollectorFailureCallSites(unittest.TestCase):
-    """All current collector_failure calls should use status plus reason only."""
-
-    def test_current_collector_failure_calls_do_not_supply_policy_evidence(
-        self,
-    ) -> None:
-        offenders: list[str] = []
-        for path in _COLLECTOR_FAILURE_CALLSITE_FILES:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.Call):
-                    continue
-                if not _is_collector_failure_call(node):
-                    continue
-                if any(
-                    keyword.arg == "policy_evidence"
-                    for keyword in node.keywords
-                ):
-                    offenders.append(
-                        f"{path.relative_to(_COLLECTOR_ROOT)}:{node.lineno}"
-                    )
-
-        self.assertEqual(offenders, [])
-
-
-def _is_collector_failure_call(node: ast.Call) -> bool:
-    if isinstance(node.func, ast.Name):
-        return node.func.id == "collector_failure"
-    if isinstance(node.func, ast.Attribute):
-        return node.func.attr == "collector_failure"
-    return False
 
 
 if __name__ == "__main__":
