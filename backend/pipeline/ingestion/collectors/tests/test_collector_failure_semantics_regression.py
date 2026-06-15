@@ -6,7 +6,7 @@ import asyncio
 import logging
 import pathlib
 import unittest
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.pipeline.ingestion import failure_policy
@@ -32,7 +32,12 @@ from backend.pipeline.ingestion.models import FeedFailure
 from backend.pipeline.storage.feed_store import FeedStatusReason
 
 
-def _payload_evidence_kwargs() -> dict[str, object]:
+class _PayloadEvidenceKwargs(TypedDict):
+    failure_scope: failure_policy.FailureScope
+    endpoint_kind: failure_policy.EndpointKind
+
+
+def _payload_evidence_kwargs() -> _PayloadEvidenceKwargs:
     return {
         "failure_scope": failure_policy.FailureScope.OBSERVATION,
         "endpoint_kind": failure_policy.EndpointKind.FIRE_POLL,

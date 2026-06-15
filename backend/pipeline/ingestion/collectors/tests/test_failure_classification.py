@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import pathlib
 import unittest
+from typing import Any, cast
 
 from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.ingestion.collectors.failure_classification import (
@@ -169,8 +170,9 @@ class TestItemBatchOutcome(unittest.TestCase):
         self.assertIs(result.policy_evidence, evidence)
 
     def test_collector_failure_helper_requires_policy_evidence(self) -> None:
+        collector_failure_func = cast("Any", collector_failure)
         with self.assertRaises(TypeError):
-            collector_failure(  # type: ignore[call-arg]
+            collector_failure_func(
                 FeedStatusReason.SOURCE_UNREACHABLE,
                 "source_unreachable",
             )

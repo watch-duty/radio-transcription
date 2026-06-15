@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import unittest
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 
 from backend.pipeline.ingestion import failure_policy, slo_contract
 from backend.pipeline.ingestion.collectors import (
@@ -18,7 +18,12 @@ from backend.pipeline.ingestion.models import FeedFailure
 from backend.pipeline.storage import feed_store
 
 
-def _payload_evidence_kwargs() -> dict[str, object]:
+class _PayloadEvidenceKwargs(TypedDict):
+    failure_scope: failure_policy.FailureScope
+    endpoint_kind: failure_policy.EndpointKind
+
+
+def _payload_evidence_kwargs() -> _PayloadEvidenceKwargs:
     return {
         "failure_scope": failure_policy.FailureScope.OBSERVATION,
         "endpoint_kind": failure_policy.EndpointKind.FIRE_POLL,
