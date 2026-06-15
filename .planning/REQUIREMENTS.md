@@ -41,7 +41,7 @@
 - [x] **TEST-12**: Policy tests prove unmatched combinations fall back to telemetry-gap non-budgeted release.
 - [ ] **TEST-13**: Runtime tests prove Pub/Sub publish-after-bookmark failure calls `report_feed_failure(...)`.
 - [ ] **TEST-14**: Runtime tests prove non-budgeted source, ambiguous collector, GCS/bookmark, credential-access, and telemetry-gap cases do not call `report_feed_failure(...)`.
-- [ ] **TEST-15**: Collector tests prove the new split enum values are produced by Calls, Fire Notifications, Icecast, and OpenMHz where applicable.
+- [x] **TEST-15**: Collector tests prove the new split enum values are produced by Calls, Fire Notifications, Icecast, and OpenMHz where applicable.
 - [ ] **TEST-16**: API/UI/storage tests prove enum compatibility surfaces are synchronized.
 
 ## Future Requirements
@@ -101,7 +101,7 @@
 | TEST-12 | Phase 4 | Complete |
 | TEST-13 | Phase 5 | Pending |
 | TEST-14 | Phase 5 | Pending |
-| TEST-15 | Phase 5 | Pending |
+| TEST-15 | Phase 5 | Complete |
 | TEST-16 | Phase 6 | Pending |
 
 **Coverage:**

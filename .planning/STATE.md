@@ -4,14 +4,14 @@ milestone: v1.1
 milestone_name: Policy Merge
 status: executing
 stopped_at: Phase 5 context gathered
-last_updated: "2026-06-15T18:17:13.441Z"
-last_activity: 2026-06-15 -- Phase 05 planning complete
+last_updated: "2026-06-15T18:29:52.839Z"
+last_activity: 2026-06-15
 progress:
   total_phases: 3
   completed_phases: 1
   total_plans: 5
-  completed_plans: 2
-  percent: 40
+  completed_plans: 3
+  percent: 60
 ---
 
 # Project State
@@ -22,15 +22,15 @@ See: `.planning/PROJECT.md` (updated 2026-06-15)
 
 **Core value:** On-call should be alerted only when retry is not expected to
 fix the ingestion failure and a human/operator repair is required.
-**Current focus:** Phase 04 — strict-policy-table-and-status-vocabulary
+**Current focus:** Phase 05 — producer-and-runtime-routing-merge
 policy routing
 
 ## Current Position
 
-Phase: 5
-Plan: Not started
+Phase: 05 (producer-and-runtime-routing-merge) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
-Last activity: 2026-06-15 -- Phase 05 planning complete
+Last activity: 2026-06-15
 
 ## Performance Metrics
 
@@ -59,6 +59,7 @@ Last activity: 2026-06-15 -- Phase 05 planning complete
 | Phase 03 P03 | 6 min | 2 tasks | 1 files |
 | Phase 04 P01 | 6 min | 3 tasks | 2 files |
 | Phase 04 P02 | 5 min | 4 tasks | 6 files |
+| Phase 05 P01 | 21 min | 3 tasks | 11 files |
 
 ## Accumulated Context
 
