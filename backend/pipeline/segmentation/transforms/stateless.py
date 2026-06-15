@@ -45,6 +45,7 @@ from backend.pipeline.segmentation.constants import (
 from backend.pipeline.segmentation.datatypes import (
     ChunkMetadata,
     FeedMetadata,
+    FlushRequest,
     SegmentationDlqOutput,
 )
 from backend.pipeline.segmentation.options import (
@@ -178,7 +179,7 @@ class ParseAndKeyFn(beam.DoFn):
         yield from outputs
 
 
-@beam.typehints.with_input_types(tuple)
+@beam.typehints.with_input_types(tuple[str, FlushRequest])
 @beam.typehints.with_output_types(PubsubMessage)
 class UploadRawSegmentFn(beam.DoFn):
     """Stateless DoFn to upload PCM audio bytes as a raw WAV file to the GCS staging bucket
@@ -208,17 +209,19 @@ class UploadRawSegmentFn(beam.DoFn):
         )
         return flac_io.getvalue()
 
-    def _upload_raw_audio(self, request: Any, start_datetime: datetime.datetime) -> str:
+    def _upload_raw_audio(
+        self, request: FlushRequest, start_datetime: datetime.datetime
+    ) -> str:
         """Converts PCM to FLAC, uploads to GCS, and returns the GCS URI."""
         flac_bytes = self._pcm_to_flac(request.buffer, request.sample_rate)
         flac_path = f"raw_segments/{request.feed_id}/{start_datetime:%Y/%m/%d}/{request.segment_id}.flac"
 
         if not self.staging_audio_bucket:
             err_msg = "staging_audio_bucket is not configured"
-            raise ValueError(err_msg)  # noqa: TRY301
+            raise ValueError(err_msg)
         if not self.gcs_client:
             err_msg = "GCS client not initialized"
-            raise RuntimeError(err_msg)  # noqa: TRY301
+            raise RuntimeError(err_msg)
 
         bucket = self.gcs_client.bucket(self.staging_audio_bucket)
         blob = bucket.blob(flac_path)
@@ -226,7 +229,7 @@ class UploadRawSegmentFn(beam.DoFn):
         return f"gs://{self.staging_audio_bucket}/{flac_path}"
 
     def _build_segmented_audio_proto(
-        self, request: Any, gcs_uri: str
+        self, request: FlushRequest, gcs_uri: str
     ) -> SegmentedAudio:
         """Constructs and returns the SegmentedAudio protobuf message."""
         start_timestamp = Timestamp()
@@ -268,21 +271,22 @@ class UploadRawSegmentFn(beam.DoFn):
             start_audio_offset=start_offset,
             end_audio_offset=end_offset,
             feed_name=request.feed_metadata.feed_name,
-            audio_classification=request.audio_classification,
+            audio_classification=request.audio_classification.name,
             raw_audio_uri=gcs_uri,
         )
 
     @override
     def process(
         self,
-        element: tuple[str, Any],
+        element: tuple[str, FlushRequest],
     ) -> Iterator[PubsubMessage | SegmentationDlqOutput]:
         feed_id, request = element
-        trace_attrs = {}
+        trace_attrs: dict[str, str] = {}
         if request.traceparent:
             trace_attrs["traceparent"] = request.traceparent
-        if getattr(request, "baggage", None):
-            trace_attrs["baggage"] = request.baggage
+        baggage_val = getattr(request, "baggage", None)
+        if baggage_val is not None:
+            trace_attrs["baggage"] = str(baggage_val)
 
         try:
             with with_tracer_context(
@@ -296,7 +300,9 @@ class UploadRawSegmentFn(beam.DoFn):
                 )
 
                 gcs_uri = self._upload_raw_audio(request, start_datetime)
-                segmented_audio_pb = self._build_segmented_audio_proto(request, gcs_uri)
+                segmented_audio_pb = self._build_segmented_audio_proto(
+                    request, gcs_uri
+                )
 
                 pubsub_attributes: dict[str, str] = {}
                 inject_otel_context(pubsub_attributes)
