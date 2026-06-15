@@ -24,6 +24,7 @@ import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { getAudioUrl } from '../../utils/audioUtils';
 import AudioDisplay from '../audio/AudioDisplay';
+import { useAudioTimelineWindow } from '../audio/useAudioTimelineWindow';
 import FeedSearchView from '../feeds/FeedSearchView';
 import FeedHeader from './FeedHeader';
 import TranscriptActionsBar from './TranscriptActionsBar';
@@ -263,6 +264,16 @@ export function TranscriptView({
       : null;
 
   const audioSegments = useConsolidatedAudioSegments(rawAudioSegments);
+
+  const { windowEndTime, windowDurationMs, isScrubbed, jumpToLive } =
+    useAudioTimelineWindow({
+      audioSegments: rawAudioSegments,
+      currentlyPlayingSegmentId,
+      highlightedSegmentId,
+    });
+
+  // Reflect where the timeline is scrubbed back to (else "Viewing live").
+  const activeWindowTime = isScrubbed ? windowEndTime : null;
 
   // Keep the ref in sync with the audio segments so that audio lifecycle callbacks can access the latest list.
   useEffect(() => {
@@ -668,6 +679,8 @@ export function TranscriptView({
         isAudioPlaying={isAudioPlaying}
         onTogglePlayPause={handleTogglePlayPause}
         currentAudioRef={currentAudio}
+        windowEndTime={windowEndTime}
+        windowDurationMs={windowDurationMs}
       />
 
       <Box
@@ -681,13 +694,17 @@ export function TranscriptView({
         <TranscriptActionsBar
           searchedTimestamp={searchedTimestamp}
           hasNewerAudioSegments={hasNewerAudioSegments}
+          activeWindowTime={activeWindowTime}
           redactTranscripts={redactTranscripts}
           setRedactTranscripts={setRedactTranscripts}
           dateTime={searchedTimestamp}
           setDateTime={handleFilterByDateTime}
           alertFilter={alertFilter}
           setAlertFilter={setAlertFilter}
-          onClickViewLatest={() => handleFilterByDateTime(null)}
+          onClickViewLatest={() => {
+            handleFilterByDateTime(null);
+            jumpToLive();
+          }}
         />
         {audioSegments.length > 0 ? (
           <TranscriptDisplay
