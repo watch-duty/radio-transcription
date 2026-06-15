@@ -2243,7 +2243,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(policy_record["owner_scope"], "unknown")
         self.assertEqual(policy_record["failure_scope"], "unknown")
         self.assertEqual(policy_record["endpoint_kind"], "unknown")
-        self.assertEqual(policy_record["policy_intent"], "telemetry_gap")
+        self.assertEqual(policy_record["policy_intent"], "non_budgeted_retry")
         self.assertEqual(
             policy_record["executed_action"],
             "suppress_feed_quarantine_telemetry_gap",
@@ -2643,7 +2643,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json_fields["owner_scope"], "unknown")
         self.assertEqual(json_fields["failure_scope"], "unknown")
         self.assertEqual(json_fields["endpoint_kind"], "unknown")
-        self.assertEqual(json_fields["policy_intent"], "telemetry_gap")
+        self.assertEqual(json_fields["policy_intent"], "non_budgeted_retry")
         self.assertEqual(
             json_fields["executed_action"],
             "suppress_feed_quarantine_telemetry_gap",

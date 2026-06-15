@@ -49,10 +49,8 @@ class PolicyIntent(StrEnum):
     """What policy lane should own this failure."""
 
     QUARANTINE_FEED = "quarantine_feed"
-    SUPPRESS_RETRY = "suppress_retry"
+    NON_BUDGETED_RETRY = "non_budgeted_retry"
     HOLD_FOR_REPLAY = "hold_for_replay"
-    TELEMETRY_GAP = "telemetry_gap"
-    OPEN_BREAKER = "open_breaker"
 
 
 class ExecutedAction(StrEnum):
@@ -159,7 +157,7 @@ _QUARANTINE_FEED_ROUTE = _PolicyRoute(
 )
 
 _NON_BUDGETED_RETRY_ROUTE = _PolicyRoute(
-    policy_intent=PolicyIntent.SUPPRESS_RETRY,
+    policy_intent=PolicyIntent.NON_BUDGETED_RETRY,
     executed_action=ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
     feed_budget_eligible=False,
     quarantine_feed=False,
@@ -172,8 +170,8 @@ _PIPELINE_GAP_ROUTE = _PolicyRoute(
     quarantine_feed=False,
 )
 
-_TELEMETRY_GAP_ROUTE = _PolicyRoute(
-    policy_intent=PolicyIntent.TELEMETRY_GAP,
+_NON_BUDGETED_TELEMETRY_ROUTE = _PolicyRoute(
+    policy_intent=PolicyIntent.NON_BUDGETED_RETRY,
     executed_action=ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP,
     feed_budget_eligible=False,
     quarantine_feed=False,
@@ -289,7 +287,7 @@ _POLICY_RULES = (
         failure_scopes=_SOURCE_FAILURE_SCOPES,
         endpoint_kinds=_SOURCE_CLASS_ENDPOINTS,
         pipeline_stages=frozenset({None}),
-        policy_intent=PolicyIntent.SUPPRESS_RETRY,
+        policy_intent=PolicyIntent.NON_BUDGETED_RETRY,
         executed_action=ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
         feed_budget_eligible=False,
         quarantine_feed=False,
@@ -300,7 +298,7 @@ _POLICY_RULES = (
         failure_scopes=_SOURCE_FAILURE_SCOPES,
         endpoint_kinds=_SOURCE_CLASS_ENDPOINTS,
         pipeline_stages=frozenset({None}),
-        policy_intent=PolicyIntent.SUPPRESS_RETRY,
+        policy_intent=PolicyIntent.NON_BUDGETED_RETRY,
         executed_action=ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
         feed_budget_eligible=False,
         quarantine_feed=False,
@@ -311,7 +309,7 @@ _POLICY_RULES = (
         failure_scopes=_SOURCE_FAILURE_SCOPES,
         endpoint_kinds=_SOURCE_CLASS_ENDPOINTS,
         pipeline_stages=frozenset({None}),
-        policy_intent=PolicyIntent.SUPPRESS_RETRY,
+        policy_intent=PolicyIntent.NON_BUDGETED_RETRY,
         executed_action=ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
         feed_budget_eligible=False,
         quarantine_feed=False,
@@ -389,7 +387,7 @@ _POLICY_RULES = (
     ),
     _policy_rule(
         status_reason=feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-        route=_TELEMETRY_GAP_ROUTE,
+        route=_NON_BUDGETED_TELEMETRY_ROUTE,
         owner_scopes=frozenset({OwnerScope.UNKNOWN}),
     ),
     _policy_rule(
@@ -412,7 +410,7 @@ _POLICY_RULES = (
     ),
     _policy_rule(
         status_reason=feed_store.FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
-        route=_TELEMETRY_GAP_ROUTE,
+        route=_NON_BUDGETED_TELEMETRY_ROUTE,
         owner_scopes=frozenset({OwnerScope.UNKNOWN}),
     ),
 )
@@ -433,14 +431,14 @@ def _decision_from_rule(
     )
 
 
-def _telemetry_gap_decision(
+def _non_budgeted_telemetry_decision(
     status_reason: feed_store.FeedStatusReason,
     evidence: FailurePolicyEvidence,
 ) -> FailurePolicyDecision:
     return FailurePolicyDecision(
         status_reason=status_reason,
         evidence=evidence,
-        policy_intent=PolicyIntent.TELEMETRY_GAP,
+        policy_intent=PolicyIntent.NON_BUDGETED_RETRY,
         executed_action=ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP,
         feed_budget_eligible=False,
         quarantine_feed=False,
@@ -455,7 +453,7 @@ def classify_failure_policy(
     for rule in _POLICY_RULES:
         if rule.matches(status_reason, evidence):
             return _decision_from_rule(status_reason, evidence, rule)
-    return _telemetry_gap_decision(status_reason, evidence)
+    return _non_budgeted_telemetry_decision(status_reason, evidence)
 
 
 def is_feed_quarantine(decision: FailurePolicyDecision) -> bool:
@@ -471,8 +469,3 @@ def is_feed_budget_eligible(decision: FailurePolicyDecision) -> bool:
 def is_pipeline_hold(decision: FailurePolicyDecision) -> bool:
     """Return whether a decision belongs in a pipeline hold/replay lane."""
     return decision.policy_intent is PolicyIntent.HOLD_FOR_REPLAY
-
-
-def is_source_class_breaker(decision: FailurePolicyDecision) -> bool:
-    """Return whether a decision belongs to a shared source/credential lane."""
-    return decision.policy_intent is PolicyIntent.OPEN_BREAKER

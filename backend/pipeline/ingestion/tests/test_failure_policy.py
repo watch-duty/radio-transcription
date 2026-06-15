@@ -95,10 +95,6 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             failure_policy.is_pipeline_hold(decision),
             policy_intent is failure_policy.PolicyIntent.HOLD_FOR_REPLAY,
         )
-        self.assertIs(
-            failure_policy.is_source_class_breaker(decision),
-            policy_intent is failure_policy.PolicyIntent.OPEN_BREAKER,
-        )
 
     def test_current_status_reasons_have_explicit_policy_routes(
         self,
@@ -174,7 +170,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.SOURCE_OFFLINE,
                 source_stream_evidence,
-                failure_policy.PolicyIntent.SUPPRESS_RETRY,
+                failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                 failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
                 False,
                 False,
@@ -182,7 +178,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
                 source_api_evidence,
-                failure_policy.PolicyIntent.SUPPRESS_RETRY,
+                failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                 failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
                 False,
                 False,
@@ -190,7 +186,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.SOURCE_RATE_LIMITED,
                 source_class_evidence,
-                failure_policy.PolicyIntent.SUPPRESS_RETRY,
+                failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                 failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
                 False,
                 False,
@@ -198,7 +194,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
                 auth_evidence,
-                failure_policy.PolicyIntent.SUPPRESS_RETRY,
+                failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                 failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
                 False,
                 False,
@@ -222,7 +218,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED,
                 credential_access_evidence,
-                failure_policy.PolicyIntent.SUPPRESS_RETRY,
+                failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                 failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
                 False,
                 False,
@@ -230,7 +226,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
                 source_payload_evidence,
-                failure_policy.PolicyIntent.SUPPRESS_RETRY,
+                failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                 failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
                 False,
                 False,
@@ -238,7 +234,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
                 unknown_evidence,
-                failure_policy.PolicyIntent.TELEMETRY_GAP,
+                failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                 failure_policy.ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP,
                 False,
                 False,
@@ -246,7 +242,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
                 pipeline_gcs_evidence,
-                failure_policy.PolicyIntent.SUPPRESS_RETRY,
+                failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                 failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
                 False,
                 False,
@@ -254,7 +250,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
                 unknown_evidence,
-                failure_policy.PolicyIntent.TELEMETRY_GAP,
+                failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                 failure_policy.ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP,
                 False,
                 False,
@@ -297,7 +293,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
         self._assert_decision(
             status_reason=feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
             evidence=evidence,
-            policy_intent=failure_policy.PolicyIntent.SUPPRESS_RETRY,
+            policy_intent=failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
             executed_action=(
                 failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE
             ),
@@ -326,7 +322,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
                         feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID
                     ),
                     evidence=evidence,
-                    policy_intent=failure_policy.PolicyIntent.SUPPRESS_RETRY,
+                    policy_intent=failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                     executed_action=(
                         failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE
                     ),
@@ -353,7 +349,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
                 item_source_evidence,
-                failure_policy.PolicyIntent.SUPPRESS_RETRY,
+                failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                 failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
                 False,
                 False,
@@ -361,7 +357,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
                 item_auth_evidence,
-                failure_policy.PolicyIntent.SUPPRESS_RETRY,
+                failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                 failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
                 False,
                 False,
@@ -369,7 +365,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED,
                 item_auth_evidence,
-                failure_policy.PolicyIntent.SUPPRESS_RETRY,
+                failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                 failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
                 False,
                 False,
@@ -377,7 +373,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
                 item_source_evidence,
-                failure_policy.PolicyIntent.SUPPRESS_RETRY,
+                failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                 failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
                 False,
                 False,
@@ -472,7 +468,7 @@ class TestClassifyFailurePolicy(unittest.TestCase):
                 self._assert_decision(
                     status_reason=status_reason,
                     evidence=evidence,
-                    policy_intent=failure_policy.PolicyIntent.TELEMETRY_GAP,
+                    policy_intent=failure_policy.PolicyIntent.NON_BUDGETED_RETRY,
                     executed_action=(
                         failure_policy.ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP
                     ),
