@@ -1984,6 +1984,8 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             mock_telemetry.emit_quarantine_event = mock.AsyncMock()
             await rt._process_feed(_FEED)
 
+        rt._store.report_feed_failure.assert_awaited_once()
+        rt._store.release_non_budgeted_failure.assert_not_awaited()
         mock_telemetry.emit_quarantine_event.assert_awaited_once_with(
             feed_id=str(_FEED_ID),
             feed_name="Test Feed",
@@ -2030,9 +2032,10 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         """Catch-all truncates exception messages longer than 200 chars.
 
         Guards the 100→200 cap bump in `_process_feed`. A 250-char message
-        must be truncated to exactly 200 chars before reaching
-        `report_feed_failure`; a 150-char message (over the old 100-char
-        cap, under the new 200-char cap) must pass through untruncated.
+        must be truncated to exactly 200 chars before reaching the
+        non-budgeted failure release path; a 150-char message (over the old
+        100-char cap, under the new 200-char cap) must pass through
+        untruncated.
         """
         long_message = "x" * 250
         mid_message = "y" * 150
@@ -2070,62 +2073,57 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
                 FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
             )
 
-    async def test_unknown_owner_collector_failure_routes_to_telemetry_gap(
+    async def test_untyped_runtime_exception_routes_to_telemetry_gap(
         self,
     ) -> None:
-        """Unknown-owner FeedFailure does not use legacy quarantine."""
-        cases = (
-            (FeedStatusReason.SOURCE_OFFLINE, "source_offline"),
-            (FeedStatusReason.SOURCE_RATE_LIMITED, "source_rate_limited"),
-            (
-                FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-                "auth_failed",
-            ),
+        """Untyped runtime failures use UNKNOWN evidence and no feed budget."""
+
+        async def _failing_capture(feed, shutdown, _resources):
+            msg = "capture_failed"
+            raise RuntimeError(msg)
+            yield _make_captured_chunk(b"audio")
+
+        rt = CollectorRuntime(
+            capture_fn=_failing_capture,
+            settings=_make_settings(),
         )
-        for status_reason, reason in cases:
-            with self.subTest(status_reason=status_reason.value):
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress.return_value = True
+        rt._store.release_non_budgeted_failure.return_value = "failing"
+        rt._releasing_feeds = set()
 
-                async def _failing_capture(
-                    feed,
-                    shutdown,
-                    _resources,
-                    _status_reason=status_reason,
-                    _reason=reason,
-                ):
-                    raise FeedFailure(
-                        _status_reason,
-                        _reason,
-                        policy_evidence=failure_policy.FailurePolicyEvidence(
-                            owner_scope=failure_policy.OwnerScope.UNKNOWN,
-                            failure_scope=failure_policy.FailureScope.UNKNOWN,
-                            endpoint_kind=failure_policy.EndpointKind.UNKNOWN,
-                        ),
-                    )
-                    yield _make_captured_chunk(b"audio")
+        with self.assertLogs(
+            "backend.pipeline.ingestion.collector_runtime",
+            level=logging.INFO,
+        ) as cm:
+            await rt._process_feed(_FEED)
 
-                rt = CollectorRuntime(
-                    capture_fn=_failing_capture,
-                    settings=_make_settings(),
-                )
-                rt._shutdown = asyncio.Event()
-                rt._lease_lost = asyncio.Event()
-                rt._capture_resources = _default_resources()
-                rt._store = mock.AsyncMock()
-                rt._store.update_feed_progress.return_value = True
-                rt._store.release_non_budgeted_failure.return_value = "failing"
-                rt._releasing_feeds = set()
-
-                await rt._process_feed(_FEED)
-
-                rt._store.report_feed_failure.assert_not_awaited()
-                rt._store.release_non_budgeted_failure.assert_awaited_once()
-                kwargs = (
-                    rt._store.release_non_budgeted_failure.await_args.kwargs
-                )
-                self.assertIs(
-                    kwargs["status_reason"],
-                    status_reason,
-                )
+        rt._store.report_feed_failure.assert_not_awaited()
+        rt._store.release_non_budgeted_failure.assert_awaited_once()
+        kwargs = rt._store.release_non_budgeted_failure.await_args.kwargs
+        self.assertIs(
+            kwargs["status_reason"],
+            FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
+        )
+        policy_records = [
+            cast("dict[str, Any]", record.__dict__["json_fields"])
+            for record in cm.records
+            if getattr(record, "json_fields", {}).get("event_type")
+            == "feed_failure_policy_decision"
+        ]
+        self.assertEqual(len(policy_records), 1)
+        policy_record = policy_records[0]
+        self.assertEqual(policy_record["owner_scope"], "unknown")
+        self.assertEqual(policy_record["failure_scope"], "unknown")
+        self.assertEqual(policy_record["endpoint_kind"], "unknown")
+        self.assertEqual(policy_record["policy_intent"], "telemetry_gap")
+        self.assertEqual(
+            policy_record["executed_action"],
+            "suppress_feed_quarantine_telemetry_gap",
+        )
 
     async def test_collector_failure_string_status_reason_persists(
         self,
