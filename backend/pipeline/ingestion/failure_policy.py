@@ -180,14 +180,27 @@ _TELEMETRY_GAP_ROUTE = _PolicyRoute(
 )
 
 
-def _route_kwargs(route: _PolicyRoute) -> dict[str, object]:
-    """Return constructor kwargs for a reusable policy route."""
-    return {
-        "policy_intent": route.policy_intent,
-        "executed_action": route.executed_action,
-        "feed_budget_eligible": route.feed_budget_eligible,
-        "quarantine_feed": route.quarantine_feed,
-    }
+def _policy_rule(
+    *,
+    status_reason: feed_store.FeedStatusReason,
+    route: _PolicyRoute,
+    owner_scopes: frozenset[OwnerScope] | None = None,
+    failure_scopes: frozenset[FailureScope] | None = None,
+    endpoint_kinds: frozenset[EndpointKind] | None = None,
+    pipeline_stages: frozenset[PipelineStage | None] | None = None,
+) -> _FailurePolicyRule:
+    """Build a rule from a reusable route without losing field types."""
+    return _FailurePolicyRule(
+        status_reason=status_reason,
+        policy_intent=route.policy_intent,
+        executed_action=route.executed_action,
+        feed_budget_eligible=route.feed_budget_eligible,
+        quarantine_feed=route.quarantine_feed,
+        owner_scopes=owner_scopes,
+        failure_scopes=failure_scopes,
+        endpoint_kinds=endpoint_kinds,
+        pipeline_stages=pipeline_stages,
+    )
 
 
 _SOURCE_CLASS_ENDPOINTS = frozenset(
@@ -260,15 +273,15 @@ _SOURCE_PAYLOAD_ENDPOINTS = frozenset(
 )
 
 _POLICY_RULES = (
-    _FailurePolicyRule(
+    _policy_rule(
         status_reason=(
             feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
         ),
+        route=_PIPELINE_GAP_ROUTE,
         owner_scopes=frozenset({OwnerScope.PIPELINE}),
         failure_scopes=frozenset({FailureScope.PIPELINE}),
         endpoint_kinds=frozenset({EndpointKind.PUBSUB_PUBLISH}),
         pipeline_stages=frozenset({PipelineStage.PUBSUB_PUBLISH}),
-        **_route_kwargs(_PIPELINE_GAP_ROUTE),
     ),
     _FailurePolicyRule(
         status_reason=feed_store.FeedStatusReason.SOURCE_OFFLINE,
@@ -303,8 +316,9 @@ _POLICY_RULES = (
         feed_budget_eligible=False,
         quarantine_feed=False,
     ),
-    _FailurePolicyRule(
+    _policy_rule(
         status_reason=feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+        route=_NON_BUDGETED_RETRY_ROUTE,
         owner_scopes=frozenset({OwnerScope.CREDENTIAL_SCOPE}),
         failure_scopes=frozenset(
             {
@@ -316,18 +330,18 @@ _POLICY_RULES = (
         ),
         endpoint_kinds=_AUTH_ENDPOINTS,
         pipeline_stages=frozenset({None}),
-        **_route_kwargs(_NON_BUDGETED_RETRY_ROUTE),
     ),
-    _FailurePolicyRule(
+    _policy_rule(
         status_reason=feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        route=_QUARANTINE_FEED_ROUTE,
         owner_scopes=frozenset({OwnerScope.FEED}),
         failure_scopes=frozenset({FailureScope.FEED}),
         endpoint_kinds=_FEED_CONFIG_ENDPOINTS,
         pipeline_stages=frozenset({None}),
-        **_route_kwargs(_QUARANTINE_FEED_ROUTE),
     ),
-    _FailurePolicyRule(
+    _policy_rule(
         status_reason=feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        route=_NON_BUDGETED_RETRY_ROUTE,
         owner_scopes=frozenset({OwnerScope.FEED}),
         failure_scopes=frozenset(
             {
@@ -337,22 +351,22 @@ _POLICY_RULES = (
         ),
         endpoint_kinds=_PROVIDER_CONTROL_CONFIG_ENDPOINTS,
         pipeline_stages=frozenset({None}),
-        **_route_kwargs(_NON_BUDGETED_RETRY_ROUTE),
     ),
-    _FailurePolicyRule(
+    _policy_rule(
         status_reason=(
             feed_store.FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID
         ),
+        route=_QUARANTINE_FEED_ROUTE,
         owner_scopes=frozenset({OwnerScope.SOURCE_CLASS}),
         failure_scopes=_SOURCE_FAILURE_SCOPES,
         endpoint_kinds=_RUNTIME_CONFIG_ENDPOINTS,
         pipeline_stages=frozenset({None}),
-        **_route_kwargs(_QUARANTINE_FEED_ROUTE),
     ),
-    _FailurePolicyRule(
+    _policy_rule(
         status_reason=(
             feed_store.FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED
         ),
+        route=_NON_BUDGETED_RETRY_ROUTE,
         owner_scopes=frozenset({OwnerScope.CREDENTIAL_SCOPE}),
         failure_scopes=frozenset(
             {
@@ -364,23 +378,23 @@ _POLICY_RULES = (
         ),
         endpoint_kinds=_AUTH_ENDPOINTS,
         pipeline_stages=frozenset({None}),
-        **_route_kwargs(_NON_BUDGETED_RETRY_ROUTE),
     ),
-    _FailurePolicyRule(
+    _policy_rule(
         status_reason=feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
+        route=_NON_BUDGETED_RETRY_ROUTE,
         owner_scopes=frozenset({OwnerScope.SOURCE_CLASS}),
         failure_scopes=_SOURCE_FAILURE_SCOPES,
         endpoint_kinds=_SOURCE_PAYLOAD_ENDPOINTS,
         pipeline_stages=frozenset({None}),
-        **_route_kwargs(_NON_BUDGETED_RETRY_ROUTE),
     ),
-    _FailurePolicyRule(
+    _policy_rule(
         status_reason=feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        route=_TELEMETRY_GAP_ROUTE,
         owner_scopes=frozenset({OwnerScope.UNKNOWN}),
-        **_route_kwargs(_TELEMETRY_GAP_ROUTE),
     ),
-    _FailurePolicyRule(
+    _policy_rule(
         status_reason=feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        route=_NON_BUDGETED_RETRY_ROUTE,
         owner_scopes=frozenset({OwnerScope.PIPELINE}),
         failure_scopes=frozenset({FailureScope.PIPELINE}),
         endpoint_kinds=frozenset(
@@ -395,12 +409,11 @@ _POLICY_RULES = (
                 PipelineStage.BOOKMARK_WRITE,
             }
         ),
-        **_route_kwargs(_NON_BUDGETED_RETRY_ROUTE),
     ),
-    _FailurePolicyRule(
+    _policy_rule(
         status_reason=feed_store.FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
+        route=_TELEMETRY_GAP_ROUTE,
         owner_scopes=frozenset({OwnerScope.UNKNOWN}),
-        **_route_kwargs(_TELEMETRY_GAP_ROUTE),
     ),
 )
 

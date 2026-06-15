@@ -137,8 +137,9 @@ class TestFeedFailureContract(unittest.TestCase):
 
     def test_rejects_missing_policy_evidence(self) -> None:
         """Typed FeedFailure requires structured policy evidence."""
+        feed_failure = cast("Any", FeedFailure)
         with self.assertRaises(TypeError):
-            FeedFailure(  # type: ignore[call-arg]
+            feed_failure(
                 FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
                 "missing_source_feed_id",
             )
