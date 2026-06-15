@@ -824,6 +824,21 @@ class CollectorRuntime:
         return failure_policy.is_feed_quarantine(decision)
 
     @staticmethod
+    def _is_post_bookmark_publish_gap(
+        decision: failure_policy.FailurePolicyDecision,
+    ) -> bool:
+        """Return whether a pipeline decision represents a publish data gap."""
+        evidence = decision.evidence
+        return (
+            evidence.owner_scope is failure_policy.OwnerScope.PIPELINE
+            and evidence.failure_scope is failure_policy.FailureScope.PIPELINE
+            and evidence.endpoint_kind
+            is failure_policy.EndpointKind.PUBSUB_PUBLISH
+            and evidence.pipeline_stage
+            is failure_policy.PipelineStage.PUBSUB_PUBLISH
+        )
+
+    @staticmethod
     def _non_budgeted_retry_after() -> datetime.datetime:
         """Return the retry time for non-budgeted failure lanes."""
         jitter_sec = random.uniform(  # noqa: S311 -- scheduling jitter
@@ -1081,6 +1096,8 @@ class CollectorRuntime:
         reason: str,
         status_reason: FeedStatusReason,
         evidence: failure_policy.FailurePolicyEvidence,
+        replay_missing: bool = False,
+        data_gap_known: bool = False,
     ) -> None:
         """Persist a classified feed failure through the fenced store path."""
         self._emit_policy_decision(
@@ -1088,6 +1105,8 @@ class CollectorRuntime:
             reason=reason,
             status_reason=status_reason,
             evidence=evidence,
+            replay_missing=replay_missing,
+            data_gap_known=data_gap_known,
         )
         extra: dict[str, object] = {
             "json_fields": {
@@ -1485,20 +1504,29 @@ class CollectorRuntime:
                 e.status_reason,
                 e.policy_evidence,
             )
-            replay_missing = (
-                decision.executed_action
-                is failure_policy.ExecutedAction.SUPPRESS_FEED_QUARANTINE_RECORD_PUBLISH_GAP
-            )
-            await self._record_non_budgeted_failure(
-                feed,
-                worker_id,
-                fencing_token,
-                reason=e.reason,
-                status_reason=e.status_reason,
-                evidence=e.policy_evidence,
-                replay_missing=replay_missing,
-                data_gap_known=replay_missing,
-            )
+            replay_missing = self._is_post_bookmark_publish_gap(decision)
+            if self._is_feed_quarantine_decision(decision):
+                await self._record_feed_failure(
+                    feed,
+                    worker_id,
+                    fencing_token,
+                    reason=e.reason,
+                    status_reason=e.status_reason,
+                    evidence=e.policy_evidence,
+                    replay_missing=replay_missing,
+                    data_gap_known=replay_missing,
+                )
+            else:
+                await self._record_non_budgeted_failure(
+                    feed,
+                    worker_id,
+                    fencing_token,
+                    reason=e.reason,
+                    status_reason=e.status_reason,
+                    evidence=e.policy_evidence,
+                    replay_missing=replay_missing,
+                    data_gap_known=replay_missing,
+                )
             return
 
         except Exception as e:

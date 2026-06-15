@@ -2018,7 +2018,7 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         records = [
             cast("dict[str, Any]", r.__dict__.get("json_fields"))
             for r in cm.records
-            if getattr(r, "json_fields", None)
+            if getattr(r, "json_fields", {}).get("event_type")
         ]
         event_types = {r["event_type"] for r in records}
         self.assertIn("feed_failure_policy_decision", event_types)
@@ -2091,7 +2091,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         records = [
             cast("dict[str, Any]", r.__dict__.get("json_fields"))
             for r in cm.records
-            if getattr(r, "json_fields", None)
+            if getattr(r, "json_fields", {}).get("event_type")
         ]
         policy_record = next(
             r
@@ -2434,7 +2434,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         records = [
             cast("dict[str, Any]", r.__dict__.get("json_fields"))
             for r in cm.records
-            if getattr(r, "json_fields", None)
+            if getattr(r, "json_fields", {}).get("event_type")
         ]
         event_types = {r["event_type"] for r in records}
         self.assertIn("feed_failure_policy_decision", event_types)
@@ -2492,7 +2492,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         records = [
             cast("dict[str, Any]", r.__dict__.get("json_fields"))
             for r in cm.records
-            if getattr(r, "json_fields", None)
+            if getattr(r, "json_fields", {}).get("event_type")
         ]
         event_types = {r["event_type"] for r in records}
         self.assertIn("feed_failure_policy_decision", event_types)
