@@ -64,30 +64,6 @@ describe('FeedsController', () => {
       });
     });
 
-    it('should preserve pipeline publish status reason from backend feeds', async () => {
-      mockRequest.mockResolvedValueOnce({
-        data: [
-          {
-            ...mockBackendFeed,
-            status: 'failing',
-            status_reason: 'pipeline_publish_after_bookmark_failed',
-          },
-        ],
-      });
-
-      const controller = new FeedsController();
-      const result = await controller.listFeeds();
-
-      expect(result).toEqual([
-        {
-          ...expectedFrontendFeed,
-          status: 'error',
-          substatus: 'failing',
-          statusReason: 'pipeline_publish_after_bookmark_failed',
-        },
-      ]);
-    });
-
     it('should return feeds with tags on success', async () => {
       const mockFeedWithTags = {
         ...mockBackendFeed,

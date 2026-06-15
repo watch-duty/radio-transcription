@@ -17,7 +17,6 @@ export type FeedStatus = 'active' | 'inactive' | 'error';
 
 export type BackendFeedStatusReason =
   | 'unknown'
-  | 'pipeline_publish_after_bookmark_failed'
   | 'source_offline'
   | 'source_unreachable'
   | 'source_rate_limited'
@@ -65,3 +64,4 @@ export interface ListFeedsResponse {
   nextToken?: string;
   total: number;
 }
+

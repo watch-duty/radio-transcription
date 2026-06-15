@@ -23,7 +23,6 @@ const FEED_STATUS_REASON_UI_TEXT_DISPLAY: Record<
   string
 > = {
   unknown: 'Unknown Status',
-  pipeline_publish_after_bookmark_failed: 'Pipeline Publish Failed After Bookmark',
   source_offline: 'Source Offline',
   source_unreachable: 'Source Unreachable',
   source_rate_limited: 'Source Rate Limited',

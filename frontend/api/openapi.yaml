@@ -281,7 +281,6 @@ components:
       type: string
       enum:
         - unknown
-        - pipeline_publish_after_bookmark_failed
         - source_offline
         - source_unreachable
         - source_rate_limited

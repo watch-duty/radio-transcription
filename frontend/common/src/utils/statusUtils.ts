@@ -5,7 +5,6 @@ import type {
 } from '../types/feeds.js';
 
 const BACKEND_FEED_STATUS_REASONS = new Set<BackendFeedStatusReason>([
-  'pipeline_publish_after_bookmark_failed',
   'source_offline',
   'source_unreachable',
   'source_rate_limited',
