@@ -212,6 +212,24 @@ class TestItemBatchOutcome(unittest.TestCase):
         )
         self.assertIs(
             owner_scope_for_status_reason(
+                FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID
+            ),
+            failure_policy.OwnerScope.SOURCE_CLASS,
+        )
+        self.assertIs(
+            owner_scope_for_status_reason(
+                FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED
+            ),
+            failure_policy.OwnerScope.CREDENTIAL_SCOPE,
+        )
+        self.assertIs(
+            owner_scope_for_status_reason(
+                FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID
+            ),
+            failure_policy.OwnerScope.SOURCE_CLASS,
+        )
+        self.assertIs(
+            owner_scope_for_status_reason(
                 FeedStatusReason.SYSTEM_COLLECTOR_ERROR
             ),
             failure_policy.OwnerScope.UNKNOWN,
