@@ -208,10 +208,10 @@ class UploadRawSegmentFn(beam.DoFn):
         )
         return flac_io.getvalue()
 
-    def _upload_raw_audio(self, request: Any, dt: datetime.datetime) -> str:
+    def _upload_raw_audio(self, request: Any, start_datetime: datetime.datetime) -> str:
         """Converts PCM to FLAC, uploads to GCS, and returns the GCS URI."""
         flac_bytes = self._pcm_to_flac(request.buffer, request.sample_rate)
-        flac_path = f"raw_segments/{request.feed_id}/{dt:%Y/%m/%d}/{request.segment_id}.flac"
+        flac_path = f"raw_segments/{request.feed_id}/{start_datetime:%Y/%m/%d}/{request.segment_id}.flac"
 
         if not self.staging_audio_bucket:
             err_msg = "staging_audio_bucket is not configured"
@@ -290,20 +290,20 @@ class UploadRawSegmentFn(beam.DoFn):
                 "upload_raw_segment",
                 "backend.pipeline.segmentation.transforms.stateless",
             ):
-                dt = datetime.datetime.fromtimestamp(
+                start_datetime = datetime.datetime.fromtimestamp(
                     request.time_range.start_ms / MS_PER_SECOND,
                     tz=datetime.UTC,
                 )
 
-                gcs_uri = self._upload_raw_audio(request, dt)
-                proto = self._build_segmented_audio_proto(request, gcs_uri)
+                gcs_uri = self._upload_raw_audio(request, start_datetime)
+                segmented_audio_pb = self._build_segmented_audio_proto(request, gcs_uri)
 
-                attrs: dict[str, str] = {}
-                inject_otel_context(attrs)
+                pubsub_attributes: dict[str, str] = {}
+                inject_otel_context(pubsub_attributes)
 
                 yield PubsubMessage(
-                    data=proto.SerializeToString(),
-                    attributes=attrs,
+                    data=segmented_audio_pb.SerializeToString(),
+                    attributes=pubsub_attributes,
                     ordering_key=request.feed_id,
                 )
 
