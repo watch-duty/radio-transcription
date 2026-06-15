@@ -31,11 +31,14 @@ valid capture events or report source-specific feed failure evidence through
 
 Runtime-side `_PipelineFailure` is separate from `FeedFailure`. It represents
 post-capture system failures after the collector already obtained source data,
-and the runtime routes those through non-budgeted pipeline policy lanes instead
-of incrementing the feed quarantine counter. GCS and bookmark failures retain
-`system_pipeline_error`; Pub/Sub failures after a successful bookmark use
-`pipeline_publish_after_bookmark_failed` because capture already advanced and a
-publish replay gap is known.
+and the runtime classifies those failures through `failure_policy` before
+choosing the budgeted or non-budgeted store path. GCS upload and bookmark-write
+failures retain `system_pipeline_error` and remain non-budgeted. Pub/Sub
+publish failures after a successful bookmark use
+`pipeline_publish_after_bookmark_failed`, record `replay_missing=true` and
+`data_gap_known=true`, and can consume feed quarantine budget after the existing
+threshold because retry cannot repair the already-advanced bookmark/publish
+gap.
 
 Echo is the exception to the VM runtime shape: it runs as a synchronous Cloud
 Function. It still writes the same status-reason fields through
@@ -68,8 +71,11 @@ the likely owner:
 
 | Reason | Use when |
 |--------|----------|
-| `system_authentication_failed` | Configured credentials, tokens, or partner auth are rejected. |
+| `system_authentication_failed` | Configured credentials, tokens, or partner auth are rejected by the upstream provider. |
 | `system_configuration_invalid` | The feed row is missing or has an invalid source-specific identifier, URL, or required configuration. |
+| `system_runtime_configuration_invalid` | Shared runtime, deployment, environment, source-class, or transport configuration is invalid and retry is not expected to repair it. |
+| `system_credential_access_failed` | Watch Duty could not retrieve or access internal credentials, such as Secret Manager access failure; this is not the same as upstream provider credential rejection. |
+| `system_source_payload_invalid` | A successful source response violates the collector payload contract and repeating the same request is not expected to help. |
 | `system_collector_error` | The collector cannot turn apparently available source data into a chunk, or all item failures are mixed/ambiguous. |
 | `system_pipeline_error` | Runtime or Echo post-capture processing fails after source data was obtained, such as GCS upload, bookmark writes, staging, duration probing, or heartbeat writes. |
 | `system_unexpected_error` | Defensive fallback for bugs or untyped exceptions that should become typed in a future collector fix. |
@@ -79,7 +85,7 @@ work belongs to a replay/hold lane, not to feed health:
 
 | Reason | Use when |
 |--------|----------|
-| `pipeline_publish_after_bookmark_failed` | The runtime bookmarked captured audio but could not publish the corresponding Pub/Sub message. This records a known downstream gap and must not quarantine the feed. |
+| `pipeline_publish_after_bookmark_failed` | The runtime bookmarked captured audio but could not publish the corresponding Pub/Sub message. This records a known downstream gap, sets `replay_missing=true` and `data_gap_known=true`, and in v1.1 can consume feed quarantine budget after the existing threshold because durable replay is not yet available. |
 
 ## Observation Boundaries
 
