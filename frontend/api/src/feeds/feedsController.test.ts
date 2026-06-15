@@ -1,4 +1,4 @@
-import { SourceType } from '@transcription/common';
+import { SourceType, convertFeedStatusReason } from '@transcription/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FeedsController } from './feedsController.js';
@@ -49,6 +49,12 @@ describe('FeedsController', () => {
     substatus: 'active',
     lastHeartbeat: '2024-01-01T00:00:00Z',
   };
+
+  it('preserves pipeline publish status reason during conversion', () => {
+    expect(
+      convertFeedStatusReason('pipeline_publish_after_bookmark_failed')
+    ).toBe('pipeline_publish_after_bookmark_failed');
+  });
 
   describe('listFeeds', () => {
     it('should return converted feeds on success', async () => {

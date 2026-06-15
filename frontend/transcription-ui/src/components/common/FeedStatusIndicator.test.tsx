@@ -72,6 +72,23 @@ describe('FeedStatusIndicator', () => {
     });
   });
 
+  it('displays pipeline publish statusReason in tooltip on hover', async () => {
+    render(
+      <FeedStatusIndicator
+        status="error"
+        substatus="failing"
+        statusReason="pipeline_publish_after_bookmark_failed"
+      />
+    );
+    const statusText = screen.getByText('Error');
+    fireEvent.mouseOver(statusText);
+    await waitFor(() => {
+      expect(
+        screen.getByText('Failing (Pipeline Publish Failed After Bookmark)')
+      ).toBeTruthy();
+    });
+  });
+
   it('displays custom substatus and reason in tooltip on hover', async () => {
     render(
       <FeedStatusIndicator
