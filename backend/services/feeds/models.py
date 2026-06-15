@@ -1,56 +1,16 @@
 from __future__ import annotations
 
 import datetime  # noqa: TC003
-import enum
 import uuid  # noqa: TC003
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from backend.pipeline.storage.feed_store import (
-    FeedStatus,
-    FeedStatusReason,
-    SourceType,
+    FeedStatus,  # noqa: TC001
+    FeedStatusReason,  # noqa: TC001
+    SourceType,  # noqa: TC001
 )
-
-
-class BackendFeedStatusReason(enum.StrEnum):
-    """Public feed status reasons exposed through the feed service API."""
-
-    UNKNOWN = "unknown"
-    PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED = (
-        "pipeline_publish_after_bookmark_failed"
-    )
-    SOURCE_OFFLINE = "source_offline"
-    SOURCE_UNREACHABLE = "source_unreachable"
-    SOURCE_RATE_LIMITED = "source_rate_limited"
-    SYSTEM_AUTHENTICATION_FAILED = "system_authentication_failed"
-    SYSTEM_CONFIGURATION_INVALID = "system_configuration_invalid"
-    SYSTEM_SOURCE_CONFIGURATION_INVALID = "system_source_configuration_invalid"
-    SYSTEM_RUNTIME_CONFIGURATION_INVALID = (
-        "system_runtime_configuration_invalid"
-    )
-    SYSTEM_CREDENTIAL_ACCESS_FAILED = "system_credential_access_failed"
-    SYSTEM_SOURCE_PAYLOAD_INVALID = "system_source_payload_invalid"
-    SYSTEM_COLLECTOR_ERROR = "system_collector_error"
-    SYSTEM_PIPELINE_ERROR = "system_pipeline_error"
-    SYSTEM_UNEXPECTED_ERROR = "system_unexpected_error"
-
-
-def _public_status_reason(
-    value: FeedStatusReason | BackendFeedStatusReason | str | None,
-) -> BackendFeedStatusReason | None:
-    """Map internal backend status reasons to the public API vocabulary."""
-    if value is None:
-        return None
-    if isinstance(value, BackendFeedStatusReason):
-        return value
-    if isinstance(value, FeedStatusReason):
-        value = value.value
-    try:
-        return BackendFeedStatusReason(str(value))
-    except ValueError:
-        return BackendFeedStatusReason.UNKNOWN
 
 
 class Tag(BaseModel):
@@ -126,15 +86,7 @@ class Feed(FeedBase):
     status: FeedStatus
     last_heartbeat: datetime.datetime | None
     quarantine_reason: str | None = None
-    status_reason: BackendFeedStatusReason | None = None
-
-    @field_validator("status_reason", mode="before")
-    @classmethod
-    def _map_status_reason(
-        cls,
-        value: FeedStatusReason | BackendFeedStatusReason | str | None,
-    ) -> BackendFeedStatusReason | None:
-        return _public_status_reason(value)
+    status_reason: FeedStatusReason | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
