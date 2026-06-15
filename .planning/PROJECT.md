@@ -36,34 +36,22 @@ human can fix at feed scope.
 - ✓ Frontend status mapping already treats `failing` and `quarantined` as UI
   `error`, so v1 can use `status='failing'` without introducing a new
   lifecycle status — existing.
+- ✓ Structured failure policy evidence, strict `FeedFailure` evidence, and
+  the non-budgeted storage primitive are implemented — validated in Phase 1.
+- ✓ Runtime routing now restricts `report_feed_failure(...)` to feed-owned
+  quarantine decisions and sends non-actionable source/class/pipeline/unknown
+  decisions through non-budgeted release — validated in Phase 2.
+- ✓ Runtime emits policy decision telemetry and post-bookmark publish-gap
+  telemetry with `replay_missing=true` and `data_gap_known=true` — validated
+  in Phase 2.
 
 ### Active
 
-- [ ] Add structured failure policy evidence for runtime decisions:
-  `owner_scope`, `failure_scope`, `endpoint_kind`, `policy_intent`,
-  `executed_action`, and `pipeline_stage` where needed.
-- [ ] Keep `quarantine_reason` as raw forensic detail only; do not use it for
-  policy, alert routing, or state transitions.
-- [ ] Add a non-budgeted storage path for suppressed retry states that writes
-  `status='failing'`, `failure_count=0`, `retry_after`, `status_reason`, and
-  releases the lease without writing `quarantine_reason`.
-- [ ] Restrict `report_feed_failure(...)` quarantine-budget increments to
-  policy decisions with `owner_scope=feed` and
-  `policy_intent=quarantine_feed`.
-- [ ] Route post-capture Pub/Sub publish failures after bookmark through
-  `policy_intent=hold_for_replay` and
-  `executed_action=suppress_feed_quarantine_record_publish_gap`.
-- [ ] Add `FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED` for the
-  v1 post-bookmark publish gap state.
-- [ ] Emit `feed_failure_policy_decision` telemetry for every routed failure.
-- [ ] Emit `post_bookmark_publish_failure` telemetry for known publish gaps
-  with `replay_missing=true` and `data_gap_known=true`.
-- [ ] Treat unannotated `FeedFailure` as a non-budgeted telemetry gap with
-  `failure_count=0`, not legacy quarantine.
-- [ ] Preserve automatic stale-state clearing through successful chunk progress
-  and `SourceObservation`.
-- [ ] Add focused storage and runtime tests proving non-budgeted paths never
-  increment quarantine budget or emit `feed_quarantined`.
+- [ ] Complete focused storage and runtime compatibility tests proving
+  non-budgeted paths never increment quarantine budget or emit
+  `feed_quarantined`.
+- [ ] Update shared API/UI/status surfaces only where required to tolerate
+  `pipeline_publish_after_bookmark_failed`.
 
 ### Out of Scope
 
@@ -136,13 +124,13 @@ The agreed v1 compatibility decision:
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Keep quarantine narrow and feed-actionable | Prevents shared system/provider/pipeline incidents from becoming many feed-level pages | — Pending |
-| Use structured policy evidence, not raw reason strings | Raw reason text is for investigation and is not stable enough for policy | — Pending |
-| Reuse `status='failing'` for v1 suppressed retry | Avoids DB lifecycle migration and keeps scheduler compatibility | — Pending |
-| Add a non-budgeted release path | Most non-actionable failures need retry/backoff without consuming quarantine budget | — Pending |
-| Post-bookmark publish failure records a data gap, not replay | Bookmark already advanced, and v1 has no durable outbox | — Pending |
-| No v1 source-class breaker state | Breakers are needed later, but v1 should first stop feed-budget damage | — Pending |
-| No ADR for the `failing` compatibility choice | User explicitly chose no ADR for this v1 decision | — Pending |
+| Keep quarantine narrow and feed-actionable | Prevents shared system/provider/pipeline incidents from becoming many feed-level pages | Complete through Phase 2 routing |
+| Use structured policy evidence, not raw reason strings | Raw reason text is for investigation and is not stable enough for policy | Complete through Phase 1/2 policy and runtime tests |
+| Reuse `status='failing'` for v1 suppressed retry | Avoids DB lifecycle migration and keeps scheduler compatibility | Complete through Phase 1 storage path |
+| Add a non-budgeted release path | Most non-actionable failures need retry/backoff without consuming quarantine budget | Complete through Phase 1 storage and Phase 2 routing |
+| Post-bookmark publish failure records a data gap, not replay | Bookmark already advanced, and v1 has no durable outbox | Complete through Phase 2 telemetry |
+| No v1 source-class breaker state | Breakers are needed later, but v1 should first stop feed-budget damage | Complete: v1 records intent only |
+| No ADR for the `failing` compatibility choice | User explicitly chose no ADR for this v1 decision | Complete |
 
 ## Evolution
 
@@ -162,4 +150,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-14 after initialization*
+*Last updated: 2026-06-15 after Phase 2 completion*

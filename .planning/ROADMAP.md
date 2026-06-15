@@ -14,9 +14,9 @@ migration, durable replay, and actual source-class breaker state.
 - Integer phases (1, 2, 3): Planned v1 work.
 - Decimal phases: Urgent insertions, if needed later.
 
-- [ ] **Phase 1: Policy And Storage Foundation** - Add structured policy
+- [x] **Phase 1: Policy And Storage Foundation** - Add structured policy
   primitives, status reason support, and the non-budgeted storage path.
-- [ ] **Phase 2: Runtime Routing And Telemetry** - Route non-actionable
+- [x] **Phase 2: Runtime Routing And Telemetry** - Route non-actionable
   failures away from quarantine and emit explicit policy/data-gap events.
 - [ ] **Phase 3: Verification And Compatibility** - Prove behavior with narrow
   tests and update compatibility surfaces only where needed.
@@ -85,9 +85,9 @@ Phases execute in numeric order: 1 -> 2 -> 3
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Policy And Storage Foundation | 4/4 | Complete | 2026-06-15 |
-| 2. Runtime Routing And Telemetry | 0/3 | Not started | - |
+| 2. Runtime Routing And Telemetry | 3/3 | Complete | 2026-06-15 |
 | 3. Verification And Compatibility | 0/3 | Not started | - |
 
 ---
 *Roadmap created: 2026-06-14*
-*Last updated: 2026-06-15 after Phase 1 execution*
+*Last updated: 2026-06-15 after Phase 2 execution*
