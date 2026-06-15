@@ -28,7 +28,7 @@ key-files:
   modified: []
 
 key-decisions:
-  - "No production changes were required in plan 03-03; verification passed against the existing Phase 3 surfaces."
+  - "No production changes were required in plan 03-03 itself; post-plan code-review gates added targeted fixes and focused compatibility tests."
   - "Incident taxonomy traceability is documented only in this summary, not in a new durable taxonomy document."
 
 patterns-established:
@@ -59,11 +59,25 @@ completed: 2026-06-15
 - Ran every narrow backend and frontend verification command required by plan 03-03.
 - Added a requirement-indexed proof matrix for `STAT-02` and `TEST-01` through `TEST-08`.
 - Added scenario and incident taxonomy mappings for reviewer traceability without creating a separate taxonomy document.
+- Resolved post-plan review findings for diagnostic preservation, duplicate model definitions, clean `SourceObservation` cursor persistence, and frontend status reason compatibility coverage.
 
 ## Task Commits
 
 1. **Task 1: Run narrow Phase 3 verification commands** - `4c7d819e` (docs)
 2. **Task 2: Write requirement and incident evidence summary** - `7d391f8a` (docs)
+
+## Post-Review Gate Addendum
+
+The required Phase 3 code-review gate found additional issues after the original plan summaries were written. Those fixes are part of the final Phase 3 state:
+
+| Commit | Purpose |
+|--------|---------|
+| `3216a2c8` | Preserve typed `FeedFailure.reason` diagnostics until the storage boundary applies its cap. |
+| `e1096a55` | Remove duplicate `SourceObservation` and `CaptureEvent` model definitions. |
+| `a826ec20` | Persist clean `SourceObservation(resume_position=...)` cursors instead of dropping them with clean no-op observations. |
+| `9877d78d` | Remove a stale runtime test import caught by the regression lint gate. |
+| `f743d1ba` | Add frontend coverage for the new pipeline status reason. |
+| `0d3d3404` | Strengthen API coverage so `FeedsController` proves backend `status_reason` maps to frontend `statusReason`. |
 
 ## Verification Evidence
 
@@ -71,6 +85,10 @@ completed: 2026-06-15
 |---------|--------|
 | `safe-run -- uv run python -m pytest backend/pipeline/storage/tests/test_feed_store.py::TestFeedStatusReason backend/pipeline/storage/tests/test_feed_store.py::TestNonBudgetedFailureSql backend/pipeline/storage/tests/test_feed_store.py::TestReleaseNonBudgetedFailure -q -n 0` | `9 passed in 0.08s` |
 | `safe-run -- uv run python -m pytest backend/pipeline/ingestion/tests/test_collector_runtime.py::TestProcessFeedRetry backend/pipeline/ingestion/tests/test_collector_runtime.py::TestProcessFeedQuarantine -q -n 0` | `16 passed, 5 subtests passed in 0.74s` |
+| `safe-run -- uv run python -m pytest backend/pipeline/storage/tests/test_feed_store.py::TestFeedStatusReason backend/pipeline/storage/tests/test_feed_store.py::TestNonBudgetedFailureSql backend/pipeline/storage/tests/test_feed_store.py::TestReleaseNonBudgetedFailure backend/pipeline/storage/tests/test_feed_store.py::TestRecordSourceObservation -q -n 0` | `11 passed in 0.09s` after post-review fixes. |
+| `safe-run -- uv run python -m pytest backend/pipeline/ingestion/tests/test_failure_policy.py backend/pipeline/ingestion/tests/test_collector_runtime.py::TestFeedFailureContract backend/pipeline/ingestion/tests/test_collector_runtime.py::TestProcessFeedSourceObservation backend/pipeline/ingestion/tests/test_collector_runtime.py::TestProcessFeedRetry backend/pipeline/ingestion/tests/test_collector_runtime.py::TestProcessFeedQuarantine -q -n 0` | `34 passed, 7 subtests passed in 1.11s` after post-review fixes. |
+| `safe-run -- yarn --cwd frontend/api test src/feeds/feedsController.test.ts --run` | `45 passed` after controller status reason coverage. |
+| `safe-run -- yarn --cwd frontend/transcription-ui test src/components/common/FeedStatusIndicator.test.tsx --run` | `11 passed` after status tooltip coverage. |
 | `safe-run -- yarn --cwd frontend/common build` | `tsc`; `Done in 0.24s.` |
 | `safe-run -- yarn --cwd frontend/api typecheck` | `tsc --noEmit`; `Done in 0.66s.` |
 | `safe-run -- yarn --cwd frontend/transcription-ui typecheck` | `tsc --noEmit`; `Done in 0.06s.` |
@@ -80,7 +98,7 @@ completed: 2026-06-15
 
 | Requirement | Status | Proof |
 |-------------|--------|-------|
-| STAT-02 | Passed | `TestFeedStatusReason.test_matches_openapi_spec` proves backend/OpenAPI status reason parity. `frontend/api/openapi.yaml`, `frontend/common/src/types/feeds.ts`, `frontend/common/src/utils/statusUtils.ts`, and `frontend/transcription-ui/src/components/common/FeedStatusIndicator.tsx` tolerate `pipeline_publish_after_bookmark_failed` while `convertFeedStatusBackend(...)` still maps `failing` and `quarantined` to UI `error`. Verified by the storage pytest command plus all three frontend build/typecheck commands. |
+| STAT-02 | Passed | `TestFeedStatusReason.test_matches_openapi_spec` proves backend/OpenAPI status reason parity. `frontend/api/openapi.yaml`, `frontend/common/src/types/feeds.ts`, `frontend/common/src/utils/statusUtils.ts`, and `frontend/transcription-ui/src/components/common/FeedStatusIndicator.tsx` tolerate `pipeline_publish_after_bookmark_failed` while `convertFeedStatusBackend(...)` still maps `failing` and `quarantined` to UI `error`. `frontend/api/src/feeds/feedsController.test.ts` proves backend `status_reason` reaches frontend `statusReason`; `frontend/transcription-ui/src/components/common/FeedStatusIndicator.test.tsx` proves the tooltip text. Verified by the storage pytest command, focused frontend Vitest commands, and all three frontend build/typecheck commands. |
 | TEST-01 | Passed | `TestNonBudgetedFailureSql.test_non_budgeted_failure_sql_releases_without_quarantine_budget`, `TestReleaseNonBudgetedFailure.test_returns_status_when_lease_held`, and `TestReleaseNonBudgetedFailure.test_passes_correct_parameters` prove `status='failing'`, `failure_count=0`, `retry_after`, and canonical `status_reason` writes. Verified by `9 passed in 0.08s`. |
 | TEST-02 | Passed | `TestNonBudgetedFailureSql.test_non_budgeted_failure_sql_releases_without_quarantine_budget` asserts the non-budgeted SQL does not write `quarantine_reason`; `test_failure_count_increment_isolated_to_report_failure_sql` keeps budget increments isolated to `REPORT_FAILURE_SQL`. Verified by `9 passed in 0.08s`. |
 | TEST-03 | Passed | `TestProcessFeedRetry.test_non_retryable_pubsub_failure_records_publish_gap_without_feed_budget` and `TestProcessFeedQuarantine.test_pubsub_publish_failure_records_pipeline_error` assert post-bookmark Pub/Sub publish failures do not call `report_feed_failure(...)` and instead call `release_non_budgeted_failure(...)`. Verified by `16 passed, 5 subtests passed in 0.74s`. |
@@ -127,7 +145,8 @@ No separate incident taxonomy document was created.
 
 ## Decisions Made
 
-- No production code changes were required by plan 03-03.
+- No production code changes were required by plan 03-03 itself.
+- Post-plan code-review findings were fixed in the same phase before final verification.
 - The original incident taxonomy is captured only in this implementation summary.
 - Evidence rows cite existing focused tests and compatibility files instead of adding duplicate incident-label tests.
 
@@ -137,7 +156,7 @@ None - plan executed exactly as written.
 
 ## Issues Encountered
 
-None.
+Code-review gates found and resolved targeted issues after the original plan summaries: premature diagnostic truncation, duplicate model definitions, dropped clean observation cursors, stale test import, and missing focused frontend compatibility coverage. Final `03-REVIEW.md` is clean.
 
 ## User Setup Required
 
