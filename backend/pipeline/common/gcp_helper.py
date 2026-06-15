@@ -28,6 +28,7 @@ from backend.pipeline.common.constants import (
     GCS_RETRY_MIN_WAIT_SEC,
     GCS_UPLOAD_TIMEOUT_SEC,
 )
+from backend.pipeline.common.utils import generate_segment_id
 from backend.pipeline.schema_types.continuous_audio_pb2 import ContinuousAudio
 from backend.pipeline.schema_types.segmented_audio_pb2 import SegmentedAudio
 
@@ -296,6 +297,65 @@ async def download_audio(gcs_client: GcsClient, gcs_uri: str) -> bytes:
 # -----------------------------------------------------------------------------
 
 
+def _build_audio_chunk_payload(
+    topic_path: str,
+    feed_id: str,
+    feed_name: str,
+    gcs_uri: str,
+    session_id: str | None,
+    start_timestamp: datetime.datetime,
+    duration_ms: int,
+    source_type: str | None = None,
+    external_audio_segment_id: str | None = None,
+) -> tuple[bytes, dict[str, str]]:
+    if "segmented" in topic_path or (
+        source_type and "bcfy_feeds" not in source_type.lower()
+    ):
+        resolved_segment_id = (
+            generate_segment_id(feed_id, external_audio_segment_id)
+            if external_audio_segment_id
+            else str(uuid.uuid4())
+        )
+        s_msg = SegmentedAudio(
+            segment_id=resolved_segment_id,
+            feed_id=feed_id,
+            feed_name=feed_name,
+            raw_audio_uri=gcs_uri,
+            audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH,
+        )
+        s_msg.source_audio_uris.append(gcs_uri)
+        s_msg.start_timestamp.FromDatetime(start_timestamp)
+        end_ts = start_timestamp + datetime.timedelta(milliseconds=duration_ms)
+        s_msg.end_timestamp.FromDatetime(end_ts)
+        if external_audio_segment_id is not None:
+            s_msg.external_audio_segment_id = external_audio_segment_id
+        serialized_data = s_msg.SerializeToString()
+    else:
+        c_msg = ContinuousAudio(
+            gcs_uri=gcs_uri,
+            feed_id=feed_id,
+            feed_name=feed_name,
+            duration_ms=duration_ms,
+        )
+        if session_id is not None:
+            c_msg.session_id = session_id
+        c_msg.start_timestamp.FromDatetime(start_timestamp)
+        serialized_data = c_msg.SerializeToString()
+
+    attrs: dict[str, str] = {
+        "feed_id": feed_id,
+        "gcs_uri": gcs_uri,
+        "timestamp_ms": str(int(start_timestamp.timestamp() * 1000)),
+    }
+    if session_id is not None:
+        attrs["session_id"] = session_id
+    if source_type is not None:
+        attrs["source_type"] = source_type
+
+    tracing_utils.inject_otel_context(attrs)
+    return serialized_data, attrs
+
+
 def publish_audio_chunk_sync(
     publisher: pubsub_v1.PublisherClient,
     topic_path: str,
@@ -314,48 +374,17 @@ def publish_audio_chunk_sync(
     ingestion) and the async wrapper below.
     """
     with tracer.start_as_current_span("publish_raw_audio_chunk"):
-        if "segmented" in topic_path or (
-            source_type and "bcfy_feeds" not in source_type.lower()
-        ):
-            s_msg = SegmentedAudio(
-                segment_id=session_id or str(uuid.uuid4()),
-                feed_id=feed_id,
-                feed_name=feed_name,
-                raw_audio_uri=gcs_uri,
-                audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH,
-            )
-            s_msg.source_audio_uris.append(gcs_uri)
-            s_msg.start_timestamp.FromDatetime(start_timestamp)
-            end_ts = start_timestamp + datetime.timedelta(
-                milliseconds=duration_ms
-            )
-            s_msg.end_timestamp.FromDatetime(end_ts)
-            if external_audio_segment_id is not None:
-                s_msg.external_audio_segment_id = external_audio_segment_id
-            serialized_data = s_msg.SerializeToString()
-        else:
-            c_msg = ContinuousAudio(
-                gcs_uri=gcs_uri,
-                feed_id=feed_id,
-                feed_name=feed_name,
-                duration_ms=duration_ms,
-            )
-            if session_id is not None:
-                c_msg.session_id = session_id
-            c_msg.start_timestamp.FromDatetime(start_timestamp)
-            serialized_data = c_msg.SerializeToString()
-
-        attrs: dict[str, str] = {
-            "feed_id": feed_id,
-            "gcs_uri": gcs_uri,
-            "timestamp_ms": str(int(start_timestamp.timestamp() * 1000)),
-        }
-        if session_id is not None:
-            attrs["session_id"] = session_id
-        if source_type is not None:
-            attrs["source_type"] = source_type
-
-        tracing_utils.inject_otel_context(attrs)
+        serialized_data, attrs = _build_audio_chunk_payload(
+            topic_path,
+            feed_id,
+            feed_name,
+            gcs_uri,
+            session_id,
+            start_timestamp,
+            duration_ms,
+            source_type,
+            external_audio_segment_id,
+        )
 
         max_retries = 1
         for attempt in range(max_retries + 1):
@@ -405,48 +434,17 @@ async def publish_audio_chunk(
     """
     with tracer.start_as_current_span("publish_raw_audio_chunk"):
         publisher = pubsub_client.get_publisher()
-        if "segmented" in topic_path or (
-            source_type and "bcfy_feeds" not in source_type.lower()
-        ):
-            s_msg = SegmentedAudio(
-                segment_id=session_id or str(uuid.uuid4()),
-                feed_id=feed_id,
-                feed_name=feed_name,
-                raw_audio_uri=gcs_uri,
-                audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH,
-            )
-            s_msg.source_audio_uris.append(gcs_uri)
-            s_msg.start_timestamp.FromDatetime(start_timestamp)
-            end_ts = start_timestamp + datetime.timedelta(
-                milliseconds=duration_ms
-            )
-            s_msg.end_timestamp.FromDatetime(end_ts)
-            if external_audio_segment_id is not None:
-                s_msg.external_audio_segment_id = external_audio_segment_id
-            serialized_data = s_msg.SerializeToString()
-        else:
-            c_msg = ContinuousAudio(
-                gcs_uri=gcs_uri,
-                feed_id=feed_id,
-                feed_name=feed_name,
-                duration_ms=duration_ms,
-            )
-            if session_id is not None:
-                c_msg.session_id = session_id
-            c_msg.start_timestamp.FromDatetime(start_timestamp)
-            serialized_data = c_msg.SerializeToString()
-
-        attrs: dict[str, str] = {
-            "feed_id": feed_id,
-            "gcs_uri": gcs_uri,
-            "timestamp_ms": str(int(start_timestamp.timestamp() * 1000)),
-        }
-        if session_id is not None:
-            attrs["session_id"] = session_id
-        if source_type is not None:
-            attrs["source_type"] = source_type
-
-        tracing_utils.inject_otel_context(attrs)
+        serialized_data, attrs = _build_audio_chunk_payload(
+            topic_path,
+            feed_id,
+            feed_name,
+            gcs_uri,
+            session_id,
+            start_timestamp,
+            duration_ms,
+            source_type,
+            external_audio_segment_id,
+        )
 
         max_retries = 1
         for attempt in range(max_retries + 1):
