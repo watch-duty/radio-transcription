@@ -18,7 +18,7 @@ migration, durable replay, and actual source-class breaker state.
   primitives, status reason support, and the non-budgeted storage path.
 - [x] **Phase 2: Runtime Routing And Telemetry** - Route non-actionable
   failures away from quarantine and emit explicit policy/data-gap events.
-- [ ] **Phase 3: Verification And Compatibility** - Prove behavior with narrow
+- [x] **Phase 3: Verification And Compatibility** - Prove behavior with narrow (completed 2026-06-15)
   tests and update compatibility surfaces only where needed.
 
 ## Phase Details
@@ -75,7 +75,7 @@ surfaces tolerate the new status reason without broad lifecycle changes.
 Plans:
 - [x] 03-01: Complete focused storage and runtime tests.
 - [x] 03-02: Update status compatibility surfaces and documentation if required.
-- [ ] 03-03: Run narrow verification and prepare implementation summary.
+- [x] 03-03: Run narrow verification and prepare implementation summary.
 
 ## Progress
 
@@ -86,7 +86,7 @@ Phases execute in numeric order: 1 -> 2 -> 3
 |-------|----------------|--------|-----------|
 | 1. Policy And Storage Foundation | 4/4 | Complete | 2026-06-15 |
 | 2. Runtime Routing And Telemetry | 3/3 | Complete | 2026-06-15 |
-| 3. Verification And Compatibility | 0/3 | Not started | - |
+| 3. Verification And Compatibility | 3/3 | Complete   | 2026-06-15 |
 
 ---
 *Roadmap created: 2026-06-14*
