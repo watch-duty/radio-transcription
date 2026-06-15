@@ -15,6 +15,18 @@ export type BackendFeedStatus =
 
 export type FeedStatus = 'active' | 'inactive' | 'error';
 
+export type BackendFeedStatusReason =
+  | 'unknown'
+  | 'source_offline'
+  | 'source_unreachable'
+  | 'source_rate_limited'
+  | 'system_authentication_failed'
+  | 'system_configuration_invalid'
+  | 'system_collector_error'
+  | 'system_pipeline_error'
+  | 'pipeline_publish_after_bookmark_failed'
+  | 'system_unexpected_error';
+
 export interface Tag {
   key: string;
   value: string;
@@ -34,6 +46,8 @@ export interface Feed extends BaseFeed {
   substatus: BackendFeedStatus;
   lastHeartbeat?: string;
   tags?: Tag[];
+  quarantineReason?: string;
+  statusReason?: BackendFeedStatusReason;
 }
 
 export interface FeedCreate extends BaseFeed {
@@ -49,5 +63,5 @@ export interface FeedUpdate {
 export interface ListFeedsResponse {
   feeds: Feed[];
   nextToken?: string;
+  total: number;
 }
-

@@ -17,7 +17,7 @@ from backend.pipeline.ingestion.router import _COLLECTORS
 
 class TestCollectorContracts(unittest.TestCase):
     def test_all_registered_collectors_are_callable(self) -> None:
-        for source_type, (fn, url_base) in _COLLECTORS.items():
+        for source_type, fn in _COLLECTORS.items():
             with self.subTest(source_type=source_type.value):
                 self.assertTrue(callable(fn))
 
@@ -25,7 +25,7 @@ class TestCollectorContracts(unittest.TestCase):
         self,
     ) -> None:
         """Each collector returns capture events or a chunk-only specialization."""
-        for source_type, (fn, _url_base) in _COLLECTORS.items():
+        for source_type, fn in _COLLECTORS.items():
             with self.subTest(source_type=source_type.value):
                 sig = inspect.signature(fn)
                 ret = str(sig.return_annotation)

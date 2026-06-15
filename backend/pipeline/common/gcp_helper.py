@@ -3,9 +3,12 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
-from typing import TYPE_CHECKING, Any
+import uuid
+from typing import TYPE_CHECKING, TypedDict
 
 import aiohttp
+from google.api_core import retry as api_retry
+from google.api_core import retry_async as api_retry_async
 from google.cloud.pubsub_v1.publisher.exceptions import (
     PublishToPausedOrderingKeyException,
 )
@@ -15,7 +18,13 @@ from opentelemetry.trace.propagation.tracecontext import (
 )
 
 from backend.pipeline.common import tracing_utils
-from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
+from backend.pipeline.common.constants import (
+    GCS_ASYNC_RETRY_TIMEOUT_SEC,
+    GCS_DOWNLOAD_TIMEOUT_SEC,
+    GCS_UPLOAD_TIMEOUT_SEC,
+)
+from backend.pipeline.schema_types.continuous_audio_pb2 import ContinuousAudio
+from backend.pipeline.schema_types.segmented_audio_pb2 import SegmentedAudio
 
 if TYPE_CHECKING:
     from google.cloud import pubsub_v1
@@ -24,13 +33,16 @@ if TYPE_CHECKING:
     from backend.pipeline.common.clients.pubsub_client import PubSubClient
     from backend.pipeline.storage.feed_store import LeasedFeed
 
+
+class UploadKwargs(TypedDict, total=False):
+    metadata: dict[str, str]
+    content_type: str
+    timeout: int
+    parameters: dict[str, str]
+
+
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
-
-# -----------------------------------------------------------------------------
-# Private helper functions
-# -----------------------------------------------------------------------------
-
 
 # -----------------------------------------------------------------------------
 # Google Cloud Storage helpers
@@ -136,9 +148,10 @@ async def upload_audio(
     """
     storage = gcs_client.get_storage()
     traceparent = tracing_utils.get_current_traceparent()
-    upload_kwargs: dict[str, Any] = {
+    upload_kwargs: UploadKwargs = {
         "metadata": {"traceparent": traceparent},
         "content_type": content_type,
+        "timeout": GCS_UPLOAD_TIMEOUT_SEC,
     }
     if if_generation_match is not None:
         upload_kwargs["parameters"] = {
@@ -189,9 +202,34 @@ def parse_gcs_uri(gcs_uri: str) -> tuple[str, str]:
     return bucket, object_name
 
 
+def _async_gcs_predicate(exc: BaseException) -> bool:
+    if isinstance(exc, aiohttp.ClientResponseError):
+        # Do not retry on missing objects (404) or authentication issues (403)
+        return exc.status not in (404, 403)
+    if isinstance(exc, (aiohttp.ClientError, asyncio.TimeoutError)):
+        return True
+    if isinstance(exc, Exception):
+        return bool(api_retry.if_transient_error(exc))
+    return False
+
+
+# Compiled module-level retry policy. AsyncRetry calculates its active deadline FSM state
+# freshly on every individual coroutine invocation, guaranteeing 100% thread-safety under high asyncio concurrency.
+GCS_ASYNC_RETRY = api_retry_async.AsyncRetry(
+    predicate=_async_gcs_predicate,
+    initial=1.0,
+    maximum=15.0,
+    multiplier=2.0,
+    timeout=GCS_ASYNC_RETRY_TIMEOUT_SEC,
+)
+
+
 async def download_audio(gcs_client: GcsClient, gcs_uri: str) -> bytes:
-    """
-    Download an audio file from GCS using the shared async client.
+    """Download an audio file from GCS using the shared async client.
+
+    Configures highly resilient asynchronous exponential backoff retries via official Google
+    api_core policies to entirely absorb transient network drops and Colossus load-shedding (`429` / `503`).
+    Missing 404 objects are short-circuited and translated to standard Python FileNotFoundError.
 
     Args:
         gcs_client: Shared GCS client manager.
@@ -200,10 +238,29 @@ async def download_audio(gcs_client: GcsClient, gcs_uri: str) -> bytes:
     Returns:
         The file contents as bytes.
 
+    Raises:
+        FileNotFoundError: If the GCS object does not exist (HTTP 404).
+        aiohttp.ClientError: If a transient error persists after all retries.
     """
     storage = gcs_client.get_storage()
     bucket, object_name = parse_gcs_uri(gcs_uri)
-    return await storage.download(bucket, object_name)
+
+    try:
+        return await GCS_ASYNC_RETRY(storage.download)(
+            bucket, object_name, timeout=GCS_DOWNLOAD_TIMEOUT_SEC
+        )
+    except aiohttp.ClientResponseError as exc:
+        if exc.status == 404:
+            err_msg = f"GCS object not found: {gcs_uri}"
+            logger.exception(err_msg)
+            raise FileNotFoundError(err_msg) from exc
+        raise
+    except Exception:
+        logger.exception(
+            "Persistent failure downloading audio after all retries: %s",
+            gcs_uri,
+        )
+        raise
 
 
 # -----------------------------------------------------------------------------
@@ -221,6 +278,7 @@ def publish_audio_chunk_sync(
     start_timestamp: datetime.datetime,
     duration_ms: int,
     source_type: str | None = None,
+    external_audio_segment_id: str | None = None,
 ) -> str:
     """Publish an AudioChunk to Pub/Sub and return the message ID.
 
@@ -228,15 +286,36 @@ def publish_audio_chunk_sync(
     ingestion) and the async wrapper below.
     """
     with tracer.start_as_current_span("publish_raw_audio_chunk"):
-        audio_chunk_msg = AudioChunk(
-            gcs_uri=gcs_uri,
-            feed_id=feed_id,
-            feed_name=feed_name,
-            duration_ms=duration_ms,
-        )
-        if session_id is not None:
-            audio_chunk_msg.session_id = session_id
-        audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
+        if "segmented" in topic_path or (
+            source_type and "bcfy_feeds" not in source_type.lower()
+        ):
+            s_msg = SegmentedAudio(
+                segment_id=session_id or str(uuid.uuid4()),
+                feed_id=feed_id,
+                feed_name=feed_name,
+                raw_audio_uri=gcs_uri,
+                audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH,
+            )
+            s_msg.source_audio_uris.append(gcs_uri)
+            s_msg.start_timestamp.FromDatetime(start_timestamp)
+            end_ts = start_timestamp + datetime.timedelta(
+                milliseconds=duration_ms
+            )
+            s_msg.end_timestamp.FromDatetime(end_ts)
+            if external_audio_segment_id is not None:
+                s_msg.external_audio_segment_id = external_audio_segment_id
+            serialized_data = s_msg.SerializeToString()
+        else:
+            c_msg = ContinuousAudio(
+                gcs_uri=gcs_uri,
+                feed_id=feed_id,
+                feed_name=feed_name,
+                duration_ms=duration_ms,
+            )
+            if session_id is not None:
+                c_msg.session_id = session_id
+            c_msg.start_timestamp.FromDatetime(start_timestamp)
+            serialized_data = c_msg.SerializeToString()
 
         attrs: dict[str, str] = {
             "feed_id": feed_id,
@@ -253,13 +332,33 @@ def publish_audio_chunk_sync(
         if "traceparent" in carrier:
             attrs["traceparent"] = carrier["traceparent"]
 
-        future = publisher.publish(
-            topic_path,
-            audio_chunk_msg.SerializeToString(),
-            ordering_key=feed_id,
-            **attrs,
-        )
-        return future.result()
+        max_retries = 1
+        for attempt in range(max_retries + 1):
+            future = publisher.publish(
+                topic_path,
+                serialized_data,
+                ordering_key=feed_id,
+                **attrs,
+            )
+            try:
+                return future.result()
+            except PublishToPausedOrderingKeyException:
+                if attempt >= max_retries:
+                    raise
+                resume_succeeded = False
+                try:
+                    publisher.resume_publish(topic_path, ordering_key=feed_id)
+                    resume_succeeded = True
+                except (RuntimeError, ValueError):
+                    logger.exception(
+                        "resume_publish failed for feed=%s topic=%s",
+                        feed_id,
+                        topic_path,
+                    )
+                if not resume_succeeded:
+                    raise
+        msg = "Unreachable"
+        raise RuntimeError(msg)
 
 
 async def publish_audio_chunk(
@@ -272,6 +371,7 @@ async def publish_audio_chunk(
     start_timestamp: datetime.datetime,
     duration_ms: int,
     source_type: str | None = None,
+    external_audio_segment_id: str | None = None,
 ) -> str:
     """Asynchronously publish an AudioChunk to Pub/Sub.
 
@@ -280,15 +380,36 @@ async def publish_audio_chunk(
     """
     with tracer.start_as_current_span("publish_raw_audio_chunk"):
         publisher = pubsub_client.get_publisher()
-        audio_chunk_msg = AudioChunk(
-            gcs_uri=gcs_uri,
-            feed_id=feed_id,
-            feed_name=feed_name,
-            duration_ms=duration_ms,
-        )
-        if session_id is not None:
-            audio_chunk_msg.session_id = session_id
-        audio_chunk_msg.start_timestamp.FromDatetime(start_timestamp)
+        if "segmented" in topic_path or (
+            source_type and "bcfy_feeds" not in source_type.lower()
+        ):
+            s_msg = SegmentedAudio(
+                segment_id=session_id or str(uuid.uuid4()),
+                feed_id=feed_id,
+                feed_name=feed_name,
+                raw_audio_uri=gcs_uri,
+                audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH,
+            )
+            s_msg.source_audio_uris.append(gcs_uri)
+            s_msg.start_timestamp.FromDatetime(start_timestamp)
+            end_ts = start_timestamp + datetime.timedelta(
+                milliseconds=duration_ms
+            )
+            s_msg.end_timestamp.FromDatetime(end_ts)
+            if external_audio_segment_id is not None:
+                s_msg.external_audio_segment_id = external_audio_segment_id
+            serialized_data = s_msg.SerializeToString()
+        else:
+            c_msg = ContinuousAudio(
+                gcs_uri=gcs_uri,
+                feed_id=feed_id,
+                feed_name=feed_name,
+                duration_ms=duration_ms,
+            )
+            if session_id is not None:
+                c_msg.session_id = session_id
+            c_msg.start_timestamp.FromDatetime(start_timestamp)
+            serialized_data = c_msg.SerializeToString()
 
         attrs: dict[str, str] = {
             "feed_id": feed_id,
@@ -305,29 +426,33 @@ async def publish_audio_chunk(
         if "traceparent" in carrier:
             attrs["traceparent"] = carrier["traceparent"]
 
-        future = publisher.publish(
-            topic_path,
-            audio_chunk_msg.SerializeToString(),
-            ordering_key=feed_id,
-            **attrs,
-        )
-        try:
-            return await asyncio.wrap_future(future)
-        except PublishToPausedOrderingKeyException:
-            # Clear the local Publisher pause flag so a later retry on the
-            # same worker can publish. The exception still propagates to the
-            # runtime, which records a non-budgeted post-bookmark publish gap
-            # rather than treating the feed itself as unhealthy.
-            # Defensive try/except: resume_publish is documented to raise
-            # RuntimeError (publisher stopped) or ValueError (unseen key).
-            # Neither should occur here in normal operation, but a crash on
-            # the failure-cleanup path itself would be worse than swallowing.
+        max_retries = 1
+        for attempt in range(max_retries + 1):
+            future = publisher.publish(
+                topic_path,
+                serialized_data,
+                ordering_key=feed_id,
+                **attrs,
+            )
             try:
-                publisher.resume_publish(topic_path, ordering_key=feed_id)
-            except (RuntimeError, ValueError):
-                logger.exception(
-                    "resume_publish failed for feed=%s topic=%s",
-                    feed_id,
-                    topic_path,
-                )
-            raise
+                return await asyncio.wrap_future(future)
+            except PublishToPausedOrderingKeyException:
+                # Clear the local Publisher pause flag and retry publishing the
+                # message once so a transient pause doesn't discard valid audio
+                # or cause unnecessary strikes against the feed.
+                if attempt >= max_retries:
+                    raise
+                resume_succeeded = False
+                try:
+                    publisher.resume_publish(topic_path, ordering_key=feed_id)
+                    resume_succeeded = True
+                except (RuntimeError, ValueError):
+                    logger.exception(
+                        "resume_publish failed for feed=%s topic=%s",
+                        feed_id,
+                        topic_path,
+                    )
+                if not resume_succeeded:
+                    raise
+        msg = "Unreachable"
+        raise RuntimeError(msg)

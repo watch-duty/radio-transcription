@@ -49,8 +49,9 @@ is a nullable, current abnormal-condition label that helps operators answer:
 async progress, successful Echo heartbeat/progress, and manual reset clear
 stale status reasons.
 
-`quarantine_reason` is different. It preserves the short raw forensic reason
-on quarantine transitions. Do not parse it for canonical ownership, and do not
+`quarantine_reason` is different. It preserves detailed diagnostic
+text for the failure episode that crosses the quarantine threshold. Do not
+parse it for canonical ownership, do not treat it as a stable code, and do not
 replace it with `status_reason`.
 
 Use source-owned reasons when the source or its provider cannot currently
@@ -95,7 +96,7 @@ every eligible attempted item in that boundary fails:
 
 - If all failures have the same canonical reason, promote that reason.
 - If all attempted items failed but reasons are mixed, promote
-  `system_collector_error` with the raw reason `mixed_item_failures`.
+  `system_collector_error` with the quarantine reason `mixed_item_failures`.
 - If no eligible items were attempted, or at least one item succeeded, do not
   record a feed failure.
 
@@ -119,8 +120,8 @@ or count it as audio progress. It may clear stale persisted failure state when
 the leased feed is dirty (`failure_count > 0` or `status_reason IS NOT NULL`).
 
 For Broadcastify Calls, the source item is a call entry in the API `calls`
-array. A missing or non-list `calls` field is treated as an empty page under the
-collector's current extraction semantics. A missing `lastPos` is still a
+array. A missing `calls` field is treated as an empty page; a present non-list
+`calls` field is malformed source data. A missing `lastPos` is still a
 successful observation but does not advance a resume cursor.
 
 For Fire Notifications, yield `SourceObservation` when the poll succeeds and
@@ -130,42 +131,56 @@ attempted item continue through `_process_file_list` item handling.
 
 ## Failure Classification Model
 
-`FailureClassification` is neutral terminal evidence: a canonical
-`FeedStatusReason` plus a bounded reason tag. It is not item-scoped or
-feed-scoped by itself.
+`FailureInfo` is a lightweight container for a canonical `FeedStatusReason`
+plus quarantine-reason text before feed scope is applied. The text is operator
+diagnostic material, not a machine-readable tag.
 
-`ItemFailure` applies item scope to a `FailureClassification`. Use it when an
-individual object, call, file, or media URL fails inside a collector-owned
-batch. `ItemBatchOutcome` owns the "all attempted items failed" promotion
-rule.
+`ItemFailure` is an item-scoped failure value. Use it when an individual
+object, call, file, or media URL fails inside a collector-owned batch.
+`ItemBatchOutcome` owns the "all attempted items failed" promotion rule.
 
 `FeedFailure` applies feed scope. Raise it only after the collector has enough
 source-specific evidence to report the current feed-level condition to the
 runtime.
 
-Shared failure classifiers classify evidence only. Collectors still own:
+Shared failure classifiers own evidence-specific classification, and may render
+diagnostics for that evidence type, such as ffmpeg exit/signal/timeout details.
+Collectors and source helpers still own quarantine-reason text around source
+operations because they know the operation, available exception text, captured
+stderr tail, and source-specific semantics.
+`backend.pipeline.ingestion.quarantine_reason` owns only shared storage-boundary
+helpers: exception detail formatting and the database storage cap. It must not
+grow source-specific message construction helpers.
+Collectors still own:
 
 - retry and backoff policy;
 - same-endpoint probes;
 - item versus feed escalation;
-- final reason-prefix selection for the endpoint or stage.
+- final quarantine-reason construction for source-specific operations.
 
-## Endpoint/Stage Policy
+## Quarantine-Reason Policy
 
-Use endpoint/stage-specific reason prefixes so on-call output says where the
-evidence came from without carrying high-cardinality data:
+Quarantine reasons should be useful for on-call debugging. Include the direct
+evidence that explains the failure: terminal HTTP status and reason phrase,
+exception class/message after retries are exhausted, ffmpeg exit/signal/timeout
+details, and the bounded stderr tail when it materially explains an ffmpeg
+failure.
 
-| Reason pattern | Use when |
-|----------------|----------|
-| `item_http_<status>` | A discrete downloaded item, media file, call recording, or object fails with a terminal HTTP status. |
-| `item_download_failed` | A discrete item download exhausts retries without terminal HTTP status evidence, such as repeated connection drops or timeouts. |
-| `calls_api_http_<status>` | Broadcastify Calls API or metadata endpoint status is terminal after its retry policy. |
-| `fn_api_http_<status>` | Fire Notifications poll/list endpoint status is terminal after its retry policy. |
-| `stream_http_<status>` | A direct stream endpoint or same-endpoint probe returns a terminal HTTP status. |
-| `ffmpeg_exit_<n>` | ffmpeg exits non-zero without stronger HTTP/probe evidence. |
-| `ffmpeg_signal_<n>` | ffmpeg is terminated by POSIX signal `n`. |
-| `capture_timeout` | Stream capture exceeds the collector-owned read timeout. |
-| `mixed_item_failures` | Every attempted item failed, but item failures have mixed canonical reasons. |
+Do not derive quarantine reasons from Python stack frames or function names.
+Build them at the call site that has the evidence. Shared helpers may render
+generic operations they own, such as item media downloads or JSON fetches.
+Collectors render source-specific operations, such as stream capture and
+same-stream probes.
+
+Do not truncate quarantine-reason text in collectors or failure objects.
+`FeedFailure` and runtime `_PipelineFailure` carry full diagnostics; async and
+sync feed stores cap the text immediately before persisting it.
+
+Do not branch on quarantine-reason text. If later behavior depends on a
+classification, carry typed information such as HTTP status, ffmpeg failure
+kind, exit code, signal number, or a local probe outcome. For example, Icecast
+stream capture uses typed ffmpeg failure info to decide whether to run a
+same-stream probe; it does not parse strings like `ffmpeg_signal_9`.
 
 The shared HTTP and ffmpeg classifiers are deliberately conservative. When an
 endpoint has source-specific semantics, define a local policy near the
@@ -177,9 +192,34 @@ Do not duplicate exact HTTP policy tables in this guide. The `HTTPStatusPolicy`
 instances in code and their tests are the source of truth; this document should
 explain why policies are scoped by endpoint/stage, not restate every mapping.
 
-Reason strings must stay short, bounded, and safe for operator surfaces. Do not
-include URLs, ffmpeg stderr blobs, stack traces, tokens, object IDs, timestamps,
-request bodies, signed URLs, feed IDs, call IDs, or secrets in `reason`.
+Do not append raw HTTP response bodies, full ffmpeg stderr, stack traces, or
+large request/response bodies. Exception text and bounded stderr tails may be
+preserved when they are the direct diagnostic evidence for the failure episode;
+storage applies the final quarantine-reason cap immediately before persistence.
+
+## Shared Collector Helpers
+
+Use the focused helpers at source boundaries where their contracts match:
+
+- `control_flow.sleep_or_cancel` replaces local boolean sleep helpers. It returns
+  after a normal timeout and raises `asyncio.CancelledError` when shutdown
+  interrupts the wait. Shutdown is a stop condition, not an item or feed
+  failure.
+- Completed item download helpers should return `bytes | ItemFailure`.
+  `None` is not an item-download result. Use
+  `item_downloads.item_http_failure` to build an item-scoped failure from
+  terminal item HTTP evidence and `item_downloads.item_download_failed` when
+  retries exhaust without terminal HTTP evidence.
+- `payloads.extract_optional_item_list` is for optional item arrays in
+  successful polling payloads. Missing fields mean an empty observation; present
+  non-list fields raise a bounded malformed-payload `FeedFailure`.
+- `telemetry.emit_call_download_failed` is the single call-download-failed SLO
+  emit point. Collectors pass only bounded feed metadata.
+
+Collectors still own transport choice, retry loops, source-specific backoff,
+same-endpoint probes, and item-to-feed promotion. Do not move HTTP sessions,
+`curl_cffi` behavior, websocket handling, ffmpeg execution, or
+`ItemBatchOutcome` promotion into the shared helpers.
 
 ## Adding a VM Collector
 
@@ -190,9 +230,11 @@ request bodies, signed URLs, feed IDs, call IDs, or secrets in `reason`.
    - add a `_COLLECTORS` entry in `router.py`;
    - update topic routing if the source is continuous instead of segmented.
 2. Implement the `CollectorFn` signature from `models.py`.
-3. Use `CaptureResources.http_session` for async HTTP. Do not create hidden
-   long-lived sessions per feed unless the source-specific transport requires
-   it and the collector owns its cleanup.
+3. Use `CaptureResources.http_session` for ordinary async HTTP. A
+   collector-owned `curl_cffi` session is acceptable only when the
+   source-specific transport requires browser impersonation, websocket
+   handshake behavior, or another capability the runtime aiohttp session does
+   not provide; in that case the collector must own cleanup in `finally`.
 4. Generate a stable `session_id` at the source's natural continuity boundary:
    stream connection, websocket connection, polling invocation, or source file.
 5. Fill `CapturedChunk.receipt_time` when the source exposes a useful arrival
@@ -209,6 +251,23 @@ request bodies, signed URLs, feed IDs, call IDs, or secrets in `reason`.
    per-item files.
 9. Update router/settings tests if a new source type changes the registry,
    caps, or topic-routing behavior.
+
+Minimum tests for an item-downloading VM collector:
+
+- completed downloads return `bytes | ItemFailure`, never `None`;
+- shutdown during a retry wait or active source request raises
+  `asyncio.CancelledError` and does not emit `call_download_failed`;
+- terminal item HTTP statuses and retry exhaustion use
+  `item_downloads.item_http_failure` and
+  `item_downloads.item_download_failed`;
+- missing optional poll item lists are empty observations, while present
+  non-list item lists raise a malformed-payload `FeedFailure` through
+  `payloads.extract_optional_item_list`;
+- partial item success suppresses `ItemBatchOutcome` promotion, all attempted
+  item failures promote, and mixed canonical reasons promote as
+  `mixed_item_failures`;
+- completed item failures call `telemetry.emit_call_download_failed` instead of
+  building `call_download_failed` JSON locally.
 
 For Echo-like synchronous ingestion, do not register a VM collector. Keep its
 classification in the Cloud Function path and write reasons through

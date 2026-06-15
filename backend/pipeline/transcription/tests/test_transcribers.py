@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, call, patch
 import requests
 from google.api_core.retry import Retry
 
-from backend.pipeline.normalization.common.enums import TranscriberType
+from backend.pipeline.transcription.enums import TranscriberType
 from backend.pipeline.transcription.transcribers.chirp import (
     CHIRP_UNINTELLIGIBLE_MARKER,
     ChirpConfig,

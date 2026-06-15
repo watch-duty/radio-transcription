@@ -11,7 +11,6 @@ import os
 import shutil
 import unittest
 from functools import partial
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
@@ -27,16 +26,12 @@ from testcontainers.core.container import DockerContainer
 from testcontainers.core.wait_strategies import LogMessageWaitStrategy
 from testcontainers.postgres import PostgresContainer
 
+from backend.pipeline.common.test_schema_helper import sync_apply_test_schema
 from backend.pipeline.ingestion.collectors.echo import main as echo_main
-from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
+from backend.pipeline.schema_types.segmented_audio_pb2 import SegmentedAudio
 from backend.pipeline.storage.settings import AlloyDBSettings
 from backend.pipeline.storage.sync_connection import connect_db
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
-
-_REPO_ROOT = Path(__file__).resolve().parents[6]
-_SQL_DIR = (
-    _REPO_ROOT / "terraform" / "modules" / "alloydb" / "sql" / "ingestion"
-)
 
 _FAKE_GCS_PORT = 4443
 _ECHO_BUCKET = "wd-echo-recordings-test"
@@ -93,10 +88,7 @@ class TestEchoCollectorIntegration(unittest.TestCase):
             dbname="postgres",
             autocommit=True,
         ) as conn:
-            for sql_file in sorted(_SQL_DIR.glob("*.sql")):
-                if "pg_cron" in sql_file.name:
-                    continue  # pg_cron extension is production-only (AlloyDB flag)
-                conn.execute(sql_file.read_bytes())
+            sync_apply_test_schema(conn)
 
         # --- Fake GCS Server ---
         cls.gcs_container = (
@@ -247,7 +239,7 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         self.mock_publisher.publish.assert_called_once()
         publish_args, call_kwargs = self.mock_publisher.publish.call_args
         self.assertEqual(call_kwargs["source_type"], "echo")
-        chunk = AudioChunk()
+        chunk = SegmentedAudio()
         chunk.ParseFromString(publish_args[1])
         self.assertEqual(chunk.feed_id, str(feed_id))
 

@@ -18,6 +18,7 @@ dependencies = [
     "rules-service",
     "transcripts-service",
     "normalization-pipeline",
+    "segmentation-pipeline",
     "transcription-function",
     "evaluation-function",
     "notification-function",
@@ -61,6 +62,7 @@ dev = [
   "soundfile>=0.12.1",
   "pyopenssl>=26.0.0",
   "deepdiff>=9.1.0",
+  "types-protobuf>=7.34.1",
 ]
 
 [tool.ruff]
@@ -235,11 +237,13 @@ exclude = ["model/", "backend/services/local-whisper-api/"]
 
 [tool.pyright]
 pythonVersion = "3.13"
+reportUnusedTypeIgnoreComment = false
 
 [tool.uv.workspace]
 members = [
     "backend/pipeline/common",
     "backend/pipeline/normalization",
+    "backend/pipeline/segmentation",
     "backend/pipeline/transcription",
     "backend/pipeline/evaluation",
     "backend/pipeline/notification",
@@ -256,6 +260,7 @@ feeds-service = { workspace = true }
 rules-service = { workspace = true }
 transcripts-service = { workspace = true }
 normalization-pipeline = { workspace = true }
+segmentation-pipeline = { workspace = true }
 transcription-function = { workspace = true }
 evaluation-function = { workspace = true }
 notification-function = { workspace = true }

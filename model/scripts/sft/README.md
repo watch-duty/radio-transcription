@@ -49,6 +49,7 @@ a single portable path component: letters, numbers, `.`, `_`, and `-` only.
 ```toml
 round_id = "YYYY-MM-DD-short-description"
 dataset = "dataset-version-name"
+inference_dataset_slug = "echo/eval"
 train_manifest_uri = "gs://your-bucket/path/manifests/canonical/train.jsonl"
 validation_manifest_uri = "gs://your-bucket/path/manifests/canonical/validation.jsonl"
 eval_manifest_uri = "gs://your-bucket/path/manifests/canonical/eval.jsonl"
@@ -74,6 +75,11 @@ Supported adapter sizes are `ONE`, `TWO`, `FOUR`, `EIGHT`, and `SIXTEEN`.
 Prompt overrides are inline-only. Local prompt files are intentionally rejected
 because the resolved prompt text is copied into `config.json` for reproducible
 resume/eval runs.
+
+`dataset` identifies the SFT training recipe/version. `inference_dataset_slug`
+identifies the evaluated corpus/split used for normalized inference-manifest
+output placement, such as `echo/eval`. Older local `run.toml` files must add
+this field before they can be used with the current CLI.
 
 ## Data Split Contract
 
@@ -121,18 +127,34 @@ evals/tuned/input.jsonl
 evals/tuned/output/
 ```
 
+`gemini-sft eval` also writes normalized inference manifests under the shared
+`inference_manifests/` tree. These JSONL files preserve the eval source rows and
+add a prediction field named for the model family on rows that received a
+prediction record:
+
+```text
+gs://<bucket>/inference_manifests/<inference_dataset_slug>/<model_family_slug>/<round_id>/base.jsonl
+gs://<bucket>/inference_manifests/<inference_dataset_slug>/<model_family_slug>/<round_id>/tuned.jsonl
+```
+
 Local `results/<round-id>/` files are a mirror/cache only. `config.json` in GCS
 is the durable state machine: if it contains `job_name`, `tune` reattaches to
 that Vertex tuning job instead of submitting another one. Evaluation summaries
-include GCS batch-output paths so WER can be recalculated from raw inference
-results.
+include raw Vertex batch-output URIs and normalized inference-manifest URIs, so
+WER can be recalculated from provider responses or from the scorer-ready JSONL.
 
 ## Evaluation Semantics
 
 `eval` can run base-only when `--base-only` is passed or when `config.json` has
 no tuned endpoint. Missing Vertex batch predictions are scored as empty
 hypotheses, which makes them count as full deletions instead of removing those
-segments from the denominator.
+segments from the denominator. The normalized inference manifests leave
+`pred_text_*` absent for those missing prediction records; explicit empty model
+outputs are written as `pred_text_* = ""`.
+
+Eval manifests must use one unique model-ready `audio_filepath` clip URI per
+row. The batch path rejects duplicate audio URIs because one provider prediction
+record cannot be assigned to multiple manifest rows.
 
 Base-model batch inference uses `[gcp].location`. If the tuned endpoint stored
 in `config.json` is a full Vertex resource name, tuned batch inference uses the

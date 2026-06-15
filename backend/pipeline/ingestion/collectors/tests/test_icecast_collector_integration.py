@@ -16,6 +16,7 @@ from testcontainers.postgres import PostgresContainer
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client
+from backend.pipeline.common.test_schema_helper import async_apply_test_schema
 from backend.pipeline.ingestion.collectors.icecast import icecast_collector
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
@@ -34,11 +35,6 @@ MOCK_ENV_VARS = {
     "BROADCASTIFY_USERNAME": "test_user",
     "BROADCASTIFY_PASSWORD": "test_pass",
 }
-
-_REPO_ROOT = Path(__file__).resolve().parents[5]
-_SQL_DIR = (
-    _REPO_ROOT / "terraform" / "modules" / "alloydb" / "sql" / "ingestion"
-)
 
 _FAKE_GCS_PORT = 4443
 _TEST_BUCKET = "test-audio-bucket"
@@ -85,10 +81,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 password="postgres",
                 database="postgres",
             )
-            for sql_file in sorted(_SQL_DIR.glob("*.sql")):
-                if "pg_cron" in sql_file.name:
-                    continue  # pg_cron extension is production-only (AlloyDB flag)
-                await conn.execute(sql_file.read_text())
+            await async_apply_test_schema(conn)
             await conn.close()
 
         asyncio.run(_setup_schema())
@@ -430,7 +423,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self,
         mock_create_ffmpeg,
     ) -> None:
-        """Ffmpeg exit code 1 -> RuntimeError -> feed status = 'failing'."""
+        """Ffmpeg exit code 1 -> FeedFailure -> feed status = 'failing'."""
         feed = await self._lease_feed("error-feed")
 
         # Mock ffmpeg: no segments and non-zero exit
@@ -457,7 +450,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             ctx.exception.status_reason,
             FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
         )
-        self.assertEqual(str(ctx.exception), "ffmpeg_exit_1")
+        self.assertEqual(str(ctx.exception), "ffmpeg exited with code 1")
 
         # Simulate what CollectorRuntime._process_feed does on exception
         await self.store.report_feed_failure(

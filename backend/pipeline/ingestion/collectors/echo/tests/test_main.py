@@ -17,7 +17,7 @@ from backend.pipeline.ingestion.collectors.echo.main import (
     _handle,
     _parse_timestamp,
 )
-from backend.pipeline.schema_types.raw_audio_chunk_pb2 import AudioChunk
+from backend.pipeline.schema_types.segmented_audio_pb2 import SegmentedAudio
 from backend.pipeline.storage.feed_store import FeedStatusReason
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
 
@@ -218,7 +218,7 @@ class TestHandle:
         publish_args, call_kwargs = pub.publish.call_args
         assert publish_args[0] == SEGMENTED_PUBSUB_TOPIC_PATH
         assert call_kwargs["source_type"] == "echo"
-        chunk = AudioChunk()
+        chunk = SegmentedAudio()
         chunk.ParseFromString(publish_args[1])
         assert chunk.feed_id == str(feed_id)
 
@@ -251,7 +251,7 @@ class TestHandle:
         pub = _patch_globals["publisher"]
         pub.publish.assert_called_once()
         publish_args, _ = pub.publish.call_args
-        chunk = AudioChunk()
+        chunk = SegmentedAudio()
         chunk.ParseFromString(publish_args[1])
 
         expected_ts = datetime(2026, 5, 31, 0, 28, 18, tzinfo=UTC)
@@ -281,7 +281,7 @@ class TestHandle:
         pub = _patch_globals["publisher"]
         pub.publish.assert_called_once()
         publish_args, _ = pub.publish.call_args
-        chunk = AudioChunk()
+        chunk = SegmentedAudio()
         chunk.ParseFromString(publish_args[1])
 
         expected_ts = datetime(2026, 5, 19, 16, 47, 57, 184784, tzinfo=UTC)
@@ -586,6 +586,37 @@ class TestHandle:
             mock_store,
             feed_id,
             reason="unexpected bug",
+            status_reason=FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
+        )
+
+    @pytest.mark.usefixtures("_patch_globals")
+    def test_unwrapped_bug_preserves_full_exception_text(
+        self, mock_store
+    ) -> None:
+        feed_id = uuid.uuid4()
+        self._set_feed(
+            mock_store,
+            {
+                "id": feed_id,
+                "name": "Central Fire",
+                "external_id": "ext-id",
+                "status": "active",
+                "failure_count": 0,
+            },
+        )
+        message = "token=secret-value " + ("x" * 300)
+
+        with patch(
+            "backend.pipeline.ingestion.collectors.echo.main._parse_timestamp",
+            side_effect=RuntimeError(message),
+        ):
+            with pytest.raises(RuntimeError, match=message):
+                _handle(self._make_event())
+
+        self._assert_failure_recorded(
+            mock_store,
+            feed_id,
+            reason=message,
             status_reason=FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
         )
 

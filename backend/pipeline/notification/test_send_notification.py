@@ -4,6 +4,7 @@ from unittest import TestCase, main, mock
 
 from cloudevents.http import CloudEvent
 
+from backend.pipeline.common.exceptions import NonRetryableError
 from backend.pipeline.schema_types import EvaluationErrorType
 from backend.pipeline.schema_types.alert_notification_pb2 import (
     AlertNotification,
@@ -62,7 +63,7 @@ class TestSendNotification(TestCase):
 
         evaluated_payload = EvaluatedTranscribedAudio(
             transcript="This is a test!",
-            transmission_id="1234",
+            segment_id="1234",
             source_audio_uris=["gs://foo/bar.flac"],
             feed_name="asdf",
         )
@@ -86,10 +87,10 @@ class TestSendNotification(TestCase):
 
         expected_notification = AlertNotification(
             transcript="This is a test!",
-            transmission_id="1234",
+            segment_id="1234",
             source_audio_uris=["gs://foo/bar.flac"],
             feed_name="asdf",
-            app_url="https://app.example.com/transcripts?feedId=&transmissionId=1234&timestamp=1000000",
+            app_url="https://app.example.com/transcripts?feedId=&segmentId=1234&timestamp=1000000",
         )
         expected_notification.start_audio_offset.seconds = 10
         expected_notification.end_audio_offset.seconds = 20
@@ -124,7 +125,7 @@ class TestSendNotification(TestCase):
 
         evaluated_payload = EvaluatedTranscribedAudio(
             transcript="This has errors!",
-            transmission_id="5678",
+            segment_id="5678",
             source_audio_uris=["gs://foo/bar.flac"],
             feed_name="asdf",
             errors=[EvaluationErrorType.ERROR_RULES_FETCH_FAILED],
@@ -147,10 +148,10 @@ class TestSendNotification(TestCase):
 
         expected_notification = AlertNotification(
             transcript="This has errors!",
-            transmission_id="5678",
+            segment_id="5678",
             source_audio_uris=["gs://foo/bar.flac"],
             feed_name="asdf",
-            app_url="https://app.example.com/transcripts?feedId=&transmissionId=5678&timestamp=1000000",
+            app_url="https://app.example.com/transcripts?feedId=&segmentId=5678&timestamp=1000000",
             evaluation_errors=[EvaluationErrorType.ERROR_RULES_FETCH_FAILED],
         )
         expected_notification.start_audio_offset.seconds = 10
@@ -176,7 +177,7 @@ class TestSendNotification(TestCase):
         mock_dedupe.process_notification.return_value = False
 
         evaluated_payload = EvaluatedTranscribedAudio(
-            transcript="This is a test!", transmission_id="1234"
+            transcript="This is a test!", segment_id="1234"
         )
         raw_data = base64.b64encode(evaluated_payload.SerializeToString())
         event_data = {"message": {"data": raw_data, "messageId": "1234"}}
@@ -217,7 +218,7 @@ class TestSendNotification(TestCase):
 
         evaluated_payload = EvaluatedTranscribedAudio(
             transcript="This is a test!",
-            transmission_id="1234",
+            segment_id="1234",
         )
         raw_data = base64.b64encode(evaluated_payload.SerializeToString())
         event_data = {
@@ -242,10 +243,89 @@ class TestSendNotification(TestCase):
             "backend.pipeline.notification.send_notification",
         )
 
+    @mock.patch("backend.pipeline.notification.send_notification.container")
+    def test_send_notification_transient_failure_clears_dedupe(
+        self, mock_container: mock.Mock
+    ) -> None:
+        mock_dedupe = mock_container.get_deduplication.return_value
+        mock_feeds_client = mock_container.get_feeds_client.return_value
+        mock_request_handler = mock_container.get_request_handler.return_value
+        type(mock_container).app_url = mock.PropertyMock(
+            return_value="https://app.example.com"
+        )
+        type(mock_container).feeds_api_url = mock.PropertyMock(
+            return_value="http://feeds-api"
+        )
+
+        mock_feeds_client.get_feed_tags.return_value = []
+        mock_dedupe.process_notification.return_value = True
+
+        mock_request_handler.send_notification.side_effect = Exception(
+            "Transient error"
+        )
+
+        evaluated_payload = EvaluatedTranscribedAudio(
+            transcript="This is a test!",
+            segment_id="1234",
+        )
+        raw_data = base64.b64encode(evaluated_payload.SerializeToString())
+        event_data = {"message": {"data": raw_data, "messageId": "1234"}}
+        cloud_event = CloudEvent(
+            {
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "//pubsub.googleapis.com/projects/my-project/topics/my-topic",
+            },
+            event_data,
+        )
+
+        with self.assertRaises(Exception):
+            send_notification(cloud_event)
+
+        mock_dedupe.clear_notification.assert_called_once_with("1234")
+
+    @mock.patch("backend.pipeline.notification.send_notification.container")
+    def test_send_notification_non_retryable_failure_does_not_clear_dedupe(
+        self, mock_container: mock.Mock
+    ) -> None:
+        mock_dedupe = mock_container.get_deduplication.return_value
+        mock_feeds_client = mock_container.get_feeds_client.return_value
+        mock_request_handler = mock_container.get_request_handler.return_value
+        type(mock_container).app_url = mock.PropertyMock(
+            return_value="https://app.example.com"
+        )
+        type(mock_container).feeds_api_url = mock.PropertyMock(
+            return_value="http://feeds-api"
+        )
+
+        mock_feeds_client.get_feed_tags.return_value = []
+        mock_dedupe.process_notification.return_value = True
+
+        mock_request_handler.send_notification.side_effect = NonRetryableError(
+            "Non-retryable error"
+        )
+
+        evaluated_payload = EvaluatedTranscribedAudio(
+            transcript="This is a test!",
+            segment_id="1234",
+        )
+        raw_data = base64.b64encode(evaluated_payload.SerializeToString())
+        event_data = {"message": {"data": raw_data, "messageId": "1234"}}
+        cloud_event = CloudEvent(
+            {
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "//pubsub.googleapis.com/projects/my-project/topics/my-topic",
+            },
+            event_data,
+        )
+
+        send_notification(cloud_event)
+
+        mock_dedupe.clear_notification.assert_not_called()
+
     def test_convert_to_notification_encodes_epoch_timestamp(self) -> None:
         evaluated_payload = EvaluatedTranscribedAudio(
             feed_id="feed-1",
-            transmission_id="tx-1",
+            segment_id="tx-1",
         )
         evaluated_payload.start_timestamp.seconds = 1776280988
         evaluated_payload.start_timestamp.nanos = 990000000
@@ -259,7 +339,7 @@ class TestSendNotification(TestCase):
 
         self.assertEqual(
             notification.app_url,
-            "https://app.example.com/transcripts?feedId=feed-1&transmissionId=tx-1"
+            "https://app.example.com/transcripts?feedId=feed-1&segmentId=tx-1"
             "&timestamp=1776280988990",
         )
         self.assertEqual(notification.start_timestamp.seconds, 1776280988)

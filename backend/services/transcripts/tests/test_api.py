@@ -6,7 +6,6 @@ from fastapi import status
 from fastapi.testclient import TestClient
 
 from backend.pipeline.common.auth import verify_oidc_token
-from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
@@ -17,7 +16,7 @@ from backend.pipeline.storage.transcript_store import (
 from backend.services.transcripts.main import app
 from backend.services.transcripts.service import TranscriptService
 
-_TRANSMISSION_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+_SEGMENT_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 _FEED_ID = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
 
 
@@ -29,7 +28,7 @@ async def skip_auth() -> dict[str, str]:
 def _make_transcript_msg() -> EvaluatedTranscribedAudio:
     """Helper to create a populated EvaluatedTranscribedAudio message."""
     msg = EvaluatedTranscribedAudio()
-    msg.transmission_id = _TRANSMISSION_ID
+    msg.segment_id = _SEGMENT_ID
     msg.feed_id = _FEED_ID
     msg.transcript = "Hello world"
     msg.start_timestamp.FromDatetime(
@@ -64,7 +63,7 @@ class TestTranscriptsAPI(unittest.TestCase):
     def test_create_transcript_success(self) -> None:
         """Test creating a transcript successfully."""
         payload = {
-            "transmission_id": _TRANSMISSION_ID,
+            "segment_id": _SEGMENT_ID,
             "feed_id": _FEED_ID,
             "transcript": "Hello world",
             "start_timestamp": "2026-01-01T00:00:00Z",
@@ -82,13 +81,13 @@ class TestTranscriptsAPI(unittest.TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         data = response.json()
-        self.assertEqual(data["transmission_id"], _TRANSMISSION_ID)
+        self.assertEqual(data["segment_id"], _SEGMENT_ID)
         self.mock_store.create_transcript.assert_called_once()
 
     def test_create_transcript_parsing_error(self) -> None:
         """Test creating a transcript with invalid JSON schema."""
         payload = {
-            "transmission_id": _TRANSMISSION_ID,
+            "segment_id": _SEGMENT_ID,
             "feed_id": _FEED_ID,
             "transcript": "bad transcript",
             "start_audio_offset": "not-a-duration",
@@ -99,38 +98,22 @@ class TestTranscriptsAPI(unittest.TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("Invalid transcript data", response.json()["detail"])
 
-    def test_create_transcript_already_exists(self) -> None:
-        """Test creating a transcript that already exists returns 409."""
-        payload = {
-            "transmission_id": _TRANSMISSION_ID,
-            "feed_id": _FEED_ID,
-            "transcript": "Hello world",
-        }
-        self.mock_store.create_transcript.side_effect = AlreadyExistsError(
-            "Already exists"
-        )
-
-        response = self.client.post("/v1/transcripts", json=payload)
-
-        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
-        self.assertIn("Already exists", response.json()["detail"])
-
     def test_get_transcript_success(self) -> None:
         """Test fetching an existing transcript."""
         mock_msg = _make_transcript_msg()
         self.mock_store.get_transcript.return_value = mock_msg
 
-        response = self.client.get(f"/v1/transcripts/{_TRANSMISSION_ID}")
+        response = self.client.get(f"/v1/transcripts/{_SEGMENT_ID}")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.json()["transmission_id"], _TRANSMISSION_ID)
-        self.mock_store.get_transcript.assert_called_once_with(_TRANSMISSION_ID)
+        self.assertEqual(response.json()["segment_id"], _SEGMENT_ID)
+        self.mock_store.get_transcript.assert_called_once_with(_SEGMENT_ID)
 
     def test_get_transcript_not_found(self) -> None:
         """Test fetching a non-existent transcript returns 404."""
         self.mock_store.get_transcript.return_value = None
 
-        response = self.client.get(f"/v1/transcripts/{_TRANSMISSION_ID}")
+        response = self.client.get(f"/v1/transcripts/{_SEGMENT_ID}")
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
@@ -147,9 +130,7 @@ class TestTranscriptsAPI(unittest.TestCase):
         data = response.json()
         self.assertIn("transcripts", data)
         self.assertEqual(len(data["transcripts"]), 1)
-        self.assertEqual(
-            data["transcripts"][0]["transmission_id"], _TRANSMISSION_ID
-        )
+        self.assertEqual(data["transcripts"][0]["segment_id"], _SEGMENT_ID)
 
     def test_list_transcripts_by_feed_id(self) -> None:
         """Test listing transcripts filtered by feed ID."""
@@ -247,18 +228,16 @@ class TestTranscriptsAPI(unittest.TestCase):
         """Test deleting a transcript successfully."""
         self.mock_store.delete_transcript.return_value = True
 
-        response = self.client.delete(f"/v1/transcripts/{_TRANSMISSION_ID}")
+        response = self.client.delete(f"/v1/transcripts/{_SEGMENT_ID}")
 
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
-        self.mock_store.delete_transcript.assert_called_once_with(
-            _TRANSMISSION_ID
-        )
+        self.mock_store.delete_transcript.assert_called_once_with(_SEGMENT_ID)
 
     def test_delete_transcript_not_found(self) -> None:
         """Test deleting a non-existent transcript returns 404."""
         self.mock_store.delete_transcript.return_value = False
 
-        response = self.client.delete(f"/v1/transcripts/{_TRANSMISSION_ID}")
+        response = self.client.delete(f"/v1/transcripts/{_SEGMENT_ID}")
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 

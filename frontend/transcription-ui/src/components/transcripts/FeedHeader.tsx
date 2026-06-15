@@ -9,39 +9,39 @@ import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import type { Feed, FeedStatus } from '@transcription/common';
 
+import { toSourceTypeString } from '../../utils/textUtils';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
-import FeedSearch from './FeedSearch';
+import FeedSearchView from '../feeds/FeedSearchView';
 
 interface FeedHeaderProps {
-  feeds: Feed[];
   searchedFeed: Feed | null;
   onSelectFeed: (feedId: string) => void;
-  feedsLoading: boolean;
   sourceUrl?: string;
   archiveUrl?: string;
   status?: FeedStatus;
   lastHeartbeat?: string;
   triggerSnackbar: (message: string) => void;
+  onError: (error: Error, titleMessage?: string) => void;
 }
 
 const FeedHeader: React.FC<FeedHeaderProps> = ({
-  feeds,
   searchedFeed,
   onSelectFeed,
-  feedsLoading,
   sourceUrl,
   archiveUrl,
   status,
   lastHeartbeat,
   triggerSnackbar,
+  onError,
 }) => {
   return (
     <>
-      <FeedSearch
-        feeds={feeds}
-        selectedFeed={searchedFeed}
+      <FeedSearchView
+        title="Select feed"
+        condensed={true}
         onFeedSelect={onSelectFeed}
-        isFetching={feedsLoading}
+        triggerSnackbar={triggerSnackbar}
+        onError={onError}
       />
       {searchedFeed && (
         <Box
@@ -78,10 +78,15 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
             >
               {searchedFeed.name}
             </Typography>
-            <Chip label={searchedFeed.sourceType} size="small" />
+            <Chip
+              label={toSourceTypeString(searchedFeed.sourceType)}
+              size="small"
+            />
             <FeedStatusIndicator
               status={status}
               substatus={searchedFeed.substatus}
+              statusReason={searchedFeed.statusReason}
+              quarantineReason={searchedFeed.quarantineReason}
               lastHeartbeat={lastHeartbeat}
             />
           </Box>

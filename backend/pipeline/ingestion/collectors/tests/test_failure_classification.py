@@ -8,7 +8,7 @@ import unittest
 
 from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.ingestion.collectors.failure_classification import (
-    FailureClassification,
+    FailureInfo,
     ItemBatchOutcome,
     ItemFailure,
     collector_failure,
@@ -48,31 +48,17 @@ def _feed_config_evidence() -> failure_policy.FailurePolicyEvidence:
 class TestItemBatchOutcome(unittest.TestCase):
     """Shared item-failure promotion rules."""
 
-    def test_failure_classification_preserves_fields(self) -> None:
-        classification = FailureClassification(
+    def test_failure_info_preserves_fields(self) -> None:
+        info = FailureInfo(
             FeedStatusReason.SOURCE_UNREACHABLE,
             "download_failed",
         )
 
         self.assertIs(
-            classification.status_reason,
+            info.status_reason,
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
-        self.assertEqual(classification.reason, "download_failed")
-
-    def test_item_failure_from_classification_copies_fields(self) -> None:
-        classification = FailureClassification(
-            FeedStatusReason.SOURCE_UNREACHABLE,
-            "download_failed",
-        )
-
-        failure = ItemFailure.from_classification(classification)
-
-        self.assertIs(
-            failure.status_reason,
-            FeedStatusReason.SOURCE_UNREACHABLE,
-        )
-        self.assertEqual(failure.reason, "download_failed")
+        self.assertEqual(info.reason, "download_failed")
 
     def test_item_failure_preserves_status_reason_and_reason(self) -> None:
         failure = ItemFailure(

@@ -10,8 +10,9 @@ from pydantic import BaseModel, Field
 class AudioClassification(StrEnum):
     """Enum for audio segment classification."""
 
-    SPEECH_DETECTED = "SPEECH_DETECTED"
-    UNCLASSIFIED = "UNCLASSIFIED"
+    UNSPECIFIED = "UNSPECIFIED"
+    SPEECH = "SPEECH"
+    OTHER = "OTHER"
 
 
 class AnnotationType(StrEnum):
@@ -94,6 +95,7 @@ class AudioSegment(BaseModel):
     start_audio_offset: timedelta | None = None
     end_audio_offset: timedelta | None = None
     playback_audio_uri: str | None = None
+    external_audio_segment_id: str | None = None
     created_at: datetime
     annotations: list[Annotation] = Field(default_factory=list)
 
@@ -101,6 +103,7 @@ class AudioSegment(BaseModel):
 class AudioSegmentCreate(BaseModel):
     """Model for creating an audio segment."""
 
+    id: str
     feed_id: str
     classification: AudioClassification
     start_timestamp: datetime
@@ -112,6 +115,7 @@ class AudioSegmentCreate(BaseModel):
     start_audio_offset: timedelta | None = None
     end_audio_offset: timedelta | None = None
     playback_audio_uri: str | None = None
+    external_audio_segment_id: str | None = None
 
 
 class ListAudioSegmentsResponse(BaseModel):

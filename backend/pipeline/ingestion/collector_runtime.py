@@ -21,10 +21,15 @@ from opentelemetry import trace
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client, pubsub_client
+from backend.pipeline.common.log_helper import setup_asyncio_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.ingestion import failure_policy
-from backend.pipeline.ingestion import health_server
-from backend.pipeline.ingestion import quarantine_telemetry
+from backend.pipeline.ingestion import (
+    health_server,
+    quarantine_reason,
+    quarantine_telemetry,
+)
+from backend.pipeline.ingestion.failure_classifiers import pubsub
 from backend.pipeline.ingestion.health_server import HealthState
 from backend.pipeline.ingestion.models import (
     AudioMimeType,
@@ -65,7 +70,6 @@ CaptureFn = Callable[
 logger = logging.getLogger(__name__)
 
 _PIPELINE_GCS_UPLOAD_FAILED = "gcs_upload_failed"
-_PIPELINE_PUBSUB_PUBLISH_FAILED = "pubsub_publish_failed"
 _PIPELINE_BOOKMARK_WRITE_FAILED = "bookmark_write_failed"
 _NON_BUDGETED_RETRY_MIN_SEC = 5 * 60
 _NON_BUDGETED_RETRY_MAX_SEC = 15 * 60
@@ -207,6 +211,7 @@ class CollectorRuntime:
     async def _main(self) -> None:
         """Top-level async entry: setup, run leasing loop, then shutdown."""
         self._loop = asyncio.get_running_loop()
+        setup_asyncio_logging(self._loop)
         self._shutdown = asyncio.Event()
         self._lease_lost = asyncio.Event()
 
@@ -1008,6 +1013,7 @@ class CollectorRuntime:
                 captured_chunk.chunk_start_time,
                 duration_ms,
                 feed["source_type"],
+                captured_chunk.external_audio_segment_id,
                 lease_lost=self._lease_lost,
                 shutdown=self._shutdown,
                 max_retries=settings.pubsub_publish_max_retries,
@@ -1029,7 +1035,7 @@ class CollectorRuntime:
             raise
         except Exception as exc:
             raise _PipelineFailure(
-                _PIPELINE_PUBSUB_PUBLISH_FAILED,
+                pubsub.publish_failure_reason(exc),
                 status_reason=(
                     FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
                 ),
@@ -1083,11 +1089,37 @@ class CollectorRuntime:
             status_reason=status_reason,
             evidence=evidence,
         )
-        logger.exception(
-            "Feed processing error: feed=%s reason=%s",
-            feed["name"],
-            reason,
-        )
+        extra: dict[str, object] = {
+            "json_fields": {
+                "feed_id": str(feed["id"]),
+                "source_type": str(feed["source_type"]),
+                "reason": reason,
+                "status_reason": status_reason.value,
+            },
+        }
+        if status_reason in (
+            FeedStatusReason.SOURCE_OFFLINE,
+            FeedStatusReason.SOURCE_UNREACHABLE,
+            FeedStatusReason.SOURCE_RATE_LIMITED,
+        ):
+            # External operational Gotchas (e.g. Icecast 404 stream missing, CDN bans) are environment observations.
+            # Log them as a warning without attaching a noisy stack traceback or spawning permanent Stackdriver Error Groups.
+            logger.warning(
+                "Feed source processing observation: feed=%s reason=%s status_reason=%s",
+                feed["name"],
+                reason,
+                status_reason.value,
+                extra=extra,
+            )
+        else:
+            # Actionable Watch Duty internal system Gotchas (e.g. collector bugs, DB/auth failures) warrant an ERROR traceback.
+            logger.exception(
+                "Feed internal processing error: feed=%s reason=%s status_reason=%s",
+                feed["name"],
+                reason,
+                status_reason.value,
+                extra=extra,
+            )
         # SAFETY: _releasing_feeds invariant -- add BEFORE the first await
         # that drops the lease (report_feed_failure sets worker_id=NULL).
         self._releasing_feeds.add(feed["id"])
@@ -1470,7 +1502,7 @@ class CollectorRuntime:
             # Transitional catch-all for bugs or untyped collector failures.
             # Source-specific attribution belongs in collectors that raise
             # FeedFailure; the runtime only records the explicit fallback.
-            reason = str(e)[:200] if str(e) else type(e).__name__
+            reason = quarantine_reason.exception_text(e)[:200]
             await self._record_non_budgeted_failure(
                 feed,
                 worker_id,

@@ -119,10 +119,9 @@ class AudioMimeType(StrEnum):
 class FeedFailure(Exception):
     """Feed-level collector failure classified at the collector boundary.
 
-    This is intentionally small: `status_reason` is the bounded operator
-    grouping key, while `reason` is a short raw stage/detail string preserved
-    for logs and quarantine_reason. Do not put stderr, stack traces, URLs with
-    credentials, or other high-cardinality data in either field.
+    ``status_reason`` is the bounded operator grouping key. ``reason`` is the
+    diagnostic text preserved for logs and quarantine_reason so users and
+    engineers can debug the threshold-crossing failure episode.
     """
 
     status_reason: FeedStatusReason
@@ -156,7 +155,7 @@ class FeedFailure(Exception):
         # Exception instances must remain runtime-mutable: Python sets
         # __traceback__, __context__, and __cause__ while propagating them.
         # A frozen dataclass breaks that machinery, so keep only the payload
-        # normalized and bounded.
+        # normalized.
         self.status_reason = normalized_status_reason
         self.reason = reason[:200]
         self.policy_evidence = policy_evidence
@@ -190,6 +189,12 @@ class CapturedChunk:
             feed's resume cursor. ``None`` → the runtime falls back to
             ``chunk_end_time``. Set by cursor-paginated collectors (bcfy_calls);
             ``None`` for stream/push collectors.
+        external_audio_segment_id: Optional external ID for tracking the source segment.
+            Represents:
+            - Echo: GCS bucket and object path (e.g. "bucket-name/channel-location/YYYYMMDD/filename.mp3").
+            - Broadcastify Calls: Full source audio URL (e.g. "https://calls.broadcastify.com/.../123456.mp3").
+            - Fire Notifications: Composite S3 file UUID and human-readable filename (e.g. "c1465213-2998-4ed7-a6a2-bf16ebf67265|SAN-JOSE-DISP 2026-06-09 18-38-41.mp3").
+            - Broadcastify Feeds: Not applicable (omitted).
     """
 
     audio_bytes: bytes
@@ -199,6 +204,29 @@ class CapturedChunk:
     receipt_time: datetime.datetime | None = None
     mime_type: AudioMimeType | None = None
     resume_position: datetime.datetime | None = None
+    external_audio_segment_id: str | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class SourceObservation:
+    """A non-audio source success observed by a capture function.
+
+    Use this when a collector successfully reaches the source and confirms
+    there is no audio item to emit. The runtime may use it to clear stale
+    failure state, but it must never upload, publish, or treat it as audio
+    progress.
+
+    Attributes:
+        resume_position: Optional source-specific cursor for the successful
+            observation. For Broadcastify Calls this is the API ``lastPos``.
+            ``None`` means the observation should not advance the persisted
+            bookmark.
+    """
+
+    resume_position: datetime.datetime | None = None
+
+
+type CaptureEvent = CapturedChunk | SourceObservation
 
 
 @dataclasses.dataclass(frozen=True)

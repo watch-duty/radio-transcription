@@ -1886,13 +1886,13 @@ async def test_delete_feed_succeeds(
     feed_id = await _insert_feed(db_pool, "Hard Delete Test Feed")
 
     # 2. Insert a transcript for the feed
-    transmission_id = uuid.uuid4()
+    segment_id = uuid.uuid4()
     await db_pool.execute(
         """
-        INSERT INTO transcripts (transmission_id, feed_id, transcript, start_timestamp, end_timestamp, created_at)
+        INSERT INTO transcripts (segment_id, feed_id, transcript, start_timestamp, end_timestamp, created_at)
         VALUES ($1, $2, $3, NOW() - INTERVAL '10 seconds', NOW(), NOW())
         """,
-        str(transmission_id),
+        str(segment_id),
         str(feed_id),
         "Test transcript to be deleted",
     )
@@ -1902,7 +1902,7 @@ async def test_delete_feed_succeeds(
     await db_pool.execute(
         """
         INSERT INTO audio_segments (id, feed_id, classification, start_timestamp, end_timestamp, created_at)
-        VALUES ($1, $2, 'SPEECH_DETECTED', NOW() - INTERVAL '10 seconds', NOW(), NOW())
+        VALUES ($1, $2, 'SPEECH', NOW() - INTERVAL '10 seconds', NOW(), NOW())
         """,
         str(segment_id),
         str(feed_id),

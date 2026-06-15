@@ -17,7 +17,7 @@ class TestAudioSegmentsClient(unittest.TestCase):
         self.segment_payload = {
             "id": "segment-id-123",
             "feed_id": "feed-id-456",
-            "classification": "SPEECH_DETECTED",
+            "classification": "SPEECH",
             "start_timestamp": "2026-01-01T00:00:00Z",
             "end_timestamp": "2026-01-01T00:01:00Z",
             "missing_prior_context": False,

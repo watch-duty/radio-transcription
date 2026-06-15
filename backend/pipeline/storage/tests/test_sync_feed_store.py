@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from unittest.mock import MagicMock, patch
 
+from backend.pipeline.storage import quarantine_reason
 from backend.pipeline.storage.feed_store import FeedStatusReason
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
 
@@ -149,6 +150,18 @@ class TestRecordFailure:
             None,
             feed_id,
         )
+
+    def test_caps_quarantine_reason_at_persistence_boundary(self) -> None:
+        conn = _make_mock_conn()
+        store = _make_store(conn)
+        feed_id = uuid.uuid4()
+        long_reason = "x" * (quarantine_reason.MAX_QUARANTINE_REASON_LENGTH + 1)
+
+        store.record_failure(feed_id, reason=long_reason)
+
+        reason_arg = conn.execute.call_args[0][1][5]
+        assert len(reason_arg) == quarantine_reason.MAX_QUARANTINE_REASON_LENGTH
+        assert reason_arg.endswith("[truncated]")
 
     def test_always_logs_failure(self) -> None:
         conn = _make_mock_conn()

@@ -21,7 +21,7 @@ class TestEvaluationService(unittest.TestCase):
         )
 
         self.transcribed_audio = transcribed_pb2.TranscribedAudio()
-        self.transcribed_audio.transmission_id = "12345"
+        self.transcribed_audio.segment_id = "12345"
         self.transcribed_audio.transcript = "There is a fire"
         self.transcribed_audio.feed_id = "1234"
         self.transcribed_audio.feed_name = "Central Fire"
@@ -46,7 +46,8 @@ class TestEvaluationService(unittest.TestCase):
         self.assertIsNotNone(result_proto)
         assert result_proto is not None
         self.assertEqual(result_proto.feed_name, "Central Fire")
-        self.assertEqual(result_proto.transmission_id, "12345")
+
+        self.assertEqual(result_proto.segment_id, "12345")
         self.assertEqual(result_proto.transcript, "There is a fire")
         self.assertEqual(
             list(result_proto.evaluation_decisions), ["basic_fire_terms"]
@@ -64,7 +65,7 @@ class TestEvaluationService(unittest.TestCase):
         self.mock_evaluator.evaluate.assert_called()
         self.assertIsNotNone(result_proto)
         assert result_proto is not None
-        self.assertEqual(result_proto.transmission_id, "12345")
+        self.assertEqual(result_proto.segment_id, "12345")
         self.assertEqual(len(result_proto.evaluation_decisions), 0)
 
     def test_return_payload_on_proto_error(self) -> None:
@@ -83,6 +84,27 @@ class TestEvaluationService(unittest.TestCase):
             list(result_proto.errors),
             [EvaluationErrorType.ERROR_FEED_ID_MISSING],
         )
+
+    def test_evaluates_sanitizes_negative_or_invalid_durations(self) -> None:
+        """Asserts that negative or sign-mismatched durations are sanitized to 0."""
+        self.mock_evaluator.evaluate.return_value = {
+            "is_flagged": False,
+            "triggered_rules": [],
+        }
+        # Simulate a sign-mismatched duration (e.g. from negative timedelta serialization)
+        self.transcribed_audio.start_audio_offset.seconds = -1
+        self.transcribed_audio.start_audio_offset.nanos = 990000000
+        self.transcribed_audio.end_audio_offset.seconds = 5
+        self.transcribed_audio.end_audio_offset.nanos = -100
+
+        result_proto = self.service.evaluate(self.transcribed_audio)
+
+        self.assertIsNotNone(result_proto)
+        assert result_proto is not None
+        self.assertEqual(result_proto.start_audio_offset.seconds, 0)
+        self.assertEqual(result_proto.start_audio_offset.nanos, 0)
+        self.assertEqual(result_proto.end_audio_offset.seconds, 0)
+        self.assertEqual(result_proto.end_audio_offset.nanos, 0)
 
 
 if __name__ == "__main__":

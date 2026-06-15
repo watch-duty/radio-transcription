@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+import React from 'react';
+
+import type { Howl } from 'howler';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -8,68 +11,144 @@ import {
   screen,
   waitFor,
 } from '@testing-library/react';
-import type { Transcript } from '@transcription/common';
+import {
+  AnnotationType,
+  AudioClassification,
+  type AudioSegment,
+} from '@transcription/common';
 
 import { getAudioUrl } from '../../utils/audioUtils';
 import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { AudioDisplay } from './AudioDisplay';
 
-vi.mock('@wavesurfer/react', () => ({
-  default: (props: { url: string }) => (
-    <div data-testid="wavesurfer-player" data-url={props.url} />
-  ),
-}));
+const mockSetTime = vi.fn();
+const mockSetOptions = vi.fn();
+
+vi.mock('@wavesurfer/react', () => {
+  const MockWavesurferPlayer = (props: {
+    url: string;
+    onReady?: (ws: {
+      setTime: (time: number) => void;
+      setOptions: (opts: unknown) => void;
+    }) => void;
+    onDestroy?: () => void;
+  }) => {
+    const { onReady, onDestroy } = props;
+    React.useEffect(() => {
+      if (onReady) {
+        onReady({
+          setTime: mockSetTime,
+          setOptions: mockSetOptions,
+        });
+      }
+      return () => {
+        if (onDestroy) {
+          onDestroy();
+        }
+      };
+    }, [onReady, onDestroy]);
+
+    return <div data-testid="wavesurfer-player" data-url={props.url} />;
+  };
+
+  return {
+    default: MockWavesurferPlayer,
+  };
+});
+
+function makeMockAudioSegment(
+  id: string,
+  feedId: string,
+  startTimestamp: string,
+  endTimestamp: string,
+  transcript: string,
+  playbackAudioUri: string,
+  evaluationDecisions: string[] = []
+): AudioSegment {
+  return {
+    id,
+    feedId,
+    classification: AudioClassification.SPEECH,
+    startTimestamp,
+    endTimestamp,
+    canonicalAudioUri: 'gs://bucket/audio.flac',
+    playbackAudioUri,
+    missingPriorContext: false,
+    missingPostContext: false,
+    sourceAudioUris: [],
+    startAudioOffset: '0',
+    endAudioOffset: '0',
+    createdAt: startTimestamp,
+    annotations: [
+      {
+        type: AnnotationType.TRANSCRIPT,
+        createdAt: startTimestamp,
+        data: {
+          text: transcript,
+          errors: [],
+        },
+      },
+      ...(evaluationDecisions.length > 0
+        ? [
+            {
+              type: AnnotationType.EVALUATION,
+              createdAt: startTimestamp,
+              data: {
+                decisions: evaluationDecisions,
+                errors: [],
+              },
+            },
+          ]
+        : []),
+    ],
+  };
+}
 
 describe('AudioDisplay', () => {
   afterEach(() => {
     cleanup();
+    mockSetTime.mockClear();
+    mockSetOptions.mockClear();
   });
 
   it('should render empty state when no transcripts', () => {
     render(
       <AudioDisplay
-        transcripts={[]}
-        currentlyPlayingTransmissionId={null}
+        audioSegments={[]}
+        currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={vi.fn()}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
-    expect(screen.getByText('No transcripts loaded')).toBeTruthy();
+    expect(screen.getByText('No audio found')).toBeTruthy();
   });
 
   it('should render transcripts when provided', () => {
-    const mockTranscripts: Transcript[] = [
-      {
-        transmissionId: '1',
-        feedId: 'feed1',
-        startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
-        endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
-        transcript: 'Test 1',
-        canonicalAudioUri: 'audio1.flac',
-        playbackAudioUri: 'audio1.m4a',
-        evaluationDecisions: [],
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: [],
-        startAudioOffset: '0',
-        endAudioOffset: '0',
-      },
+    const mockAudioSegments: AudioSegment[] = [
+      makeMockAudioSegment(
+        '1',
+        'feed1',
+        new Date('2026-04-20T09:00:00Z').toISOString(),
+        new Date('2026-04-20T09:00:05Z').toISOString(),
+        'Test 1',
+        'audio1.m4a'
+      ),
     ];
 
     const { container } = render(
       <AudioDisplay
-        transcripts={mockTranscripts}
-        currentlyPlayingTransmissionId={null}
+        audioSegments={mockAudioSegments}
+        currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={vi.fn()}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
 
-    expect(screen.queryByText('No transcripts loaded')).toBeNull();
+    expect(screen.queryByText('No audio found')).toBeNull();
 
     const paper = container.querySelector('.MuiPaper-root');
     expect(paper).toBeTruthy();
@@ -77,80 +156,60 @@ describe('AudioDisplay', () => {
   });
 
   it('should render warning icon when transcript has evaluation decisions', () => {
-    const mockTranscripts: Transcript[] = [
-      {
-        transmissionId: '1',
-        feedId: 'feed1',
-        startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
-        endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
-        transcript: 'Test 1',
-        canonicalAudioUri: 'audio1.flac',
-        playbackAudioUri: 'audio1.m4a',
-        evaluationDecisions: ['rule1'],
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: [],
-        startAudioOffset: '0',
-        endAudioOffset: '0',
-      },
+    const mockAudioSegments: AudioSegment[] = [
+      makeMockAudioSegment(
+        '1',
+        'feed1',
+        new Date('2026-04-20T09:00:00Z').toISOString(),
+        new Date('2026-04-20T09:00:05Z').toISOString(),
+        'Test 1',
+        'audio1.m4a',
+        ['rule1']
+      ),
     ];
 
     render(
       <AudioDisplay
-        transcripts={mockTranscripts}
-        currentlyPlayingTransmissionId={null}
+        audioSegments={mockAudioSegments}
+        currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={vi.fn()}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
 
     expect(screen.getByTestId('warning-icon')).toBeTruthy();
   });
 
-  it('should shift window when playing transmission is outside window', async () => {
-    const mockTranscripts: Transcript[] = [
-      {
-        transmissionId: '1',
-        feedId: 'feed1',
-        startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
-        endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
-        transcript: 'Test 1',
-        canonicalAudioUri: 'audio1.flac',
-        playbackAudioUri: 'audio1.m4a',
-        evaluationDecisions: [],
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: [],
-        startAudioOffset: '0',
-        endAudioOffset: '0',
-      },
-      {
-        transmissionId: '2',
-        feedId: 'feed1',
-        startTimestamp: new Date('2026-04-20T08:20:00Z').toISOString(),
-        endTimestamp: new Date('2026-04-20T08:20:05Z').toISOString(),
-        transcript: 'Test 2',
-        canonicalAudioUri: 'audio2.flac',
-        playbackAudioUri: 'audio2.m4a',
-        evaluationDecisions: [],
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: [],
-        startAudioOffset: '0',
-        endAudioOffset: '0',
-      },
+  it('should shift window when playing segment is outside window', async () => {
+    const mockAudioSegments: AudioSegment[] = [
+      makeMockAudioSegment(
+        '1',
+        'feed1',
+        new Date('2026-04-20T09:00:00Z').toISOString(),
+        new Date('2026-04-20T09:00:05Z').toISOString(),
+        'Test 1',
+        'audio1.m4a'
+      ),
+      makeMockAudioSegment(
+        '2',
+        'feed1',
+        new Date('2026-04-20T08:20:00Z').toISOString(),
+        new Date('2026-04-20T08:20:05Z').toISOString(),
+        'Test 2',
+        'audio2.m4a'
+      ),
     ];
 
     const { rerender } = render(
       <AudioDisplay
-        transcripts={mockTranscripts}
-        currentlyPlayingTransmissionId={null}
+        audioSegments={mockAudioSegments}
+        currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={vi.fn()}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
 
@@ -160,12 +219,12 @@ describe('AudioDisplay', () => {
 
     rerender(
       <AudioDisplay
-        transcripts={mockTranscripts}
-        currentlyPlayingTransmissionId="2"
+        audioSegments={mockAudioSegments}
+        currentlyPlayingSegmentId="2"
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={vi.fn()}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
 
@@ -178,50 +237,36 @@ describe('AudioDisplay', () => {
   });
 
   it('should reset window when transcripts[0] changes', async () => {
-    const mockTranscripts1: Transcript[] = [
-      {
-        transmissionId: '1',
-        feedId: 'feed1',
-        startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
-        endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
-        transcript: 'Test 1',
-        canonicalAudioUri: 'audio1.flac',
-        playbackAudioUri: 'audio1.m4a',
-        evaluationDecisions: [],
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: [],
-        startAudioOffset: '0',
-        endAudioOffset: '0',
-      },
+    const mockAudioSegments1: AudioSegment[] = [
+      makeMockAudioSegment(
+        '1',
+        'feed1',
+        new Date('2026-04-20T09:00:00Z').toISOString(),
+        new Date('2026-04-20T09:00:05Z').toISOString(),
+        'Test 1',
+        'audio1.m4a'
+      ),
     ];
 
-    const mockTranscripts2: Transcript[] = [
-      {
-        transmissionId: '2',
-        feedId: 'feed2',
-        startTimestamp: new Date('2026-04-20T10:00:00Z').toISOString(),
-        endTimestamp: new Date('2026-04-20T10:00:05Z').toISOString(),
-        transcript: 'Test 2',
-        canonicalAudioUri: 'audio2.flac',
-        playbackAudioUri: 'audio1.m4a',
-        evaluationDecisions: [],
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: [],
-        startAudioOffset: '0',
-        endAudioOffset: '0',
-      },
+    const mockAudioSegments2: AudioSegment[] = [
+      makeMockAudioSegment(
+        '2',
+        'feed2',
+        new Date('2026-04-20T10:00:00Z').toISOString(),
+        new Date('2026-04-20T10:00:05Z').toISOString(),
+        'Test 2',
+        'audio1.m4a'
+      ),
     ];
 
     const { rerender } = render(
       <AudioDisplay
-        transcripts={mockTranscripts1}
-        currentlyPlayingTransmissionId={null}
+        audioSegments={mockAudioSegments1}
+        currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={vi.fn()}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
 
@@ -231,12 +276,12 @@ describe('AudioDisplay', () => {
 
     rerender(
       <AudioDisplay
-        transcripts={mockTranscripts2}
-        currentlyPlayingTransmissionId={null}
+        audioSegments={mockAudioSegments2}
+        currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={vi.fn()}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
 
@@ -249,33 +294,26 @@ describe('AudioDisplay', () => {
   });
 
   it('should adjust window duration based on userDuration capped at 15 minutes', async () => {
-    const mockTranscripts: Transcript[] = [
-      {
-        transmissionId: '1',
-        feedId: 'feed1',
-        startTimestamp: new Date('2026-04-20T09:15:00Z').toISOString(),
-        endTimestamp: new Date('2026-04-20T09:15:00Z').toISOString(),
-        transcript: 'Test 1',
-        canonicalAudioUri: 'audio1.flac',
-        playbackAudioUri: 'audio1.m4a',
-        evaluationDecisions: [],
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: [],
-        startAudioOffset: '0',
-        endAudioOffset: '0',
-      },
+    const mockAudioSegments: AudioSegment[] = [
+      makeMockAudioSegment(
+        '1',
+        'feed1',
+        new Date('2026-04-20T09:15:00Z').toISOString(),
+        new Date('2026-04-20T09:15:00Z').toISOString(),
+        'Test 1',
+        'audio1.m4a'
+      ),
     ];
 
     const { rerender } = render(
       <AudioDisplay
-        transcripts={mockTranscripts}
-        currentlyPlayingTransmissionId={null}
+        audioSegments={mockAudioSegments}
+        currentlyPlayingSegmentId={null}
         userDuration="5"
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={vi.fn()}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
 
@@ -291,13 +329,13 @@ describe('AudioDisplay', () => {
 
     rerender(
       <AudioDisplay
-        transcripts={mockTranscripts}
-        currentlyPlayingTransmissionId={null}
+        audioSegments={mockAudioSegments}
+        currentlyPlayingSegmentId={null}
         userDuration="30"
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={vi.fn()}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
 
@@ -315,39 +353,32 @@ describe('AudioDisplay', () => {
   });
 
   it('passes playbackAudioUri to WavesurferPlayer (transformed via getAudioUrl)', () => {
-    const mockTranscripts: Transcript[] = [
-      {
-        transmissionId: '1',
-        feedId: 'feed1',
-        startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
-        endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
-        transcript: 'Test 1',
-        canonicalAudioUri: 'audio1.flac',
-        playbackAudioUri: 'gs://bucket/audio1.m4a',
-        evaluationDecisions: [],
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: [],
-        startAudioOffset: '0',
-        endAudioOffset: '0',
-      },
+    const mockAudioSegments: AudioSegment[] = [
+      makeMockAudioSegment(
+        '1',
+        'feed1',
+        new Date('2026-04-20T09:00:00Z').toISOString(),
+        new Date('2026-04-20T09:00:05Z').toISOString(),
+        'Test 1',
+        'gs://bucket/audio1.m4a'
+      ),
     ];
 
     render(
       <AudioDisplay
-        transcripts={mockTranscripts}
-        currentlyPlayingTransmissionId={null}
+        audioSegments={mockAudioSegments}
+        currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={vi.fn()}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
 
     const wavesurfer = screen.getByTestId('wavesurfer-player');
     expect(wavesurfer).toBeTruthy();
     expect(wavesurfer.getAttribute('data-url')).toBe(
-      getAudioUrl(mockTranscripts[0].playbackAudioUri)
+      getAudioUrl(mockAudioSegments[0].playbackAudioUri ?? '')
     );
     expect(wavesurfer.getAttribute('data-url')).toContain('.m4a');
   });
@@ -356,28 +387,21 @@ describe('AudioDisplay', () => {
     const mockOnTogglePlayPause = vi.fn();
     render(
       <AudioDisplay
-        transcripts={[
-          {
-            transmissionId: '1',
-            feedId: 'feed1',
-            startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
-            endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
-            transcript: 'Test 1',
-            canonicalAudioUri: 'audio1.flac',
-            playbackAudioUri: 'audio1.m4a',
-            evaluationDecisions: [],
-            missingPriorContext: false,
-            missingPostContext: false,
-            sourceAudioUris: [],
-            startAudioOffset: '0',
-            endAudioOffset: '0',
-          },
+        audioSegments={[
+          makeMockAudioSegment(
+            '1',
+            'feed1',
+            new Date('2026-04-20T09:00:00Z').toISOString(),
+            new Date('2026-04-20T09:00:05Z').toISOString(),
+            'Test 1',
+            'audio1.m4a'
+          ),
         ]}
-        currentlyPlayingTransmissionId={null}
+        currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={mockOnTogglePlayPause}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
 
@@ -391,12 +415,12 @@ describe('AudioDisplay', () => {
     const mockOnTogglePlayPause = vi.fn();
     render(
       <AudioDisplay
-        transcripts={[]}
-        currentlyPlayingTransmissionId={null}
+        audioSegments={[]}
+        currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={mockOnTogglePlayPause}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
 
@@ -410,60 +434,46 @@ describe('AudioDisplay', () => {
   it('should render pause button when playing', () => {
     render(
       <AudioDisplay
-        transcripts={[]}
-        currentlyPlayingTransmissionId={null}
+        audioSegments={[]}
+        currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={true}
         onTogglePlayPause={vi.fn()}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
 
     expect(screen.getByLabelText('pause')).toBeTruthy();
   });
 
-  it('should shift window when highlighted transmission is outside window', async () => {
-    const mockTranscripts: Transcript[] = [
-      {
-        transmissionId: '1',
-        feedId: 'feed1',
-        startTimestamp: new Date('2026-04-20T09:00:00Z').toISOString(),
-        endTimestamp: new Date('2026-04-20T09:00:05Z').toISOString(),
-        transcript: 'Test 1',
-        canonicalAudioUri: 'audio1.flac',
-        playbackAudioUri: 'audio1.m4a',
-        evaluationDecisions: [],
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: [],
-        startAudioOffset: '0',
-        endAudioOffset: '0',
-      },
-      {
-        transmissionId: '2',
-        feedId: 'feed1',
-        startTimestamp: new Date('2026-04-20T08:20:00Z').toISOString(),
-        endTimestamp: new Date('2026-04-20T08:20:05Z').toISOString(),
-        transcript: 'Test 2',
-        canonicalAudioUri: 'audio2.flac',
-        playbackAudioUri: 'audio2.m4a',
-        evaluationDecisions: [],
-        missingPriorContext: false,
-        missingPostContext: false,
-        sourceAudioUris: [],
-        startAudioOffset: '0',
-        endAudioOffset: '0',
-      },
+  it('should shift window when highlighted segment is outside window', async () => {
+    const mockAudioSegments: AudioSegment[] = [
+      makeMockAudioSegment(
+        '1',
+        'feed1',
+        new Date('2026-04-20T09:00:00Z').toISOString(),
+        new Date('2026-04-20T09:00:05Z').toISOString(),
+        'Test 1',
+        'audio1.m4a'
+      ),
+      makeMockAudioSegment(
+        '2',
+        'feed1',
+        new Date('2026-04-20T08:20:00Z').toISOString(),
+        new Date('2026-04-20T08:20:05Z').toISOString(),
+        'Test 2',
+        'audio2.m4a'
+      ),
     ];
 
     const { rerender } = render(
       <AudioDisplay
-        transcripts={mockTranscripts}
-        currentlyPlayingTransmissionId={null}
+        audioSegments={mockAudioSegments}
+        currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={vi.fn()}
-        highlightedTransmissionId={null}
+        highlightedSegmentId={null}
       />
     );
 
@@ -473,12 +483,12 @@ describe('AudioDisplay', () => {
 
     rerender(
       <AudioDisplay
-        transcripts={mockTranscripts}
-        currentlyPlayingTransmissionId={null}
+        audioSegments={mockAudioSegments}
+        currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         onTogglePlayPause={vi.fn()}
-        highlightedTransmissionId="2"
+        highlightedSegmentId="2"
       />
     );
 
@@ -488,5 +498,71 @@ describe('AudioDisplay', () => {
         .map((el) => el.textContent);
       expect(labelsAfter).not.toEqual(labelsBefore);
     });
+  });
+
+  it('should call setTime on wavesurfer player when progress is provided', () => {
+    const mockAudioSegments: AudioSegment[] = [
+      makeMockAudioSegment(
+        '1',
+        'feed1',
+        new Date('2026-04-20T09:00:00Z').toISOString(),
+        new Date('2026-04-20T09:00:05Z').toISOString(),
+        'Test 1',
+        'audio1.m4a'
+      ),
+    ];
+
+    render(
+      <AudioDisplay
+        audioSegments={mockAudioSegments}
+        currentlyPlayingSegmentId="1"
+        onClipClick={vi.fn()}
+        isAudioPlaying={true}
+        onTogglePlayPause={vi.fn()}
+        highlightedSegmentId={null}
+        currentTimeSeconds={3.5}
+      />
+    );
+
+    expect(mockSetTime).toHaveBeenCalledWith(3.5);
+  });
+
+  it('should poll progress from currentAudioRef and seek wavesurfer player', async () => {
+    const mockAudioSegments: AudioSegment[] = [
+      makeMockAudioSegment(
+        '1',
+        'feed1',
+        new Date('2026-04-20T09:00:00Z').toISOString(),
+        new Date('2026-04-20T09:00:05Z').toISOString(),
+        'Test 1',
+        'audio1.m4a'
+      ),
+    ];
+
+    const mockHowl = {
+      seek: vi.fn().mockReturnValue(2.5),
+    };
+
+    const currentAudioRef = {
+      current: mockHowl as unknown as Howl,
+    };
+
+    render(
+      <AudioDisplay
+        audioSegments={mockAudioSegments}
+        currentlyPlayingSegmentId="1"
+        onClipClick={vi.fn()}
+        isAudioPlaying={true}
+        onTogglePlayPause={vi.fn()}
+        highlightedSegmentId={null}
+        currentAudioRef={currentAudioRef}
+      />
+    );
+
+    await waitFor(() => {
+      expect(mockHowl.seek).toHaveBeenCalled();
+    });
+
+    expect(mockSetTime).toHaveBeenCalledWith(2.5);
   });
 });

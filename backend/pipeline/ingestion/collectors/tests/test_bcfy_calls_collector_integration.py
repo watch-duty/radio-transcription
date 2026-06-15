@@ -18,6 +18,7 @@ from testcontainers.postgres import PostgresContainer
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client
+from backend.pipeline.common.test_schema_helper import async_apply_test_schema
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     bcfy_calls_collector,
 )
@@ -37,11 +38,6 @@ from backend.pipeline.storage.feed_store import (
 )
 
 _CLAIM: dict[SourceType, int] = {SourceType.BCFY_CALLS: 1}
-
-_REPO_ROOT = __import__("pathlib").Path(__file__).resolve().parents[5]
-_SQL_DIR = (
-    _REPO_ROOT / "terraform" / "modules" / "alloydb" / "sql" / "ingestion"
-)
 
 _FAKE_GCS_PORT = 4443
 _TEST_BUCKET = "test-audio-bucket"
@@ -98,10 +94,7 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 password="postgres",
                 database="postgres",
             )
-            for sql_file in sorted(_SQL_DIR.glob("*.sql")):
-                if "pg_cron" in sql_file.name:
-                    continue  # pg_cron extension is production-only (AlloyDB flag)
-                await conn.execute(sql_file.read_text())
+            await async_apply_test_schema(conn)
             await conn.close()
 
         asyncio.run(_setup_schema())
@@ -222,7 +215,10 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
     @patch(f"{_COL_MOD}._get_jwt_token")
     @patch(f"{_COL_MOD}._fetch_calls", new_callable=AsyncMock)
     @patch(f"{_COL_MOD}._download_audio", new_callable=AsyncMock)
-    @patch(f"{_COL_MOD}._sleep_or_shutdown", new_callable=AsyncMock)
+    @patch(
+        f"{_COL_MOD}.control_flow.sleep_or_cancel",
+        new_callable=AsyncMock,
+    )
     async def test_capture_upload_and_bookmark(
         self,
         mock_sleep: AsyncMock,
@@ -298,7 +294,10 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
     @patch(f"{_COL_MOD}._get_jwt_token")
     @patch(f"{_COL_MOD}._fetch_calls", new_callable=AsyncMock)
     @patch(f"{_COL_MOD}._download_audio", new_callable=AsyncMock)
-    @patch(f"{_COL_MOD}._sleep_or_shutdown", new_callable=AsyncMock)
+    @patch(
+        f"{_COL_MOD}.control_flow.sleep_or_cancel",
+        new_callable=AsyncMock,
+    )
     async def test_multiple_calls_uploaded_to_gcs(
         self,
         mock_sleep: AsyncMock,
@@ -379,7 +378,10 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
     @patch(f"{_COL_MOD}._get_jwt_token")
     @patch(f"{_COL_MOD}._fetch_calls", new_callable=AsyncMock)
     @patch(f"{_COL_MOD}._download_audio", new_callable=AsyncMock)
-    @patch(f"{_COL_MOD}._sleep_or_shutdown", new_callable=AsyncMock)
+    @patch(
+        f"{_COL_MOD}.control_flow.sleep_or_cancel",
+        new_callable=AsyncMock,
+    )
     async def test_session_id_set_on_chunks(
         self,
         mock_sleep: AsyncMock,

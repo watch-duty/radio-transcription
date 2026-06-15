@@ -6,7 +6,6 @@ import datetime
 import os
 import unittest
 import uuid
-from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
@@ -19,6 +18,7 @@ from testcontainers.postgres import PostgresContainer
 
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client
+from backend.pipeline.common.test_schema_helper import async_apply_test_schema
 from backend.pipeline.ingestion.collectors.openmhz._types import CallEvent
 from backend.pipeline.ingestion.collectors.openmhz.collector import (
     openmhz_collector,
@@ -39,11 +39,6 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 _CLAIM: dict[SourceType, int] = {SourceType.OPENMHZ: 1}
-
-_REPO_ROOT = Path(__file__).resolve().parents[5]
-_SQL_DIR = (
-    _REPO_ROOT / "terraform" / "modules" / "alloydb" / "sql" / "ingestion"
-)
 
 _FAKE_GCS_PORT = 4443
 _TEST_BUCKET = "test-audio-bucket"
@@ -125,10 +120,7 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 password="postgres",
                 database="postgres",
             )
-            for sql_file in sorted(_SQL_DIR.glob("*.sql")):
-                if "pg_cron" in sql_file.name:
-                    continue  # pg_cron extension is production-only (AlloyDB flag)
-                await conn.execute(sql_file.read_text())
+            await async_apply_test_schema(conn)
             await conn.close()
 
         asyncio.run(_setup_schema())

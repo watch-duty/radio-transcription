@@ -50,3 +50,16 @@ export function getRelativeTimeString(
   const diffDays = Math.floor(diffHours / 24);
   return rtf.format(-diffDays, 'day');
 }
+
+export function formatDuration(seconds: number): string {
+  const roundedSeconds = Math.round(seconds);
+  if (roundedSeconds < 60) {
+    return `${roundedSeconds} sec`;
+  }
+  const minutes = Math.floor(roundedSeconds / 60);
+  const remainingSeconds = roundedSeconds % 60;
+  if (remainingSeconds === 0) {
+    return `${minutes} min`;
+  }
+  return `${minutes} min ${remainingSeconds} sec`;
+}

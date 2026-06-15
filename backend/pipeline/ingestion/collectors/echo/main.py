@@ -117,7 +117,6 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
     feed = feed_store.resolve_echo_feed(channel_name)
 
     if not feed:
-        logger.warning("No feed found for channel: %s", channel_name)
         return
     if feed["status"] == "deactivated":
         logger.info(
@@ -134,7 +133,7 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
         )
         return
 
-    failure: failure_classification.FailureClassification | None = None
+    failure: failure_classification.FailureInfo | None = None
 
     try:
         # Download MP3.  A NotFound means the object was deleted between the
@@ -214,6 +213,7 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
                 start_ts,
                 duration_ms=duration_ms,
                 source_type="echo",
+                external_audio_segment_id=f"{bucket}/{name}",
             )
         except Exception:
             failure = _pipeline_failure(_PUBSUB_PUBLISH_FAILED)
@@ -229,12 +229,9 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
         _mirror_to_dev_best_effort(bucket, name)
 
     except Exception as exc:
-        classification = (
-            failure
-            or failure_classification.FailureClassification(
-                FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
-                _unexpected_failure_reason(exc),
-            )
+        classification = failure or failure_classification.FailureInfo(
+            FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
+            _unexpected_failure_reason(exc),
         )
         try:
             feed_store.record_failure(
@@ -252,8 +249,8 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
 # ---------------------------------------------------------------------------
 def _pipeline_failure(
     reason: str,
-) -> failure_classification.FailureClassification:
-    return failure_classification.FailureClassification(
+) -> failure_classification.FailureInfo:
+    return failure_classification.FailureInfo(
         FeedStatusReason.SYSTEM_PIPELINE_ERROR,
         reason,
     )
@@ -261,7 +258,7 @@ def _pipeline_failure(
 
 def _unexpected_failure_reason(exc: Exception) -> str:
     reason = str(exc)
-    return reason[:200] if reason else type(exc).__name__
+    return reason or type(exc).__name__
 
 
 def _mirror_to_dev_best_effort(bucket: str, name: str) -> None:

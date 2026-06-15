@@ -9,6 +9,7 @@ from cloudevents.http.event import CloudEvent
 
 from backend.pipeline.common import env
 from backend.pipeline.common.clients.feeds_client import FeedsClient
+from backend.pipeline.common.constants import MS_PER_SECOND, NANOS_PER_MS
 from backend.pipeline.common.exceptions import NonRetryableError
 from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.storage.redis_service import RedisService
@@ -127,12 +128,12 @@ def _build_app_url(
 ) -> str:
     query_params = {
         "feedId": evaluated_transcribed_audio.feed_id,
-        "transmissionId": evaluated_transcribed_audio.transmission_id,
+        "segmentId": evaluated_transcribed_audio.segment_id,
     }
     if evaluated_transcribed_audio.start_timestamp.seconds:
         timestamp = evaluated_transcribed_audio.start_timestamp
         query_params["timestamp"] = str(
-            timestamp.seconds * 1000 + timestamp.nanos // 1_000_000
+            timestamp.seconds * MS_PER_SECOND + timestamp.nanos // NANOS_PER_MS
         )
 
     return f"{app_url}/transcripts?{urllib.parse.urlencode(query_params)}"
@@ -146,7 +147,7 @@ def convert_to_notification(
     url = _build_app_url(evaluated_transcribed_audio, app_url)
     notification = AlertNotification(
         feed_id=evaluated_transcribed_audio.feed_id,
-        transmission_id=evaluated_transcribed_audio.transmission_id,
+        segment_id=evaluated_transcribed_audio.segment_id,
         source_audio_uris=evaluated_transcribed_audio.source_audio_uris,
         transcript=evaluated_transcribed_audio.transcript,
         missing_prior_context=evaluated_transcribed_audio.missing_prior_context,
@@ -185,30 +186,43 @@ def send_notification(cloud_event: CloudEvent) -> None:
             logger.warning("Unable to parse incoming message")
             return
 
-        notification_id = evaluated_transcribed_audio.transmission_id
+        notification_id = evaluated_transcribed_audio.segment_id
         deduplication = container.get_deduplication()
         if not deduplication.process_notification(notification_id):
-            message = f"Duplicate transmission_id detected, skipping notification with ID: {notification_id}"
-            logger.warning(message)
+            message = f"Duplicate segment_id detected, skipping notification with ID: {notification_id}"
+            logger.info(message)
             return
 
-        # Fetch tags from feeds API
-        feeds_client = container.get_feeds_client()
-        tags = feeds_client.get_feed_tags(evaluated_transcribed_audio.feed_id)
-
-        # Convert the EvaluatedTranscribedAudio into an AlertNotifcation
-        alert_notification = convert_to_notification(
-            evaluated_transcribed_audio,
-            tags,
-            container.app_url,
-        )
-
-        # Send a POST request to the endpoint
         try:
-            request_handler = container.get_request_handler()
-            request_handler.send_notification(alert_notification)
-        except NonRetryableError:
-            logger.exception(
-                "Failed to send notification for audio segment (transmission_id: %s) due to client (4xx) error. Message will not be retried.",
-                notification_id,
+            # Fetch tags from feeds API
+            feeds_client = container.get_feeds_client()
+            tags = feeds_client.get_feed_tags(
+                evaluated_transcribed_audio.feed_id
             )
+
+            # Convert the EvaluatedTranscribedAudio into an AlertNotifcation
+            alert_notification = convert_to_notification(
+                evaluated_transcribed_audio,
+                tags,
+                container.app_url,
+            )
+
+            # Send a POST request to the endpoint
+            try:
+                request_handler = container.get_request_handler()
+                request_handler.send_notification(alert_notification)
+            except NonRetryableError:
+                logger.exception(
+                    "Failed to send notification for audio segment (segment_id: %s) due to client (4xx) error. Message will not be retried.",
+                    notification_id,
+                )
+        except Exception:
+            try:
+                deduplication.clear_notification(notification_id)
+            except Exception as e:
+                logger.exception(
+                    "Failed to clear deduplication key for segment_id: %s: %s",
+                    notification_id,
+                    e,
+                )
+            raise
