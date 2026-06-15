@@ -11,7 +11,7 @@ import FormControlLabel from '@mui/material/FormControlLabel';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import { useQuery } from '@tanstack/react-query';
-import { AudioClassification } from '@transcription/common';
+import { AudioClassification, type AudioSegment } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { useAudioSegmentHistogram } from '../../hooks/useAudioSegmentHistogram';
@@ -19,10 +19,7 @@ import {
   type AlertFilter,
   useAudioSegments,
 } from '../../hooks/useAudioSegments';
-import {
-  type RenderableAudioSegment,
-  useConsolidatedAudioSegments,
-} from '../../hooks/useConsolidatedAudioSegments';
+import { useConsolidatedAudioSegments } from '../../hooks/useConsolidatedAudioSegments';
 import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
@@ -122,7 +119,7 @@ export function TranscriptView({
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
 
   // Latest list, read by the Howl onend callback to avoid a stale closure.
-  const audioSegmentsRef = useRef<RenderableAudioSegment[]>([]);
+  const audioSegmentsRef = useRef<AudioSegment[]>([]);
 
   useEffect(() => {
     return () => {
