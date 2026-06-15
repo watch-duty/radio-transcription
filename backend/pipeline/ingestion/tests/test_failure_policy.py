@@ -135,6 +135,21 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             failure_scope=failure_policy.FailureScope.FEED,
             endpoint_kind=failure_policy.EndpointKind.FEED_CONFIGURATION,
         )
+        runtime_config_evidence = failure_policy.FailurePolicyEvidence(
+            owner_scope=failure_policy.OwnerScope.SOURCE_CLASS,
+            failure_scope=failure_policy.FailureScope.CLASS,
+            endpoint_kind=failure_policy.EndpointKind.FEED_CONFIGURATION,
+        )
+        credential_access_evidence = failure_policy.FailurePolicyEvidence(
+            owner_scope=failure_policy.OwnerScope.CREDENTIAL_SCOPE,
+            failure_scope=failure_policy.FailureScope.FEED,
+            endpoint_kind=failure_policy.EndpointKind.CALLS_API,
+        )
+        source_payload_evidence = failure_policy.FailurePolicyEvidence(
+            owner_scope=failure_policy.OwnerScope.SOURCE_CLASS,
+            failure_scope=failure_policy.FailureScope.OBSERVATION,
+            endpoint_kind=failure_policy.EndpointKind.CALLS_API,
+        )
         pipeline_gcs_evidence = failure_policy.FailurePolicyEvidence(
             owner_scope=failure_policy.OwnerScope.PIPELINE,
             failure_scope=failure_policy.FailureScope.PIPELINE,
@@ -191,6 +206,30 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
                 feed_config_evidence,
+                failure_policy.PolicyIntent.QUARANTINE_FEED,
+                failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
+                True,
+                True,
+            ),
+            (
+                feed_store.FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
+                runtime_config_evidence,
+                failure_policy.PolicyIntent.QUARANTINE_FEED,
+                failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
+                True,
+                True,
+            ),
+            (
+                feed_store.FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED,
+                credential_access_evidence,
+                failure_policy.PolicyIntent.SUPPRESS_RETRY,
+                failure_policy.ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+                False,
+                False,
+            ),
+            (
+                feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
+                source_payload_evidence,
                 failure_policy.PolicyIntent.QUARANTINE_FEED,
                 failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
                 True,
@@ -291,6 +330,11 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             failure_scope=failure_policy.FailureScope.UNKNOWN,
             endpoint_kind=failure_policy.EndpointKind.UNKNOWN,
         )
+        wrong_credential_evidence = failure_policy.FailurePolicyEvidence(
+            owner_scope=failure_policy.OwnerScope.CREDENTIAL_SCOPE,
+            failure_scope=failure_policy.FailureScope.FEED,
+            endpoint_kind=failure_policy.EndpointKind.CALLS_API,
+        )
 
         cases = (
             (
@@ -308,6 +352,18 @@ class TestClassifyFailurePolicy(unittest.TestCase):
             (
                 feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
                 wrong_unknown_evidence,
+            ),
+            (
+                feed_store.FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
+                wrong_feed_evidence,
+            ),
+            (
+                feed_store.FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED,
+                wrong_source_evidence,
+            ),
+            (
+                feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
+                wrong_credential_evidence,
             ),
         )
 
