@@ -9,6 +9,7 @@ import unittest
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemBatchOutcome,
     ItemFailure,
@@ -791,10 +792,43 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(
             ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
         )
         self.assertEqual(
             str(ctx.exception), "missing_fire_notifications_s3_base"
+        )
+        self.assertIs(
+            ctx.exception.policy_evidence.owner_scope,
+            failure_policy.OwnerScope.SOURCE_CLASS,
+        )
+
+    async def test_missing_auth_env_raises_typed_configuration_failure(
+        self,
+    ) -> None:
+        with patch.dict(
+            os.environ,
+            {"FIRE_NOTIFICATIONS_S3_BASE": "http://mock-s3-bucket"},
+            clear=True,
+        ):
+            with self.assertRaises(FeedFailure) as ctx:
+                async for _ in collector.fire_notifications_collector(
+                    self.feed,  # type: ignore
+                    self.shutdown,
+                    "http://base",
+                    self.resources,
+                ):
+                    pass
+
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
+        )
+        self.assertEqual(
+            str(ctx.exception), "missing_fire_notifications_auth_config"
+        )
+        self.assertIs(
+            ctx.exception.policy_evidence.owner_scope,
+            failure_policy.OwnerScope.SOURCE_CLASS,
         )
 
     @patch(
@@ -879,11 +913,15 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(
             ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
         )
         self.assertEqual(
             str(ctx.exception),
             "fn_api_payload_malformed: ValueError: bad json",
+        )
+        self.assertIs(
+            ctx.exception.policy_evidence.owner_scope,
+            failure_policy.OwnerScope.SOURCE_CLASS,
         )
 
     @patch(
@@ -1019,7 +1057,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(
             ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
         )
         self.assertEqual(str(ctx.exception), "fn_api_payload_malformed")
         mock_session.close.assert_awaited_once()
