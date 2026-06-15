@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
+      requires_backend: ${{ steps.filter.outputs.requires_backend }}
+      requires_model: ${{ steps.filter.outputs.requires_model }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,6 +36,35 @@ jobs:
             if (alreadyPassed) {
               core.notice('Workflow already passed for this commit, skipping all jobs');
             }
+      - name: Detect file changes for smart job routing
+        id: filter
+        if: steps.check.outputs.should_run == 'true'
+        run: |
+          # 1. Fetch upstream base commit cleanly without entirely suppressing network exit codes
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          if [ -n "$BASE_SHA" ]; then
+            git fetch origin "${{ github.event.pull_request.base.ref }}" 2>/dev/null
+            FILES=$(git diff --name-only "$BASE_SHA" "${{ github.event.pull_request.head.sha }}" 2>/dev/null)
+          else
+            git fetch origin main 2>/dev/null
+            FILES=$(git diff --name-only origin/main HEAD 2>/dev/null || git diff --name-only HEAD~1 HEAD)
+          fi
+          echo "Modified files: $FILES"
+
+          # 2. Filter A: requires_backend. If any modified file falls OUTSIDE model/ and .md, we require backend runs.
+          # Note: grep -v inverts match per line. If any modified file is not a model/ or .md file, it returns true (exit 0).
+          if echo "$FILES" | grep -qvE '^(model/|.*\.md)'; then
+            echo "requires_backend=true" >> $GITHUB_OUTPUT
+          else
+            echo "requires_backend=false" >> $GITHUB_OUTPUT
+          fi
+
+          # 3. Filter B: requires_model. If any modified file touches model/ or .github/workflows/, we require model runs.
+          if echo "$FILES" | grep -qE '^(model/|\.github/workflows/)'; then
+            echo "requires_model=true" >> $GITHUB_OUTPUT
+          else
+            echo "requires_model=false" >> $GITHUB_OUTPUT
+          fi
       - name: Validate merge with main (fail fast on conflicts)
         if: steps.check.outputs.should_run == 'true'
         run: |
@@ -44,7 +75,8 @@ jobs:
 
   code-quality-checks-python:
     needs: [setup]
-    if: needs.setup.outputs.should_run == 'true'
+    # Gated on both backend and model changes to ensure Colab notebook JSON schemas and Ruff Python formatting are strictly enforced across all ML and API PRs
+    if: needs.setup.outputs.should_run == 'true' && (needs.setup.outputs.requires_backend == 'true' || needs.setup.outputs.requires_model == 'true')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -67,9 +99,33 @@ jobs:
       - name: Run Python code quality checks
         run: mise run lint:python
 
+  run-model-tests:
+    needs: [setup]
+    if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_model == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 100
+      - name: Install mise, install tools
+        uses: jdx/mise-action@v3
+      - name: Cache uv dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-uv-${{ hashFiles('**/uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
+      - name: Install dependencies
+        run: uv sync
+      - name: Generate Protobuf Python files
+        run: mise run generate:protos
+      - name: Run model unit tests
+        run: mise run test:model
+
   code-quality-checks-typescript:
     needs: [setup]
-    if: needs.setup.outputs.should_run == 'true'
+    if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_backend == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -105,7 +161,7 @@ jobs:
 
   terraform-checks:
     needs: [setup]
-    if: needs.setup.outputs.should_run == 'true'
+    if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_backend == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -123,7 +179,7 @@ jobs:
 
   run-backend-tests:
     needs: [setup]
-    if: needs.setup.outputs.should_run == 'true'
+    if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_backend == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -168,7 +224,7 @@ jobs:
 
   run-frontend-tests:
     needs: [setup]
-    if: needs.setup.outputs.should_run == 'true'
+    if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_backend == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -202,7 +258,7 @@ jobs:
   # Dockerfiles include protobuf generation.
   docker-smoke-test:
     needs: [setup]
-    if: needs.setup.outputs.should_run == 'true'
+    if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_backend == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -259,7 +315,7 @@ jobs:
   # migrations from silently defeating HOT updates and bloating the table.
   alloydb-hot-protection-check:
     needs: [setup]
-    if: needs.setup.outputs.should_run == 'true'
+    if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_backend == 'true'
     runs-on: ubuntu-24.04
     services:
       postgres:
