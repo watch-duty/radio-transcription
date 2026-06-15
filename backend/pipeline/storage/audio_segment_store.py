@@ -1,15 +1,12 @@
 from __future__ import annotations
 
+import datetime
 import json
 import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import asyncpg
 from pydantic import TypeAdapter
-
-if TYPE_CHECKING:
-    import datetime
 
 from backend.pipeline.storage import audio_segment_queries
 from backend.pipeline.storage.pagination_utils import (
@@ -22,6 +19,7 @@ from backend.services.audio_segments.models import (
     AnnotationType,
     AudioClassification,
     AudioSegment,
+    HistogramBucket,
 )
 
 annotation_adapter = TypeAdapter(Annotation)
@@ -209,3 +207,53 @@ class AudioSegmentStore:
         ]
 
         return PaginatedAudioSegments(segments, new_next_token)
+
+    async def get_audio_segment_histogram(
+        self,
+        start_time: datetime.datetime,
+        end_time: datetime.datetime | None = None,
+        feed_ids: list[str] | None = None,
+        buckets: int = 288,
+        *,
+        is_alert: bool | None = None,
+    ) -> list[HistogramBucket]:
+        """Clip-density histogram over [start_time, end_time) by start_timestamp.
+
+        end_time defaults to now (UTC); the window is split into `buckets`
+        equal-width bins. Empty bins are omitted. Each bucket's is_alert is true
+        if any clip in it is an alert. An inverted window matches no rows.
+        """
+        if buckets < 1:
+            msg = f"buckets must be >= 1, got {buckets}"
+            raise ValueError(msg)
+
+        if end_time is None:
+            end_time = datetime.datetime.now(datetime.UTC)
+
+        feed_uuids = None
+        if feed_ids:
+            try:
+                feed_uuids = [uuid.UUID(fid) for fid in feed_ids]
+            except ValueError as e:
+                msg = f"Invalid feed_id UUID in list: {feed_ids}"
+                raise ValueError(msg) from e
+
+        rows = await self._pool.fetch(
+            audio_segment_queries.AUDIO_SEGMENT_HISTOGRAM_SQL,
+            feed_uuids,
+            start_time,
+            end_time,
+            buckets,
+            is_alert,
+        )
+
+        bucket_width = (end_time - start_time) / buckets
+        return [
+            HistogramBucket(
+                bucket_start=start_time
+                + bucket_width * (row["bucket_index"] - 1),
+                count=row["count"],
+                is_alert=bool(row["is_alert"]),
+            )
+            for row in rows
+        ]

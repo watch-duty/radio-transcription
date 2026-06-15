@@ -3,6 +3,7 @@ import type {
   Annotation,
   AudioClassification,
   AudioSegment,
+  HistogramBucket,
 } from '@transcription/common';
 import {
   Controller,
@@ -93,6 +94,22 @@ function convertAudioSegmentBackend(
   };
 }
 
+interface HistogramBucketBackend {
+  bucket_start: string;
+  count: number;
+  is_alert: boolean;
+}
+
+function convertHistogramBucketBackend(
+  response: HistogramBucketBackend
+): HistogramBucket {
+  return {
+    bucketStart: response.bucket_start,
+    count: response.count,
+    isAlert: response.is_alert,
+  };
+}
+
 export class ListAudioSegmentsQueryParams {
   /**
    * @isInt
@@ -102,6 +119,17 @@ export class ListAudioSegmentsQueryParams {
   startTime?: string;
   endTime?: string;
   order?: 'asc' | 'desc';
+  isAlert?: boolean;
+}
+
+export class AudioSegmentHistogramQueryParams {
+  startTime!: string;
+  /** ISO-8601; open-ended (defaults to now) when omitted. */
+  endTime?: string;
+  /**
+   * @isInt
+   */
+  buckets: number = 288;
   isAlert?: boolean;
 }
 
@@ -150,6 +178,53 @@ export class AudioController extends Controller {
       const { status, message } = handleBackendError(
         error,
         'fetching audio segments'
+      );
+      throw new HttpError(status, message);
+    }
+  }
+
+  /**
+   * Clip-density histogram over a time window, for the timeline overview.
+   * Returns equal-width buckets of clip counts with a per-bucket alert flag.
+   */
+  @Get('{feedId}/histogram')
+  @Security('google_id_token')
+  @Extension('x-google-backend', 'radio-transcription-api')
+  public async getAudioSegmentHistogram(
+    @Path() feedId: string,
+    @Queries() query: AudioSegmentHistogramQueryParams
+  ): Promise<{ buckets: HistogramBucket[] }> {
+    try {
+      const queryParams = new URLSearchParams();
+      queryParams.append('feed_ids', [feedId].toString());
+      queryParams.append('start_time', query.startTime);
+      if (query.endTime) queryParams.append('end_time', query.endTime);
+      if (query.buckets) {
+        queryParams.append('buckets', query.buckets.toString());
+      }
+      if (query.isAlert !== undefined) {
+        queryParams.append('is_alert', query.isAlert.toString());
+      }
+
+      // Same Cloud Run service as the list URL, differing only by path.
+      const histogramUrl = AUDIO_SEGMENTS_API_URL.replace(
+        /\/audio_segments$/,
+        '/audio_segment_histogram'
+      );
+      const client = await getServiceClient(AUDIO_SEGMENTS_API_URL);
+      const response = await client.request({
+        url: `${histogramUrl}?${queryParams.toString()}`,
+        method: 'GET',
+      });
+
+      const data = response.data as { buckets: HistogramBucketBackend[] };
+      return {
+        buckets: data.buckets.map(convertHistogramBucketBackend),
+      };
+    } catch (error: unknown) {
+      const { status, message } = handleBackendError(
+        error,
+        'fetching audio segment histogram'
       );
       throw new HttpError(status, message);
     }

@@ -253,6 +253,70 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             await self.store.list_audio_segments(["invalid-uuid"])
         self.assertIn("Invalid feed_id UUID in list", str(cm.exception))
 
+    async def test_get_audio_segment_histogram(self) -> None:
+        start = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
+        end = datetime.datetime(2026, 1, 1, 1, tzinfo=datetime.UTC)
+        self.pool.fetch.return_value = [
+            {"bucket_index": 1, "count": 3, "is_alert": False},
+            {"bucket_index": 3, "count": 1, "is_alert": True},
+        ]
+
+        result = await self.store.get_audio_segment_histogram(
+            start_time=start,
+            end_time=end,
+            feed_ids=[str(_FEED_ID)],
+            buckets=12,
+            is_alert=None,
+        )
+
+        # 1h / 12 buckets = 5min width; bucket index 1 -> start, 3 -> +10min.
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0].bucket_start, start)
+        self.assertEqual(result[0].count, 3)
+        self.assertFalse(result[0].is_alert)
+        self.assertEqual(
+            result[1].bucket_start,
+            start + datetime.timedelta(minutes=10),
+        )
+        self.assertTrue(result[1].is_alert)
+        self.pool.fetch.assert_called_once_with(
+            audio_segment_queries.AUDIO_SEGMENT_HISTOGRAM_SQL,
+            [_FEED_ID],
+            start,
+            end,
+            12,
+            None,
+        )
+
+    async def test_get_audio_segment_histogram_open_ended_defaults_to_now(
+        self,
+    ) -> None:
+        start = datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
+        self.pool.fetch.return_value = []
+
+        await self.store.get_audio_segment_histogram(start_time=start)
+
+        passed_end = self.pool.fetch.call_args.args[3]
+        self.assertIsInstance(passed_end, datetime.datetime)
+        self.assertGreater(passed_end, start)
+        self.assertEqual(self.pool.fetch.call_args.args[4], 288)
+
+    async def test_get_audio_segment_histogram_invalid_buckets(self) -> None:
+        with self.assertRaises(ValueError) as cm:
+            await self.store.get_audio_segment_histogram(
+                start_time=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+                buckets=0,
+            )
+        self.assertIn("buckets must be >= 1", str(cm.exception))
+
+    async def test_get_audio_segment_histogram_invalid_feed_id(self) -> None:
+        with self.assertRaises(ValueError) as cm:
+            await self.store.get_audio_segment_histogram(
+                start_time=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+                feed_ids=["invalid-uuid"],
+            )
+        self.assertIn("Invalid feed_id UUID in list", str(cm.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -564,6 +564,38 @@ components:
           type: boolean
       type: object
       additionalProperties: false
+    HistogramBucket:
+      properties:
+        bucketStart:
+          type: string
+        count:
+          type: number
+          format: double
+        isAlert:
+          type: boolean
+      required:
+        - bucketStart
+        - count
+        - isAlert
+      type: object
+      additionalProperties: false
+    AudioSegmentHistogramQueryParams:
+      properties:
+        startTime:
+          type: string
+        endTime:
+          type: string
+          description: ISO-8601; open-ended (defaults to now) when omitted.
+        buckets:
+          type: integer
+          format: int32
+          default: 288
+        isAlert:
+          type: boolean
+      required:
+        - startTime
+      type: object
+      additionalProperties: false
   securitySchemes:
     google_id_token:
       type: oauth2
@@ -1739,6 +1771,104 @@ paths:
             enum:
               - asc
               - desc
+        - in: query
+          name: isAlert
+          required: false
+          schema:
+            type: boolean
+      x-google-backend: radio-transcription-api
+  /api/v1/audioSegments/{feedId}/histogram:
+    get:
+      operationId: GetAudioSegmentHistogram
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                properties:
+                  buckets:
+                    items:
+                      $ref: "#/components/schemas/HistogramBucket"
+                    type: array
+                required:
+                  - buckets
+                type: object
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      description: |-
+        Clip-density histogram over a time window, for the timeline overview.
+        Returns equal-width buckets of clip counts with a per-bucket alert flag.
+      tags:
+        - Audio Segments
+      security:
+        - google_id_token: []
+      parameters:
+        - in: path
+          name: feedId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: startTime
+          required: true
+          schema:
+            type: string
+        - description: ISO-8601; open-ended (defaults to now) when omitted.
+          in: query
+          name: endTime
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: buckets
+          required: false
+          schema:
+            default: 288
+            format: int32
+            type: integer
         - in: query
           name: isAlert
           required: false

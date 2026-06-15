@@ -123,3 +123,17 @@ class ListAudioSegmentsResponse(BaseModel):
 
     segments: list[AudioSegment]
     next_token: str | None = None
+
+
+class HistogramBucket(BaseModel):
+    """A single equal-width time bucket of the clip-density histogram."""
+
+    bucket_start: datetime
+    count: int
+    is_alert: bool
+
+
+class AudioSegmentHistogramResponse(BaseModel):
+    """Response model for the clip-density histogram over a time window."""
+
+    buckets: list[HistogramBucket]

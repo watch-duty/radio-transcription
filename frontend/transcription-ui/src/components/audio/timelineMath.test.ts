@@ -1,23 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  type TranscriptTime,
   clamp,
   computeGridLineTimes,
   msToPct,
+  opacityForCount,
   pickGridIntervalMs,
-  segmentIdAt,
 } from './timelineMath';
 
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
-
-const time = (startMs: number, endMs: number): TranscriptTime => ({
-  id: `${startMs}`,
-  startMs,
-  endMs,
-  hasAlert: false,
-});
 
 describe('clamp', () => {
   it('constrains to the range', () => {
@@ -65,23 +57,21 @@ describe('computeGridLineTimes', () => {
   });
 });
 
-describe('segmentIdAt', () => {
-  // Newest-first, like the loaded audio-segment list.
-  const times = [
-    time(120 * MINUTE, 121 * MINUTE),
-    time(60 * MINUTE, 61 * MINUTE),
-    time(20 * MINUTE, 21 * MINUTE),
-  ];
-
-  it('returns the right-most segment starting at or before the window end', () => {
-    expect(segmentIdAt(times, 65 * MINUTE)).toBe(times[1].id);
+describe('opacityForCount', () => {
+  it('is invisible for empty buckets', () => {
+    expect(opacityForCount(0)).toBe(0);
   });
 
-  it('falls back to the oldest when the end precedes every segment', () => {
-    expect(segmentIdAt(times, 5 * MINUTE)).toBe(times[2].id);
+  it('reads a single clip at half opacity', () => {
+    expect(opacityForCount(1)).toBe(0.5);
   });
 
-  it('returns null when there are no segments', () => {
-    expect(segmentIdAt([], 0)).toBeNull();
+  it('ramps linearly between 1 and 5 clips', () => {
+    expect(opacityForCount(3)).toBeCloseTo(0.75);
+  });
+
+  it('saturates at fully opaque for 5 or more clips', () => {
+    expect(opacityForCount(5)).toBe(1);
+    expect(opacityForCount(50)).toBe(1);
   });
 });

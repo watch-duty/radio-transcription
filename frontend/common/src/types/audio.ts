@@ -42,3 +42,13 @@ export interface AudioSegment {
   createdAt: string;
   annotations: Annotation[];
 }
+
+export interface HistogramBucket {
+  bucketStart: string;
+  count: number;
+  isAlert: boolean;
+}
+
+export interface AudioSegmentHistogramResponse {
+  buckets: HistogramBucket[];
+}

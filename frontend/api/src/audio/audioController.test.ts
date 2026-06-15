@@ -184,3 +184,66 @@ describe('listAudioSegments', () => {
     ).rejects.toThrow(/Backend Connection Failed/);
   });
 });
+
+describe('getAudioSegmentHistogram', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('should convert buckets and forward start_time and buckets', async () => {
+    mockRequest.mockResolvedValueOnce({
+      data: {
+        buckets: [
+          { bucket_start: '2026-01-01T00:00:00Z', count: 3, is_alert: false },
+          { bucket_start: '2026-01-01T00:05:00Z', count: 1, is_alert: true },
+        ],
+      },
+    });
+
+    const controller = new AudioController();
+    const result = await controller.getAudioSegmentHistogram('test', {
+      startTime: '2026-01-01T00:00:00Z',
+      buckets: 288,
+    });
+
+    expect(result).toEqual({
+      buckets: [
+        { bucketStart: '2026-01-01T00:00:00Z', count: 3, isAlert: false },
+        { bucketStart: '2026-01-01T00:05:00Z', count: 1, isAlert: true },
+      ],
+    });
+    expect(mockRequest).toHaveBeenCalledWith({
+      url: 'http://audio-segments.example.com?feed_ids=test&start_time=2026-01-01T00%3A00%3A00Z&buckets=288',
+      method: 'GET',
+    });
+  });
+
+  it('should forward optional endTime and isAlert', async () => {
+    mockRequest.mockResolvedValueOnce({ data: { buckets: [] } });
+
+    const controller = new AudioController();
+    await controller.getAudioSegmentHistogram('test', {
+      startTime: '2026-01-01T00:00:00Z',
+      endTime: '2026-01-02T00:00:00Z',
+      buckets: 48,
+      isAlert: true,
+    });
+
+    expect(mockRequest).toHaveBeenCalledWith({
+      url: 'http://audio-segments.example.com?feed_ids=test&start_time=2026-01-01T00%3A00%3A00Z&end_time=2026-01-02T00%3A00%3A00Z&buckets=48&is_alert=true',
+      method: 'GET',
+    });
+  });
+
+  it('should throw error on API failure', async () => {
+    mockRequest.mockRejectedValueOnce(new Error('Backend Connection Failed'));
+    const controller = new AudioController();
+
+    await expect(
+      controller.getAudioSegmentHistogram('test', {
+        startTime: '2026-01-01T00:00:00Z',
+        buckets: 288,
+      })
+    ).rejects.toThrow(/Backend Connection Failed/);
+  });
+});

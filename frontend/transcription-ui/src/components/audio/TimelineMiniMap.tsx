@@ -5,10 +5,11 @@ import Typography from '@mui/material/Typography';
 
 import { formatClockTime, formatDateTimeShort } from '../../utils/timeUtils';
 import {
-  type TranscriptTime,
+  type HistogramMark,
   clamp,
   computeGridLineTimes,
   msToPct,
+  opacityForCount,
 } from './timelineMath';
 
 // Thinnest a mark/tick may render so 1-2s clips stay visible.
@@ -19,7 +20,7 @@ const EDGE_LABEL_MARGIN_PCT = 4;
 const MIN_LABEL_GAP_PCT = 8;
 
 interface TimelineMiniMapProps {
-  miniMapTimes: TranscriptTime[];
+  histogramMarks: HistogramMark[];
   rangeStartMs: number | null;
   maxEnd: number | null;
   windowEndTime: number | null;
@@ -29,7 +30,7 @@ interface TimelineMiniMapProps {
 }
 
 export function TimelineMiniMap({
-  miniMapTimes,
+  histogramMarks,
   rangeStartMs,
   maxEnd,
   windowEndTime,
@@ -43,11 +44,19 @@ export function TimelineMiniMap({
     maxEnd != null && rangeStartMs != null ? maxEnd - rangeStartMs : 0;
   const showMiniMap = rangeTotalMs > windowDurationMs;
 
-  // Alerted segments paint last so their tint stays visible where marks overlap.
-  const segmentMarks = useMemo(
+  // Hide the viewport cursor when the window sits before the range (a date
+  // filter older than the live 24h the overview always shows).
+  const viewportEnd = windowEndTime ?? maxEnd;
+  const showViewport =
+    viewportEnd != null && rangeStartMs != null && viewportEnd > rangeStartMs;
+
+  // Alerted buckets paint last so their tint stays visible where cells overlap.
+  const densityMarks = useMemo(
     () =>
-      [...miniMapTimes].sort((a, b) => Number(a.hasAlert) - Number(b.hasAlert)),
-    [miniMapTimes]
+      [...histogramMarks].sort(
+        (a, b) => Number(a.hasAlert) - Number(b.hasAlert)
+      ),
+    [histogramMarks]
   );
   const gridLineTimes = useMemo(() => {
     if (!showMiniMap || rangeStartMs == null || maxEnd == null) return [];
@@ -153,23 +162,25 @@ export function TimelineMiniMap({
               />
             ))}
           {showMiniMap &&
-            segmentMarks.map((t) => (
+            densityMarks.map((mark) => (
               <Box
-                key={t.id}
+                key={mark.startMs}
                 sx={{
                   position: 'absolute',
                   top: '50%',
                   transform: 'translateY(-50%)',
                   height: '8px',
                   borderRadius: '2px',
-                  bgcolor: t.hasAlert
+                  bgcolor: mark.hasAlert
                     ? 'warning.main'
                     : isDarkTheme
                       ? 'grey.500'
                       : 'grey.700',
+                  // Density by opacity: 1 clip reads at 50%, 5+ fully opaque.
+                  opacity: opacityForCount(mark.count),
                   pointerEvents: 'none',
-                  left: `${pctOf(t.startMs)}%`,
-                  width: `${Math.max(pctOf(t.endMs) - pctOf(t.startMs), 0.5)}%`,
+                  left: `${pctOf(mark.startMs)}%`,
+                  width: `${Math.max(pctOf(mark.endMs) - pctOf(mark.startMs), 0.5)}%`,
                   minWidth: `${MIN_OVERVIEW_MARK_PX}px`,
                 }}
               />
@@ -177,7 +188,7 @@ export function TimelineMiniMap({
         </Box>
         {/* Viewport rectangle lives outside the clipped strip and stands a few
             px taller than it, so the current window reads at a glance. */}
-        {showMiniMap && maxEnd != null && (
+        {showMiniMap && maxEnd != null && showViewport && (
           <Box
             data-testid="minimap-viewport"
             sx={{

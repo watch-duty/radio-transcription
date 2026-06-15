@@ -14,11 +14,11 @@ import { useQuery } from '@tanstack/react-query';
 import { AudioClassification } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
+import { useAudioSegmentHistogram } from '../../hooks/useAudioSegmentHistogram';
 import {
   type AlertFilter,
   useAudioSegments,
 } from '../../hooks/useAudioSegments';
-import { useAudioTimelineSummary } from '../../hooks/useAudioTimelineSummary';
 import {
   type RenderableAudioSegment,
   useConsolidatedAudioSegments,
@@ -27,6 +27,7 @@ import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { getAudioUrl } from '../../utils/audioUtils';
+import { DEFAULT_AUDIO_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import AudioDisplay from '../audio/AudioDisplay';
 import { useAudioTimelineWindow } from '../audio/useAudioTimelineWindow';
 import FeedSearchView from '../feeds/FeedSearchView';
@@ -251,15 +252,28 @@ export function TranscriptView({
     };
   }, []);
 
-  // Full last-24h overview for the heatmap, loaded independently of the list's
-  // lazy pagination. Kicked off before the list so the mini-map fills first.
-  const { summarySegments } = useAudioTimelineSummary({
-    token,
-    searchedFeedId,
-    alertFilter,
-    isFeedsSuccess,
-    searchedTimestamp,
-  });
+  // Bucketed density for the overview; always the live last 24h, regardless of
+  // the date filter. The viewport cursor hides when the selection is older.
+  const { buckets: histogramBuckets, bucketDurationMs } =
+    useAudioSegmentHistogram({
+      token,
+      searchedFeedId,
+      alertFilter,
+      isFeedsSuccess,
+      anchorTimestamp: null,
+    });
+
+  // The list loads forward from its anchor, but the focus time should sit in the
+  // middle of the window, so load from half a window earlier.
+  const listAnchorTimestamp = useMemo(
+    () =>
+      searchedTimestamp
+        ? new Date(
+            searchedTimestamp.getTime() - DEFAULT_AUDIO_WINDOW_DURATION_MS / 2
+          )
+        : null,
+    [searchedTimestamp]
+  );
 
   const {
     rawAudioSegments,
@@ -279,7 +293,7 @@ export function TranscriptView({
   } = useAudioSegments({
     token,
     searchedFeedId,
-    searchedTimestamp,
+    searchedTimestamp: listAnchorTimestamp,
     alertFilter,
     isFeedsSuccess,
   });
@@ -291,22 +305,20 @@ export function TranscriptView({
 
   const audioSegments = useConsolidatedAudioSegments(rawAudioSegments);
 
-  // The summary query doesn't poll, so union it with the polling list to keep the
-  // live edge fresh while the summary backfills history. Newest-first, deduped.
-  const timelineSegments = useMemo(() => {
-    const seenIds = new Set<string>();
-    return [...rawAudioSegments, ...summarySegments]
-      .filter((segment) => {
-        if (seenIds.has(segment.id)) return false;
-        seenIds.add(segment.id);
-        return true;
-      })
-      .sort(
-        (a, b) =>
-          new Date(b.startTimestamp).getTime() -
-          new Date(a.startTimestamp).getTime()
-      );
-  }, [rawAudioSegments, summarySegments]);
+  // Histogram buckets as positioned overview cells spanning bucketDurationMs.
+  const histogramMarks = useMemo(
+    () =>
+      histogramBuckets.map((b) => {
+        const startMs = new Date(b.bucketStart).getTime();
+        return {
+          startMs,
+          endMs: startMs + bucketDurationMs,
+          count: b.count,
+          hasAlert: b.isAlert,
+        };
+      }),
+    [histogramBuckets, bucketDurationMs]
+  );
 
   const {
     windowEndTime,
@@ -314,13 +326,13 @@ export function TranscriptView({
     isScrubbed,
     rangeStartMs,
     maxEnd,
-    miniMapTimes,
     scrubToCenter,
     jumpToLive,
   } = useAudioTimelineWindow({
-    audioSegments: timelineSegments,
+    audioSegments: rawAudioSegments,
     currentlyPlayingSegmentId,
     highlightedSegmentId,
+    overviewAnchorMs: null,
   });
   const activeWindowTime = isScrubbed ? windowEndTime : null;
 
@@ -635,7 +647,7 @@ export function TranscriptView({
       scrollListToSegment(segmentId, 'smooth');
       return;
     }
-    const clip = timelineSegments.find((s) => s.id === segmentId);
+    const clip = rawAudioSegments.find((s) => s.id === segmentId);
     if (!clip) return;
     // Re-arm the scroll even when segmentId is unchanged (e.g. re-selecting the
     // same clip after jumping to live), since the [targetSegmentId] reset won't.
@@ -655,8 +667,9 @@ export function TranscriptView({
 
   const handleScrubToCenter = (centerMs: number) => {
     followPlaybackRef.current = true;
-    const segmentId = scrubToCenter(centerMs);
-    if (segmentId) scrollListToSegment(segmentId);
+    // Sets the list anchor only, not the URL timestamp, so the overview stays put.
+    scrubToCenter(centerMs);
+    setSearchedTimestamp(new Date(centerMs));
   };
 
   // The oldest clip with audio overlapping the visible window (its left edge),
@@ -665,9 +678,9 @@ export function TranscriptView({
     const windowEnd = windowEndTime ?? maxEnd;
     if (windowEnd != null) {
       const windowStart = windowEnd - windowDurationMs;
-      // timelineSegments is newest-first, so scan from the end for the oldest.
-      for (let i = timelineSegments.length - 1; i >= 0; i--) {
-        const s = timelineSegments[i];
+      // rawAudioSegments is newest-first, so scan from the end for the oldest.
+      for (let i = rawAudioSegments.length - 1; i >= 0; i--) {
+        const s = rawAudioSegments[i];
         if (!s.playbackAudioUri) continue;
         const start = new Date(s.startTimestamp).getTime();
         const end = new Date(s.endTimestamp).getTime();
@@ -689,12 +702,8 @@ export function TranscriptView({
         windowFirstPlayableId();
     if (!targetId) return;
 
-    // The timeline can target clips from the 24h overview that the lazy list
-    // hasn't loaded, so fall back to the union before the consolidated list.
     // When starting playback, bring the list to the clip so its row highlights.
-    const specificSegment =
-      rawAudioSegments.find((s) => s.id === targetId) ??
-      timelineSegments.find((s) => s.id === targetId);
+    const specificSegment = rawAudioSegments.find((s) => s.id === targetId);
     if (specificSegment && specificSegment.playbackAudioUri) {
       toggleAudio(specificSegment.id, specificSegment.playbackAudioUri);
       if (startingPlayback) navigateListToSegment(specificSegment.id);
@@ -829,7 +838,7 @@ export function TranscriptView({
       </Box>
 
       <AudioDisplay
-        audioSegments={timelineSegments}
+        audioSegments={rawAudioSegments}
         currentlyPlayingSegmentId={currentlyPlayingSegmentId}
         highlightedSegmentId={highlightedSegmentId}
         onClipClick={handleClipClick}
@@ -840,8 +849,9 @@ export function TranscriptView({
         windowDurationMs={windowDurationMs}
         rangeStartMs={rangeStartMs}
         maxEnd={maxEnd}
-        miniMapTimes={miniMapTimes}
+        histogramMarks={histogramMarks}
         onScrubToCenter={handleScrubToCenter}
+        isLoading={isAudioSegmentsInitialLoading}
       />
 
       <Box

@@ -52,6 +52,35 @@ LIST_AUDIO_SEGMENTS_ASC_SQL = _BASE_LIST_AUDIO_SEGMENTS_SQL.format(
     direction="ASC",
 )
 
+# Clip-density histogram: bucket in-window segments by start_timestamp into $4
+# equal-width buckets and count them, flagging any bucket containing an alert.
+# is_alert uses a LATERAL aggregate scoped to each segment via the annotations
+# PK, not a full-table GROUP BY. width_bucket returns 1..$4 since the WHERE
+# constrains start_timestamp to [$2, $3). Empty buckets produce no row.
+AUDIO_SEGMENT_HISTOGRAM_SQL = """
+SELECT
+    width_bucket(
+        EXTRACT(EPOCH FROM s.start_timestamp),
+        EXTRACT(EPOCH FROM $2::timestamptz),
+        EXTRACT(EPOCH FROM $3::timestamptz),
+        $4
+    ) AS bucket_index,
+    COUNT(*) AS count,
+    bool_or(COALESCE(a.is_alert, False)) AS is_alert
+FROM audio_segments s
+LEFT JOIN LATERAL (
+    SELECT bool_or(type = 'EVALUATION' AND jsonb_array_length(data->'decisions') > 0) AS is_alert
+    FROM annotations
+    WHERE audio_segment_id = s.id
+) a ON TRUE
+WHERE ($1::uuid[] IS NULL OR s.feed_id = ANY($1))
+  AND s.start_timestamp >= $2::timestamptz
+  AND s.start_timestamp < $3::timestamptz
+  AND ($5::boolean IS NULL OR COALESCE(a.is_alert, False) = $5::boolean)
+GROUP BY bucket_index
+ORDER BY bucket_index
+"""
+
 ADD_ANNOTATION_SQL = """
 INSERT INTO annotations (audio_segment_id, type, data)
 VALUES ($1, $2, $3)

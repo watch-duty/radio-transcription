@@ -12,8 +12,10 @@ from backend.services.audio_segments.models import (
     AnnotationType,
     AudioClassification,
     AudioSegment,
+    AudioSegmentHistogramResponse,
     EvaluationAnnotation,
     EvaluationAnnotationData,
+    HistogramBucket,
     ListAudioSegmentsResponse,
     TranscriptAnnotation,
     TranscriptAnnotationData,
@@ -113,6 +115,85 @@ class TestAudioSegmentsAPI(unittest.TestCase):
             order=SortOrder.ASC,
             is_alert=True,
         )
+
+    def test_get_audio_segment_histogram_defaults(self) -> None:
+        """start_time only: end_time/buckets/is_alert default through."""
+        self.mock_service.get_audio_segment_histogram.return_value = (
+            AudioSegmentHistogramResponse(
+                buckets=[
+                    HistogramBucket(
+                        bucket_start=datetime.datetime(
+                            2026, 1, 1, tzinfo=datetime.UTC
+                        ),
+                        count=3,
+                        is_alert=True,
+                    )
+                ]
+            )
+        )
+
+        response = self.client.get(
+            "/v1/audio_segment_histogram",
+            params={"start_time": "2026-01-01T00:00:00Z"},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertEqual(len(data["buckets"]), 1)
+        self.assertEqual(data["buckets"][0]["count"], 3)
+        self.assertTrue(data["buckets"][0]["is_alert"])
+        self.mock_service.get_audio_segment_histogram.assert_called_once_with(
+            start_time=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+            end_time=None,
+            feed_ids=None,
+            buckets=288,
+            is_alert=None,
+        )
+
+    def test_get_audio_segment_histogram_with_filters(self) -> None:
+        """All params forward to the service."""
+        self.mock_service.get_audio_segment_histogram.return_value = (
+            AudioSegmentHistogramResponse(buckets=[])
+        )
+
+        response = self.client.get(
+            "/v1/audio_segment_histogram",
+            params={
+                "feed_ids": [_FEED_ID],
+                "start_time": "2026-01-01T00:00:00Z",
+                "end_time": "2026-01-02T00:00:00Z",
+                "buckets": 48,
+                "is_alert": True,
+            },
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.mock_service.get_audio_segment_histogram.assert_called_once_with(
+            start_time=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+            end_time=datetime.datetime(2026, 1, 2, tzinfo=datetime.UTC),
+            feed_ids=[_FEED_ID],
+            buckets=48,
+            is_alert=True,
+        )
+
+    def test_get_audio_segment_histogram_requires_start_time(self) -> None:
+        """Omitting start_time is a 422 validation error."""
+        response = self.client.get("/v1/audio_segment_histogram")
+        self.assertEqual(
+            response.status_code, status.HTTP_422_UNPROCESSABLE_CONTENT
+        )
+
+    def test_get_audio_segment_histogram_value_error_is_400(self) -> None:
+        """A store ValueError surfaces as a 400."""
+        self.mock_service.get_audio_segment_histogram.side_effect = ValueError(
+            "buckets must be >= 1, got 0"
+        )
+
+        response = self.client.get(
+            "/v1/audio_segment_histogram",
+            params={"start_time": "2026-01-01T00:00:00Z", "buckets": 0},
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_create_audio_segment_success(self) -> None:
         """Test creating an audio segment successfully."""

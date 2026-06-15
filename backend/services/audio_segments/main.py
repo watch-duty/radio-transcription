@@ -23,6 +23,7 @@ from .models import (
     AnnotationCreate,
     AudioSegment,
     AudioSegmentCreate,
+    AudioSegmentHistogramResponse,
     ListAudioSegmentsResponse,
 )
 from .service import AudioSegmentService
@@ -79,6 +80,41 @@ async def list_audio_segments(
             start_time=start_time,
             end_time=end_time,
             order=order,
+            is_alert=is_alert,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+
+@app.get(
+    "/v1/audio_segment_histogram",
+    response_model=AudioSegmentHistogramResponse,
+    tags=["audio_segments"],
+)
+async def get_audio_segment_histogram(
+    request: Request,
+    start_time: datetime.datetime,
+    feed_ids: Annotated[list[str] | None, Query()] = None,
+    end_time: datetime.datetime | None = None,
+    buckets: int = 288,
+    *,
+    is_alert: bool | None = None,
+) -> AudioSegmentHistogramResponse:
+    """Clip-density histogram over a time window.
+
+    start_time is required; omit end_time for an open-ended upper bound
+    (defaults to now). buckets defaults to 288 equal-width bins.
+    """
+    service: AudioSegmentService = request.app.state.audio_segment_service
+    try:
+        return await service.get_audio_segment_histogram(
+            start_time=start_time,
+            end_time=end_time,
+            feed_ids=feed_ids,
+            buckets=buckets,
             is_alert=is_alert,
         )
     except ValueError as e:

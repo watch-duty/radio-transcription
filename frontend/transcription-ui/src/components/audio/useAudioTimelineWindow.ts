@@ -1,13 +1,12 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { type AudioSegment } from '@transcription/common';
 
-import { segmentHasAlert } from '../../utils/annotationUtils';
 import {
   DEFAULT_AUDIO_WINDOW_DURATION_MS,
   TIMELINE_RANGE_DURATION_MS,
 } from '../../utils/timeUtils';
-import { type TranscriptTime, clamp, segmentIdAt } from './timelineMath';
+import { clamp } from './timelineMath';
 
 // A scrubbed window end within this of the live edge still counts as "live".
 const LIVE_EDGE_EPS_MS = 1000;
@@ -32,10 +31,8 @@ export interface AudioTimelineWindow {
   isScrubbed: boolean;
   rangeStartMs: number | null;
   maxEnd: number | null;
-  miniMapTimes: TranscriptTime[];
-  // Center the window on `centerMs`. Returns the segment nearest that center so
-  // the caller can scroll the list to match what the window now shows.
-  scrubToCenter: (centerMs: number) => string | null;
+  // Center the window on `centerMs`, clamped to the overview range.
+  scrubToCenter: (centerMs: number) => void;
   jumpToLive: () => void;
 }
 
@@ -44,6 +41,8 @@ interface UseAudioTimelineWindowParams {
   audioSegments: AudioSegment[];
   currentlyPlayingSegmentId: string | null;
   highlightedSegmentId: string | null;
+  // Right edge of the fixed 24h overview (date-filter time, else null=live).
+  overviewAnchorMs: number | null;
   windowDurationMs?: number;
 }
 
@@ -53,9 +52,17 @@ export function useAudioTimelineWindow({
   audioSegments,
   currentlyPlayingSegmentId,
   highlightedSegmentId,
+  overviewAnchorMs,
   windowDurationMs = DEFAULT_AUDIO_WINDOW_DURATION_MS,
 }: UseAudioTimelineWindowParams): AudioTimelineWindow {
   const [windowEndTime, setWindowEndTime] = useState<number | null>(null);
+
+  // Overview right edge; not Date.now() in render, which must stay pure.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
 
   // Previous-value trackers for the render-time follow/recenter transitions.
   const [prevFirstId, setPrevFirstId] = useState<string | null>(null);
@@ -69,47 +76,31 @@ export function useAudioTimelineWindow({
   const firstId = firstSegment?.id ?? null;
   const firstEnd = firstSegment?.endTimestamp ?? null;
 
-  // The mini-map's fixed-24h range (ending at the live edge) and per-segment
-  // marks; maxEnd is the live edge the window follows.
-  const { miniMapTimes, rangeStartMs, maxEnd, minEnd } = useMemo(() => {
-    if (audioSegments.length === 0) {
-      return {
-        miniMapTimes: [] as TranscriptTime[],
-        rangeStartMs: null as number | null,
-        maxEnd: null as number | null,
-        minEnd: null as number | null,
-      };
-    }
-    const miniMapTimes = audioSegments.map(
-      (t): TranscriptTime => ({
-        id: t.id,
-        startMs: new Date(t.startTimestamp).getTime(),
-        endMs: new Date(t.endTimestamp).getTime(),
-        hasAlert: segmentHasAlert(t.annotations),
-      })
-    );
-    const liveEdge = new Date(audioSegments[0].endTimestamp).getTime();
-    const rangeStart = liveEdge - TIMELINE_RANGE_DURATION_MS;
-    return {
-      miniMapTimes,
-      rangeStartMs: rangeStart,
-      maxEnd: liveEdge,
-      minEnd: Math.min(rangeStart + windowDurationMs, liveEdge),
-    };
-  }, [audioSegments, windowDurationMs]);
+  // Live edge of loaded audio — drives follow-live and the scrubbed check.
+  const liveEnd = firstEnd ? new Date(firstEnd).getTime() : null;
+
+  // Fixed 24h overview range, decoupled from the lazy list so scrubs don't shift it.
+  const rangeEndMs = Math.max(overviewAnchorMs ?? nowMs, liveEnd ?? 0);
+  const rangeStartMs = rangeEndMs - TIMELINE_RANGE_DURATION_MS;
+  const maxEnd = rangeEndMs;
+  const minEnd = rangeStartMs + windowDurationMs;
 
   // Derived, not stored, so it stays correct however the window moved (scrub,
   // clicking an old clip, jump-to-live): scrubbed iff the right edge sits before
-  // the live edge.
+  // the live edge of loaded audio.
   const isScrubbed =
     windowEndTime != null &&
-    maxEnd != null &&
-    windowEndTime < maxEnd - LIVE_EDGE_EPS_MS;
+    liveEnd != null &&
+    windowEndTime < liveEnd - LIVE_EDGE_EPS_MS;
 
   // Follow the live edge as new audio arrives, or as the head segment extends
   // (e.g. an ongoing silence bundle keeps the same id but a later end), unless
   // the user has scrubbed away.
-  if (firstId !== prevFirstId || firstEnd !== prevFirstEnd) {
+  // Skip empty lists: a refetch blank must not read as a fresh initial load.
+  if (
+    firstId !== null &&
+    (firstId !== prevFirstId || firstEnd !== prevFirstEnd)
+  ) {
     const pinned = isPinnedToLiveEdge(
       windowEndTime,
       prevFirstEnd,
@@ -146,7 +137,7 @@ export function useAudioTimelineWindow({
       if (target) {
         const tStart = new Date(target.startTimestamp).getTime();
         const tEnd = new Date(target.endTimestamp).getTime();
-        const newestEnd = firstEnd ? new Date(firstEnd).getTime() : 0;
+        const newestEnd = liveEnd ?? 0;
         const currentEnd = windowEndTime || newestEnd;
         const currentStart = currentEnd - windowDurationMs;
         if (tStart < currentStart || tEnd > currentEnd) {
@@ -157,14 +148,11 @@ export function useAudioTimelineWindow({
   }
 
   const scrubToCenter = useCallback(
-    (centerMs: number): string | null => {
-      if (minEnd == null || maxEnd == null) return null;
+    (centerMs: number): void => {
       const half = windowDurationMs / 2;
-      const end = clamp(centerMs + half, minEnd, maxEnd);
-      setWindowEndTime(end);
-      return segmentIdAt(miniMapTimes, end - half);
+      setWindowEndTime(clamp(centerMs + half, minEnd, maxEnd));
     },
-    [minEnd, maxEnd, windowDurationMs, miniMapTimes]
+    [minEnd, maxEnd, windowDurationMs]
   );
 
   const jumpToLive = useCallback(() => {
@@ -177,7 +165,6 @@ export function useAudioTimelineWindow({
     isScrubbed,
     rangeStartMs,
     maxEnd,
-    miniMapTimes,
     scrubToCenter,
     jumpToLive,
   };

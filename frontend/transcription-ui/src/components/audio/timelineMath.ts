@@ -1,8 +1,15 @@
-export interface TranscriptTime {
-  id: string;
+// A single overview histogram bucket positioned in wall-clock time.
+export interface HistogramMark {
   startMs: number;
   endMs: number;
+  count: number;
   hasAlert: boolean;
+}
+
+// Bucket opacity by count: 1 clip = 50%, ramping to fully opaque at 5+.
+export function opacityForCount(count: number): number {
+  if (count <= 0) return 0;
+  return clamp(0.5 + (0.5 * (count - 1)) / 4, 0.5, 1);
 }
 
 const MINUTE_MS = 60 * 1000;
@@ -63,16 +70,4 @@ export function computeGridLineTimes(
     times.push(local + offsetMs);
   }
   return times;
-}
-
-// The newest segment starting at or before `at`, for syncing the list to a
-// window position. `times` is newest-first; falls back to the oldest, else null.
-export function segmentIdAt(
-  times: TranscriptTime[],
-  at: number
-): string | null {
-  for (const t of times) {
-    if (t.startMs <= at) return t.id;
-  }
-  return times[times.length - 1]?.id ?? null;
 }

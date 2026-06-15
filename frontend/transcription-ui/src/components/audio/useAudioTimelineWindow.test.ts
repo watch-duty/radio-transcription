@@ -27,6 +27,9 @@ const base = {
   audioSegments: [] as AudioSegment[],
   currentlyPlayingSegmentId: null as string | null,
   highlightedSegmentId: null as string | null,
+  // Anchor the 24h overview at the segments' live edge so its range contains
+  // them (otherwise the live "now" sits far from these fixed test timestamps).
+  overviewAnchorMs: ms('10:00:05') as number | null,
 };
 
 afterEach(cleanup);
@@ -79,7 +82,7 @@ describe('useAudioTimelineWindow', () => {
     expect(result.current.windowEndTime).toBeLessThan(liveEnd!);
   });
 
-  it('scrubToCenter moves the window, marks it scrubbed, and reports the edge segment', () => {
+  it('scrubToCenter moves the window and marks it scrubbed', () => {
     const a = seg('a', '10:00:00', '10:00:05');
     const b = seg('b', '08:00:00', '08:00:05');
     const { result } = renderHook(
@@ -88,12 +91,10 @@ describe('useAudioTimelineWindow', () => {
       { initialProps: { ...base, audioSegments: [a, b] } }
     );
 
-    let repId: string | null = null;
     act(() => {
-      repId = result.current.scrubToCenter(ms('08:00:02'));
+      result.current.scrubToCenter(ms('08:00:02'));
     });
 
-    expect(repId).toBe('b');
     expect(result.current.isScrubbed).toBe(true);
     expect(result.current.windowEndTime).toBeLessThan(ms('10:00:05'));
   });
@@ -165,6 +166,30 @@ describe('useAudioTimelineWindow', () => {
     });
     expect(result.current.windowEndTime).toBe(ms('10:00:05'));
     expect(result.current.isScrubbed).toBe(false);
+  });
+
+  it('keeps the scrubbed window when the list blanks and reloads (scrub re-anchor)', () => {
+    const a = seg('a', '10:00:00', '10:00:05');
+    const b = seg('b', '08:00:00', '08:00:05');
+    const { result, rerender } = renderHook(
+      (props: Parameters<typeof useAudioTimelineWindow>[0]) =>
+        useAudioTimelineWindow(props),
+      { initialProps: { ...base, audioSegments: [a, b] } }
+    );
+    act(() => {
+      result.current.scrubToCenter(ms('08:00:02'));
+    });
+    const scrubbedEnd = result.current.windowEndTime;
+    expect(result.current.isScrubbed).toBe(true);
+
+    // Scrubbing re-anchors the segment query: the list blanks mid-refetch, then
+    // reloads with the newly anchored page. Neither must yank the window.
+    rerender({ ...base, audioSegments: [] });
+    const reanchored = seg('c', '09:00:00', '09:00:05');
+    rerender({ ...base, audioSegments: [reanchored] });
+
+    expect(result.current.windowEndTime).toBe(scrubbedEnd);
+    expect(result.current.isScrubbed).toBe(true);
   });
 
   it('jumpToLive returns to the live edge', () => {

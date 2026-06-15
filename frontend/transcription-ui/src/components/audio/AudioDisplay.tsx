@@ -17,7 +17,7 @@ import { getAudioUrl } from '../../utils/audioUtils';
 import { formatClockTime } from '../../utils/timeUtils';
 import { CustomAlertIcon } from '../common/AlertIcon';
 import { TimelineMiniMap } from './TimelineMiniMap';
-import { type TranscriptTime } from './timelineMath';
+import { type HistogramMark } from './timelineMath';
 import { usePeaksDecodeQueue } from './usePeaksDecodeQueue';
 
 interface AudioDisplayProps {
@@ -33,8 +33,9 @@ interface AudioDisplayProps {
   windowDurationMs: number;
   rangeStartMs: number | null;
   maxEnd: number | null;
-  miniMapTimes: TranscriptTime[];
+  histogramMarks: HistogramMark[];
   onScrubToCenter: (centerMs: number) => void;
+  isLoading?: boolean;
 }
 
 const PLAYING_CURSOR_WIDTH_PX = 2;
@@ -195,8 +196,9 @@ export function AudioDisplay({
   windowDurationMs,
   rangeStartMs,
   maxEnd,
-  miniMapTimes,
+  histogramMarks,
   onScrubToCenter,
+  isLoading = false,
 }: AudioDisplayProps) {
   const theme = useTheme();
   const isDarkTheme = theme.palette.mode === 'dark';
@@ -337,7 +339,7 @@ export function AudioDisplay({
               />
             );
           })}
-          {audioSegments.length === 0 && (
+          {clips.length === 0 && !isLoading && (
             <Box
               sx={{
                 position: 'absolute',
@@ -371,7 +373,7 @@ export function AudioDisplay({
           ))}
         </Box>
         <TimelineMiniMap
-          miniMapTimes={miniMapTimes}
+          histogramMarks={histogramMarks}
           rangeStartMs={rangeStartMs}
           maxEnd={maxEnd}
           windowEndTime={windowEndTime}

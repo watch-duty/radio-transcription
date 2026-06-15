@@ -98,11 +98,12 @@ vi.mock('../../service/listAudioSegments', () => ({
   listAudioSegments: vi.fn(),
 }));
 
-// The heatmap loader paginates listAudioSegments on its own; stub it out so these
-// tests exercise only the transcript list's pagination.
-vi.mock('../../hooks/useAudioTimelineSummary', () => ({
-  useAudioTimelineSummary: () => ({
-    summarySegments: [],
+// The overview histogram fetches on its own; stub it out so these tests
+// exercise only the transcript list's pagination.
+vi.mock('../../hooks/useAudioSegmentHistogram', () => ({
+  useAudioSegmentHistogram: () => ({
+    buckets: [],
+    bucketDurationMs: 5 * 60 * 1000,
     isLoading: false,
     isError: false,
   }),

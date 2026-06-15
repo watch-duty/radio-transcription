@@ -128,7 +128,7 @@ const renderDisplay = (
       windowDurationMs={DEFAULT_AUDIO_WINDOW_DURATION_MS}
       rangeStartMs={null}
       maxEnd={null}
-      miniMapTimes={[]}
+      histogramMarks={[]}
       onScrubToCenter={vi.fn()}
       {...overrides}
     />
@@ -152,6 +152,20 @@ describe('AudioDisplay', () => {
 
   it('renders the empty state when there are no segments', () => {
     renderDisplay({ audioSegments: [] });
+    expect(screen.getByText('No audio found')).toBeTruthy();
+  });
+
+  it('stays blank instead of "No audio found" while loading', () => {
+    renderDisplay({ audioSegments: [], isLoading: true });
+    expect(screen.queryByText('No audio found')).toBeNull();
+  });
+
+  it('shows the empty state when the window has no clips even if the list does', () => {
+    // List has a 09:00 clip, but the window sits at 12:00 — nothing in view.
+    renderDisplay({
+      audioSegments: [seg('1', '09:00')],
+      windowEndTime: new Date('2026-04-20T12:00:00Z').getTime(),
+    });
     expect(screen.getByText('No audio found')).toBeTruthy();
   });
 

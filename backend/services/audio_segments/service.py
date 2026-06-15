@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 from backend.pipeline.storage.audio_segment_store import SortOrder
 
-from .models import ListAudioSegmentsResponse
+from .models import AudioSegmentHistogramResponse, ListAudioSegmentsResponse
 
 if TYPE_CHECKING:
     import datetime
@@ -52,6 +52,25 @@ class AudioSegmentService:
         return ListAudioSegmentsResponse(
             segments=result.segments, next_token=result.next_token
         )
+
+    async def get_audio_segment_histogram(
+        self,
+        start_time: datetime.datetime,
+        end_time: datetime.datetime | None = None,
+        feed_ids: list[str] | None = None,
+        buckets: int = 288,
+        *,
+        is_alert: bool | None = None,
+    ) -> AudioSegmentHistogramResponse:
+        """Returns a bucketed clip-density histogram over a time window."""
+        result = await self._store.get_audio_segment_histogram(
+            start_time=start_time,
+            end_time=end_time,
+            feed_ids=feed_ids,
+            buckets=buckets,
+            is_alert=is_alert,
+        )
+        return AudioSegmentHistogramResponse(buckets=result)
 
     async def create_audio_segment(
         self, segment: AudioSegmentCreate
