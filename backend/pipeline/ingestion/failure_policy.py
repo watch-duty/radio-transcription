@@ -98,85 +98,243 @@ class FailurePolicyDecision:
     quarantine_feed: bool
 
 
+@dataclasses.dataclass(frozen=True)
+class _FailurePolicyRule:
+    """One explicit status/evidence policy route."""
+
+    status_reason: feed_store.FeedStatusReason
+    policy_intent: PolicyIntent
+    executed_action: ExecutedAction
+    feed_budget_eligible: bool
+    quarantine_feed: bool
+    owner_scopes: frozenset[OwnerScope] | None = None
+    failure_scopes: frozenset[FailureScope] | None = None
+    endpoint_kinds: frozenset[EndpointKind] | None = None
+    pipeline_stages: frozenset[PipelineStage | None] | None = None
+
+    def matches(
+        self,
+        status_reason: feed_store.FeedStatusReason,
+        evidence: FailurePolicyEvidence,
+    ) -> bool:
+        """Return whether this rule explicitly covers the evidence."""
+        if status_reason is not self.status_reason:
+            return False
+        if (
+            self.owner_scopes is not None
+            and evidence.owner_scope not in self.owner_scopes
+        ):
+            return False
+        if (
+            self.failure_scopes is not None
+            and evidence.failure_scope not in self.failure_scopes
+        ):
+            return False
+        if (
+            self.endpoint_kinds is not None
+            and evidence.endpoint_kind not in self.endpoint_kinds
+        ):
+            return False
+        return not (
+            self.pipeline_stages is not None
+            and evidence.pipeline_stage not in self.pipeline_stages
+        )
+
+
+_SOURCE_CLASS_ENDPOINTS = frozenset(
+    {
+        EndpointKind.STREAM,
+        EndpointKind.CALLS_API,
+        EndpointKind.CALLS_METADATA,
+        EndpointKind.CALLS_MEDIA,
+        EndpointKind.FIRE_POLL,
+        EndpointKind.OPENMHZ_WS_UPGRADE,
+        EndpointKind.UNKNOWN,
+    }
+)
+
+_SOURCE_FAILURE_SCOPES = frozenset(
+    {
+        FailureScope.OBSERVATION,
+        FailureScope.FEED,
+        FailureScope.CLASS,
+    }
+)
+
+_AUTH_ENDPOINTS = frozenset(
+    {
+        EndpointKind.STREAM,
+        EndpointKind.CALLS_API,
+        EndpointKind.CALLS_METADATA,
+        EndpointKind.CALLS_MEDIA,
+        EndpointKind.FIRE_POLL,
+        EndpointKind.OPENMHZ_WS_UPGRADE,
+        EndpointKind.UNKNOWN,
+    }
+)
+
+_FEED_CONFIG_ENDPOINTS = frozenset(
+    {
+        EndpointKind.FEED_CONFIGURATION,
+        EndpointKind.CALLS_API,
+        EndpointKind.FIRE_POLL,
+        EndpointKind.OPENMHZ_WS_UPGRADE,
+    }
+)
+
+_POLICY_RULES = (
+    _FailurePolicyRule(
+        status_reason=(
+            feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
+        ),
+        owner_scopes=frozenset({OwnerScope.PIPELINE}),
+        failure_scopes=frozenset({FailureScope.PIPELINE}),
+        endpoint_kinds=frozenset({EndpointKind.PUBSUB_PUBLISH}),
+        pipeline_stages=frozenset({PipelineStage.PUBSUB_PUBLISH}),
+        policy_intent=PolicyIntent.QUARANTINE_FEED,
+        executed_action=ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
+        feed_budget_eligible=True,
+        quarantine_feed=True,
+    ),
+    _FailurePolicyRule(
+        status_reason=feed_store.FeedStatusReason.SOURCE_OFFLINE,
+        owner_scopes=frozenset({OwnerScope.SOURCE_CLASS}),
+        failure_scopes=_SOURCE_FAILURE_SCOPES,
+        endpoint_kinds=_SOURCE_CLASS_ENDPOINTS,
+        pipeline_stages=frozenset({None}),
+        policy_intent=PolicyIntent.SUPPRESS_RETRY,
+        executed_action=ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+        feed_budget_eligible=False,
+        quarantine_feed=False,
+    ),
+    _FailurePolicyRule(
+        status_reason=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+        owner_scopes=frozenset({OwnerScope.SOURCE_CLASS}),
+        failure_scopes=_SOURCE_FAILURE_SCOPES,
+        endpoint_kinds=_SOURCE_CLASS_ENDPOINTS,
+        pipeline_stages=frozenset({None}),
+        policy_intent=PolicyIntent.SUPPRESS_RETRY,
+        executed_action=ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+        feed_budget_eligible=False,
+        quarantine_feed=False,
+    ),
+    _FailurePolicyRule(
+        status_reason=feed_store.FeedStatusReason.SOURCE_RATE_LIMITED,
+        owner_scopes=frozenset({OwnerScope.SOURCE_CLASS}),
+        failure_scopes=_SOURCE_FAILURE_SCOPES,
+        endpoint_kinds=_SOURCE_CLASS_ENDPOINTS,
+        pipeline_stages=frozenset({None}),
+        policy_intent=PolicyIntent.SUPPRESS_RETRY,
+        executed_action=ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+        feed_budget_eligible=False,
+        quarantine_feed=False,
+    ),
+    _FailurePolicyRule(
+        status_reason=feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+        owner_scopes=frozenset({OwnerScope.CREDENTIAL_SCOPE}),
+        failure_scopes=frozenset(
+            {
+                FailureScope.OBSERVATION,
+                FailureScope.FEED,
+                FailureScope.CLASS,
+            }
+        ),
+        endpoint_kinds=_AUTH_ENDPOINTS,
+        pipeline_stages=frozenset({None}),
+        policy_intent=PolicyIntent.QUARANTINE_FEED,
+        executed_action=ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
+        feed_budget_eligible=True,
+        quarantine_feed=True,
+    ),
+    _FailurePolicyRule(
+        status_reason=feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        owner_scopes=frozenset({OwnerScope.FEED}),
+        failure_scopes=frozenset({FailureScope.FEED}),
+        endpoint_kinds=_FEED_CONFIG_ENDPOINTS,
+        pipeline_stages=frozenset({None}),
+        policy_intent=PolicyIntent.QUARANTINE_FEED,
+        executed_action=ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
+        feed_budget_eligible=True,
+        quarantine_feed=True,
+    ),
+    _FailurePolicyRule(
+        status_reason=feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        owner_scopes=frozenset({OwnerScope.UNKNOWN}),
+        policy_intent=PolicyIntent.TELEMETRY_GAP,
+        executed_action=ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP,
+        feed_budget_eligible=False,
+        quarantine_feed=False,
+    ),
+    _FailurePolicyRule(
+        status_reason=feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        owner_scopes=frozenset({OwnerScope.PIPELINE}),
+        failure_scopes=frozenset({FailureScope.PIPELINE}),
+        endpoint_kinds=frozenset(
+            {
+                EndpointKind.GCS_UPLOAD,
+                EndpointKind.BOOKMARK_WRITE,
+            }
+        ),
+        pipeline_stages=frozenset(
+            {
+                PipelineStage.GCS_UPLOAD,
+                PipelineStage.BOOKMARK_WRITE,
+            }
+        ),
+        policy_intent=PolicyIntent.SUPPRESS_RETRY,
+        executed_action=ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
+        feed_budget_eligible=False,
+        quarantine_feed=False,
+    ),
+    _FailurePolicyRule(
+        status_reason=feed_store.FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
+        owner_scopes=frozenset({OwnerScope.UNKNOWN}),
+        policy_intent=PolicyIntent.TELEMETRY_GAP,
+        executed_action=ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP,
+        feed_budget_eligible=False,
+        quarantine_feed=False,
+    ),
+)
+
+
+def _decision_from_rule(
+    status_reason: feed_store.FeedStatusReason,
+    evidence: FailurePolicyEvidence,
+    rule: _FailurePolicyRule,
+) -> FailurePolicyDecision:
+    return FailurePolicyDecision(
+        status_reason=status_reason,
+        evidence=evidence,
+        policy_intent=rule.policy_intent,
+        executed_action=rule.executed_action,
+        feed_budget_eligible=rule.feed_budget_eligible,
+        quarantine_feed=rule.quarantine_feed,
+    )
+
+
+def _telemetry_gap_decision(
+    status_reason: feed_store.FeedStatusReason,
+    evidence: FailurePolicyEvidence,
+) -> FailurePolicyDecision:
+    return FailurePolicyDecision(
+        status_reason=status_reason,
+        evidence=evidence,
+        policy_intent=PolicyIntent.TELEMETRY_GAP,
+        executed_action=ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP,
+        feed_budget_eligible=False,
+        quarantine_feed=False,
+    )
+
+
 def classify_failure_policy(
     status_reason: feed_store.FeedStatusReason,
     evidence: FailurePolicyEvidence,
 ) -> FailurePolicyDecision:
     """Classify structured evidence into a side-effect-free policy decision."""
-    if (
-        status_reason
-        is feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
-        or evidence.pipeline_stage is PipelineStage.PUBSUB_PUBLISH
-        and evidence.owner_scope is OwnerScope.PIPELINE
-    ):
-        return FailurePolicyDecision(
-            status_reason=status_reason,
-            evidence=evidence,
-            policy_intent=PolicyIntent.HOLD_FOR_REPLAY,
-            executed_action=(
-                ExecutedAction.SUPPRESS_FEED_QUARANTINE_RECORD_PUBLISH_GAP
-            ),
-            feed_budget_eligible=False,
-            quarantine_feed=False,
-        )
-
-    if evidence.owner_scope is OwnerScope.PIPELINE:
-        return FailurePolicyDecision(
-            status_reason=status_reason,
-            evidence=evidence,
-            policy_intent=PolicyIntent.SUPPRESS_RETRY,
-            executed_action=ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
-            feed_budget_eligible=False,
-            quarantine_feed=False,
-        )
-
-    if evidence.owner_scope in {
-        OwnerScope.CREDENTIAL_SCOPE,
-        OwnerScope.SOURCE_CLASS,
-    }:
-        return FailurePolicyDecision(
-            status_reason=status_reason,
-            evidence=evidence,
-            policy_intent=PolicyIntent.OPEN_BREAKER,
-            executed_action=ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
-            feed_budget_eligible=False,
-            quarantine_feed=False,
-        )
-
-    if (
-        evidence.owner_scope is OwnerScope.FEED
-        and evidence.failure_scope is FailureScope.FEED
-        and evidence.endpoint_kind is EndpointKind.FEED_CONFIGURATION
-    ):
-        return FailurePolicyDecision(
-            status_reason=status_reason,
-            evidence=evidence,
-            policy_intent=PolicyIntent.QUARANTINE_FEED,
-            executed_action=ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET,
-            feed_budget_eligible=True,
-            quarantine_feed=True,
-        )
-
-    if evidence.owner_scope is OwnerScope.UNKNOWN:
-        return FailurePolicyDecision(
-            status_reason=status_reason,
-            evidence=evidence,
-            policy_intent=PolicyIntent.TELEMETRY_GAP,
-            executed_action=(
-                ExecutedAction.SUPPRESS_FEED_QUARANTINE_TELEMETRY_GAP
-            ),
-            feed_budget_eligible=False,
-            quarantine_feed=False,
-        )
-
-    return FailurePolicyDecision(
-        status_reason=status_reason,
-        evidence=evidence,
-        policy_intent=PolicyIntent.SUPPRESS_RETRY,
-        executed_action=ExecutedAction.RELEASE_NON_BUDGETED_FAILURE,
-        feed_budget_eligible=False,
-        quarantine_feed=False,
-    )
+    for rule in _POLICY_RULES:
+        if rule.matches(status_reason, evidence):
+            return _decision_from_rule(status_reason, evidence, rule)
+    return _telemetry_gap_decision(status_reason, evidence)
 
 
 def is_feed_quarantine(decision: FailurePolicyDecision) -> bool:
