@@ -147,14 +147,115 @@ audio is present.
 
 ### Feed Failure Episode
 
-A terminal feed-level failure recorded in storage after a collector or runtime
-decides the current feed cannot make progress. Consecutive feed failure
-episodes drive quarantine.
+A terminal failure recorded after policy decides retry, backoff, or probing is
+not expected to restore progress without operator intervention. Consecutive feed
+failure episodes drive quarantine, including v1 cases where the repair is a
+code, deploy, or internal system fix.
+
+### Non-Budgeted Ingestion Failure
+
+A visible, retryable ingestion failure that does not count toward feed
+quarantine because policy expects retry, backoff, or probing to recover without
+operator intervention, or because the condition is outside operator control.
+
+### External Source Condition
+
+A source/provider condition such as offline, unreachable, or rate-limited source
+access. It remains non-budgeted because retry, backoff, probing, or upstream
+recovery is the expected path.
+
+### Operator-Actionable Failure
+
+An ingestion failure that requires a human-initiated correction before normal
+claiming should resume. The correction may target one feed, a batch of feeds,
+code, deploy configuration, credentials, or another internal system.
+
+### Quarantine-Budgeted Failure
+
+An ingestion failure where retry, backoff, or probing is not expected to restore
+progress and an operator can fix the condition. Consecutive quarantine-budgeted
+failures drive quarantine.
+
+### Feed Configuration Failure
+
+A feed-row or source-specific feed configuration problem that prevents
+ingestion from addressing the intended source. Missing source identifiers and
+invalid source-specific feed paths are feed configuration failures.
+
+### Runtime Configuration Failure
+
+A shared deploy, environment, credential-location, transport, or source-class
+configuration problem that prevents ingestion from operating correctly. It is
+not specific to one feed row, even when first observed while processing one
+feed.
+
+### Pipeline-Owned Quarantine
+
+A quarantine caused by a deterministic post-capture ingestion failure that retry
+is not expected to repair, such as an internal publish/schema consistency
+problem. The source feed may be healthy; the quarantine exists to stop repeated
+claiming until the pipeline repair is made.
+
+### Post-Bookmark Publish Failure
+
+A pipeline-owned failure where captured audio was uploaded and the feed cursor
+was advanced, but the corresponding publish did not complete. It is
+quarantine-budgeted in v1 because normal retry no longer represents the full
+recovery workflow.
+
+### Retryable Pipeline Failure
+
+A post-capture ingestion failure that policy expects retry to recover without
+operator intervention. It remains visible but does not count toward quarantine.
+
+### Terminal Auth Or Access Refusal
+
+An explicit authentication or authorization refusal that remains after
+collector-local retry, token refresh, or reconnect policy has been exhausted.
+It is quarantine-budgeted when the evidence shows retry alone is not expected
+to restore progress.
+
+### Credential Access Failure
+
+A failure to retrieve or access credentials from an internal credential store.
+It is distinct from terminal auth or access refusal because the upstream source
+has not necessarily rejected the credential.
+
+### Source Payload Contract Failure
+
+A failure where the source returned apparently successful data, but its shape or
+encoding does not match the collector contract. It is quarantine-budgeted when
+repeating the same request is not expected to produce processable data.
+Avoid: ambiguous collector error, item failure.
+
+### Ambiguous Item Failure
+
+An item-scoped media/download/probe failure that cannot prove the whole feed or
+collector contract is broken. It remains non-budgeted unless later evidence
+promotes it to a more precise operator-actionable failure.
 
 ### Status Reason
 
-The current canonical abnormal-condition label for a feed. It says whether the
-likely owner is the source/provider or the ingestion system.
+The current canonical abnormal-condition label for a feed. It is visible to
+operators and can be one input to routing policy, but routing requires policy
+evidence and must not use status reason alone.
+
+### Policy Evidence
+
+Structured ownership, scope, and stage facts used with status reason to decide
+whether an ingestion failure is quarantine-budgeted, non-budgeted,
+pipeline-owned, or unknown.
+
+### Routing Policy
+
+The canonical decision for a status reason plus policy evidence combination. It
+decides whether the ingestion failure is quarantine-budgeted or non-budgeted.
+
+### Unexpected System Failure
+
+The residual fallback for untyped bugs or missing classification evidence. It
+is non-budgeted until a future change replaces it with a more precise status
+reason and policy evidence.
 
 ### Quarantine Reason
 
