@@ -19,8 +19,8 @@ complete and retained in the project history; this milestone starts at Phase 4.
 - [ ] **Phase 5: Producer And Runtime Routing Merge** - Update collector/runtime
   producers and route `_PipelineFailure` through the same budgeted/non-budgeted
   policy branch as collector failures.
-- [ ] **Phase 6: Compatibility And Verification** - Synchronize API/UI status
-  surfaces and run focused verification for the merged behavior.
+- [ ] **Phase 6: Compatibility And Verification** - Update backend
+  documentation and run focused verification for the merged behavior.
 
 ## Phase Details
 
@@ -82,25 +82,26 @@ Plans:
 
 ### Phase 6: Compatibility And Verification
 
-**Goal**: External status surfaces understand the new reason values, generated
-API metadata is synchronized, and focused checks prove the milestone is ready
-for code review.
+**Goal**: Backend documentation reflects the final v1.1 policy semantics, and
+focused backend checks prove the milestone is ready for code review.
 
 **Depends on**: Phase 5
 
-**Requirements**: COMP-11, COMP-12, COMP-13, COMP-14, TEST-16
+**Requirements**: DOC-11, VER-11, TEST-17
 
 **Success Criteria**:
-1. Backend enum, OpenAPI, generated API route metadata, shared TypeScript types,
-   and frontend status reason allowlists are synchronized.
-2. UI status indicator renders readable labels for all new status reasons.
-3. Focused backend and frontend tests pass.
-4. Docs reflect the final v1.1 policy semantics.
+1. Collector authoring documentation no longer describes
+   `pipeline_publish_after_bookmark_failed` as non-quarantining.
+2. Focused backend tests and diff hygiene checks pass.
+3. Phase summary/verification documents record that OpenAPI, generated API,
+   shared frontend types, and UI labels are deferred follow-up work.
+4. No frontend, OpenAPI, generated API metadata, database migration, or schema
+   files are changed.
 
 **Plans**: 2 plans
 
 Plans:
-- [ ] 06-01: Sync API/UI status compatibility surfaces.
+- [ ] 06-01: Update backend collector documentation for final v1.1 semantics.
 - [ ] 06-02: Run focused verification and update implementation summary/docs.
 
 ## Progress
@@ -110,8 +111,8 @@ Phases execute in numeric order: 4 -> 5 -> 6
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 4. Strict Policy Table And Status Vocabulary | 0/2 | Pending | — |
-| 5. Producer And Runtime Routing Merge | 0/3 | Pending | — |
+| 4. Strict Policy Table And Status Vocabulary | 2/2 | Complete | 2026-06-15 |
+| 5. Producer And Runtime Routing Merge | 3/3 | Complete | 2026-06-15 |
 | 6. Compatibility And Verification | 0/2 | Pending | — |
 
 ---

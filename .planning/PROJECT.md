@@ -11,8 +11,8 @@ coarsely.
 
 The v1.1 implementation merges the strict policy design with the latest
 codebase by making explicit `status_reason + evidence` rows decide whether a
-failure consumes feed quarantine budget, while keeping current schema and UI
-compatibility.
+failure consumes feed quarantine budget, while keeping the current schema and
+deferring broader API/UI/generated compatibility to follow-up work.
 
 ## Core Value
 
@@ -29,7 +29,7 @@ failure and a human/operator repair is required.
   payload contract failures.
 - Runtime policy routing for `_PipelineFailure`, including budgeted
   `pipeline_publish_after_bookmark_failed`.
-- API/UI/status compatibility updates and focused tests.
+- Backend documentation closeout and focused backend verification.
 
 ## Requirements
 
@@ -73,8 +73,7 @@ failure and a human/operator repair is required.
   path.
 - [ ] Keep non-budgeted retry/reset behavior for source, ambiguous collector,
   GCS/bookmark, credential-access, and telemetry-gap cases.
-- [ ] Sync backend, OpenAPI, shared frontend types, generated API metadata, and
-  UI labels.
+- [ ] Update backend documentation and run final focused backend verification.
 
 ### Out of Scope
 
@@ -88,6 +87,8 @@ failure and a human/operator repair is required.
   suppressed retry state.
 - Broad UI redesign for status reasons — only update shared types/status
   handling if required by new backend enum values.
+- OpenAPI, shared frontend types, generated API metadata, and UI labels —
+  deferred from this backend-only v1.1 milestone.
 - Echo ingestion parity — v1 targets VM ingestion first.
 - Parsing or whitelisting `quarantine_reason` values — explicitly forbidden.
 
