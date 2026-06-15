@@ -74,7 +74,7 @@ surfaces tolerate the new status reason without broad lifecycle changes.
 
 Plans:
 - [x] 03-01: Complete focused storage and runtime tests.
-- [ ] 03-02: Update status compatibility surfaces and documentation if required.
+- [x] 03-02: Update status compatibility surfaces and documentation if required.
 - [ ] 03-03: Run narrow verification and prepare implementation summary.
 
 ## Progress

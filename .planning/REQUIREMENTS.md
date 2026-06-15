@@ -34,7 +34,7 @@
 ### Status Reasons
 
 - [x] **STAT-01**: Backend status reason enum includes `pipeline_publish_after_bookmark_failed`.
-- [ ] **STAT-02**: API/UI/shared status handling is updated only where necessary to tolerate the new status reason while preserving existing lifecycle status behavior.
+- [x] **STAT-02**: API/UI/shared status handling is updated only where necessary to tolerate the new status reason while preserving existing lifecycle status behavior.
 
 ### Telemetry
 
@@ -112,7 +112,7 @@
 | RUN-06 | Phase 2 | Complete |
 | RUN-07 | Phase 2 | Complete |
 | STAT-01 | Phase 1 | Complete |
-| STAT-02 | Phase 3 | Pending |
+| STAT-02 | Phase 3 | Complete |
 | TEL-01 | Phase 2 | Complete |
 | TEL-02 | Phase 2 | Complete |
 | TEL-03 | Phase 2 | Complete |
