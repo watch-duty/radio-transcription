@@ -8,6 +8,9 @@ from typing import TYPE_CHECKING
 import asyncpg
 from pydantic import TypeAdapter
 
+if TYPE_CHECKING:
+    import datetime
+
 from backend.pipeline.storage import audio_segment_queries
 from backend.pipeline.storage.pagination_utils import (
     SortOrder,
@@ -21,9 +24,6 @@ from backend.services.audio_segments.models import (
     AudioSegment,
     HistogramBucket,
 )
-
-if TYPE_CHECKING:
-    import datetime
 
 annotation_adapter = TypeAdapter(Annotation)
 
