@@ -17,6 +17,7 @@ export type FeedStatus = 'active' | 'inactive' | 'error';
 
 export type BackendFeedStatusReason =
   | 'unknown'
+  | 'pipeline_publish_after_bookmark_failed'
   | 'source_offline'
   | 'source_unreachable'
   | 'source_rate_limited'
@@ -24,7 +25,6 @@ export type BackendFeedStatusReason =
   | 'system_configuration_invalid'
   | 'system_collector_error'
   | 'system_pipeline_error'
-  | 'pipeline_publish_after_bookmark_failed'
   | 'system_unexpected_error';
 
 export interface Tag {

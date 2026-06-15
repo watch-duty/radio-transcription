@@ -5,6 +5,7 @@ import type {
 } from '../types/feeds.js';
 
 const BACKEND_FEED_STATUS_REASONS = new Set<BackendFeedStatusReason>([
+  'pipeline_publish_after_bookmark_failed',
   'source_offline',
   'source_unreachable',
   'source_rate_limited',
@@ -12,7 +13,6 @@ const BACKEND_FEED_STATUS_REASONS = new Set<BackendFeedStatusReason>([
   'system_configuration_invalid',
   'system_collector_error',
   'system_pipeline_error',
-  'pipeline_publish_after_bookmark_failed',
   'system_unexpected_error',
 ]);
 

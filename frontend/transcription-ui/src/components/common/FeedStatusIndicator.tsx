@@ -23,6 +23,7 @@ const FEED_STATUS_REASON_UI_TEXT_DISPLAY: Record<
   string
 > = {
   unknown: 'Unknown Status',
+  pipeline_publish_after_bookmark_failed: 'Pipeline Publish Failed After Bookmark',
   source_offline: 'Source Offline',
   source_unreachable: 'Source Unreachable',
   source_rate_limited: 'Source Rate Limited',
@@ -30,7 +31,6 @@ const FEED_STATUS_REASON_UI_TEXT_DISPLAY: Record<
   system_configuration_invalid: 'System Configuration Invalid',
   system_collector_error: 'System Collector Error',
   system_pipeline_error: 'System Pipeline Error',
-  pipeline_publish_after_bookmark_failed: 'Pipeline Publish Failed After Bookmark',
   system_unexpected_error: 'System Unexpected Error',
 };
 
