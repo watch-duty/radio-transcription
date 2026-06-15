@@ -27,7 +27,7 @@ import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { getAudioUrl } from '../../utils/audioUtils';
-import { DEFAULT_AUDIO_WINDOW_DURATION_MS } from '../../utils/timeUtils';
+import { AUDIO_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import AudioDisplay from '../audio/AudioDisplay';
 import { useAudioTimelineWindow } from '../audio/useAudioTimelineWindow';
 import FeedSearchView from '../feeds/FeedSearchView';
@@ -268,9 +268,7 @@ export function TranscriptView({
   const listAnchorTimestamp = useMemo(
     () =>
       searchedTimestamp
-        ? new Date(
-            searchedTimestamp.getTime() - DEFAULT_AUDIO_WINDOW_DURATION_MS / 2
-          )
+        ? new Date(searchedTimestamp.getTime() - AUDIO_WINDOW_DURATION_MS / 2)
         : null,
     [searchedTimestamp]
   );

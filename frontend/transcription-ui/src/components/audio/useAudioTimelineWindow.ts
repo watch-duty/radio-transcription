@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { type AudioSegment } from '@transcription/common';
 
 import {
-  DEFAULT_AUDIO_WINDOW_DURATION_MS,
+  AUDIO_WINDOW_DURATION_MS,
   TIMELINE_RANGE_DURATION_MS,
 } from '../../utils/timeUtils';
 import { clamp } from './timelineMath';
@@ -43,7 +43,6 @@ interface UseAudioTimelineWindowParams {
   highlightedSegmentId: string | null;
   // Right edge of the fixed 24h overview (date-filter time, else null=live).
   overviewAnchorMs: number | null;
-  windowDurationMs?: number;
 }
 
 // Single source of truth for the timeline's visible window, shared by the
@@ -53,8 +52,8 @@ export function useAudioTimelineWindow({
   currentlyPlayingSegmentId,
   highlightedSegmentId,
   overviewAnchorMs,
-  windowDurationMs = DEFAULT_AUDIO_WINDOW_DURATION_MS,
 }: UseAudioTimelineWindowParams): AudioTimelineWindow {
+  const windowDurationMs = AUDIO_WINDOW_DURATION_MS;
   const [windowEndTime, setWindowEndTime] = useState<number | null>(null);
 
   // Overview right edge; not Date.now() in render, which must stay pure.

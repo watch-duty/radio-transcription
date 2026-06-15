@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { AudioClassification, type AudioSegment } from '@transcription/common';
 
-import { DEFAULT_AUDIO_WINDOW_DURATION_MS } from '../../utils/timeUtils';
+import { AUDIO_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { useAudioTimelineWindow } from './useAudioTimelineWindow';
 
 const iso = (clock: string) => new Date(`2026-04-20T${clock}Z`).toISOString();
@@ -35,19 +35,9 @@ const base = {
 afterEach(cleanup);
 
 describe('useAudioTimelineWindow', () => {
-  it('defaults to the standard window duration', () => {
+  it('exposes the window duration', () => {
     const { result } = renderHook(() => useAudioTimelineWindow(base));
-    expect(result.current.windowDurationMs).toBe(
-      DEFAULT_AUDIO_WINDOW_DURATION_MS
-    );
-  });
-
-  it('honors a custom window duration', () => {
-    const custom = 5 * 60 * 1000;
-    const { result } = renderHook(() =>
-      useAudioTimelineWindow({ ...base, windowDurationMs: custom })
-    );
-    expect(result.current.windowDurationMs).toBe(custom);
+    expect(result.current.windowDurationMs).toBe(AUDIO_WINDOW_DURATION_MS);
   });
 
   it('follows the live edge as the head segment changes', () => {

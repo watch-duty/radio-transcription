@@ -18,7 +18,7 @@ import {
 } from '@transcription/common';
 
 import { getAudioUrl } from '../../utils/audioUtils';
-import { DEFAULT_AUDIO_WINDOW_DURATION_MS } from '../../utils/timeUtils';
+import { AUDIO_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { AudioDisplay } from './AudioDisplay';
 import {
   __primePeaksCacheForTest,
@@ -125,7 +125,7 @@ const renderDisplay = (
       isAudioPlaying={false}
       onTogglePlayPause={vi.fn()}
       windowEndTime={null}
-      windowDurationMs={DEFAULT_AUDIO_WINDOW_DURATION_MS}
+      windowDurationMs={AUDIO_WINDOW_DURATION_MS}
       rangeStartMs={null}
       maxEnd={null}
       histogramMarks={[]}
