@@ -29,7 +29,9 @@ from backend.pipeline.common.constants import (
 from backend.pipeline.common.log_helper import get_task_logger
 from backend.pipeline.common.tracing_utils import (
     extract_trace_context,
+    inject_otel_context,
     setup_tracing,
+    with_tracer_context,
 )
 from backend.pipeline.schema_types.continuous_audio_pb2 import (
     ContinuousAudio,
@@ -212,85 +214,93 @@ class UploadRawSegmentFn(beam.DoFn):
         element: tuple[str, Any],
     ) -> Iterator[PubsubMessage | SegmentationDlqOutput]:
         feed_id, request = element
+        trace_attrs = {}
+        if request.traceparent:
+            trace_attrs["traceparent"] = request.traceparent
+        if getattr(request, "baggage", None):
+            trace_attrs["baggage"] = request.baggage
+
         try:
-            dt = datetime.datetime.fromtimestamp(
-                request.time_range.start_ms / MS_PER_SECOND,
-                tz=datetime.UTC,
-            )
-
-            # Convert PCM buffer to compressed lossless FLAC format bytes
-            flac_bytes = self._pcm_to_flac(request.buffer, request.sample_rate)
-
-            # Construct raw segment GCS path
-            flac_path = f"raw_segments/{request.feed_id}/{dt:%Y/%m/%d}/{request.segment_id}.flac"
-
-            if not self.staging_audio_bucket:
-                err_msg = "staging_audio_bucket is not configured"
-                raise ValueError(err_msg)  # noqa: TRY301
-            if not self.gcs_client:
-                err_msg = "GCS client not initialized"
-                raise RuntimeError(err_msg)  # noqa: TRY301
-
-            bucket = self.gcs_client.bucket(self.staging_audio_bucket)
-            blob = bucket.blob(flac_path)
-            blob.upload_from_string(flac_bytes, content_type="audio/flac")
-            gcs_uri = f"gs://{self.staging_audio_bucket}/{flac_path}"
-
-            # Build SegmentedAudio claim-check protobuf message
-            start_timestamp = Timestamp()
-            start_timestamp.FromMicroseconds(
-                request.time_range.start_ms * MICROSECONDS_PER_MS
-            )
-
-            end_timestamp = Timestamp()
-            end_timestamp.FromMicroseconds(
-                request.time_range.end_ms * MICROSECONDS_PER_MS
-            )
-
-            start_offset = Duration()
-            if (
-                request.start_audio_offset_ms is not None
-                and request.start_audio_offset_ms > 0
+            with with_tracer_context(
+                trace_attrs,
+                "upload_raw_segment",
+                "backend.pipeline.segmentation.transforms.stateless",
             ):
-                start_offset.FromMicroseconds(
-                    int(request.start_audio_offset_ms * MICROSECONDS_PER_MS)
+                dt = datetime.datetime.fromtimestamp(
+                    request.time_range.start_ms / MS_PER_SECOND,
+                    tz=datetime.UTC,
                 )
 
-            end_offset = Duration()
-            if (
-                request.end_audio_offset_ms is not None
-                and request.end_audio_offset_ms > 0
-            ):
-                end_offset.FromMicroseconds(
-                    int(request.end_audio_offset_ms * MICROSECONDS_PER_MS)
+                # Convert PCM buffer to compressed lossless FLAC format bytes
+                flac_bytes = self._pcm_to_flac(request.buffer, request.sample_rate)
+
+                # Construct raw segment GCS path
+                flac_path = f"raw_segments/{request.feed_id}/{dt:%Y/%m/%d}/{request.segment_id}.flac"
+
+                if not self.staging_audio_bucket:
+                    err_msg = "staging_audio_bucket is not configured"
+                    raise ValueError(err_msg)  # noqa: TRY301
+                if not self.gcs_client:
+                    err_msg = "GCS client not initialized"
+                    raise RuntimeError(err_msg)  # noqa: TRY301
+
+                bucket = self.gcs_client.bucket(self.staging_audio_bucket)
+                blob = bucket.blob(flac_path)
+                blob.upload_from_string(flac_bytes, content_type="audio/flac")
+                gcs_uri = f"gs://{self.staging_audio_bucket}/{flac_path}"
+
+                # Build SegmentedAudio claim-check protobuf message
+                start_timestamp = Timestamp()
+                start_timestamp.FromMicroseconds(
+                    request.time_range.start_ms * MICROSECONDS_PER_MS
                 )
 
-            proto = SegmentedAudio(
-                segment_id=request.segment_id,
-                feed_id=request.feed_id,
-                start_timestamp=start_timestamp,
-                end_timestamp=end_timestamp,
-                missing_prior_context=request.missing_prior_context,
-                missing_post_context=request.missing_post_context,
-                source_audio_uris=request.contributing_audio_uris,
-                start_audio_offset=start_offset,
-                end_audio_offset=end_offset,
-                feed_name=request.feed_metadata.feed_name,
-                audio_classification=request.audio_classification,
-                raw_audio_uri=gcs_uri,
-            )
+                end_timestamp = Timestamp()
+                end_timestamp.FromMicroseconds(
+                    request.time_range.end_ms * MICROSECONDS_PER_MS
+                )
 
-            attrs: dict[str, str] = {}
-            if request.traceparent:
-                attrs["traceparent"] = request.traceparent
-            if getattr(request, "baggage", None):
-                attrs["baggage"] = request.baggage
+                start_offset = Duration()
+                if (
+                    request.start_audio_offset_ms is not None
+                    and request.start_audio_offset_ms > 0
+                ):
+                    start_offset.FromMicroseconds(
+                        int(request.start_audio_offset_ms * MICROSECONDS_PER_MS)
+                    )
 
-            yield PubsubMessage(
-                data=proto.SerializeToString(),
-                attributes=attrs,
-                ordering_key=request.feed_id,
-            )
+                end_offset = Duration()
+                if (
+                    request.end_audio_offset_ms is not None
+                    and request.end_audio_offset_ms > 0
+                ):
+                    end_offset.FromMicroseconds(
+                        int(request.end_audio_offset_ms * MICROSECONDS_PER_MS)
+                    )
+
+                proto = SegmentedAudio(
+                    segment_id=request.segment_id,
+                    feed_id=request.feed_id,
+                    start_timestamp=start_timestamp,
+                    end_timestamp=end_timestamp,
+                    missing_prior_context=request.missing_prior_context,
+                    missing_post_context=request.missing_post_context,
+                    source_audio_uris=request.contributing_audio_uris,
+                    start_audio_offset=start_offset,
+                    end_audio_offset=end_offset,
+                    feed_name=request.feed_metadata.feed_name,
+                    audio_classification=request.audio_classification,
+                    raw_audio_uri=gcs_uri,
+                )
+
+                attrs: dict[str, str] = {}
+                inject_otel_context(attrs)
+
+                yield PubsubMessage(
+                    data=proto.SerializeToString(),
+                    attributes=attrs,
+                    ordering_key=request.feed_id,
+                )
 
         except Exception as e:
             logger.exception(
