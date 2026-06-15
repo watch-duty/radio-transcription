@@ -236,7 +236,6 @@ class NormalizationEventProcessor:
                 self._publish_dlq(
                     segmented_audio=segmented_audio,
                     error=e,
-                    traceparent=traceparent,
                     delivery_attempt=delivery_attempt,
                 )
 
@@ -387,7 +386,6 @@ class NormalizationEventProcessor:
         self,
         segmented_audio: SegmentedAudio,
         error: Exception,
-        traceparent: str,
         delivery_attempt: int = 1,
     ) -> None:
         """Publishes a structured error payload to the Normalization Dead Letter Queue topic."""
@@ -415,8 +413,7 @@ class NormalizationEventProcessor:
         topic_path = self.publisher.topic_path(self.project_id, self.dlq_topic)
 
         attrs: dict[str, str] = {"error_type": "normalization_failure"}
-        if traceparent:
-            attrs["traceparent"] = traceparent
+        inject_otel_context(attrs)
 
         try:
             # Item #4 from Claude review: publish to DLQ with ordering_key="" so DLQ publishing never gridlocks

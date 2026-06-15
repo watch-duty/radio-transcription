@@ -12,9 +12,6 @@ from google.cloud.pubsub_v1.publisher.exceptions import (
     PublishToPausedOrderingKeyException,
 )
 from opentelemetry import trace
-from opentelemetry.trace.propagation.tracecontext import (
-    TraceContextTextMapPropagator,
-)
 from tenacity import (
     RetryCallState,
     retry,
