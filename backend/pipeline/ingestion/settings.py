@@ -230,12 +230,8 @@ class CollectorSettings:
         ),
     )
 
-    # RSS watchdog (WATCHDOG-01). Cgroup-aware self-monitoring daemon
-    # thread that pauses claims at sustained 70% RSS and triggers
-    # graceful shutdown at 90% RSS x 3 consecutive samples. See
-    # PITFALLS.md Pitfalls 1, 2, 3, 16, 18, 20. Hysteresis margin is
-    # hard-coded as pause_threshold - 0.10 (D-20) -- exposing it as a
-    # setting would invite the 5pp temptation rejected by D-08.
+    # Memory watchdog (WATCHDOG-01). See memory_watchdog.py for cgroup detection,
+    # pause/resume hysteresis, and graceful-shutdown trip behavior.
     rss_watchdog_poll_interval_sec: float = field(
         default_factory=lambda: float(
             os.environ.get("RSS_WATCHDOG_POLL_INTERVAL_SEC", "2.0"),

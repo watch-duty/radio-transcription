@@ -3,7 +3,6 @@ import concurrent.futures
 import datetime
 import logging
 import os
-import pathlib
 import signal
 import threading
 import time
@@ -23,6 +22,7 @@ from backend.pipeline.common.log_helper import setup_asyncio_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.ingestion import (
     health_server,
+    memory_watchdog,
     quarantine_reason,
     quarantine_telemetry,
 )
@@ -123,8 +123,13 @@ class CollectorRuntime:
         self._capture_fn = capture_fn
         self._collector_settings = settings
         # threading.Event (not asyncio.Event) — the heartbeat OS thread
-        # can't use asyncio primitives; it needs a thread-safe signal.
+        # and memory watchdog thread can't use asyncio primitives; they need a
+        # shared thread-safe stop signal.
         self._thread_stop = threading.Event()
+        self._memory_watchdog = memory_watchdog.MemoryWatchdog(
+            settings,
+            self._thread_stop,
+        )
         # These fields are initialized in _main() before any method reads them.
         # Typed without None so the type checker doesn't require narrowing at
         # every usage site.  Accessing before _main() is a programming error.
@@ -154,12 +159,6 @@ class CollectorRuntime:
         # _shutdown_sequence after _gcs_client.close() with a 250ms
         # SSL-teardown sleep (Pitfall 12).
         self._http_session: aiohttp.ClientSession = None  # type: ignore # set in _main()
-        # _paused_for_memory: threading.Event (NOT bare bool) — read by the
-        # asyncio leasing loop, set/cleared by the watchdog OS thread. See
-        # PITFALLS.md Pitfall 20 — bool atomicity is a CPython implementation
-        # detail; threading.Event is a contract.
-        self._paused_for_memory = threading.Event()
-        self._rss_watchdog_thread: threading.Thread | None = None
         self._capture_resources: CaptureResources = None  # type: ignore # set in _main()
         # Size the aiohttp connection pool to match the feed concurrency so
         # GCS uploads are never queued waiting for a free connection slot.
@@ -251,36 +250,17 @@ class CollectorRuntime:
         )
         self._heartbeat_thread.start()
 
-        # WATCHDOG-01: cgroup-aware self-RSS daemon thread (Phase 4).
-        # Resolved limit drives whether the thread starts at all (D-22):
-        # if cgroup limit is "max" or v1 sentinel, _resolve_* returns None
-        # and we must NOT start the thread (the leasing loop's
-        # _paused_for_memory.is_set() check trivially returns False forever
-        # — acceptable, since the watchdog cannot do its job without a
-        # limit). Joined in _shutdown_sequence immediately after the
-        # heartbeat thread join and BEFORE feed-task cancellation
-        # (PITFALLS Pitfall 1).
-        watchdog_limit = self._resolve_container_memory_bytes()
-        if watchdog_limit is None:
-            logger.warning(
-                "RSS watchdog disabled — no cgroup memory limit detected",
-            )
-        else:
-            self._rss_watchdog_thread = threading.Thread(
-                target=self._rss_watchdog_loop,
-                args=(watchdog_limit,),
-                daemon=True,
-                name="rss-watchdog",
-            )
-            self._rss_watchdog_thread.start()
+        # WATCHDOG-01: cgroup-aware memory daemon thread. The watchdog owns
+        # cgroup detection and disabled-mode logging; the runtime only wires
+        # lifecycle signals.
+        self._memory_watchdog.start(self._loop, self._shutdown)
 
         quarantine_telemetry.configure(settings.google_cloud_project)
 
         # try/finally wraps session creation, capture_resources, and
         # health_server.start so an exception in any of those triggers
         # _shutdown_sequence — closes the aiohttp session and joins
-        # heartbeat/watchdog threads cleanly (each guarded by None/is_alive
-        # checks so partial init is safe).
+        # heartbeat/watchdog threads cleanly.
         try:
             # HTTP-01: runtime-owned aiohttp.ClientSession. Constructed
             # inside _main() because the connector requires a running event
@@ -336,96 +316,6 @@ class CollectorRuntime:
             return False
         return True
 
-    # cgroup memory paths -- frozen at class level so the path objects
-    # are constructed once at import time, not per call. Cached as
-    # pathlib.Path so each poll is just `.read_text()` + `int()`.
-    _CGROUP_V2_LIMIT_PATH = pathlib.Path("/sys/fs/cgroup/memory.max")
-    _CGROUP_V2_USAGE_PATH = pathlib.Path("/sys/fs/cgroup/memory.current")
-    _CGROUP_V1_LIMIT_PATH = pathlib.Path(
-        "/sys/fs/cgroup/memory/memory.limit_in_bytes",
-    )
-    _CGROUP_V1_USAGE_PATH = pathlib.Path(
-        "/sys/fs/cgroup/memory/memory.usage_in_bytes",
-    )
-    # cgroup v1 "unbounded" sentinel (~ 2**63). PITFALLS.md Pitfall 2.
-    _CGROUP_V1_UNBOUNDED_SENTINEL_THRESHOLD = 2**62
-
-    @staticmethod
-    def _resolve_container_memory_bytes() -> int | None:  # noqa: PLR0911
-        """
-        Return the container memory limit in bytes, or None if unbounded.
-
-        Priority order (D-01 / D-04):
-          1. cgroup v2 unified hierarchy (/sys/fs/cgroup/memory.max).
-             Literal "max" -> None (PITFALLS.md Pitfall 2 -- DO NOT
-             fall back to psutil.virtual_memory(); host-namespaced).
-          2. cgroup v1 fallback (/sys/fs/cgroup/memory/memory.limit_in_bytes).
-             Values >= 2**62 are the v1 "unbounded" sentinel -> None.
-          3. None on OSError, malformed/non-integer content, or a
-             non-positive limit (a 0 limit would cause ZeroDivisionError
-             in the watchdog ratio computation).
-
-        Caller MUST treat None as "watchdog disabled" and emit a
-        WARNING per D-22 -- never fall back to host-namespaced memory.
-        """
-        # cgroup v2 (unified hierarchy; expected on COS / GKE / Cloud Run)
-        try:
-            raw = CollectorRuntime._CGROUP_V2_LIMIT_PATH.read_text().strip()
-        except OSError:
-            pass
-        else:
-            if raw == "max":
-                return None
-            try:
-                val = int(raw)
-            except ValueError:
-                return None
-            return val if val > 0 else None
-        # cgroup v1 fallback (legacy hosts; should not be reachable on COS)
-        try:
-            raw = CollectorRuntime._CGROUP_V1_LIMIT_PATH.read_text().strip()
-        except OSError:
-            return None
-        try:
-            val = int(raw)
-        except ValueError:
-            return None
-        if (
-            val >= CollectorRuntime._CGROUP_V1_UNBOUNDED_SENTINEL_THRESHOLD
-            or val <= 0
-        ):
-            return None
-        return val
-
-    @staticmethod
-    def _resolve_container_memory_usage_bytes() -> int | None:
-        """
-        Return current container memory usage in bytes, or None on read error.
-
-        Tries cgroup v2 (/sys/fs/cgroup/memory.current) first, falls back
-        to cgroup v1 (/sys/fs/cgroup/memory/memory.usage_in_bytes). Per
-        D-04, the "max"/sentinel handling lives in
-        _resolve_container_memory_bytes -- this helper only sees numeric
-        values once the limit phase has decided the watchdog should run.
-
-        Returns None if BOTH paths raise OSError. The caller (the
-        watchdog body in Plan 04-02) defensively pauses on None per
-        CONTEXT.md "Specifics": "if read_text raises OSError mid-run,
-        set _paused_for_memory defensively and emit a single ERROR log".
-        """
-        try:
-            return int(
-                CollectorRuntime._CGROUP_V2_USAGE_PATH.read_text().strip(),
-            )
-        except (OSError, ValueError):
-            pass
-        try:
-            return int(
-                CollectorRuntime._CGROUP_V1_USAGE_PATH.read_text().strip(),
-            )
-        except (OSError, ValueError):
-            return None
-
     # -- Leasing ----------------------------------------------------------
 
     async def _leasing_loop(self) -> None:  # noqa: PLR0912
@@ -444,7 +334,7 @@ class CollectorRuntime:
         running at 249 for ~14s is negligible.
         """
         while True:
-            # Memory back-pressure (WATCHDOG-01 / D-26..D-28): if RSS
+            # Memory back-pressure (WATCHDOG-01 / D-26..D-28): if the cgroup
             # crossed the pause threshold, don't claim more feeds. Existing
             # leases continue running (held leases are renewed by the
             # heartbeat — pause means "stop claiming MORE", not "abandon
@@ -459,7 +349,7 @@ class CollectorRuntime:
             # _feed_tasks until pause clears.
             self._reap_completed_tasks()
 
-            if self._paused_for_memory.is_set():
+            if self._memory_watchdog.is_paused():
                 if await self._sleep_or_shutdown(
                     self._collector_settings.rss_watchdog_poll_interval_sec,
                 ):
@@ -1337,136 +1227,6 @@ class CollectorRuntime:
             # sleep_time clamps to 0 — fires immediately to catch up.
             next_tick += interval
 
-    def _rss_watchdog_loop(self, limit_bytes: int) -> None:  # noqa: PLR0912
-        """
-        OS daemon thread: poll cgroup RSS, gate _paused_for_memory, trip _shutdown.
-
-        Mirrors the heartbeat-loop pattern (no asyncio primitives — this is
-        an OS thread). After 3 consecutive samples >= pause_threshold, sets
-        _paused_for_memory so the leasing loop stops claiming new feeds.
-        After 3 consecutive samples >= exit_threshold, triggers graceful
-        shutdown via _loop.call_soon_threadsafe(_shutdown.set) AND sets
-        _thread_stop — the latter causes the next loop iteration to exit
-        via the `while not self._thread_stop.is_set()` check, giving us
-        the single-trip semantics required by PITFALLS Pitfall 1.
-
-        NEVER calls os._exit(1) — that path is reserved for fence violations
-        and the stall watchdog. Kernel OOM is the backstop for fast leaks
-        (REQUIREMENTS WATCHDOG-01 explicit).
-
-        Logging is transition-only (D-25): startup, pause-set, pause-clear,
-        trip. No periodic-poll logging — at 2s polling, 1800 lines/hour
-        would dominate Cloud Logging quota.
-        """
-        s = self._collector_settings
-        poll_interval = s.rss_watchdog_poll_interval_sec
-        pause_threshold = s.rss_watchdog_pause_threshold
-        exit_threshold = s.rss_watchdog_exit_threshold
-        # Hysteresis margin is hard-coded as pause_threshold - 0.10 per D-20
-        # — exposing it as a setting invites the 5pp temptation (D-08).
-        resume_threshold = pause_threshold - 0.10
-        pause_consec_target = s.rss_watchdog_pause_consecutive_samples
-        exit_consec_target = s.rss_watchdog_exit_consecutive_samples
-        warmup_sec = s.rss_watchdog_warmup_sec
-        watchdog_start = time.monotonic()
-
-        pause_consec = 0
-        exit_consec = 0
-        # One-shot flag for "OSError reading cgroup mid-run" — defensive
-        # pause + single ERROR log (CONTEXT.md "Specifics"). We do NOT
-        # trip exit on read failures (heavier action than failure mode
-        # warrants).
-        usage_read_error_logged = False
-
-        # D-21 startup log line (mandatory per ROADMAP SC#1).
-        logger.info(
-            "RSS watchdog limit = %d MB (cgroup detected)",
-            limit_bytes // (1024 * 1024),
-        )
-
-        while not self._thread_stop.is_set():
-            if self._thread_stop.wait(timeout=poll_interval):
-                break
-
-            # Warmup grace — D-11 + D-32: counters do NOT increment during
-            # warmup. Orthogonal to the consecutive-sample debounce; both
-            # protect against different failure modes.
-            if (time.monotonic() - watchdog_start) < warmup_sec:
-                continue
-
-            usage = self._resolve_container_memory_usage_bytes()
-            if usage is None:
-                # Defensive pause + single ERROR log (CONTEXT.md "Specifics":
-                # better to pause than to silently disable; do NOT trip exit).
-                if not self._paused_for_memory.is_set():
-                    self._paused_for_memory.set()
-                if not usage_read_error_logged:
-                    logger.error(
-                        "RSS watchdog: failed to read cgroup memory.current "
-                        "— defensively pausing claims",
-                    )
-                    usage_read_error_logged = True
-                continue
-
-            # A successful read clears the one-shot error-log gate so a
-            # later transient failure logs again.
-            usage_read_error_logged = False
-
-            ratio = usage / limit_bytes
-
-            # Exit-threshold debounce (D-09 / D-31).
-            if ratio >= exit_threshold:
-                exit_consec += 1
-            else:
-                exit_consec = 0
-
-            if exit_consec >= exit_consec_target:
-                logger.error(
-                    "RSS watchdog: %.1f%% >= exit threshold for %d samples "
-                    "— initiating graceful shutdown",
-                    ratio * 100.0,
-                    exit_consec,
-                )
-                # D-18: trip path sets BOTH _thread_stop (so the watchdog
-                # exits its own loop on the next iteration) AND
-                # _shutdown via call_soon_threadsafe (so the asyncio main
-                # loop sees the shutdown event). NEVER os._exit(1) —
-                # PITFALLS Pitfall 1 + REQUIREMENTS WATCHDOG-01.
-                self._loop.call_soon_threadsafe(self._shutdown.set)
-                self._thread_stop.set()
-                # Single-trip: the next iteration's `while not
-                # self._thread_stop.is_set()` will be False, exiting the
-                # loop. No explicit guard needed here.
-                continue
-
-            # Pause-set debounce (D-09 / D-30).
-            if ratio >= pause_threshold:
-                pause_consec += 1
-            else:
-                pause_consec = 0
-
-            if (
-                pause_consec >= pause_consec_target
-                and not self._paused_for_memory.is_set()
-            ):
-                self._paused_for_memory.set()
-                logger.warning(
-                    "RSS watchdog: %.1f%% >= pause threshold for %d samples "
-                    "— pausing claims",
-                    ratio * 100.0,
-                    pause_consec,
-                )
-
-            # Pause-clear (D-10): single sample below the hysteresis floor.
-            # No separate consecutive-sample counter — the 10pp band already
-            # absorbs noise.
-            if self._paused_for_memory.is_set() and ratio < resume_threshold:
-                self._paused_for_memory.clear()
-                logger.info(
-                    "RSS watchdog: %.1f%% — resuming claims",
-                    ratio * 100.0,
-                )
-
     async def _heartbeat_cycle(self) -> None:
         """
         Renew heartbeats and detect fence violations.
@@ -1605,7 +1365,7 @@ class CollectorRuntime:
 
     # -- Shutdown sequence ------------------------------------------------
 
-    async def _shutdown_sequence(self) -> None:  # noqa: PLR0912
+    async def _shutdown_sequence(self) -> None:
         """
         Orderly teardown: stop /healthz HTTP server, cancel feed tasks,
         stop heartbeat thread, close GCS client and database pools.
@@ -1653,11 +1413,7 @@ class CollectorRuntime:
         # 3s join (vs heartbeat's 5s): watchdog body has no DB I/O; only a
         # path-stuck-on-cgroup-read could legitimately stall, and that's
         # rare enough that 3s is generous.
-        if (
-            self._rss_watchdog_thread is not None
-            and self._rss_watchdog_thread.is_alive()
-        ):
-            await asyncio.to_thread(self._rss_watchdog_thread.join, timeout=3)
+        await self._memory_watchdog.join(timeout_sec=3)
 
         # Cancel all feed tasks
         for task in self._feed_tasks.values():
