@@ -17,6 +17,10 @@ from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
 from opentelemetry.metrics import get_meter_provider, set_meter_provider
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.metrics.view import (
+    ExplicitBucketHistogramAggregation,
+    View,
+)
 from opentelemetry.sdk.resources import (
     SERVICE_INSTANCE_ID,
     SERVICE_NAME,
@@ -149,8 +153,44 @@ def setup_tracing(
             )
             # Use default export interval
             reader = PeriodicExportingMetricReader(metrics_exporter)
+
+            # Custom bucket boundaries for e2e latency up to 30 minutes (1,800,000 ms)
+            latency_view = View(
+                instrument_name="transcription_e2e_latency_ms",
+                aggregation=ExplicitBucketHistogramAggregation(
+                    boundaries=[
+                        500.0,
+                        1000.0,
+                        2000.0,
+                        3000.0,
+                        4000.0,
+                        5000.0,
+                        7500.0,
+                        10000.0,
+                        15000.0,
+                        20000.0,
+                        30000.0,
+                        45000.0,
+                        60000.0,
+                        90000.0,
+                        120000.0,
+                        180000.0,
+                        240000.0,
+                        300000.0,
+                        420000.0,
+                        540000.0,
+                        660000.0,
+                        780000.0,
+                        900000.0,
+                        1200000.0,
+                        1500000.0,
+                        1800000.0,
+                    ]
+                ),
+            )
+
             meter_provider = MeterProvider(
-                metric_readers=[reader], resource=resource
+                metric_readers=[reader], resource=resource, views=[latency_view]
             )
             set_meter_provider(meter_provider)
 
