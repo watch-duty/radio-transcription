@@ -13,6 +13,9 @@ from backend.pipeline.ingestion import cgroup_memory
 
 logger = logging.getLogger(__name__)
 
+_BYTES_PER_MIB = 1024 * 1024
+_RESUME_HYSTERESIS_MARGIN = 0.10
+
 MemoryReader = Callable[[], int | None]
 MonotonicClock = Callable[[], float]
 
@@ -111,7 +114,7 @@ class RssWatchdog:
         poll_interval = settings.rss_watchdog_poll_interval_sec
         pause_threshold = settings.rss_watchdog_pause_threshold
         exit_threshold = settings.rss_watchdog_exit_threshold
-        resume_threshold = pause_threshold - 0.10
+        resume_threshold = pause_threshold - _RESUME_HYSTERESIS_MARGIN
         pause_consec_target = settings.rss_watchdog_pause_consecutive_samples
         exit_consec_target = settings.rss_watchdog_exit_consecutive_samples
         warmup_sec = settings.rss_watchdog_warmup_sec
@@ -123,7 +126,7 @@ class RssWatchdog:
 
         logger.info(
             "RSS watchdog limit = %d MB (cgroup detected)",
-            limit_bytes // (1024 * 1024),
+            limit_bytes // _BYTES_PER_MIB,
         )
 
         while not self._thread_stop.is_set():
