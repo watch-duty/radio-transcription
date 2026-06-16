@@ -157,7 +157,7 @@ class TestClientDownloadAudio(unittest.IsolatedAsyncioTestCase):
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
         self.assertEqual(failure.reason, "item_http_500")
-        self.assertEqual(self.session.get.call_count, 5)
+        self.assertEqual(self.session.get.call_count, 3)
 
     @patch(
         "backend.pipeline.ingestion.collectors.fire_notifications.client.control_flow.sleep_or_cancel",
@@ -177,7 +177,7 @@ class TestClientDownloadAudio(unittest.IsolatedAsyncioTestCase):
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
         self.assertEqual(failure.reason, "item_download_failed: TimeoutError")
-        self.assertEqual(self.session.get.call_count, 5)
+        self.assertEqual(self.session.get.call_count, 3)
 
     @patch(
         "backend.pipeline.ingestion.collectors.fire_notifications.client.control_flow.sleep_or_cancel",
@@ -197,7 +197,7 @@ class TestClientDownloadAudio(unittest.IsolatedAsyncioTestCase):
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
         self.assertEqual(failure.reason, "item_http_503")
-        self.assertEqual(self.session.get.call_count, 5)
+        self.assertEqual(self.session.get.call_count, 3)
 
     @patch(
         "backend.pipeline.ingestion.collectors.fire_notifications.client.control_flow.sleep_or_cancel",
