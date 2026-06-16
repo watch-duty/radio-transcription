@@ -218,7 +218,6 @@ services:
     depends_on:
       - pubsub-emulator
       - rules-management
-      - transcripts-api
       - postgres
 
   notification:
