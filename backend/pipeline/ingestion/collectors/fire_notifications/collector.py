@@ -144,17 +144,10 @@ async def _process_file_list(
         raise collector_failure(promoted.status_reason, promoted.reason)
 
 
-async def fire_notifications_collector(  # noqa: PLR0912
-    feed: LeasedFeed,
-    shutdown_event: asyncio.Event,
+def _init_client(
     url_base: str,
     resources: CaptureResources,
-) -> AsyncIterator[CaptureEvent]:
-    """Capture Fire Notifications audio via HTTP Polling.
-
-    Yields :class:`CapturedChunk` for each new MP3 file found, and
-    :class:`SourceObservation` for successful empty/skipped-only file listings.
-    """
+) -> FireNotificationsClient:
     try:
         s3_base_url = _require_env("FIRE_NOTIFICATIONS_S3_BASE")
     except ValueError as e:
@@ -171,6 +164,26 @@ async def fire_notifications_collector(  # noqa: PLR0912
             "missing_fire_notifications_auth_config",
         ) from e
 
+    return FireNotificationsRestClient(
+        session=resources.http_session,
+        url_base=url_base,
+        s3_base_url=s3_base_url,
+        user=user,
+        password=password,
+    )
+
+
+async def fire_notifications_collector(  # noqa: PLR0912
+    feed: LeasedFeed,
+    shutdown_event: asyncio.Event,
+    url_base: str,
+    resources: CaptureResources,
+) -> AsyncIterator[CaptureEvent]:
+    """Capture Fire Notifications audio via HTTP Polling.
+
+    Yields :class:`CapturedChunk` for each new MP3 file found, and
+    :class:`SourceObservation` for successful empty/skipped-only file listings.
+    """
     source_feed_id = feed.get("source_feed_id")
     if not source_feed_id:
         logger.error(
@@ -181,13 +194,7 @@ async def fire_notifications_collector(  # noqa: PLR0912
         raise missing_source_feed_id_failure()
 
     # Construct the Fire Notifications API REST client helper
-    client: FireNotificationsClient = FireNotificationsRestClient(
-        session=resources.http_session,
-        url_base=url_base,
-        s3_base_url=s3_base_url,
-        user=user,
-        password=password,
-    )
+    client = _init_client(url_base, resources)
 
     # Track UUIDs we've already ingested to prevent duplicates.
     # We use a deque with maxlen to prevent unbounded memory growth.
