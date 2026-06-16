@@ -44,7 +44,7 @@ class FireNotificationsFile:
     uuid: str
     filename: str
     start_time: datetime.datetime
-    size: int
+    size: int | None = None
 
 
 class FireNotificationsClient(abc.ABC):
@@ -173,8 +173,7 @@ class FireNotificationsRestClient(FireNotificationsClient):
             if not name.endswith(".mp3"):
                 continue
             file_uuid = f.get("uuid")
-            size = f.get("size")
-            if not file_uuid or size is None:
+            if not file_uuid:
                 continue
 
             try:
@@ -187,12 +186,22 @@ class FireNotificationsRestClient(FireNotificationsClient):
                 )
                 continue
 
+            raw_size = f.get("size")
+            size = None
+            if raw_size is not None:
+                try:
+                    size = int(raw_size)
+                except (ValueError, TypeError):
+                    logger.warning(
+                        "Invalid non-numeric size ignored: %s", raw_size
+                    )
+
             resolved_files.append(
                 FireNotificationsFile(
                     uuid=str(file_uuid),
                     filename=str(name),
                     start_time=start_time,
-                    size=int(size),
+                    size=size,
                 )
             )
 
