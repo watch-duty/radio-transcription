@@ -12,8 +12,8 @@ from integration_tests.feed_utils import create_test_bcfy_feed  # noqa: F401
 from integration_tests.test_utils import (
     get_audio_segments_api_url,
     verify_audio_segments_via_api,
+    verify_notification_received,
 )
-from integration_tests.utils import assert_eventually
 
 PUBSUB_EMULATOR_HOST = os.environ.get("PUBSUB_EMULATOR_HOST", "localhost:8085")
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "local-project")
@@ -108,27 +108,8 @@ def test_rules_creation_evaluation_publish(
     create_test_audio_segment(unique_trans_id, feed_id)
     publish_test_message(unique_trans_id, unique_transcript, feed_id)
 
-    def notification_received() -> bool:
-        try:
-            # Check Notification (via Mock Server)
-            url = f"http://{MOCK_SERVER_HOST}"
-            response = requests.get(url, timeout=5)
-            response.raise_for_status()
-            data = response.json()
-
-            if data:
-                for item in data:
-                    if unique_trans_id in str(item):
-                        return True
-        except requests.RequestException:
-            pass
-        return False
-
-    assert_eventually(
-        notification_received,
-        timeout_sec=70.0,
-        error_msg=f"Did not receive expected notification matching {unique_trans_id}.",
-    )
+    # 1. Check Notification (via Mock Server)
+    verify_notification_received(unique_trans_id, timeout_sec=70.0)
 
     # 2. Check Transcript Annotation (via Audio Segments API)
     verify_audio_segments_via_api(

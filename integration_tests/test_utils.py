@@ -84,3 +84,35 @@ def verify_multiple_audio_segments_via_api(
         error_msg=f"Did not find {min_count} matching audio segments via API",
     )
     return True
+
+
+def verify_notification_received(
+    segment_id: str,
+    timeout_sec: float = 70.0,
+) -> bool:
+    """Polls the mock server until a notification matching segment_id is found."""
+    mock_host = os.environ.get("MOCK_SERVER_HOST", "localhost:8082")
+    url = f"http://{mock_host}"
+
+    async def _check():
+        async with httpx.AsyncClient() as client:
+            res = await client.get(url, timeout=5.0)
+            if res.status_code == 200:
+                data = res.json()
+                return any(r.get("segmentId") == segment_id for r in data)
+            return False
+
+    def condition():
+        try:
+            return asyncio.run(_check())
+        except Exception as e:
+            logger.warning(f"Mock server check failed: {e}")
+            return False
+
+    logger.info(f"Waiting for notification matching segment {segment_id}...")
+    assert_eventually(
+        condition,
+        timeout_sec=timeout_sec,
+        error_msg=f"Did not find expected notification matching segment {segment_id}",
+    )
+    return True
