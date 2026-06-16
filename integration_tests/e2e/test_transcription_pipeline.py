@@ -43,7 +43,9 @@ def _publish_and_verify(
         feed_id,
         lambda s: (
             any(ann["type"] == "TRANSCRIPT" for ann in s.get("annotations", []))
-            and any(ann["type"] == "EVALUATION" for ann in s.get("annotations", []))
+            and any(
+                ann["type"] == "EVALUATION" for ann in s.get("annotations", [])
+            )
         ),
     )
 

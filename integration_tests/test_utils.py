@@ -1,12 +1,10 @@
 import asyncio
 import logging
 import os
-import time
 from collections.abc import Callable
 from pathlib import Path
 
 import httpx
-import pytest
 
 from integration_tests.utils import assert_eventually
 

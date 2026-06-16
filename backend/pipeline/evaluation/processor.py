@@ -4,7 +4,6 @@ import base64
 import logging
 from typing import TYPE_CHECKING
 
-from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.common.tracing_utils import (
     inject_otel_context,
     parse_pubsub_cloudevent,
@@ -109,9 +108,7 @@ class EvaluationEventProcessor:
             # 3. Write to Annotation Segments table
             try:
                 annotation_data = {
-                    "decisions": list(
-                        evaluated_payload.evaluation_decisions
-                    ),
+                    "decisions": list(evaluated_payload.evaluation_decisions),
                     "errors": list(evaluated_payload.errors),
                 }
                 self.audio_segments_client.add_audio_segment_annotation(

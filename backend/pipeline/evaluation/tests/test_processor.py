@@ -3,7 +3,6 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
-from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.evaluation.processor import EvaluationEventProcessor
 from backend.pipeline.schema_types import (
     EvaluationErrorType,
@@ -173,7 +172,6 @@ class TestEvaluationEventProcessor(unittest.TestCase):
         self.mock_service.evaluate.assert_called_once()
         self.mock_raw_publisher.publish.assert_not_called()
 
-
     @patch("backend.pipeline.evaluation.processor.with_tracer_context")
     def test_process_event_uses_traceparent(
         self, mock_with_tracer_context
@@ -259,7 +257,6 @@ class TestEvaluationEventProcessor(unittest.TestCase):
         self.mock_service.evaluate.assert_called_once()
         # Should still publish because it was flagged, despite DB error
         self.mock_raw_publisher.publish.assert_called_once()
-
 
 
 if __name__ == "__main__":
