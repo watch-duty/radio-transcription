@@ -264,6 +264,7 @@ def process_ordering(
         buffer_elements=buffer_elements,
         chunk_duration_ms=metadata.duration_ms,
         traceparent=metadata.traceparent,
+        baggage=metadata.baggage,
         max_emit=MAX_CHUNKS_PER_WINDMILL_BUNDLE,
     )
 

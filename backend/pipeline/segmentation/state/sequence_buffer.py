@@ -48,6 +48,7 @@ class SequenceBuffer:
         buffer_elements: list[BufferedChunk],
         chunk_duration_ms: int | None = None,
         traceparent: str | None = None,
+        baggage: str | None = None,
         max_emit: int | None = None,
     ) -> tuple[int, list[BufferedChunk], list[BufferedChunk], bool, bool]:
         """Processes a single incoming audio chunk against the expected sequence progression.
@@ -71,7 +72,9 @@ class SequenceBuffer:
 
         if abs(difference) <= epsilon_ms:
             # HAPPY PATH: The chunk matches our mathematical expectation exactly.
-            to_emit.append(BufferedChunk(current_ts_ms, gcs_uri, traceparent))
+            to_emit.append(
+                BufferedChunk(current_ts_ms, gcs_uri, traceparent, baggage)
+            )
             # Advance the expected timestamp. Use provided duration if available (for varying lengths),
             # otherwise fallback to fixed config duration.
             duration = (
@@ -100,7 +103,9 @@ class SequenceBuffer:
             logger.info(
                 f"Yielding late chunk at {current_ts_ms} (expected {expected_next_ts}) for isolated transcription."
             )
-            to_emit.append(BufferedChunk(current_ts_ms, gcs_uri, traceparent))
+            to_emit.append(
+                BufferedChunk(current_ts_ms, gcs_uri, traceparent, baggage)
+            )
         else:
             # FUTURE PATH: The difference > epsilon_ms, meaning this chunk arrived before
             # its predecessor. We store it in state, parking it until the missing chunk arrives.
@@ -112,7 +117,7 @@ class SequenceBuffer:
             heapq.heappush(
                 heap,
                 ComparableChunk(
-                    BufferedChunk(current_ts_ms, gcs_uri, traceparent)
+                    BufferedChunk(current_ts_ms, gcs_uri, traceparent, baggage)
                 ),
             )
             buffer_elements[:] = [item.chunk for item in heap]

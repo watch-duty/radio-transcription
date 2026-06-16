@@ -472,6 +472,68 @@ class OrderedStitchAudioTest(unittest.TestCase):
     @patch(
         "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
     )
+    def test_ordered_stitch_audio_updates_otel_context_on_next_chunks(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies ActiveStitchingState updates trace parent/baggage."""
+        mock_processor_inst = mock_audio_processor.return_value
+        chunk_data = AudioChunkData(
+            start_ms=2000,
+            audio=np.zeros(16000, dtype=np.int16),
+            speech_segments=[],
+            gcs_uri="gs://test-bucket/path/to/test2.flac",
+            duration_ms=1000,
+            sample_rate=16000,
+        )
+        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        stitch_config = get_test_stitch_config()
+        fn = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn.setup()
+
+        mock_state = MagicMock()
+        mock_state.read.return_value = ActiveStitchingState(
+            session_id="mock-session-id",
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
+            traceparent="mock-traceparent-1",
+            baggage="ingest_time_ms=1",
+            sample_rate=16000,
+        )
+
+        metadata = ChunkMetadata(
+            gcs_uri="gs://test-bucket/path/to/test2.flac",
+            session_id="mock-session-id",
+            duration_ms=1000,
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
+            traceparent="mock-traceparent-2",
+            baggage="ingest_time_ms=2",
+        )
+
+        list(
+            fn.process(
+                element=("test-feed", metadata),
+                timestamp=Timestamp(200),
+                transmission_buffer_state=MagicMock(),
+                transmission_context_state=mock_state,
+                last_start_ms_state=MagicMock(),
+                out_of_order_timer=MagicMock(),
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        self.assertGreater(mock_state.write.call_count, 0)
+        written_state = mock_state.write.call_args[0][0]
+        self.assertIsInstance(written_state, ActiveStitchingState)
+        self.assertEqual(written_state.traceparent, "mock-traceparent-2")
+        self.assertEqual(written_state.baggage, "ingest_time_ms=2")
+
+    @patch(
+        "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
+    )
     def test_late_chunk_empty_buffer_no_fallback(
         self, mock_audio_processor: MagicMock
     ) -> None:
