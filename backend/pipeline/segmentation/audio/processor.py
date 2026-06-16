@@ -14,6 +14,7 @@ from backend.pipeline.schema_types import streaming_state as bp_state
 from backend.pipeline.segmentation import storage as audio_storage
 from backend.pipeline.segmentation.audio import vad
 from backend.pipeline.segmentation.constants import (
+    MAX_AUDIO_CHUNK_DURATION_SEC,
     MONO_CHANNEL_COUNT,
     PRIMARY_AUDIO_STREAM_INDEX,
 )
@@ -28,6 +29,17 @@ def get_vad_engine(config_json: str) -> vad.VoiceActivityDetector:
     except Exception:
         config = {}
     return vad.VoiceActivityDetector(**config)
+
+
+def _parse_feed_and_segment_from_gcs_path(gcs_path: str) -> tuple[str, str]:
+    """Parses the feed name and segment ID from a standard GCS path.
+
+    e.g., "gs://bucket/feed_name/segment_id.flac" -> ("feed_name", "segment_id.flac")
+    """
+    parts = gcs_path.split("/")
+    feed_name = parts[-2] if len(parts) >= 2 else "unknown"
+    segment_id = parts[-1] if len(parts) >= 1 else "unknown"
+    return feed_name, segment_id
 
 
 class SegmentationAudioProcessor:
@@ -83,6 +95,19 @@ class SegmentationAudioProcessor:
         in_mem_file.seek(0)
 
         samples, sr = self._decode_audio_in_memory(in_mem_file)
+
+        # Safeguard: Reject extremely long audio files (e.g. >300s) to prevent memory exhaustion
+        # and Windmill timeouts at the engine level.
+        duration_sec = len(samples) / sr
+        if duration_sec > MAX_AUDIO_CHUNK_DURATION_SEC:
+            feed_name, segment_id = _parse_feed_and_segment_from_gcs_path(
+                gcs_path
+            )
+            msg = (
+                f"[{feed_name} / {segment_id}] Audio chunk duration of {duration_sec:.2f}s for GCS path '{gcs_path}' "
+                f"exceeds the maximum safety limit of {MAX_AUDIO_CHUNK_DURATION_SEC}s."
+            )
+            raise ValueError(msg)
 
         speech_segments = []
         if len(samples) > 0:
