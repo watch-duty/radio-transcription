@@ -32,7 +32,8 @@ export interface PlaybackController {
   play: () => void;
   pause: () => void;
   stop: () => void;
-  seek: () => number;
+  getCurrentTime: () => number;
+  setCurrentTime: (time: number) => void;
   unload: () => void;
   off: () => void;
 }
@@ -141,7 +142,11 @@ export class WebAudioPlayer {
         this.audio.pause();
         this.audio.currentTime = 0;
       },
-      seek: () => this.audio.currentTime,
+      getCurrentTime: () => this.audio.currentTime,
+      setCurrentTime: (time: number) => {
+        if (!Number.isFinite(time)) return;
+        this.audio.currentTime = time;
+      },
       unload: () => this.detachListeners(listeners),
       off: () => this.detachListeners(listeners),
     };

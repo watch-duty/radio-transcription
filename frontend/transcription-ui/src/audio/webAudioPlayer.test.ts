@@ -220,6 +220,17 @@ describe('WebAudioPlayer', () => {
     expect(onend).toHaveBeenCalled();
   });
 
+  it('reads and writes the playback position', () => {
+    const player = new WebAudioPlayer(new AudioContext());
+    const handle = player.load('https://example.com/clip.m4a', {});
+
+    lastAudio.currentTime = 3.2;
+    expect(handle.getCurrentTime()).toBe(3.2);
+
+    handle.setCurrentTime(7.5);
+    expect(lastAudio.currentTime).toBe(7.5);
+  });
+
   it('clears the source on stop but leaves the context open', () => {
     const player = new WebAudioPlayer(new AudioContext());
     player.load('https://example.com/clip.m4a', {});

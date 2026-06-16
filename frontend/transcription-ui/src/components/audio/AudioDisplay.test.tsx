@@ -540,7 +540,7 @@ describe('AudioDisplay', () => {
     ];
 
     const mockPlayer = {
-      seek: vi.fn().mockReturnValue(2.5),
+      getCurrentTime: vi.fn().mockReturnValue(2.5),
     };
 
     const currentAudioRef = {
@@ -560,7 +560,7 @@ describe('AudioDisplay', () => {
     );
 
     await waitFor(() => {
-      expect(mockPlayer.seek).toHaveBeenCalled();
+      expect(mockPlayer.getCurrentTime).toHaveBeenCalled();
     });
 
     expect(mockSetTime).toHaveBeenCalledWith(2.5);

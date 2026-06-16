@@ -199,7 +199,8 @@ vi.mock('../../audio/webAudioPlayer', () => ({
         },
         pause: () => callbacks.onpause?.(),
         stop: () => {},
-        seek: () => 0,
+        getCurrentTime: () => 0,
+        setCurrentTime: () => {},
         unload: () => {},
         off: () => {},
       };
