@@ -154,7 +154,10 @@ def setup_tracing(
             # Use default export interval
             reader = PeriodicExportingMetricReader(metrics_exporter)
 
-            # Custom bucket boundaries for e2e latency up to 30 minutes (1,800,000 ms)
+            # Custom bucket boundaries for E2E latency. The default OTel boundaries cap at 10s,
+            # causing p99/p95 percentiles to flatline at 10s in Cloud Monitoring.
+            # This progressive scale goes from 500ms up to 30 minutes (1,800,000 ms) to capture
+            # normal runs, transcription times, and long queued jobs while keeping bucket count low.
             latency_view = View(
                 instrument_name="transcription_e2e_latency_ms",
                 aggregation=ExplicitBucketHistogramAggregation(
