@@ -149,15 +149,15 @@ export function useAudioSegments({
 
     if (newestTimestamp) {
       let currentNextToken: string | undefined = undefined;
-      let hasMore = true;
       let iterations = 0;
 
       try {
-        while (hasMore) {
+        do {
           if (iterations > MAX_AUDIO_SEGMENTS_POLLING_ITERATIONS) {
             console.warn(
               'pollNewerAudioSegments has more than 10 pages of new audio segments. This is unexpected. If this message continues, please report a bug.'
             );
+            break;
           }
           iterations++;
 
@@ -177,8 +177,7 @@ export function useAudioSegments({
           }
 
           currentNextToken = response.nextToken;
-          hasMore = !!currentNextToken;
-        }
+        } while (currentNextToken);
       } catch (error) {
         console.error('Error polling for new audio segments:', error);
       }
