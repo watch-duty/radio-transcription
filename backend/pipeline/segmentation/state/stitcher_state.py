@@ -295,6 +295,8 @@ class AudioStitchingStateMachine:
         ctx.start_audio_offset_ms = None
         ctx.buffer_duration_ms = 0
         ctx.speech_segments.clear()
+        ctx.traceparent = None
+        ctx.baggage = None
 
     def _process_silent_chunk(
         self, chunk_data: AudioChunkData, ctx: StitcherContext
