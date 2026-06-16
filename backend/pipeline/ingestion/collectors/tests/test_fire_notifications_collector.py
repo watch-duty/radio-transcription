@@ -4,6 +4,7 @@ import asyncio
 import collections
 import datetime
 import os
+import subprocess
 import unittest
 import uuid
 from typing import Any
@@ -593,9 +594,23 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
             ),
         ]
 
-        with patch(
-            "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
-            side_effect=ValueError("bad mp3"),
+        expected_reason = (
+            "ffprobe exited with code 1; "
+            "Invalid data found when processing input"
+        )
+        with (
+            patch(
+                "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
+                side_effect=subprocess.CalledProcessError(
+                    1,
+                    ["ffprobe"],
+                    stderr=b"Invalid data found when processing input\n",
+                ),
+            ),
+            self.assertLogs(
+                "backend.pipeline.ingestion.collectors.fire_notifications.collector",
+                level="WARNING",
+            ) as logs,
         ):
             with self.assertRaises(FeedFailure) as ctx:
                 async for _ in collector._process_file_list(
@@ -614,7 +629,64 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
             ctx.exception.status_reason,
             FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
         )
-        self.assertEqual(str(ctx.exception), "duration_probe_failed")
+        self.assertEqual(str(ctx.exception), expected_reason)
+        log_text = "\n".join(logs.output)
+        self.assertIn(expected_reason, log_text)
+        self.assertNotIn("Traceback", log_text)
+        self.assertNotIn("uuid1", self.processed_uuids)
+        mock_emit.assert_not_called()
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.telemetry.emit_call_download_failed",
+    )
+    async def test_duration_generic_failure_promotes_exception_reason(
+        self,
+        mock_emit: MagicMock,
+    ) -> None:
+        self.client.download_audio.return_value = b"mp3_bytes"
+        files = [
+            FireNotificationsFile(
+                uuid="uuid1",
+                filename="CHAN 2026-05-20 12-00-00.mp3",
+                start_time=datetime.datetime(
+                    2026, 5, 20, 12, 0, 0, tzinfo=datetime.UTC
+                ),
+                size=1000,
+            ),
+        ]
+
+        expected_reason = "ValueError: bad mp3"
+        with (
+            patch(
+                "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
+                side_effect=ValueError("bad mp3"),
+            ),
+            self.assertLogs(
+                "backend.pipeline.ingestion.collectors.fire_notifications.collector",
+                level="WARNING",
+            ) as logs,
+        ):
+            with self.assertRaises(FeedFailure) as ctx:
+                async for _ in collector._process_file_list(
+                    files,
+                    self.client,
+                    self.shutdown,
+                    "session-id",
+                    self.feed,  # type: ignore
+                    self.processed_uuids,
+                    "CHAN",
+                    ItemBatchOutcome(),
+                ):
+                    pass
+
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        )
+        self.assertEqual(str(ctx.exception), expected_reason)
+        log_text = "\n".join(logs.output)
+        self.assertIn(expected_reason, log_text)
+        self.assertNotIn("Traceback", log_text)
         self.assertNotIn("uuid1", self.processed_uuids)
         mock_emit.assert_not_called()
 
