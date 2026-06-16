@@ -73,6 +73,7 @@ the likely owner:
 |--------|----------|
 | `system_authentication_failed` | Configured credentials, tokens, or partner auth are rejected by the upstream provider. |
 | `system_configuration_invalid` | The feed row is missing or has an invalid source-specific identifier, URL, or required configuration. |
+| `system_source_configuration_invalid` | A source control-plane or provider API response says the configured feed/source path is invalid, but v1 keeps it non-budgeted because provider-side changes may recover without feed-row edits. |
 | `system_runtime_configuration_invalid` | Shared runtime, deployment, environment, source-class, or transport configuration is invalid and retry is not expected to repair it. |
 | `system_credential_access_failed` | Watch Duty could not retrieve or access internal credentials, such as Secret Manager access failure; this is not the same as upstream provider credential rejection. |
 | `system_source_payload_invalid` | A successful source response violates the collector payload contract, but v1 keeps it non-budgeted because the response may be transient, provider-owned, or later auto-recovered by a deploy. |
