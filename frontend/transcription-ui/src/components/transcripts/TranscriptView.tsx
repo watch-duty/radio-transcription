@@ -21,6 +21,7 @@ import { AudioClassification, type AudioSegment } from '@transcription/common';
 import {
   type PlaybackController,
   WebAudioPlayer,
+  createAudioContext,
 } from '../../audio/webAudioPlayer';
 import { useAuth } from '../../context/AuthContext';
 import {
@@ -140,6 +141,7 @@ export function TranscriptView({
   const newerLoadAnchorId = useRef<string | null>(null);
   const wasFetchingNewer = useRef(false);
 
+  const audioContextRef = useRef<AudioContext | null>(null);
   const playerRef = useRef<WebAudioPlayer | null>(null);
   const currentAudio = useRef<PlaybackController | null>(null);
   const [playbackEndedForId, setPlaybackEndedForId] = useState<string | null>(
@@ -154,7 +156,9 @@ export function TranscriptView({
 
   useEffect(() => {
     return () => {
-      playerRef.current?.destroy();
+      // Best-effort context teardown; the browser reclaims it on page unload regardless.
+      audioContextRef.current?.close().catch(() => {});
+      audioContextRef.current = null;
       playerRef.current = null;
       currentAudio.current = null;
     };
@@ -164,7 +168,8 @@ export function TranscriptView({
   const toggleAudio = useCallback(
     (segmentId: string, audioUri: string) => {
       // Lazy-build on first play so the AudioContext is created inside a user gesture.
-      const player = (playerRef.current ??= new WebAudioPlayer());
+      const context = (audioContextRef.current ??= createAudioContext());
+      const player = (playerRef.current ??= new WebAudioPlayer(context));
       player.resume();
 
       const newAudio = currentlyPlayingSegmentId !== segmentId;

@@ -28,8 +28,6 @@ export interface AudioCallbacks {
   onerror?: () => void;
 }
 
-// Per-segment controller over the player's shared element; `unload`/`off` only
-// detach this segment's listeners, they never tear down the graph.
 export interface PlaybackController {
   play: () => void;
   pause: () => void;
@@ -48,7 +46,7 @@ type GraphListeners = {
 
 const RAMP_SECONDS = 0.05;
 
-function createAudioContext(): AudioContext {
+export function createAudioContext(): AudioContext {
   const Ctor =
     window.AudioContext ??
     (window as unknown as { webkitAudioContext?: typeof AudioContext })
@@ -59,36 +57,29 @@ function createAudioContext(): AudioContext {
   return new Ctor();
 }
 
-/**
- * Plays audio through the Web Audio API:
- *   MediaElementSource → GainNode → StereoPannerNode → destination
- *
- * A MediaElementSourceNode can only be created once per element, so the graph is
- * built once and the source is swapped per segment via `load()`; volume/pan/speed
- * live on the graph and thus apply to every segment automatically.
- */
+/** MediaElementSource → GainNode → StereoPannerNode → destination */
 export class WebAudioPlayer {
   private readonly context: AudioContext;
   private readonly audio: HTMLAudioElement;
+  private readonly source: MediaElementAudioSourceNode;
   private readonly gain: GainNode;
   private readonly panner: StereoPannerNode;
 
   private activeListeners: GraphListeners | null = null;
   private speed = 1;
 
-  constructor() {
-    this.context = createAudioContext();
+  constructor(context: AudioContext) {
+    this.context = context;
 
     this.audio = new Audio();
-    // Required so the cross-origin GCS media isn't tainted when routed through
-    // Web Audio (otherwise the graph output is silenced).
+    // Cross-origin GCS media must be CORS-clean here or Web Audio silences the output.
     this.audio.crossOrigin = 'anonymous';
     this.audio.preload = 'auto';
 
-    const source = this.context.createMediaElementSource(this.audio);
+    this.source = this.context.createMediaElementSource(this.audio);
     this.gain = this.context.createGain();
     this.panner = this.context.createStereoPanner();
-    source
+    this.source
       .connect(this.gain)
       .connect(this.panner)
       .connect(this.context.destination);
@@ -164,13 +155,14 @@ export class WebAudioPlayer {
     this.audio.load();
   }
 
-  destroy(): void {
+  dispose(): void {
     this.stop();
-    this.context.close().catch(() => {});
+    this.source.disconnect();
+    this.gain.disconnect();
+    this.panner.disconnect();
   }
 
-  // Detaches the given listeners, or the active ones if none specified. A
-  // stale handle (already replaced by a newer load) is a no-op.
+  // A stale handle (already replaced by a newer `load`) is a no-op.
   private detachListeners(listeners?: GraphListeners): void {
     const target = listeners ?? this.activeListeners;
     if (!target || (listeners && listeners !== this.activeListeners)) return;

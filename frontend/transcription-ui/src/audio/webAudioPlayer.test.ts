@@ -66,6 +66,7 @@ class MockAudioParam {
 
 class MockNode {
   connect = vi.fn((dest: unknown) => dest);
+  disconnect = vi.fn();
 }
 
 class MockGainNode extends MockNode {
@@ -128,8 +129,6 @@ let lastContext: MockAudioContext;
 let lastAudio: MockAudio;
 
 beforeEach(() => {
-  // Plain function expressions (unlike arrows) are valid constructors, and
-  // returning an object makes `new` yield it — letting us capture each instance.
   vi.stubGlobal('AudioContext', function () {
     lastContext = new MockAudioContext();
     return lastContext;
@@ -146,7 +145,7 @@ afterEach(() => {
 
 describe('WebAudioPlayer', () => {
   it('builds the MediaElementSource → Gain → StereoPanner → destination graph', () => {
-    new WebAudioPlayer();
+    new WebAudioPlayer(new AudioContext());
 
     expect(lastContext.createMediaElementSource).toHaveBeenCalledWith(
       lastAudio
@@ -160,7 +159,7 @@ describe('WebAudioPlayer', () => {
   });
 
   it('resumes a suspended context and is a no-op when running', () => {
-    const player = new WebAudioPlayer();
+    const player = new WebAudioPlayer(new AudioContext());
 
     player.resume();
     expect(lastContext.resume).toHaveBeenCalledTimes(1);
@@ -171,7 +170,7 @@ describe('WebAudioPlayer', () => {
   });
 
   it('maps volume in dB to gain', () => {
-    const player = new WebAudioPlayer();
+    const player = new WebAudioPlayer(new AudioContext());
 
     player.setVolumeDb(-6);
     expect(lastContext.gain.gain.linearRampToValueAtTime).toHaveBeenCalledWith(
@@ -181,7 +180,7 @@ describe('WebAudioPlayer', () => {
   });
 
   it('applies pan to the StereoPanner', () => {
-    const player = new WebAudioPlayer();
+    const player = new WebAudioPlayer(new AudioContext());
 
     player.setPan(-1);
     expect(lastContext.panner.pan.linearRampToValueAtTime).toHaveBeenCalledWith(
@@ -191,14 +190,14 @@ describe('WebAudioPlayer', () => {
   });
 
   it('sets playbackRate', () => {
-    const player = new WebAudioPlayer();
+    const player = new WebAudioPlayer(new AudioContext());
 
     player.setSpeed(1.5);
     expect(lastAudio.playbackRate).toBe(1.5);
   });
 
   it('loads a clip, wires callbacks, and re-applies the current speed', () => {
-    const player = new WebAudioPlayer();
+    const player = new WebAudioPlayer(new AudioContext());
     player.setSpeed(1.25);
 
     const onplay = vi.fn();
@@ -221,10 +220,22 @@ describe('WebAudioPlayer', () => {
     expect(onend).toHaveBeenCalled();
   });
 
-  it('closes the context on destroy', () => {
-    const player = new WebAudioPlayer();
-    player.destroy();
+  it('clears the source on stop but leaves the context open', () => {
+    const player = new WebAudioPlayer(new AudioContext());
+    player.load('https://example.com/clip.m4a', {});
+    player.stop();
 
-    expect(lastContext.close).toHaveBeenCalled();
+    expect(lastAudio.pause).toHaveBeenCalled();
+    expect(lastAudio.removeAttribute).toHaveBeenCalledWith('src');
+    expect(lastContext.close).not.toHaveBeenCalled();
+  });
+
+  it('disconnects its own nodes on dispose without closing the context', () => {
+    const player = new WebAudioPlayer(new AudioContext());
+    player.dispose();
+
+    expect(lastContext.gain.disconnect).toHaveBeenCalled();
+    expect(lastContext.panner.disconnect).toHaveBeenCalled();
+    expect(lastContext.close).not.toHaveBeenCalled();
   });
 });
