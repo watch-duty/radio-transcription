@@ -26,6 +26,9 @@ from backend.pipeline.ingestion.collectors.fire_notifications.client import (
     FireNotificationsFile,
     FireNotificationsRestClient,
 )
+from backend.pipeline.ingestion.failure_classifiers import (
+    ffmpeg as ffmpeg_classifier,
+)
 from backend.pipeline.ingestion.models import (
     AudioMimeType,
     CapturedChunk,
@@ -97,16 +100,17 @@ async def _process_file_list(
         try:
             # to_thread: get_audio_duration shells out to ffprobe — keep it off the event loop.
             duration_ms = await asyncio.to_thread(get_audio_duration, mp3_bytes)
-        except Exception:
+        except Exception as exc:
+            reason = ffmpeg_classifier.ffprobe_exception_failure_reason(exc)
             logger.warning(
-                "Failed to compute duration for uuid=%s",
+                "Failed to compute duration for uuid=%s: %s",
                 f.uuid,
-                exc_info=True,
+                reason,
             )
             outcome.record_failure(
                 ItemFailure(
                     feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-                    "duration_probe_failed",
+                    reason,
                 )
             )
             continue
