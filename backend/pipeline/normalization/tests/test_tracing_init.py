@@ -24,4 +24,6 @@ class TestTracingInitialization(unittest.TestCase):
         """Verifies setup_tracing is called when the cloud event handler runs."""
         mock_event = mock.MagicMock()
         normalization_main.normalize_claim_check(mock_event)
-        mock_setup_tracing.assert_called_once_with(use_batch=False)
+        mock_setup_tracing.assert_called_once_with(
+            service_name="normalization-service", use_batch=False
+        )
