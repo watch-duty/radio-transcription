@@ -664,6 +664,8 @@ class StitcherEngine:
                             speech_segments=ctx.speech_segments,
                             prior_audio_tail=prior_tail,
                             sample_rate=chunk_data.sample_rate,
+                            traceparent=ctx.traceparent,
+                            baggage=ctx.baggage,
                         )
                 case datatypes.ScheduleStaleTimerAction():
                     timer_manager.schedule(

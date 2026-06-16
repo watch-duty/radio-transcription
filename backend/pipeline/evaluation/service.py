@@ -163,8 +163,7 @@ class EvaluationService:
                 new_audio.end_audio_offset
             )
 
-            # 5. Record End-to-End Latency Metric via OpenTelemetry
-            _record_e2e_latency(new_audio.feed_id)
+        
 
         except Exception:
             logger.exception("Error processing new audio message")
