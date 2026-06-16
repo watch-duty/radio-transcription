@@ -7,16 +7,15 @@ import datetime
 import logging
 import random
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
 from backend.pipeline.common.audio import get_audio_duration
-from backend.pipeline.ingestion.collectors import aiohttp_requests
 from backend.pipeline.ingestion import quarantine_reason
 from backend.pipeline.ingestion.collectors import (
+    aiohttp_requests,
     control_flow,
     failure_classification,
-    item_downloads,
     payloads,
     telemetry,
 )
@@ -278,8 +277,9 @@ async def _fetch_file_list(
 
     def validate_payload(payload: object) -> dict[str, Any]:
         if not isinstance(payload, dict):
-            raise ValueError("Payload must be a dictionary")
-        return payload
+            msg = "payload must be a dictionary"
+            raise TypeError(msg)
+        return cast("dict[str, Any]", payload)
 
     return await aiohttp_requests.fetch_json_with_retries(
         session,
@@ -357,7 +357,7 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
     session = resources.http_session
 
     # Stagger initial polling requests to prevent thundering herd
-    startup_delay = random.uniform(0, _POLL_INTERVAL_SEC)
+    startup_delay = random.uniform(0, _POLL_INTERVAL_SEC)  # noqa: S311
     await control_flow.sleep_or_cancel(shutdown_event, startup_delay)
 
     while not shutdown_event.is_set():

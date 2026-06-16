@@ -83,7 +83,9 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         self.shutdown = asyncio.Event()
 
     async def test_success(self) -> None:
-        self.session.get = MagicMock(return_value=_mock_response(200, b"audio_data"))
+        self.session.get = MagicMock(
+            return_value=_mock_response(200, b"audio_data")
+        )
 
         data = await collector._download_audio(
             self.session, "http://url", self.shutdown
