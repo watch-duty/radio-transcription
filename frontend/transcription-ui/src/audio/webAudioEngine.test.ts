@@ -21,7 +21,7 @@ class MockPannerNode extends MockNode {
 }
 
 class MockAudioContext {
-  state: AudioContextState | 'interrupted' = 'suspended';
+  state: AudioContextState = 'suspended';
   currentTime = 0;
   destination = {};
   gain = new MockGainNode();
@@ -71,18 +71,6 @@ class MockAudio {
 let lastContext: MockAudioContext;
 let lastAudio: MockAudio;
 
-function setUserAgent(ua: string) {
-  Object.defineProperty(window.navigator, 'userAgent', {
-    value: ua,
-    configurable: true,
-  });
-}
-
-const SAFARI_UA =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15';
-const CHROME_UA =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36';
-
 beforeEach(() => {
   // Plain function expressions (unlike arrows) are valid constructors, and
   // returning an object makes `new` yield it — letting us capture each instance.
@@ -94,12 +82,10 @@ beforeEach(() => {
     lastAudio = new MockAudio();
     return lastAudio;
   });
-  setUserAgent(CHROME_UA);
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  vi.useRealTimers();
 });
 
 describe('WebAudioEngine', () => {
@@ -128,14 +114,6 @@ describe('WebAudioEngine', () => {
     expect(lastContext.resume).not.toHaveBeenCalled();
   });
 
-  it('resumes a Safari "interrupted" context', () => {
-    const engine = new WebAudioEngine();
-    lastContext.state = 'interrupted';
-
-    engine.resume();
-    expect(lastContext.resume).toHaveBeenCalled();
-  });
-
   it('maps volume in dB to gain', () => {
     const engine = new WebAudioEngine();
 
@@ -156,7 +134,7 @@ describe('WebAudioEngine', () => {
     );
   });
 
-  it('sets playbackRate immediately on non-Safari browsers', () => {
+  it('sets playbackRate', () => {
     const engine = new WebAudioEngine();
 
     engine.setSpeed(1.5);
@@ -187,69 +165,10 @@ describe('WebAudioEngine', () => {
     expect(onend).toHaveBeenCalled();
   });
 
-  describe('on Safari', () => {
-    beforeEach(() => {
-      setUserAgent(SAFARI_UA);
-      vi.useFakeTimers();
-    });
-
-    it('debounces playbackRate and brackets it with pause/resume while playing', async () => {
-      const engine = new WebAudioEngine();
-      const onplay = vi.fn();
-      const onpause = vi.fn();
-      engine.load('https://example.com/clip.m4a', { onplay, onpause });
-
-      lastAudio.paused = false;
-      onplay.mockClear();
-      onpause.mockClear();
-
-      engine.setSpeed(2);
-      expect(lastAudio.playbackRate).toBe(1);
-
-      await vi.advanceTimersByTimeAsync(200);
-
-      expect(lastAudio.playbackRate).toBe(2);
-      expect(lastAudio.pause).toHaveBeenCalled();
-      expect(lastAudio.play).toHaveBeenCalled();
-      // The internal pause/resume must not surface as play/pause callbacks.
-      expect(onpause).not.toHaveBeenCalled();
-      expect(onplay).not.toHaveBeenCalled();
-    });
-
-    it('coalesces rapid speed changes into a single applied value', async () => {
-      const engine = new WebAudioEngine();
-      engine.load('https://example.com/clip.m4a', {});
-
-      engine.setSpeed(1.5);
-      engine.setSpeed(2);
-
-      await vi.advanceTimersByTimeAsync(200);
-      expect(lastAudio.playbackRate).toBe(2);
-    });
-  });
-
-  it('resumes on visibilitychange when the page becomes visible', () => {
-    Object.defineProperty(document, 'visibilityState', {
-      value: 'visible',
-      configurable: true,
-    });
-    const engine = new WebAudioEngine();
-    engine.resume();
-    lastContext.state = 'suspended';
-    lastContext.resume.mockClear();
-
-    document.dispatchEvent(new Event('visibilitychange'));
-    expect(lastContext.resume).toHaveBeenCalled();
-  });
-
-  it('removes the visibility listener and closes the context on destroy', () => {
+  it('closes the context on destroy', () => {
     const engine = new WebAudioEngine();
     engine.destroy();
 
     expect(lastContext.close).toHaveBeenCalled();
-
-    lastContext.resume.mockClear();
-    document.dispatchEvent(new Event('visibilitychange'));
-    expect(lastContext.resume).not.toHaveBeenCalled();
   });
 });

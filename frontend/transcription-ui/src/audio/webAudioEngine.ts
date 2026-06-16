@@ -26,9 +26,6 @@ type GraphListeners = {
 };
 
 const RAMP_SECONDS = 0.05;
-// Safari needs playbackRate changes deferred and bracketed by a pause/resume
-// (see setSpeed); coalesce rapid slider changes within this window.
-const SPEED_DEBOUNCE_MS = 150;
 
 function createAudioContext(): AudioContext {
   const Ctor =
@@ -39,11 +36,6 @@ function createAudioContext(): AudioContext {
     throw new Error('Web Audio API is not supported in this browser');
   }
   return new Ctor();
-}
-
-// Desktop Safari + iOS WebKit (which share Safari's audio quirks), not Chrome/Android.
-function detectSafari(): boolean {
-  return /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
 }
 
 /**
@@ -58,17 +50,9 @@ export class WebAudioEngine {
   private readonly audio: HTMLAudioElement;
   private readonly gain: GainNode;
   private readonly panner: StereoPannerNode;
-  private readonly isSafari = detectSafari();
-  private readonly handleVisibilityChange = () => {
-    if (document.visibilityState === 'visible') this.resume();
-  };
 
   private activeListeners: GraphListeners | null = null;
   private speed = 1;
-  private speedDebounce: ReturnType<typeof setTimeout> | null = null;
-  // True while we pause/resume the element internally (Safari speed change) so
-  // those transient events don't surface as play/pause callbacks.
-  private adjusting = false;
 
   constructor() {
     this.context = createAudioContext();
@@ -86,16 +70,11 @@ export class WebAudioEngine {
       .connect(this.gain)
       .connect(this.panner)
       .connect(this.context.destination);
-
-    // Safari/iOS suspend (or "interrupt") the context when the tab is hidden;
-    // resume it once the page is visible again so playback isn't left silent.
-    document.addEventListener('visibilitychange', this.handleVisibilityChange);
   }
 
   /** Resume the context (call from a user gesture). */
   resume(): void {
-    // `!== 'running'` also covers Safari's non-standard "interrupted" state.
-    if (this.context.state !== 'running' && this.context.state !== 'closed') {
+    if (this.context.state === 'suspended') {
       this.context.resume().catch(() => {});
     }
   }
@@ -116,45 +95,15 @@ export class WebAudioEngine {
 
   setSpeed(rate: number): void {
     this.speed = rate;
-
-    if (!this.isSafari) {
-      this.audio.playbackRate = rate;
-      return;
-    }
-
-    // Safari distorts audio when playbackRate changes mid-playback on a
-    // graph-routed element, so pause, apply, then resume — suppressing the
-    // transient play/pause events so the UI doesn't flicker.
-    if (this.speedDebounce) clearTimeout(this.speedDebounce);
-    this.speedDebounce = setTimeout(() => {
-      const wasPlaying = !this.audio.paused;
-      this.adjusting = true;
-      if (wasPlaying) this.audio.pause();
-      this.audio.playbackRate = rate;
-      if (wasPlaying) {
-        this.audio
-          .play()
-          .catch(() => {})
-          .finally(() => {
-            this.adjusting = false;
-          });
-      } else {
-        this.adjusting = false;
-      }
-    }, SPEED_DEBOUNCE_MS);
+    this.audio.playbackRate = rate;
   }
 
   load(src: string, callbacks: AudioCallbacks): WebAudioPlayer {
     this.detachListeners();
-    this.clearSpeedDebounce();
 
     const listeners: GraphListeners = {
-      play: () => {
-        if (!this.adjusting) callbacks.onplay?.();
-      },
-      pause: () => {
-        if (!this.adjusting) callbacks.onpause?.();
-      },
+      play: () => callbacks.onplay?.(),
+      pause: () => callbacks.onpause?.(),
       ended: () => callbacks.onend?.(),
       error: () => callbacks.onerror?.(),
     };
@@ -188,26 +137,14 @@ export class WebAudioEngine {
   /** Stop and clear the source, but keep the graph/context alive for reuse. */
   stop(): void {
     this.detachListeners();
-    this.clearSpeedDebounce();
     this.audio.pause();
     this.audio.removeAttribute('src');
     this.audio.load();
   }
 
   destroy(): void {
-    document.removeEventListener(
-      'visibilitychange',
-      this.handleVisibilityChange
-    );
     this.stop();
     this.context.close().catch(() => {});
-  }
-
-  private clearSpeedDebounce(): void {
-    if (this.speedDebounce) {
-      clearTimeout(this.speedDebounce);
-      this.speedDebounce = null;
-    }
   }
 
   // Detaches the given listeners, or the active ones if none specified. A
