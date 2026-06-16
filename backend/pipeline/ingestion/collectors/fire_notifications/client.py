@@ -35,7 +35,7 @@ _FN_POLL_HTTP_POLICY = http_status.HTTPStatusPolicy(
     default_other_failure=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
 )
 
-_DOWNLOAD_MAX_RETRIES = 5
+_DOWNLOAD_MAX_RETRIES = 3
 _DOWNLOAD_BACKOFF_BASE_SEC = 2.0
 
 
