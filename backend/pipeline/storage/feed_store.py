@@ -164,6 +164,7 @@ class Feed(TypedDict):
     created_at: datetime.datetime
     source_feed_id: str | None
     tags: list[dict[str, str]] | None
+    last_speech_segment_timestamp: datetime.datetime | None
 
 
 @dataclass
@@ -263,6 +264,9 @@ class FeedStore:
             created_at=row["created_at"],
             source_feed_id=row["source_feed_id"],
             tags=tags,
+            last_speech_segment_timestamp=row.get(
+                "last_speech_segment_timestamp"
+            ),
         )
 
     @staticmethod

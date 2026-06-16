@@ -60,6 +60,7 @@ def _full_feed_row(**overrides: object) -> dict[str, object]:
         "created_at": datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
         "source_feed_id": "123",
         "tags": None,
+        "last_speech_segment_timestamp": None,
     }
     row.update(overrides)
     return row
@@ -288,6 +289,19 @@ class TestStatusReasonSqlProjection(unittest.TestCase):
         ):
             self.assertRegex(sql, r"\bstatus_reason\b")
             self.assertRegex(sql, r"\bstatus_reason_updated_at\b")
+
+    def test_full_feed_queries_project_last_speech_segment_timestamp(
+        self,
+    ) -> None:
+        for sql in (
+            feed_queries.CREATE_FEED_SQL,
+            feed_queries.GET_FEED_SQL,
+            feed_queries.LIST_FEEDS_DESC_SQL,
+            feed_queries.LIST_FEEDS_ASC_SQL,
+            feed_queries.RESET_FEED_SQL,
+            feed_queries.UPDATE_FEED_SQL,
+        ):
+            self.assertRegex(sql, r"\blast_speech_segment_timestamp\b")
 
 
 class TestStatusReasonLifecycleIsolation(unittest.TestCase):

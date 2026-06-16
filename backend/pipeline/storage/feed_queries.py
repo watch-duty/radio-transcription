@@ -384,7 +384,8 @@ new_props AS (
     SELECT id, $3, source_type, $4 FROM new_feed
     RETURNING source_feed_id, tags
 )
-SELECT nf.*, np.source_feed_id, np.tags
+SELECT nf.*, np.source_feed_id, np.tags,
+       NULL::timestamptz AS last_speech_segment_timestamp
 FROM new_feed nf
 JOIN new_props np ON TRUE;
 """
@@ -394,7 +395,15 @@ SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
        f.last_bookmark_time, f.created_at, f.quarantine_reason,
-       fp.source_feed_id, fp.tags
+       fp.source_feed_id, fp.tags,
+       (
+           SELECT s.end_timestamp
+           FROM audio_segments s
+           WHERE s.feed_id = f.id
+             AND s.classification = 'SPEECH'::audio_classification
+           ORDER BY s.end_timestamp DESC, s.id DESC
+           LIMIT 1
+       ) AS last_speech_segment_timestamp
 FROM feeds f
 JOIN feed_properties fp ON f.id = fp.feed_id
 WHERE f.id = $1
@@ -405,7 +414,15 @@ SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
        f.last_bookmark_time, f.created_at, f.quarantine_reason,
-       fp.source_feed_id, fp.tags
+       fp.source_feed_id, fp.tags,
+       (
+           SELECT s.end_timestamp
+           FROM audio_segments s
+           WHERE s.feed_id = f.id
+             AND s.classification = 'SPEECH'::audio_classification
+           ORDER BY s.end_timestamp DESC, s.id DESC
+           LIMIT 1
+       ) AS last_speech_segment_timestamp
 FROM feeds f
 JOIN feed_properties fp ON f.id = fp.feed_id
 WHERE ($1::timestamptz IS NULL OR f.created_at < $1 OR (f.created_at = $1 AND f.id < $2))
@@ -422,7 +439,15 @@ SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
        f.last_bookmark_time, f.created_at, f.quarantine_reason,
-       fp.source_feed_id, fp.tags
+       fp.source_feed_id, fp.tags,
+       (
+           SELECT s.end_timestamp
+           FROM audio_segments s
+           WHERE s.feed_id = f.id
+             AND s.classification = 'SPEECH'::audio_classification
+           ORDER BY s.end_timestamp DESC, s.id DESC
+           LIMIT 1
+       ) AS last_speech_segment_timestamp
 FROM feeds f
 JOIN feed_properties fp ON f.id = fp.feed_id
 WHERE ($1::timestamptz IS NULL OR f.created_at > $1 OR (f.created_at = $1 AND f.id > $2))
@@ -475,7 +500,15 @@ WITH updated AS (
               last_processed_filename, last_bookmark_time, created_at,
               quarantine_reason
 )
-SELECT u.*, fp.source_feed_id, fp.tags
+SELECT u.*, fp.source_feed_id, fp.tags,
+       (
+           SELECT s.end_timestamp
+           FROM audio_segments s
+           WHERE s.feed_id = u.id
+             AND s.classification = 'SPEECH'::audio_classification
+           ORDER BY s.end_timestamp DESC, s.id DESC
+           LIMIT 1
+       ) AS last_speech_segment_timestamp
 FROM updated u
 JOIN feed_properties fp ON fp.feed_id = u.id
 """
@@ -496,7 +529,15 @@ updated_props AS (
     WHERE feed_id = $1
     RETURNING source_feed_id, tags
 )
-SELECT uf.*, up.source_feed_id, up.tags
+SELECT uf.*, up.source_feed_id, up.tags,
+       (
+           SELECT s.end_timestamp
+           FROM audio_segments s
+           WHERE s.feed_id = uf.id
+             AND s.classification = 'SPEECH'::audio_classification
+           ORDER BY s.end_timestamp DESC, s.id DESC
+           LIMIT 1
+       ) AS last_speech_segment_timestamp
 FROM updated_feed uf
 JOIN updated_props up ON TRUE;
 """
