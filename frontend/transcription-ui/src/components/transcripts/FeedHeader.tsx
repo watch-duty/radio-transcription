@@ -20,6 +20,7 @@ interface FeedHeaderProps {
   archiveUrl?: string;
   status?: FeedStatus;
   lastHeartbeat?: string;
+  lastSpeechSegmentTimestamp?: string;
   triggerSnackbar: (message: string) => void;
   onError: (error: Error, titleMessage?: string) => void;
 }
@@ -31,6 +32,7 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
   archiveUrl,
   status,
   lastHeartbeat,
+  lastSpeechSegmentTimestamp,
   triggerSnackbar,
   onError,
 }) => {
@@ -88,6 +90,7 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
               statusReason={searchedFeed.statusReason}
               quarantineReason={searchedFeed.quarantineReason}
               lastHeartbeat={lastHeartbeat}
+              lastSpeechSegmentTimestamp={lastSpeechSegmentTimestamp}
             />
           </Box>
           <Box

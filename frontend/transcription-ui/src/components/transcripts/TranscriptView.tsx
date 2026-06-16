@@ -633,6 +633,10 @@ export function TranscriptView({
         lastHeartbeat={
           activeFeedData?.lastHeartbeat ?? searchedFeed?.lastHeartbeat
         }
+        lastSpeechSegmentTimestamp={
+          activeFeedData?.lastSpeechSegmentTimestamp ??
+          searchedFeed?.lastSpeechSegmentTimestamp
+        }
         triggerSnackbar={triggerSnackbar}
         onError={onError}
       />

@@ -31,7 +31,7 @@ describe('FeedHeader', () => {
     name: 'Test Scanner Feed',
     status: 'active',
     substatus: 'active',
-    lastHeartbeat: new Date().toISOString(),
+    lastSpeechSegmentTimestamp: new Date().toISOString(),
     sourceUrl: 'https://test.example/source',
     archiveUrl: 'https://test.example/archives',
     sourceType: SourceType.BCFY_CALLS,
@@ -163,7 +163,7 @@ describe('FeedHeader', () => {
     expect(mockTriggerSnackbar).toHaveBeenCalledWith('Feed link copied');
   });
 
-  it('displays the human-friendly relative time string for heartbeat', () => {
+  it('displays the human-friendly relative time string for both heartbeat and lastSpeechSegmentTimestamp', () => {
     const fixedNow = new Date('2026-04-10T12:05:00Z');
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(fixedNow);
@@ -175,6 +175,9 @@ describe('FeedHeader', () => {
           onSelectFeed={vi.fn()}
           status="active"
           lastHeartbeat={new Date(
+            fixedNow.getTime() - 10 * 60 * 1000
+          ).toISOString()}
+          lastSpeechSegmentTimestamp={new Date(
             fixedNow.getTime() - 5 * 60 * 1000
           ).toISOString()}
           triggerSnackbar={mockTriggerSnackbar}
@@ -183,7 +186,8 @@ describe('FeedHeader', () => {
       );
 
       expect(screen.getByText('Active')).toBeTruthy();
-      expect(screen.getByText('Last updated: 5 minutes ago')).toBeTruthy();
+      expect(screen.getByText('Last updated: 10 minutes ago')).toBeTruthy();
+      expect(screen.getByText('Last transmission: 5 minutes ago')).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }

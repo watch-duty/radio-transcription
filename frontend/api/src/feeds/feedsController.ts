@@ -53,6 +53,7 @@ interface FeedBackend extends BaseFeedBackend {
   tags?: Tag[];
   quarantine_reason: string | null;
   status_reason: BackendFeedStatusReason | null;
+  last_speech_segment_timestamp: string | null;
 }
 
 interface FeedCreateBackend extends BaseFeedBackend {
@@ -151,6 +152,8 @@ function convertFeedBackend(response: FeedBackend): Feed {
     tags: response.tags,
     quarantineReason: response.quarantine_reason ?? undefined,
     statusReason: convertFeedStatusReason(response.status_reason),
+    lastSpeechSegmentTimestamp:
+      response.last_speech_segment_timestamp ?? undefined,
   };
 }
 

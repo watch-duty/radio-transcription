@@ -87,12 +87,14 @@ export function FeedStatusIndicator({
   statusReason,
   quarantineReason,
   lastHeartbeat,
+  lastSpeechSegmentTimestamp,
 }: {
   status?: FeedStatus;
   substatus?: BackendFeedStatus;
   statusReason?: BackendFeedStatusReason;
   quarantineReason?: string;
   lastHeartbeat?: string;
+  lastSpeechSegmentTimestamp?: string;
 }) {
   if (!status) {
     return null;
@@ -166,6 +168,29 @@ export function FeedStatusIndicator({
           }}
         >
           Last updated: {getRelativeTimeString(lastHeartbeat)}
+        </Typography>
+      )}
+      {lastHeartbeat && lastSpeechSegmentTimestamp && (
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ flexShrink: 0 }}
+        >
+          •
+        </Typography>
+      )}
+      {lastSpeechSegmentTimestamp && (
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            minWidth: 0,
+          }}
+        >
+          Last transmission: {getRelativeTimeString(lastSpeechSegmentTimestamp)}
         </Typography>
       )}
     </Box>

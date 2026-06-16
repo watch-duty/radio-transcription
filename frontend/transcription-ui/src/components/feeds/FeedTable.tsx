@@ -322,6 +322,7 @@ export function FeedTable({
             statusReason={feed.statusReason}
             quarantineReason={feed.quarantineReason}
             lastHeartbeat={feed.lastHeartbeat}
+            lastSpeechSegmentTimestamp={feed.lastSpeechSegmentTimestamp}
           />
         </TableCell>
 

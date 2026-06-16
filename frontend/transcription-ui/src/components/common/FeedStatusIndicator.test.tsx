@@ -122,4 +122,25 @@ describe('FeedStatusIndicator', () => {
       vi.useRealTimers();
     }
   });
+
+  it('displays lastSpeechSegmentTimestamp relative time string', () => {
+    const fixedNow = new Date('2026-06-09T13:00:00Z');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(fixedNow);
+    try {
+      render(
+        <FeedStatusIndicator
+          status="active"
+          lastSpeechSegmentTimestamp={new Date(
+            fixedNow.getTime() - 10 * 60 * 1000
+          ).toISOString()}
+        />
+      );
+      expect(
+        screen.getByText('Last transmission: 10 minutes ago')
+      ).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

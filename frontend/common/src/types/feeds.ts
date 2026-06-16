@@ -52,6 +52,7 @@ export interface Feed extends BaseFeed {
   tags?: Tag[];
   quarantineReason?: string;
   statusReason?: BackendFeedStatusReason;
+  lastSpeechSegmentTimestamp?: string;
 }
 
 export interface FeedCreate extends BaseFeed {

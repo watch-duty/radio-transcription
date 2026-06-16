@@ -330,6 +330,8 @@ components:
           type: string
         statusReason:
           $ref: "#/components/schemas/BackendFeedStatusReason"
+        lastSpeechSegmentTimestamp:
+          type: string
       required:
         - name
         - sourceType
