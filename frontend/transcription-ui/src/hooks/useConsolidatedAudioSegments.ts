@@ -53,7 +53,8 @@ export function consolidateAudioSegments(
   // Return sorted descending (newest at the top)
   return consolidated.sort(
     (a, b) =>
-      new Date(b.endTimestamp).getTime() - new Date(a.endTimestamp).getTime()
+      new Date(b.startTimestamp).getTime() -
+      new Date(a.startTimestamp).getTime()
   );
 }
 
