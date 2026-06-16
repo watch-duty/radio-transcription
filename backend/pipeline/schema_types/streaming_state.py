@@ -38,6 +38,9 @@ class BufferedChunkProto(betterproto.Message):
     traceparent: Optional[str] = betterproto.string_field(
         3, optional=True, group="_traceparent"
     )
+    baggage: Optional[str] = betterproto.string_field(
+        4, optional=True, group="_baggage"
+    )
 
 
 @dataclass(eq=False, repr=False)
@@ -59,6 +62,10 @@ class ChunkMetadataProto(betterproto.Message):
     True recording event timestamp of the incoming audio chunk in milliseconds
     since epoch.
     """
+
+    baggage: Optional[str] = betterproto.string_field(
+        8, optional=True, group="_baggage"
+    )
 
 
 @dataclass(eq=False, repr=False)
@@ -86,6 +93,9 @@ class FlushRequestProto(betterproto.Message):
         betterproto.enum_field(15)
     )
     segment_id: str = betterproto.string_field(16)
+    baggage: Optional[str] = betterproto.string_field(
+        17, optional=True, group="_baggage"
+    )
 
 
 @dataclass(eq=False, repr=False)
@@ -136,6 +146,9 @@ class ActiveStitchingStateProto(betterproto.Message):
     )
     sample_rate: Optional[int] = betterproto.int32_field(
         19, optional=True, group="_sample_rate"
+    )
+    baggage: Optional[str] = betterproto.string_field(
+        20, optional=True, group="_baggage"
     )
 
 

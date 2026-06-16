@@ -29,9 +29,8 @@ from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
 )
 from backend.services.feeds.models import Tag
 
-# Setup Logging and Tracing
+# Setup Logging
 setup_logging()
-setup_tracing(service_name="notification-service", use_batch=False)
 logger = logging.getLogger(__name__)
 
 
@@ -175,11 +174,11 @@ def convert_to_notification(
 
 @functions_framework.cloud_event
 def send_notification(cloud_event: CloudEvent) -> None:
+    setup_tracing(service_name="notification-service", use_batch=False)
     pubsub_message = cloud_event.data.get("message", {})
     attributes = pubsub_message.get("attributes", {}) or {}
-    traceparent = attributes.get("traceparent", "")
 
-    with with_tracer_context(traceparent, "send_notification", __name__):
+    with with_tracer_context(attributes, "send_notification", __name__):
         # Process the incoming CloudEvent message
         evaluated_transcribed_audio = parse_cloud_event(cloud_event)
         if not evaluated_transcribed_audio:

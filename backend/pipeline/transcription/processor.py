@@ -19,7 +19,7 @@ from backend.pipeline.common.constants import (
     NANOS_PER_MS,
 )
 from backend.pipeline.common.tracing_utils import (
-    get_current_traceparent,
+    inject_otel_context,
     with_tracer_context,
 )
 from backend.pipeline.schema_types.normalized_audio_pb2 import (
@@ -61,10 +61,9 @@ class TranscriptionEventProcessor:
         """Decodes, processes, and transcribes the given CloudEvent."""
         pubsub_message = cloud_event.data.get("message", {}) or {}
         attributes = pubsub_message.get("attributes", {}) or {}
-        traceparent = attributes.get("traceparent", "")
 
         with with_tracer_context(
-            traceparent, "transcribe_claim_check", __name__
+            attributes, "transcribe_claim_check", __name__
         ):
             errors = []
             transcript = ""
@@ -138,9 +137,7 @@ class TranscriptionEventProcessor:
                 )
 
                 attrs: dict[str, str] = {}
-                current_tp = get_current_traceparent() or traceparent
-                if current_tp:
-                    attrs["traceparent"] = current_tp
+                inject_otel_context(attrs)
 
                 future = self.publisher.publish(
                     topic=topic_path,

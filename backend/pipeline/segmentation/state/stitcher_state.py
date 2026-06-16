@@ -194,6 +194,7 @@ class AudioStitchingStateMachine:
             isolated_audio_buffer=[],
             speech_segments=ctx.speech_segments.copy(),
             traceparent=ctx.traceparent,
+            baggage=ctx.baggage,
             audio_classification=audio_classification,
         )
 
@@ -277,6 +278,7 @@ class AudioStitchingStateMachine:
                             clear_state=False,
                             isolated_audio_buffer=isolated_audio_buffer.copy(),
                             traceparent=action.traceparent,
+                            baggage=action.baggage,
                             audio_classification=action.audio_classification,
                         )
                     )

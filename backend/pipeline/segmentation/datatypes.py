@@ -91,6 +91,7 @@ class StitcherContext:
     buffer_duration_ms: int = 0
     speech_segments: list[TimeRange] = field(default_factory=list)
     traceparent: str | None = None
+    baggage: str | None = None
     prior_audio_tail: bytes | None = None
 
 
@@ -181,6 +182,7 @@ class FlushAction(StateMachineAction):
     isolated_audio_buffer_uris: list[str] = field(default_factory=list)
     speech_segments: list[TimeRange] = field(default_factory=list)
     traceparent: str | None = None
+    baggage: str | None = None
     audio_classification: int = 0
 
 

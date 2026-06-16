@@ -4,25 +4,31 @@ import asyncio
 import datetime
 import logging
 import uuid
+from http import HTTPStatus
 from typing import TYPE_CHECKING, TypedDict
 
 import aiohttp
-from google.api_core import retry as api_retry
-from google.api_core import retry_async as api_retry_async
 from google.cloud.pubsub_v1.publisher.exceptions import (
     PublishToPausedOrderingKeyException,
 )
 from opentelemetry import trace
-from opentelemetry.trace.propagation.tracecontext import (
-    TraceContextTextMapPropagator,
+from tenacity import (
+    RetryCallState,
+    retry,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
 )
 
 from backend.pipeline.common import tracing_utils
 from backend.pipeline.common.constants import (
-    GCS_ASYNC_RETRY_TIMEOUT_SEC,
     GCS_DOWNLOAD_TIMEOUT_SEC,
+    GCS_RETRY_MAX_ATTEMPTS,
+    GCS_RETRY_MAX_WAIT_SEC,
+    GCS_RETRY_MIN_WAIT_SEC,
     GCS_UPLOAD_TIMEOUT_SEC,
 )
+from backend.pipeline.common.utils import generate_segment_id
 from backend.pipeline.schema_types.continuous_audio_pb2 import ContinuousAudio
 from backend.pipeline.schema_types.segmented_audio_pb2 import SegmentedAudio
 
@@ -167,8 +173,12 @@ async def upload_audio(
         },
     )
 
-    try:
+    @gcs_async_retry
+    async def _execute_upload() -> None:
         await storage.upload(bucket, object_name, audio_chunk, **upload_kwargs)
+
+    try:
+        await _execute_upload()
     except aiohttp.ClientResponseError as exc:
         # Catch 412 here rather than in the caller because
         # aiohttp.ClientResponseError is a subclass of ClientError, which
@@ -202,33 +212,48 @@ def parse_gcs_uri(gcs_uri: str) -> tuple[str, str]:
     return bucket, object_name
 
 
-def _async_gcs_predicate(exc: BaseException) -> bool:
+_NON_RETRYABLE_HTTP_STATUSES = {
+    HTTPStatus.NOT_FOUND,  # 404
+    HTTPStatus.FORBIDDEN,  # 403
+    HTTPStatus.PRECONDITION_FAILED,  # 412
+}
+
+
+def _should_retry_gcs(exc: BaseException) -> bool:
     if isinstance(exc, aiohttp.ClientResponseError):
-        # Do not retry on missing objects (404) or authentication issues (403)
-        return exc.status not in (404, 403)
-    if isinstance(exc, (aiohttp.ClientError, asyncio.TimeoutError)):
-        return True
-    if isinstance(exc, Exception):
-        return bool(api_retry.if_transient_error(exc))
-    return False
+        # Do not retry on missing objects, authentication issues, or existing objects
+        return exc.status not in _NON_RETRYABLE_HTTP_STATUSES
+    return isinstance(exc, (aiohttp.ClientError, asyncio.TimeoutError))
 
 
-# Compiled module-level retry policy. AsyncRetry calculates its active deadline FSM state
-# freshly on every individual coroutine invocation, guaranteeing 100% thread-safety under high asyncio concurrency.
-GCS_ASYNC_RETRY = api_retry_async.AsyncRetry(
-    predicate=_async_gcs_predicate,
-    initial=1.0,
-    maximum=15.0,
-    multiplier=2.0,
-    timeout=GCS_ASYNC_RETRY_TIMEOUT_SEC,
+def _log_gcs_retry(retry_state: RetryCallState) -> None:
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    logger.warning(
+        "GCS operation failed (attempt %d/%d): %s. Retrying...",
+        retry_state.attempt_number,
+        GCS_RETRY_MAX_ATTEMPTS,
+        exc,
+    )
+
+
+gcs_async_retry = retry(
+    retry=retry_if_exception(_should_retry_gcs),
+    stop=stop_after_attempt(GCS_RETRY_MAX_ATTEMPTS),
+    wait=wait_exponential(
+        multiplier=GCS_RETRY_MIN_WAIT_SEC,
+        min=GCS_RETRY_MIN_WAIT_SEC,
+        max=GCS_RETRY_MAX_WAIT_SEC,
+    ),
+    before_sleep=_log_gcs_retry,
+    reraise=True,
 )
 
 
 async def download_audio(gcs_client: GcsClient, gcs_uri: str) -> bytes:
     """Download an audio file from GCS using the shared async client.
 
-    Configures highly resilient asynchronous exponential backoff retries via official Google
-    api_core policies to entirely absorb transient network drops and Colossus load-shedding (`429` / `503`).
+    Configures highly resilient asynchronous exponential backoff retries via Tenacity
+    policies to entirely absorb transient network drops and Colossus load-shedding (`429` / `503`).
     Missing 404 objects are short-circuited and translated to standard Python FileNotFoundError.
 
     Args:
@@ -245,10 +270,14 @@ async def download_audio(gcs_client: GcsClient, gcs_uri: str) -> bytes:
     storage = gcs_client.get_storage()
     bucket, object_name = parse_gcs_uri(gcs_uri)
 
-    try:
-        return await GCS_ASYNC_RETRY(storage.download)(
+    @gcs_async_retry
+    async def _execute_download() -> bytes:
+        return await storage.download(
             bucket, object_name, timeout=GCS_DOWNLOAD_TIMEOUT_SEC
         )
+
+    try:
+        return await _execute_download()
     except aiohttp.ClientResponseError as exc:
         if exc.status == 404:
             err_msg = f"GCS object not found: {gcs_uri}"
@@ -266,6 +295,65 @@ async def download_audio(gcs_client: GcsClient, gcs_uri: str) -> bytes:
 # -----------------------------------------------------------------------------
 # Pub/Sub helpers
 # -----------------------------------------------------------------------------
+
+
+def _build_audio_chunk_payload(
+    topic_path: str,
+    feed_id: str,
+    feed_name: str,
+    gcs_uri: str,
+    session_id: str | None,
+    start_timestamp: datetime.datetime,
+    duration_ms: int,
+    source_type: str | None = None,
+    external_audio_segment_id: str | None = None,
+) -> tuple[bytes, dict[str, str]]:
+    if "segmented" in topic_path or (
+        source_type and "bcfy_feeds" not in source_type.lower()
+    ):
+        resolved_segment_id = (
+            generate_segment_id(feed_id, external_audio_segment_id)
+            if external_audio_segment_id
+            else str(uuid.uuid4())
+        )
+        s_msg = SegmentedAudio(
+            segment_id=resolved_segment_id,
+            feed_id=feed_id,
+            feed_name=feed_name,
+            raw_audio_uri=gcs_uri,
+            audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH,
+        )
+        s_msg.source_audio_uris.append(gcs_uri)
+        s_msg.start_timestamp.FromDatetime(start_timestamp)
+        end_ts = start_timestamp + datetime.timedelta(milliseconds=duration_ms)
+        s_msg.end_timestamp.FromDatetime(end_ts)
+        if external_audio_segment_id is not None:
+            s_msg.external_audio_segment_id = external_audio_segment_id
+        serialized_data = s_msg.SerializeToString()
+    else:
+        c_msg = ContinuousAudio(
+            gcs_uri=gcs_uri,
+            feed_id=feed_id,
+            feed_name=feed_name,
+            duration_ms=duration_ms,
+        )
+        if session_id is not None:
+            c_msg.session_id = session_id
+        c_msg.start_timestamp.FromDatetime(start_timestamp)
+        serialized_data = c_msg.SerializeToString()
+
+    attrs: dict[str, str] = {
+        "feed_id": feed_id,
+        "gcs_uri": gcs_uri,
+        "timestamp_ms": str(int(start_timestamp.timestamp() * 1000)),
+    }
+    if session_id is not None:
+        attrs["session_id"] = session_id
+    if source_type is not None:
+        attrs["source_type"] = source_type
+
+    tracing_utils.inject_otel_context(attrs)
+    return serialized_data, attrs
 
 
 def publish_audio_chunk_sync(
@@ -286,51 +374,17 @@ def publish_audio_chunk_sync(
     ingestion) and the async wrapper below.
     """
     with tracer.start_as_current_span("publish_raw_audio_chunk"):
-        if "segmented" in topic_path or (
-            source_type and "bcfy_feeds" not in source_type.lower()
-        ):
-            s_msg = SegmentedAudio(
-                segment_id=session_id or str(uuid.uuid4()),
-                feed_id=feed_id,
-                feed_name=feed_name,
-                raw_audio_uri=gcs_uri,
-                audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH,
-            )
-            s_msg.source_audio_uris.append(gcs_uri)
-            s_msg.start_timestamp.FromDatetime(start_timestamp)
-            end_ts = start_timestamp + datetime.timedelta(
-                milliseconds=duration_ms
-            )
-            s_msg.end_timestamp.FromDatetime(end_ts)
-            if external_audio_segment_id is not None:
-                s_msg.external_audio_segment_id = external_audio_segment_id
-            serialized_data = s_msg.SerializeToString()
-        else:
-            c_msg = ContinuousAudio(
-                gcs_uri=gcs_uri,
-                feed_id=feed_id,
-                feed_name=feed_name,
-                duration_ms=duration_ms,
-            )
-            if session_id is not None:
-                c_msg.session_id = session_id
-            c_msg.start_timestamp.FromDatetime(start_timestamp)
-            serialized_data = c_msg.SerializeToString()
-
-        attrs: dict[str, str] = {
-            "feed_id": feed_id,
-            "gcs_uri": gcs_uri,
-            "timestamp_ms": str(int(start_timestamp.timestamp() * 1000)),
-        }
-        if session_id is not None:
-            attrs["session_id"] = session_id
-        if source_type is not None:
-            attrs["source_type"] = source_type
-
-        carrier: dict[str, str] = {}
-        TraceContextTextMapPropagator().inject(carrier)
-        if "traceparent" in carrier:
-            attrs["traceparent"] = carrier["traceparent"]
+        serialized_data, attrs = _build_audio_chunk_payload(
+            topic_path,
+            feed_id,
+            feed_name,
+            gcs_uri,
+            session_id,
+            start_timestamp,
+            duration_ms,
+            source_type,
+            external_audio_segment_id,
+        )
 
         max_retries = 1
         for attempt in range(max_retries + 1):
@@ -380,51 +434,17 @@ async def publish_audio_chunk(
     """
     with tracer.start_as_current_span("publish_raw_audio_chunk"):
         publisher = pubsub_client.get_publisher()
-        if "segmented" in topic_path or (
-            source_type and "bcfy_feeds" not in source_type.lower()
-        ):
-            s_msg = SegmentedAudio(
-                segment_id=session_id or str(uuid.uuid4()),
-                feed_id=feed_id,
-                feed_name=feed_name,
-                raw_audio_uri=gcs_uri,
-                audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH,
-            )
-            s_msg.source_audio_uris.append(gcs_uri)
-            s_msg.start_timestamp.FromDatetime(start_timestamp)
-            end_ts = start_timestamp + datetime.timedelta(
-                milliseconds=duration_ms
-            )
-            s_msg.end_timestamp.FromDatetime(end_ts)
-            if external_audio_segment_id is not None:
-                s_msg.external_audio_segment_id = external_audio_segment_id
-            serialized_data = s_msg.SerializeToString()
-        else:
-            c_msg = ContinuousAudio(
-                gcs_uri=gcs_uri,
-                feed_id=feed_id,
-                feed_name=feed_name,
-                duration_ms=duration_ms,
-            )
-            if session_id is not None:
-                c_msg.session_id = session_id
-            c_msg.start_timestamp.FromDatetime(start_timestamp)
-            serialized_data = c_msg.SerializeToString()
-
-        attrs: dict[str, str] = {
-            "feed_id": feed_id,
-            "gcs_uri": gcs_uri,
-            "timestamp_ms": str(int(start_timestamp.timestamp() * 1000)),
-        }
-        if session_id is not None:
-            attrs["session_id"] = session_id
-        if source_type is not None:
-            attrs["source_type"] = source_type
-
-        carrier: dict[str, str] = {}
-        TraceContextTextMapPropagator().inject(carrier)
-        if "traceparent" in carrier:
-            attrs["traceparent"] = carrier["traceparent"]
+        serialized_data, attrs = _build_audio_chunk_payload(
+            topic_path,
+            feed_id,
+            feed_name,
+            gcs_uri,
+            session_id,
+            start_timestamp,
+            duration_ms,
+            source_type,
+            external_audio_segment_id,
+        )
 
         max_retries = 1
         for attempt in range(max_retries + 1):

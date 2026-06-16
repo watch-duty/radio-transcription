@@ -305,6 +305,7 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                             + datetime.timedelta(seconds=call.length_sec),
                             session_id=connection_session_id,
                             receipt_time=receipt_time,
+                            external_audio_segment_id=call.url,
                         )
                         connection_produced_chunk = True
                         consecutive_ws_failures = 0
