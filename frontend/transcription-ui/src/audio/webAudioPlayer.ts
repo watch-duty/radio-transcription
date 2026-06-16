@@ -86,7 +86,6 @@ export class WebAudioPlayer {
       .connect(this.context.destination);
   }
 
-  /** Resume the context (call from a user gesture). */
   resume(): void {
     if (this.context.state === 'suspended') {
       this.context.resume().catch(() => {});
@@ -152,7 +151,6 @@ export class WebAudioPlayer {
     };
   }
 
-  /** Stop and clear the source, but keep the graph/context alive for reuse. */
   stop(): void {
     this.detachListeners();
     this.audio.pause();

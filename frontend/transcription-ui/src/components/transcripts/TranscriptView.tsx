@@ -156,7 +156,6 @@ export function TranscriptView({
 
   useEffect(() => {
     return () => {
-      // Best-effort context teardown; the browser reclaims it on page unload regardless.
       audioContextRef.current?.close().catch(() => {});
       audioContextRef.current = null;
       playerRef.current = null;
@@ -604,7 +603,6 @@ export function TranscriptView({
 
   const handleFeedSelect = (feedId: string) => {
     setSearchedFeedId(feedId);
-    // Keep the engine/graph alive for the next feed.
     playerRef.current?.stop();
     currentAudio.current = null;
     // Reset all state
