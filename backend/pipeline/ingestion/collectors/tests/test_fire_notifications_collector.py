@@ -48,7 +48,7 @@ def _mock_response(status: int, content: bytes = b"") -> MagicMock:
 
     cm = MagicMock()
     cm.__aenter__ = AsyncMock(return_value=resp)
-    cm.__aexit__ = MagicMock(return_value=False)
+    cm.__aexit__ = AsyncMock(return_value=False)
     return cm
 
 

@@ -27,6 +27,9 @@ from backend.pipeline.ingestion.collectors.fire_notifications.client import (
 from backend.pipeline.ingestion.collectors.openmhz import (
     collector as openmhz_collector,
 )
+from backend.pipeline.ingestion.collectors.tests.test_fire_notifications_collector import (
+    _mock_response,
+)
 from backend.pipeline.ingestion.models import FeedFailure
 from backend.pipeline.storage.feed_store import FeedStatusReason
 
@@ -78,7 +81,7 @@ class TestCrossCollectorShutdownSemantics(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         mock_sleep.side_effect = asyncio.CancelledError
         session = MagicMock()
-        session.get = AsyncMock(return_value=MagicMock(status_code=503))
+        session.get = MagicMock(return_value=_mock_response(503))
         client = FireNotificationsRestClient(
             session=session,
             url_base="http://mock-api",
@@ -93,7 +96,7 @@ class TestCrossCollectorShutdownSemantics(unittest.IsolatedAsyncioTestCase):
                 asyncio.Event(),
             )
 
-        session.get.assert_awaited_once()
+        session.get.assert_called_once()
         mock_sleep.assert_awaited_once()
 
     @patch(
