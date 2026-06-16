@@ -230,7 +230,7 @@ class CollectorSettings:
         ),
     )
 
-    # RSS watchdog (WATCHDOG-01). See rss_watchdog.py for cgroup detection,
+    # Memory watchdog (WATCHDOG-01). See memory_watchdog.py for cgroup detection,
     # pause/resume hysteresis, and graceful-shutdown trip behavior.
     rss_watchdog_poll_interval_sec: float = field(
         default_factory=lambda: float(

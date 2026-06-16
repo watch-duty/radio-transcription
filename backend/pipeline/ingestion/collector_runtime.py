@@ -22,9 +22,9 @@ from backend.pipeline.common.log_helper import setup_asyncio_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.ingestion import (
     health_server,
+    memory_watchdog,
     quarantine_reason,
     quarantine_telemetry,
-    rss_watchdog,
 )
 from backend.pipeline.ingestion.failure_classifiers import pubsub
 from backend.pipeline.ingestion.health_server import HealthState
@@ -126,7 +126,7 @@ class CollectorRuntime:
         # and memory watchdog thread can't use asyncio primitives; they need a
         # shared thread-safe stop signal.
         self._thread_stop = threading.Event()
-        self._memory_watchdog = rss_watchdog.MemoryWatchdog(
+        self._memory_watchdog = memory_watchdog.MemoryWatchdog(
             settings,
             self._thread_stop,
         )
@@ -334,7 +334,7 @@ class CollectorRuntime:
         running at 249 for ~14s is negligible.
         """
         while True:
-            # Memory back-pressure (WATCHDOG-01 / D-26..D-28): if RSS
+            # Memory back-pressure (WATCHDOG-01 / D-26..D-28): if the cgroup
             # crossed the pause threshold, don't claim more feeds. Existing
             # leases continue running (held leases are renewed by the
             # heartbeat — pause means "stop claiming MORE", not "abandon
