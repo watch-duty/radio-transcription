@@ -7,7 +7,7 @@ import threading
 import unittest
 from unittest import mock
 
-from backend.pipeline.ingestion import rss_watchdog
+from backend.pipeline.ingestion import memory_watchdog
 
 
 def _make_settings(**overrides: object) -> mock.MagicMock:
@@ -40,7 +40,7 @@ class TestMemoryWatchdogStart(unittest.IsolatedAsyncioTestCase):
     async def test_no_cgroup_limit_disables_without_thread(self) -> None:
         """A missing cgroup limit leaves the watchdog unpaused and join no-ops."""
         limit_reader = mock.Mock(return_value=None)
-        watchdog = rss_watchdog.MemoryWatchdog(
+        watchdog = memory_watchdog.MemoryWatchdog(
             _make_settings(),
             threading.Event(),
             limit_reader=limit_reader,
@@ -54,7 +54,7 @@ class TestMemoryWatchdogStart(unittest.IsolatedAsyncioTestCase):
 
     async def test_second_start_raises_runtime_error(self) -> None:
         """start() is single-use so duplicate watchdog threads cannot appear."""
-        watchdog = rss_watchdog.MemoryWatchdog(
+        watchdog = memory_watchdog.MemoryWatchdog(
             _make_settings(),
             threading.Event(),
             limit_reader=mock.Mock(return_value=None),
@@ -74,9 +74,9 @@ class TestMemoryWatchdogDebounce(unittest.TestCase):
         usage_samples: list[int],
         *,
         limit_bytes: int = 1000,
-    ) -> rss_watchdog.MemoryWatchdog:
+    ) -> memory_watchdog.MemoryWatchdog:
         thread_stop = _sequenced_stop(len(usage_samples))
-        watchdog = rss_watchdog.MemoryWatchdog(
+        watchdog = memory_watchdog.MemoryWatchdog(
             _make_settings(),
             thread_stop,
             usage_reader=mock.Mock(side_effect=usage_samples),
@@ -123,7 +123,7 @@ class TestMemoryWatchdogExitSemantics(unittest.TestCase):
         thread_stop = _sequenced_stop(len(usage_samples))
         loop = mock.MagicMock()
         shutdown = mock.MagicMock()
-        watchdog = rss_watchdog.MemoryWatchdog(
+        watchdog = memory_watchdog.MemoryWatchdog(
             _make_settings(),
             thread_stop,
             usage_reader=mock.Mock(side_effect=usage_samples),
@@ -162,9 +162,9 @@ class TestMemoryWatchdogWarmupGrace(unittest.TestCase):
         self,
         usage_samples: list[int],
         time_sequence: list[float],
-    ) -> rss_watchdog.MemoryWatchdog:
+    ) -> memory_watchdog.MemoryWatchdog:
         thread_stop = _sequenced_stop(len(usage_samples))
-        watchdog = rss_watchdog.MemoryWatchdog(
+        watchdog = memory_watchdog.MemoryWatchdog(
             _make_settings(rss_watchdog_warmup_sec=60.0),
             thread_stop,
             usage_reader=mock.Mock(side_effect=usage_samples),
@@ -199,7 +199,7 @@ class TestMemoryWatchdogReadErrors(unittest.TestCase):
         thread_stop = _sequenced_stop(1)
         loop = mock.MagicMock()
         shutdown = mock.MagicMock()
-        watchdog = rss_watchdog.MemoryWatchdog(
+        watchdog = memory_watchdog.MemoryWatchdog(
             _make_settings(),
             thread_stop,
             usage_reader=mock.Mock(return_value=None),

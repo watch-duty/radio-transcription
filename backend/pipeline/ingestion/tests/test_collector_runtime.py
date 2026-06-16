@@ -15,7 +15,7 @@ from google.api_core import exceptions as google_exceptions
 from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
-from backend.pipeline.ingestion import rss_watchdog
+from backend.pipeline.ingestion import memory_watchdog
 from backend.pipeline.ingestion.collector_runtime import (
     CollectorRuntime,
     _PipelineFailure,
@@ -174,7 +174,7 @@ def _make_settings(**overrides) -> mock.MagicMock:
         "heartbeat_stall_timeout_sec": 45.0,
         "graceful_shutdown_timeout_sec": 10.0,
         "task_cancel_budget_sec": 5.0,
-        # RSS watchdog (Phase 4 / WATCHDOG-01). Defaults pin to "watchdog
+        # Memory watchdog (Phase 4 / WATCHDOG-01). Defaults pin to "watchdog
         # disabled in tests unless explicitly overridden": override=None
         # would normally trigger fs reads at __init__ — but the watchdog
         # construction lives in _main, not __init__, and tests typically
@@ -2427,7 +2427,7 @@ class TestMemoryWatchdogIntegration(unittest.IsolatedAsyncioTestCase):
         wait_returns = [False] * len(usage_samples)
         rt._thread_stop.is_set.side_effect = is_set_returns
         rt._thread_stop.wait.side_effect = wait_returns
-        rt._memory_watchdog = rss_watchdog.MemoryWatchdog(
+        rt._memory_watchdog = memory_watchdog.MemoryWatchdog(
             rt._collector_settings,
             rt._thread_stop,
             usage_reader=mock.Mock(side_effect=usage_samples),

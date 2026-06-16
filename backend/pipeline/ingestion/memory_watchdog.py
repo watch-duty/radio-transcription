@@ -70,14 +70,14 @@ class MemoryWatchdog:
     ) -> None:
         """Start the watchdog thread, or disable it if no cgroup limit exists."""
         if self._started:
-            msg = "RSS watchdog cannot be started more than once"
+            msg = "Memory watchdog cannot be started more than once"
             raise RuntimeError(msg)
         self._started = True
 
         limit_bytes = self._limit_reader()
         if limit_bytes is None:
             logger.warning(
-                "RSS watchdog disabled — no cgroup memory limit detected",
+                "Memory watchdog disabled — no cgroup memory limit detected",
             )
             return
 
@@ -85,7 +85,7 @@ class MemoryWatchdog:
             target=self._run,
             args=(limit_bytes, loop, shutdown_event),
             daemon=True,
-            name="rss-watchdog",
+            name="memory-watchdog",
         )
         self._thread.start()
 
@@ -125,7 +125,7 @@ class MemoryWatchdog:
         usage_read_error_logged = False
 
         logger.info(
-            "RSS watchdog limit = %d MB (cgroup detected)",
+            "Memory watchdog limit = %d MB (cgroup detected)",
             limit_bytes // _BYTES_PER_MIB,
         )
 
@@ -142,7 +142,7 @@ class MemoryWatchdog:
                     self._paused.set()
                 if not usage_read_error_logged:
                     logger.error(
-                        "RSS watchdog: failed to read cgroup memory.current "
+                        "Memory watchdog: failed to read cgroup memory.current "
                         "— defensively pausing claims",
                     )
                     usage_read_error_logged = True
@@ -158,7 +158,7 @@ class MemoryWatchdog:
 
             if exit_consec >= exit_consec_target:
                 logger.error(
-                    "RSS watchdog: %.1f%% >= exit threshold for %d samples "
+                    "Memory watchdog: %.1f%% >= exit threshold for %d samples "
                     "— initiating graceful shutdown",
                     ratio * 100.0,
                     exit_consec,
@@ -178,7 +178,7 @@ class MemoryWatchdog:
             ):
                 self._paused.set()
                 logger.warning(
-                    "RSS watchdog: %.1f%% >= pause threshold for %d samples "
+                    "Memory watchdog: %.1f%% >= pause threshold for %d samples "
                     "— pausing claims",
                     ratio * 100.0,
                     pause_consec,
@@ -187,6 +187,6 @@ class MemoryWatchdog:
             if self._paused.is_set() and ratio < resume_threshold:
                 self._paused.clear()
                 logger.info(
-                    "RSS watchdog: %.1f%% — resuming claims",
+                    "Memory watchdog: %.1f%% — resuming claims",
                     ratio * 100.0,
                 )
