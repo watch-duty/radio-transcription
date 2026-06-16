@@ -81,9 +81,6 @@ from dataclasses import replace
 from typing import Any, override
 
 import apache_beam as beam
-import google.auth
-import requests
-import requests.adapters
 from apache_beam.transforms.userstate import (
     BagRuntimeState,
     BagStateSpec,
@@ -95,10 +92,6 @@ from apache_beam.transforms.userstate import (
 )
 from apache_beam.utils.shared import Shared
 from apache_beam.utils.timestamp import Timestamp
-from google.auth.credentials import AnonymousCredentials
-from google.auth.exceptions import DefaultCredentialsError
-from google.auth.transport.requests import AuthorizedSession
-from google.cloud import storage
 
 from backend.pipeline.common import constants as common_constants
 from backend.pipeline.common import tracing_utils
@@ -112,6 +105,9 @@ from backend.pipeline.segmentation.constants import (
     WINDMILL_TIMER_MIN_ADVANCE_SECS,
 )
 from backend.pipeline.segmentation.state import sequence_buffer
+from backend.pipeline.segmentation.storage import (
+    acquire_shared_gcs_client,
+)
 from backend.pipeline.segmentation.transforms import stitcher_engine
 
 SHARED_RESOURCE_HANDLE = Shared()
@@ -119,30 +115,6 @@ SHARED_RESOURCE_HANDLE = Shared()
 logger = get_task_logger(
     __name__, {"system": "transcription", "component": "ordered-stitcher"}
 )
-
-
-def get_gcs_client(project_id: str | None) -> storage.Client:
-    """Creates a GCS Client configured with an expanded HTTP connection pool."""
-    try:
-        credentials, project = google.auth.default()
-        authed_session = AuthorizedSession(credentials)
-        adapter = requests.adapters.HTTPAdapter(
-            pool_connections=trans_constants.GCS_CONNECTION_POOL_SIZE,
-            pool_maxsize=trans_constants.GCS_CONNECTION_POOL_SIZE,
-            max_retries=trans_constants.GCS_CONNECTION_MAX_RETRIES,
-        )
-        authed_session.mount("https://", adapter)
-        return storage.Client(
-            project=project_id or project,
-            credentials=credentials,
-            _http=authed_session,
-        )
-    except DefaultCredentialsError:
-        # Fallback for un-authenticated remote testing environments (e.g., GitHub Actions CI)
-        return storage.Client(
-            project=project_id or "test-project",
-            credentials=AnonymousCredentials(),
-        )
 
 
 def _get_task_logger(
@@ -474,9 +446,9 @@ class OrderedStitchAudioFn(beam.DoFn):
             tag="vad",
         )
 
-        shared_gcs = SHARED_RESOURCE_HANDLE.acquire(
-            lambda: get_gcs_client(self.stitch_config.project_id),
-            tag="gcs_pool_100",
+        shared_gcs = acquire_shared_gcs_client(
+            project_id=self.stitch_config.project_id,
+            shared_handle=SHARED_RESOURCE_HANDLE,
         )
         self.engine.processor.vad = shared_vad
         self.engine.processor.gcs_client = shared_gcs

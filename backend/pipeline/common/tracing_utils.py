@@ -86,6 +86,10 @@ def setup_tracing(
         # Do not set up tracing for local development or tests
         return
 
+    # Disable OTel metrics exporter to prevent write-frequency errors in Cloud Monitoring
+    # from automatic metric collection (we only use OTel for tracing).
+    os.environ.setdefault("OTEL_METRICS_EXPORTER", "none")
+
     current_provider = get_tracer_provider()
     if isinstance(current_provider, TracerProvider):
         return
