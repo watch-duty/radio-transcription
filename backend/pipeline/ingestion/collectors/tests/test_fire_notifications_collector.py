@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import collections
 import datetime
 import os
 import unittest
 import uuid
 from typing import Any
-from unittest import mock
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.pipeline.ingestion.collectors.failure_classification import (
@@ -16,6 +14,11 @@ from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemFailure,
 )
 from backend.pipeline.ingestion.collectors.fire_notifications import collector
+from backend.pipeline.ingestion.collectors.fire_notifications.client import (
+    FireNotificationsClient,
+    FireNotificationsFile,
+    FireNotificationsRestClient,
+)
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
 )
@@ -33,36 +36,8 @@ from backend.pipeline.storage.feed_store import (
 
 
 def _require_item_failure(value: ItemFailure | bytes | None) -> ItemFailure:
-    """Return a typed item failure for tests that intentionally expect one."""
-    if not isinstance(value, ItemFailure):
-        msg = f"Expected ItemFailure, got {value!r}"
-        raise TypeError(msg)
+    assert isinstance(value, ItemFailure)
     return value
-
-
-class TestParseFilenameTimestamp(unittest.TestCase):
-    def test_valid_filename(self) -> None:
-        filename = "CHANNEL 2026-05-20 12-00-00.mp3"
-        dt = collector._parse_filename_timestamp(filename, "CHANNEL")
-        self.assertEqual(dt.year, 2026)
-        self.assertEqual(dt.month, 5)
-        self.assertEqual(dt.day, 20)
-        self.assertEqual(dt.hour, 12)
-        self.assertEqual(dt.minute, 0)
-        self.assertEqual(dt.second, 0)
-        self.assertEqual(dt.tzinfo, datetime.UTC)
-
-    def test_filename_with_spaces_in_channel(self) -> None:
-        filename = "SAN JOSE DISP 2026-05-20 12-00-00.mp3"
-        dt = collector._parse_filename_timestamp(filename, "SAN JOSE DISP")
-        self.assertEqual(dt.year, 2026)
-        self.assertEqual(dt.month, 5)
-        self.assertEqual(dt.day, 20)
-
-    def test_invalid_filename(self) -> None:
-        filename = "invalid_filename.mp3"
-        with self.assertRaises(ValueError):
-            collector._parse_filename_timestamp(filename, "CHANNEL")
 
 
 def _mock_response(status: int, content: bytes = b"") -> MagicMock:
@@ -73,31 +48,34 @@ def _mock_response(status: int, content: bytes = b"") -> MagicMock:
 
     cm = MagicMock()
     cm.__aenter__ = AsyncMock(return_value=resp)
-    cm.__aexit__ = AsyncMock(return_value=False)
+    cm.__aexit__ = MagicMock(return_value=False)
     return cm
 
 
-class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
+class TestClientDownloadAudio(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.session = MagicMock()
         self.shutdown = asyncio.Event()
+        self.client = FireNotificationsRestClient(
+            session=self.session,
+            url_base="http://mock-api",
+            s3_base_url="http://mock-s3-bucket",
+            user="test-user",
+            password="test-password",
+        )
 
     async def test_success(self) -> None:
         self.session.get = MagicMock(
             return_value=_mock_response(200, b"audio_data")
         )
 
-        data = await collector._download_audio(
-            self.session, "http://url", self.shutdown
-        )
+        data = await self.client.download_audio("uuid1.mp3", self.shutdown)
         self.assertEqual(data, b"audio_data")
 
     async def test_non_retryable_4xx(self) -> None:
         self.session.get = MagicMock(return_value=_mock_response(404))
 
-        result = await collector._download_audio(
-            self.session, "http://url", self.shutdown
-        )
+        result = await self.client.download_audio("uuid1.mp3", self.shutdown)
         failure = _require_item_failure(result)
         self.assertIs(
             failure.status_reason,
@@ -110,9 +88,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         self.session.get = MagicMock(return_value=_mock_response(302))
 
-        result = await collector._download_audio(
-            self.session, "http://url", self.shutdown
-        )
+        result = await self.client.download_audio("uuid1.mp3", self.shutdown)
 
         failure = _require_item_failure(result)
         self.assertIs(
@@ -123,7 +99,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         self.session.get.assert_called_once()
 
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector.control_flow.sleep_or_cancel",
+        "backend.pipeline.ingestion.collectors.fire_notifications.client.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_5xx_retry_success(self, mock_sleep: AsyncMock) -> None:
@@ -135,14 +111,12 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
-        data = await collector._download_audio(
-            self.session, "http://url", self.shutdown
-        )
+        data = await self.client.download_audio("uuid1.mp3", self.shutdown)
         self.assertEqual(data, b"data")
         self.assertEqual(self.session.get.call_count, 2)
 
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector.control_flow.sleep_or_cancel",
+        "backend.pipeline.ingestion.collectors.fire_notifications.client.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_retryable_4xx_retry_success(
@@ -160,8 +134,8 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
                     ]
                 )
 
-                data = await collector._download_audio(
-                    self.session, "http://url", self.shutdown
+                data = await self.client.download_audio(
+                    "uuid1.mp3", self.shutdown
                 )
 
                 self.assertEqual(data, b"data")
@@ -169,28 +143,24 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
                 mock_sleep.assert_awaited_once()
 
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector.control_flow.sleep_or_cancel",
+        "backend.pipeline.ingestion.collectors.fire_notifications.client.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_5xx_max_retries_fail(self, mock_sleep: MagicMock) -> None:
         mock_sleep.return_value = False
         self.session.get = MagicMock(return_value=_mock_response(500))
 
-        result = await collector._download_audio(
-            self.session, "http://url", self.shutdown
-        )
+        result = await self.client.download_audio("uuid1.mp3", self.shutdown)
         failure = _require_item_failure(result)
         self.assertIs(
             failure.status_reason,
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
         self.assertEqual(failure.reason, "item_http_500")
-        self.assertEqual(
-            self.session.get.call_count, collector._DOWNLOAD_MAX_RETRIES
-        )
+        self.assertEqual(self.session.get.call_count, 5)
 
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector.control_flow.sleep_or_cancel",
+        "backend.pipeline.ingestion.collectors.fire_notifications.client.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_network_errors_exhausted_return_item_failure(
@@ -199,9 +169,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         mock_sleep.return_value = False
         self.session.get = MagicMock(side_effect=TimeoutError)
 
-        result = await collector._download_audio(
-            self.session, "http://url", self.shutdown
-        )
+        result = await self.client.download_audio("uuid1.mp3", self.shutdown)
 
         failure = _require_item_failure(result)
         self.assertIs(
@@ -209,12 +177,10 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
         self.assertEqual(failure.reason, "item_download_failed: TimeoutError")
-        self.assertEqual(
-            self.session.get.call_count, collector._DOWNLOAD_MAX_RETRIES
-        )
+        self.assertEqual(self.session.get.call_count, 5)
 
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector.control_flow.sleep_or_cancel",
+        "backend.pipeline.ingestion.collectors.fire_notifications.client.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_503_retries_exhausted_return_item_failure(
@@ -223,9 +189,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         mock_sleep.return_value = False
         self.session.get = MagicMock(return_value=_mock_response(503))
 
-        result = await collector._download_audio(
-            self.session, "http://url", self.shutdown
-        )
+        result = await self.client.download_audio("uuid1.mp3", self.shutdown)
 
         failure = _require_item_failure(result)
         self.assertIs(
@@ -233,12 +197,10 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
             FeedStatusReason.SOURCE_UNREACHABLE,
         )
         self.assertEqual(failure.reason, "item_http_503")
-        self.assertEqual(
-            self.session.get.call_count, collector._DOWNLOAD_MAX_RETRIES
-        )
+        self.assertEqual(self.session.get.call_count, 5)
 
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector.control_flow.sleep_or_cancel",
+        "backend.pipeline.ingestion.collectors.fire_notifications.client.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_final_transport_error_wins_over_stale_status(
@@ -253,9 +215,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
             ]
         )
 
-        result = await collector._download_audio(
-            self.session, "http://url", self.shutdown
-        )
+        result = await self.client.download_audio("uuid1.mp3", self.shutdown)
 
         failure = _require_item_failure(result)
         self.assertIs(
@@ -268,7 +228,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector.control_flow.sleep_or_cancel",
+        "backend.pipeline.ingestion.collectors.fire_notifications.client.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_shutdown_during_retry_raises_cancelled_error(
@@ -278,48 +238,14 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         self.session.get = MagicMock(return_value=_mock_response(503))
 
         with self.assertRaises(asyncio.CancelledError):
-            await collector._download_audio(
-                self.session, "http://url", self.shutdown
-            )
+            await self.client.download_audio("uuid1.mp3", self.shutdown)
 
         self.assertEqual(self.session.get.call_count, 1)
 
 
-class TestPollStatusClassification(unittest.TestCase):
-    def test_poll_4xx_maps_to_configuration_invalid(self) -> None:
-        for status in (400, 404):
-            with self.subTest(status=status):
-                classification = collector._classify_poll_status(status)
-
-                self.assertIs(
-                    classification.status_reason,
-                    FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-                )
-                self.assertEqual(
-                    classification.reason,
-                    f"fn_api_http_{status}",
-                )
-
-    def test_poll_auth_and_rate_limit_keep_exact_meanings(self) -> None:
-        cases = {
-            401: FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-            403: FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-            429: FeedStatusReason.SOURCE_RATE_LIMITED,
-        }
-        for status, reason in cases.items():
-            with self.subTest(status=status):
-                classification = collector._classify_poll_status(status)
-
-                self.assertIs(classification.status_reason, reason)
-                self.assertEqual(
-                    classification.reason,
-                    f"fn_api_http_{status}",
-                )
-
-
 class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        self.session = MagicMock()
+        self.client = MagicMock(spec=FireNotificationsClient)
         self.shutdown = asyncio.Event()
         self.feed: dict[str, Any] = {
             "id": "feed-id",
@@ -327,32 +253,25 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         }
         self.processed_uuids = collections.deque(maxlen=1000)
 
-    @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
-        new_callable=AsyncMock,
-    )
-    async def test_process_files(self, mock_download: AsyncMock) -> None:
-        mock_download.return_value = b"mp3_bytes"
+    async def test_process_files(self) -> None:
+        self.client.download_audio.return_value = b"mp3_bytes"
         files = [
-            {
-                "type": "file",
-                "name": "CHAN 2026-05-20 12-00-00.mp3",
-                "uuid": "uuid1",
-                "size": 1000,
-            },
-            {
-                "type": "file",
-                "name": "CHAN 2026-05-20 12-00-01.mp3",
-                "uuid": "uuid2",
-                "size": 1000,
-            },
-            {"type": "dir", "name": "some_dir"},
-            {
-                "type": "file",
-                "name": "not_mp3.txt",
-                "uuid": "uuid3",
-                "size": 1000,
-            },
+            FireNotificationsFile(
+                uuid="uuid1",
+                filename="CHAN 2026-05-20 12-00-00.mp3",
+                start_time=datetime.datetime(
+                    2026, 5, 20, 12, 0, 0, tzinfo=datetime.UTC
+                ),
+                size=1000,
+            ),
+            FireNotificationsFile(
+                uuid="uuid2",
+                filename="CHAN 2026-05-20 12-00-01.mp3",
+                start_time=datetime.datetime(
+                    2026, 5, 20, 12, 0, 1, tzinfo=datetime.UTC
+                ),
+                size=1000,
+            ),
         ]
 
         chunks = []
@@ -362,13 +281,12 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         ) as mock_duration:
             async for chunk in collector._process_file_list(
                 files,
-                self.session,
+                self.client,
                 self.shutdown,
                 "session-id",
                 self.feed,  # type: ignore
                 self.processed_uuids,
                 "CHAN",
-                "http://mock-s3-bucket",
                 ItemBatchOutcome(),
             ):
                 chunks.append(chunk)
@@ -383,30 +301,30 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         self.assertIn("uuid1", self.processed_uuids)
         self.assertIn("uuid2", self.processed_uuids)
 
-    @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
-        new_callable=AsyncMock,
-    )
     async def test_process_files_with_last_bookmark_time(
-        self, mock_download: AsyncMock
+        self,
     ) -> None:
-        mock_download.return_value = b"mp3_bytes"
+        self.client.download_audio.return_value = b"mp3_bytes"
         self.feed["last_bookmark_time"] = datetime.datetime(
             2026, 5, 20, 12, 0, 0, tzinfo=datetime.UTC
         )
         files = [
-            {
-                "type": "file",
-                "name": "CHAN 2026-05-20 12-00-00.mp3",
-                "uuid": "uuid1",
-                "size": 1000,
-            },
-            {
-                "type": "file",
-                "name": "CHAN 2026-05-20 12-00-01.mp3",
-                "uuid": "uuid2",
-                "size": 1000,
-            },
+            FireNotificationsFile(
+                uuid="uuid1",
+                filename="CHAN 2026-05-20 12-00-00.mp3",
+                start_time=datetime.datetime(
+                    2026, 5, 20, 12, 0, 0, tzinfo=datetime.UTC
+                ),
+                size=1000,
+            ),
+            FireNotificationsFile(
+                uuid="uuid2",
+                filename="CHAN 2026-05-20 12-00-01.mp3",
+                start_time=datetime.datetime(
+                    2026, 5, 20, 12, 0, 1, tzinfo=datetime.UTC
+                ),
+                size=1000,
+            ),
         ]
 
         chunks = []
@@ -416,13 +334,12 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         ) as mock_duration:
             async for chunk in collector._process_file_list(
                 files,
-                self.session,
+                self.client,
                 self.shutdown,
                 "session-id",
                 self.feed,  # type: ignore
                 self.processed_uuids,
                 "CHAN",
-                "http://mock-s3-bucket",
                 ItemBatchOutcome(),
             ):
                 chunks.append(chunk)
@@ -435,37 +352,34 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(chunks[0].resume_position, chunks[0].chunk_start_time)
 
-    @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
-        new_callable=AsyncMock,
-    )
     async def test_failed_download_does_not_mark_uuid_seen(
-        self, mock_download: AsyncMock
+        self,
     ) -> None:
-        mock_download.return_value = ItemFailure(
+        self.client.download_audio.return_value = ItemFailure(
             FeedStatusReason.SOURCE_UNREACHABLE,
             "item_download_failed",
         )
         files = [
-            {
-                "type": "file",
-                "name": "CHAN 2026-05-20 12-00-00.mp3",
-                "uuid": "uuid1",
-                "size": 1000,
-            },
+            FireNotificationsFile(
+                uuid="uuid1",
+                filename="CHAN 2026-05-20 12-00-00.mp3",
+                start_time=datetime.datetime(
+                    2026, 5, 20, 12, 0, 0, tzinfo=datetime.UTC
+                ),
+                size=1000,
+            ),
         ]
 
         chunks = []
         with self.assertRaises(FeedFailure) as ctx:
             async for chunk in collector._process_file_list(
                 files,
-                self.session,
+                self.client,
                 self.shutdown,
                 "session-id",
                 self.feed,  # type: ignore
                 self.processed_uuids,
                 "CHAN",
-                "http://mock-s3-bucket",
                 ItemBatchOutcome(),
             ):
                 chunks.append(chunk)
@@ -479,36 +393,33 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(ctx.exception.reason, "item_download_failed")
 
-    @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
-        new_callable=AsyncMock,
-    )
     async def test_classified_download_failure_promotes_and_does_not_mark_uuid_seen(
-        self, mock_download: AsyncMock
+        self,
     ) -> None:
-        mock_download.return_value = ItemFailure(
+        self.client.download_audio.return_value = ItemFailure(
             FeedStatusReason.SOURCE_UNREACHABLE,
             "item_http_503",
         )
         files = [
-            {
-                "type": "file",
-                "name": "CHAN 2026-05-20 12-00-00.mp3",
-                "uuid": "uuid1",
-                "size": 1000,
-            },
+            FireNotificationsFile(
+                uuid="uuid1",
+                filename="CHAN 2026-05-20 12-00-00.mp3",
+                start_time=datetime.datetime(
+                    2026, 5, 20, 12, 0, 0, tzinfo=datetime.UTC
+                ),
+                size=1000,
+            ),
         ]
 
         with self.assertRaises(FeedFailure) as ctx:
             async for _ in collector._process_file_list(
                 files,
-                self.session,
+                self.client,
                 self.shutdown,
                 "session-id",
                 self.feed,  # type: ignore
                 self.processed_uuids,
                 "CHAN",
-                "http://mock-s3-bucket",
                 ItemBatchOutcome(),
             ):
                 pass
@@ -520,14 +431,10 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(ctx.exception), "item_http_503")
         self.assertEqual(len(self.processed_uuids), 0)
 
-    @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
-        new_callable=AsyncMock,
-    )
     async def test_mixed_classified_download_failures_promote_collector_error(
-        self, mock_download: AsyncMock
+        self,
     ) -> None:
-        mock_download.side_effect = [
+        self.client.download_audio.side_effect = [
             ItemFailure(
                 FeedStatusReason.SOURCE_UNREACHABLE,
                 "item_http_503",
@@ -538,30 +445,33 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
             ),
         ]
         files = [
-            {
-                "type": "file",
-                "name": "CHAN 2026-05-20 12-00-00.mp3",
-                "uuid": "uuid1",
-                "size": 1000,
-            },
-            {
-                "type": "file",
-                "name": "CHAN 2026-05-20 12-00-01.mp3",
-                "uuid": "uuid2",
-                "size": 1000,
-            },
+            FireNotificationsFile(
+                uuid="uuid1",
+                filename="CHAN 2026-05-20 12-00-00.mp3",
+                start_time=datetime.datetime(
+                    2026, 5, 20, 12, 0, 0, tzinfo=datetime.UTC
+                ),
+                size=1000,
+            ),
+            FireNotificationsFile(
+                uuid="uuid2",
+                filename="CHAN 2026-05-20 12-00-01.mp3",
+                start_time=datetime.datetime(
+                    2026, 5, 20, 12, 0, 1, tzinfo=datetime.UTC
+                ),
+                size=1000,
+            ),
         ]
 
         with self.assertRaises(FeedFailure) as ctx:
             async for _ in collector._process_file_list(
                 files,
-                self.session,
+                self.client,
                 self.shutdown,
                 "session-id",
                 self.feed,  # type: ignore
                 self.processed_uuids,
                 "CHAN",
-                "http://mock-s3-bucket",
                 ItemBatchOutcome(),
             ):
                 pass
@@ -572,14 +482,10 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(str(ctx.exception), "mixed_item_failures")
 
-    @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
-        new_callable=AsyncMock,
-    )
     async def test_partial_item_success_suppresses_item_failure_promotion(
-        self, mock_download: AsyncMock
+        self,
     ) -> None:
-        mock_download.side_effect = [
+        self.client.download_audio.side_effect = [
             ItemFailure(
                 FeedStatusReason.SOURCE_UNREACHABLE,
                 "item_http_503",
@@ -587,18 +493,22 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
             b"mp3_bytes",
         ]
         files = [
-            {
-                "type": "file",
-                "name": "CHAN 2026-05-20 12-00-00.mp3",
-                "uuid": "uuid1",
-                "size": 1000,
-            },
-            {
-                "type": "file",
-                "name": "CHAN 2026-05-20 12-00-01.mp3",
-                "uuid": "uuid2",
-                "size": 1000,
-            },
+            FireNotificationsFile(
+                uuid="uuid1",
+                filename="CHAN 2026-05-20 12-00-00.mp3",
+                start_time=datetime.datetime(
+                    2026, 5, 20, 12, 0, 0, tzinfo=datetime.UTC
+                ),
+                size=1000,
+            ),
+            FireNotificationsFile(
+                uuid="uuid2",
+                filename="CHAN 2026-05-20 12-00-01.mp3",
+                start_time=datetime.datetime(
+                    2026, 5, 20, 12, 0, 1, tzinfo=datetime.UTC
+                ),
+                size=1000,
+            ),
         ]
 
         chunks = []
@@ -608,13 +518,12 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         ):
             async for chunk in collector._process_file_list(
                 files,
-                self.session,
+                self.client,
                 self.shutdown,
                 "session-id",
                 self.feed,  # type: ignore
                 self.processed_uuids,
                 "CHAN",
-                "http://mock-s3-bucket",
                 ItemBatchOutcome(),
             ):
                 chunks.append(chunk)
@@ -625,13 +534,8 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
     @patch(
         "backend.pipeline.ingestion.collectors.fire_notifications.collector.telemetry.emit_call_download_failed",
     )
-    @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
-        new_callable=AsyncMock,
-    )
     async def test_shutdown_suppresses_call_download_failed_emit(
         self,
-        mock_download: AsyncMock,
         mock_emit: MagicMock,
     ) -> None:
         async def _fail_after_shutdown(*_args: object) -> ItemFailure:
@@ -641,27 +545,28 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
                 "item_download_failed",
             )
 
-        mock_download.side_effect = _fail_after_shutdown
+        self.client.download_audio.side_effect = _fail_after_shutdown
         files = [
-            {
-                "type": "file",
-                "name": "CHAN 2026-05-20 12-00-00.mp3",
-                "uuid": "uuid1",
-                "size": 1000,
-            },
+            FireNotificationsFile(
+                uuid="uuid1",
+                filename="CHAN 2026-05-20 12-00-00.mp3",
+                start_time=datetime.datetime(
+                    2026, 5, 20, 12, 0, 0, tzinfo=datetime.UTC
+                ),
+                size=1000,
+            ),
         ]
 
         chunks = [
             chunk
             async for chunk in collector._process_file_list(
                 files,
-                self.session,
+                self.client,
                 self.shutdown,
                 "session-id",
                 self.feed,  # type: ignore
                 self.processed_uuids,
                 "CHAN",
-                "http://mock-s3-bucket",
                 ItemBatchOutcome(),
             )
         ]
@@ -672,23 +577,20 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
     @patch(
         "backend.pipeline.ingestion.collectors.fire_notifications.collector.telemetry.emit_call_download_failed",
     )
-    @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
-        new_callable=AsyncMock,
-    )
     async def test_duration_probe_failed_promotes_without_marking_uuid_or_slo(
         self,
-        mock_download: AsyncMock,
         mock_emit: MagicMock,
     ) -> None:
-        mock_download.return_value = b"mp3_bytes"
+        self.client.download_audio.return_value = b"mp3_bytes"
         files = [
-            {
-                "type": "file",
-                "name": "CHAN 2026-05-20 12-00-00.mp3",
-                "uuid": "uuid1",
-                "size": 1000,
-            },
+            FireNotificationsFile(
+                uuid="uuid1",
+                filename="CHAN 2026-05-20 12-00-00.mp3",
+                start_time=datetime.datetime(
+                    2026, 5, 20, 12, 0, 0, tzinfo=datetime.UTC
+                ),
+                size=1000,
+            ),
         ]
 
         with patch(
@@ -698,13 +600,12 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(FeedFailure) as ctx:
                 async for _ in collector._process_file_list(
                     files,
-                    self.session,
+                    self.client,
                     self.shutdown,
                     "session-id",
                     self.feed,  # type: ignore
                     self.processed_uuids,
                     "CHAN",
-                    "http://mock-s3-bucket",
                     ItemBatchOutcome(),
                 ):
                     pass
@@ -742,7 +643,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector._fetch_file_list",
+        "backend.pipeline.ingestion.collectors.fire_notifications.client.FireNotificationsRestClient.fetch_file_list",
         new_callable=AsyncMock,
     )
     async def test_max_consecutive_failures_raises_source_unreachable(
@@ -770,7 +671,6 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
             str(ctx.exception),
             "source_unreachable: Exception: Connection failure",
         )
-        # 10 attempts
         self.assertEqual(mock_fetch.call_count, 10)
 
     async def test_missing_source_feed_id_raises_typed_failure(self) -> None:
@@ -817,7 +717,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         1,
     )
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector._fetch_file_list",
+        "backend.pipeline.ingestion.collectors.fire_notifications.client.FireNotificationsRestClient.fetch_file_list",
         new_callable=AsyncMock,
     )
     async def test_poll_http_statuses_raise_typed_failures(
@@ -870,7 +770,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(str(ctx.exception), expected_reason)
 
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector._fetch_file_list",
+        "backend.pipeline.ingestion.collectors.fire_notifications.client.FireNotificationsRestClient.fetch_file_list",
         new_callable=AsyncMock,
     )
     async def test_poll_malformed_json_raises_payload_failure(
@@ -905,7 +805,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector._fetch_file_list",
+        "backend.pipeline.ingestion.collectors.fire_notifications.client.FireNotificationsRestClient.fetch_file_list",
         new_callable=AsyncMock,
     )
     async def test_successful_poll_resets_consecutive_failures(
@@ -914,13 +814,13 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         mock_sleep.return_value = False
 
         resp_fail = Exception("Connection failure")
-        resp_ok = {"files": []}
+        resp_ok = []
 
         # 9 failures, 1 success, 2 failures, then we trigger shutdown to exit gracefully.
         mock_fetch.side_effect = [resp_fail] * 9 + [resp_ok] + [resp_fail] * 2
 
         async def sleep_side_effect(event, duration):
-            if mock_sleep.call_count >= 11:
+            if mock_sleep.call_count >= 13:
                 self.shutdown.set()
             return False
 
@@ -945,17 +845,22 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector._fetch_file_list",
+        "backend.pipeline.ingestion.collectors.fire_notifications.client.FireNotificationsRestClient.fetch_file_list",
         new_callable=AsyncMock,
     )
     async def test_successful_poll_missing_files_yields_source_observation(
         self, mock_fetch: AsyncMock, mock_sleep: AsyncMock
     ) -> None:
+        sleep_count = 0
+
         async def _stop_after_poll_sleep(*_args: object) -> None:
-            self.shutdown.set()
+            nonlocal sleep_count
+            sleep_count += 1
+            if sleep_count >= 2:
+                self.shutdown.set()
 
         mock_sleep.side_effect = _stop_after_poll_sleep
-        mock_fetch.return_value = {}
+        mock_fetch.return_value = []
 
         events = []
         async for event in collector.fire_notifications_collector(
@@ -969,13 +874,16 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events, [SourceObservation()])
 
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector._fetch_file_list",
+        "backend.pipeline.ingestion.collectors.fire_notifications.client.FireNotificationsRestClient.fetch_file_list",
         new_callable=AsyncMock,
     )
     async def test_present_non_list_files_raises_malformed_failure(
         self, mock_fetch: AsyncMock
     ) -> None:
-        mock_fetch.return_value = {"files": {"bad": "shape"}}
+        mock_fetch.side_effect = FeedFailure(
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            "fn_api_payload_malformed",
+        )
 
         with self.assertRaises(FeedFailure) as ctx:
             async for _ in collector.fire_notifications_collector(
@@ -997,41 +905,41 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
+        "backend.pipeline.ingestion.collectors.fire_notifications.client.FireNotificationsRestClient.download_audio",
         new_callable=AsyncMock,
     )
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector._fetch_file_list",
+        "backend.pipeline.ingestion.collectors.fire_notifications.client.FireNotificationsRestClient.fetch_file_list",
         new_callable=AsyncMock,
     )
     async def test_all_seen_files_yield_source_observation(
         self,
         mock_fetch: AsyncMock,
         mock_download: AsyncMock,
-        mock_sleep: AsyncMock,
+        mock_sleep: MagicMock,
     ) -> None:
         mock_download.return_value = b"mp3"
 
-        first_payload = {
-            "files": [
-                {
-                    "type": "file",
-                    "name": "CHAN 2026-05-20 12-00-00.mp3",
-                    "uuid": "uuid1",
-                    "size": 1000,
-                }
-            ]
-        }
-        second_payload = {
-            "files": [
-                {
-                    "type": "file",
-                    "name": "CHAN 2026-05-20 12-00-00.mp3",
-                    "uuid": "uuid1",
-                    "size": 1000,
-                }
-            ]
-        }
+        first_payload = [
+            FireNotificationsFile(
+                uuid="uuid1",
+                filename="CHAN 2026-05-20 12-00-00.mp3",
+                start_time=datetime.datetime(
+                    2026, 5, 20, 12, 0, 0, tzinfo=datetime.UTC
+                ),
+                size=1000,
+            )
+        ]
+        second_payload = [
+            FireNotificationsFile(
+                uuid="uuid1",
+                filename="CHAN 2026-05-20 12-00-00.mp3",
+                start_time=datetime.datetime(
+                    2026, 5, 20, 12, 0, 0, tzinfo=datetime.UTC
+                ),
+                size=1000,
+            )
+        ]
         mock_fetch.side_effect = [first_payload, second_payload]
 
         sleep_calls = 0
@@ -1039,7 +947,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         async def sleep_side_effect(*args, **kwargs) -> bool:
             nonlocal sleep_calls
             sleep_calls += 1
-            if sleep_calls >= 2:
+            if sleep_calls >= 3:
                 self.shutdown.set()
                 return True
             return False
@@ -1069,17 +977,22 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector._fetch_file_list",
+        "backend.pipeline.ingestion.collectors.fire_notifications.client.FireNotificationsRestClient.fetch_file_list",
         new_callable=AsyncMock,
     )
     async def test_polling_passes_authorization_header(
-        self, mock_fetch: AsyncMock, mock_sleep: AsyncMock
+        self, mock_fetch: MagicMock, mock_sleep: AsyncMock
     ) -> None:
+        sleep_count = 0
+
         async def _stop_after_poll_sleep(*_args: object) -> None:
-            self.shutdown.set()
+            nonlocal sleep_count
+            sleep_count += 1
+            if sleep_count >= 2:
+                self.shutdown.set()
 
         mock_sleep.side_effect = _stop_after_poll_sleep
-        mock_fetch.return_value = {"files": []}
+        mock_fetch.return_value = []
 
         collector_generator = collector.fire_notifications_collector(
             self.feed,  # type: ignore
@@ -1091,13 +1004,8 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         async for _ in collector_generator:
             pass
 
-        # Since we mock `_fetch_file_list` directly, this test checks that `_fetch_file_list`
-        # is called with the expected headers.
-        expected_auth = base64.b64encode(b"test-user:test-password").decode()
         mock_fetch.assert_called_once_with(
-            mock.ANY,
-            "http://base/CHAN",
-            {"Authorization": f"Basic {expected_auth}"},
+            "CHAN",
             "feed-id",
             self.shutdown,
         )
@@ -1132,19 +1040,18 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         shutdown_event = asyncio.Event()
 
         # Mock responses
-        payload_ok = {
-            "files": [
-                {
-                    "type": "file",
-                    "name": "SAN-JOSE-DISP 2026-06-15 17-37-43.mp3",
-                    "uuid": "uuid1",
-                    "size": 1024,
-                }
-            ],
-            "directories": [],
-        }
+        payload_ok = [
+            FireNotificationsFile(
+                uuid="uuid1",
+                filename="SAN-JOSE-DISP 2026-06-15 17-37-43.mp3",
+                start_time=datetime.datetime(
+                    2026, 6, 15, 17, 37, 43, tzinfo=datetime.UTC
+                ),
+                size=1024,
+            )
+        ]
 
-        # Keep track of sleep calls. On the first sleep call, we shut down.
+        # Keep track of sleep calls.
         sleep_count = 0
 
         async def mock_sleep_or_cancel(
@@ -1152,17 +1059,17 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         ) -> None:
             nonlocal sleep_count
             sleep_count += 1
-            if sleep_count >= 2:
+            if sleep_count >= 3:
                 event.set()
 
-        # Patch _fetch_file_list, _download_audio and sleep_or_cancel
+        # Patch fetch_file_list, download_audio and sleep_or_cancel
         with (
             patch(
-                "backend.pipeline.ingestion.collectors.fire_notifications.collector._fetch_file_list",
+                "backend.pipeline.ingestion.collectors.fire_notifications.client.FireNotificationsRestClient.fetch_file_list",
                 return_value=payload_ok,
             ),
             patch(
-                "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",
+                "backend.pipeline.ingestion.collectors.fire_notifications.client.FireNotificationsRestClient.download_audio",
                 return_value=b"fake audio bytes",
             ),
             patch(

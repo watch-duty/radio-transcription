@@ -21,8 +21,8 @@ from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemBatchOutcome,
     ItemFailure,
 )
-from backend.pipeline.ingestion.collectors.fire_notifications import (
-    collector as fire_collector,
+from backend.pipeline.ingestion.collectors.fire_notifications.client import (
+    FireNotificationsRestClient,
 )
 from backend.pipeline.ingestion.collectors.openmhz import (
     collector as openmhz_collector,
@@ -69,8 +69,7 @@ class TestCrossCollectorShutdownSemantics(unittest.IsolatedAsyncioTestCase):
         mock_sleep.assert_awaited_once()
 
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications"
-        ".collector.control_flow.sleep_or_cancel",
+        "backend.pipeline.ingestion.collectors.fire_notifications.client.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_fire_notifications_retry_shutdown_raises_cancelled_error(
@@ -80,11 +79,17 @@ class TestCrossCollectorShutdownSemantics(unittest.IsolatedAsyncioTestCase):
         mock_sleep.side_effect = asyncio.CancelledError
         session = MagicMock()
         session.get = AsyncMock(return_value=MagicMock(status_code=503))
+        client = FireNotificationsRestClient(
+            session=session,
+            url_base="http://mock-api",
+            s3_base_url="http://mock-s3-bucket",
+            user="test-user",
+            password="test-password",
+        )
 
         with self.assertRaises(asyncio.CancelledError):
-            await fire_collector._download_audio(
-                session,
-                "https://files.example/test.mp3",
+            await client.download_audio(
+                "test.mp3",
                 asyncio.Event(),
             )
 
