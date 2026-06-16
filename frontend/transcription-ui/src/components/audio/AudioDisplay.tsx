@@ -12,7 +12,7 @@ import { type Theme, useTheme } from '@mui/material/styles';
 import { type AudioSegment } from '@transcription/common';
 import WavesurferPlayer from '@wavesurfer/react';
 
-import type { WebAudioPlayer } from '../../audio/webAudioEngine';
+import type { PlaybackController } from '../../audio/webAudioPlayer';
 import { findEvaluationAnnotationData } from '../../utils/annotationUtils';
 import { getAudioUrl } from '../../utils/audioUtils';
 import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
@@ -27,7 +27,7 @@ interface AudioDisplayProps {
   isAudioPlaying: boolean;
   onTogglePlayPause: () => void;
   currentTimeSeconds?: number;
-  currentAudioRef?: React.RefObject<WebAudioPlayer | null>;
+  currentAudioRef?: React.RefObject<PlaybackController | null>;
 }
 
 const PLAYING_CURSOR_WIDTH_PX = 1;

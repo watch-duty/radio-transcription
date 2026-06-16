@@ -166,7 +166,7 @@ vi.mock('@wavesurfer/react', () => ({
   default: () => <div data-testid="wavesurfer-player" />,
 }));
 
-// Mock the Web Audio engine so tests run without a real AudioContext, while
+// Mock the Web Audio player so tests run without a real AudioContext, while
 // still capturing the per-segment load src and lifecycle callbacks.
 const audioEngineMock = vi.hoisted(() => ({
   playSpy: vi.fn(),
@@ -179,8 +179,8 @@ const audioEngineMock = vi.hoisted(() => ({
   } | null,
 }));
 
-vi.mock('../../audio/webAudioEngine', () => ({
-  WebAudioEngine: class {
+vi.mock('../../audio/webAudioPlayer', () => ({
+  WebAudioPlayer: class {
     resume() {}
     setVolumeDb() {}
     setPan() {}

@@ -16,7 +16,7 @@ import {
   type AudioSegment,
 } from '@transcription/common';
 
-import type { WebAudioPlayer } from '../../audio/webAudioEngine';
+import type { PlaybackController } from '../../audio/webAudioPlayer';
 import { getAudioUrl } from '../../utils/audioUtils';
 import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { AudioDisplay } from './AudioDisplay';
@@ -544,7 +544,7 @@ describe('AudioDisplay', () => {
     };
 
     const currentAudioRef = {
-      current: mockPlayer as unknown as WebAudioPlayer,
+      current: mockPlayer as unknown as PlaybackController,
     };
 
     render(

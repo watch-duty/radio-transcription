@@ -1,8 +1,64 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { dbToGain } from './audioMath';
-import { WebAudioEngine } from './webAudioEngine';
+import {
+  VOLUME_MAX_DB,
+  VOLUME_MIN_DB,
+  WebAudioPlayer,
+  dbToGain,
+  formatVolumeDb,
+  gainToDb,
+} from './webAudioPlayer';
+
+describe('audioMath', () => {
+  describe('dbToGain', () => {
+    it('maps 0 dB to unity gain', () => {
+      expect(dbToGain(0)).toBeCloseTo(1);
+    });
+
+    it('maps +20 dB to 10x gain', () => {
+      expect(dbToGain(VOLUME_MAX_DB)).toBeCloseTo(10);
+    });
+
+    it('maps -6 dB to ~0.5 gain', () => {
+      expect(dbToGain(-6)).toBeCloseTo(0.501, 2);
+    });
+
+    it('snaps to 0 at and below the mute threshold', () => {
+      expect(dbToGain(VOLUME_MIN_DB)).toBe(0);
+      expect(dbToGain(VOLUME_MIN_DB + 0.5)).toBe(0);
+    });
+  });
+
+  describe('gainToDb', () => {
+    it('is the inverse of dbToGain for audible values', () => {
+      expect(gainToDb(dbToGain(-6))).toBeCloseTo(-6);
+      expect(gainToDb(1)).toBeCloseTo(0);
+    });
+
+    it('returns -Infinity for zero gain', () => {
+      expect(gainToDb(0)).toBe(-Infinity);
+    });
+  });
+
+  describe('formatVolumeDb', () => {
+    it('formats unity as 0 dB', () => {
+      expect(formatVolumeDb(0)).toBe('0 dB');
+    });
+
+    it('prefixes positive values with +', () => {
+      expect(formatVolumeDb(12)).toBe('+12 dB');
+    });
+
+    it('formats negative values', () => {
+      expect(formatVolumeDb(-12)).toBe('-12 dB');
+    });
+
+    it('shows Muted at the floor', () => {
+      expect(formatVolumeDb(VOLUME_MIN_DB)).toBe('Muted');
+    });
+  });
+});
 
 class MockAudioParam {
   linearRampToValueAtTime = vi.fn();
@@ -88,9 +144,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('WebAudioEngine', () => {
+describe('WebAudioPlayer', () => {
   it('builds the MediaElementSource → Gain → StereoPanner → destination graph', () => {
-    new WebAudioEngine();
+    new WebAudioPlayer();
 
     expect(lastContext.createMediaElementSource).toHaveBeenCalledWith(
       lastAudio
@@ -104,20 +160,20 @@ describe('WebAudioEngine', () => {
   });
 
   it('resumes a suspended context and is a no-op when running', () => {
-    const engine = new WebAudioEngine();
+    const player = new WebAudioPlayer();
 
-    engine.resume();
+    player.resume();
     expect(lastContext.resume).toHaveBeenCalledTimes(1);
 
     lastContext.resume.mockClear();
-    engine.resume();
+    player.resume();
     expect(lastContext.resume).not.toHaveBeenCalled();
   });
 
   it('maps volume in dB to gain', () => {
-    const engine = new WebAudioEngine();
+    const player = new WebAudioPlayer();
 
-    engine.setVolumeDb(-6);
+    player.setVolumeDb(-6);
     expect(lastContext.gain.gain.linearRampToValueAtTime).toHaveBeenCalledWith(
       dbToGain(-6),
       expect.any(Number)
@@ -125,9 +181,9 @@ describe('WebAudioEngine', () => {
   });
 
   it('applies pan to the StereoPanner', () => {
-    const engine = new WebAudioEngine();
+    const player = new WebAudioPlayer();
 
-    engine.setPan(-1);
+    player.setPan(-1);
     expect(lastContext.panner.pan.linearRampToValueAtTime).toHaveBeenCalledWith(
       -1,
       expect.any(Number)
@@ -135,19 +191,19 @@ describe('WebAudioEngine', () => {
   });
 
   it('sets playbackRate', () => {
-    const engine = new WebAudioEngine();
+    const player = new WebAudioPlayer();
 
-    engine.setSpeed(1.5);
+    player.setSpeed(1.5);
     expect(lastAudio.playbackRate).toBe(1.5);
   });
 
   it('loads a clip, wires callbacks, and re-applies the current speed', () => {
-    const engine = new WebAudioEngine();
-    engine.setSpeed(1.25);
+    const player = new WebAudioPlayer();
+    player.setSpeed(1.25);
 
     const onplay = vi.fn();
     const onend = vi.fn();
-    const player = engine.load('https://example.com/clip.m4a', {
+    const handle = player.load('https://example.com/clip.m4a', {
       onplay,
       onend,
     });
@@ -156,7 +212,7 @@ describe('WebAudioEngine', () => {
     expect(lastAudio.load).toHaveBeenCalled();
     expect(lastAudio.playbackRate).toBe(1.25);
 
-    player.play();
+    handle.play();
     expect(lastContext.resume).toHaveBeenCalled();
     expect(lastAudio.play).toHaveBeenCalled();
     expect(onplay).toHaveBeenCalled();
@@ -166,8 +222,8 @@ describe('WebAudioEngine', () => {
   });
 
   it('closes the context on destroy', () => {
-    const engine = new WebAudioEngine();
-    engine.destroy();
+    const player = new WebAudioPlayer();
+    player.destroy();
 
     expect(lastContext.close).toHaveBeenCalled();
   });

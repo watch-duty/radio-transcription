@@ -1,4 +1,25 @@
-import { dbToGain } from './audioMath';
+export const VOLUME_MIN_DB = -30;
+export const VOLUME_MAX_DB = 20;
+
+export const SPEED_OPTIONS = [0.5, 1.0, 1.25, 1.5, 2.0] as const;
+export const PAN_OPTIONS = [-1, 0, 1] as const;
+
+// Below this, snap to silence instead of an inaudible-but-nonzero gain.
+const MUTE_THRESHOLD_DB = VOLUME_MIN_DB + 1;
+
+export function dbToGain(db: number): number {
+  return db < MUTE_THRESHOLD_DB ? 0 : 10 ** (db / 20);
+}
+
+export function gainToDb(gain: number): number {
+  return gain <= 0 ? -Infinity : 20 * Math.log10(gain);
+}
+
+export function formatVolumeDb(db: number): string {
+  if (db < MUTE_THRESHOLD_DB) return 'Muted';
+  const rounded = Math.round(db);
+  return rounded > 0 ? `+${rounded} dB` : `${rounded} dB`;
+}
 
 export interface AudioCallbacks {
   onplay?: () => void;
@@ -7,9 +28,9 @@ export interface AudioCallbacks {
   onerror?: () => void;
 }
 
-// Per-segment handle over the engine's shared element; `unload`/`off` only
+// Per-segment controller over the player's shared element; `unload`/`off` only
 // detach this segment's listeners, they never tear down the graph.
-export interface WebAudioPlayer {
+export interface PlaybackController {
   play: () => void;
   pause: () => void;
   stop: () => void;
@@ -39,13 +60,14 @@ function createAudioContext(): AudioContext {
 }
 
 /**
- * Browser playback graph: MediaElementSource → GainNode → StereoPannerNode → destination.
+ * Plays audio through the Web Audio API:
+ *   MediaElementSource → GainNode → StereoPannerNode → destination
  *
  * A MediaElementSourceNode can only be created once per element, so the graph is
  * built once and the source is swapped per segment via `load()`; volume/pan/speed
  * live on the graph and thus apply to every segment automatically.
  */
-export class WebAudioEngine {
+export class WebAudioPlayer {
   private readonly context: AudioContext;
   private readonly audio: HTMLAudioElement;
   private readonly gain: GainNode;
@@ -98,7 +120,7 @@ export class WebAudioEngine {
     this.audio.playbackRate = rate;
   }
 
-  load(src: string, callbacks: AudioCallbacks): WebAudioPlayer {
+  load(src: string, callbacks: AudioCallbacks): PlaybackController {
     this.detachListeners();
 
     const listeners: GraphListeners = {

@@ -19,9 +19,9 @@ import { useQuery } from '@tanstack/react-query';
 import { AudioClassification, type AudioSegment } from '@transcription/common';
 
 import {
-  WebAudioEngine,
-  type WebAudioPlayer,
-} from '../../audio/webAudioEngine';
+  type PlaybackController,
+  WebAudioPlayer,
+} from '../../audio/webAudioPlayer';
 import { useAuth } from '../../context/AuthContext';
 import {
   type AlertFilter,
@@ -140,8 +140,8 @@ export function TranscriptView({
   const newerLoadAnchorId = useRef<string | null>(null);
   const wasFetchingNewer = useRef(false);
 
-  const engineRef = useRef<WebAudioEngine | null>(null);
-  const currentAudio = useRef<WebAudioPlayer | null>(null);
+  const playerRef = useRef<WebAudioPlayer | null>(null);
+  const currentAudio = useRef<PlaybackController | null>(null);
   const [playbackEndedForId, setPlaybackEndedForId] = useState<string | null>(
     null
   );
@@ -154,8 +154,8 @@ export function TranscriptView({
 
   useEffect(() => {
     return () => {
-      engineRef.current?.destroy();
-      engineRef.current = null;
+      playerRef.current?.destroy();
+      playerRef.current = null;
       currentAudio.current = null;
     };
   }, []);
@@ -164,8 +164,8 @@ export function TranscriptView({
   const toggleAudio = useCallback(
     (segmentId: string, audioUri: string) => {
       // Lazy-build on first play so the AudioContext is created inside a user gesture.
-      const engine = (engineRef.current ??= new WebAudioEngine());
-      engine.resume();
+      const player = (playerRef.current ??= new WebAudioPlayer());
+      player.resume();
 
       const newAudio = currentlyPlayingSegmentId !== segmentId;
 
@@ -177,7 +177,7 @@ export function TranscriptView({
       }
 
       if (!currentAudio.current) {
-        currentAudio.current = engine.load(getAudioUrl(audioUri), {
+        currentAudio.current = player.load(getAudioUrl(audioUri), {
           onplay: () => setIsAudioPlaying(true),
           onpause: () => setIsAudioPlaying(false),
           onerror: () => setIsAudioPlaying(false),
@@ -600,7 +600,7 @@ export function TranscriptView({
   const handleFeedSelect = (feedId: string) => {
     setSearchedFeedId(feedId);
     // Keep the engine/graph alive for the next feed.
-    engineRef.current?.stop();
+    playerRef.current?.stop();
     currentAudio.current = null;
     // Reset all state
     handleFilterByDateTime(null);
