@@ -209,11 +209,11 @@ class TestSequenceBuffer(unittest.TestCase):
         """Verifies that traceparent and baggage are correctly propagated to emitted and buffered chunks."""
         # Happy Path
         (
-            expected_next_ts,
-            buffered,
+            _,
+            _,
             to_emit,
-            was_late,
-            was_buffered,
+            _,
+            _,
         ) = self.buffer.process_chunk(
             current_ts_ms=1000,
             gcs_uri="gs://chunk1",
