@@ -143,10 +143,7 @@ def render_ffmpeg_diagnostic(
     diagnostic_text: str | None = None,
 ) -> str:
     """Render typed ffmpeg failure info into operator diagnostics."""
-    if (
-        info.kind is FfmpegFailureKind.HTTP_STATUS
-        and diagnostic_text
-    ):
+    if info.kind is FfmpegFailureKind.HTTP_STATUS and diagnostic_text:
         return diagnostic_text
 
     base = _humanize_ffmpeg_info(info)
