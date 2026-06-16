@@ -286,6 +286,7 @@ async def _process_file_list(
         # Only mark as processed after a successful yield, confirming
         # the chunk was handed off to the pipeline.
         processed_uuids.append(file_uuid)
+        feed["last_bookmark_time"] = start_time
         outcome.record_chunk_produced()
 
     if shutdown_event.is_set():
