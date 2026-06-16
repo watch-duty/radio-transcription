@@ -1,4 +1,4 @@
-"""RSS watchdog thread for ingestion claim back-pressure."""
+"""Memory watchdog thread for ingestion claim back-pressure."""
 
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ MemoryReader = Callable[[], int | None]
 MonotonicClock = Callable[[], float]
 
 
-class RssWatchdogSettings(Protocol):
-    """Settings required by RssWatchdog."""
+class MemoryWatchdogSettings(Protocol):
+    """Settings required by MemoryWatchdog."""
 
     rss_watchdog_poll_interval_sec: float
     rss_watchdog_pause_threshold: float
@@ -31,9 +31,9 @@ class RssWatchdogSettings(Protocol):
     rss_watchdog_warmup_sec: float
 
 
-class RssWatchdog:
+class MemoryWatchdog:
     """
-    Cgroup-aware RSS watchdog for the ingestion runtime.
+    Cgroup-aware memory watchdog for the ingestion runtime.
 
     The watchdog runs in an OS daemon thread so it can keep polling even if
     the asyncio event loop is starved. It pauses new feed claims when memory
@@ -43,7 +43,7 @@ class RssWatchdog:
 
     def __init__(
         self,
-        settings: RssWatchdogSettings,
+        settings: MemoryWatchdogSettings,
         thread_stop: threading.Event,
         *,
         limit_reader: MemoryReader = (

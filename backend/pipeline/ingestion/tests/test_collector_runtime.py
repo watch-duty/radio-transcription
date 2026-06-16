@@ -2364,7 +2364,7 @@ class TestProcessFeedPublishAttributes(unittest.IsolatedAsyncioTestCase):
         )
 
 
-class TestRssWatchdogIntegration(unittest.IsolatedAsyncioTestCase):
+class TestMemoryWatchdogIntegration(unittest.IsolatedAsyncioTestCase):
     """D-33: end-to-end pause / resume / trip via monkeypatched cgroup readers.
 
     Per D-34, no real allocation in CI — the monkeypatched-usage approach
@@ -2427,7 +2427,7 @@ class TestRssWatchdogIntegration(unittest.IsolatedAsyncioTestCase):
         wait_returns = [False] * len(usage_samples)
         rt._thread_stop.is_set.side_effect = is_set_returns
         rt._thread_stop.wait.side_effect = wait_returns
-        rt._rss_watchdog = rss_watchdog.RssWatchdog(
+        rt._memory_watchdog = rss_watchdog.MemoryWatchdog(
             rt._collector_settings,
             rt._thread_stop,
             usage_reader=mock.Mock(side_effect=usage_samples),
@@ -2442,7 +2442,7 @@ class TestRssWatchdogIntegration(unittest.IsolatedAsyncioTestCase):
             # Phase A: drive the watchdog body in a worker thread so the
             # asyncio loop stays available for call_soon_threadsafe.
             await asyncio.to_thread(
-                rt._rss_watchdog._run,
+                rt._memory_watchdog._run,
                 100 * 1024 * 1024,
                 rt._loop,
                 rt._shutdown,

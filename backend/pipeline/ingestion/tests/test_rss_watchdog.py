@@ -1,4 +1,4 @@
-"""Unit tests for the extracted RSS watchdog."""
+"""Unit tests for the extracted memory watchdog."""
 
 from __future__ import annotations
 
@@ -34,13 +34,13 @@ def _sequenced_stop(sample_count: int) -> mock.MagicMock:
     return thread_stop
 
 
-class TestRssWatchdogStart(unittest.IsolatedAsyncioTestCase):
+class TestMemoryWatchdogStart(unittest.IsolatedAsyncioTestCase):
     """Tests for watchdog lifecycle start and join behavior."""
 
     async def test_no_cgroup_limit_disables_without_thread(self) -> None:
         """A missing cgroup limit leaves the watchdog unpaused and join no-ops."""
         limit_reader = mock.Mock(return_value=None)
-        watchdog = rss_watchdog.RssWatchdog(
+        watchdog = rss_watchdog.MemoryWatchdog(
             _make_settings(),
             threading.Event(),
             limit_reader=limit_reader,
@@ -54,7 +54,7 @@ class TestRssWatchdogStart(unittest.IsolatedAsyncioTestCase):
 
     async def test_second_start_raises_runtime_error(self) -> None:
         """start() is single-use so duplicate watchdog threads cannot appear."""
-        watchdog = rss_watchdog.RssWatchdog(
+        watchdog = rss_watchdog.MemoryWatchdog(
             _make_settings(),
             threading.Event(),
             limit_reader=mock.Mock(return_value=None),
@@ -66,7 +66,7 @@ class TestRssWatchdogStart(unittest.IsolatedAsyncioTestCase):
             watchdog.start(mock.MagicMock(), mock.MagicMock())
 
 
-class TestRssWatchdogDebounce(unittest.TestCase):
+class TestMemoryWatchdogDebounce(unittest.TestCase):
     """Pause-set debounce and resume hysteresis semantics."""
 
     def _drive_samples(
@@ -74,9 +74,9 @@ class TestRssWatchdogDebounce(unittest.TestCase):
         usage_samples: list[int],
         *,
         limit_bytes: int = 1000,
-    ) -> rss_watchdog.RssWatchdog:
+    ) -> rss_watchdog.MemoryWatchdog:
         thread_stop = _sequenced_stop(len(usage_samples))
-        watchdog = rss_watchdog.RssWatchdog(
+        watchdog = rss_watchdog.MemoryWatchdog(
             _make_settings(),
             thread_stop,
             usage_reader=mock.Mock(side_effect=usage_samples),
@@ -111,7 +111,7 @@ class TestRssWatchdogDebounce(unittest.TestCase):
         self.assertFalse(watchdog.is_paused())
 
 
-class TestRssWatchdogExitSemantics(unittest.TestCase):
+class TestMemoryWatchdogExitSemantics(unittest.TestCase):
     """Exit-trip semantics for the watchdog OS thread."""
 
     def _drive_samples_with_loop(
@@ -123,7 +123,7 @@ class TestRssWatchdogExitSemantics(unittest.TestCase):
         thread_stop = _sequenced_stop(len(usage_samples))
         loop = mock.MagicMock()
         shutdown = mock.MagicMock()
-        watchdog = rss_watchdog.RssWatchdog(
+        watchdog = rss_watchdog.MemoryWatchdog(
             _make_settings(),
             thread_stop,
             usage_reader=mock.Mock(side_effect=usage_samples),
@@ -155,16 +155,16 @@ class TestRssWatchdogExitSemantics(unittest.TestCase):
         mock_exit.assert_not_called()
 
 
-class TestRssWatchdogWarmupGrace(unittest.TestCase):
+class TestMemoryWatchdogWarmupGrace(unittest.TestCase):
     """Warmup grace semantics."""
 
     def _drive_samples_with_time(
         self,
         usage_samples: list[int],
         time_sequence: list[float],
-    ) -> rss_watchdog.RssWatchdog:
+    ) -> rss_watchdog.MemoryWatchdog:
         thread_stop = _sequenced_stop(len(usage_samples))
-        watchdog = rss_watchdog.RssWatchdog(
+        watchdog = rss_watchdog.MemoryWatchdog(
             _make_settings(rss_watchdog_warmup_sec=60.0),
             thread_stop,
             usage_reader=mock.Mock(side_effect=usage_samples),
@@ -191,7 +191,7 @@ class TestRssWatchdogWarmupGrace(unittest.TestCase):
         self.assertTrue(watchdog.is_paused())
 
 
-class TestRssWatchdogReadErrors(unittest.TestCase):
+class TestMemoryWatchdogReadErrors(unittest.TestCase):
     """Usage-read error handling."""
 
     def test_usage_read_failure_defensively_pauses(self) -> None:
@@ -199,7 +199,7 @@ class TestRssWatchdogReadErrors(unittest.TestCase):
         thread_stop = _sequenced_stop(1)
         loop = mock.MagicMock()
         shutdown = mock.MagicMock()
-        watchdog = rss_watchdog.RssWatchdog(
+        watchdog = rss_watchdog.MemoryWatchdog(
             _make_settings(),
             thread_stop,
             usage_reader=mock.Mock(return_value=None),

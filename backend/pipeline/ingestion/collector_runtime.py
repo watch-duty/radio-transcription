@@ -123,10 +123,10 @@ class CollectorRuntime:
         self._capture_fn = capture_fn
         self._collector_settings = settings
         # threading.Event (not asyncio.Event) — the heartbeat OS thread
-        # and RSS watchdog thread can't use asyncio primitives; they need a
+        # and memory watchdog thread can't use asyncio primitives; they need a
         # shared thread-safe stop signal.
         self._thread_stop = threading.Event()
-        self._rss_watchdog = rss_watchdog.RssWatchdog(
+        self._memory_watchdog = rss_watchdog.MemoryWatchdog(
             settings,
             self._thread_stop,
         )
@@ -250,10 +250,10 @@ class CollectorRuntime:
         )
         self._heartbeat_thread.start()
 
-        # WATCHDOG-01: cgroup-aware self-RSS daemon thread. The watchdog owns
+        # WATCHDOG-01: cgroup-aware memory daemon thread. The watchdog owns
         # cgroup detection and disabled-mode logging; the runtime only wires
         # lifecycle signals.
-        self._rss_watchdog.start(self._loop, self._shutdown)
+        self._memory_watchdog.start(self._loop, self._shutdown)
 
         quarantine_telemetry.configure(settings.google_cloud_project)
 
@@ -349,7 +349,7 @@ class CollectorRuntime:
             # _feed_tasks until pause clears.
             self._reap_completed_tasks()
 
-            if self._rss_watchdog.is_paused():
+            if self._memory_watchdog.is_paused():
                 if await self._sleep_or_shutdown(
                     self._collector_settings.rss_watchdog_poll_interval_sec,
                 ):
@@ -1413,7 +1413,7 @@ class CollectorRuntime:
         # 3s join (vs heartbeat's 5s): watchdog body has no DB I/O; only a
         # path-stuck-on-cgroup-read could legitimately stall, and that's
         # rare enough that 3s is generous.
-        await self._rss_watchdog.join(timeout_sec=3)
+        await self._memory_watchdog.join(timeout_sec=3)
 
         # Cancel all feed tasks
         for task in self._feed_tasks.values():
