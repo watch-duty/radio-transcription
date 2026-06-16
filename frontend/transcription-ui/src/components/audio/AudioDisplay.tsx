@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
-import type { Howl } from 'howler';
 import type WaveSurfer from 'wavesurfer.js';
 
 import PauseIcon from '@mui/icons-material/PauseCircleFilledOutlined';
@@ -13,6 +12,7 @@ import { type Theme, useTheme } from '@mui/material/styles';
 import { type AudioSegment } from '@transcription/common';
 import WavesurferPlayer from '@wavesurfer/react';
 
+import type { WebAudioPlayer } from '../../audio/webAudioEngine';
 import { findEvaluationAnnotationData } from '../../utils/annotationUtils';
 import { getAudioUrl } from '../../utils/audioUtils';
 import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
@@ -27,7 +27,7 @@ interface AudioDisplayProps {
   isAudioPlaying: boolean;
   onTogglePlayPause: () => void;
   currentTimeSeconds?: number;
-  currentAudioRef?: React.RefObject<Howl | null>;
+  currentAudioRef?: React.RefObject<WebAudioPlayer | null>;
 }
 
 const PLAYING_CURSOR_WIDTH_PX = 1;
@@ -242,7 +242,6 @@ export function AudioDisplay({
     const updateProgress = () => {
       if (currentAudioRef.current) {
         const seek = currentAudioRef.current.seek();
-        // seek could be the Howl instance if audio isn't yet loaded, so we should guard against that.
         if (typeof seek === 'number') {
           setLocalCurrentTimeSeconds(seek);
         }

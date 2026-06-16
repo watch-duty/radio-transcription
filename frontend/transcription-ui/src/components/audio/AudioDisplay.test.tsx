@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react';
 
-import type { Howl } from 'howler';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -17,6 +16,7 @@ import {
   type AudioSegment,
 } from '@transcription/common';
 
+import type { WebAudioPlayer } from '../../audio/webAudioEngine';
 import { getAudioUrl } from '../../utils/audioUtils';
 import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { AudioDisplay } from './AudioDisplay';
@@ -539,12 +539,12 @@ describe('AudioDisplay', () => {
       ),
     ];
 
-    const mockHowl = {
+    const mockPlayer = {
       seek: vi.fn().mockReturnValue(2.5),
     };
 
     const currentAudioRef = {
-      current: mockHowl as unknown as Howl,
+      current: mockPlayer as unknown as WebAudioPlayer,
     };
 
     render(
@@ -560,7 +560,7 @@ describe('AudioDisplay', () => {
     );
 
     await waitFor(() => {
-      expect(mockHowl.seek).toHaveBeenCalled();
+      expect(mockPlayer.seek).toHaveBeenCalled();
     });
 
     expect(mockSetTime).toHaveBeenCalledWith(2.5);
