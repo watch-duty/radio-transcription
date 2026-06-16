@@ -10,9 +10,8 @@ import uuid
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
-from curl_cffi.requests import AsyncSession
-
 from backend.pipeline.common.audio import get_audio_duration
+from backend.pipeline.ingestion.collectors import aiohttp_requests
 from backend.pipeline.ingestion import quarantine_reason
 from backend.pipeline.ingestion.collectors import (
     control_flow,
@@ -42,6 +41,8 @@ from backend.pipeline.storage import feed_store
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+
+    import aiohttp
 
     from backend.pipeline.ingestion.models import CaptureResources
     from backend.pipeline.storage.feed_store import LeasedFeed
@@ -93,57 +94,26 @@ def _build_auth_headers() -> dict[str, str]:
 
 
 async def _download_audio(
-    session: AsyncSession,
+    session: aiohttp.ClientSession,
     url: str,
     shutdown: asyncio.Event,
 ) -> bytes | ItemFailure:
     """Download audio file from S3 with retries."""
-    # Note: We use a manual retry loop instead of 'tenacity' to easily
-    # interrupt the backoff sleep when the shutdown event is set,
-    # matching the pattern in bcfy_calls_collector.py.
-    last_status: int | None = None
-    last_exception: Exception | None = None
-    for attempt in range(_DOWNLOAD_MAX_RETRIES):
-        try:
-            resp = await session.get(url, timeout=30.0)
-            last_status = resp.status_code
-            last_exception = None
-            if resp.status_code == 200:
-                return resp.content
-            if http_status.is_retryable_http_status(resp.status_code):
-                logger.warning(
-                    "Download retryable %d (attempt %d/%d): url=%s",
-                    resp.status_code,
-                    attempt + 1,
-                    _DOWNLOAD_MAX_RETRIES,
-                    url,
-                )
-            else:
-                logger.warning(
-                    "Download non-retryable %d: url=%s",
-                    resp.status_code,
-                    url,
-                )
-                return item_downloads.item_http_failure(resp.status_code)
-        except Exception as exc:
-            last_exception = exc
-            last_status = None
-            logger.warning(
-                "Download error (attempt %d/%d): url=%s",
-                attempt + 1,
-                _DOWNLOAD_MAX_RETRIES,
-                url,
-                exc_info=True,
-            )
-        if attempt < _DOWNLOAD_MAX_RETRIES - 1:
-            await control_flow.sleep_or_cancel(
-                shutdown, _DOWNLOAD_BACKOFF_BASE_SEC * (2**attempt)
-            )
-
-    logger.warning("Download failed after retries: url=%s", url)
-    if last_status is not None:
-        return item_downloads.item_http_failure(last_status)
-    return item_downloads.item_download_failed(last_exception)
+    result = await aiohttp_requests.download_item_media(
+        session,
+        url,
+        shutdown,
+        retry_config=aiohttp_requests.RetryConfig(
+            timeout_sec=30.0,
+            max_attempts=_DOWNLOAD_MAX_RETRIES,
+            base_delay_sec=_DOWNLOAD_BACKOFF_BASE_SEC,
+            sleep_func=control_flow.sleep_or_cancel,
+        ),
+        log_label="Fire Notifications item audio",
+    )
+    if isinstance(result, aiohttp_requests.DownloadedItem):
+        return result.content
+    return result
 
 
 def _get_channel_timezone(channel_key: str) -> ZoneInfo:
@@ -186,7 +156,7 @@ def _parse_filename_timestamp(
 
 async def _process_file_list(
     files: list[dict[str, Any]],
-    session: AsyncSession,
+    session: aiohttp.ClientSession,
     shutdown_event: asyncio.Event,
     connection_session_id: str,
     feed: LeasedFeed,
@@ -297,11 +267,47 @@ async def _process_file_list(
         raise collector_failure(promoted.status_reason, promoted.reason)
 
 
+async def _fetch_file_list(
+    session: aiohttp.ClientSession,
+    url: str,
+    headers: dict[str, str],
+    feed_id: object,
+    shutdown_event: asyncio.Event,
+) -> dict[str, Any]:
+    """Fetch the Fire Notifications file list with request-level retries."""
+
+    def validate_payload(payload: object) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise ValueError("Payload must be a dictionary")
+        return payload
+
+    return await aiohttp_requests.fetch_json_with_retries(
+        session,
+        url,
+        shutdown_event,
+        retry_config=aiohttp_requests.RetryConfig(
+            timeout_sec=10.0,
+            max_attempts=3,
+            base_delay_sec=1.0,
+            sleep_func=control_flow.sleep_or_cancel,
+        ),
+        headers=headers,
+        log_label=f"Fire Notifications API feed {feed_id}",
+        reason_prefix="fn_api_http",
+        status_policy=_FN_POLL_HTTP_POLICY,
+        validate_payload=validate_payload,
+        invalid_payload_status_reason=feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        invalid_payload_reason="fn_api_payload_malformed",
+        transport_status_reason=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+        transport_reason="source_unreachable",
+    )
+
+
 async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
     url_base: str,
-    _resources: CaptureResources,
+    resources: CaptureResources,
 ) -> AsyncIterator[CaptureEvent]:
     """Capture Fire Notifications audio via HTTP Polling.
 
@@ -348,92 +354,89 @@ async def fire_notifications_collector(  # noqa: PLR0912, PLR0915
     )
     connection_session_id = str(uuid.uuid4())
 
-    session = AsyncSession()
+    session = resources.http_session
 
-    try:
-        while not shutdown_event.is_set():
-            poll_ok = False
+    # Stagger initial polling requests to prevent thundering herd
+    startup_delay = random.uniform(0, _POLL_INTERVAL_SEC)
+    await control_flow.sleep_or_cancel(shutdown_event, startup_delay)
 
-            try:
-                # Poll the API
-                resp = await session.get(
-                    poll_url, headers=headers, timeout=10.0
-                )
-                if resp.status_code == 200:
-                    try:
-                        data = resp.json()
-                    except ValueError as exc:
-                        raise collector_failure(
-                            feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-                            "fn_api_payload_malformed: "
-                            f"{quarantine_reason.exception_text(exc)}",
-                        ) from exc
-                    files = payloads.extract_optional_item_list(
-                        data,
-                        "files",
-                        malformed_reason="fn_api_payload_malformed",
-                    )
+    while not shutdown_event.is_set():
+        poll_ok = False
 
-                    if files == []:
-                        yield SourceObservation()
-                    else:
-                        outcome = ItemBatchOutcome()
-                        async for chunk in _process_file_list(
-                            files,
-                            session,
-                            shutdown_event,
-                            connection_session_id,
-                            feed,
-                            processed_uuids,
-                            source_feed_id,
-                            s3_base_url,
-                            outcome,
-                        ):
-                            yield chunk
-                        is_skipped_only_listing_while_running = (
-                            outcome.attempted_count == 0
-                            and not outcome.chunk_produced
-                            and not shutdown_event.is_set()
-                        )
-                        if is_skipped_only_listing_while_running:
-                            yield SourceObservation()
-                    poll_ok = True
-                else:
-                    last_poll_failure = _classify_poll_status(resp.status_code)
-                    logger.warning(
-                        "FN API returned %d: %s", resp.status_code, poll_url
-                    )
-            except FeedFailure:
-                raise
-            except Exception as exc:
-                last_poll_failure = failure_classification.FailureInfo(
-                    feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
-                    "source_unreachable: "
-                    f"{quarantine_reason.exception_text(exc)}",
-                )
-                logger.warning(
-                    "FN API poll error: %s",
-                    poll_url,
-                    exc_info=True,
-                )
-
-            if poll_ok:
-                consecutive_failures = 0
-            else:
-                consecutive_failures += 1
-                if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
-                    raise collector_failure(
-                        last_poll_failure.status_reason,
-                        last_poll_failure.reason,
-                    )
-
-            # Sleep before next poll, with a small jitter
-            if shutdown_event.is_set():
-                return
-            jitter = random.uniform(0, 5.0)  # noqa: S311
-            await control_flow.sleep_or_cancel(
-                shutdown_event, _POLL_INTERVAL_SEC + jitter
+        try:
+            # Poll the API
+            data = await _fetch_file_list(
+                session,
+                poll_url,
+                headers,
+                feed["id"],
+                shutdown_event,
+            )
+            files = payloads.extract_optional_item_list(
+                data,
+                "files",
+                malformed_reason="fn_api_payload_malformed",
             )
 
-    finally:
-        await session.close()
+            if files == []:
+                yield SourceObservation()
+            else:
+                outcome = ItemBatchOutcome()
+                async for chunk in _process_file_list(
+                    files,
+                    session,
+                    shutdown_event,
+                    connection_session_id,
+                    feed,
+                    processed_uuids,
+                    source_feed_id,
+                    s3_base_url,
+                    outcome,
+                ):
+                    yield chunk
+                is_skipped_only_listing_while_running = (
+                    outcome.attempted_count == 0
+                    and not outcome.chunk_produced
+                    and not shutdown_event.is_set()
+                )
+                if is_skipped_only_listing_while_running:
+                    yield SourceObservation()
+            poll_ok = True
+        except FeedFailure as exc:
+            last_poll_failure = failure_classification.FailureInfo(
+                exc.status_reason,
+                exc.reason or "unknown_failure",
+            )
+            logger.warning(
+                "FN API error feed %s: %s",
+                feed["id"],
+                exc,
+            )
+        except Exception as exc:
+            last_poll_failure = failure_classification.FailureInfo(
+                feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+                f"source_unreachable: {quarantine_reason.exception_text(exc)}",
+            )
+            logger.warning(
+                "FN API unexpected poll error feed %s",
+                feed["id"],
+                exc_info=True,
+            )
+
+        if poll_ok:
+            consecutive_failures = 0
+        else:
+            consecutive_failures += 1
+            if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+                raise collector_failure(
+                    last_poll_failure.status_reason,
+                    last_poll_failure.reason,
+                )
+
+        # Sleep before next poll, with a small jitter
+        if shutdown_event.is_set():
+            return
+        jitter = random.uniform(0, 5.0)  # noqa: S311
+        await control_flow.sleep_or_cancel(
+            shutdown_event, _POLL_INTERVAL_SEC + jitter
+        )
