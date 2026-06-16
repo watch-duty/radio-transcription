@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import unittest
 
 from backend.pipeline.ingestion.failure_classifiers import (
@@ -17,6 +18,16 @@ def _require_classification(
     """Return ffmpeg info for tests that intentionally expect one."""
     if value is None:
         msg = "Expected FfmpegFailureInfo, got None"
+        raise AssertionError(msg)
+    return value
+
+
+def _require_ffprobe_classification(
+    value,
+):
+    """Return ffprobe info for tests that intentionally expect one."""
+    if value is None:
+        msg = "Expected ffprobe failure info, got None"
         raise AssertionError(msg)
     return value
 
@@ -191,8 +202,7 @@ class TestFfmpegClassifier(unittest.TestCase):
         )
 
         self.assertEqual(
-            ffmpeg.render_ffmpeg_diagnostic(info, "(no stderr captured)"),
-            "ffmpeg exited with code 8",
+            ffmpeg.render_ffmpeg_diagnostic(info), "ffmpeg exited with code 8"
         )
         self.assertEqual(
             ffmpeg.render_ffmpeg_diagnostic(info, "Input/output error"),
@@ -221,6 +231,130 @@ class TestFfmpegClassifier(unittest.TestCase):
             ffmpeg.render_ffmpeg_diagnostic(timeout_info),
             "Stream capture timed out",
         )
+
+    def test_classifies_ffprobe_process_exit_exception(self) -> None:
+        exc = subprocess.CalledProcessError(
+            1,
+            ["ffprobe"],
+            stderr=b"first line\nInvalid data found when processing input\n",
+        )
+
+        info = _require_ffprobe_classification(
+            ffmpeg.classify_ffprobe_exception(exc)
+        )
+
+        self.assertIs(
+            info.status_reason,
+            feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        )
+        self.assertIs(info.kind, ffmpeg.FfmpegFailureKind.PROCESS_EXIT)
+        self.assertEqual(info.exit_code, 1)
+        self.assertEqual(
+            ffmpeg.render_ffprobe_diagnostic(
+                info,
+                ffmpeg.ffprobe_exception_diagnostic_text(exc),
+            ),
+            (
+                "ffprobe exited with code 1; "
+                "first line\nInvalid data found when processing input"
+            ),
+        )
+
+    def test_ffprobe_process_exit_without_stderr_omits_sentinel(self) -> None:
+        exc = subprocess.CalledProcessError(1, ["ffprobe"], stderr=b"")
+        info = _require_ffprobe_classification(
+            ffmpeg.classify_ffprobe_exception(exc)
+        )
+
+        self.assertIsNone(ffmpeg.ffprobe_exception_diagnostic_text(exc))
+        self.assertEqual(
+            ffmpeg.render_ffprobe_diagnostic(
+                info,
+                ffmpeg.ffprobe_exception_diagnostic_text(exc),
+            ),
+            "ffprobe exited with code 1",
+        )
+
+    def test_ffprobe_signal_exception_renders_signal(self) -> None:
+        exc = subprocess.CalledProcessError(
+            -9,
+            ["ffprobe"],
+            stderr=b"Killed\n",
+        )
+        info = _require_ffprobe_classification(
+            ffmpeg.classify_ffprobe_exception(exc)
+        )
+
+        self.assertIs(info.kind, ffmpeg.FfmpegFailureKind.PROCESS_SIGNAL)
+        self.assertEqual(info.signal_number, 9)
+        self.assertEqual(
+            ffmpeg.render_ffprobe_diagnostic(
+                info,
+                ffmpeg.ffprobe_exception_diagnostic_text(exc),
+            ),
+            "ffprobe terminated by signal 9; Killed",
+        )
+
+    def test_ffprobe_timeout_exception_renders_timeout(self) -> None:
+        exc = subprocess.TimeoutExpired(
+            ["ffprobe"],
+            timeout=10,
+            stderr=b"probe still running\n",
+        )
+        info = _require_ffprobe_classification(
+            ffmpeg.classify_ffprobe_exception(exc)
+        )
+
+        self.assertIs(info.kind, ffmpeg.FfmpegFailureKind.TIMEOUT)
+        self.assertEqual(
+            ffmpeg.render_ffprobe_diagnostic(
+                info,
+                ffmpeg.ffprobe_exception_diagnostic_text(exc),
+            ),
+            "ffprobe timed out after 10s; probe still running",
+        )
+
+    def test_ffprobe_non_subprocess_exception_is_not_classified(self) -> None:
+        self.assertIsNone(
+            ffmpeg.classify_ffprobe_exception(ValueError("bad duration"))
+        )
+
+    def test_ffprobe_exception_failure_reason_falls_back_for_generic_exception(
+        self,
+    ) -> None:
+        self.assertEqual(
+            ffmpeg.ffprobe_exception_failure_reason(ValueError("bad duration")),
+            "ValueError: bad duration",
+        )
+
+    def test_ffprobe_exception_failure_reason_renders_subprocess_evidence(
+        self,
+    ) -> None:
+        exc = subprocess.CalledProcessError(
+            1,
+            ["ffprobe"],
+            stderr=b"Invalid data found when processing input\n",
+        )
+
+        self.assertEqual(
+            ffmpeg.ffprobe_exception_failure_reason(exc),
+            (
+                "ffprobe exited with code 1; "
+                "Invalid data found when processing input"
+            ),
+        )
+
+    def test_ffprobe_stderr_diagnostic_uses_last_thirty_lines(self) -> None:
+        stderr = "".join(f"line {index}\n" for index in range(35)).encode()
+        exc = subprocess.CalledProcessError(1, ["ffprobe"], stderr=stderr)
+
+        diagnostic = ffmpeg.ffprobe_exception_diagnostic_text(exc)
+        if diagnostic is None:
+            self.fail("Expected ffprobe stderr diagnostic text")
+
+        self.assertNotIn("line 4", diagnostic)
+        self.assertIn("line 5", diagnostic)
+        self.assertIn("line 34", diagnostic)
 
 
 if __name__ == "__main__":

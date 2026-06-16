@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from dataclasses import dataclass
 from enum import StrEnum
 
+from backend.pipeline.ingestion import quarantine_reason
 from backend.pipeline.ingestion.failure_classifiers import (
     http_status,
 )
@@ -15,6 +17,7 @@ _HTTP_STATUS_RE = re.compile(
     r"(?:HTTP error|Server returned|HTTP/\d(?:\.\d)?)\s+(\d{3})",
     re.IGNORECASE,
 )
+FFPROBE_STDERR_TAIL_LINES = 30
 
 
 class FfmpegFailureKind(StrEnum):
@@ -44,6 +47,7 @@ class FfmpegFailureInfo:
     http_status: int | None = None
     exit_code: int | None = None
     signal_number: int | None = None
+    timeout_sec: float | None = None
 
 
 def extract_http_status_from_ffmpeg_stderr(stderr_text: str) -> int | None:
@@ -147,13 +151,88 @@ def render_ffmpeg_diagnostic(
         return diagnostic_text
 
     base = _humanize_ffmpeg_info(info)
+    return _render_with_diagnostic_text(base, diagnostic_text)
+
+
+def classify_ffprobe_exception(
+    exc: BaseException,
+) -> FfmpegFailureInfo | None:
+    """Classify terminal ffprobe subprocess evidence from an exception."""
+    if isinstance(exc, subprocess.TimeoutExpired):
+        return FfmpegFailureInfo(
+            status_reason=feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            kind=FfmpegFailureKind.TIMEOUT,
+            source=FfmpegEvidenceSource.PROCESS,
+            timeout_sec=(
+                float(exc.timeout) if exc.timeout is not None else None
+            ),
+        )
+
+    if not isinstance(exc, subprocess.CalledProcessError):
+        return None
+
+    if exc.returncode < 0:
+        return FfmpegFailureInfo(
+            status_reason=feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            kind=FfmpegFailureKind.PROCESS_SIGNAL,
+            source=FfmpegEvidenceSource.PROCESS,
+            exit_code=exc.returncode,
+            signal_number=-exc.returncode,
+        )
+
+    return FfmpegFailureInfo(
+        status_reason=feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        kind=FfmpegFailureKind.PROCESS_EXIT,
+        source=FfmpegEvidenceSource.PROCESS,
+        exit_code=exc.returncode,
+    )
+
+
+def ffprobe_exception_diagnostic_text(exc: BaseException) -> str | None:
+    """Return a bounded ffprobe stderr tail from a subprocess exception."""
+    stderr = getattr(exc, "stderr", None)
+    return _bounded_stderr_tail(stderr, line_limit=FFPROBE_STDERR_TAIL_LINES)
+
+
+def render_ffprobe_diagnostic(
+    info: FfmpegFailureInfo,
+    diagnostic_text: str | None = None,
+) -> str:
+    """Render typed ffprobe failure info into operator diagnostics."""
+    return _render_with_diagnostic_text(
+        _humanize_ffprobe_info(info),
+        diagnostic_text,
+    )
+
+
+def render_ffprobe_exception_diagnostic(exc: BaseException) -> str | None:
+    """Render ffprobe subprocess evidence from *exc*, if present."""
+    info = classify_ffprobe_exception(exc)
+    if info is None:
+        return None
+    return render_ffprobe_diagnostic(
+        info, ffprobe_exception_diagnostic_text(exc)
+    )
+
+
+def ffprobe_exception_failure_reason(exc: BaseException) -> str:
+    """Render ffprobe subprocess evidence, falling back to exception text."""
+    return render_ffprobe_exception_diagnostic(
+        exc
+    ) or quarantine_reason.exception_text(exc)
+
+
+def _render_with_diagnostic_text(
+    base: str,
+    diagnostic_text: str | None,
+) -> str:
     if _has_useful_diagnostic_text(diagnostic_text):
         return f"{base}; {diagnostic_text}"
     return base
 
 
 def _has_useful_diagnostic_text(diagnostic_text: str | None) -> bool:
-    return bool(diagnostic_text and diagnostic_text != "(no stderr captured)")
+    return bool(diagnostic_text)
 
 
 def _humanize_ffmpeg_info(info: FfmpegFailureInfo) -> str:
@@ -168,3 +247,35 @@ def _humanize_ffmpeg_info(info: FfmpegFailureInfo) -> str:
     if info.kind is FfmpegFailureKind.TIMEOUT:
         return "Stream capture timed out"
     return "ffmpeg failed"
+
+
+def _humanize_ffprobe_info(info: FfmpegFailureInfo) -> str:
+    if info.kind is FfmpegFailureKind.PROCESS_EXIT:
+        return f"ffprobe exited with code {info.exit_code}"
+    if info.kind is FfmpegFailureKind.PROCESS_SIGNAL:
+        return f"ffprobe terminated by signal {info.signal_number}"
+    if info.kind is FfmpegFailureKind.TIMEOUT:
+        if info.timeout_sec is not None:
+            return f"ffprobe timed out after {info.timeout_sec:g}s"
+        return "ffprobe timed out"
+    return "ffprobe failed"
+
+
+def _bounded_stderr_tail(
+    stderr: bytes | str | None,
+    *,
+    line_limit: int,
+) -> str | None:
+    text = _decode_process_output(stderr)
+    lines = text.splitlines()
+    if not lines:
+        return None
+    return "\n".join(lines[-line_limit:])
+
+
+def _decode_process_output(output: bytes | str | None) -> str:
+    if output is None:
+        return ""
+    if isinstance(output, bytes):
+        return output.decode("utf-8", errors="replace")
+    return output
