@@ -76,7 +76,6 @@ QUERY = "SELECT COUNT(*) FROM feeds WHERE status = 'unclaimed'"
 QUERY_TIMEOUT_SEC = 5.0
 
 # ---------------------------------------------------------------------------
-setup_logging()
 logger = logging.getLogger(__name__)
 
 # Persistent event loop, created once at module import. The asyncpg pool
@@ -155,6 +154,7 @@ async def _run() -> None:
 @functions_framework.http
 def oldest_feed_publisher(request: flask.Request) -> tuple[str, int]:
     """HTTP entrypoint invoked by Cloud Scheduler every 60 s."""
+    setup_logging()
     del request  # unused for scheduler-triggered requests
     if not PROJECT_ID:
         logger.error("missing required env var: GOOGLE_CLOUD_PROJECT")
