@@ -361,7 +361,7 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chunks[0].session_id, "session-id")
         self.assertEqual(chunks[0].audio_bytes, b"mp3_bytes")
         self.assertEqual(chunks[0].mime_type, AudioMimeType.MPEG)
-        self.assertEqual(chunks[0].resume_position, chunks[0].chunk_end_time)
+        self.assertEqual(chunks[0].resume_position, chunks[0].chunk_start_time)
         self.assertEqual(len(self.processed_uuids), 2)
         self.assertIn("uuid1", self.processed_uuids)
         self.assertIn("uuid2", self.processed_uuids)
@@ -416,7 +416,7 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
             chunks[0].chunk_start_time,
             datetime.datetime(2026, 5, 20, 12, 0, 1, tzinfo=datetime.UTC),
         )
-        self.assertEqual(chunks[0].resume_position, chunks[0].chunk_end_time)
+        self.assertEqual(chunks[0].resume_position, chunks[0].chunk_start_time)
 
     @patch(
         "backend.pipeline.ingestion.collectors.fire_notifications.collector._download_audio",

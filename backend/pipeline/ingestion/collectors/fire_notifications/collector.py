@@ -280,7 +280,7 @@ async def _process_file_list(
             session_id=connection_session_id,
             receipt_time=receipt_time,
             mime_type=AudioMimeType.MPEG,
-            resume_position=end_time,
+            resume_position=start_time,
             external_audio_segment_id=f"{file_uuid}|{filename}",
         )
         # Only mark as processed after a successful yield, confirming
