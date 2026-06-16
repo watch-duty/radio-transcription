@@ -308,6 +308,8 @@ class TestStatusReasonSqlProjection(unittest.TestCase):
             self.assertRegex(sql, r"\bstatus_reason\b")
             self.assertRegex(sql, r"\bstatus_reason_updated_at\b")
 
+
+class TestLastSpeechSegmentTimestampSqlProjection(unittest.TestCase):
     def test_full_feed_queries_project_last_speech_segment_timestamp(
         self,
     ) -> None:
