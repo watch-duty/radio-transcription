@@ -264,9 +264,7 @@ class FeedStore:
             created_at=row["created_at"],
             source_feed_id=row["source_feed_id"],
             tags=tags,
-            last_speech_segment_timestamp=row.get(
-                "last_speech_segment_timestamp"
-            ),
+            last_speech_segment_timestamp=row["last_speech_segment_timestamp"],
         )
 
     @staticmethod

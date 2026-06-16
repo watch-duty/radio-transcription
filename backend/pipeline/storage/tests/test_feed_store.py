@@ -275,6 +275,24 @@ class TestStatusReasonRowMapping(unittest.TestCase):
         self.assertIn("Unknown status reason", str(context.exception))
 
 
+class TestLastSpeechSegmentTimestampMapping(unittest.TestCase):
+    """Tests for mapping last_speech_segment_timestamp DB fields to Feed."""
+
+    def test_null_timestamp_maps_to_none(self) -> None:
+        store = FeedStore(make_mock_pool())
+        result = store._row_to_feed(cast("asyncpg.Record", _full_feed_row()))
+        self.assertIsNone(result["last_speech_segment_timestamp"])
+
+    def test_valid_timestamp_maps_correctly(self) -> None:
+        store = FeedStore(make_mock_pool())
+        timestamp = datetime.datetime(
+            2026, 6, 16, 18, 0, 0, tzinfo=datetime.UTC
+        )
+        row = _full_feed_row(last_speech_segment_timestamp=timestamp)
+        result = store._row_to_feed(cast("asyncpg.Record", row))
+        self.assertEqual(result["last_speech_segment_timestamp"], timestamp)
+
+
 class TestStatusReasonSqlProjection(unittest.TestCase):
     """Tests for full-feed SQL projection coverage."""
 

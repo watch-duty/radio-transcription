@@ -1,3 +1,4 @@
+import datetime
 import unittest
 import uuid
 from unittest.mock import AsyncMock
@@ -158,6 +159,32 @@ class TestFeedsAPI(unittest.TestCase):
         data = response.json()
         self.assertEqual(data["id"], str(feed_id))
         self.assertEqual(data["tags"], [{"key": "county", "value": "Fulton"}])
+
+    def test_get_feed_with_last_speech_segment_timestamp(self) -> None:
+        """Test fetching an existing feed with last_speech_segment_timestamp."""
+        feed_id = uuid.uuid4()
+        timestamp = datetime.datetime(
+            2026, 6, 16, 18, 0, 0, tzinfo=datetime.UTC
+        )
+        mock_feed = Feed(
+            id=feed_id,
+            name="Test Feed",
+            source_type=SourceType.BCFY_FEEDS,
+            source_feed_id="123",
+            status=FeedStatus.ACTIVE,
+            last_heartbeat=None,
+            last_speech_segment_timestamp=timestamp,
+        )
+        self.mock_service.get_feed.return_value = mock_feed
+
+        response = self.client.get(f"/v1/feeds/{feed_id}")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertEqual(data["id"], str(feed_id))
+        self.assertEqual(
+            data["last_speech_segment_timestamp"], "2026-06-16T18:00:00Z"
+        )
 
     def test_get_feed_not_found(self) -> None:
         """Test fetching a non-existent feed returns 404."""
