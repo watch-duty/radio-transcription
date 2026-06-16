@@ -26,7 +26,11 @@ from backend.pipeline.ingestion.models import (
     FeedFailure,
     SourceObservation,
 )
-from backend.pipeline.storage.feed_store import FeedStatusReason, LeasedFeed, SourceType
+from backend.pipeline.storage.feed_store import (
+    FeedStatusReason,
+    LeasedFeed,
+    SourceType,
+)
 
 
 def _require_item_failure(value: ItemFailure | bytes | None) -> ItemFailure:
@@ -1154,9 +1158,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
         return_value=15000,
     )
-    async def test_bookmark_progression(
-        self, mock_duration: MagicMock
-    ) -> None:
+    async def test_bookmark_progression(self, mock_duration: MagicMock) -> None:
         feed = LeasedFeed(
             id=uuid.uuid4(),
             name="test-fn-feed",
@@ -1227,7 +1229,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
                 feed,
                 shutdown_event,
                 "http://mock-api/",
-                _default_resources,
+                _default_resources(),
             )
 
             events = []
