@@ -9,6 +9,10 @@ import requests
 
 from backend.pipeline.schema_types.transcribed_audio_pb2 import TranscribedAudio
 from integration_tests.feed_utils import create_test_bcfy_feed  # noqa: F401
+from integration_tests.test_utils import (
+    get_audio_segments_api_url,
+    verify_audio_segments_via_api,
+)
 from integration_tests.utils import assert_eventually
 
 PUBSUB_EMULATOR_HOST = os.environ.get("PUBSUB_EMULATOR_HOST", "localhost:8085")
@@ -19,11 +23,6 @@ TRANSCRIPTION_TOPIC = os.environ.get(
 )
 MOCK_SERVER_HOST = os.environ.get("MOCK_SERVER_HOST", "localhost:8082")
 FEEDS_API_HOST = os.environ.get("FEEDS_API_HOST", "localhost:8089")
-AUDIO_SEGMENTS_API_URL = os.environ.get(
-    "AUDIO_SEGMENTS_API_URL", "http://audio-segments-api:8091"
-)
-if not AUDIO_SEGMENTS_API_URL.endswith("/v1"):
-    AUDIO_SEGMENTS_API_URL = f"{AUDIO_SEGMENTS_API_URL.rstrip('/')}/v1"
 
 
 def create_test_rule(test_keyword: str) -> str:
@@ -91,7 +90,7 @@ def create_test_audio_segment(segment_id: str, feed_id: str) -> None:
         "missing_post_context": False,
         "source_audio_uris": ["gs://bucket/audio1.ogg"],
     }
-    url = f"{AUDIO_SEGMENTS_API_URL}/audio_segments"
+    url = f"{get_audio_segments_api_url()}/audio_segments"
     response = requests.post(url, json=segment_data, timeout=10)
     response.raise_for_status()
 
@@ -109,44 +108,38 @@ def test_rules_creation_evaluation_publish(
     create_test_audio_segment(unique_trans_id, feed_id)
     publish_test_message(unique_trans_id, unique_transcript, feed_id)
 
-    def transcript_and_notification_received() -> bool:
+    def notification_received() -> bool:
         try:
-            # 1. Check Notification (via Mock Server)
+            # Check Notification (via Mock Server)
             url = f"http://{MOCK_SERVER_HOST}"
             response = requests.get(url, timeout=5)
             response.raise_for_status()
             data = response.json()
 
-            notification_found = False
             if data:
                 for item in data:
                     if unique_trans_id in str(item):
-                        notification_found = True
-
-            # 2. Check Transcript Annotation (via Audio Segments API)
-            annotation_found = False
-            segments_url = f"{AUDIO_SEGMENTS_API_URL}/audio_segments"
-            segments_response = requests.get(
-                segments_url, params={"feed_ids": [feed_id]}, timeout=5
-            )
-            if segments_response.status_code == 200:
-                segments_data = segments_response.json()
-                for segment in segments_data.get("segments", []):
-                    if segment["id"] == unique_trans_id:
-                        for ann in segment.get("annotations", []):
-                            if ann["type"] == "EVALUATION":
-                                decisions = ann.get("data", {}).get("decisions", [])
-                                if rule_id in decisions:
-                                    annotation_found = True
-                                    break
+                        return True
         except requests.RequestException:
             pass
-        else:
-            return notification_found and annotation_found
         return False
 
     assert_eventually(
-        transcript_and_notification_received,
+        notification_received,
         timeout_sec=70.0,
-        error_msg=f"Did not receive expected notification or evaluation annotation matching {unique_trans_id}.",
+        error_msg=f"Did not receive expected notification matching {unique_trans_id}.",
+    )
+
+    # 2. Check Transcript Annotation (via Audio Segments API)
+    verify_audio_segments_via_api(
+        feed_id=feed_id,
+        matcher=lambda segment: (
+            segment["id"] == unique_trans_id
+            and any(
+                ann["type"] == "EVALUATION"
+                and rule_id in ann.get("data", {}).get("decisions", [])
+                for ann in segment.get("annotations", [])
+            )
+        ),
+        timeout_sec=70.0,
     )
