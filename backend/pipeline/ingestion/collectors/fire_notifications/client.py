@@ -26,9 +26,7 @@ logger = logging.getLogger(__name__)
 
 _FN_POLL_HTTP_POLICY = http_status.HTTPStatusPolicy(
     exact={
-        401: feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-        403: feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-        429: feed_store.FeedStatusReason.SOURCE_RATE_LIMITED,
+        **http_status.DEFAULT_HTTP_STATUS_POLICY.exact,
     },
     default_4xx=feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
     default_5xx=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,

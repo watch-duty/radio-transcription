@@ -212,7 +212,33 @@ async def fire_notifications_collector(  # noqa: PLR0912
                 str(feed["id"]),
                 shutdown_event,
             )
-
+        except FeedFailure as exc:
+            if exc.status_reason in {
+                feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+                feed_store.FeedStatusReason.SOURCE_RATE_LIMITED,
+            }:
+                last_poll_failure = failure_classification.FailureInfo(
+                    exc.status_reason,
+                    exc.reason or "unknown_failure",
+                )
+                logger.warning(
+                    "FN API transient error feed %s: %s",
+                    feed["id"],
+                    exc,
+                )
+            else:
+                raise
+        except Exception as exc:
+            last_poll_failure = failure_classification.FailureInfo(
+                feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+                f"source_unreachable: {quarantine_reason.exception_text(exc)}",
+            )
+            logger.warning(
+                "FN API unexpected poll error feed %s",
+                feed["id"],
+                exc_info=True,
+            )
+        else:
             if files == []:
                 yield SourceObservation()
             else:
@@ -236,26 +262,6 @@ async def fire_notifications_collector(  # noqa: PLR0912
                 if is_skipped_only_listing_while_running:
                     yield SourceObservation()
             poll_ok = True
-        except FeedFailure as exc:
-            last_poll_failure = failure_classification.FailureInfo(
-                exc.status_reason,
-                exc.reason or "unknown_failure",
-            )
-            logger.warning(
-                "FN API error feed %s: %s",
-                feed["id"],
-                exc,
-            )
-        except Exception as exc:
-            last_poll_failure = failure_classification.FailureInfo(
-                feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
-                f"source_unreachable: {quarantine_reason.exception_text(exc)}",
-            )
-            logger.warning(
-                "FN API unexpected poll error feed %s",
-                feed["id"],
-                exc_info=True,
-            )
 
         if poll_ok:
             consecutive_failures = 0
