@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from backend.pipeline.evaluation import service
 from backend.pipeline.schema_types import (
@@ -20,6 +20,13 @@ class TestEvaluationService(unittest.TestCase):
             text_evaluator=self.mock_evaluator,
         )
 
+        self.record_pipeline_stage_patch = patch(
+            "backend.pipeline.evaluation.service.record_pipeline_stage"
+        )
+        self.mock_record_pipeline_stage = (
+            self.record_pipeline_stage_patch.start()
+        )
+
         self.transcribed_audio = transcribed_pb2.TranscribedAudio()
         self.transcribed_audio.segment_id = "12345"
         self.transcribed_audio.transcript = "There is a fire"
@@ -30,6 +37,9 @@ class TestEvaluationService(unittest.TestCase):
         self.transcribed_audio.start_timestamp.nanos = 0
         self.transcribed_audio.end_timestamp.seconds = 1234567999
         self.transcribed_audio.end_timestamp.nanos = 0
+
+    def tearDown(self) -> None:
+        self.record_pipeline_stage_patch.stop()
 
     def test_successful_flow(self) -> None:
         """Tests a basic successful evaluation flow returning payload."""
@@ -52,6 +62,8 @@ class TestEvaluationService(unittest.TestCase):
         self.assertEqual(
             list(result_proto.evaluation_decisions), ["basic_fire_terms"]
         )
+        self.mock_record_pipeline_stage.assert_any_call("evaluation", "start")
+        self.mock_record_pipeline_stage.assert_any_call("evaluation", "success")
 
     def test_return_payload_if_not_flagged(self) -> None:
         """Ensures payload is returned even if the text is not flagged."""

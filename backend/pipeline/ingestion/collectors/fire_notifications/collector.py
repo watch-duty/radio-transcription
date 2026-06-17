@@ -99,7 +99,9 @@ async def _process_file_list(
 
         try:
             # to_thread: get_audio_duration shells out to ffprobe — keep it off the event loop.
-            duration_ms = await asyncio.to_thread(get_audio_duration, mp3_bytes)
+            duration_ms = await asyncio.to_thread(
+                get_audio_duration, mp3_bytes, input_format="mp3"
+            )
         except Exception as exc:
             reason = ffmpeg_classifier.ffprobe_exception_failure_reason(exc)
             logger.warning(

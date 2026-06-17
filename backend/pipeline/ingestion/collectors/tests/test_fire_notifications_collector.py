@@ -8,7 +8,7 @@ import subprocess
 import unittest
 import uuid
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemBatchOutcome,
@@ -342,6 +342,12 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(chunks), 2)
         self.assertEqual(mock_duration.call_count, 2)
+        mock_duration.assert_has_calls(
+            [
+                call(b"mp3_bytes", input_format="mp3"),
+                call(b"mp3_bytes", input_format="mp3"),
+            ]
+        )
         self.assertEqual(chunks[0].session_id, "session-id")
         self.assertEqual(chunks[0].audio_bytes, b"mp3_bytes")
         self.assertEqual(chunks[0].mime_type, AudioMimeType.MPEG)

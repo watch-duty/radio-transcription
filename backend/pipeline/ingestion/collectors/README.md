@@ -160,6 +160,10 @@ diagnostics for that evidence type, such as ffmpeg exit/signal/timeout details.
 Collectors and source helpers still own quarantine-reason text around source
 operations because they know the operation, available exception text, captured
 stderr tail, and source-specific semantics.
+For ffmpeg and ffprobe subprocess failures, shared helpers should expose or
+render bounded process evidence; collectors should log the source-scoped
+operation context and decide whether that evidence is item-scoped or
+feed-scoped.
 `backend.pipeline.ingestion.quarantine_reason` owns only shared storage-boundary
 helpers: exception detail formatting and the database storage cap. It must not
 grow source-specific message construction helpers.
