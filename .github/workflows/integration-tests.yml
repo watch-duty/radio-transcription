@@ -76,6 +76,12 @@ jobs:
         run: |
           docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run --rm integration-tests sh -c "pip install -q uv && uv sync && uv run python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto && uv run pytest integration_tests/ --ignore=integration_tests/storage/ -n auto -v -s --log-cli-level=INFO"
 
+      - name: Run Frontend API Playwright integration tests
+        run: |
+          corepack enable
+          yarn install --frozen-lockfile --non-interactive
+          VITE_API_BASE_URL=http://localhost:8088 yarn --cwd frontend/api test:integration
+
       - name: Print container logs on failure
         if: failure()
         run: docker compose --env-file local_dev/LOCAL.env logs

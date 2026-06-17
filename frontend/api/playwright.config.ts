@@ -16,10 +16,12 @@ export default defineConfig({
       Accept: 'application/json',
     },
   },
-  webServer: {
-    command: 'yarn local',
-    url: 'http://localhost:8080/api/v1/feeds',
-    reuseExistingServer: !process.env.CI,
-    timeout: 120000,
-  },
+  webServer: process.env.VITE_API_BASE_URL
+    ? undefined
+    : {
+        command: 'yarn local',
+        url: 'http://localhost:8080/api/v1/feeds',
+        reuseExistingServer: true,
+        timeout: 120000,
+      },
 });
