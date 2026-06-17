@@ -87,17 +87,17 @@ class ParseAndKeyFn(beam.DoFn):
 
     def __init__(self, *, is_continuous: bool = True) -> None:
         self.is_continuous = is_continuous
-
-    @override
-    def setup(self) -> None:
-        """Initializes tracing and metrics for the worker."""
-        setup_tracing(service_name="segmentation-pipeline")
         self.segmentation_start = Metrics.counter(
             self.__class__, "segmentation_start"
         )
         self.segmentation_error = Metrics.counter(
             self.__class__, "segmentation_error"
         )
+
+    @override
+    def setup(self) -> None:
+        """Initializes tracing for the worker."""
+        setup_tracing(service_name="segmentation-pipeline")
 
     @override
     def process(
@@ -215,18 +215,18 @@ class UploadRawSegmentFn(beam.DoFn):
         self.staging_audio_bucket = staging_audio_bucket
         self.project_id = project_id
         self.gcs_client = None
+        self.segmentation_success = Metrics.counter(
+            self.__class__, "segmentation_success"
+        )
+        self.segmentation_error = Metrics.counter(
+            self.__class__, "segmentation_error"
+        )
 
     @override
     def setup(self) -> None:
         setup_tracing(service_name="segmentation-pipeline")
         self.gcs_client = acquire_shared_gcs_client(
             self.project_id, shared_handle=self.SHARED_GCS_HANDLE
-        )
-        self.segmentation_success = Metrics.counter(
-            self.__class__, "segmentation_success"
-        )
-        self.segmentation_error = Metrics.counter(
-            self.__class__, "segmentation_error"
         )
 
     def _pcm_to_flac(self, pcm_bytes: bytes, sample_rate: int) -> bytes:

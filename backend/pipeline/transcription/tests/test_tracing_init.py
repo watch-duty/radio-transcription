@@ -25,5 +25,7 @@ class TestTracingInitialization(unittest.TestCase):
         mock_event = mock.MagicMock()
         transcription_main.transcribe_claim_check(mock_event)
         mock_setup_tracing.assert_called_once_with(
-            service_name="transcription-service", use_batch=False
+            service_name="transcription-service",
+            use_batch=False,
+            setup_metrics=True,
         )
