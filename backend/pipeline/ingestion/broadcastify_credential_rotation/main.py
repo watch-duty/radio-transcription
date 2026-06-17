@@ -44,7 +44,6 @@ AUTH_URL = "https://api.bcfy.io/common/v1/auth"
 # ---------------------------------------------------------------------------
 # Global state (persisted across warm invocations)
 # ---------------------------------------------------------------------------
-setup_logging()
 logger = logging.getLogger(__name__)
 secret_client: secretmanager.SecretManagerServiceClient | None = None
 
@@ -216,6 +215,7 @@ def _authenticate() -> dict[str, Any]:
 @functions_framework.http
 def broadcastify_credential_rotation(request: flask.Request) -> tuple[str, int]:
     """HTTP entry point for Broadcastify credential rotation."""
+    setup_logging()
     del request  # unused for scheduler-triggered requests
     global secret_client  # noqa: PLW0603
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import sys
@@ -343,7 +344,7 @@ class TestHandle:
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_duration_failure_records_pipeline_reason(
-        self, mock_store, _patch_globals
+        self, mock_store, _patch_globals, caplog
     ) -> None:
         feed_id = uuid.uuid4()
         self._set_feed(
@@ -356,17 +357,67 @@ class TestHandle:
                 "failure_count": 0,
             },
         )
-        _patch_globals["get_duration"].side_effect = Exception("duration error")
+        expected_reason = (
+            "ffprobe exited with code 1; "
+            "Invalid data found when processing input"
+        )
+        _patch_globals[
+            "get_duration"
+        ].side_effect = subprocess.CalledProcessError(
+            1,
+            ["ffprobe"],
+            stderr=b"Invalid data found when processing input\n",
+        )
+        caplog.set_level(
+            logging.WARNING,
+            logger="backend.pipeline.ingestion.collectors.echo.main",
+        )
 
-        with pytest.raises(Exception, match="duration error"):
+        with pytest.raises(subprocess.CalledProcessError):
             _handle(self._make_event())
 
         self._assert_failure_recorded(
             mock_store,
             feed_id,
-            reason="echo_duration_probe_failed",
+            reason=expected_reason,
             status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
         )
+        assert expected_reason in caplog.text
+        assert "Traceback" not in caplog.text
+
+    @pytest.mark.usefixtures("_patch_globals")
+    def test_duration_failure_records_generic_exception_reason(
+        self, mock_store, _patch_globals, caplog
+    ) -> None:
+        feed_id = uuid.uuid4()
+        self._set_feed(
+            mock_store,
+            {
+                "id": feed_id,
+                "name": "Central Fire",
+                "external_id": "ext-id",
+                "status": "active",
+                "failure_count": 0,
+            },
+        )
+        expected_reason = "ValueError: bad mp3"
+        _patch_globals["get_duration"].side_effect = ValueError("bad mp3")
+        caplog.set_level(
+            logging.WARNING,
+            logger="backend.pipeline.ingestion.collectors.echo.main",
+        )
+
+        with pytest.raises(ValueError, match="bad mp3"):
+            _handle(self._make_event())
+
+        self._assert_failure_recorded(
+            mock_store,
+            feed_id,
+            reason=expected_reason,
+            status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        )
+        assert expected_reason in caplog.text
+        assert "Traceback" not in caplog.text
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_staging_upload_failure_records_pipeline_reason(
