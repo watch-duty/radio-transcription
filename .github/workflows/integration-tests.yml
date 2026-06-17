@@ -45,7 +45,7 @@ jobs:
       - name: Run component tests
         run: |
           set -o pipefail
-          uv run pytest integration_tests/storage/ --cov=backend/pipeline --cov-report=term-missing | tee storage-coverage.txt
+          mise run test:component --cov=backend/pipeline --cov-report=term-missing | tee storage-coverage.txt
           
       - name: Comment Coverage
         uses: MishaKav/pytest-coverage-comment@main
