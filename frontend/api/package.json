@@ -6,7 +6,7 @@
   "scripts": {
     "build": "yarn run generate-routes && tsc",
     "start": "functions-framework --target=api",
-    "local": "yarn build && dotenv -o -e .env.local.dev -e .env.local -- yarn start",
+    "local": "yarn build && dotenv -o -e .env.local -- yarn start",
     "lint:check": "eslint .",
     "lint:fix": "eslint . --fix",
     "format:check": "prettier --ignore-path ../../.prettierignore --check .",
@@ -49,5 +49,8 @@
     "typescript": "^6.0.2",
     "typescript-eslint": "^8.58.0",
     "vitest": "^4.1.0"
+  },
+  "engines": {
+    "node": ">=22.22.0"
   }
 }

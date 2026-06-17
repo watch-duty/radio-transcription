@@ -1,0 +1,14 @@
+{
+  "extends": "../../frontend/api/tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    "baseUrl": "../../frontend/api",
+    "paths": {
+      "*": [
+        "../../frontend/api/node_modules/*",
+      ]
+    }
+  },
+  "include": ["**/*.ts", "../../frontend/api/node_modules/@types/node"]
+}
