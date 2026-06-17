@@ -2776,22 +2776,15 @@ class TestCaptureBcfyCallsResumePosition(unittest.IsolatedAsyncioTestCase):
         mock_fetch.side_effect = lease1_fetch
         mock_sleep.return_value = False
 
-        fixed_now = datetime.datetime.fromtimestamp(1000, datetime.UTC)
-        with patch(
-            "backend.pipeline.ingestion.collectors.bcfy_calls"
-            ".bcfy_calls_collector.datetime.datetime",
-            wraps=datetime.datetime,
-        ) as mock_datetime:
-            mock_datetime.now.return_value = fixed_now
-            lease1_events = [
-                c
-                async for c in bcfy_calls_collector.capture_bcfy_calls(
-                    cast("LeasedFeed", self.feed),
-                    lease1_shutdown,
-                    self.url_base,
-                    _default_resources(),
-                )
-            ]
+        lease1_events = [
+            c
+            async for c in bcfy_calls_collector.capture_bcfy_calls(
+                cast("LeasedFeed", self.feed),
+                lease1_shutdown,
+                self.url_base,
+                _default_resources(),
+            )
+        ]
         lease1_chunks = [
             e
             for e in lease1_events

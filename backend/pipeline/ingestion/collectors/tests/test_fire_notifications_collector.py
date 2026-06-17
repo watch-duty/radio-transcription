@@ -1118,9 +1118,6 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         mock_download: AsyncMock,
         mock_sleep: AsyncMock,
     ) -> None:
-        self.feed["last_bookmark_time"] = datetime.datetime(
-            2026, 5, 20, 11, 0, 0, tzinfo=datetime.UTC
-        )
         mock_download.return_value = b"mp3"
         repeated_file = FireNotificationsFile(
             uuid="uuid1",
@@ -1180,9 +1177,6 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         mock_download: AsyncMock,
         mock_sleep: MagicMock,
     ) -> None:
-        self.feed["last_bookmark_time"] = datetime.datetime(
-            2026, 5, 20, 11, 0, 0, tzinfo=datetime.UTC
-        )
         mock_download.return_value = b"mp3"
 
         first_payload = [
