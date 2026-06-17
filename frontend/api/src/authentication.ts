@@ -2,15 +2,18 @@ import * as express from 'express';
 
 import * as jose from 'jose';
 
+import { checkIsAdmin } from './config.js';
+
 export interface GoogleUser {
   email: string;
   email_verified: boolean;
   sub: string; // The user's unique Google ID
   aud: string; // The client ID or audience
   iss: string; // The issuer (e.g., https://accounts.google.com)
+  isAdmin?: boolean; // Special admin user flag
 }
 
-export function expressAuthentication(
+export async function expressAuthentication(
   request: express.Request,
   securityName: string,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -36,6 +39,8 @@ export function expressAuthentication(
     if (!decoded) {
       return Promise.reject(new Error('Invalid JWT token'));
     }
+
+    decoded.isAdmin = decoded.email ? await checkIsAdmin(decoded.email) : false;
 
     // The resolved value is what gets injected into your controllers
     return Promise.resolve(decoded);
