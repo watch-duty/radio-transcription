@@ -1,3 +1,4 @@
+import abc
 import logging
 import os
 import threading
@@ -5,7 +6,7 @@ import threading
 logger = logging.getLogger(__name__)
 
 
-class ForkAwareContainer:
+class ForkAwareContainer(abc.ABC):
     """Base class for service containers that detects process forks and resets clients safely."""
 
     def __init__(self) -> None:
@@ -30,10 +31,9 @@ class ForkAwareContainer:
                     self._pid = current_pid
                     self.reset_clients()
 
+    @abc.abstractmethod
     def reset_clients(self) -> None:
         """Resets all cached client/processor instances in the subclass.
 
         Must be implemented by subclasses.
         """
-        msg = "Subclasses must implement reset_clients"
-        raise NotImplementedError(msg)
