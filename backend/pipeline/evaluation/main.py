@@ -16,6 +16,7 @@ from backend.pipeline.common.clients.audio_segments_client import (
     AudioSegmentsClient,
 )
 from backend.pipeline.common.clients.transcripts_client import TranscriptsClient
+from backend.pipeline.common.container_helper import ForkDetector, fork_checked
 from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.evaluation import service
@@ -64,12 +65,30 @@ def _get_rules_cache_ttl_seconds() -> float:
 # 2. Container for lazy initialization (for performance on warm starts)
 class EvaluationServiceContainer:
     def __init__(self) -> None:
+        self._fork_detector = ForkDetector(self.reset_clients)
         self._processor: EvaluationEventProcessor | None = None
         self._evaluation_service: service.EvaluationService | None = None
         self._transcripts_client: TranscriptsClient | None = None
         self._audio_segments_client: AudioSegmentsClient | None = None
         self._publisher: pubsub_client.PubSubClient | None = None
 
+    def reset_clients(self) -> None:
+        if self._publisher is not None:
+            try:
+                underlying = getattr(self._publisher, "_publisher", None)
+                if underlying is not None:
+                    underlying.close()
+            except Exception:
+                logger.exception(
+                    "Failed to close Pub/Sub publisher client on fork reset"
+                )
+        self._processor = None
+        self._evaluation_service = None
+        self._transcripts_client = None
+        self._audio_segments_client = None
+        self._publisher = None
+
+    @fork_checked
     def get_transcripts_client(self) -> TranscriptsClient:
         if self._transcripts_client is None:
             url = os.environ.get("TRANSCRIPTS_API_URL")
@@ -79,6 +98,7 @@ class EvaluationServiceContainer:
             self._transcripts_client = TranscriptsClient(api_url=url)
         return self._transcripts_client
 
+    @fork_checked
     def get_audio_segments_client(self) -> AudioSegmentsClient | None:
         if self._audio_segments_client is None:
             # TODO (https://linear.app/watchduty/issue/GOO-449/ui-uibff-cutover-and-legacy-cleanup): Make this client required once the migration is complete.
@@ -91,11 +111,13 @@ class EvaluationServiceContainer:
             self._audio_segments_client = AudioSegmentsClient(api_url=url)
         return self._audio_segments_client
 
+    @fork_checked
     def get_publisher(self) -> pubsub_client.PubSubClient:
         if self._publisher is None:
             self._publisher = pubsub_client.PubSubClient()
         return self._publisher
 
+    @fork_checked
     def get_evaluation_service(self) -> service.EvaluationService:
         if self._evaluation_service is None:
             url = os.environ.get("RULES_API_URL")
@@ -114,12 +136,10 @@ class EvaluationServiceContainer:
             )
         return self._evaluation_service
 
+    @fork_checked
     def get_processor(self) -> EvaluationEventProcessor:
         if self._processor is None:
             logger.info("Initializing EvaluationEventProcessor...")
-            # Initialize tracing lazily in the worker process to avoid gunicorn fork sharing
-            setup_tracing(service_name="evaluation-service", use_batch=False)
-
             output_topic = os.environ.get("RULES_EVALUATION_RESULTS_TOPIC")
             if not output_topic:
                 msg = "RULES_EVALUATION_RESULTS_TOPIC environment variable is not set."
@@ -148,5 +168,8 @@ def evaluate_transcribed_audio_segment(
     Args:
         cloud_event: The CloudEvent triggered by Pub/Sub.
     """
+    setup_tracing(
+        service_name="evaluation-service", use_batch=False, setup_metrics=True
+    )
     proc = container.get_processor()
     proc.process_event(cloud_event)
