@@ -14,7 +14,7 @@ from google.cloud import pubsub_v1, storage
 from backend.pipeline.common.clients.audio_segments_client import (
     AudioSegmentsClient,
 )
-from backend.pipeline.common.container_helper import ForkDetector
+from backend.pipeline.common.container_helper import ForkDetector, fork_checked
 from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.normalization.processor import NormalizationEventProcessor
@@ -47,13 +47,13 @@ class NormalizationServiceContainer:
         self._publisher = None
         self._gcs_client = None
 
+    @fork_checked
     def get_publisher(self) -> pubsub_v1.PublisherClient:
         """Warms up and caches the Pub/Sub publisher client with ordering enabled.
 
         Returns:
             The cached PubSub PublisherClient instance.
         """
-        self._fork_detector.check_fork()
         if self._publisher is None:
             logger.info("Initializing Pub/Sub PublisherClient")
             publisher_options = pubsub_v1.types.PublisherOptions(
@@ -64,6 +64,7 @@ class NormalizationServiceContainer:
             )
         return self._publisher
 
+    @fork_checked
     def get_gcs_client(self, project_id: str) -> storage.Client:
         """Warms up and caches the GCS client.
 
@@ -73,12 +74,12 @@ class NormalizationServiceContainer:
         Returns:
             The cached storage.Client instance.
         """
-        self._fork_detector.check_fork()
         if self._gcs_client is None:
             logger.info("Initializing GCS Client")
             self._gcs_client = storage.Client(project=project_id)
         return self._gcs_client
 
+    @fork_checked
     def get_processor(self) -> NormalizationEventProcessor:
         """Warms up and caches the Event Processor instance.
 
@@ -88,7 +89,6 @@ class NormalizationServiceContainer:
         Raises:
             ValueError: If required environment variables are not set.
         """
-        self._fork_detector.check_fork()
         if self._processor is None:
             project_id = os.environ.get("PROJECT_ID", "watch-duty-dev")
             canonical_audio_bucket = os.environ.get("AUDIO_CANONICAL_BUCKET")

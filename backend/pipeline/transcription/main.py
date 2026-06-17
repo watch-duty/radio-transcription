@@ -12,7 +12,7 @@ from cloudevents.http.event import CloudEvent
 from google.cloud import pubsub_v1
 
 from backend.pipeline.common.clients import audio_segments_client
-from backend.pipeline.common.container_helper import ForkDetector
+from backend.pipeline.common.container_helper import ForkDetector, fork_checked
 from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.transcription.enums import TranscriberType
@@ -48,6 +48,7 @@ class TranscriptionServiceContainer:
         self._publisher = None
         self._processor = None
 
+    @fork_checked
     def get_transcriber(self, project_id: str) -> Transcriber:
         """Warms up and caches the transcriber instance.
 
@@ -57,7 +58,6 @@ class TranscriptionServiceContainer:
         Returns:
             The cached Transcriber instance.
         """
-        self._fork_detector.check_fork()
         if self._transcriber is None:
             t_type_str = os.environ.get("TRANSCRIBER_TYPE", "GOOGLE_CHIRP_V3")
             t_config_json = os.environ.get("TRANSCRIBER_CONFIG", "{}")
@@ -69,13 +69,13 @@ class TranscriptionServiceContainer:
             self._transcriber.setup()
         return self._transcriber
 
+    @fork_checked
     def get_publisher(self) -> pubsub_v1.PublisherClient:
         """Warms up and caches the Pub/Sub publisher client with ordering enabled.
 
         Returns:
             The cached PubSub PublisherClient instance.
         """
-        self._fork_detector.check_fork()
         if self._publisher is None:
             logger.info("Initializing Pub/Sub PublisherClient")
             publisher_options = pubsub_v1.types.PublisherOptions(
@@ -86,6 +86,7 @@ class TranscriptionServiceContainer:
             )
         return self._publisher
 
+    @fork_checked
     def get_processor(self) -> TranscriptionEventProcessor:
         """Warms up and caches the Event Processor instance.
 
@@ -95,7 +96,6 @@ class TranscriptionServiceContainer:
         Raises:
             ValueError: If the OUTPUT_TOPIC environment variable is not set.
         """
-        self._fork_detector.check_fork()
         if self._processor is None:
             project_id = os.environ.get("PROJECT_ID", "watch-duty-dev")
             output_topic = os.environ.get("OUTPUT_TOPIC")

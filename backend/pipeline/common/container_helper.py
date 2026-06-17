@@ -2,6 +2,7 @@ import logging
 import os
 import threading
 from collections.abc import Callable
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -31,3 +32,18 @@ class ForkDetector:
                     )
                     self._pid = current_pid
                     self._on_fork()
+
+
+def fork_checked[F: Callable[..., Any]](func: F) -> F:
+    """Decorator for container methods to ensure a fork check is performed before execution.
+
+    Expects the instance to have a `_fork_detector` attribute.
+    """
+
+    def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
+        detector = getattr(self, "_fork_detector", None)
+        if detector is not None:
+            detector.check_fork()
+        return func(self, *args, **kwargs)
+
+    return cast("F", wrapper)
