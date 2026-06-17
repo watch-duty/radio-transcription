@@ -881,10 +881,35 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(
             ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
         )
         self.assertEqual(
             str(ctx.exception), "missing_fire_notifications_s3_base"
+        )
+
+    async def test_missing_auth_env_raises_typed_configuration_failure(
+        self,
+    ) -> None:
+        with patch.dict(
+            os.environ,
+            {"FIRE_NOTIFICATIONS_S3_BASE": "http://mock-s3-bucket"},
+            clear=True,
+        ):
+            with self.assertRaises(FeedFailure) as ctx:
+                async for _ in collector.fire_notifications_collector(
+                    self.feed,  # type: ignore
+                    self.shutdown,
+                    "http://base",
+                    self.resources,
+                ):
+                    pass
+
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
+        )
+        self.assertEqual(
+            str(ctx.exception), "missing_fire_notifications_auth_config"
         )
 
     @patch(
@@ -902,7 +927,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         cases = [
             (
                 400,
-                FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+                FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID,
                 "fn_api_http_400",
             ),
             (
@@ -917,7 +942,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
             ),
             (
                 404,
-                FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+                FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID,
                 "fn_api_http_404",
             ),
             (429, FeedStatusReason.SOURCE_RATE_LIMITED, "fn_api_http_429"),
@@ -953,7 +978,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         mock_fetch: AsyncMock,
     ) -> None:
         mock_fetch.side_effect = FeedFailure(
-            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
             "fn_api_payload_malformed: ValueError: bad json",
         )
 
@@ -968,7 +993,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(
             ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
         )
         self.assertEqual(
             str(ctx.exception),
@@ -1056,7 +1081,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         self, mock_fetch: AsyncMock
     ) -> None:
         mock_fetch.side_effect = FeedFailure(
-            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
             "fn_api_payload_malformed",
         )
 
@@ -1071,9 +1096,68 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(
             ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
         )
         self.assertEqual(str(ctx.exception), "fn_api_payload_malformed")
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.control_flow.sleep_or_cancel",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.client.FireNotificationsRestClient.download_audio",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.client.FireNotificationsRestClient.fetch_file_list",
+        new_callable=AsyncMock,
+    )
+    async def test_repeated_seen_files_yield_source_observation(
+        self,
+        mock_fetch: AsyncMock,
+        mock_download: AsyncMock,
+        mock_sleep: AsyncMock,
+    ) -> None:
+        mock_download.return_value = b"mp3"
+        repeated_file = FireNotificationsFile(
+            uuid="uuid1",
+            filename="CHAN 2026-05-20 12-00-00.mp3",
+            start_time=datetime.datetime(
+                2026, 5, 20, 12, 0, 0, tzinfo=datetime.UTC
+            ),
+            size=1000,
+        )
+        mock_fetch.side_effect = [[repeated_file], [repeated_file]]
+
+        sleep_calls = 0
+
+        async def sleep_side_effect(*args, **kwargs) -> bool:
+            nonlocal sleep_calls
+            sleep_calls += 1
+            if sleep_calls >= 3:
+                self.shutdown.set()
+                return True
+            return False
+
+        mock_sleep.side_effect = sleep_side_effect
+
+        events = []
+        with patch(
+            "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
+            return_value=1000,
+        ):
+            async for event in collector.fire_notifications_collector(
+                self.feed,  # type: ignore
+                self.shutdown,
+                "http://base",
+                self.resources,
+            ):
+                events.append(event)
+
+        self.assertEqual(len(events), 2)
+        self.assertIsInstance(events[0], collector.CapturedChunk)
+        self.assertEqual(events[1], SourceObservation())
+        mock_download.assert_awaited_once()
 
     @patch(
         "backend.pipeline.ingestion.collectors.fire_notifications.collector.control_flow.sleep_or_cancel",

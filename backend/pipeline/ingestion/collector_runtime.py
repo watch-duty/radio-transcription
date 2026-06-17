@@ -3,6 +3,7 @@ import concurrent.futures
 import datetime
 import logging
 import os
+import random
 import signal
 import threading
 import time
@@ -21,6 +22,7 @@ from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.common.log_helper import setup_asyncio_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.ingestion import (
+    failure_policy,
     health_server,
     memory_watchdog,
     quarantine_reason,
@@ -68,14 +70,22 @@ logger = logging.getLogger(__name__)
 
 _PIPELINE_GCS_UPLOAD_FAILED = "gcs_upload_failed"
 _PIPELINE_BOOKMARK_WRITE_FAILED = "bookmark_write_failed"
+_NON_BUDGETED_RETRY_MIN_SEC = 5 * 60
+_NON_BUDGETED_RETRY_MAX_SEC = 15 * 60
 
 
 class _PipelineFailure(Exception):
     """Post-capture runtime side-effect failure with a stable stage tag."""
 
-    def __init__(self, reason: str) -> None:
+    def __init__(
+        self,
+        reason: str,
+        *,
+        status_reason: FeedStatusReason,
+    ) -> None:
+        super().__init__(reason)
         self.reason = reason
-        super().__init__(self.reason)
+        self.status_reason = status_reason
 
 
 class CollectorRuntime:
@@ -522,8 +532,8 @@ class CollectorRuntime:
         warning at garbage collection time. ``.exception()`` on a cancelled
         task raises ``CancelledError``, hence the guard.
 
-        The catch-and-quarantine handler in ``_process_feed`` (D-01, v1.1)
-        is the primary fault-response path. The reaper exists to drain
+        The policy-routing handler in ``_process_feed`` is the primary
+        fault-response path. The reaper exists to drain
         ``task.exception()`` so asyncio does not emit
         "Task exception was never retrieved" warnings, and to log meta-bugs
         where the catch handler itself raised -- which would indicate the
@@ -651,6 +661,69 @@ class CollectorRuntime:
         """Determines the Pub/Sub topic path based on the feed source type."""
         return resolve_topic_path(feed["source_type"], self._collector_settings)
 
+    @staticmethod
+    def _non_budgeted_retry_after() -> datetime.datetime:
+        """Return the retry time for non-budgeted failure lanes."""
+        jitter_sec = random.uniform(  # noqa: S311 -- scheduling jitter
+            _NON_BUDGETED_RETRY_MIN_SEC,
+            _NON_BUDGETED_RETRY_MAX_SEC,
+        )
+        return datetime.datetime.now(datetime.UTC) + datetime.timedelta(
+            seconds=jitter_sec,
+        )
+
+    def _emit_policy_decision(
+        self,
+        feed: LeasedFeed,
+        *,
+        reason: str,
+        status_reason: FeedStatusReason,
+        retry_after: datetime.datetime | None = None,
+        replay_missing: bool = False,
+        data_gap_known: bool = False,
+    ) -> None:
+        """Emit the canonical policy-decision telemetry event."""
+        action = failure_policy.classify_failure_policy(status_reason)
+        payload: dict[str, object] = {
+            "event_type": "feed_failure_policy_decision",
+            "feed_id": str(feed["id"]),
+            "source_type": str(feed["source_type"]),
+            "reason": reason,
+            "status_reason": status_reason.value,
+            "replay_missing": replay_missing,
+            "data_gap_known": data_gap_known,
+            "executed_action": action.value,
+        }
+        if retry_after is not None:
+            payload["retry_after"] = retry_after.isoformat()
+        logger.info(
+            "Feed failure policy decision", extra={"json_fields": payload}
+        )
+
+    def _emit_post_bookmark_publish_failure(
+        self,
+        feed: LeasedFeed,
+        *,
+        reason: str,
+        status_reason: FeedStatusReason,
+    ) -> None:
+        """Emit explicit evidence that capture/bookmark succeeded but publish did not."""
+        action = failure_policy.classify_failure_policy(status_reason)
+        payload: dict[str, object] = {
+            "event_type": "post_bookmark_publish_failure",
+            "feed_id": str(feed["id"]),
+            "source_type": str(feed["source_type"]),
+            "reason": reason,
+            "status_reason": status_reason.value,
+            "replay_missing": True,
+            "data_gap_known": True,
+            "executed_action": action.value,
+        }
+        logger.error(
+            "Post-bookmark publish failure",
+            extra={"json_fields": payload},
+        )
+
     async def _process_captured_chunk(
         self,
         feed: LeasedFeed,
@@ -690,7 +763,10 @@ class CollectorRuntime:
         except (asyncio.CancelledError, LeaseExpiredError):
             raise
         except Exception as exc:
-            raise _PipelineFailure(_PIPELINE_GCS_UPLOAD_FAILED) from exc
+            raise _PipelineFailure(
+                _PIPELINE_GCS_UPLOAD_FAILED,
+                status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            ) from exc
 
         duration_ms = int(
             (
@@ -723,7 +799,10 @@ class CollectorRuntime:
         except (asyncio.CancelledError, LeaseExpiredError):
             raise
         except Exception as exc:
-            raise _PipelineFailure(_PIPELINE_BOOKMARK_WRITE_FAILED) from exc
+            raise _PipelineFailure(
+                _PIPELINE_BOOKMARK_WRITE_FAILED,
+                status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            ) from exc
 
         if not ok:
             # If the batched heartbeat is healthy (renewing every 15s),
@@ -777,7 +856,12 @@ class CollectorRuntime:
         except (asyncio.CancelledError, LeaseExpiredError):
             raise
         except Exception as exc:
-            raise _PipelineFailure(pubsub.publish_failure_reason(exc)) from exc
+            raise _PipelineFailure(
+                pubsub.publish_failure_reason(exc),
+                status_reason=(
+                    FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
+                ),
+            ) from exc
 
         logger.info(
             "Published message %s for feed %s",
@@ -814,8 +898,17 @@ class CollectorRuntime:
         *,
         reason: str,
         status_reason: FeedStatusReason,
+        replay_missing: bool = False,
+        data_gap_known: bool = False,
     ) -> None:
         """Persist a classified feed failure through the fenced store path."""
+        self._emit_policy_decision(
+            feed,
+            reason=reason,
+            status_reason=status_reason,
+            replay_missing=replay_missing,
+            data_gap_known=data_gap_known,
+        )
         extra: dict[str, object] = {
             "json_fields": {
                 "feed_id": str(feed["id"]),
@@ -824,11 +917,7 @@ class CollectorRuntime:
                 "status_reason": status_reason.value,
             },
         }
-        if status_reason in (
-            FeedStatusReason.SOURCE_OFFLINE,
-            FeedStatusReason.SOURCE_UNREACHABLE,
-            FeedStatusReason.SOURCE_RATE_LIMITED,
-        ):
+        if status_reason.owner == "source":
             # External operational Gotchas (e.g. Icecast 404 stream missing, CDN bans) are environment observations.
             # Log them as a warning without attaching a noisy stack traceback or spawning permanent Stackdriver Error Groups.
             logger.warning(
@@ -879,6 +968,80 @@ class CollectorRuntime:
             # absent from _releasing_feeds but the task is not yet .done().
             self._releasing_feeds.discard(feed["id"])
 
+    async def _record_non_budgeted_failure(
+        self,
+        feed: LeasedFeed,
+        worker_id: uuid.UUID,
+        fencing_token: int,
+        *,
+        reason: str,
+        status_reason: FeedStatusReason,
+        replay_missing: bool = False,
+        data_gap_known: bool = False,
+    ) -> None:
+        """Release a failure that must not consume the feed quarantine budget."""
+        retry_after = self._non_budgeted_retry_after()
+        self._emit_policy_decision(
+            feed,
+            reason=reason,
+            status_reason=status_reason,
+            retry_after=retry_after,
+            replay_missing=replay_missing,
+            data_gap_known=data_gap_known,
+        )
+        if replay_missing and data_gap_known:
+            self._emit_post_bookmark_publish_failure(
+                feed,
+                reason=reason,
+                status_reason=status_reason,
+            )
+        if (
+            status_reason
+            is FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
+        ):
+            # The policy-decision event and dedicated gap ERROR already cover
+            # this case; avoid a third log line for the same publish failure.
+            pass
+        elif (
+            status_reason.owner == "source"
+            or status_reason
+            is FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID
+        ):
+            logger.info(
+                "Feed source failure suppressed from quarantine budget: "
+                "feed=%s reason=%s",
+                feed["name"],
+                reason,
+            )
+        else:
+            logger.exception(
+                "Feed processing error suppressed from quarantine budget: "
+                "feed=%s reason=%s",
+                feed["name"],
+                reason,
+            )
+        # SAFETY: _releasing_feeds invariant -- add BEFORE the first await
+        # that drops the lease (release_non_budgeted_failure sets
+        # worker_id=NULL).
+        self._releasing_feeds.add(feed["id"])
+        try:
+            await self._store.release_non_budgeted_failure(
+                feed["id"],
+                worker_id,
+                fencing_token,
+                retry_after=retry_after,
+                status_reason=status_reason,
+            )
+        except Exception:
+            # 60s abandonment window is the safety net if this fails.
+            logger.exception(
+                "Failed to record non-budgeted failure for feed %s",
+                feed["name"],
+            )
+        finally:
+            # SAFETY: No await between discard() and return.
+            self._releasing_feeds.discard(feed["id"])
+
     @staticmethod
     def _leased_feed_has_failure_state(feed: LeasedFeed) -> bool:
         """Return whether a leased feed carries persisted failure state."""
@@ -903,12 +1066,15 @@ class CollectorRuntime:
         worker_id: uuid.UUID,
         fencing_token: int,
     ) -> bool:
-        """Record a non-audio source success when persisted state is dirty.
+        """Record a non-audio source success when persisted state needs it.
 
         Returns ``True`` when processing may continue, ``False`` when the task
         should stop because the row is no longer owned by this active lease.
         """
-        if not self._leased_feed_has_failure_state(feed):
+        if (
+            not self._leased_feed_has_failure_state(feed)
+            and observation.resume_position is None
+        ):
             return True
 
         try:
@@ -1126,23 +1292,57 @@ class CollectorRuntime:
             return
 
         except FeedFailure as e:
-            await self._record_feed_failure(
-                feed,
-                worker_id,
-                fencing_token,
-                reason=e.reason,
-                status_reason=e.status_reason,
-            )
+            action = failure_policy.classify_failure_policy(e.status_reason)
+            if (
+                action
+                is failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
+            ):
+                await self._record_feed_failure(
+                    feed,
+                    worker_id,
+                    fencing_token,
+                    reason=e.reason,
+                    status_reason=e.status_reason,
+                )
+            else:
+                await self._record_non_budgeted_failure(
+                    feed,
+                    worker_id,
+                    fencing_token,
+                    reason=e.reason,
+                    status_reason=e.status_reason,
+                )
             return
 
         except _PipelineFailure as e:
-            await self._record_feed_failure(
-                feed,
-                worker_id,
-                fencing_token,
-                reason=e.reason,
-                status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            action = failure_policy.classify_failure_policy(e.status_reason)
+            replay_missing = (
+                e.status_reason
+                is FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
             )
+            if (
+                action
+                is failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
+            ):
+                await self._record_feed_failure(
+                    feed,
+                    worker_id,
+                    fencing_token,
+                    reason=e.reason,
+                    status_reason=e.status_reason,
+                    replay_missing=replay_missing,
+                    data_gap_known=replay_missing,
+                )
+            else:
+                await self._record_non_budgeted_failure(
+                    feed,
+                    worker_id,
+                    fencing_token,
+                    reason=e.reason,
+                    status_reason=e.status_reason,
+                    replay_missing=replay_missing,
+                    data_gap_known=replay_missing,
+                )
             return
 
         except Exception as e:
@@ -1150,13 +1350,27 @@ class CollectorRuntime:
             # Source-specific attribution belongs in collectors that raise
             # FeedFailure; the runtime only records the explicit fallback.
             reason = quarantine_reason.exception_text(e)
-            await self._record_feed_failure(
-                feed,
-                worker_id,
-                fencing_token,
-                reason=reason,
-                status_reason=FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
-            )
+            status_reason = FeedStatusReason.SYSTEM_UNEXPECTED_ERROR
+            action = failure_policy.classify_failure_policy(status_reason)
+            if (
+                action
+                is failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
+            ):
+                await self._record_feed_failure(
+                    feed,
+                    worker_id,
+                    fencing_token,
+                    reason=reason,
+                    status_reason=status_reason,
+                )
+            else:
+                await self._record_non_budgeted_failure(
+                    feed,
+                    worker_id,
+                    fencing_token,
+                    reason=reason,
+                    status_reason=status_reason,
+                )
             return
 
         # Normal completion (capture generator exhausted)
@@ -1279,8 +1493,9 @@ class CollectorRuntime:
         # of which can happen while our last_heartbeat stays < 60 s old.
         # Fenced writes on the task side are the authoritative lease-lost
         # detection at write time; they call update_feed_progress /
-        # release_feed / report_feed_failure with WHERE worker_id=$1 AND
-        # fencing_token=$2 and return False if our lease was taken. The
+        # release_feed / report_feed_failure / release_non_budgeted_failure
+        # with WHERE worker_id=$1 AND fencing_token=$2 and return False if
+        # our lease was taken. The
         # existing retry_with_lease_check wrapper + _lease_lost event
         # gracefully handles that outcome without depending on the
         # heartbeat's retained_ids observation.

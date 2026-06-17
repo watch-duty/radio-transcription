@@ -89,7 +89,7 @@ def _build_auth_header() -> str:
     password = os.getenv("BROADCASTIFY_PASSWORD")
     if not user or not password:
         raise collector_failure(
-            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
             "missing_broadcastify_credentials",
         )
     credentials = f"{user}:{password}"
