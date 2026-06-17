@@ -99,7 +99,9 @@ async def _process_file_list(
 
         try:
             # to_thread: get_audio_duration shells out to ffprobe — keep it off the event loop.
-            duration_ms = await asyncio.to_thread(get_audio_duration, mp3_bytes)
+            duration_ms = await asyncio.to_thread(
+                get_audio_duration, mp3_bytes, input_format="mp3"
+            )
         except Exception as exc:
             reason = ffmpeg_classifier.ffprobe_exception_failure_reason(exc)
             logger.warning(
@@ -145,7 +147,10 @@ async def _process_file_list(
 
     promoted = outcome.promoted_failure()
     if promoted is not None:
-        raise collector_failure(promoted.status_reason, promoted.reason)
+        raise collector_failure(
+            promoted.status_reason,
+            promoted.reason,
+        )
 
 
 def _init_client(
@@ -156,7 +161,7 @@ def _init_client(
         s3_base_url = _require_env("FIRE_NOTIFICATIONS_S3_BASE")
     except ValueError as e:
         raise collector_failure(
-            feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            feed_store.FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
             "missing_fire_notifications_s3_base",
         ) from e
     try:
@@ -164,7 +169,7 @@ def _init_client(
         password = _require_env("FIRE_NOTIFICATIONS_PASSWORD")
     except ValueError as e:
         raise collector_failure(
-            feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            feed_store.FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
             "missing_fire_notifications_auth_config",
         ) from e
 

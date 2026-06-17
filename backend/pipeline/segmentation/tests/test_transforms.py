@@ -47,6 +47,7 @@ from backend.pipeline.segmentation.transforms.stateful import (
 )
 from backend.pipeline.segmentation.transforms.stateless import (
     ParseAndKeyFn,
+    UploadRawSegmentFn,
 )
 from backend.pipeline.segmentation.utils import get_duration_ms
 
@@ -146,6 +147,13 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
                 equal_to([]),
                 label="CheckEmptyDLQ",
             )
+
+        # Assert native Beam metrics
+        metrics = p.result.metrics().query(
+            beam.metrics.metric.MetricsFilter().with_name("segmentation_start")
+        )
+        self.assertEqual(len(metrics["counters"]), 1)
+        self.assertEqual(metrics["counters"][0].committed, 1)
 
     def test_parse_and_key_dlq(self) -> None:
         """Verifies that incoming data missing a critical routing attribute like 'feed_id' is gracefully intercepted and routed to the Dead Letter Queue."""
@@ -2072,3 +2080,80 @@ class DlqTaggingTest(unittest.TestCase):
         mock_logger.warning.assert_not_called()
         # last_start_ms state should NOT be written (remains 10050, not updated to 10070)
         self.assertEqual(mock_last_start_ms.read(), 10050)
+
+
+class UploadRawSegmentFnTest(unittest.TestCase):
+    @patch("backend.pipeline.segmentation.transforms.stateless.setup_tracing")
+    @patch(
+        "backend.pipeline.segmentation.transforms.stateless.acquire_shared_gcs_client"
+    )
+    def test_setup_initializes_tracing(
+        self, mock_acquire_gcs: MagicMock, mock_setup_tracing: MagicMock
+    ) -> None:
+        """Verifies that UploadRawSegmentFn.setup initializes tracing."""
+        fn = UploadRawSegmentFn(
+            staging_audio_bucket="bucket", project_id="proj"
+        )
+        fn.setup()
+        mock_setup_tracing.assert_called_once_with(
+            service_name="segmentation-pipeline"
+        )
+
+    @patch(
+        "backend.pipeline.segmentation.transforms.stateless.inject_otel_context"
+    )
+    @patch(
+        "backend.pipeline.segmentation.transforms.stateless.with_tracer_context"
+    )
+    @patch(
+        "backend.pipeline.segmentation.transforms.stateless.UploadRawSegmentFn._upload_raw_audio"
+    )
+    def test_process_propagates_otel_context(
+        self,
+        mock_upload_audio: MagicMock,
+        mock_with_tracer_context: MagicMock,
+        mock_inject_otel_context: MagicMock,
+    ) -> None:
+        """Verifies that process propagates OpenTelemetry trace context and baggage."""
+        # Create a mock context manager for with_tracer_context
+        mock_ctx = MagicMock()
+        mock_with_tracer_context.return_value = mock_ctx
+
+        mock_upload_audio.return_value = "gs://bucket/raw.wav"
+
+        fn = UploadRawSegmentFn(
+            staging_audio_bucket="bucket", project_id="proj"
+        )
+        fn.gcs_client = MagicMock()
+
+        request = FlushRequest(
+            buffer=b"audio-data",
+            feed_id="test-feed",
+            session_id="test-session",
+            contributing_audio_uris=["gs://bucket/1.flac"],
+            time_range=TimeRange(start_ms=1000, end_ms=2000),
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
+            sample_rate=16000,
+            missing_prior_context=False,
+            missing_post_context=False,
+            start_audio_offset_ms=0,
+            end_audio_offset_ms=1000,
+            speech_segments=[],
+            segment_id="segment-123",
+            traceparent="test-traceparent",
+            baggage="test-baggage",
+            audio_classification=AudioClassification.AUDIO_CLASSIFICATION_SPEECH,
+        )
+
+        # Execute the process generator
+        list(fn.process(element=("test-feed", request)))
+
+        # Verify that with_tracer_context was called with the correct extracted attributes
+        mock_with_tracer_context.assert_called_once_with(
+            {"traceparent": "test-traceparent", "baggage": "test-baggage"},
+            "upload_raw_segment",
+            "backend.pipeline.segmentation.transforms.stateless",
+        )
+
+        # Verify that inject_otel_context was called to inject active context into egress attributes
+        mock_inject_otel_context.assert_called_once()

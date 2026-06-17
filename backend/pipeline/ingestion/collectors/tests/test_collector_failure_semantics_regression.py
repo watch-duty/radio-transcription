@@ -240,7 +240,7 @@ class TestPollingPayloadRegression(unittest.TestCase):
 
         self.assertIs(
             cm.exception.status_reason,
-            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
         )
         self.assertEqual(cm.exception.reason, "calls_api_payload_malformed")
 
@@ -276,7 +276,7 @@ class TestPollingPayloadRegression(unittest.TestCase):
 
         self.assertIs(
             cm.exception.status_reason,
-            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
         )
         self.assertEqual(cm.exception.reason, "fn_api_payload_malformed")
 

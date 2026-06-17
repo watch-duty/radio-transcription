@@ -103,7 +103,7 @@ class TestGetJwtToken(unittest.TestCase):
             bcfy_calls_collector._get_jwt_token()
         self.assertIs(
             ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
         )
         self.assertEqual(str(ctx.exception), "calls_jwt_config_missing")
 
@@ -123,7 +123,7 @@ class TestGetJwtToken(unittest.TestCase):
             bcfy_calls_collector._get_jwt_token()
         self.assertIs(
             ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+            FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED,
         )
         self.assertEqual(str(ctx.exception), "calls_jwt_secret_access_failed")
 
@@ -352,7 +352,7 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(
             ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
         )
         self.assertEqual(
             str(ctx.exception),
@@ -667,7 +667,7 @@ class TestExtractCallsFromResponse(unittest.TestCase):
             )
         self.assertIs(
             ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
         )
         self.assertEqual(ctx.exception.reason, "calls_api_payload_malformed")
 
@@ -684,7 +684,7 @@ class TestExtractCallsFromResponse(unittest.TestCase):
             )
         self.assertIs(
             ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
         )
         self.assertEqual(ctx.exception.reason, "calls_api_payload_malformed")
 
@@ -1696,7 +1696,7 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
                 pass
         self.assertIs(
             ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+            FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED,
         )
         self.assertEqual(str(ctx.exception), "calls_jwt_secret_access_failed")
         self.assertEqual(mock_fetch.call_count, 1)
