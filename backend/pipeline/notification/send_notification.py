@@ -10,7 +10,7 @@ from cloudevents.http.event import CloudEvent
 from backend.pipeline.common import env
 from backend.pipeline.common.clients.feeds_client import FeedsClient
 from backend.pipeline.common.constants import MS_PER_SECOND, NANOS_PER_MS
-from backend.pipeline.common.container import ForkDetector
+from backend.pipeline.common.container_helper import ForkDetector
 from backend.pipeline.common.exceptions import NonRetryableError
 from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.storage.redis_service import RedisService

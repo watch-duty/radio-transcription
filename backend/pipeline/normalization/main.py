@@ -14,7 +14,7 @@ from google.cloud import pubsub_v1, storage
 from backend.pipeline.common.clients.audio_segments_client import (
     AudioSegmentsClient,
 )
-from backend.pipeline.common.container import ForkDetector
+from backend.pipeline.common.container_helper import ForkDetector
 from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.normalization.processor import NormalizationEventProcessor

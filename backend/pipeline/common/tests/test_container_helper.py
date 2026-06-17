@@ -2,7 +2,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from backend.pipeline.common.container import ForkDetector
+from backend.pipeline.common.container_helper import ForkDetector
 
 
 class TestForkDetector(unittest.TestCase):
