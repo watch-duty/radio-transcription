@@ -128,6 +128,7 @@ def _render_wer_md(metrics: dict[str, Any]) -> str:
     lines.append(
         f"| CER | {_fmt(base_cer)} | {_fmt(tuned_cer)} | {_delta(base_cer, tuned_cer)} |"
     )
+    _append_inference_artifacts(lines, metrics)
 
     # Ins/del/sub breakdown
     for model_key, prefix in [("base", "base"), ("tuned", "tuned")]:
@@ -230,6 +231,27 @@ def _render_wer_md(metrics: dict[str, Any]) -> str:
             "_Note: Base-only run (no tuned model). Tuned metrics will appear after `tune` + `eval`._"
         )
     return "\n".join(lines) + "\n"
+
+
+def _append_inference_artifacts(
+    lines: list[str], metrics: dict[str, Any]
+) -> None:
+    artifact_labels = [
+        ("base_inference_manifest_uri", "Base normalized inference manifest"),
+        ("tuned_inference_manifest_uri", "Tuned normalized inference manifest"),
+        ("base_batch_output_uri", "Base raw Vertex batch output"),
+        ("tuned_batch_output_uri", "Tuned raw Vertex batch output"),
+    ]
+    present = [
+        (label, metrics[key])
+        for key, label in artifact_labels
+        if metrics.get(key)
+    ]
+    if not present:
+        return
+    lines += ["", "## Inference Artifacts"]
+    for label, uri in present:
+        lines.append(f"- {label}: {uri}")
 
 
 def append_ledger(results_dir: Path, row: dict[str, Any]) -> None:

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.common.tracing_utils import (
-    get_current_traceparent,
+    inject_otel_context,
     with_tracer_context,
 )
 from backend.pipeline.schema_types import (
@@ -68,9 +68,8 @@ class EvaluationEventProcessor:
         """
         pubsub_message = cloud_event.data.get("message", {})
         attributes = pubsub_message.get("attributes", {}) or {}
-        traceparent = attributes.get("traceparent", "")
 
-        with with_tracer_context(traceparent, "evaluate_rules", __name__):
+        with with_tracer_context(attributes, "evaluate_rules", __name__):
             # 1. Decode the Incoming Message
             # TODO (https://linear.app/watchduty/issue/GOO-245/): Handle parse failure.
             new_audio = self._parse_cloud_event(cloud_event)
@@ -148,12 +147,14 @@ class EvaluationEventProcessor:
                 or len(evaluated_payload.errors) > 0
             ):
                 encoded_data = evaluated_payload.SerializeToString()
+                attrs: dict[str, str] = {}
+                inject_otel_context(attrs)
                 # TODO (https://linear.app/watchduty/issue/GOO-245/): Handle publish failure.
                 future = self.publisher.get_publisher().publish(
                     self.output_topic_path,
                     encoded_data,
                     ordering_key=evaluated_payload.feed_id,
-                    traceparent=get_current_traceparent(),
+                    **attrs,
                 )
                 message_id = future.result()
                 logger.info(

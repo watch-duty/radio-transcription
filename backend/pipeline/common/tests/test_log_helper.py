@@ -9,10 +9,17 @@ class TestLogging(TestCase):
         setup_logging.cache_clear()
 
     @mock.patch("backend.pipeline.common.tracing_utils.set_tracer_provider")
+    @mock.patch(
+        "backend.pipeline.common.tracing_utils.CloudMonitoringMetricsExporter"
+    )
     @mock.patch("backend.pipeline.common.tracing_utils.CloudTraceSpanExporter")
     @mock.patch("backend.pipeline.common.log_helper.cloud_logging")
     def test_setup_logging_gcp(
-        self, mock_cloud_logging, mock_exporter, mock_set_provider
+        self,
+        mock_cloud_logging,
+        mock_trace_exporter,
+        mock_metrics_exporter,
+        mock_set_provider,
     ) -> None:
         # Mock cloud_logging to look like the real library
         mock_client_inst = mock.Mock()
@@ -36,14 +43,20 @@ class TestLogging(TestCase):
                 setup_logging()
                 mock_cloud_logging.Client.assert_called_once()
                 mock_client_inst.setup_logging.assert_called_once()
-                mock_exporter.assert_called_once_with(project_id="test-project")
+                mock_trace_exporter.assert_called_once_with(
+                    project_id="test-project"
+                )
+                mock_metrics_exporter.assert_called_once_with(
+                    project_id="test-project"
+                )
                 mock_set_provider.assert_called_once()
 
                 # Second call should do nothing (idempotency due to cache)
                 setup_logging()
                 mock_cloud_logging.Client.assert_called_once()
                 mock_client_inst.setup_logging.assert_called_once()
-                mock_exporter.assert_called_once()
+                mock_trace_exporter.assert_called_once()
+                mock_metrics_exporter.assert_called_once()
                 mock_set_provider.assert_called_once()
 
     @mock.patch("logging.basicConfig")

@@ -11,7 +11,6 @@ model/
 │   ├── inference_manifests/   — per-model inference results merged with ground truth
 │   ├── manifests/             — batch manifests consumed by transcription notebooks
 │   ├── label_studio_exports/  — Label Studio annotation exports
-│   ├── segmentation/          — audio segmentation outputs
 │   └── README.md              — this file
 └── data_sources/              — fetch scripts and API clients
     ├── broadcastify/          — Broadcastify API client + archive-URL fetch scripts

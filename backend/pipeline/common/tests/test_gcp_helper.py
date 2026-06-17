@@ -97,6 +97,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             audio_chunk,
             metadata={"traceparent": ""},
             content_type="audio/flac",
+            timeout=60,
         )
         self.assertEqual(result, expected_path)
 
@@ -137,6 +138,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             audio_chunk,
             metadata={"traceparent": ""},
             content_type="audio/flac",
+            timeout=60,
         )
         self.assertEqual(result, expected_path)
 
@@ -269,6 +271,7 @@ class TestUploadStagedAudio(unittest.IsolatedAsyncioTestCase):
             metadata={"traceparent": ""},
             content_type="audio/flac",
             parameters={"ifGenerationMatch": "0"},
+            timeout=60,
         )
         self.assertEqual(result, expected_path)
 
@@ -296,6 +299,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             audio,
             metadata={"traceparent": ""},
             content_type="audio/flac",
+            timeout=60,
         )
         self.assertEqual(result, f"gs://{bucket}/{object_name}")
 
@@ -334,6 +338,7 @@ class TestUploadAudio(unittest.IsolatedAsyncioTestCase):
             metadata={"traceparent": ""},
             content_type="audio/flac",
             parameters={"ifGenerationMatch": "0"},
+            timeout=60,
         )
         self.assertEqual(result, "gs://bucket/obj.flac")
 
@@ -729,7 +734,7 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
         )
 
         mock_storage.download.assert_called_once_with(
-            "my-bucket", "path/to/audio.flac"
+            "my-bucket", "path/to/audio.flac", timeout=30
         )
         self.assertEqual(result, b"audio-data")
 
@@ -743,6 +748,84 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertIn("Expected gs:// URI", str(ctx.exception))
+
+    async def test_download_audio_raises_file_not_found_on_404(self) -> None:
+        mock_gcs_client, mock_storage = _make_gcs_client()
+        mock_storage.download.side_effect = aiohttp.ClientResponseError(
+            request_info=_DUMMY_REQUEST_INFO,
+            history=(),
+            status=404,
+            message="Not Found",
+        )
+
+        with self.assertRaises(FileNotFoundError) as ctx:
+            await gcp_helper.download_audio(
+                mock_gcs_client,
+                "gs://my-bucket/path/to/missing.flac",
+            )
+
+        self.assertIn("GCS object not found", str(ctx.exception))
+
+    async def test_download_audio_retries_on_transient_aiohttp_client_error(
+        self,
+    ) -> None:
+        mock_gcs_client, mock_storage = _make_gcs_client()
+        mock_storage.download.side_effect = [
+            aiohttp.ClientResponseError(
+                request_info=_DUMMY_REQUEST_INFO,
+                history=(),
+                status=503,
+                message="Service Unavailable",
+            ),
+            aiohttp.ClientResponseError(
+                request_info=_DUMMY_REQUEST_INFO,
+                history=(),
+                status=429,
+                message="Too Many Requests",
+            ),
+            b"recovered-audio",
+        ]
+
+        with patch("asyncio.sleep", AsyncMock()):
+            result = await gcp_helper.download_audio(
+                mock_gcs_client,
+                "gs://my-bucket/path/to/audio.flac",
+            )
+
+        self.assertEqual(mock_storage.download.call_count, 3)
+        self.assertEqual(result, b"recovered-audio")
+
+    async def test_async_gcs_predicate_evaluations(self) -> None:
+        """Verify _should_retry_gcs correctly discriminates status and SDK errors."""
+        # 404, 403, and 412 are not retryable
+        exc_404 = aiohttp.ClientResponseError(
+            request_info=_DUMMY_REQUEST_INFO,
+            history=(),
+            status=404,
+            message="Not Found",
+        )
+        self.assertFalse(gcp_helper._should_retry_gcs(exc_404))
+
+        exc_412 = aiohttp.ClientResponseError(
+            request_info=_DUMMY_REQUEST_INFO,
+            history=(),
+            status=412,
+            message="Precondition Failed",
+        )
+        self.assertFalse(gcp_helper._should_retry_gcs(exc_412))
+
+        # 429 Too Many Requests is retryable
+        exc_429 = aiohttp.ClientResponseError(
+            request_info=_DUMMY_REQUEST_INFO,
+            history=(),
+            status=429,
+            message="Too Many Requests",
+        )
+        self.assertTrue(gcp_helper._should_retry_gcs(exc_429))
+
+        # TimeoutError is retryable
+        exc_timeout = TimeoutError("Socket dropped")
+        self.assertTrue(gcp_helper._should_retry_gcs(exc_timeout))
 
 
 if __name__ == "__main__":

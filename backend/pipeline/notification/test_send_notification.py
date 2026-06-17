@@ -238,7 +238,7 @@ class TestSendNotification(TestCase):
         send_notification(cloud_event)
 
         mock_with_tracer_context.assert_called_once_with(
-            "mock-traceparent",
+            event_data["message"]["attributes"],
             "send_notification",
             "backend.pipeline.notification.send_notification",
         )

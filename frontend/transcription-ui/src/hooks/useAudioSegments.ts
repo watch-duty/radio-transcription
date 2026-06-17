@@ -20,7 +20,7 @@ export type ListAudioSegmentsData = {
 
 export type AlertFilter = 'all' | 'alerts';
 
-const MAX_TRANSCRIPTS_POLLING_ITERATIONS = 10;
+const MAX_AUDIO_SEGMENTS_POLLING_ITERATIONS = 10;
 
 interface UseAudioSegmentsOptions {
   token: string | null;
@@ -51,17 +51,17 @@ export function useAudioSegments({
   );
 
   const {
-    data: listTranscriptsResponse,
-    fetchNextPage: loadOlderTranscripts,
-    fetchPreviousPage: loadNewerTranscripts,
-    hasNextPage: hasOlderTranscripts,
-    hasPreviousPage: hasNewerTranscripts,
-    isSuccess: isTranscriptsSuccess,
-    isError: isTranscriptsError,
-    error: transcriptsError,
-    dataUpdatedAt: transcriptsDataUpdatedAt,
-    isFetchingPreviousPage: isFetchingNewerTranscripts,
-    isFetchingNextPage: isFetchingOlderTranscripts,
+    data: listAudioSegmentsResponse,
+    fetchNextPage: loadOlderAudioSegments,
+    fetchPreviousPage: loadNewerAudioSegments,
+    hasNextPage: hasOlderAudioSegments,
+    hasPreviousPage: hasNewerAudioSegments,
+    isSuccess: isAudioSegmentsSuccess,
+    isError: isAudioSegmentsError,
+    error: audioSegmentsError,
+    dataUpdatedAt: audioSegmentsDataUpdatedAt,
+    isFetchingPreviousPage: isFetchingNewerAudioSegments,
+    isFetchingNextPage: isFetchingOlderAudioSegments,
     isLoading,
     isFetching,
   } = useInfiniteQuery<ListAudioSegmentsData, Error>({
@@ -122,7 +122,7 @@ export function useAudioSegments({
 
   const rawAudioSegments = useMemo(() => {
     const allSegments =
-      listTranscriptsResponse?.pages.flatMap((page) => page.segments) ?? [];
+      listAudioSegmentsResponse?.pages.flatMap((page) => page.segments) ?? [];
     const seenIds = new Set<string>();
     const uniqueSegments = allSegments.filter((segment) => {
       if (seenIds.has(segment.id)) {
@@ -136,25 +136,25 @@ export function useAudioSegments({
         new Date(b.startTimestamp).getTime() -
         new Date(a.startTimestamp).getTime()
     );
-  }, [listTranscriptsResponse]);
+  }, [listAudioSegmentsResponse]);
 
   const newestTimestamp = rawAudioSegments[0]?.startTimestamp;
 
-  const pollNewerTranscripts = useCallback(async (): Promise<
+  const pollNewerAudioSegments = useCallback(async (): Promise<
     AudioSegment[]
   > => {
     if (!newestTimestamp || !searchedFeedId || !token) return [];
 
-    const allNewTranscripts: AudioSegment[] = [];
+    const allNewAudioSegments: AudioSegment[] = [];
     let currentNextToken: string | undefined = undefined;
     let hasMore = true;
     let iterations = 0;
 
     try {
       while (hasMore) {
-        if (iterations > MAX_TRANSCRIPTS_POLLING_ITERATIONS) {
+        if (iterations > MAX_AUDIO_SEGMENTS_POLLING_ITERATIONS) {
           console.warn(
-            'pollNewerTranscripts has more than 10 pages of new transcripts. This is unexpected. If this message continues, please report a bug.'
+            'pollNewerAudioSegments has more than 10 pages of new audio segments. This is unexpected. If this message continues, please report a bug.'
           );
         }
         iterations++;
@@ -171,37 +171,37 @@ export function useAudioSegments({
         );
 
         if (response.segments && response.segments.length > 0) {
-          allNewTranscripts.push(...response.segments);
+          allNewAudioSegments.push(...response.segments);
         }
 
         currentNextToken = response.nextToken;
         hasMore = !!currentNextToken;
       }
     } catch (error) {
-      console.error('Error polling for new transcripts:', error);
+      console.error('Error polling for new audio segments:', error);
     }
 
-    return allNewTranscripts.reverse();
+    return allNewAudioSegments.reverse();
   }, [newestTimestamp, searchedFeedId, token, alertFilter]);
 
-  const updateCacheWithNewTranscripts = useCallback(
-    (newTranscripts: AudioSegment[]): AudioSegment[] => {
+  const updateCacheWithNewAudioSegments = useCallback(
+    (newAudioSegments: AudioSegment[]): AudioSegment[] => {
       if (!token) return [];
-      let updatedTranscripts: AudioSegment[] = [];
+      let updatedAudioSegments: AudioSegment[] = [];
 
       queryClient.setQueryData<InfiniteData<ListAudioSegmentsData>>(
         queryKey,
         (oldData) => {
           if (!oldData) return oldData;
 
-          const newTranscriptsMap = new Map(
-            newTranscripts.map((t) => [t.id, t])
+          const newAudioSegmentsMap = new Map(
+            newAudioSegments.map((t) => [t.id, t])
           );
 
           const updatedPages = oldData.pages.map((page) => {
             let pageSegmentsChanged = false;
             const updatedSegments = page.segments.map((existingSegment) => {
-              const newSegment = newTranscriptsMap.get(existingSegment.id);
+              const newSegment = newAudioSegmentsMap.get(existingSegment.id);
               if (newSegment) {
                 pageSegmentsChanged = true;
                 return newSegment;
@@ -217,7 +217,7 @@ export function useAudioSegments({
           const existingIds = new Set(
             oldData.pages.flatMap((p) => p.segments.map((t) => t.id))
           );
-          const brandNewSegments = newTranscripts.filter(
+          const brandNewSegments = newAudioSegments.filter(
             (t) => !existingIds.has(t.id)
           );
 
@@ -229,7 +229,7 @@ export function useAudioSegments({
             return { ...oldData, pages: updatedPages };
           }
 
-          updatedTranscripts = brandNewSegments;
+          updatedAudioSegments = brandNewSegments;
 
           const finalPages = [...updatedPages];
           finalPages[0] = {
@@ -240,7 +240,7 @@ export function useAudioSegments({
           return { ...oldData, pages: finalPages };
         }
       );
-      return updatedTranscripts;
+      return updatedAudioSegments;
     },
     [token, queryKey, queryClient]
   );
@@ -248,18 +248,18 @@ export function useAudioSegments({
   return {
     rawAudioSegments,
     newestTimestamp,
-    loadOlderTranscripts,
-    loadNewerTranscripts,
-    hasOlderTranscripts,
-    hasNewerTranscripts,
-    isTranscriptsSuccess,
-    isTranscriptsError,
-    transcriptsError,
-    transcriptsDataUpdatedAt,
-    isFetchingNewerTranscripts,
-    isFetchingOlderTranscripts,
-    pollNewerTranscripts,
-    updateCacheWithNewTranscripts,
+    loadOlderAudioSegments,
+    loadNewerAudioSegments,
+    hasOlderAudioSegments,
+    hasNewerAudioSegments,
+    isAudioSegmentsSuccess,
+    isAudioSegmentsError,
+    audioSegmentsError,
+    audioSegmentsDataUpdatedAt,
+    isFetchingNewerAudioSegments,
+    isFetchingOlderAudioSegments,
+    pollNewerAudioSegments,
+    updateCacheWithNewAudioSegments,
     isLoading,
     isFetching,
   };

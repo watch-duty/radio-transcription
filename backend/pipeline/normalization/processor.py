@@ -2,7 +2,10 @@
 
 import base64
 import datetime
+import json
 import logging
+import os
+import traceback
 import urllib.parse
 
 from cloudevents.http.event import CloudEvent
@@ -16,7 +19,10 @@ from backend.pipeline.common.constants import (
     NANOS_PER_SECOND,
 )
 from backend.pipeline.common.storage import gcs_uploader
-from backend.pipeline.common.tracing_utils import with_tracer_context
+from backend.pipeline.common.tracing_utils import (
+    inject_otel_context,
+    with_tracer_context,
+)
 from backend.pipeline.normalization import audio_processor
 from backend.pipeline.schema_types.normalized_audio_pb2 import NormalizedAudio
 from backend.pipeline.schema_types.segmented_audio_pb2 import (
@@ -35,6 +41,15 @@ _CLASSIFICATION_MAP = {
 }
 
 
+class DLQPublishError(RuntimeError):
+    """Raised when publishing a failed claim to the Dead Letter Queue entirely fails."""
+
+    def __init__(self, segment_id: str, topic_path: str) -> None:
+        super().__init__(
+            f"Failed to emit failed segment {segment_id} to DLQ topic {topic_path}"
+        )
+
+
 class NormalizationEventProcessor:
     """Coordinates GCS downloading, VAD-preserving bandpass normalization, and derivative uploads.
 
@@ -49,6 +64,7 @@ class NormalizationEventProcessor:
         audio_segments_client: AudioSegmentsClient | None = None,
         publisher: pubsub_v1.PublisherClient | None = None,
         gcs_client: storage.Client | None = None,
+        dlq_topic: str | None = None,
     ) -> None:
         self.project_id = project_id
         self.canonical_audio_bucket = canonical_audio_bucket
@@ -56,6 +72,9 @@ class NormalizationEventProcessor:
         self.audio_segments_client = audio_segments_client
         self.publisher = publisher or pubsub_v1.PublisherClient()
         self.gcs_client = gcs_client or storage.Client(project=self.project_id)
+        self.dlq_topic = dlq_topic or os.environ.get(
+            "DLQ_TOPIC", "normalized-audio-dlq-prod"
+        )
 
         # Set up specialized shared audio processing components
         self.audio_processor = audio_processor.AudioProcessor()
@@ -75,7 +94,6 @@ class NormalizationEventProcessor:
                 return
             pubsub_message = envelope.get("message", {}) or {}
             attributes = pubsub_message.get("attributes", {}) or {}
-            traceparent = attributes.get("traceparent", "")
             raw_data = pubsub_message.get("data", "")
         except Exception as e:
             logger.exception(
@@ -84,7 +102,7 @@ class NormalizationEventProcessor:
             return
 
         with with_tracer_context(
-            traceparent,
+            attributes,
             "normalize_segmented_audio",
             __name__,
         ):
@@ -110,25 +128,10 @@ class NormalizationEventProcessor:
                 # 1. Download raw audio bytes from GCS staging
                 raw_audio_bytes = self._download_raw_audio(raw_audio_uri)
 
-                # 2. Determine formats based on raw audio GCS URI extension, copying where possible
-                lower_uri = raw_audio_uri.lower()
-                if lower_uri.endswith(".flac"):
-                    flac_bytes = raw_audio_bytes
-                    m4a_bytes = self.audio_processor.transcode_to_m4a(
-                        flac_bytes
-                    )
-                elif lower_uri.endswith(".m4a"):
-                    m4a_bytes = raw_audio_bytes
-                    flac_bytes = self.audio_processor.transcode_to_flac(
-                        m4a_bytes
-                    )
-                else:
-                    flac_bytes = self.audio_processor.transcode_to_flac(
-                        raw_audio_bytes
-                    )
-                    m4a_bytes = self.audio_processor.transcode_to_m4a(
-                        raw_audio_bytes
-                    )
+                # 2. Transcode into lossless FLAC and playback M4A derivatives
+                flac_bytes, m4a_bytes = self._transcode_audio(
+                    raw_audio_uri, raw_audio_bytes
+                )
 
                 # 3. Upload lossless FLAC and playback M4A to GCS canonical bucket
                 dt = datetime.datetime.fromtimestamp(
@@ -194,18 +197,63 @@ class NormalizationEventProcessor:
                     canonical_audio_uri=canonical_audio_uri,
                     playback_audio_uri=playback_audio_uri,
                     transcription_audio_uri=transcription_audio_uri,
-                    traceparent=traceparent,
                 )
 
             except Exception as e:
+                # 1. Inspect delivery attempt counter from Eventarc / PubSub push envelope
+                delivery_attempt = int(
+                    attributes.get("googclient_deliveryattempt", 0)
+                    or attributes.get("delivery_attempt", 0)
+                    or 1
+                )
+                is_permanent = isinstance(
+                    e,
+                    (
+                        ValueError,
+                        TypeError,
+                        FileNotFoundError,
+                        AttributeError,
+                        KeyError,
+                        RuntimeError,
+                    ),
+                )
+                if not is_permanent and delivery_attempt < 3:
+                    logger.warning(
+                        "Transient failure processing segment %s (feed %s) on attempt %d. Re-raising to let Functions Framework retry: %s",
+                        segment_id,
+                        feed_id,
+                        delivery_attempt,
+                        e,
+                    )
+                    raise
+
                 logger.exception(
-                    "Transient or permanent failure processing segmented audio claim for segment %s (feed %s): %s",
+                    "Permanent failure (or max transient retries exhausted) processing segment %s (feed %s): %s",
                     segment_id,
                     feed_id,
                     e,
                 )
-                # Re-raise exception to let functions framework retry transient Pub/Sub errors
-                raise
+                self._publish_dlq(
+                    segmented_audio=segmented_audio,
+                    error=e,
+                    delivery_attempt=delivery_attempt,
+                )
+
+    def _transcode_audio(
+        self, raw_audio_uri: str, raw_audio_bytes: bytes
+    ) -> tuple[bytes, bytes]:
+        """Transcodes raw bytes into lossless FLAC and streaming M4A derivatives."""
+        lower_uri = raw_audio_uri.lower()
+        if lower_uri.endswith(".flac"):
+            flac_bytes = raw_audio_bytes
+            m4a_bytes = self.audio_processor.transcode_to_m4a(flac_bytes)
+        elif lower_uri.endswith(".m4a"):
+            m4a_bytes = raw_audio_bytes
+            flac_bytes = self.audio_processor.transcode_to_flac(m4a_bytes)
+        else:
+            flac_bytes = self.audio_processor.transcode_to_flac(raw_audio_bytes)
+            m4a_bytes = self.audio_processor.transcode_to_m4a(raw_audio_bytes)
+        return flac_bytes, m4a_bytes
 
     def _download_raw_audio(self, raw_audio_uri: str) -> bytes:
         """Downloads raw audio bytes from GCS staging."""
@@ -290,7 +338,6 @@ class NormalizationEventProcessor:
         canonical_audio_uri: str,
         playback_audio_uri: str,
         transcription_audio_uri: str,
-        traceparent: str,
     ) -> None:
         """Publishes the egress NormalizedAudio message downstream to Pub/Sub."""
         segment_id = segmented_audio.segment_id
@@ -319,8 +366,7 @@ class NormalizationEventProcessor:
         topic_path = self.publisher.topic_path(self.project_id, topic_name)
 
         attrs: dict[str, str] = {}
-        if traceparent:
-            attrs["traceparent"] = traceparent
+        inject_otel_context(attrs)
 
         future = self.publisher.publish(
             topic=topic_path,
@@ -335,6 +381,65 @@ class NormalizationEventProcessor:
             segment_id,
             feed_id,
         )
+
+    def _publish_dlq(
+        self,
+        segmented_audio: SegmentedAudio,
+        error: Exception,
+        delivery_attempt: int = 1,
+    ) -> None:
+        """Publishes a structured error payload to the Normalization Dead Letter Queue topic."""
+        segment_id = segmented_audio.segment_id or "unknown_segment"
+        feed_id = segmented_audio.feed_id or "unknown_feed"
+
+        dlq_payload = {
+            "segment_id": segment_id,
+            "feed_id": feed_id,
+            "error": str(error),
+            "traceback": traceback.format_exc(),
+            "delivery_attempt": delivery_attempt,
+            "timestamp_ms": int(
+                datetime.datetime.now(datetime.UTC).timestamp() * 1000
+            ),
+        }
+        if segmented_audio.external_audio_segment_id:
+            dlq_payload["external_audio_segment_id"] = (
+                segmented_audio.external_audio_segment_id
+            )
+
+        data_bytes = json.dumps(dlq_payload).encode("utf-8")
+
+        # Option A from Claude review: make DLQ topic a first-class config parameter
+        topic_path = self.publisher.topic_path(self.project_id, self.dlq_topic)
+
+        attrs: dict[str, str] = {"error_type": "normalization_failure"}
+        inject_otel_context(attrs)
+
+        try:
+            # Item #4 from Claude review: publish to DLQ with ordering_key="" so DLQ publishing never gridlocks
+            future = self.publisher.publish(
+                topic=topic_path,
+                data=data_bytes,
+                ordering_key="",
+                **attrs,
+            )
+            msg_id = future.result()
+            logger.info(
+                "Successfully routed failed segment %s (feed %s) to DLQ topic %s (Msg: %s)",
+                segment_id,
+                feed_id,
+                topic_path,
+                msg_id,
+            )
+        except Exception as pub_err:
+            logger.critical(
+                "CRITICAL ALERT: Failed to publish to DLQ topic %s! Segment %s dropped entirely: %s",
+                topic_path,
+                segment_id,
+                pub_err,
+            )
+            # Item #5 from Claude review: trigger secondary alert path when DLQ publish entirely fails
+            raise DLQPublishError(segment_id, topic_path) from pub_err
 
     def _parse_claim(self, raw_data: str) -> SegmentedAudio:
         """Parses the base64 encoded SegmentedAudio protobuf payload."""

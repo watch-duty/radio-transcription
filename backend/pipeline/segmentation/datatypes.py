@@ -24,12 +24,12 @@ logger = logging.getLogger(__name__)
 
 # Type alias for the segmentation Dead Letter Queue tagged output
 SegmentationDlqOutput = beam.pvalue.TaggedOutput[
-    Literal["normalization_dlq"],
+    Literal["segmentation_dlq"],
     dict[str, Any],
 ]
 
 # Type alias for the raw DLQ payload tuple yielded by StitcherEngine
-SegmentationRawDlqOutput = tuple[Literal["normalization_dlq"], dict[str, Any]]
+SegmentationRawDlqOutput = tuple[Literal["segmentation_dlq"], dict[str, Any]]
 
 
 TimeRange = bp_state.TimeRangeProto
@@ -91,6 +91,7 @@ class StitcherContext:
     buffer_duration_ms: int = 0
     speech_segments: list[TimeRange] = field(default_factory=list)
     traceparent: str | None = None
+    baggage: str | None = None
     prior_audio_tail: bytes | None = None
 
 
@@ -181,6 +182,7 @@ class FlushAction(StateMachineAction):
     isolated_audio_buffer_uris: list[str] = field(default_factory=list)
     speech_segments: list[TimeRange] = field(default_factory=list)
     traceparent: str | None = None
+    baggage: str | None = None
     audio_classification: int = 0
 
 

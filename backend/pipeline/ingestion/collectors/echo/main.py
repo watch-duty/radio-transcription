@@ -25,6 +25,9 @@ from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.gcp_helper import publish_audio_chunk_sync
 from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.ingestion.collectors import failure_classification
+from backend.pipeline.ingestion.failure_classifiers import (
+    ffmpeg as ffmpeg_classifier,
+)
 from backend.pipeline.ingestion.settings import _require_env
 from backend.pipeline.storage.feed_store import FeedStatusReason
 from backend.pipeline.storage.sync_connection import connect_db
@@ -54,7 +57,6 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
 _RECORDING_DOWNLOAD_FAILED = "echo_recording_download_failed"
-_DURATION_PROBE_FAILED = "echo_duration_probe_failed"
 _STAGING_UPLOAD_FAILED = "echo_staging_upload_failed"
 _PUBSUB_PUBLISH_FAILED = "echo_pubsub_publish_failed"
 _HEARTBEAT_WRITE_FAILED = "echo_heartbeat_write_failed"
@@ -117,7 +119,6 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
     feed = feed_store.resolve_echo_feed(channel_name)
 
     if not feed:
-        logger.warning("No feed found for channel: %s", channel_name)
         return
     if feed["status"] == "deactivated":
         logger.info(
@@ -134,7 +135,7 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
         )
         return
 
-    failure: failure_classification.FailureClassification | None = None
+    failure: failure_classification.FailureInfo | None = None
 
     try:
         # Download MP3.  A NotFound means the object was deleted between the
@@ -151,8 +152,13 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
         # Calculate duration of audio bytes using shared helper
         try:
             duration_ms = get_audio_duration(mp3_bytes)
-        except Exception:
-            failure = _pipeline_failure(_DURATION_PROBE_FAILED)
+        except Exception as exc:
+            reason = ffmpeg_classifier.ffprobe_exception_failure_reason(exc)
+            logger.warning(
+                "Echo duration probe failed: %s",
+                reason,
+            )
+            failure = _pipeline_failure(reason)
             raise
 
         # RTL-Airband appends the filename timestamp when opening a split
@@ -230,12 +236,9 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
         _mirror_to_dev_best_effort(bucket, name)
 
     except Exception as exc:
-        classification = (
-            failure
-            or failure_classification.FailureClassification(
-                FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
-                _unexpected_failure_reason(exc),
-            )
+        classification = failure or failure_classification.FailureInfo(
+            FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
+            _unexpected_failure_reason(exc),
         )
         try:
             feed_store.record_failure(
@@ -253,8 +256,8 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
 # ---------------------------------------------------------------------------
 def _pipeline_failure(
     reason: str,
-) -> failure_classification.FailureClassification:
-    return failure_classification.FailureClassification(
+) -> failure_classification.FailureInfo:
+    return failure_classification.FailureInfo(
         FeedStatusReason.SYSTEM_PIPELINE_ERROR,
         reason,
     )
@@ -262,7 +265,7 @@ def _pipeline_failure(
 
 def _unexpected_failure_reason(exc: Exception) -> str:
     reason = str(exc)
-    return reason[:200] if reason else type(exc).__name__
+    return reason or type(exc).__name__
 
 
 def _mirror_to_dev_best_effort(bucket: str, name: str) -> None:

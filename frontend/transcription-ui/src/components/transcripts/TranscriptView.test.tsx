@@ -122,7 +122,7 @@ vi.mock('@wavesurfer/react', () => ({
 describe('TranscriptView', () => {
   const mockHandleError = vi.fn();
 
-  const mockTranscripts = [
+  const mockAudioSegments = [
     makeMockAudioSegment(
       '1',
       'feed123',
@@ -190,7 +190,7 @@ describe('TranscriptView', () => {
   });
 
   it('renders transcripts when fetched', async () => {
-    const mockTranscripts = [
+    const mockAudioSegments = [
       makeMockAudioSegment(
         '1',
         'feed123',
@@ -202,7 +202,7 @@ describe('TranscriptView', () => {
       ),
     ];
     vi.mocked(listAudioSegments).mockResolvedValueOnce({
-      segments: mockTranscripts,
+      segments: mockAudioSegments,
       nextToken: undefined,
     });
 
@@ -372,7 +372,7 @@ describe('TranscriptView', () => {
       total: 1,
     });
     vi.mocked(listAudioSegments).mockResolvedValueOnce({
-      segments: mockTranscripts,
+      segments: mockAudioSegments,
       nextToken: undefined,
     });
 
@@ -388,7 +388,7 @@ describe('TranscriptView', () => {
   });
 
   it('scrolls to highlighted transcript when segmentId is in search params', async () => {
-    const mockTranscripts = [
+    const mockAudioSegments = [
       makeMockAudioSegment(
         'target-id',
         'feed123',
@@ -401,7 +401,7 @@ describe('TranscriptView', () => {
     ];
 
     vi.mocked(listAudioSegments).mockResolvedValueOnce({
-      segments: mockTranscripts,
+      segments: mockAudioSegments,
       nextToken: undefined,
     });
 
@@ -417,7 +417,7 @@ describe('TranscriptView', () => {
   });
 
   it('passes correct params to listAudioSegments when loading older transcripts', async () => {
-    const initialTranscripts = [
+    const initialAudioSegments = [
       makeMockAudioSegment(
         '1',
         'feed123',
@@ -431,7 +431,7 @@ describe('TranscriptView', () => {
 
     vi.mocked(listAudioSegments)
       .mockResolvedValueOnce({
-        segments: initialTranscripts,
+        segments: initialAudioSegments,
         nextToken: 'next-token-123',
       })
       .mockResolvedValueOnce({
@@ -476,7 +476,7 @@ describe('TranscriptView', () => {
 
   it('passes correct params to listAudioSegments when loading newer transcripts', async () => {
     const testTimestamp = new Date('2026-04-10T12:00:00Z').getTime();
-    const initialTranscripts = [
+    const initialAudioSegments = [
       makeMockAudioSegment(
         '1',
         'feed123',
@@ -490,7 +490,7 @@ describe('TranscriptView', () => {
 
     vi.mocked(listAudioSegments)
       .mockResolvedValueOnce({
-        segments: initialTranscripts,
+        segments: initialAudioSegments,
         nextToken: 'next-token-newer',
       })
       .mockResolvedValueOnce({
@@ -529,7 +529,7 @@ describe('TranscriptView', () => {
 
   it('passes correct params to listAudioSegments when loading newer transcripts with alerts filter active', async () => {
     const testTimestamp = new Date('2026-04-10T12:00:00Z').getTime();
-    const initialTranscripts = [
+    const initialAudioSegments = [
       makeMockAudioSegment(
         '1',
         'feed123',
@@ -555,7 +555,7 @@ describe('TranscriptView', () => {
 
     vi.mocked(listAudioSegments)
       .mockResolvedValueOnce({
-        segments: initialTranscripts,
+        segments: initialAudioSegments,
         nextToken: undefined,
       })
       .mockResolvedValueOnce({
@@ -621,7 +621,7 @@ describe('TranscriptView', () => {
   it('polls for newer transcripts in background', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
-    const initialTranscripts = [
+    const initialAudioSegments = [
       makeMockAudioSegment(
         '1',
         'feed123',
@@ -633,7 +633,7 @@ describe('TranscriptView', () => {
       ),
     ];
 
-    const newerTranscripts = [
+    const newerAudioSegments = [
       makeMockAudioSegment(
         '2',
         'feed123',
@@ -647,11 +647,11 @@ describe('TranscriptView', () => {
 
     vi.mocked(listAudioSegments)
       .mockResolvedValueOnce({
-        segments: initialTranscripts,
+        segments: initialAudioSegments,
         nextToken: undefined,
       })
       .mockResolvedValueOnce({
-        segments: newerTranscripts,
+        segments: newerAudioSegments,
         nextToken: undefined,
       });
 
@@ -729,7 +729,7 @@ describe('TranscriptView', () => {
     };
     vi.mocked(getFeed).mockResolvedValue(mockFeed);
     vi.mocked(listAudioSegments).mockResolvedValue({
-      segments: mockTranscripts,
+      segments: mockAudioSegments,
       nextToken: undefined,
     });
 
@@ -757,7 +757,7 @@ describe('TranscriptView', () => {
 
     const playSpy = vi.spyOn(Howl.prototype, 'play');
 
-    const initialTranscripts = [
+    const initialAudioSegments = [
       makeMockAudioSegment(
         '1',
         'feed123',
@@ -769,7 +769,7 @@ describe('TranscriptView', () => {
       ),
     ];
 
-    const newerTranscripts = [
+    const newerAudioSegments = [
       makeMockAudioSegment(
         '2',
         'feed123',
@@ -783,11 +783,11 @@ describe('TranscriptView', () => {
 
     vi.mocked(listAudioSegments)
       .mockResolvedValueOnce({
-        segments: initialTranscripts,
+        segments: initialAudioSegments,
         nextToken: undefined,
       })
       .mockResolvedValueOnce({
-        segments: newerTranscripts,
+        segments: newerAudioSegments,
         nextToken: undefined,
       });
 
@@ -824,7 +824,7 @@ describe('TranscriptView', () => {
 
     const playSpy = vi.spyOn(Howl.prototype, 'play');
 
-    const initialTranscripts = [
+    const initialAudioSegments = [
       makeMockAudioSegment(
         '1',
         'feed123',
@@ -836,7 +836,7 @@ describe('TranscriptView', () => {
       ),
     ];
 
-    const newerTranscripts = [
+    const newerAudioSegments = [
       makeMockAudioSegment(
         '2',
         'feed123',
@@ -850,11 +850,11 @@ describe('TranscriptView', () => {
 
     vi.mocked(listAudioSegments)
       .mockResolvedValueOnce({
-        segments: initialTranscripts,
+        segments: initialAudioSegments,
         nextToken: undefined,
       })
       .mockResolvedValueOnce({
-        segments: newerTranscripts,
+        segments: newerAudioSegments,
         nextToken: undefined,
       });
 
@@ -943,7 +943,7 @@ describe('TranscriptView', () => {
 
   it('does not set timestamp in query/params when toggling alerts filter', async () => {
     const testTimestampString = '2026-04-10T12:00:00Z';
-    const initialTranscripts = [
+    const initialAudioSegments = [
       makeMockAudioSegment(
         '1',
         'feed123',
@@ -957,7 +957,7 @@ describe('TranscriptView', () => {
 
     vi.mocked(listAudioSegments)
       .mockResolvedValueOnce({
-        segments: initialTranscripts,
+        segments: initialAudioSegments,
         nextToken: undefined,
       })
       .mockResolvedValueOnce({
@@ -1009,7 +1009,7 @@ describe('TranscriptView', () => {
 
   it('clears the timestamp filter when clicking Jump to live', async () => {
     const testTimestamp = new Date('2026-04-10T12:00:00Z').getTime();
-    const initialTranscripts = [
+    const initialAudioSegments = [
       makeMockAudioSegment(
         '1',
         'feed123',
@@ -1022,7 +1022,7 @@ describe('TranscriptView', () => {
     ];
 
     vi.mocked(listAudioSegments).mockResolvedValue({
-      segments: initialTranscripts,
+      segments: initialAudioSegments,
       nextToken: 'next-token-newer',
     });
 
@@ -1195,6 +1195,44 @@ describe('TranscriptView', () => {
 
       // Speech should be next
       expect(result[1].id).toBe('speech-1');
+    });
+
+    it('sorts segments by startTimestamp descending even if an older segment ends later', () => {
+      const olderLongSegment: AudioSegment = {
+        id: 'speech-older-long',
+        feedId: 'feed-123',
+        classification: AudioClassification.SPEECH,
+        startTimestamp: '2026-04-10T12:00:00Z',
+        endTimestamp: '2026-04-10T12:00:10Z',
+        createdAt: '2026-04-10T12:00:00Z',
+        annotations: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+      };
+
+      const newerShortSegment: AudioSegment = {
+        id: 'speech-newer-short',
+        feedId: 'feed-123',
+        classification: AudioClassification.SPEECH,
+        startTimestamp: '2026-04-10T12:00:05Z',
+        endTimestamp: '2026-04-10T12:00:08Z',
+        createdAt: '2026-04-10T12:00:05Z',
+        annotations: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+      };
+
+      const result = consolidateAudioSegments([
+        olderLongSegment,
+        newerShortSegment,
+      ]);
+      expect(result).toHaveLength(2);
+
+      // Newer segment (starts 12:00:05) should be at the top, despite ending earlier (12:00:08 vs 12:00:10)
+      expect(result[0].id).toBe('speech-newer-short');
+      expect(result[1].id).toBe('speech-older-long');
     });
   });
 });

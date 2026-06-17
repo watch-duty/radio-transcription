@@ -13,6 +13,7 @@ from integration_tests.feed_utils import (
 )
 from integration_tests.test_utils import (
     verify_audio_segments_via_api,
+    verify_multiple_audio_segments_via_api,
 )
 
 logger = logging.getLogger(__name__)
@@ -32,8 +33,10 @@ def test_ingestion_api_polling(test_polling_feed: tuple[str, str]) -> None:
     """Tests that audio ingestion service picks up a feed from API polling and results in a transcript."""
     feed_id, _ = test_polling_feed
 
-    # Broadcastify calls should have an external ID representing the full audio URL
-    verify_audio_segments_via_api(
+    # Broadcastify calls should have an external ID representing the full audio URL.
+    # We verify that at least 2 segments are generated, proving that the collector's
+    # single connection_session_id does not cause segment_id collisions.
+    verify_multiple_audio_segments_via_api(
         feed_id,
         lambda s: (
             isinstance(ext_id := s.get("external_audio_segment_id"), str)
@@ -41,6 +44,7 @@ def test_ingestion_api_polling(test_polling_feed: tuple[str, str]) -> None:
                 "http://mock-audio-server:8090/broadcastify_calls/2912/"
             )
         ),
+        min_count=2,
     )
 
 

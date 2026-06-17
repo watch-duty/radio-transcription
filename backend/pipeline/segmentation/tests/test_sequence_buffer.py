@@ -204,3 +204,65 @@ class TestSequenceBuffer(unittest.TestCase):
         self.assertEqual(len(new_buffer), 2)
         self.assertEqual(new_buffer[0].gcs_uri, "gs://chunk5")
         self.assertEqual(new_buffer[1].gcs_uri, "gs://chunk6")
+
+    def test_tracing_context_propagation(self) -> None:
+        """Verifies that traceparent and baggage are correctly propagated to emitted and buffered chunks."""
+        # Happy Path
+        (
+            _,
+            _,
+            to_emit,
+            _,
+            _,
+        ) = self.buffer.process_chunk(
+            current_ts_ms=1000,
+            gcs_uri="gs://chunk1",
+            expected_next_ts=None,
+            buffer_elements=[],
+            traceparent="trace-1",
+            baggage="bag-1",
+        )
+        self.assertEqual(len(to_emit), 1)
+        self.assertEqual(to_emit[0].traceparent, "trace-1")
+        self.assertEqual(to_emit[0].baggage, "bag-1")
+
+        # Late Path
+        (
+            _,
+            _,
+            to_emit_late,
+            was_late,
+            _,
+        ) = self.buffer.process_chunk(
+            current_ts_ms=500,
+            gcs_uri="gs://chunk-late",
+            expected_next_ts=4000,
+            buffer_elements=[],
+            traceparent="trace-late",
+            baggage="bag-late",
+        )
+        self.assertTrue(was_late)
+        self.assertEqual(len(to_emit_late), 1)
+        self.assertEqual(to_emit_late[0].traceparent, "trace-late")
+        self.assertEqual(to_emit_late[0].baggage, "bag-late")
+
+        # Future Path (Buffered chunk)
+        (
+            _,
+            new_buffer,
+            to_emit_future,
+            _,
+            was_buffered,
+        ) = self.buffer.process_chunk(
+            current_ts_ms=7000,
+            gcs_uri="gs://chunk-future",
+            expected_next_ts=4000,
+            buffer_elements=[],
+            traceparent="trace-future",
+            baggage="bag-future",
+        )
+        self.assertTrue(was_buffered)
+        self.assertEqual(len(to_emit_future), 0)
+        self.assertEqual(len(new_buffer), 1)
+        self.assertEqual(new_buffer[0].traceparent, "trace-future")
+        self.assertEqual(new_buffer[0].baggage, "bag-future")

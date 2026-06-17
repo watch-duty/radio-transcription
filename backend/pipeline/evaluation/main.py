@@ -22,9 +22,8 @@ from backend.pipeline.evaluation import service
 from backend.pipeline.evaluation.processor import EvaluationEventProcessor
 from backend.pipeline.evaluation.rules_evaluation import evaluator
 
-# 1. Setup Logging and Tracing
+# 1. Setup Logging
 setup_logging()
-setup_tracing(service_name="evaluation-service", use_batch=False)
 logger = logging.getLogger(__name__)
 DEFAULT_RULES_CACHE_TTL_SECONDS = 60.0
 
@@ -118,6 +117,9 @@ class EvaluationServiceContainer:
     def get_processor(self) -> EvaluationEventProcessor:
         if self._processor is None:
             logger.info("Initializing EvaluationEventProcessor...")
+            # Initialize tracing lazily in the worker process to avoid gunicorn fork sharing
+            setup_tracing(service_name="evaluation-service", use_batch=False)
+
             output_topic = os.environ.get("RULES_EVALUATION_RESULTS_TOPIC")
             if not output_topic:
                 msg = "RULES_EVALUATION_RESULTS_TOPIC environment variable is not set."
