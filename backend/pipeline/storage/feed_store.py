@@ -27,6 +27,7 @@ from backend.pipeline.storage.feed_queries import (
     RECORD_SOURCE_OBSERVATION_SQL,
     RELEASE_FEED_SQL,
     RELEASE_FEEDS_BATCH_SQL,
+    RELEASE_NON_BUDGETED_FAILURE_SQL,
     RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
     REPORT_FAILURE_SQL,
     RESET_FEED_SQL,
@@ -100,17 +101,43 @@ class FeedStatus(enum.StrEnum):
     DEACTIVATED = "deactivated"
 
 
+_FEED_STATUS_REASON_OWNERS = frozenset({"source", "system", "pipeline"})
+
+
+def _status_reason_owner(status_reason: str) -> str:
+    """Return the owner namespace encoded by a status-reason prefix."""
+    owner, separator, _ = status_reason.partition("_")
+    if not separator or owner not in _FEED_STATUS_REASON_OWNERS:
+        msg = f"Unsupported status reason owner in {status_reason!r}"
+        raise ValueError(msg)
+    return owner
+
+
 class FeedStatusReason(enum.StrEnum):
     """Canonical abnormal feed reason stored in ``feeds.status_reason``."""
 
+    PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED = (
+        "pipeline_publish_after_bookmark_failed"
+    )
     SOURCE_OFFLINE = "source_offline"
     SOURCE_UNREACHABLE = "source_unreachable"
     SOURCE_RATE_LIMITED = "source_rate_limited"
     SYSTEM_AUTHENTICATION_FAILED = "system_authentication_failed"
     SYSTEM_CONFIGURATION_INVALID = "system_configuration_invalid"
+    SYSTEM_SOURCE_CONFIGURATION_INVALID = "system_source_configuration_invalid"
+    SYSTEM_RUNTIME_CONFIGURATION_INVALID = (
+        "system_runtime_configuration_invalid"
+    )
+    SYSTEM_CREDENTIAL_ACCESS_FAILED = "system_credential_access_failed"
+    SYSTEM_SOURCE_PAYLOAD_INVALID = "system_source_payload_invalid"
     SYSTEM_COLLECTOR_ERROR = "system_collector_error"
     SYSTEM_PIPELINE_ERROR = "system_pipeline_error"
     SYSTEM_UNEXPECTED_ERROR = "system_unexpected_error"
+
+    @property
+    def owner(self) -> str:
+        """Coarse owner namespace encoded by the reason prefix."""
+        return _status_reason_owner(self.value)
 
 
 class LeasedFeed(TypedDict):
@@ -514,6 +541,35 @@ class FeedStore:
                 },
             )
         return status
+
+    async def release_non_budgeted_failure(
+        self,
+        feed_id: uuid.UUID,
+        worker_id: uuid.UUID,
+        fencing_token: int,
+        *,
+        retry_after: datetime.datetime,
+        status_reason: FeedStatusReason,
+    ) -> str | None:
+        """Release a non-feed-budgeted failure into retryable failing state.
+
+        This fenced path is for failures that should not consume the feed
+        quarantine budget: post-capture pipeline failures, unannotated
+        collector failures, source-class incidents, and unknown evidence. It
+        leaves ``quarantine_reason`` untouched, resets any previous
+        consecutive feed budget, and releases the lease for later retry.
+        """
+        row = await self._pool.fetchrow(
+            RELEASE_NON_BUDGETED_FAILURE_SQL,
+            feed_id,
+            worker_id,
+            fencing_token,
+            retry_after,
+            status_reason.value,
+        )
+        if row is None:
+            return None
+        return row["status"]
 
     async def release_feed(
         self,

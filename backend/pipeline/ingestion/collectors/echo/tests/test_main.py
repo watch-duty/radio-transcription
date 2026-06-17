@@ -225,6 +225,10 @@ class TestHandle:
 
         # Verify heartbeat recorded
         mock_store.record_heartbeat.assert_called_once_with(feed_id)
+        _patch_globals["get_duration"].assert_called_once_with(
+            b"mp3-placeholder",
+            input_format="mp3",
+        )
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_filename_timestamp_wins_over_gcs_time_created(

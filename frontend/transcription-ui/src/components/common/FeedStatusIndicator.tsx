@@ -23,11 +23,16 @@ const FEED_STATUS_REASON_UI_TEXT_DISPLAY: Record<
   string
 > = {
   unknown: 'Unknown Status',
+  pipeline_publish_after_bookmark_failed: 'Publish After Bookmark Failed',
   source_offline: 'Source Offline',
   source_unreachable: 'Source Unreachable',
   source_rate_limited: 'Source Rate Limited',
   system_authentication_failed: 'System Authentication Failed',
   system_configuration_invalid: 'System Configuration Invalid',
+  system_source_configuration_invalid: 'System Source Configuration Invalid',
+  system_runtime_configuration_invalid: 'System Runtime Configuration Invalid',
+  system_credential_access_failed: 'System Credential Access Failed',
+  system_source_payload_invalid: 'System Source Payload Invalid',
   system_collector_error: 'System Collector Error',
   system_pipeline_error: 'System Pipeline Error',
   system_unexpected_error: 'System Unexpected Error',

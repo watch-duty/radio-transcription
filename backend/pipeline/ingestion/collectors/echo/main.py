@@ -151,7 +151,7 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
 
         # Calculate duration of audio bytes using shared helper
         try:
-            duration_ms = get_audio_duration(mp3_bytes)
+            duration_ms = get_audio_duration(mp3_bytes, input_format="mp3")
         except Exception as exc:
             reason = ffmpeg_classifier.ffprobe_exception_failure_reason(exc)
             logger.warning(

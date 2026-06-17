@@ -377,7 +377,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         _assert_collector_failure(
             self,
             context.exception,
-            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
             "missing_broadcastify_credentials",
         )
 
