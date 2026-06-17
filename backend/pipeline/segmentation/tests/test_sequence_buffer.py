@@ -266,3 +266,31 @@ class TestSequenceBuffer(unittest.TestCase):
         self.assertEqual(len(new_buffer), 1)
         self.assertEqual(new_buffer[0].traceparent, "trace-future")
         self.assertEqual(new_buffer[0].baggage, "bag-future")
+
+    def test_drain_ready_elements_with_none_expected_ts(self) -> None:
+        """Verifies that drain_ready_elements handles expected_next_ts=None correctly by using the smallest chunk timestamp as the start."""
+        initial_buffer = [
+            BufferedChunk(timestamp_ms=7000, gcs_uri="gs://chunk3"),
+            BufferedChunk(timestamp_ms=10000, gcs_uri="gs://chunk4"),
+            BufferedChunk(timestamp_ms=16000, gcs_uri="gs://chunk6"),
+        ]
+
+        (
+            new_expected,
+            new_buffer,
+            to_emit,
+        ) = self.buffer.drain_ready_elements(
+            expected_next_ts=None,
+            buffer_elements=initial_buffer,
+            epsilon_ms=10,
+        )
+
+        # Expected sequence should start from 7000, then advance to 10000, then 13000.
+        # So chunk 3 (7000) and chunk 4 (10000) should be emitted.
+        # Chunk 6 (16000) remains in the buffer because expected next is 13000 (after 10000).
+        self.assertEqual(new_expected, 13000)
+        self.assertEqual(len(to_emit), 2)
+        self.assertEqual(to_emit[0].gcs_uri, "gs://chunk3")
+        self.assertEqual(to_emit[1].gcs_uri, "gs://chunk4")
+        self.assertEqual(len(new_buffer), 1)
+        self.assertEqual(new_buffer[0].gcs_uri, "gs://chunk6")
