@@ -117,6 +117,8 @@ class TestHandle:
 
     def _set_feed(self, mock_store: MagicMock, feed: dict | None) -> None:
         """Configure mock_store to return a feed row from resolve."""
+        if feed is not None and "created_at" not in feed:
+            feed = {**feed, "created_at": datetime(2026, 1, 1, tzinfo=UTC)}
         mock_store.resolve_echo_feed.return_value = feed
 
     def _assert_failure_recorded(
@@ -229,6 +231,25 @@ class TestHandle:
             b"mp3-placeholder",
             input_format="mp3",
         )
+
+    @pytest.mark.usefixtures("_patch_globals")
+    def test_drops_historical_recording(
+        self, mock_store, _patch_globals
+    ) -> None:
+        feed_id = uuid.uuid4()
+        self._set_feed(
+            mock_store,
+            {
+                "id": feed_id,
+                "name": "Central Fire",
+                "status": "active",
+                "failure_count": 0,
+                "created_at": datetime(2026, 3, 27, tzinfo=UTC),
+            },
+        )
+        _handle(self._make_event())
+        mock_store.record_heartbeat.assert_not_called()
+        _patch_globals["publisher"].publish.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_filename_timestamp_wins_over_gcs_time_created(

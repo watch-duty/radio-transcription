@@ -182,6 +182,16 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
                 )
                 return
 
+        # Skip historical recordings uploaded/created before the feed was registered in the database.
+        if start_ts < feed["created_at"]:
+            logger.info(
+                "Skipping historical Echo recording: %s (start_ts: %s < feed created_at: %s)",
+                name,
+                start_ts,
+                feed["created_at"],
+            )
+            return
+
         # Upload MP3 directly to staging bucket.
         # if_generation_match=0 skips redundant writes but we
         # always proceed to publish (prior invocation may have crashed after upload).
