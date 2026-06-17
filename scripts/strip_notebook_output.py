@@ -35,7 +35,7 @@ def main() -> None:
         return
 
     notebook = strip_notebook(notebook)
-    json.dump(notebook, sys.stdout, indent=4, ensure_ascii=False)
+    json.dump(notebook, sys.stdout, indent=2, ensure_ascii=False)
     sys.stdout.write("\n")
 
 

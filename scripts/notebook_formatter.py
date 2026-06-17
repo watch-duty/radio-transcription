@@ -34,7 +34,7 @@ def process_notebook(path: Path, *, write: bool = False) -> tuple[bool, bool]:
 
     try:
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
+            json.dump(data, f, indent=2, ensure_ascii=False)
             f.write("\n")  # trailing newline
     except Exception as e:
         sys.stderr.write(f"Error writing {path}: {e}\n")
