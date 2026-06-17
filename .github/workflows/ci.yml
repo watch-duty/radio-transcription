@@ -230,6 +230,7 @@ jobs:
         with:
           pytest-coverage-path: ./unit-coverage.txt
           title: Unit Tests Coverage
+          hide-report: true
 
   run-frontend-tests:
     needs: [setup]

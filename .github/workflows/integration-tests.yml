@@ -57,6 +57,7 @@ jobs:
         with:
           pytest-coverage-path: ./storage-coverage.txt
           title: Storage Integration Tests Coverage
+          hide-report: true
 
   e2e-tests:
     runs-on: ubuntu-24.04
@@ -96,6 +97,7 @@ jobs:
         with:
           pytest-coverage-path: ./e2e-coverage.txt
           title: E2E Integration Tests Coverage
+          hide-report: true
 
       - name: Print container logs on failure
         if: failure()
