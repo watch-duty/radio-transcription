@@ -141,7 +141,7 @@ class TestDownloadM4a(unittest.IsolatedAsyncioTestCase):
         failure = _require_item_failure(result)
         self.assertIs(
             failure.status_reason,
-            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
         )
         self.assertEqual(failure.reason, "invalid_openmhz_media_url")
         self.session.get.assert_not_called()
@@ -158,7 +158,7 @@ class TestDownloadM4a(unittest.IsolatedAsyncioTestCase):
         failure = _require_item_failure(result)
         self.assertIs(
             failure.status_reason,
-            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
         )
         self.assertEqual(failure.reason, "invalid_openmhz_media_url")
         self.session.get.assert_not_called()

@@ -41,10 +41,14 @@ def _require_item_failure(value: ItemFailure | bytes | None) -> ItemFailure:
     return value
 
 
-def _mock_response(status: int, content: bytes = b"") -> MagicMock:
+def _mock_response(
+    status: int, content: bytes = b"", json_data: Any = None
+) -> MagicMock:
     resp = AsyncMock()
     resp.status = status
     resp.read = AsyncMock(return_value=content)
+    if json_data is not None:
+        resp.json = AsyncMock(return_value=json_data)
     resp.headers = {}
 
     cm = MagicMock()
@@ -72,6 +76,50 @@ class TestClientDownloadAudio(unittest.IsolatedAsyncioTestCase):
 
         data = await self.client.download_audio("uuid1.mp3", self.shutdown)
         self.assertEqual(data, b"audio_data")
+
+    async def test_fetch_file_list_deduplicates(self) -> None:
+        payload = {
+            "files": [
+                {
+                    "name": "SAN-JOSE-DISP 2026-06-15 17-45-43.mp3",
+                    "uuid": "f66bcfae-c1bf-4abc-8def-1234567890ab",
+                    "type": "file",
+                    "size": 1000,
+                },
+                {
+                    "name": "SAN-JOSE-DISP 2026-06-15 17-45-43.mp3",
+                    "uuid": "6a21ba3b-c1bf-4abc-8def-1234567890ab",
+                    "type": "file",
+                    "size": 2000,
+                },
+                {
+                    "name": "SAN-JOSE-DISP 2026-06-15 17-50-00.mp3",
+                    "uuid": "3bc21da2-c1bf-4abc-8def-1234567890ab",
+                    "type": "file",
+                    "size": 1500,
+                },
+            ]
+        }
+        self.session.get = MagicMock(
+            return_value=_mock_response(200, json_data=payload)
+        )
+
+        files = await self.client.fetch_file_list(
+            source_feed_id="SAN-JOSE-DISP",
+            feed_id="feed-id",
+            shutdown_event=self.shutdown,
+        )
+
+        # It should only return 2 files (uuid1 and uuid3), with uuid2 filtered out as a duplicate name.
+        self.assertEqual(len(files), 2)
+        self.assertEqual(files[0].uuid, "f66bcfae-c1bf-4abc-8def-1234567890ab")
+        self.assertEqual(
+            files[0].filename, "SAN-JOSE-DISP 2026-06-15 17-45-43.mp3"
+        )
+        self.assertEqual(files[1].uuid, "3bc21da2-c1bf-4abc-8def-1234567890ab")
+        self.assertEqual(
+            files[1].filename, "SAN-JOSE-DISP 2026-06-15 17-50-00.mp3"
+        )
 
     async def test_non_retryable_4xx(self) -> None:
         self.session.get = MagicMock(return_value=_mock_response(404))
@@ -301,6 +349,55 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.processed_uuids), 2)
         self.assertIn("uuid1", self.processed_uuids)
         self.assertIn("uuid2", self.processed_uuids)
+
+    async def test_process_files_with_duplicates(self) -> None:
+        self.client.download_audio.return_value = b"mp3_bytes"
+        files = [
+            FireNotificationsFile(
+                uuid="uuid1",
+                filename="CHAN 2026-05-20 12-00-00.mp3",
+                start_time=datetime.datetime(
+                    2026, 5, 20, 12, 0, 0, tzinfo=datetime.UTC
+                ),
+                size=1000,
+            ),
+            FireNotificationsFile(
+                uuid="uuid2",
+                filename="CHAN 2026-05-20 12-00-00.mp3",
+                start_time=datetime.datetime(
+                    2026, 5, 20, 12, 0, 0, tzinfo=datetime.UTC
+                ),
+                size=1000,
+            ),
+        ]
+
+        chunks = []
+        with patch(
+            "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
+            return_value=30000,
+        ) as mock_duration:
+            async for chunk in collector._process_file_list(
+                files,
+                self.client,
+                self.shutdown,
+                "session-id",
+                self.feed,  # type: ignore
+                self.processed_uuids,
+                "CHAN",
+                ItemBatchOutcome(),
+            ):
+                chunks.append(chunk)
+
+        # Because the second file has the same start time, it should be skipped
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(mock_duration.call_count, 1)
+        self.assertEqual(chunks[0].session_id, "session-id")
+        self.assertEqual(chunks[0].audio_bytes, b"mp3_bytes")
+        self.assertEqual(chunks[0].mime_type, AudioMimeType.MPEG)
+        self.assertEqual(chunks[0].resume_position, chunks[0].chunk_start_time)
+        self.assertEqual(len(self.processed_uuids), 1)
+        self.assertIn("uuid1", self.processed_uuids)
+        self.assertNotIn("uuid2", self.processed_uuids)
 
     async def test_process_files_with_last_bookmark_time(
         self,
@@ -778,10 +875,35 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(
             ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
         )
         self.assertEqual(
             str(ctx.exception), "missing_fire_notifications_s3_base"
+        )
+
+    async def test_missing_auth_env_raises_typed_configuration_failure(
+        self,
+    ) -> None:
+        with patch.dict(
+            os.environ,
+            {"FIRE_NOTIFICATIONS_S3_BASE": "http://mock-s3-bucket"},
+            clear=True,
+        ):
+            with self.assertRaises(FeedFailure) as ctx:
+                async for _ in collector.fire_notifications_collector(
+                    self.feed,  # type: ignore
+                    self.shutdown,
+                    "http://base",
+                    self.resources,
+                ):
+                    pass
+
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
+        )
+        self.assertEqual(
+            str(ctx.exception), "missing_fire_notifications_auth_config"
         )
 
     @patch(
@@ -799,7 +921,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         cases = [
             (
                 400,
-                FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+                FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID,
                 "fn_api_http_400",
             ),
             (
@@ -814,7 +936,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
             ),
             (
                 404,
-                FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+                FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID,
                 "fn_api_http_404",
             ),
             (429, FeedStatusReason.SOURCE_RATE_LIMITED, "fn_api_http_429"),
@@ -850,7 +972,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         mock_fetch: AsyncMock,
     ) -> None:
         mock_fetch.side_effect = FeedFailure(
-            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
             "fn_api_payload_malformed: ValueError: bad json",
         )
 
@@ -865,7 +987,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(
             ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
         )
         self.assertEqual(
             str(ctx.exception),
@@ -953,7 +1075,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         self, mock_fetch: AsyncMock
     ) -> None:
         mock_fetch.side_effect = FeedFailure(
-            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
             "fn_api_payload_malformed",
         )
 
@@ -968,9 +1090,68 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(
             ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
         )
         self.assertEqual(str(ctx.exception), "fn_api_payload_malformed")
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.control_flow.sleep_or_cancel",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.client.FireNotificationsRestClient.download_audio",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.client.FireNotificationsRestClient.fetch_file_list",
+        new_callable=AsyncMock,
+    )
+    async def test_repeated_seen_files_yield_source_observation(
+        self,
+        mock_fetch: AsyncMock,
+        mock_download: AsyncMock,
+        mock_sleep: AsyncMock,
+    ) -> None:
+        mock_download.return_value = b"mp3"
+        repeated_file = FireNotificationsFile(
+            uuid="uuid1",
+            filename="CHAN 2026-05-20 12-00-00.mp3",
+            start_time=datetime.datetime(
+                2026, 5, 20, 12, 0, 0, tzinfo=datetime.UTC
+            ),
+            size=1000,
+        )
+        mock_fetch.side_effect = [[repeated_file], [repeated_file]]
+
+        sleep_calls = 0
+
+        async def sleep_side_effect(*args, **kwargs) -> bool:
+            nonlocal sleep_calls
+            sleep_calls += 1
+            if sleep_calls >= 3:
+                self.shutdown.set()
+                return True
+            return False
+
+        mock_sleep.side_effect = sleep_side_effect
+
+        events = []
+        with patch(
+            "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
+            return_value=1000,
+        ):
+            async for event in collector.fire_notifications_collector(
+                self.feed,  # type: ignore
+                self.shutdown,
+                "http://base",
+                self.resources,
+            ):
+                events.append(event)
+
+        self.assertEqual(len(events), 2)
+        self.assertIsInstance(events[0], collector.CapturedChunk)
+        self.assertEqual(events[1], SourceObservation())
+        mock_download.assert_awaited_once()
 
     @patch(
         "backend.pipeline.ingestion.collectors.fire_notifications.collector.control_flow.sleep_or_cancel",
@@ -1182,6 +1363,117 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
                 feed["last_bookmark_time"],
                 datetime.datetime(2026, 6, 15, 17, 37, 43, tzinfo=datetime.UTC),
             )
+
+    @patch.dict(
+        "os.environ",
+        {
+            "FIRE_NOTIFICATIONS_S3_BASE": "http://mock-s3",
+            "FIRE_NOTIFICATIONS_USER": "test-user",
+            "FIRE_NOTIFICATIONS_PASSWORD": "test-password",
+        },
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
+        return_value=15000,
+    )
+    async def test_bookmark_progression_with_duplicates(
+        self, mock_duration: MagicMock
+    ) -> None:
+        feed = LeasedFeed(
+            id=uuid.uuid4(),
+            name="test-fn-feed",
+            source_type=SourceType.FIRE_NOTIFICATIONS,
+            last_processed_filename=None,
+            last_bookmark_time=datetime.datetime(
+                2026, 6, 15, 17, 30, tzinfo=datetime.UTC
+            ),
+            fencing_token=0,
+            failure_count=0,
+            status_reason=None,
+            source_feed_id="RECORDINGS/SAN-JOSE-DISP",
+        )
+
+        shutdown_event = asyncio.Event()
+
+        # Mock responses
+        payload_1 = [
+            FireNotificationsFile(
+                uuid="uuid1",
+                filename="SAN-JOSE-DISP 2026-06-15 17-37-43.mp3",
+                start_time=datetime.datetime(
+                    2026, 6, 15, 17, 37, 43, tzinfo=datetime.UTC
+                ),
+                size=1024,
+            )
+        ]
+        payload_2 = [
+            FireNotificationsFile(
+                uuid="uuid2",
+                filename="SAN-JOSE-DISP 2026-06-15 17-37-43.mp3",
+                start_time=datetime.datetime(
+                    2026, 6, 15, 17, 37, 43, tzinfo=datetime.UTC
+                ),
+                size=1024,
+            )
+        ]
+
+        # Keep track of sleep calls.
+        sleep_count = 0
+
+        async def mock_sleep_or_cancel(
+            event: asyncio.Event, delay: float
+        ) -> None:
+            nonlocal sleep_count
+            sleep_count += 1
+            if sleep_count >= 3:
+                event.set()
+
+        # Patch fetch_file_list, download_audio and sleep_or_cancel
+        with (
+            patch(
+                "backend.pipeline.ingestion.collectors.fire_notifications.client.FireNotificationsRestClient.fetch_file_list",
+                side_effect=[payload_1, payload_2, []],
+            ),
+            patch(
+                "backend.pipeline.ingestion.collectors.fire_notifications.client.FireNotificationsRestClient.download_audio",
+                return_value=b"fake audio bytes",
+            ),
+            patch(
+                "backend.pipeline.ingestion.collectors.control_flow.sleep_or_cancel",
+                side_effect=mock_sleep_or_cancel,
+            ),
+        ):
+            collector_iter = collector.fire_notifications_collector(
+                feed,
+                shutdown_event,
+                "http://mock-api/",
+                _default_resources(),
+            )
+
+            events = []
+            async for event in collector_iter:
+                events.append(event)
+
+            # Iteration 1:
+            # - Bookmark starts at 17:30
+            # - Audio file at 17:37:43 is newer -> yields CapturedChunk (uuid1)
+            # Iteration 2:
+            # - Bookmark has progressed to 17:37:43
+            # - Audio file (uuid2) at 17:37:43 is <= bookmark -> skipped, yields SourceObservation
+
+            self.assertEqual(len(events), 2)
+            chunk = events[0]
+            self.assertIsInstance(chunk, CapturedChunk)
+            assert isinstance(chunk, CapturedChunk)
+            self.assertEqual(
+                chunk.chunk_start_time,
+                datetime.datetime(2026, 6, 15, 17, 37, 43, tzinfo=datetime.UTC),
+            )
+            self.assertEqual(
+                chunk.external_audio_segment_id,
+                "uuid1|SAN-JOSE-DISP 2026-06-15 17-37-43.mp3",
+            )
+            self.assertIsInstance(events[1], SourceObservation)
 
 
 if __name__ == "__main__":

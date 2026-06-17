@@ -97,7 +97,7 @@ class TestHTTPStatusClassifier(unittest.TestCase):
             feed_store.FeedStatusReason.SOURCE_OFFLINE,
         )
 
-    def test_fire_notifications_poll_policy_maps_4xx_to_configuration_invalid(
+    def test_fire_notifications_poll_policy_maps_4xx_to_source_configuration_invalid(
         self,
     ) -> None:
         policy = http_status.HTTPStatusPolicy(
@@ -107,7 +107,7 @@ class TestHTTPStatusClassifier(unittest.TestCase):
                 429: feed_store.FeedStatusReason.SOURCE_RATE_LIMITED,
             },
             default_4xx=(
-                feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID
+                feed_store.FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID
             ),
             default_5xx=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
             default_other_failure=(
@@ -125,7 +125,7 @@ class TestHTTPStatusClassifier(unittest.TestCase):
                 )
                 self.assertIs(
                     status_reason,
-                    feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+                    feed_store.FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID,
                 )
 
         for status, reason in (

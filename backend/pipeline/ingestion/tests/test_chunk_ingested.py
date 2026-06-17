@@ -288,11 +288,11 @@ class TestChunkIngestedEmit(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(records, [])
 
     async def test_no_emit_when_publish_fails_after_bookmark(self) -> None:
-        """Post-bookmark publish failure records failure and skips emit."""
+        """Post-bookmark publish failure records gap and skips emit."""
         chunk = _make_chunk(datetime.datetime.now(datetime.UTC))
         rt = _build_runtime_for_one_chunk(chunk, bookmark_ok=True)
         store = cast("Any", rt._store)
-        store.report_feed_failure.return_value = "failing"
+        store.release_non_budgeted_failure.return_value = "failing"
 
         with (
             _mock_upload_audio(),
@@ -309,13 +309,12 @@ class TestChunkIngestedEmit(unittest.IsolatedAsyncioTestCase):
             await rt._process_feed(_FEED)
 
         store.update_feed_progress.assert_awaited_once()
-        store.report_feed_failure.assert_awaited_once()
-        kwargs = store.report_feed_failure.await_args.kwargs
-        self.assertIn("Pub/Sub publish failed", kwargs["reason"])
-        self.assertIn("pubsub boom", kwargs["reason"])
+        store.report_feed_failure.assert_not_awaited()
+        store.release_non_budgeted_failure.assert_awaited_once()
+        kwargs = store.release_non_budgeted_failure.await_args.kwargs
         self.assertIs(
             kwargs["status_reason"],
-            FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
         )
         records = [
             record

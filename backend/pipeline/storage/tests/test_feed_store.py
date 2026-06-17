@@ -12,7 +12,7 @@ from unittest import mock
 import asyncpg
 import yaml
 
-from backend.pipeline.storage import feed_queries, quarantine_reason
+from backend.pipeline.storage import feed_queries, feed_store, quarantine_reason
 from backend.pipeline.storage.feed_store import (
     FeedStatus,
     FeedStatusReason,
@@ -29,6 +29,22 @@ _WORKER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _STATUS_REASON_UPDATED_AT = datetime.datetime(
     2026, 5, 29, 12, 0, tzinfo=datetime.UTC
 )
+
+_FEED_STATUS_REASON_VALUES = {
+    "pipeline_publish_after_bookmark_failed",
+    "source_offline",
+    "source_unreachable",
+    "source_rate_limited",
+    "system_authentication_failed",
+    "system_configuration_invalid",
+    "system_source_configuration_invalid",
+    "system_runtime_configuration_invalid",
+    "system_credential_access_failed",
+    "system_source_payload_invalid",
+    "system_collector_error",
+    "system_pipeline_error",
+    "system_unexpected_error",
+}
 
 _LEASE_ROW = {
     "id": _FEED_ID,
@@ -126,16 +142,7 @@ class TestFeedStatusReason(unittest.TestCase):
     def test_canonical_reason_values(self) -> None:
         self.assertEqual(
             {reason.value for reason in FeedStatusReason},
-            {
-                "source_offline",
-                "source_unreachable",
-                "source_rate_limited",
-                "system_authentication_failed",
-                "system_configuration_invalid",
-                "system_collector_error",
-                "system_pipeline_error",
-                "system_unexpected_error",
-            },
+            _FEED_STATUS_REASON_VALUES,
         )
 
     def test_matches_openapi_spec(self) -> None:
@@ -155,28 +162,48 @@ class TestFeedStatusReason(unittest.TestCase):
             "enum", []
         )
 
-        python_reasons = {reason.value for reason in FeedStatusReason}
-        expected_openapi_reasons = python_reasons | {"unknown"}
+        expected_openapi_reasons = _FEED_STATUS_REASON_VALUES | {"unknown"}
 
         self.assertEqual(
             set(backend_reasons),
             expected_openapi_reasons,
-            "The status reasons in backend.pipeline.storage.feed_store.FeedStatusReason "
-            "do not match BackendFeedStatusReason in frontend/api/openapi.yaml. "
+            "The status reasons exposed by frontend/api/openapi.yaml "
+            "do not match the canonical backend vocabulary. "
             "Please run `yarn generate-spec` in frontend/api to sync the spec after updating TypeScript types.",
         )
 
     def test_reason_values_encode_source_or_system_ownership(self) -> None:
-        prefixes = {
-            reason.value.split("_", 1)[0] for reason in FeedStatusReason
-        }
-
         for reason in FeedStatusReason:
             self.assertTrue(
-                reason.value.startswith(("source_", "system_")),
+                reason.value.startswith(("source_", "system_", "pipeline_")),
                 reason.value,
             )
-        self.assertEqual(prefixes, {"source", "system"})
+
+    def test_reason_owner_comes_from_status_prefix(self) -> None:
+        cases = {
+            FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED: "pipeline",
+            FeedStatusReason.SOURCE_OFFLINE: "source",
+            FeedStatusReason.SOURCE_UNREACHABLE: "source",
+            FeedStatusReason.SOURCE_RATE_LIMITED: "source",
+            FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED: "system",
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID: "system",
+            FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID: "system",
+            FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID: "system",
+            FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED: "system",
+            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID: "system",
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR: "system",
+            FeedStatusReason.SYSTEM_PIPELINE_ERROR: "system",
+            FeedStatusReason.SYSTEM_UNEXPECTED_ERROR: "system",
+        }
+
+        self.assertEqual(set(cases), set(FeedStatusReason))
+        for reason, owner in cases.items():
+            with self.subTest(reason=reason.value):
+                self.assertEqual(reason.owner, owner)
+
+    def test_reason_owner_rejects_unknown_prefix(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Unsupported status reason"):
+            feed_store._status_reason_owner("unknown_failure")
 
 
 class TestSourceType(unittest.TestCase):
@@ -400,7 +427,14 @@ class TestReportFailureSqlStatusReason(unittest.TestCase):
             "status_reason = COALESCE($8, 'system_unexpected_error')",
             sql,
         )
-        self.assertIn("status_reason_updated_at = NOW()", sql)
+        self.assertRegex(
+            sql,
+            r"status_reason_updated_at = CASE\s+"
+            r"WHEN status_reason IS DISTINCT FROM COALESCE"
+            r"\(\$8, 'system_unexpected_error'\)\s+"
+            r"THEN NOW\(\)\s+"
+            r"ELSE status_reason_updated_at\s+END",
+        )
         self.assertIn(
             "WHERE id = $1 AND worker_id = $2 AND fencing_token = $4",
             sql,
@@ -413,6 +447,71 @@ class TestReportFailureSqlStatusReason(unittest.TestCase):
 
         self.assertIn("COALESCE($7, quarantine_reason)", sql)
         self.assertNotIn("COALESCE($8, quarantine_reason)", sql)
+
+
+class TestNonBudgetedFailureSql(unittest.TestCase):
+    """Tests for non-quarantine suppressed retry SQL."""
+
+    def test_non_budgeted_failure_sql_releases_without_quarantine_budget(
+        self,
+    ) -> None:
+        sql = _sql_without_comments(
+            feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL
+        )
+
+        self.assertIn("status = 'failing'::feed_status", sql)
+        self.assertIn("failure_count = 0", sql)
+        self.assertIn("retry_after = $4", sql)
+        self.assertIn("status_reason = $5", sql)
+        self.assertIn("worker_id = NULL", sql)
+        self.assertIn("WHERE id = $1 AND worker_id = $2", sql)
+        self.assertIn("AND fencing_token = $3", sql)
+        self.assertIn("AND status = 'active'::feed_status", sql)
+        self.assertNotIn("quarantine_reason", sql)
+        self.assertNotIn("failure_count + 1", sql)
+
+    def test_non_budgeted_failure_sql_does_not_write_quarantine_reason(
+        self,
+    ) -> None:
+        sql = _sql_without_comments(
+            feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL
+        )
+
+        self.assertNotIn("quarantine_reason =", sql)
+        self.assertNotIn("COALESCE", sql)
+
+    def test_non_budgeted_failure_sql_returns_status_diagnostics(self) -> None:
+        sql = _sql_without_comments(
+            feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL
+        )
+
+        self.assertIn("RETURNING status::text, failure_count, retry_after", sql)
+
+    def test_non_budgeted_failure_sql_preserves_reason_change_time(
+        self,
+    ) -> None:
+        sql = _sql_without_comments(
+            feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL
+        )
+
+        self.assertRegex(
+            sql,
+            r"status_reason_updated_at = CASE\s+"
+            r"WHEN status_reason IS DISTINCT FROM \$5 THEN NOW\(\)\s+"
+            r"ELSE status_reason_updated_at\s+END",
+        )
+
+    def test_failure_count_increment_isolated_to_report_failure_sql(
+        self,
+    ) -> None:
+        for name, value in vars(feed_queries).items():
+            if not name.endswith("_SQL") or not isinstance(value, str):
+                continue
+            stripped = _sql_without_comments(value)
+            if name == "REPORT_FAILURE_SQL":
+                self.assertIn("failure_count + 1", stripped)
+                continue
+            self.assertNotIn("failure_count + 1", stripped, name)
 
 
 class TestStatusReasonClearSql(unittest.TestCase):
@@ -463,6 +562,12 @@ class TestStatusReasonClearSql(unittest.TestCase):
             sql,
         )
         self.assertIn("status_reason = NULL", sql)
+        self.assertRegex(
+            sql,
+            r"status_reason_updated_at = CASE\s+"
+            r"WHEN status_reason IS NOT NULL THEN NOW\(\)\s+"
+            r"ELSE status_reason_updated_at\s+END",
+        )
         self.assertIn("current_state.worker_id = $2", sql)
         self.assertIn("current_state.fencing_token = $3", sql)
         self.assertIn("current_state.status = 'active'::feed_status", sql)
@@ -783,6 +888,7 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         )
 
         args = pool.fetchrow.call_args[0]
+        self.assertIs(args[0], feed_queries.REPORT_FAILURE_SQL)
         self.assertEqual(
             args[1:],
             (
@@ -847,6 +953,89 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
             quarantine_reason.MAX_QUARANTINE_REASON_LENGTH,
         )
         self.assertTrue(reason_arg.endswith("[truncated]"))
+
+
+class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.release_non_budgeted_failure."""
+
+    async def test_returns_status_when_lease_held(self) -> None:
+        """Status string is returned when the non-budgeted update succeeds."""
+        retry_after = datetime.datetime(
+            2026, 6, 14, 12, 15, tzinfo=datetime.UTC
+        )
+        pool = make_mock_pool(
+            fetchrow_result={
+                "status": "failing",
+                "failure_count": 0,
+                "retry_after": retry_after,
+            },
+        )
+        store = FeedStore(pool)
+
+        result = await store.release_non_budgeted_failure(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            retry_after=retry_after,
+            status_reason=(
+                FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
+            ),
+        )
+
+        self.assertEqual(result, "failing")
+
+    async def test_returns_none_when_lease_lost(self) -> None:
+        """None is returned when no active lease matches."""
+        retry_after = datetime.datetime(
+            2026, 6, 14, 12, 15, tzinfo=datetime.UTC
+        )
+        pool = make_mock_pool(fetchrow_result=None)
+        store = FeedStore(pool)
+
+        result = await store.release_non_budgeted_failure(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            retry_after=retry_after,
+            status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        )
+
+        self.assertIsNone(result)
+
+    async def test_passes_correct_parameters(self) -> None:
+        """Parameters are passed in the correct order."""
+        retry_after = datetime.datetime(
+            2026, 6, 14, 12, 15, tzinfo=datetime.UTC
+        )
+        pool = make_mock_pool(
+            fetchrow_result={
+                "status": "failing",
+                "failure_count": 0,
+                "retry_after": retry_after,
+            },
+        )
+        store = FeedStore(pool)
+
+        await store.release_non_budgeted_failure(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            retry_after=retry_after,
+            status_reason=FeedStatusReason.SOURCE_OFFLINE,
+        )
+
+        args = pool.fetchrow.call_args[0]
+        self.assertIs(args[0], feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL)
+        self.assertEqual(
+            args[1:],
+            (
+                _FEED_ID,
+                _WORKER_ID,
+                1,
+                retry_after,
+                "source_offline",
+            ),
+        )
 
 
 class TestReleaseFeed(unittest.IsolatedAsyncioTestCase):

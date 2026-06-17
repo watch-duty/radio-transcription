@@ -69,7 +69,7 @@ _TRANSIENT_CALLS_API_FAILURES = frozenset(
 _CALLS_API_HTTP_POLICY = http_status.HTTPStatusPolicy(
     exact={
         **http_status.DEFAULT_HTTP_STATUS_POLICY.exact,
-        404: FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        404: FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID,
     },
 )
 
@@ -107,7 +107,7 @@ def _get_jwt_token() -> str:
     secret_id = os.getenv("BROADCASTIFY_JWT_SECRET_ID")
     if not project_id or not secret_id:
         raise collector_failure(
-            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
             "calls_jwt_config_missing",
         )
 
@@ -119,7 +119,7 @@ def _get_jwt_token() -> str:
     except Exception as e:
         logger.exception("Failed to access secret %s: %s", name, e)
         raise collector_failure(
-            FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+            FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED,
             "calls_jwt_secret_access_failed",
         ) from e
 
@@ -180,9 +180,9 @@ async def _get_shared_jwt_token(
             if _jwt_state.refresh_task is task:
                 _jwt_state.refresh_task = None
                 should_log = True
-        is_config_failure = (
-            isinstance(e, FeedFailure)
-            and e.status_reason is FeedStatusReason.SYSTEM_CONFIGURATION_INVALID
+        is_config_failure = isinstance(e, FeedFailure) and e.status_reason in (
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
         )
         if should_log and not is_config_failure:
             logger.warning(
@@ -222,7 +222,10 @@ async def _get_shared_jwt_token_with_retry(
                 stale_token=stale_token,
             )
         except FeedFailure as e:
-            if e.status_reason is FeedStatusReason.SYSTEM_CONFIGURATION_INVALID:
+            if e.status_reason in (
+                FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+                FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
+            ):
                 raise
             jwt_failures = await _handle_loop_failure(
                 feed_id,
@@ -236,7 +239,7 @@ async def _get_shared_jwt_token_with_retry(
                 jwt_failures,
                 shutdown_event,
                 ItemFailure(
-                    FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+                    FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED,
                     "calls_jwt_secret_access_failed",
                 ),
             )
@@ -299,7 +302,9 @@ async def _fetch_calls(
         reason_prefix="calls_api_http",
         status_policy=_CALLS_API_HTTP_POLICY,
         validate_payload=validate_payload,
-        invalid_payload_status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        invalid_payload_status_reason=(
+            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID
+        ),
         invalid_payload_reason="calls_api_response_invalid",
         transport_status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
         transport_reason="calls_api_http_transport_failed",
@@ -448,7 +453,10 @@ async def _create_chunk_from_call(
 
 def _raise_item_failure(failure: ItemFailure) -> None:
     """Raise a typed collector failure from an item aggregation result."""
-    raise collector_failure(failure.status_reason, failure.reason)
+    raise collector_failure(
+        failure.status_reason,
+        failure.reason,
+    )
 
 
 async def _handle_loop_failure(
@@ -461,7 +469,10 @@ async def _handle_loop_failure(
     del feed_id
     consecutive_failures += 1
     if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
-        raise collector_failure(failure.status_reason, failure.reason)
+        raise collector_failure(
+            failure.status_reason,
+            failure.reason,
+        )
     await control_flow.sleep_or_cancel(shutdown_event, _POLL_INTERVAL_SEC)
     return consecutive_failures
 

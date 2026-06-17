@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import dataclasses
 
-from backend.pipeline.ingestion.models import FeedFailure
+from backend.pipeline.ingestion.models import (
+    FeedFailure,
+)
 from backend.pipeline.storage.feed_store import FeedStatusReason
 
 MIXED_ITEM_FAILURE_REASON = "mixed_item_failures"
@@ -108,7 +110,10 @@ def collector_failure(
     reason: str,
 ) -> FeedFailure:
     """Build a typed feed-level collector failure."""
-    return FeedFailure(status_reason=status_reason, reason=reason)
+    return FeedFailure(
+        status_reason=status_reason,
+        reason=reason,
+    )
 
 
 def missing_source_feed_id_failure() -> FeedFailure:
