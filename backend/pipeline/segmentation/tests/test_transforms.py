@@ -2099,6 +2099,10 @@ class UploadRawSegmentFnTest(unittest.TestCase):
             service_name="segmentation-pipeline"
         )
 
+    @patch("backend.pipeline.segmentation.transforms.stateless.setup_tracing")
+    @patch(
+        "backend.pipeline.segmentation.transforms.stateless.acquire_shared_gcs_client"
+    )
     @patch(
         "backend.pipeline.segmentation.transforms.stateless.inject_otel_context"
     )
@@ -2113,6 +2117,8 @@ class UploadRawSegmentFnTest(unittest.TestCase):
         mock_upload_audio: MagicMock,
         mock_with_tracer_context: MagicMock,
         mock_inject_otel_context: MagicMock,
+        mock_acquire_gcs: MagicMock,
+        mock_setup_tracing: MagicMock,
     ) -> None:
         """Verifies that process propagates OpenTelemetry trace context and baggage."""
         # Create a mock context manager for with_tracer_context
@@ -2124,7 +2130,7 @@ class UploadRawSegmentFnTest(unittest.TestCase):
         fn = UploadRawSegmentFn(
             staging_audio_bucket="bucket", project_id="proj"
         )
-        fn.gcs_client = MagicMock()
+        fn.setup()
 
         request = FlushRequest(
             buffer=b"audio-data",
