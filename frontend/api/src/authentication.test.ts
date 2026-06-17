@@ -155,4 +155,42 @@ describe('expressAuthentication', () => {
       isAdmin: false,
     });
   });
+
+  it('should decode from x-apigateway-api-userinfo when present', async () => {
+    const payload = {
+      email: 'admin1@example.com',
+      email_verified: true,
+      sub: 'google-id-123',
+      aud: 'audience-client-id',
+      iss: 'https://accounts.google.com',
+    };
+    const encodedPayload = Buffer.from(JSON.stringify(payload)).toString(
+      'base64url'
+    );
+
+    const mockReq = {
+      headers: {
+        'x-apigateway-api-userinfo': encodedPayload,
+      },
+    } as unknown as express.Request;
+
+    const user = await expressAuthentication(mockReq, 'google_id_token');
+
+    expect(user).toEqual({
+      ...payload,
+      isAdmin: true,
+    });
+  });
+
+  it('should reject if x-apigateway-api-userinfo contains invalid json', async () => {
+    const mockReq = {
+      headers: {
+        'x-apigateway-api-userinfo': 'invalid-base64url-string',
+      },
+    } as unknown as express.Request;
+
+    await expect(
+      expressAuthentication(mockReq, 'google_id_token')
+    ).rejects.toThrow('Failed to parse gateway userinfo header');
+  });
 });

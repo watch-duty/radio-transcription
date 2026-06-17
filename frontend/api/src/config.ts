@@ -108,6 +108,7 @@ async function checkCloudIdentityMembership(
   memberEmail: string,
   token: string
 ): Promise<boolean> {
+  console.log(`Looking up membership for ${memberEmail} in ${groupId}`);
   const checkUrl = `https://cloudidentity.googleapis.com/v1/${groupId}/memberships:checkTransitiveMembership`;
   const checkResponse = await axios.get(checkUrl, {
     headers: { Authorization: `Bearer ${token}` },
@@ -128,10 +129,8 @@ export async function checkIsAdmin(email: string): Promise<boolean> {
     return cached.isAdmin;
   }
 
+  // If no admin group is configured, allow all users access.
   if (!WORKSPACE_ADMIN_GROUP_EMAIL) {
-    console.warn(
-      'WORKSPACE_ADMIN_GROUP_EMAIL environment variable is not set. Defaulting to granting admin access to all authenticated users.'
-    );
     return true;
   }
 
