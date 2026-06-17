@@ -24,6 +24,7 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  checks: write
 
 jobs:
   component-tests:
@@ -51,13 +52,29 @@ jobs:
           set -o pipefail
           mise run test:component --cov=backend/pipeline --cov-report=term-missing | tee storage-coverage.txt
           
-      - name: Comment Coverage
-        uses: MishaKav/pytest-coverage-comment@main
+      - name: Extract Storage Coverage
+        id: extract_storage_cov
         if: always()
+        run: |
+          if [ -f storage-coverage.txt ]; then
+            PCT=$(grep -i "TOTAL" storage-coverage.txt | awk '{print $NF}')
+            if [ -n "$PCT" ]; then
+              echo "percentage=$PCT" >> $GITHUB_OUTPUT
+            fi
+          fi
+      - name: Create Storage Coverage Check
+        uses: LouisBrunner/checks-action@v2.0.0
+        if: always() && steps.extract_storage_cov.outputs.percentage != ''
         with:
-          pytest-coverage-path: ./storage-coverage.txt
-          title: Storage Integration Tests Coverage
-          hide-report: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+          name: "Storage Integration Coverage: ${{ steps.extract_storage_cov.outputs.percentage }}"
+          conclusion: success
+          status: completed
+          output: |
+            {
+              "title": "Storage Integration Coverage: ${{ steps.extract_storage_cov.outputs.percentage }}",
+              "summary": "Detailed coverage report is available in the workflow logs."
+            }
 
   e2e-tests:
     runs-on: ubuntu-24.04
@@ -91,13 +108,29 @@ jobs:
           set -o pipefail
           docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run --rm integration-tests sh -c "pip install -q uv && uv sync && uv run python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto && uv run pytest integration_tests/ --ignore=integration_tests/storage/ -n auto -v -s --log-cli-level=INFO --cov=backend/pipeline --cov-report=term-missing" | tee e2e-coverage.txt
 
-      - name: Comment Coverage
-        uses: MishaKav/pytest-coverage-comment@main
+      - name: Extract E2E Coverage
+        id: extract_e2e_cov
         if: always()
+        run: |
+          if [ -f e2e-coverage.txt ]; then
+            PCT=$(grep -i "TOTAL" e2e-coverage.txt | awk '{print $NF}')
+            if [ -n "$PCT" ]; then
+              echo "percentage=$PCT" >> $GITHUB_OUTPUT
+            fi
+          fi
+      - name: Create E2E Coverage Check
+        uses: LouisBrunner/checks-action@v2.0.0
+        if: always() && steps.extract_e2e_cov.outputs.percentage != ''
         with:
-          pytest-coverage-path: ./e2e-coverage.txt
-          title: E2E Integration Tests Coverage
-          hide-report: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+          name: "E2E Integration Coverage: ${{ steps.extract_e2e_cov.outputs.percentage }}"
+          conclusion: success
+          status: completed
+          output: |
+            {
+              "title": "E2E Integration Coverage: ${{ steps.extract_e2e_cov.outputs.percentage }}",
+              "summary": "Detailed coverage report is available in the workflow logs."
+            }
 
       - name: Print container logs on failure
         if: failure()
