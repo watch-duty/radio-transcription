@@ -208,6 +208,7 @@ class UploadRawSegmentFn(beam.DoFn):
 
     @override
     def setup(self) -> None:
+        setup_tracing(service_name="segmentation-pipeline")
         self.gcs_client = acquire_shared_gcs_client(
             self.project_id, shared_handle=self.SHARED_GCS_HANDLE
         )
