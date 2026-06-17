@@ -15,8 +15,11 @@ from google.api_core import exceptions as google_exceptions
 from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
-from backend.pipeline.ingestion import failure_policy
-from backend.pipeline.ingestion.collector_runtime import CollectorRuntime
+from backend.pipeline.ingestion import failure_policy, memory_watchdog
+from backend.pipeline.ingestion.collector_runtime import (
+    CollectorRuntime,
+    _PipelineFailure,
+)
 from backend.pipeline.ingestion.collectors.failure_classification import (
     missing_source_feed_id_failure,
 )
@@ -103,6 +106,17 @@ class TestFeedFailureContract(unittest.TestCase):
         self.assertEqual(exc.reason, reason)
         self.assertEqual(str(exc), reason)
 
+    def test_pipeline_failure_reason_preserves_diagnostic_text(self) -> None:
+        """Runtime pipeline failures keep raw diagnostics until storage."""
+        reason = "Authorization: Bearer secret-token " + ("x" * 3000)
+        exc = _PipelineFailure(
+            reason,
+            status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        )
+
+        self.assertEqual(exc.reason, reason)
+        self.assertEqual(str(exc), reason)
+
     def test_normalizes_status_reason_values(self) -> None:
         """FeedFailure accepts canonical DB text values at the boundary."""
         exc = FeedFailure(
@@ -157,7 +171,7 @@ def _make_settings(**overrides) -> mock.MagicMock:
         "heartbeat_stall_timeout_sec": 45.0,
         "graceful_shutdown_timeout_sec": 10.0,
         "task_cancel_budget_sec": 5.0,
-        # RSS watchdog (Phase 4 / WATCHDOG-01). Defaults pin to "watchdog
+        # Memory watchdog (Phase 4 / WATCHDOG-01). Defaults pin to "watchdog
         # disabled in tests unless explicitly overridden": override=None
         # would normally trigger fs reads at __init__ — but the watchdog
         # construction lives in _main, not __init__, and tests typically
@@ -2863,206 +2877,7 @@ class TestProcessFeedPublishAttributes(unittest.IsolatedAsyncioTestCase):
         )
 
 
-class TestRssWatchdogDebounce(unittest.TestCase):
-    """D-30: pause-set debounce semantics.
-
-    The watchdog OS-thread body is exercised by mocking _thread_stop so the
-    loop runs exactly N+1 times (initial check returns False N times, then
-    True to break) and mocking _resolve_container_memory_usage_bytes to
-    return controlled values. _resolve_container_memory_bytes is bypassed
-    by passing the limit directly to _rss_watchdog_loop.
-    """
-
-    def _drive_samples(
-        self,
-        rt: CollectorRuntime,
-        limit_bytes: int,
-        usage_samples: list[int],
-    ) -> None:
-        """Run _rss_watchdog_loop with controlled samples then exit."""
-        # _thread_stop.is_set returns False len(samples) times then True.
-        # _thread_stop.wait returns False each time (timeout elapsed normally).
-        is_set_returns = [False] * len(usage_samples) + [True]
-        wait_returns = [False] * len(usage_samples)
-
-        rt._thread_stop = mock.MagicMock()
-        rt._thread_stop.is_set.side_effect = is_set_returns
-        rt._thread_stop.wait.side_effect = wait_returns
-
-        with mock.patch.object(
-            rt,
-            "_resolve_container_memory_usage_bytes",
-            side_effect=usage_samples,
-        ):
-            rt._rss_watchdog_loop(limit_bytes)
-
-    def test_two_high_then_one_low_does_not_set(self) -> None:
-        """2 samples at 70% then 1 at 65% — counter resets, NOT paused."""
-        rt = _make_runtime()
-        # 70%, 70%, 65% of 1000 = 700, 700, 650
-        self._drive_samples(rt, limit_bytes=1000, usage_samples=[700, 700, 650])
-        self.assertFalse(rt._paused_for_memory.is_set())
-
-    def test_three_high_samples_set_pause(self) -> None:
-        """3 consecutive samples at 70% — _paused_for_memory.is_set() True."""
-        rt = _make_runtime()
-        self._drive_samples(rt, limit_bytes=1000, usage_samples=[700, 700, 700])
-        self.assertTrue(rt._paused_for_memory.is_set())
-
-    def test_three_high_then_inside_band_stays_set(self) -> None:
-        """3 high then 1 sample inside hysteresis band (65%) — still set."""
-        rt = _make_runtime()
-        self._drive_samples(
-            rt,
-            limit_bytes=1000,
-            usage_samples=[700, 700, 700, 650],
-        )
-        self.assertTrue(rt._paused_for_memory.is_set())
-
-    def test_three_high_then_below_floor_clears(self) -> None:
-        """3 high then 1 below-floor (59%) — cleared via 10pp hysteresis."""
-        rt = _make_runtime()
-        self._drive_samples(
-            rt,
-            limit_bytes=1000,
-            usage_samples=[700, 700, 700, 590],
-        )
-        self.assertFalse(rt._paused_for_memory.is_set())
-
-
-class TestRssWatchdogExitSemantics(unittest.TestCase):
-    """D-31: exit-trip semantics + os._exit-NOT-called assertion.
-
-    The single-trip flag is verified by driving 4 samples at 95% and asserting
-    call_soon_threadsafe is invoked exactly once.
-    """
-
-    def _drive_samples_with_loop(
-        self,
-        rt: CollectorRuntime,
-        limit_bytes: int,
-        usage_samples: list[int],
-    ) -> tuple[mock.MagicMock, mock.MagicMock]:
-        """Drive _rss_watchdog_loop and return the call_soon_threadsafe mock."""
-        rt._loop = mock.MagicMock()
-        rt._shutdown = mock.MagicMock()
-        is_set_returns = [False] * len(usage_samples) + [True]
-        wait_returns = [False] * len(usage_samples)
-        rt._thread_stop = mock.MagicMock()
-        rt._thread_stop.is_set.side_effect = is_set_returns
-        rt._thread_stop.wait.side_effect = wait_returns
-
-        with (
-            mock.patch.object(
-                rt,
-                "_resolve_container_memory_usage_bytes",
-                side_effect=usage_samples,
-            ),
-            mock.patch(
-                "backend.pipeline.ingestion.collector_runtime.os._exit",
-            ) as mock_exit,
-            mock.patch("logging.shutdown"),
-        ):
-            rt._rss_watchdog_loop(limit_bytes)
-            return rt._loop.call_soon_threadsafe, mock_exit
-
-    def test_two_at_exit_then_one_low_does_not_trip(self) -> None:
-        """2 samples at 95% then 1 at 70% — counter resets, no trip."""
-        rt = _make_runtime()
-        cst_mock, exit_mock = self._drive_samples_with_loop(
-            rt,
-            limit_bytes=1000,
-            usage_samples=[950, 950, 700],
-        )
-        cst_mock.assert_not_called()
-        exit_mock.assert_not_called()
-
-    def test_three_at_exit_threshold_trips_via_shutdown_set(self) -> None:
-        """3 consecutive 95% samples — call_soon_threadsafe(_shutdown.set)
-        called once, _thread_stop.set called, os._exit NOT called.
-
-        Single-trip semantics are a property of the production code path:
-        once `_thread_stop.set()` runs, the next iteration's
-        `while not self._thread_stop.is_set()` is False and the loop exits.
-        We don't separately test "what if the loop kept running" because
-        with a real `threading.Event` it cannot.
-        """
-        rt = _make_runtime()
-        cst_mock, exit_mock = self._drive_samples_with_loop(
-            rt,
-            limit_bytes=1000,
-            usage_samples=[950, 950, 950],
-        )
-        cst_mock.assert_called_once_with(rt._shutdown.set)
-        # _thread_stop has been reassigned to MagicMock inside
-        # _drive_samples_with_loop, but ty can't narrow across the helper
-        # call boundary; the ignore comment makes the intent explicit.
-        rt._thread_stop.set.assert_called_once()  # ty: ignore[unresolved-attribute]
-        # CRITICAL ASSERTION (D-31): os._exit MUST NOT be called by the
-        # watchdog. Graceful shutdown only — kernel OOM is the backstop.
-        exit_mock.assert_not_called()
-
-
-class TestRssWatchdogWarmupGrace(unittest.TestCase):
-    """D-32: 60s warmup grace — counter does NOT increment during warmup."""
-
-    def _drive_samples_with_time(
-        self,
-        rt: CollectorRuntime,
-        limit_bytes: int,
-        usage_samples: list[int],
-        time_sequence: list[float],
-    ) -> None:
-        """Drive _rss_watchdog_loop with a controlled time.monotonic sequence."""
-        is_set_returns = [False] * len(usage_samples) + [True]
-        wait_returns = [False] * len(usage_samples)
-        rt._thread_stop = mock.MagicMock()
-        rt._thread_stop.is_set.side_effect = is_set_returns
-        rt._thread_stop.wait.side_effect = wait_returns
-
-        with (
-            mock.patch.object(
-                rt,
-                "_resolve_container_memory_usage_bytes",
-                side_effect=usage_samples,
-            ),
-            mock.patch(
-                "backend.pipeline.ingestion.collector_runtime.time.monotonic",
-                side_effect=time_sequence,
-            ),
-        ):
-            rt._rss_watchdog_loop(limit_bytes)
-
-    def test_sample_during_warmup_does_not_increment(self) -> None:
-        """Sample at 80% within 60s warmup — pause flag stays clear."""
-        rt = _make_runtime(rss_watchdog_warmup_sec=60.0)
-        # Time sequence: 0.0 (watchdog_start), then 30.0 (sample 1, < 60s).
-        # Sample is 80% (above pause_threshold) but warmup grace skips it.
-        self._drive_samples_with_time(
-            rt,
-            limit_bytes=1000,
-            usage_samples=[800],
-            time_sequence=[0.0, 30.0],
-        )
-        self.assertFalse(rt._paused_for_memory.is_set())
-
-    def test_sample_after_warmup_increments(self) -> None:
-        """Sample at 80% post-warmup (61s) — counter increments. After 3
-        post-warmup samples the pause flag sets.
-        """
-        rt = _make_runtime(rss_watchdog_warmup_sec=60.0)
-        # Time sequence: 0.0 (watchdog_start), then 61, 62, 63 (post-warmup).
-        # 3 post-warmup samples at 80% — pause flag should set.
-        self._drive_samples_with_time(
-            rt,
-            limit_bytes=1000,
-            usage_samples=[800, 800, 800],
-            time_sequence=[0.0, 61.0, 62.0, 63.0],
-        )
-        self.assertTrue(rt._paused_for_memory.is_set())
-
-
-class TestRssWatchdogIntegration(unittest.IsolatedAsyncioTestCase):
+class TestMemoryWatchdogIntegration(unittest.IsolatedAsyncioTestCase):
     """D-33: end-to-end pause / resume / trip via monkeypatched cgroup readers.
 
     Per D-34, no real allocation in CI — the monkeypatched-usage approach
@@ -3096,9 +2911,6 @@ class TestRssWatchdogIntegration(unittest.IsolatedAsyncioTestCase):
         # Mirroring that shape keeps the integration test on the same
         # well-trodden path.
         rt._heartbeat_thread = None
-        rt._rss_watchdog_thread = (
-            None  # join skipped after watchdog body returns
-        )
         rt._store = mock.AsyncMock()
         rt._store.release_feeds_batch.return_value = 0
         rt._data_pool = mock.AsyncMock()
@@ -3128,13 +2940,13 @@ class TestRssWatchdogIntegration(unittest.IsolatedAsyncioTestCase):
         wait_returns = [False] * len(usage_samples)
         rt._thread_stop.is_set.side_effect = is_set_returns
         rt._thread_stop.wait.side_effect = wait_returns
+        rt._memory_watchdog = memory_watchdog.MemoryWatchdog(
+            rt._collector_settings,
+            rt._thread_stop,
+            usage_reader=mock.Mock(side_effect=usage_samples),
+        )
 
         with (
-            mock.patch.object(
-                rt,
-                "_resolve_container_memory_usage_bytes",
-                side_effect=usage_samples,
-            ),
             mock.patch(
                 "backend.pipeline.ingestion.collector_runtime.os._exit",
             ) as mock_exit,
@@ -3143,8 +2955,10 @@ class TestRssWatchdogIntegration(unittest.IsolatedAsyncioTestCase):
             # Phase A: drive the watchdog body in a worker thread so the
             # asyncio loop stays available for call_soon_threadsafe.
             await asyncio.to_thread(
-                rt._rss_watchdog_loop,
+                rt._memory_watchdog._run,
                 100 * 1024 * 1024,
+                rt._loop,
+                rt._shutdown,
             )
 
             # Yield once so any call_soon_threadsafe-scheduled callbacks
@@ -3217,7 +3031,6 @@ class TestSubTimeoutEscape(unittest.IsolatedAsyncioTestCase):
         rt._shutdown = asyncio.Event()
         rt._thread_stop = mock.MagicMock()
         rt._heartbeat_thread = None
-        rt._rss_watchdog_thread = None
         rt._store = mock.AsyncMock()
         rt._store.release_feeds_batch.return_value = 1
         rt._data_pool = mock.AsyncMock()

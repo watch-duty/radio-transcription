@@ -19,9 +19,8 @@ from backend.pipeline.transcription.processor import TranscriptionEventProcessor
 from backend.pipeline.transcription.transcribers.base import Transcriber
 from backend.pipeline.transcription.transcribers.factory import get_transcriber
 
-# Setup Logging and Tracing
+# Setup Logging
 setup_logging()
-setup_tracing(service_name="transcription-service", use_batch=False)
 logger = logging.getLogger(__name__)
 
 
@@ -136,5 +135,6 @@ def transcribe_claim_check(cloud_event: CloudEvent) -> None:
     Args:
         cloud_event: The triggered Pub/Sub CloudEvent.
     """
+    setup_tracing(service_name="transcription-service", use_batch=False)
     processor = container.get_processor()
     processor.process_event(cloud_event)

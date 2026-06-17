@@ -36,6 +36,7 @@ from backend.pipeline.segmentation.datatypes import (
     ChunkMetadata,
     FeedMetadata,
     FlushRequest,
+    IdleFeedState,
     OrderRestorerConfig,
     StitchAudioConfig,
     TimeRange,
@@ -353,12 +354,12 @@ class OrderedStitchAudioTest(unittest.TestCase):
         )
 
         mock_with_tracer_context.assert_any_call(
-            "mock-traceparent",
+            {"traceparent": "mock-traceparent"},
             "stitching_process",
             "backend.pipeline.segmentation.transforms.stateful",
         )
         mock_with_tracer_context.assert_any_call(
-            "mock-traceparent",
+            {"traceparent": "mock-traceparent"},
             "stitching_single_chunk",
             "backend.pipeline.segmentation.transforms.stateful",
         )
@@ -403,15 +404,132 @@ class OrderedStitchAudioTest(unittest.TestCase):
         )
 
         mock_with_tracer_context.assert_any_call(
-            "mock-traceparent-context",
+            {"traceparent": "mock-traceparent-context"},
             "handle_audio_gap",
             "backend.pipeline.segmentation.transforms.stateful",
         )
         mock_with_tracer_context.assert_any_call(
-            "",
+            {},
             "stitching_single_chunk",
             "backend.pipeline.segmentation.transforms.stateful",
         )
+
+    @patch(
+        "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
+    )
+    def test_ordered_stitch_audio_preserves_otel_baggage_in_state(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that ActiveStitchingState preserves OpenTelemetry Baggage when initialized."""
+        mock_processor_inst = mock_audio_processor.return_value
+        chunk_data = AudioChunkData(
+            start_ms=1000,
+            audio=np.zeros(16000, dtype=np.int16),
+            speech_segments=[],
+            gcs_uri="gs://test-bucket/path/to/test.flac",
+            duration_ms=1000,
+            sample_rate=16000,
+        )
+        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        stitch_config = get_test_stitch_config()
+        fn = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn.setup()
+
+        mock_state = MagicMock()
+        mock_state.read.return_value = IdleFeedState()
+
+        metadata = ChunkMetadata(
+            gcs_uri="gs://test-bucket/path/to/test.flac",
+            session_id="mock-session-id",
+            duration_ms=1000,
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
+            traceparent="mock-traceparent",
+            baggage="ingest_time_ms=12345",
+        )
+
+        list(
+            fn.process(
+                element=("test-feed", metadata),
+                timestamp=Timestamp(100),
+                transmission_buffer_state=MagicMock(),
+                transmission_context_state=mock_state,
+                last_start_ms_state=MagicMock(),
+                out_of_order_timer=MagicMock(),
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        self.assertGreater(mock_state.write.call_count, 0)
+        written_state = mock_state.write.call_args[0][0]
+        self.assertIsInstance(written_state, ActiveStitchingState)
+        self.assertEqual(written_state.baggage, "ingest_time_ms=12345")
+
+    @patch(
+        "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
+    )
+    def test_ordered_stitch_audio_updates_otel_context_on_next_chunks(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies ActiveStitchingState updates trace parent/baggage."""
+        mock_processor_inst = mock_audio_processor.return_value
+        chunk_data = AudioChunkData(
+            start_ms=2000,
+            audio=np.zeros(16000, dtype=np.int16),
+            speech_segments=[],
+            gcs_uri="gs://test-bucket/path/to/test2.flac",
+            duration_ms=1000,
+            sample_rate=16000,
+        )
+        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        stitch_config = get_test_stitch_config()
+        fn = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn.setup()
+
+        mock_state = MagicMock()
+        mock_state.read.return_value = ActiveStitchingState(
+            session_id="mock-session-id",
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
+            traceparent="mock-traceparent-1",
+            baggage="ingest_time_ms=1",
+            sample_rate=16000,
+        )
+
+        metadata = ChunkMetadata(
+            gcs_uri="gs://test-bucket/path/to/test2.flac",
+            session_id="mock-session-id",
+            duration_ms=1000,
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
+            traceparent="mock-traceparent-2",
+            baggage="ingest_time_ms=2",
+        )
+
+        list(
+            fn.process(
+                element=("test-feed", metadata),
+                timestamp=Timestamp(200),
+                transmission_buffer_state=MagicMock(),
+                transmission_context_state=mock_state,
+                last_start_ms_state=MagicMock(),
+                out_of_order_timer=MagicMock(),
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        self.assertGreater(mock_state.write.call_count, 0)
+        written_state = mock_state.write.call_args[0][0]
+        self.assertIsInstance(written_state, ActiveStitchingState)
+        self.assertEqual(written_state.traceparent, "mock-traceparent-2")
+        self.assertEqual(written_state.baggage, "ingest_time_ms=2")
 
     @patch(
         "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
@@ -481,7 +599,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
         transmission_context_state = MockValueState(curr_context)
         transmission_buffer_state = MockBagState()
         transmission_buffer_state.add(
-            np.ones(16000, dtype=np.int16)
+            np.ones(16000, dtype=np.int16).tobytes()
         )  # Main buffer content
 
         out_of_order_timer = MagicMock()
@@ -916,7 +1034,7 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
             )
         )
         mock_state_buffer = MockBagState()
-        mock_state_buffer.add(np.zeros(16000 * 5, dtype=np.int16))
+        mock_state_buffer.add(np.zeros(16000 * 5, dtype=np.int16).tobytes())
         mock_last_start_ms = MockValueState(None)
 
         # Trigger stale flush and verify NO_SPEECH classification
@@ -1146,6 +1264,149 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
         self.assertTrue(saved_context.missing_prior_context)
         self.assertEqual(saved_context.speech_segments[0].start_ms, 60000)
         self.assertEqual(saved_context.speech_segments[0].end_ms, 65000)
+
+    @patch(
+        "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
+    )
+    def test_intra_chunk_multiple_flushes_direct_runner(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that when a single chunk triggers multiple flushes (speech, silence, speech),
+        the audio buffer is correctly cleared between flushes on the Beam runner and no audio is repeated.
+        """
+        mock_processor_inst = mock_audio_processor.return_value
+
+        # 10 seconds of audio. We use np.arange so each sample has a unique, identifiable value.
+        # Sample rate is 16000 Hz. Total samples = 160,000.
+        total_samples = 16000 * 10
+        audio_data = np.arange(total_samples, dtype=np.int16)
+
+        chunk_data = AudioChunkData(
+            start_ms=100000,
+            audio=audio_data,
+            speech_segments=[TimeRange(1000, 3000), TimeRange(7000, 9000)],
+            gcs_uri="gs://bucket/multi_segment.flac",
+            duration_ms=10000,
+            sample_rate=16000,
+        )
+        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+        mock_processor_inst.preprocess_audio.side_effect = lambda x: x
+
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        # Use significant_gap_ms = 500 so the gap between 3s and 7s (4s) triggers a flush,
+        # and the trailing silence from 9s to 10s (1s) also triggers a flush.
+        stitch_config = get_test_stitch_config(
+            significant_gap_ms=500,
+            stale_timeout_ms=60000,
+        )
+
+        options = PipelineOptions(
+            flags=[
+                "--continuous_input_subscription=projects/p/subscriptions/a",
+                "--output_topic=b",
+                "--project=c",
+            ]
+        )
+
+        metadata = ChunkMetadata(
+            gcs_uri="gs://bucket/multi_segment.flac",
+            session_id="session-multi",
+            duration_ms=10000,
+            feed_metadata=FeedMetadata(feed_name="mock-feed"),
+            traceparent="mock-traceparent",
+        )
+
+        with BeamTestPipeline(options=options) as p:
+            test_stream = (
+                TestStream(
+                    coder=beam.coders.TupleCoder(
+                        (
+                            beam.coders.StrUtf8Coder(),
+                            trans_coders.ChunkMetadataCoder(),
+                        )
+                    )
+                )
+                .advance_watermark_to(100)
+                .add_elements([TimestampedValue(("test-feed", metadata), 100)])
+                .advance_watermark_to(200)
+                .advance_watermark_to_infinity()
+            )
+
+            results = (
+                p
+                | test_stream
+                | beam.ParDo(
+                    OrderedStitchAudioFn(
+                        order_config=order_config, stitch_config=stitch_config
+                    )
+                )
+            )
+
+            def assert_results(msgs):
+                # We expect exactly 4 flush requests:
+                # 1. Speech 1: from 1000ms to 3500ms (including 500ms post-roll)
+                # 2. Silence 1: from 3500ms to 7000ms
+                # 3. Speech 2: from 7000ms to 9500ms (including 500ms post-roll)
+                # 4. Silence 2: from 9500ms to 10000ms (flushed by stale timer at the end)
+                assert len(msgs) == 4, f"Expected 4 flushes, got {len(msgs)}"
+
+                # Check Flush 1 (Speech 1)
+                feed_id_1, req_1 = msgs[0]
+                assert feed_id_1 == "test-feed"
+                assert (
+                    req_1.audio_classification
+                    == AudioClassification.AUDIO_CLASSIFICATION_SPEECH
+                )
+                # Samples should correspond to [1000ms, 3000ms], which is [16000, 48000]
+                buf_1 = np.frombuffer(req_1.buffer, dtype=np.int16)
+                expected_buf_1 = audio_data[16000:48000]
+                np.testing.assert_array_equal(
+                    buf_1, expected_buf_1, err_msg="Flush 1 audio mismatch"
+                )
+
+                # Check Flush 2 (Silence 1)
+                feed_id_2, req_2 = msgs[1]
+                assert feed_id_2 == "test-feed"
+                assert (
+                    req_2.audio_classification
+                    == AudioClassification.AUDIO_CLASSIFICATION_OTHER
+                )
+                # Samples should correspond to [3000ms, 7000ms], which is [48000, 112000]
+                buf_2 = np.frombuffer(req_2.buffer, dtype=np.int16)
+                expected_buf_2 = audio_data[48000:112000]
+                np.testing.assert_array_equal(
+                    buf_2, expected_buf_2, err_msg="Flush 2 audio mismatch"
+                )
+
+                # Check Flush 3 (Speech 2)
+                feed_id_3, req_3 = msgs[2]
+                assert feed_id_3 == "test-feed"
+                assert (
+                    req_3.audio_classification
+                    == AudioClassification.AUDIO_CLASSIFICATION_SPEECH
+                )
+                # Samples should correspond to [7000ms, 9000ms], which is [112000, 144000]
+                buf_3 = np.frombuffer(req_3.buffer, dtype=np.int16)
+                expected_buf_3 = audio_data[112000:144000]
+                np.testing.assert_array_equal(
+                    buf_3, expected_buf_3, err_msg="Flush 3 audio mismatch"
+                )
+
+                # Check Flush 4 (Silence 2)
+                feed_id_4, req_4 = msgs[3]
+                assert feed_id_4 == "test-feed"
+                assert (
+                    req_4.audio_classification
+                    == AudioClassification.AUDIO_CLASSIFICATION_OTHER
+                )
+                # Samples should correspond to [9000ms, 10000ms], which is [144000, 160000]
+                buf_4 = np.frombuffer(req_4.buffer, dtype=np.int16)
+                expected_buf_4 = audio_data[144000:160000]
+                np.testing.assert_array_equal(
+                    buf_4, expected_buf_4, err_msg="Flush 4 audio mismatch"
+                )
+
+            assert_that(results, assert_results)
 
     @patch(
         "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"

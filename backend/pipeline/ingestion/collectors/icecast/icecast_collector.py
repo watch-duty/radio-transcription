@@ -198,7 +198,7 @@ async def _build_stream_capture_failure(
     exit_code: int | None,
     timed_out: bool,
     classification_text: str,
-    stderr_snippet: str,
+    stderr_snippet: str | None,
 ) -> FeedFailure:
     """Build the feed failure for terminal ffmpeg stream-capture evidence."""
     info = ffmpeg_classifier.classify_ffmpeg_failure(
@@ -412,21 +412,22 @@ async def capture_icecast_stream(  # noqa: PLR0915
                     exit_code = wait_task.result()
                     if exit_code != 0:
                         stderr_snippet = (
-                            "\n".join(stderr_tail)
-                            if stderr_tail
-                            else "(no stderr captured)"
+                            "\n".join(stderr_tail) if stderr_tail else None
+                        )
+                        stderr_log_text = (
+                            stderr_snippet or "(no stderr captured)"
                         )
                         logger.error(
                             "Feed %s (%s) ffmpeg exited with code %d; stderr tail:\n%s",
                             feed_id,
                             feed_name,
                             exit_code,
-                            stderr_snippet,
+                            stderr_log_text,
                         )
                         classification_text = (
                             "\n".join(stderr_http_status_lines)
                             if stderr_http_status_lines
-                            else stderr_snippet
+                            else stderr_snippet or ""
                         )
                         failure = await _build_stream_capture_failure(
                             resources,
@@ -447,21 +448,20 @@ async def capture_icecast_stream(  # noqa: PLR0915
 
                 if time.monotonic() - last_activity_time > READ_TIMEOUT_SEC:
                     stderr_snippet = (
-                        "\n".join(stderr_tail)
-                        if stderr_tail
-                        else "(no stderr captured)"
+                        "\n".join(stderr_tail) if stderr_tail else None
                     )
+                    stderr_log_text = stderr_snippet or "(no stderr captured)"
                     logger.error(
                         "Feed %s (%s) no finalized segment within %ss; stderr tail:\n%s",
                         feed_id,
                         feed_name,
                         READ_TIMEOUT_SEC,
-                        stderr_snippet,
+                        stderr_log_text,
                     )
                     classification_text = (
                         "\n".join(stderr_http_status_lines)
                         if stderr_http_status_lines
-                        else stderr_snippet
+                        else stderr_snippet or ""
                     )
                     failure = await _build_stream_capture_failure(
                         resources,

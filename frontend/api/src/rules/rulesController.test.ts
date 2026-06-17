@@ -1,3 +1,5 @@
+import type * as express from 'express';
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RulesController } from './rulesController.js';
@@ -121,6 +123,18 @@ describe('RulesController', () => {
     });
   });
 
+  const mockAdminRequest = {
+    user: {
+      isAdmin: true,
+    },
+  } as unknown as express.Request;
+
+  const mockNonAdminRequest = {
+    user: {
+      isAdmin: false,
+    },
+  } as unknown as express.Request;
+
   describe('createRule', () => {
     it('should return converted rule on success', async () => {
       mockRequest.mockResolvedValueOnce({ data: mockBackendRule });
@@ -136,7 +150,7 @@ describe('RulesController', () => {
           caseSensitive: false,
         },
       };
-      const result = await controller.createRule(payload);
+      const result = await controller.createRule(mockAdminRequest, payload);
 
       expect(result).toEqual(expectedFrontendRule);
       expect(mockRequest).toHaveBeenCalledWith({
@@ -156,6 +170,23 @@ describe('RulesController', () => {
         },
       });
     });
+
+    it('should throw 403 Forbidden if user is not an admin', async () => {
+      const controller = new RulesController();
+      const payload = {
+        ruleName: 'Test Rule',
+        scope: { level: 'GLOBAL' as const, targetFeeds: [] },
+        conditions: {
+          evaluationType: 'KEYWORD_MATCH' as const,
+          operator: 'ANY' as const,
+          keywords: ['test'],
+          caseSensitive: false,
+        },
+      };
+      await expect(
+        controller.createRule(mockNonAdminRequest, payload)
+      ).rejects.toThrow('Forbidden');
+    });
   });
 
   describe('updateRule', () => {
@@ -164,7 +195,11 @@ describe('RulesController', () => {
 
       const controller = new RulesController();
       const payload = { ruleName: 'Updated Name' };
-      const result = await controller.updateRule('rule_123', payload);
+      const result = await controller.updateRule(
+        mockAdminRequest,
+        'rule_123',
+        payload
+      );
 
       expect(result).toEqual(expectedFrontendRule);
       expect(mockRequest).toHaveBeenCalledWith({
@@ -174,6 +209,13 @@ describe('RulesController', () => {
       });
     });
 
+    it('should throw 403 Forbidden if user is not an admin', async () => {
+      const controller = new RulesController();
+      await expect(
+        controller.updateRule(mockNonAdminRequest, 'rule_123', {})
+      ).rejects.toThrow('Forbidden');
+    });
+
     it('should throw on 404', async () => {
       const error = new Error('Not Found') as Error & {
         response?: { status: number };
@@ -182,9 +224,9 @@ describe('RulesController', () => {
       mockRequest.mockRejectedValueOnce(error);
 
       const controller = new RulesController();
-      await expect(controller.updateRule('rule_123', {})).rejects.toThrow(
-        /Not Found/
-      );
+      await expect(
+        controller.updateRule(mockAdminRequest, 'rule_123', {})
+      ).rejects.toThrow(/Not Found/);
     });
   });
 
@@ -193,12 +235,19 @@ describe('RulesController', () => {
       mockRequest.mockResolvedValueOnce({ status: 204 });
 
       const controller = new RulesController();
-      await controller.deleteRule('rule_123');
+      await controller.deleteRule(mockAdminRequest, 'rule_123');
 
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://rules-api.example.com/rule_123',
         method: 'DELETE',
       });
+    });
+
+    it('should throw 403 Forbidden if user is not an admin', async () => {
+      const controller = new RulesController();
+      await expect(
+        controller.deleteRule(mockNonAdminRequest, 'rule_123')
+      ).rejects.toThrow('Forbidden');
     });
 
     it('should throw on 404', async () => {
@@ -209,9 +258,9 @@ describe('RulesController', () => {
       mockRequest.mockRejectedValueOnce(error);
 
       const controller = new RulesController();
-      await expect(controller.deleteRule('rule_123')).rejects.toThrow(
-        /Not Found/
-      );
+      await expect(
+        controller.deleteRule(mockAdminRequest, 'rule_123')
+      ).rejects.toThrow(/Not Found/);
     });
   });
 });

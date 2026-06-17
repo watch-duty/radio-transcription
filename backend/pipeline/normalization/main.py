@@ -18,9 +18,8 @@ from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.normalization.processor import NormalizationEventProcessor
 
-# Setup Logging and Tracing
+# Setup Logging
 setup_logging()
-setup_tracing(use_batch=False)
 logger = logging.getLogger(__name__)
 
 
@@ -137,5 +136,6 @@ def normalize_claim_check(cloud_event: CloudEvent) -> None:
     Args:
         cloud_event: The triggered Pub/Sub CloudEvent.
     """
+    setup_tracing(service_name="normalization-service", use_batch=False)
     processor = container.get_processor()
     processor.process_event(cloud_event)

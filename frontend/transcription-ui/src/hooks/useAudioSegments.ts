@@ -143,45 +143,67 @@ export function useAudioSegments({
   const pollNewerAudioSegments = useCallback(async (): Promise<
     AudioSegment[]
   > => {
-    if (!newestTimestamp || !searchedFeedId || !token) return [];
+    if (!searchedFeedId || !token) return [];
 
     const allNewAudioSegments: AudioSegment[] = [];
-    let currentNextToken: string | undefined = undefined;
-    let hasMore = true;
-    let iterations = 0;
 
-    try {
-      while (hasMore) {
-        if (iterations > MAX_AUDIO_SEGMENTS_POLLING_ITERATIONS) {
-          console.warn(
-            'pollNewerAudioSegments has more than 10 pages of new audio segments. This is unexpected. If this message continues, please report a bug.'
+    if (newestTimestamp) {
+      let currentNextToken: string | undefined = undefined;
+      let iterations = 0;
+
+      try {
+        do {
+          if (iterations > MAX_AUDIO_SEGMENTS_POLLING_ITERATIONS) {
+            console.warn(
+              'pollNewerAudioSegments has more than 10 pages of new audio segments. This is unexpected. If this message continues, please report a bug.'
+            );
+            break;
+          }
+          iterations++;
+
+          const response = await listAudioSegments(
+            searchedFeedId,
+            token,
+            /*limit=*/ undefined,
+            currentNextToken,
+            /*startTime=*/ new Date(newestTimestamp).getTime(),
+            /*endTime=*/ undefined,
+            /*order=*/ 'asc',
+            alertFilter === 'alerts' ? true : undefined
           );
-        }
-        iterations++;
 
+          if (response.segments && response.segments.length > 0) {
+            allNewAudioSegments.push(...response.segments);
+          }
+
+          currentNextToken = response.nextToken;
+        } while (currentNextToken);
+      } catch (error) {
+        console.error('Error polling for new audio segments:', error);
+      }
+
+      return allNewAudioSegments.reverse();
+    } else {
+      try {
         const response = await listAudioSegments(
           searchedFeedId,
           token,
           /*limit=*/ undefined,
-          currentNextToken,
-          /*startTime=*/ new Date(newestTimestamp).getTime(),
+          /*nextToken=*/ undefined,
+          /*startTime=*/ undefined,
           /*endTime=*/ undefined,
-          /*order=*/ 'asc',
+          /*order=*/ 'desc',
           alertFilter === 'alerts' ? true : undefined
         );
-
-        if (response.segments && response.segments.length > 0) {
-          allNewAudioSegments.push(...response.segments);
-        }
-
-        currentNextToken = response.nextToken;
-        hasMore = !!currentNextToken;
+        return response.segments || [];
+      } catch (error) {
+        console.error(
+          'Error polling for new audio segments (no initial audio segments):',
+          error
+        );
+        return [];
       }
-    } catch (error) {
-      console.error('Error polling for new audio segments:', error);
     }
-
-    return allNewAudioSegments.reverse();
   }, [newestTimestamp, searchedFeedId, token, alertFilter]);
 
   const updateCacheWithNewAudioSegments = useCallback(

@@ -786,24 +786,33 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
             b"recovered-audio",
         ]
 
-        result = await gcp_helper.download_audio(
-            mock_gcs_client,
-            "gs://my-bucket/path/to/audio.flac",
-        )
+        with patch("asyncio.sleep", AsyncMock()):
+            result = await gcp_helper.download_audio(
+                mock_gcs_client,
+                "gs://my-bucket/path/to/audio.flac",
+            )
 
         self.assertEqual(mock_storage.download.call_count, 3)
         self.assertEqual(result, b"recovered-audio")
 
     async def test_async_gcs_predicate_evaluations(self) -> None:
-        """Verify _async_gcs_predicate correctly discriminates status and SDK errors."""
-        # 404 and 403 are not retryable
+        """Verify _should_retry_gcs correctly discriminates status and SDK errors."""
+        # 404, 403, and 412 are not retryable
         exc_404 = aiohttp.ClientResponseError(
             request_info=_DUMMY_REQUEST_INFO,
             history=(),
             status=404,
             message="Not Found",
         )
-        self.assertFalse(gcp_helper._async_gcs_predicate(exc_404))
+        self.assertFalse(gcp_helper._should_retry_gcs(exc_404))
+
+        exc_412 = aiohttp.ClientResponseError(
+            request_info=_DUMMY_REQUEST_INFO,
+            history=(),
+            status=412,
+            message="Precondition Failed",
+        )
+        self.assertFalse(gcp_helper._should_retry_gcs(exc_412))
 
         # 429 Too Many Requests is retryable
         exc_429 = aiohttp.ClientResponseError(
@@ -812,11 +821,11 @@ class TestDownloadAudio(unittest.IsolatedAsyncioTestCase):
             status=429,
             message="Too Many Requests",
         )
-        self.assertTrue(gcp_helper._async_gcs_predicate(exc_429))
+        self.assertTrue(gcp_helper._should_retry_gcs(exc_429))
 
         # TimeoutError is retryable
         exc_timeout = TimeoutError("Socket dropped")
-        self.assertTrue(gcp_helper._async_gcs_predicate(exc_timeout))
+        self.assertTrue(gcp_helper._should_retry_gcs(exc_timeout))
 
 
 if __name__ == "__main__":

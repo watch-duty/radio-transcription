@@ -90,6 +90,21 @@ def verify_audio_segments_via_api(
     timeout_sec: float = 300.0,
 ) -> bool:
     """Polls /v1/audio_segments until a segment matching the condition is found."""
+    return verify_multiple_audio_segments_via_api(
+        feed_id=feed_id,
+        matcher=matcher,
+        min_count=1,
+        timeout_sec=timeout_sec,
+    )
+
+
+def verify_multiple_audio_segments_via_api(
+    feed_id: str,
+    matcher: Callable[[dict], bool],
+    min_count: int,
+    timeout_sec: float = 300.0,
+) -> bool:
+    """Polls /v1/audio_segments until at least `min_count` segments matching the condition are found."""
     base_url = get_audio_segments_api_url()
 
     async def _check_api():
@@ -100,7 +115,12 @@ def verify_audio_segments_via_api(
             if res.status_code != 200:
                 return False
             data = res.json()
-            return any(matcher(segment) for segment in data.get("segments", []))
+            matches = [
+                segment
+                for segment in data.get("segments", [])
+                if matcher(segment)
+            ]
+            return len(matches) >= min_count
 
     def condition():
         try:
@@ -109,10 +129,12 @@ def verify_audio_segments_via_api(
             logger.warning(f"API check failed: {e}")
             return False
 
-    logger.info("Waiting for matching audio segment via API...")
+    logger.info(
+        f"Waiting for at least {min_count} matching audio segments via API..."
+    )
     assert_eventually(
         condition,
         timeout_sec=timeout_sec,
-        error_msg="No matching audio segment found via API",
+        error_msg=f"Did not find {min_count} matching audio segments via API",
     )
     return True
