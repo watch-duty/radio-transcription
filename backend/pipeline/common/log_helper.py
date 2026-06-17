@@ -11,7 +11,6 @@ from google.cloud import logging as cloud_logging
 from backend.pipeline.common.env import is_gcp_env
 from backend.pipeline.common.tracing_utils import (
     get_trace_attributes,
-    setup_tracing,
 )
 
 logger = logging.getLogger(__name__)
@@ -99,8 +98,6 @@ def setup_logging() -> None:
     if is_gcp_env():
         client = cloud_logging.Client()
         client.setup_logging()
-
-        setup_tracing(use_batch=False)
     else:
         # Standardized format for local development or unsupported environments
         logging.basicConfig(
