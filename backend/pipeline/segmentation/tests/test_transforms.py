@@ -2118,6 +2118,8 @@ class UploadRawSegmentFnTest(unittest.TestCase):
             staging_audio_bucket="bucket", project_id="proj"
         )
         fn.gcs_client = MagicMock()
+        fn.segmentation_success = MagicMock()
+        fn.segmentation_error = MagicMock()
 
         request = FlushRequest(
             buffer=b"audio-data",

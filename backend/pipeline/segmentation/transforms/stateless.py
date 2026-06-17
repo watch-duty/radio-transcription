@@ -187,6 +187,8 @@ class UploadRawSegmentFn(beam.DoFn):
     """
 
     SHARED_GCS_HANDLE = Shared()
+    segmentation_success: Any
+    segmentation_error: Any
 
     def __init__(
         self, staging_audio_bucket: str | None, project_id: str
