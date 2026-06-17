@@ -251,10 +251,22 @@ jobs:
         run: yarn --cwd frontend/api install --frozen-lockfile --non-interactive && yarn --cwd frontend/transcription-ui install --frozen-lockfile --non-interactive
       - name: Run proxy tests
         working-directory: frontend/api
-        run: yarn test --watch=false
+        run: yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text
+      - name: Report Proxy Coverage
+        uses: davelosert/vitest-coverage-report@v2
+        if: always()
+        with:
+          json-summary-path: frontend/api/coverage/coverage-summary.json
+          name: Frontend Proxy API Coverage
       - name: Run UI tests
         working-directory: frontend/transcription-ui
-        run: yarn test --watch=false
+        run: yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text
+      - name: Report UI Coverage
+        uses: davelosert/vitest-coverage-report@v2
+        if: always()
+        with:
+          json-summary-path: frontend/transcription-ui/coverage/coverage-summary.json
+          name: Frontend UI Coverage
 
   # Builds each service's Dockerfile and verifies all transitive imports resolve
   # and required environment variables are documented. This catches:
