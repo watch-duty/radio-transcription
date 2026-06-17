@@ -11,12 +11,12 @@ import functions_framework
 if TYPE_CHECKING:
     from cloudevents.http import event as cloudevent
 
-from backend.pipeline.common import ForkAwareContainer
 from backend.pipeline.common.clients import pubsub_client
 from backend.pipeline.common.clients.audio_segments_client import (
     AudioSegmentsClient,
 )
 from backend.pipeline.common.clients.transcripts_client import TranscriptsClient
+from backend.pipeline.common.container import ForkAwareContainer
 from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.evaluation import service

@@ -11,8 +11,8 @@ import functions_framework
 from cloudevents.http.event import CloudEvent
 from google.cloud import pubsub_v1
 
-from backend.pipeline.common import ForkAwareContainer
 from backend.pipeline.common.clients import audio_segments_client
+from backend.pipeline.common.container import ForkAwareContainer
 from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.transcription.enums import TranscriberType
