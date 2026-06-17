@@ -101,6 +101,18 @@ class FeedStatus(enum.StrEnum):
     DEACTIVATED = "deactivated"
 
 
+_FEED_STATUS_REASON_OWNERS = frozenset({"source", "system", "pipeline"})
+
+
+def _status_reason_owner(status_reason: str) -> str:
+    """Return the owner namespace encoded by a status-reason prefix."""
+    owner, separator, _ = status_reason.partition("_")
+    if not separator or owner not in _FEED_STATUS_REASON_OWNERS:
+        msg = f"Unsupported status reason owner in {status_reason!r}"
+        raise ValueError(msg)
+    return owner
+
+
 class FeedStatusReason(enum.StrEnum):
     """Canonical abnormal feed reason stored in ``feeds.status_reason``."""
 
@@ -121,6 +133,11 @@ class FeedStatusReason(enum.StrEnum):
     SYSTEM_COLLECTOR_ERROR = "system_collector_error"
     SYSTEM_PIPELINE_ERROR = "system_pipeline_error"
     SYSTEM_UNEXPECTED_ERROR = "system_unexpected_error"
+
+    @property
+    def owner(self) -> str:
+        """Coarse owner namespace encoded by the reason prefix."""
+        return _status_reason_owner(self.value)
 
 
 class LeasedFeed(TypedDict):

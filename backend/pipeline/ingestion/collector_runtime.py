@@ -89,6 +89,16 @@ class _PipelineFailure(Exception):
         self.status_reason = status_reason
 
 
+def _logs_as_non_budgeted_source_observation(
+    status_reason: FeedStatusReason,
+) -> bool:
+    """Return whether a non-budgeted failure should use source log severity."""
+    return (
+        status_reason.owner == "source"
+        or status_reason is FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID
+    )
+
+
 class CollectorRuntime:
     """
     Generic runtime orchestrator for a fleet of async feed-processing tasks.
@@ -1028,11 +1038,7 @@ class CollectorRuntime:
                 "status_reason": status_reason.value,
             },
         }
-        if status_reason in (
-            FeedStatusReason.SOURCE_OFFLINE,
-            FeedStatusReason.SOURCE_UNREACHABLE,
-            FeedStatusReason.SOURCE_RATE_LIMITED,
-        ):
+        if status_reason.owner == "source":
             # External operational Gotchas (e.g. Icecast 404 stream missing, CDN bans) are environment observations.
             # Log them as a warning without attaching a noisy stack traceback or spawning permanent Stackdriver Error Groups.
             logger.warning(
@@ -1120,11 +1126,7 @@ class CollectorRuntime:
                 feed["name"],
                 reason,
             )
-        elif (
-            status_reason.value.startswith("source_")
-            or status_reason
-            is FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID
-        ):
+        elif _logs_as_non_budgeted_source_observation(status_reason):
             logger.info(
                 "Feed source failure suppressed from quarantine budget: "
                 "feed=%s reason=%s",

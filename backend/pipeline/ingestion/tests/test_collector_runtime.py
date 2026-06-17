@@ -2403,6 +2403,54 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             [record for record in cm.records if record.levelno >= logging.ERROR]
         )
 
+    async def test_non_budgeted_source_owner_uses_source_observation_log(
+        self,
+    ) -> None:
+        """Source-owned non-budgeted failures use source observation logs."""
+        retry_after = datetime.datetime(2026, 6, 15, tzinfo=datetime.UTC)
+
+        async def _failing_capture(feed, shutdown, _resources):
+            raise FeedFailure(
+                FeedStatusReason.SOURCE_RATE_LIMITED,
+                "source_rate_limited",
+            )
+            yield _make_captured_chunk(b"audio")
+
+        rt = CollectorRuntime(
+            capture_fn=_failing_capture,
+            settings=_make_settings(),
+        )
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.release_non_budgeted_failure.return_value = "failing"
+        rt._releasing_feeds = set()
+
+        with (
+            mock.patch.object(
+                CollectorRuntime,
+                "_non_budgeted_retry_after",
+                return_value=retry_after,
+            ),
+            self.assertLogs(
+                "backend.pipeline.ingestion.collector_runtime",
+                level=logging.INFO,
+            ) as cm,
+        ):
+            await rt._process_feed(_FEED)
+
+        self.assertTrue(
+            any(
+                "Feed source failure suppressed from quarantine budget"
+                in record.getMessage()
+                for record in cm.records
+            )
+        )
+        self.assertFalse(
+            [record for record in cm.records if record.levelno >= logging.ERROR]
+        )
+
     async def test_gcs_upload_failure_records_pipeline_error(self) -> None:
         """Upload failures after a valid chunk use the GCS stage tag."""
 

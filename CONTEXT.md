@@ -240,6 +240,12 @@ promotes it to a more precise operator-actionable failure.
 The current canonical abnormal-condition label for a feed. It is visible to
 operators and is the v1 routing key for failure policy decisions.
 
+### Status Reason Owner
+
+The coarse ownership namespace encoded by a status reason prefix: `source`,
+`system`, or `pipeline`. It identifies the layer that owns the abnormal
+condition and is distinct from retry, quarantine, and logging policy.
+
 ### Failure Policy Action
 
 The side-effect-free runtime action selected from a `FeedStatusReason`.

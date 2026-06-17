@@ -57,6 +57,11 @@ text for the failure episode that crosses the quarantine threshold. Do not
 parse it for canonical ownership, do not treat it as a stable code, and do not
 replace it with `status_reason`.
 
+Status-reason prefixes are semantic owner namespaces: `source_` for external
+source/provider conditions, `system_` for Watch Duty-owned system conditions,
+and `pipeline_` for post-capture pipeline conditions. Ownership is not the
+same as retry, quarantine, or logging policy.
+
 Use source-owned reasons when the source or its provider cannot currently
 supply usable audio for this feed:
 

@@ -12,7 +12,7 @@ from unittest import mock
 import asyncpg
 import yaml
 
-from backend.pipeline.storage import feed_queries, quarantine_reason
+from backend.pipeline.storage import feed_queries, feed_store, quarantine_reason
 from backend.pipeline.storage.feed_store import (
     FeedStatus,
     FeedStatusReason,
@@ -177,6 +177,32 @@ class TestFeedStatusReason(unittest.TestCase):
                 reason.value.startswith(("source_", "system_", "pipeline_")),
                 reason.value,
             )
+
+    def test_reason_owner_comes_from_status_prefix(self) -> None:
+        cases = {
+            FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED: "pipeline",
+            FeedStatusReason.SOURCE_OFFLINE: "source",
+            FeedStatusReason.SOURCE_UNREACHABLE: "source",
+            FeedStatusReason.SOURCE_RATE_LIMITED: "source",
+            FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED: "system",
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID: "system",
+            FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID: "system",
+            FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID: "system",
+            FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED: "system",
+            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID: "system",
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR: "system",
+            FeedStatusReason.SYSTEM_PIPELINE_ERROR: "system",
+            FeedStatusReason.SYSTEM_UNEXPECTED_ERROR: "system",
+        }
+
+        self.assertEqual(set(cases), set(FeedStatusReason))
+        for reason, owner in cases.items():
+            with self.subTest(reason=reason.value):
+                self.assertEqual(reason.owner, owner)
+
+    def test_reason_owner_rejects_unknown_prefix(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Unsupported status reason"):
+            feed_store._status_reason_owner("unknown_failure")
 
 
 class TestSourceType(unittest.TestCase):
