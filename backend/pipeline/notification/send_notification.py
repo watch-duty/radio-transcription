@@ -29,6 +29,7 @@ from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
 from backend.services.feeds.models import Tag
+
 # Setup Logging
 setup_logging()
 logger = logging.getLogger(__name__)

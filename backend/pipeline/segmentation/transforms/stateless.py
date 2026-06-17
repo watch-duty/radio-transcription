@@ -19,7 +19,7 @@ from apache_beam.io.gcp.pubsub import PubsubMessage
 from apache_beam.utils.shared import Shared
 from google.protobuf.duration_pb2 import Duration
 from google.protobuf.timestamp_pb2 import Timestamp
-from opentelemetry import metrics, trace
+from opentelemetry import trace
 
 from backend.pipeline.common.constants import (
     MICROSECONDS_PER_MS,
@@ -99,7 +99,7 @@ class ParseAndKeyFn(beam.DoFn):
             chunk_proto = ContinuousAudio()
             chunk_proto.ParseFromString(element.data)
             feed_id = chunk_proto.feed_id
-            
+
             record_pipeline_stage("segmentation", "start")
 
             context = extract_trace_context(element.attributes)
