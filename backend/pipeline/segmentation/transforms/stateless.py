@@ -19,7 +19,7 @@ from apache_beam.io.gcp.pubsub import PubsubMessage
 from apache_beam.utils.shared import Shared
 from google.protobuf.duration_pb2 import Duration
 from google.protobuf.timestamp_pb2 import Timestamp
-from opentelemetry import trace
+from opentelemetry import metrics, trace
 
 from backend.pipeline.common.constants import (
     MICROSECONDS_PER_MS,
@@ -30,6 +30,7 @@ from backend.pipeline.common.log_helper import get_task_logger
 from backend.pipeline.common.tracing_utils import (
     extract_trace_context,
     inject_otel_context,
+    record_pipeline_stage,
     setup_tracing,
     with_tracer_context,
 )
@@ -98,6 +99,9 @@ class ParseAndKeyFn(beam.DoFn):
             chunk_proto = ContinuousAudio()
             chunk_proto.ParseFromString(element.data)
             feed_id = chunk_proto.feed_id
+            
+            record_pipeline_stage("segmentation", "start")
+
             context = extract_trace_context(element.attributes)
             tracer = trace.get_tracer(__name__)
             with tracer.start_as_current_span(
@@ -166,6 +170,7 @@ class ParseAndKeyFn(beam.DoFn):
         except Exception as e:
             msg = f"Failed to parse or validate payload: {e}"
             logger.exception(msg)
+            record_pipeline_stage("segmentation", "error")
             outputs.append(
                 beam.pvalue.TaggedOutput(
                     DEAD_LETTER_QUEUE_TAG,
@@ -312,12 +317,14 @@ class UploadRawSegmentFn(beam.DoFn):
                     attributes=pubsub_attributes,
                     ordering_key=request.feed_id,
                 )
+                record_pipeline_stage("segmentation", "success")
 
         except Exception as e:
             logger.exception(
                 "Error uploading raw segment for feed %s",
                 feed_id,
             )
+            record_pipeline_stage("segmentation", "error")
             yield beam.pvalue.TaggedOutput(
                 DEAD_LETTER_QUEUE_TAG,
                 {"error": str(e), "feed_id": feed_id},
