@@ -224,7 +224,7 @@ jobs:
       - name: Run tests
         run: |
           set -o pipefail
-          uv run python -m pytest backend/ -q --cov=backend/pipeline --cov-report=term-missing | tee unit-coverage.txt
+          uv run python -m pytest backend/ -q --cov=backend/pipeline --cov-report=term-missing --color=no > unit-coverage.txt
       - name: Extract Coverage
         id: extract_cov
         if: always()
@@ -281,7 +281,7 @@ jobs:
         working-directory: frontend/api
         run: |
           set -o pipefail
-          yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text | tee proxy-coverage.txt
+          yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text --no-color > proxy-coverage.txt
       - name: Extract Proxy Coverage
         id: extract_proxy_cov
         if: always()
@@ -295,7 +295,7 @@ jobs:
         working-directory: frontend/transcription-ui
         run: |
           set -o pipefail
-          yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text | tee ui-coverage.txt
+          yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text --no-color > ui-coverage.txt
       - name: Extract UI Coverage
         id: extract_ui_cov
         if: always()

@@ -50,7 +50,7 @@ jobs:
       - name: Run component tests
         run: |
           set -o pipefail
-          mise run test:component --cov=backend/pipeline --cov-report=term-missing | tee storage-coverage.txt
+          mise run test:component --cov=backend/pipeline --cov-report=term-missing --color=no > storage-coverage.txt
           
       - name: Extract Storage Coverage
         id: extract_storage_cov
@@ -117,7 +117,7 @@ jobs:
       - name: Run E2E tests
         run: |
           set -o pipefail
-          docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run --rm integration-tests sh -c "pip install -q uv && uv sync && uv run python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto && uv run pytest integration_tests/ --ignore=integration_tests/storage/ -n auto -v -s --log-cli-level=INFO --cov=backend/pipeline --cov-report=term-missing" | tee e2e-coverage.txt
+          docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run --rm integration-tests sh -c "pip install -q uv && uv sync && uv run python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto && uv run pytest integration_tests/ --ignore=integration_tests/storage/ -n auto -v -s --log-cli-level=INFO --cov=backend/pipeline --cov-report=term-missing --color=no" > e2e-coverage.txt
 
       - name: Extract E2E Coverage
         id: extract_e2e_cov
