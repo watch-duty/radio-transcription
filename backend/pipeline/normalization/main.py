@@ -14,6 +14,7 @@ from google.cloud import pubsub_v1, storage
 from backend.pipeline.common.clients.audio_segments_client import (
     AudioSegmentsClient,
 )
+from backend.pipeline.common.container_helper import ForkDetector, fork_checked
 from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.normalization.processor import NormalizationEventProcessor
@@ -27,10 +28,26 @@ class NormalizationServiceContainer:
     """Encapsulates the warm-started cached service container instances for GCF."""
 
     def __init__(self) -> None:
+        self._fork_detector = ForkDetector(self.reset_clients)
         self._processor: NormalizationEventProcessor | None = None
         self._publisher: pubsub_v1.PublisherClient | None = None
         self._gcs_client: storage.Client | None = None
 
+    def reset_clients(self) -> None:
+        if self._publisher is not None:
+            try:
+                close_fn = getattr(self._publisher, "close", None)
+                if close_fn is not None:
+                    close_fn()
+            except Exception:
+                logger.exception(
+                    "Failed to close Pub/Sub publisher client on fork reset"
+                )
+        self._processor = None
+        self._publisher = None
+        self._gcs_client = None
+
+    @fork_checked
     def get_publisher(self) -> pubsub_v1.PublisherClient:
         """Warms up and caches the Pub/Sub publisher client with ordering enabled.
 
@@ -47,6 +64,7 @@ class NormalizationServiceContainer:
             )
         return self._publisher
 
+    @fork_checked
     def get_gcs_client(self, project_id: str) -> storage.Client:
         """Warms up and caches the GCS client.
 
@@ -61,6 +79,7 @@ class NormalizationServiceContainer:
             self._gcs_client = storage.Client(project=project_id)
         return self._gcs_client
 
+    @fork_checked
     def get_processor(self) -> NormalizationEventProcessor:
         """Warms up and caches the Event Processor instance.
 
