@@ -67,22 +67,25 @@ jobs:
         if: always() && env.PERCENTAGE != ''
         with:
           script: |
+            const fs = require('fs');
             const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
-            const { data: checks } = await github.rest.checks.listForRef({
+            let summary = 'No coverage report found';
+            if (fs.existsSync('storage-coverage.txt')) {
+              const content = fs.readFileSync('storage-coverage.txt', 'utf8');
+              summary = `### Storage Integration Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
+            }
+            await github.rest.checks.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              ref: ref,
-              check_name: 'component-tests',
+              head_sha: ref,
+              name: `Storage Integration Coverage: ${process.env.PERCENTAGE}`,
+              status: 'completed',
+              conclusion: 'success',
+              output: {
+                title: `Storage Integration Coverage: ${process.env.PERCENTAGE}`,
+                summary: summary,
+              }
             });
-            if (checks.check_runs.length > 0) {
-              const checkRun = checks.check_runs[0];
-              await github.rest.checks.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                check_run_id: checkRun.id,
-                name: `component-tests - ${process.env.PERCENTAGE} coverage`,
-              });
-            }
 
   e2e-tests:
     runs-on: ubuntu-24.04
@@ -131,22 +134,25 @@ jobs:
         if: always() && env.PERCENTAGE != ''
         with:
           script: |
+            const fs = require('fs');
             const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
-            const { data: checks } = await github.rest.checks.listForRef({
+            let summary = 'No coverage report found';
+            if (fs.existsSync('e2e-coverage.txt')) {
+              const content = fs.readFileSync('e2e-coverage.txt', 'utf8');
+              summary = `### E2E Integration Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
+            }
+            await github.rest.checks.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              ref: ref,
-              check_name: 'e2e-tests',
+              head_sha: ref,
+              name: `E2E Integration Coverage: ${process.env.PERCENTAGE}`,
+              status: 'completed',
+              conclusion: 'success',
+              output: {
+                title: `E2E Integration Coverage: ${process.env.PERCENTAGE}`,
+                summary: summary,
+              }
             });
-            if (checks.check_runs.length > 0) {
-              const checkRun = checks.check_runs[0];
-              await github.rest.checks.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                check_run_id: checkRun.id,
-                name: `e2e-tests - ${process.env.PERCENTAGE} coverage`,
-              });
-            }
 
       - name: Print container logs on failure
         if: failure()

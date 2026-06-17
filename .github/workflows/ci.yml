@@ -240,22 +240,25 @@ jobs:
         if: always() && env.PERCENTAGE != ''
         with:
           script: |
+            const fs = require('fs');
             const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
-            const { data: checks } = await github.rest.checks.listForRef({
+            let summary = 'No coverage report found';
+            if (fs.existsSync('unit-coverage.txt')) {
+              const content = fs.readFileSync('unit-coverage.txt', 'utf8');
+              summary = `### Unit Test Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
+            }
+            await github.rest.checks.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              ref: ref,
-              check_name: 'run-backend-tests',
+              head_sha: ref,
+              name: `Unit Test Coverage: ${process.env.PERCENTAGE}`,
+              status: 'completed',
+              conclusion: 'success',
+              output: {
+                title: `Unit Test Coverage: ${process.env.PERCENTAGE}`,
+                summary: summary,
+              }
             });
-            if (checks.check_runs.length > 0) {
-              const checkRun = checks.check_runs[0];
-              await github.rest.checks.update({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                check_run_id: checkRun.id,
-                name: `run-backend-tests - ${process.env.PERCENTAGE} coverage`,
-              });
-            }
 
   run-frontend-tests:
     needs: [setup]
@@ -276,7 +279,9 @@ jobs:
         run: yarn --cwd frontend/api install --frozen-lockfile --non-interactive && yarn --cwd frontend/transcription-ui install --frozen-lockfile --non-interactive
       - name: Run proxy tests
         working-directory: frontend/api
-        run: yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text
+        run: |
+          set -o pipefail
+          yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text | tee proxy-coverage.txt
       - name: Extract Proxy Coverage
         id: extract_proxy_cov
         if: always()
@@ -288,7 +293,9 @@ jobs:
           fi
       - name: Run UI tests
         working-directory: frontend/transcription-ui
-        run: yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text
+        run: |
+          set -o pipefail
+          yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text | tee ui-coverage.txt
       - name: Extract UI Coverage
         id: extract_ui_cov
         if: always()
@@ -303,23 +310,46 @@ jobs:
         if: always() && (env.PROXY_PERCENTAGE != '' || env.UI_PERCENTAGE != '')
         with:
           script: |
+            const fs = require('fs');
             const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
-            const { data: checks } = await github.rest.checks.listForRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: ref,
-              check_name: 'run-frontend-tests',
-            });
-            if (checks.check_runs.length > 0) {
-              const checkRun = checks.check_runs[0];
-              const proxy = process.env.PROXY_PERCENTAGE ? `Proxy: ${process.env.PROXY_PERCENTAGE}` : '';
-              const ui = process.env.UI_PERCENTAGE ? `UI: ${process.env.UI_PERCENTAGE}` : '';
-              const coverageStr = [proxy, ui].filter(Boolean).join(', ');
-              await github.rest.checks.update({
+            
+            if (process.env.PROXY_PERCENTAGE) {
+              let summary = 'No coverage report found';
+              if (fs.existsSync('frontend/api/proxy-coverage.txt')) {
+                const content = fs.readFileSync('frontend/api/proxy-coverage.txt', 'utf8');
+                summary = `### Frontend Proxy API Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
+              }
+              await github.rest.checks.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                check_run_id: checkRun.id,
-                name: `run-frontend-tests - ${coverageStr} coverage`,
+                head_sha: ref,
+                name: `Frontend Proxy API Coverage: ${process.env.PROXY_PERCENTAGE}`,
+                status: 'completed',
+                conclusion: 'success',
+                output: {
+                  title: `Frontend Proxy API Coverage: ${process.env.PROXY_PERCENTAGE}`,
+                  summary: summary,
+                }
+              });
+            }
+            
+            if (process.env.UI_PERCENTAGE) {
+              let summary = 'No coverage report found';
+              if (fs.existsSync('frontend/transcription-ui/ui-coverage.txt')) {
+                const content = fs.readFileSync('frontend/transcription-ui/ui-coverage.txt', 'utf8');
+                summary = `### Frontend UI Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
+              }
+              await github.rest.checks.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                head_sha: ref,
+                name: `Frontend UI Coverage: ${process.env.UI_PERCENTAGE}`,
+                status: 'completed',
+                conclusion: 'success',
+                output: {
+                  title: `Frontend UI Coverage: ${process.env.UI_PERCENTAGE}`,
+                  summary: summary,
+                }
               });
             }
 
