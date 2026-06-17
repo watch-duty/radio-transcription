@@ -245,6 +245,9 @@ jobs:
       - name: Run UI tests
         working-directory: frontend/transcription-ui
         run: yarn test --watch=false
+      - name: Run API integration tests
+        working-directory: frontend/api
+        run: yarn test:integration
 
   # Builds each service's Dockerfile and verifies all transitive imports resolve
   # and required environment variables are documented. This catches:

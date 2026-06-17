@@ -1,9 +1,10 @@
 {
   "extends": "@tsconfig/node22/tsconfig.json",
   "compilerOptions": {
-    "rootDir": "./src",
+    "rootDir": ".",
     "outDir": "./dist",
     "experimentalDecorators": true,
     "rootDirs": ["./src", "../common"]
-  }
+  },
+  "include": ["./src", "./integration_tests"]
 }

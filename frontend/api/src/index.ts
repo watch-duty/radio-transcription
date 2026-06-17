@@ -36,13 +36,20 @@ app.use(
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     next: express.NextFunction
   ) => {
-    console.error(err);
+    if (err && typeof err === 'object' && 'status' in err) {
+      const status = (err as { status: unknown }).status;
+      if (typeof status === 'number') {
+        res.status(status).json({ message: err.message });
+        return;
+      }
+    }
 
     if (err instanceof HttpError) {
       res.status(err.status).json({ message: err.message });
       return;
     }
 
+    console.error(err);
     res.status(500).json({ message: 'Internal Server Error' });
   }
 );
