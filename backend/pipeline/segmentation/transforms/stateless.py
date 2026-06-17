@@ -16,6 +16,7 @@ import apache_beam as beam
 import numpy as np
 import soundfile as sf
 from apache_beam.io.gcp.pubsub import PubsubMessage
+from apache_beam.metrics import Metrics
 from apache_beam.utils.shared import Shared
 from google.protobuf.duration_pb2 import Duration
 from google.protobuf.timestamp_pb2 import Timestamp
@@ -30,7 +31,6 @@ from backend.pipeline.common.log_helper import get_task_logger
 from backend.pipeline.common.tracing_utils import (
     extract_trace_context,
     inject_otel_context,
-    record_pipeline_stage,
     setup_tracing,
     with_tracer_context,
 )
@@ -82,8 +82,14 @@ class ParseAndKeyFn(beam.DoFn):
 
     @override
     def setup(self) -> None:
-        """Initializes tracing for the worker."""
+        """Initializes tracing and metrics for the worker."""
         setup_tracing(service_name="segmentation-pipeline")
+        self.segmentation_start = Metrics.counter(
+            self.__class__, "segmentation_start"
+        )
+        self.segmentation_error = Metrics.counter(
+            self.__class__, "segmentation_error"
+        )
 
     @override
     def process(
@@ -100,7 +106,7 @@ class ParseAndKeyFn(beam.DoFn):
             chunk_proto.ParseFromString(element.data)
             feed_id = chunk_proto.feed_id
 
-            record_pipeline_stage("segmentation", "start")
+            self.segmentation_start.inc()
 
             context = extract_trace_context(element.attributes)
             tracer = trace.get_tracer(__name__)
@@ -170,7 +176,7 @@ class ParseAndKeyFn(beam.DoFn):
         except Exception as e:
             msg = f"Failed to parse or validate payload: {e}"
             logger.exception(msg)
-            record_pipeline_stage("segmentation", "error")
+            self.segmentation_error.inc()
             outputs.append(
                 beam.pvalue.TaggedOutput(
                     DEAD_LETTER_QUEUE_TAG,
@@ -204,6 +210,12 @@ class UploadRawSegmentFn(beam.DoFn):
     def setup(self) -> None:
         self.gcs_client = acquire_shared_gcs_client(
             self.project_id, shared_handle=self.SHARED_GCS_HANDLE
+        )
+        self.segmentation_success = Metrics.counter(
+            self.__class__, "segmentation_success"
+        )
+        self.segmentation_error = Metrics.counter(
+            self.__class__, "segmentation_error"
         )
 
     def _pcm_to_flac(self, pcm_bytes: bytes, sample_rate: int) -> bytes:
@@ -317,14 +329,14 @@ class UploadRawSegmentFn(beam.DoFn):
                     attributes=pubsub_attributes,
                     ordering_key=request.feed_id,
                 )
-                record_pipeline_stage("segmentation", "success")
+                self.segmentation_success.inc()
 
         except Exception as e:
             logger.exception(
                 "Error uploading raw segment for feed %s",
                 feed_id,
             )
-            record_pipeline_stage("segmentation", "error")
+            self.segmentation_error.inc()
             yield beam.pvalue.TaggedOutput(
                 DEAD_LETTER_QUEUE_TAG,
                 {"error": str(e), "feed_id": feed_id},
