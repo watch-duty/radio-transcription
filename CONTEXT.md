@@ -139,6 +139,13 @@ The source-specific scope used to decide whether item failures are isolated or
 feed-level. For polling collectors this is usually one response page or file
 listing.
 
+### Object-Scoped Failure
+
+A failure limited to one source object, item, media URL, or Echo Eventarc GCS
+object. It does not prove the whole feed is broken by itself, so it should not
+promote to feed-level quarantine evidence without broader observation-boundary
+evidence.
+
 ### Collector-Local Failure Streak
 
 An in-memory streak of failed poll, fetch, connection, or source operations
@@ -194,7 +201,9 @@ feed.
 A post-capture ingestion failure after source capture has succeeded or
 partially succeeded. The source feed may be healthy, so v1 keeps these failures
 outside the feed quarantine budget while preserving visibility for repair and
-replay work.
+replay work. Echo v1 records these failures as non-budgeted status and ACKs the
+Eventarc event to avoid retry loops and duplicate Pub/Sub publish risk until a
+durable hold/replay lane exists.
 
 ### Post-Bookmark Publish Failure
 

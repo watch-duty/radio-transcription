@@ -174,7 +174,8 @@ class TestEchoCollectorIntegration(unittest.TestCase):
 
     def _get_feed_row(self, feed_id: uuid.UUID) -> dict[str, Any]:
         row = self.conn.execute(
-            "SELECT status::text, failure_count FROM feeds WHERE id = %s",
+            "SELECT status::text, failure_count, status_reason, retry_after,"
+            " quarantine_reason FROM feeds WHERE id = %s",
             (feed_id,),
         ).fetchone()
         assert row is not None
@@ -198,12 +199,20 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         resp.raise_for_status()
         return resp.content
 
-    def _run_handler(self, event: MagicMock) -> None:
+    def _run_handler(
+        self,
+        event: MagicMock,
+        *,
+        duration_side_effect: Exception | None = None,
+    ) -> None:
         """Run _handle with real GCS + DB, mocked publisher."""
         mock_pubsub = MagicMock()
         mock_pubsub.get_publisher.return_value = self.mock_publisher
 
         store = SyncFeedStore(partial(connect_db, self._db_settings))
+        duration_mock = MagicMock(return_value=15000)
+        if duration_side_effect is not None:
+            duration_mock.side_effect = duration_side_effect
 
         with (
             patch.object(echo_main, "gcs_client", self.gcs),
@@ -215,7 +224,7 @@ class TestEchoCollectorIntegration(unittest.TestCase):
                 _SEGMENTED_PUBSUB_TOPIC_PATH,
             ),
             patch.object(echo_main, "STAGING_BUCKET", _STAGING_BUCKET),
-            patch.object(echo_main, "get_audio_duration", return_value=15000),
+            patch.object(echo_main, "get_audio_duration", duration_mock),
         ):
             echo_main._handle(event)
 
@@ -277,8 +286,8 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         self.assertEqual(row["status"], "active")
         self.mock_publisher.publish.assert_not_called()
 
-    def test_failure_increments_to_quarantine(self) -> None:
-        """5 consecutive infrastructure failures -> feed quarantined."""
+    def test_pipeline_failure_does_not_quarantine(self) -> None:
+        """Pipeline failures are visible but do not consume feed budget."""
         channel = "failing-ch"
         feed_id = self._insert_echo_feed(channel)
 
@@ -297,12 +306,49 @@ class TestEchoCollectorIntegration(unittest.TestCase):
             "Pub/Sub unavailable"
         )
 
-        with self.assertRaises(Exception):
-            self._run_handler(self._make_cloud_event(name))
+        self._run_handler(self._make_cloud_event(name))
 
         row = self._get_feed_row(feed_id)
-        self.assertEqual(row["failure_count"], 5)
-        self.assertEqual(row["status"], "quarantined")
+        self.assertEqual(row["failure_count"], 0)
+        self.assertEqual(row["status"], "failing")
+        self.assertEqual(row["status_reason"], "system_pipeline_error")
+        self.assertIsNone(row["retry_after"])
+        self.assertIsNone(row["quarantine_reason"])
+
+    def test_duration_failure_does_not_block_later_valid_object(self) -> None:
+        """One bad Echo object cannot quarantine or block later objects."""
+        channel = "duration-failing-ch"
+        feed_id = self._insert_echo_feed(channel)
+
+        self.conn.execute(
+            "UPDATE feeds SET failure_count = 4, status = 'failing'"
+            " WHERE id = %s",
+            (feed_id,),
+        )
+
+        bad_name = f"{channel}/20260326/bad_20260326_143022.mp3"
+        good_name = f"{channel}/20260326/good_20260326_143122.mp3"
+        self._upload_mp3(bad_name)
+        self._upload_mp3(good_name)
+
+        self._run_handler(
+            self._make_cloud_event(bad_name),
+            duration_side_effect=ValueError("bad mp3"),
+        )
+
+        bad_row = self._get_feed_row(feed_id)
+        self.assertEqual(bad_row["failure_count"], 0)
+        self.assertEqual(bad_row["status"], "failing")
+        self.assertEqual(bad_row["status_reason"], "system_collector_error")
+        self.mock_publisher.publish.assert_not_called()
+
+        self._run_handler(self._make_cloud_event(good_name))
+
+        good_row = self._get_feed_row(feed_id)
+        self.assertEqual(good_row["failure_count"], 0)
+        self.assertEqual(good_row["status"], "active")
+        self.assertIsNone(good_row["status_reason"])
+        self.mock_publisher.publish.assert_called_once()
 
     def test_success_resets_failure_count(self) -> None:
         """Successful processing resets failure_count to 0."""

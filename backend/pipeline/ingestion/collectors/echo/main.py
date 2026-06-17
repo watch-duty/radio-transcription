@@ -24,6 +24,7 @@ from backend.pipeline.common.audio import get_audio_duration
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.gcp_helper import publish_audio_chunk_sync
 from backend.pipeline.common.log_helper import setup_logging
+from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.failure_classifiers import (
     ffmpeg as ffmpeg_classifier,
@@ -60,6 +61,10 @@ _RECORDING_DOWNLOAD_FAILED = "echo_recording_download_failed"
 _STAGING_UPLOAD_FAILED = "echo_staging_upload_failed"
 _PUBSUB_PUBLISH_FAILED = "echo_pubsub_publish_failed"
 _HEARTBEAT_WRITE_FAILED = "echo_heartbeat_write_failed"
+_ACK_RECORDED_STATUS_REASONS = {
+    FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+    FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+}
 
 # ---------------------------------------------------------------------------
 # Global state (persisted across warm invocations)
@@ -158,7 +163,7 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
                 "Echo duration probe failed: %s",
                 reason,
             )
-            failure = _pipeline_failure(reason)
+            failure = _collector_failure(reason)
             raise
 
         # RTL-Airband appends the filename timestamp when opening a split
@@ -240,20 +245,35 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
             FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
             _unexpected_failure_reason(exc),
         )
-        try:
-            feed_store.record_failure(
+        should_ack = _should_ack_after_recorded_failure(
+            classification.status_reason
+        )
+        if should_ack:
+            logger.exception(
+                "Echo processing failure will ACK Eventarc event: "
+                "feed=%s status_reason=%s reason=%s",
                 feed["id"],
-                reason=classification.reason,
-                status_reason=classification.status_reason,
+                classification.status_reason.value,
+                classification.reason,
             )
-        except Exception:
-            logger.exception("Failed to record failure for feed %s", feed["id"])
+        _record_failure_by_policy(feed["id"], classification)
+        if should_ack:
+            return
         raise
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+def _collector_failure(
+    reason: str,
+) -> failure_classification.FailureInfo:
+    return failure_classification.FailureInfo(
+        FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        reason,
+    )
+
+
 def _pipeline_failure(
     reason: str,
 ) -> failure_classification.FailureInfo:
@@ -261,6 +281,42 @@ def _pipeline_failure(
         FeedStatusReason.SYSTEM_PIPELINE_ERROR,
         reason,
     )
+
+
+def _record_failure_by_policy(
+    feed_id: uuid.UUID,
+    classification: failure_classification.FailureInfo,
+) -> None:
+    if feed_store is None:
+        msg = "Feed store is not initialized"
+        raise RuntimeError(msg)
+
+    action = failure_policy.classify_failure_policy(
+        classification.status_reason,
+    )
+    try:
+        if (
+            action
+            is failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
+        ):
+            feed_store.record_failure(
+                feed_id,
+                reason=classification.reason,
+                status_reason=classification.status_reason,
+            )
+        else:
+            feed_store.record_non_budgeted_failure(
+                feed_id,
+                status_reason=classification.status_reason,
+            )
+    except Exception:
+        logger.exception("Failed to record failure for feed %s", feed_id)
+
+
+def _should_ack_after_recorded_failure(
+    status_reason: FeedStatusReason,
+) -> bool:
+    return status_reason in _ACK_RECORDED_STATUS_REASONS
 
 
 def _unexpected_failure_reason(exc: Exception) -> str:

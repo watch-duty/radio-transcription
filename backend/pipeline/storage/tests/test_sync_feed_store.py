@@ -70,7 +70,12 @@ class TestRecordHeartbeat:
         store.record_heartbeat(feed_id)
 
         conn.execute.assert_called_once()
-        assert conn.execute.call_args[0][1] == (feed_id,)
+        sql, params = conn.execute.call_args[0]
+        assert (
+            "status NOT IN ('quarantined'::feed_status, "
+            "'deactivated'::feed_status)"
+        ) in sql
+        assert params == (feed_id,)
 
 
 class TestRecordFailure:
@@ -91,7 +96,11 @@ class TestRecordFailure:
         )
 
         conn.execute.assert_called_once()
-        params = conn.execute.call_args[0][1]
+        sql, params = conn.execute.call_args[0]
+        assert (
+            "status NOT IN ('quarantined'::feed_status, "
+            "'deactivated'::feed_status)"
+        ) in sql
         assert params == (
             5,
             5,
@@ -99,6 +108,7 @@ class TestRecordFailure:
             15,
             5,
             "echo_pubsub_publish_failed",
+            "system_pipeline_error",
             "system_pipeline_error",
             feed_id,
         )
@@ -128,6 +138,7 @@ class TestRecordFailure:
             10,
             "echo_heartbeat_write_failed",
             "system_pipeline_error",
+            "system_pipeline_error",
             feed_id,
         )
 
@@ -147,6 +158,7 @@ class TestRecordFailure:
             15,
             5,
             "raw",
+            None,
             None,
             feed_id,
         )
@@ -176,3 +188,52 @@ class TestRecordFailure:
         mock_logger.warning.assert_called_once()
         extra = mock_logger.warning.call_args[1]["extra"]
         assert extra["feed_id"] == str(feed_id)
+
+
+class TestRecordNonBudgetedFailure:
+    def test_executes_non_budgeted_failure_sql(self) -> None:
+        conn = _make_mock_conn()
+        store = _make_store(conn)
+        feed_id = uuid.uuid4()
+
+        store.record_non_budgeted_failure(
+            feed_id,
+            status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        )
+
+        conn.execute.assert_called_once()
+        sql, params = conn.execute.call_args[0]
+        assert "failure_count = 0" in sql
+        assert "retry_after = NULL" in sql
+        assert "status_reason_updated_at = CASE" in sql
+        assert "WHEN status_reason IS DISTINCT FROM %s THEN NOW()" in sql
+        assert (
+            "status NOT IN ('quarantined'::feed_status, "
+            "'deactivated'::feed_status)"
+        ) in sql
+        assert "quarantine_reason" not in sql
+        assert params == (
+            "system_pipeline_error",
+            "system_pipeline_error",
+            feed_id,
+        )
+
+    def test_logs_non_budgeted_failure(self) -> None:
+        conn = _make_mock_conn()
+        store = _make_store(conn)
+        feed_id = uuid.uuid4()
+
+        with patch(
+            "backend.pipeline.storage.sync_feed_store.logger"
+        ) as mock_logger:
+            store.record_non_budgeted_failure(
+                feed_id,
+                status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            )
+
+        mock_logger.info.assert_called_once()
+        extra = mock_logger.info.call_args[1]["extra"]
+        assert extra == {
+            "feed_id": str(feed_id),
+            "status_reason": "system_collector_error",
+        }

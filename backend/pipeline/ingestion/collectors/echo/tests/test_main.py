@@ -133,12 +133,26 @@ class TestHandle:
             status_reason=status_reason,
         )
 
+    def _assert_non_budgeted_failure_recorded(
+        self,
+        mock_store: MagicMock,
+        feed_id: uuid.UUID,
+        *,
+        status_reason: FeedStatusReason,
+    ) -> None:
+        mock_store.record_non_budgeted_failure.assert_called_once_with(
+            feed_id,
+            status_reason=status_reason,
+        )
+        mock_store.record_failure.assert_not_called()
+
     @pytest.mark.usefixtures("_patch_globals")
     def test_skips_non_mp3(self, mock_store) -> None:
         event = self._make_event(name="fire-ca/20260326/notes.txt")
         _handle(event)
         mock_store.resolve_echo_feed.assert_not_called()
         mock_store.record_failure.assert_not_called()
+        mock_store.record_non_budgeted_failure.assert_not_called()
         mock_store.record_heartbeat.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
@@ -149,6 +163,7 @@ class TestHandle:
 
         mock_store.resolve_echo_feed.assert_not_called()
         mock_store.record_failure.assert_not_called()
+        mock_store.record_non_budgeted_failure.assert_not_called()
         mock_store.record_heartbeat.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
@@ -157,6 +172,7 @@ class TestHandle:
         _handle(self._make_event())
         mock_store.resolve_echo_feed.assert_called_once()
         mock_store.record_failure.assert_not_called()
+        mock_store.record_non_budgeted_failure.assert_not_called()
         mock_store.record_heartbeat.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
@@ -173,6 +189,7 @@ class TestHandle:
         _handle(self._make_event())
         mock_store.record_heartbeat.assert_not_called()
         mock_store.record_failure.assert_not_called()
+        mock_store.record_non_budgeted_failure.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_skips_deactivated_feed(self, mock_store) -> None:
@@ -188,6 +205,7 @@ class TestHandle:
         _handle(self._make_event())
         mock_store.record_heartbeat.assert_not_called()
         mock_store.record_failure.assert_not_called()
+        mock_store.record_non_budgeted_failure.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_successful_processing(self, mock_store, _patch_globals) -> None:
@@ -316,10 +334,13 @@ class TestHandle:
 
         mock_store.record_heartbeat.assert_not_called()
         mock_store.record_failure.assert_not_called()
+        mock_store.record_non_budgeted_failure.assert_not_called()
         _patch_globals["publisher"].publish.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_failure_records_in_db(self, mock_store, _patch_globals) -> None:
+    def test_download_failure_records_non_budgeted_status(
+        self, mock_store, _patch_globals, caplog
+    ) -> None:
         feed_id = uuid.uuid4()
         self._set_feed(
             mock_store,
@@ -335,19 +356,27 @@ class TestHandle:
         gcs.bucket.return_value.blob.return_value.download_as_bytes.side_effect = Exception(
             "GCS error"
         )
-
-        with pytest.raises(Exception, match="GCS error"):
-            _handle(self._make_event())
-
-        self._assert_failure_recorded(
-            mock_store,
-            feed_id,
-            reason="echo_recording_download_failed",
-            status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        caplog.set_level(
+            logging.ERROR,
+            logger="backend.pipeline.ingestion.collectors.echo.main",
         )
 
+        _handle(self._make_event())
+
+        self._assert_non_budgeted_failure_recorded(
+            mock_store,
+            feed_id,
+            status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        )
+        mock_store.record_heartbeat.assert_not_called()
+        _patch_globals["publisher"].publish.assert_not_called()
+        assert "will ACK Eventarc event" in caplog.text
+        assert "echo_recording_download_failed" in caplog.text
+        assert "GCS error" in caplog.text
+        assert "Traceback" in caplog.text
+
     @pytest.mark.usefixtures("_patch_globals")
-    def test_duration_failure_records_pipeline_reason(
+    def test_duration_failure_records_collector_reason(
         self, mock_store, _patch_globals, caplog
     ) -> None:
         feed_id = uuid.uuid4()
@@ -377,17 +406,18 @@ class TestHandle:
             logger="backend.pipeline.ingestion.collectors.echo.main",
         )
 
-        with pytest.raises(subprocess.CalledProcessError):
-            _handle(self._make_event())
+        _handle(self._make_event())
 
-        self._assert_failure_recorded(
+        self._assert_non_budgeted_failure_recorded(
             mock_store,
             feed_id,
-            reason=expected_reason,
-            status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
         )
+        mock_store.record_heartbeat.assert_not_called()
+        _patch_globals["publisher"].publish.assert_not_called()
         assert expected_reason in caplog.text
-        assert "Traceback" not in caplog.text
+        assert "will ACK Eventarc event" in caplog.text
+        assert "Traceback" in caplog.text
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_duration_failure_records_generic_exception_reason(
@@ -411,17 +441,18 @@ class TestHandle:
             logger="backend.pipeline.ingestion.collectors.echo.main",
         )
 
-        with pytest.raises(ValueError, match="bad mp3"):
-            _handle(self._make_event())
+        _handle(self._make_event())
 
-        self._assert_failure_recorded(
+        self._assert_non_budgeted_failure_recorded(
             mock_store,
             feed_id,
-            reason=expected_reason,
-            status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
         )
+        mock_store.record_heartbeat.assert_not_called()
+        _patch_globals["publisher"].publish.assert_not_called()
         assert expected_reason in caplog.text
-        assert "Traceback" not in caplog.text
+        assert "will ACK Eventarc event" in caplog.text
+        assert "Traceback" in caplog.text
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_staging_upload_failure_records_pipeline_reason(
@@ -443,18 +474,18 @@ class TestHandle:
         ].bucket.return_value.blob.return_value.upload_from_string
         upload_call.side_effect = Exception("upload error")
 
-        with pytest.raises(Exception, match="upload error"):
-            _handle(self._make_event())
+        _handle(self._make_event())
 
-        self._assert_failure_recorded(
+        self._assert_non_budgeted_failure_recorded(
             mock_store,
             feed_id,
-            reason="echo_staging_upload_failed",
             status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
         )
+        mock_store.record_heartbeat.assert_not_called()
+        _patch_globals["publisher"].publish.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_failure_recording_db_error_preserves_original(
+    def test_non_budgeted_recording_db_error_keeps_ack_policy(
         self, mock_store, _patch_globals
     ) -> None:
         feed_id = uuid.uuid4()
@@ -473,23 +504,34 @@ class TestHandle:
             "Original error"
         )
 
-        mock_store.record_failure.side_effect = Exception("DB error")
+        mock_store.record_non_budgeted_failure.side_effect = Exception(
+            "DB error"
+        )
 
         with patch(
             "backend.pipeline.ingestion.collectors.echo.main.logger"
         ) as mock_logger:
-            with pytest.raises(Exception, match="Original error"):
-                _handle(self._make_event())
+            _handle(self._make_event())
 
-        self._assert_failure_recorded(
+        self._assert_non_budgeted_failure_recorded(
             mock_store,
             feed_id,
-            reason="echo_recording_download_failed",
             status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
         )
-        mock_logger.exception.assert_called_once_with(
-            "Failed to record failure for feed %s", feed_id
+        assert mock_logger.exception.call_count == 2
+        first_call, second_call = mock_logger.exception.call_args_list
+        log_args, log_kwargs = first_call
+        assert log_args[:4] == (
+            "Echo processing failure will ACK Eventarc event: "
+            "feed=%s status_reason=%s reason=%s",
+            feed_id,
+            "system_pipeline_error",
+            "echo_recording_download_failed",
         )
+        assert log_kwargs == {}
+        second_args, second_kwargs = second_call
+        assert second_args == ("Failed to record failure for feed %s", feed_id)
+        assert second_kwargs == {}
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_malformed_filename_skips_gracefully(self, mock_store) -> None:
@@ -509,6 +551,7 @@ class TestHandle:
         mock_store.resolve_echo_feed.assert_called_once()
         mock_store.record_heartbeat.assert_not_called()
         mock_store.record_failure.assert_not_called()
+        mock_store.record_non_budgeted_failure.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_malformed_filename_with_invalid_gcs_time_skips_gracefully(
@@ -530,6 +573,7 @@ class TestHandle:
 
         mock_store.record_heartbeat.assert_not_called()
         mock_store.record_failure.assert_not_called()
+        mock_store.record_non_budgeted_failure.assert_not_called()
         _patch_globals["publisher"].publish.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
@@ -550,15 +594,14 @@ class TestHandle:
         pub = _patch_globals["publisher"]
         pub.publish.return_value.result.side_effect = Exception("Pub/Sub error")
 
-        with pytest.raises(Exception, match="Pub/Sub error"):
-            _handle(self._make_event())
+        _handle(self._make_event())
 
-        self._assert_failure_recorded(
+        self._assert_non_budgeted_failure_recorded(
             mock_store,
             feed_id,
-            reason="echo_pubsub_publish_failed",
             status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
         )
+        mock_store.record_heartbeat.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_publisher_factory_failure_records_pipeline_reason(
@@ -579,15 +622,14 @@ class TestHandle:
             "publisher error"
         )
 
-        with pytest.raises(Exception, match="publisher error"):
-            _handle(self._make_event())
+        _handle(self._make_event())
 
-        self._assert_failure_recorded(
+        self._assert_non_budgeted_failure_recorded(
             mock_store,
             feed_id,
-            reason="echo_pubsub_publish_failed",
             status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
         )
+        mock_store.record_heartbeat.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_heartbeat_failure_records_pipeline_reason(
@@ -606,13 +648,11 @@ class TestHandle:
         )
         mock_store.record_heartbeat.side_effect = Exception("heartbeat error")
 
-        with pytest.raises(Exception, match="heartbeat error"):
-            _handle(self._make_event())
+        _handle(self._make_event())
 
-        self._assert_failure_recorded(
+        self._assert_non_budgeted_failure_recorded(
             mock_store,
             feed_id,
-            reason="echo_heartbeat_write_failed",
             status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
         )
 
@@ -637,15 +677,14 @@ class TestHandle:
             with pytest.raises(RuntimeError, match="unexpected bug"):
                 _handle(self._make_event())
 
-        self._assert_failure_recorded(
+        self._assert_non_budgeted_failure_recorded(
             mock_store,
             feed_id,
-            reason="unexpected bug",
             status_reason=FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
         )
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_unwrapped_bug_preserves_full_exception_text(
+    def test_unwrapped_bug_reraises_after_non_budgeted_record(
         self, mock_store
     ) -> None:
         feed_id = uuid.uuid4()
@@ -668,10 +707,9 @@ class TestHandle:
             with pytest.raises(RuntimeError, match=message):
                 _handle(self._make_event())
 
-        self._assert_failure_recorded(
+        self._assert_non_budgeted_failure_recorded(
             mock_store,
             feed_id,
-            reason=message,
             status_reason=FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
         )
 
@@ -758,6 +796,7 @@ class TestHandle:
         # punished for the dev-side failure.
         mock_store.record_heartbeat.assert_called_once_with(feed["id"])
         mock_store.record_failure.assert_not_called()
+        mock_store.record_non_budgeted_failure.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

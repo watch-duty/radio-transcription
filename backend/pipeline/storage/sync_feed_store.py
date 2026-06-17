@@ -47,6 +47,7 @@ SET last_heartbeat = NOW(),
     END,
     status_reason = NULL
 WHERE id = %s
+  AND status NOT IN ('quarantined'::feed_status, 'deactivated'::feed_status)
 """
 
 # Backoff formula: base * 2^(failure_count), capped at max, plus 0-10s jitter.
@@ -66,8 +67,28 @@ SET status = CASE WHEN failure_count + 1 >= %s
                        ELSE NULL END,
     quarantine_reason = CASE WHEN failure_count + 1 >= %s THEN COALESCE(%s, quarantine_reason) ELSE quarantine_reason END,
     status_reason = COALESCE(%s, 'system_unexpected_error'),
-    status_reason_updated_at = NOW()
+    status_reason_updated_at = CASE
+        WHEN status_reason IS DISTINCT FROM COALESCE(%s, 'system_unexpected_error')
+            THEN NOW()
+        ELSE status_reason_updated_at
+    END
 WHERE id = %s
+  AND status NOT IN ('quarantined'::feed_status, 'deactivated'::feed_status)
+"""
+
+_RECORD_NON_BUDGETED_FAILURE_SQL = """\
+UPDATE feeds
+SET status = 'failing'::feed_status,
+    failure_count = 0,
+    last_heartbeat = NOW(),
+    retry_after = NULL,
+    status_reason = %s,
+    status_reason_updated_at = CASE
+        WHEN status_reason IS DISTINCT FROM %s THEN NOW()
+        ELSE status_reason_updated_at
+    END
+WHERE id = %s
+  AND status NOT IN ('quarantined'::feed_status, 'deactivated'::feed_status)
 """
 
 
@@ -156,10 +177,40 @@ class SyncFeedStore:
                     self._failure_threshold,
                     stored_reason,
                     status_reason_value,
+                    status_reason_value,
                     feed_id,
                 ),
             )
             logger.warning(
                 "Feed failure recorded",
                 extra={"feed_id": str(feed_id)},
+            )
+
+    def record_non_budgeted_failure(
+        self,
+        feed_id: uuid.UUID,
+        *,
+        status_reason: FeedStatusReason,
+    ) -> None:
+        """Record a visible failure without consuming quarantine budget.
+
+        Echo retries are Eventarc-driven, so this sync path clears
+        ``retry_after`` instead of scheduling DB-based retry. It also leaves
+        ``quarantine_reason`` untouched because no quarantine threshold crossed.
+        """
+        with self._connect_db() as conn:
+            conn.execute(
+                _RECORD_NON_BUDGETED_FAILURE_SQL,
+                (
+                    status_reason.value,
+                    status_reason.value,
+                    feed_id,
+                ),
+            )
+            logger.info(
+                "Non-budgeted feed failure recorded",
+                extra={
+                    "feed_id": str(feed_id),
+                    "status_reason": status_reason.value,
+                },
             )
