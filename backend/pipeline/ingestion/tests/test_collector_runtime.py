@@ -2587,6 +2587,11 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             [record.getMessage() for record in error_records],
             ["Post-bookmark publish failure"],
         )
+        messages = [record.getMessage() for record in cm.records]
+        self.assertNotIn(
+            "Feed post-bookmark publish gap suppressed from quarantine budget",
+            messages,
+        )
         policy_record = next(
             r
             for r in records

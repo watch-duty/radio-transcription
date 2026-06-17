@@ -999,12 +999,9 @@ class CollectorRuntime:
             status_reason
             is FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
         ):
-            logger.info(
-                "Feed post-bookmark publish gap suppressed from quarantine "
-                "budget: feed=%s reason=%s",
-                feed["name"],
-                reason,
-            )
+            # The policy-decision event and dedicated gap ERROR already cover
+            # this case; avoid a third log line for the same publish failure.
+            pass
         elif (
             status_reason.owner == "source"
             or status_reason
