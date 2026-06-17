@@ -10,7 +10,7 @@ from cloudevents.http.event import CloudEvent
 from backend.pipeline.common import env
 from backend.pipeline.common.clients.feeds_client import FeedsClient
 from backend.pipeline.common.constants import MS_PER_SECOND, NANOS_PER_MS
-from backend.pipeline.common.container import ForkAwareContainer
+from backend.pipeline.common.container import ForkDetector
 from backend.pipeline.common.exceptions import NonRetryableError
 from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.storage.redis_service import RedisService
@@ -35,11 +35,11 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
-class NotificationServiceContainer(ForkAwareContainer):
+class NotificationServiceContainer:
     """Encapsulates the warm-started cached service container instances for GCF."""
 
     def __init__(self) -> None:
-        super().__init__()
+        self._fork_detector = ForkDetector(self.reset_clients)
         self._deduplication: NotificationDeduplication | None = None
         self._request_handler: RequestHandler | None = None
         self._feeds_client: FeedsClient | None = None
@@ -60,7 +60,7 @@ class NotificationServiceContainer(ForkAwareContainer):
 
     def get_deduplication(self) -> NotificationDeduplication:
         """Warms up and caches the NotificationDeduplication instance."""
-        self.check_fork()
+        self._fork_detector.check_fork()
         if self._deduplication is None:
             logger.info("Initializing NotificationDeduplication")
             self._deduplication = NotificationDeduplication(RedisService())
@@ -68,7 +68,7 @@ class NotificationServiceContainer(ForkAwareContainer):
 
     def get_request_handler(self) -> RequestHandler:
         """Warms up and caches the RequestHandler instance."""
-        self.check_fork()
+        self._fork_detector.check_fork()
         if self._request_handler is None:
             logger.info("Initializing RequestHandler")
             self._request_handler = RequestHandler(logger)
@@ -94,7 +94,7 @@ class NotificationServiceContainer(ForkAwareContainer):
 
     def get_feeds_client(self) -> FeedsClient:
         """Warms up and caches the FeedsClient instance."""
-        self.check_fork()
+        self._fork_detector.check_fork()
         if self._feeds_client is None:
             logger.info("Initializing FeedsClient")
             self._feeds_client = FeedsClient(self.feeds_api_url)

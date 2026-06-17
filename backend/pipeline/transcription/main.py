@@ -12,7 +12,7 @@ from cloudevents.http.event import CloudEvent
 from google.cloud import pubsub_v1
 
 from backend.pipeline.common.clients import audio_segments_client
-from backend.pipeline.common.container import ForkAwareContainer
+from backend.pipeline.common.container import ForkDetector
 from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.transcription.enums import TranscriberType
@@ -25,11 +25,11 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
-class TranscriptionServiceContainer(ForkAwareContainer):
+class TranscriptionServiceContainer:
     """Encapsulates the warm-started cached service container instances for GCF."""
 
     def __init__(self) -> None:
-        super().__init__()
+        self._fork_detector = ForkDetector(self.reset_clients)
         self._transcriber: Transcriber | None = None
         self._publisher: pubsub_v1.PublisherClient | None = None
         self._processor: TranscriptionEventProcessor | None = None
@@ -57,7 +57,7 @@ class TranscriptionServiceContainer(ForkAwareContainer):
         Returns:
             The cached Transcriber instance.
         """
-        self.check_fork()
+        self._fork_detector.check_fork()
         if self._transcriber is None:
             t_type_str = os.environ.get("TRANSCRIBER_TYPE", "GOOGLE_CHIRP_V3")
             t_config_json = os.environ.get("TRANSCRIBER_CONFIG", "{}")
@@ -75,7 +75,7 @@ class TranscriptionServiceContainer(ForkAwareContainer):
         Returns:
             The cached PubSub PublisherClient instance.
         """
-        self.check_fork()
+        self._fork_detector.check_fork()
         if self._publisher is None:
             logger.info("Initializing Pub/Sub PublisherClient")
             publisher_options = pubsub_v1.types.PublisherOptions(
@@ -95,7 +95,7 @@ class TranscriptionServiceContainer(ForkAwareContainer):
         Raises:
             ValueError: If the OUTPUT_TOPIC environment variable is not set.
         """
-        self.check_fork()
+        self._fork_detector.check_fork()
         if self._processor is None:
             project_id = os.environ.get("PROJECT_ID", "watch-duty-dev")
             output_topic = os.environ.get("OUTPUT_TOPIC")
