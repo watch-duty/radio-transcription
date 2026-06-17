@@ -1735,6 +1735,85 @@ async def test_get_feed_returns_none_if_not_found(store: FeedStore) -> None:
     assert feed is None
 
 
+async def test_get_feed_projects_last_speech_segment_timestamp(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """get_feed and list_feeds project the correct last_speech_segment_timestamp."""
+    feed_id = await _insert_feed(
+        db_pool,
+        "Speech Timestamp Feed",
+        source_feed_id="src_speech_ts",
+    )
+
+    # 1. No segments: should be None
+    feed = await store.get_feed(feed_id)
+    assert feed is not None
+    assert feed["last_speech_segment_timestamp"] is None
+
+    # 2. Insert non-speech segment: should still be None
+    t1 = datetime.datetime(2026, 6, 16, 12, 0, 0, tzinfo=datetime.UTC)
+    await db_pool.execute(
+        "INSERT INTO audio_segments (id, feed_id, classification, start_timestamp, end_timestamp, created_at) "
+        "VALUES ($1, $2, 'OTHER'::audio_classification, $3, $4, NOW())",
+        uuid.uuid4(),
+        feed_id,
+        t1 - datetime.timedelta(seconds=10),
+        t1,
+    )
+    feed = await store.get_feed(feed_id)
+    assert feed is not None
+    assert feed["last_speech_segment_timestamp"] is None
+
+    # 3. Insert speech segment at T2: should return T2
+    t2 = datetime.datetime(2026, 6, 16, 13, 0, 0, tzinfo=datetime.UTC)
+    await db_pool.execute(
+        "INSERT INTO audio_segments (id, feed_id, classification, start_timestamp, end_timestamp, created_at) "
+        "VALUES ($1, $2, 'SPEECH'::audio_classification, $3, $4, NOW())",
+        uuid.uuid4(),
+        feed_id,
+        t2 - datetime.timedelta(seconds=10),
+        t2,
+    )
+    feed = await store.get_feed(feed_id)
+    assert feed is not None
+    assert feed["last_speech_segment_timestamp"] == t2
+
+    # 4. Insert another speech segment at a later T3: should return T3
+    t3 = datetime.datetime(2026, 6, 16, 14, 0, 0, tzinfo=datetime.UTC)
+    seg_id_3 = uuid.UUID("33333333-3333-3333-3333-333333333333")
+    await db_pool.execute(
+        "INSERT INTO audio_segments (id, feed_id, classification, start_timestamp, end_timestamp, created_at) "
+        "VALUES ($1, $2, 'SPEECH'::audio_classification, $3, $4, NOW())",
+        seg_id_3,
+        feed_id,
+        t3 - datetime.timedelta(seconds=10),
+        t3,
+    )
+    feed = await store.get_feed(feed_id)
+    assert feed is not None
+    assert feed["last_speech_segment_timestamp"] == t3
+
+    # 5. Insert another speech segment at same T3, but with a smaller ID to verify ordering: should still return T3
+    seg_id_4 = uuid.UUID("22222222-2222-2222-2222-222222222222")
+    await db_pool.execute(
+        "INSERT INTO audio_segments (id, feed_id, classification, start_timestamp, end_timestamp, created_at) "
+        "VALUES ($1, $2, 'SPEECH'::audio_classification, $3, $4, NOW())",
+        seg_id_4,
+        feed_id,
+        t3 - datetime.timedelta(seconds=10),
+        t3,
+    )
+
+    feed = await store.get_feed(feed_id)
+    assert feed is not None
+    assert feed["last_speech_segment_timestamp"] == t3
+
+    # Verify that listing feeds also correctly projects the timestamp
+    list_res = await store.list_feeds(limit=10)
+    matching_feed = next(f for f in list_res.feeds if f["id"] == feed_id)
+    assert matching_feed["last_speech_segment_timestamp"] == t3
+
+
 # -- Tests: list_feeds ------------------------------------------------
 
 
