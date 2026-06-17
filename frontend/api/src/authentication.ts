@@ -22,7 +22,9 @@ export async function expressAuthentication(
   // Match the name defined in tsoa.json and @Security decorators
   if (securityName === 'google_id_token') {
     const userInfoHeader =
+      // Google Cloud API Gateway injects the authenticated user metadata in this header
       request.headers['x-apigateway-api-userinfo'] ||
+      // Google Cloud Endpoints / ESPv2 uses this header as an alternative or older name
       request.headers['x-endpoint-api-userinfo'];
 
     let decoded: GoogleUser;
