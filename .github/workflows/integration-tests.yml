@@ -21,6 +21,10 @@ on:
       - 'model/colabs/**'
       - '**.md'
 
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   component-tests:
     runs-on: ubuntu-24.04
