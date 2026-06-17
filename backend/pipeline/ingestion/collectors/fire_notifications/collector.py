@@ -205,6 +205,10 @@ async def fire_notifications_collector(  # noqa: PLR0912
     # Construct the Fire Notifications API REST client helper
     client = _init_client(url_base, resources)
 
+    if feed.get("last_bookmark_time") is None:
+        # Avoid backfilling historical audio on feed initialization by starting from "now"
+        feed["last_bookmark_time"] = datetime.datetime.now(datetime.UTC)
+
     # Track UUIDs we've already ingested to prevent duplicates.
     # We use a deque with maxlen to prevent unbounded memory growth.
     processed_uuids: collections.deque[str] = collections.deque(maxlen=1000)

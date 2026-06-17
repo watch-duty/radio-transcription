@@ -505,9 +505,13 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
     feed_id = feed.get("id")
     feed_name = feed.get("name")
     last_bookmark_time = feed.get("last_bookmark_time")
-    last_bookmark_time_unix = (
-        int(last_bookmark_time.timestamp()) if last_bookmark_time else None
-    )
+    if last_bookmark_time is None:
+        # Avoid backfilling historical calls on feed initialization by starting from "now"
+        last_bookmark_time_unix = int(
+            datetime.datetime.now(datetime.UTC).timestamp()
+        )
+    else:
+        last_bookmark_time_unix = int(last_bookmark_time.timestamp())
     if not source_feed_id:
         logger.error(
             "Feed %s (%s) missing source_feed_id",
