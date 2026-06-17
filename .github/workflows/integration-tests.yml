@@ -79,7 +79,9 @@ jobs:
       - name: Run Frontend API Playwright integration tests
         run: |
           corepack enable
-          yarn install --frozen-lockfile --non-interactive
+          yarn --cwd frontend/common install --frozen-lockfile --non-interactive
+          yarn --cwd frontend/common build
+          yarn --cwd frontend/api install --frozen-lockfile --non-interactive
           VITE_API_BASE_URL=http://localhost:8088 yarn --cwd frontend/api test:integration
 
       - name: Print container logs on failure
