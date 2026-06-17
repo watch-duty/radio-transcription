@@ -1,7 +1,7 @@
 {
   "name": "radio-transcription-api",
   "version": "1.0.0",
-  "main": "dist/src/index.js",
+  "main": "dist/index.js",
   "type": "module",
   "scripts": {
     "build": "yarn run generate-routes && tsc",
