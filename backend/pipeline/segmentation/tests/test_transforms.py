@@ -147,6 +147,13 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
                 label="CheckEmptyDLQ",
             )
 
+        # Assert native Beam metrics
+        metrics = p.result.metrics().query(
+            beam.metrics.metric.MetricsFilter().with_name("segmentation_start")
+        )
+        self.assertEqual(len(metrics["counters"]), 1)
+        self.assertEqual(metrics["counters"][0].committed, 1)
+
     def test_parse_and_key_dlq(self) -> None:
         """Verifies that incoming data missing a critical routing attribute like 'feed_id' is gracefully intercepted and routed to the Dead Letter Queue."""
         chunk = ContinuousAudio(gcs_uri="gs://test-bucket/path/to/test.flac")

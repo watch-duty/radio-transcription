@@ -21,6 +21,7 @@ from backend.pipeline.common.constants import (
 from backend.pipeline.common.storage import gcs_uploader
 from backend.pipeline.common.tracing_utils import (
     inject_otel_context,
+    record_pipeline_stage,
     with_tracer_context,
 )
 from backend.pipeline.normalization import audio_processor
@@ -86,6 +87,7 @@ class NormalizationEventProcessor:
 
     def process_event(self, cloud_event: CloudEvent) -> None:
         """Main entrypoint triggered on Pub/Sub claim message push delivery."""
+        record_pipeline_stage("normalization", "start")
         # Parse envelope from Pub/Sub CloudEvent structure
         try:
             envelope = cloud_event.data
@@ -111,6 +113,7 @@ class NormalizationEventProcessor:
                 segmented_audio = self._parse_claim(raw_data)
             except Exception:
                 # Return early to avoid infinite retries on corrupted/un-parseable payloads
+                record_pipeline_stage("normalization", "error")
                 return
 
             segment_id = segmented_audio.segment_id
@@ -198,6 +201,7 @@ class NormalizationEventProcessor:
                     playback_audio_uri=playback_audio_uri,
                     transcription_audio_uri=transcription_audio_uri,
                 )
+                record_pipeline_stage("normalization", "success")
 
             except Exception as e:
                 # 1. Inspect delivery attempt counter from Eventarc / PubSub push envelope
@@ -225,6 +229,7 @@ class NormalizationEventProcessor:
                         delivery_attempt,
                         e,
                     )
+                    record_pipeline_stage("normalization", "error")
                     raise
 
                 logger.exception(
@@ -233,6 +238,7 @@ class NormalizationEventProcessor:
                     feed_id,
                     e,
                 )
+                record_pipeline_stage("normalization", "error")
                 self._publish_dlq(
                     segmented_audio=segmented_audio,
                     error=e,

@@ -8,6 +8,7 @@ from backend.pipeline.common.tracing_utils import (
     ContextPropagationValidator,
     extract_trace_context,
     get_current_traceparent,
+    record_pipeline_stage,
     with_baggage_and_span,
     with_tracer_context,
 )
@@ -115,3 +116,17 @@ class TestTracingUtils(unittest.TestCase):
                 self.assertEqual(baggage.get_baggage("test_key"), "test_val")
 
         self.assertEqual(baggage.get_baggage("test_key"), None)
+
+    @patch("backend.pipeline.common.tracing_utils._pipeline_stage_counter")
+    def test_record_pipeline_stage(self, mock_counter) -> None:
+        """Verifies that record_pipeline_stage increments the pipeline counter with correct labels."""
+        record_pipeline_stage("segmentation", "start")
+        mock_counter.add.assert_called_once_with(
+            1, {"stage": "segmentation", "status": "start"}
+        )
+
+        mock_counter.reset_mock()
+        record_pipeline_stage("transcription", "success")
+        mock_counter.add.assert_called_once_with(
+            1, {"stage": "transcription", "status": "success"}
+        )
