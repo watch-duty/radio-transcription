@@ -1248,5 +1248,43 @@ describe('TranscriptView', () => {
       // Speech should be next
       expect(result[1].id).toBe('speech-1');
     });
+
+    it('sorts segments by startTimestamp descending even if an older segment ends later', () => {
+      const olderLongSegment: AudioSegment = {
+        id: 'speech-older-long',
+        feedId: 'feed-123',
+        classification: AudioClassification.SPEECH,
+        startTimestamp: '2026-04-10T12:00:00Z',
+        endTimestamp: '2026-04-10T12:00:10Z',
+        createdAt: '2026-04-10T12:00:00Z',
+        annotations: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+      };
+
+      const newerShortSegment: AudioSegment = {
+        id: 'speech-newer-short',
+        feedId: 'feed-123',
+        classification: AudioClassification.SPEECH,
+        startTimestamp: '2026-04-10T12:00:05Z',
+        endTimestamp: '2026-04-10T12:00:08Z',
+        createdAt: '2026-04-10T12:00:05Z',
+        annotations: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+      };
+
+      const result = consolidateAudioSegments([
+        olderLongSegment,
+        newerShortSegment,
+      ]);
+      expect(result).toHaveLength(2);
+
+      // Newer segment (starts 12:00:05) should be at the top, despite ending earlier (12:00:08 vs 12:00:10)
+      expect(result[0].id).toBe('speech-newer-short');
+      expect(result[1].id).toBe('speech-older-long');
+    });
   });
 });

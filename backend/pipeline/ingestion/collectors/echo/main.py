@@ -25,6 +25,9 @@ from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.gcp_helper import publish_audio_chunk_sync
 from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.ingestion.collectors import failure_classification
+from backend.pipeline.ingestion.failure_classifiers import (
+    ffmpeg as ffmpeg_classifier,
+)
 from backend.pipeline.ingestion.settings import _require_env
 from backend.pipeline.storage.feed_store import FeedStatusReason
 from backend.pipeline.storage.sync_connection import connect_db
@@ -54,7 +57,6 @@ logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
 _RECORDING_DOWNLOAD_FAILED = "echo_recording_download_failed"
-_DURATION_PROBE_FAILED = "echo_duration_probe_failed"
 _STAGING_UPLOAD_FAILED = "echo_staging_upload_failed"
 _PUBSUB_PUBLISH_FAILED = "echo_pubsub_publish_failed"
 _HEARTBEAT_WRITE_FAILED = "echo_heartbeat_write_failed"
@@ -150,8 +152,13 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
         # Calculate duration of audio bytes using shared helper
         try:
             duration_ms = get_audio_duration(mp3_bytes)
-        except Exception:
-            failure = _pipeline_failure(_DURATION_PROBE_FAILED)
+        except Exception as exc:
+            reason = ffmpeg_classifier.ffprobe_exception_failure_reason(exc)
+            logger.warning(
+                "Echo duration probe failed: %s",
+                reason,
+            )
+            failure = _pipeline_failure(reason)
             raise
 
         # RTL-Airband appends the filename timestamp when opening a split
