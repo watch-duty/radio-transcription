@@ -151,7 +151,7 @@ async def _download_m4a(
     if not _is_openmhz_media_url(url):
         logger.warning("Download invalid OpenMHz media URL")
         return ItemFailure(
-            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
             _INVALID_OPENMHZ_MEDIA_URL_REASON,
         )
 
@@ -354,11 +354,11 @@ async def openmhz_collector(  # noqa: PLR0912, PLR0915
                 )
                 if last_transport_failure is not None:
                     raise last_transport_failure
-                exception_context = (
-                    f"; {_exception_chain_text(last_transport_exception)}"
-                    if last_transport_exception is not None
-                    else ""
-                )
+                exception_context = ""
+                if last_transport_exception is not None:
+                    exception_context = "; " + _exception_chain_text(
+                        last_transport_exception
+                    )
                 raise collector_failure(
                     FeedStatusReason.SOURCE_UNREACHABLE,
                     "OpenMHz transport reconnect exhausted "

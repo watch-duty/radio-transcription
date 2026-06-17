@@ -71,6 +71,7 @@ The capture function must **never**:
 from __future__ import annotations
 
 import dataclasses
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 import aiohttp  # noqa: TC002 — runtime use: CaptureResources holds aiohttp.ClientSession
@@ -83,9 +84,6 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
 
     from backend.pipeline.storage.feed_store import LeasedFeed
-
-
-from enum import StrEnum
 
 
 class AudioMimeType(StrEnum):

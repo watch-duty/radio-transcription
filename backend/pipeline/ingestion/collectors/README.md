@@ -31,11 +31,18 @@ valid capture events or report source-specific feed failure evidence through
 
 Runtime-side `_PipelineFailure` is separate from `FeedFailure`. It represents
 post-capture system failures after the collector already obtained source data,
-and the runtime records those as `system_pipeline_error`.
+and the runtime classifies those failures through `failure_policy` before
+choosing the budgeted or non-budgeted store path. GCS upload and bookmark-write
+failures retain `system_pipeline_error` and remain non-budgeted. Pub/Sub
+publish failures after a successful bookmark use
+`pipeline_publish_after_bookmark_failed`, record `replay_missing=true` and
+`data_gap_known=true`, and remain outside the feed quarantine budget because
+the source feed did not cause the already-advanced bookmark/publish gap.
 
 Echo is the exception to the VM runtime shape: it runs as a synchronous Cloud
-Function. It still writes the same status-reason fields through
-`SyncFeedStore`, so admin-facing semantics stay consistent.
+Function. It writes the same canonical status-reason field through
+`SyncFeedStore`, but the non-budgeted VM routing in this change does not yet
+apply to Echo; sync-store policy parity is a follow-up.
 
 ## Status Reason Policy
 
@@ -49,6 +56,11 @@ stale status reasons.
 text for the failure episode that crosses the quarantine threshold. Do not
 parse it for canonical ownership, do not treat it as a stable code, and do not
 replace it with `status_reason`.
+
+Status-reason prefixes are semantic owner namespaces: `source_` for external
+source/provider conditions, `system_` for Watch Duty-owned system conditions,
+and `pipeline_` for post-capture pipeline conditions. Ownership is not the
+same as retry, quarantine, or logging policy.
 
 Use source-owned reasons when the source or its provider cannot currently
 supply usable audio for this feed:
@@ -64,11 +76,22 @@ the likely owner:
 
 | Reason | Use when |
 |--------|----------|
-| `system_authentication_failed` | Configured credentials, tokens, or partner auth are rejected. |
+| `system_authentication_failed` | Configured credentials, tokens, or partner auth are rejected by the upstream provider. |
 | `system_configuration_invalid` | The feed row is missing or has an invalid source-specific identifier, URL, or required configuration. |
+| `system_source_configuration_invalid` | A source control-plane or provider API response says the configured feed/source path is invalid, but v1 keeps it non-budgeted because provider-side changes may recover without feed-row edits. |
+| `system_runtime_configuration_invalid` | Shared runtime, deployment, environment, source-class, or transport configuration is invalid and retry is not expected to repair it. |
+| `system_credential_access_failed` | Watch Duty could not retrieve or access internal credentials, such as Secret Manager access failure; this is not the same as upstream provider credential rejection. |
+| `system_source_payload_invalid` | A successful source response violates the collector payload contract, but v1 keeps it non-budgeted because the response may be transient, provider-owned, or later auto-recovered by a deploy. |
 | `system_collector_error` | The collector cannot turn apparently available source data into a chunk, or all item failures are mixed/ambiguous. |
-| `system_pipeline_error` | Runtime or Echo post-capture processing fails after source data was obtained, such as GCS upload, Pub/Sub publish, staging, duration probing, or heartbeat writes. |
+| `system_pipeline_error` | Runtime or Echo post-capture processing fails after source data was obtained, such as GCS upload, bookmark writes, staging, duration probing, or heartbeat writes. |
 | `system_unexpected_error` | Defensive fallback for bugs or untyped exceptions that should become typed in a future collector fix. |
+
+Use pipeline-owned reasons when capture has already succeeded and the remaining
+work belongs to a replay/hold lane, not to feed health:
+
+| Reason | Use when |
+|--------|----------|
+| `pipeline_publish_after_bookmark_failed` | The runtime bookmarked captured audio but could not publish the corresponding Pub/Sub message. This records a known downstream gap, sets `replay_missing=true` and `data_gap_known=true`, and does not consume feed quarantine budget. |
 
 ## Observation Boundaries
 
