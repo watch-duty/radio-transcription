@@ -59,21 +59,29 @@ jobs:
           if [ -f storage-coverage.txt ]; then
             PCT=$(grep -i "TOTAL" storage-coverage.txt | awk '{print $NF}')
             if [ -n "$PCT" ]; then
-              echo "percentage=$PCT" >> $GITHUB_OUTPUT
+              echo "PERCENTAGE=$PCT" >> $GITHUB_ENV
             fi
           fi
-      - name: Create Storage Coverage Check
-        uses: LouisBrunner/checks-action@v2.0.0
-        if: always() && steps.extract_storage_cov.outputs.percentage != ''
+      - name: Rename Check Run
+        uses: actions/github-script@v7
+        if: always() && env.PERCENTAGE != ''
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          name: "Storage Integration Coverage: ${{ steps.extract_storage_cov.outputs.percentage }}"
-          conclusion: success
-          status: completed
-          output: |
-            {
-              "title": "Storage Integration Coverage: ${{ steps.extract_storage_cov.outputs.percentage }}",
-              "summary": "Detailed coverage report is available in the workflow logs."
+          script: |
+            const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
+            const { data: checks } = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: ref,
+              check_name: 'component-tests',
+            });
+            if (checks.check_runs.length > 0) {
+              const checkRun = checks.check_runs[0];
+              await github.rest.checks.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                check_run_id: checkRun.id,
+                name: `component-tests - ${process.env.PERCENTAGE} coverage`,
+              });
             }
 
   e2e-tests:
@@ -115,21 +123,29 @@ jobs:
           if [ -f e2e-coverage.txt ]; then
             PCT=$(grep -i "TOTAL" e2e-coverage.txt | awk '{print $NF}')
             if [ -n "$PCT" ]; then
-              echo "percentage=$PCT" >> $GITHUB_OUTPUT
+              echo "PERCENTAGE=$PCT" >> $GITHUB_ENV
             fi
           fi
-      - name: Create E2E Coverage Check
-        uses: LouisBrunner/checks-action@v2.0.0
-        if: always() && steps.extract_e2e_cov.outputs.percentage != ''
+      - name: Rename Check Run
+        uses: actions/github-script@v7
+        if: always() && env.PERCENTAGE != ''
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          name: "E2E Integration Coverage: ${{ steps.extract_e2e_cov.outputs.percentage }}"
-          conclusion: success
-          status: completed
-          output: |
-            {
-              "title": "E2E Integration Coverage: ${{ steps.extract_e2e_cov.outputs.percentage }}",
-              "summary": "Detailed coverage report is available in the workflow logs."
+          script: |
+            const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
+            const { data: checks } = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: ref,
+              check_name: 'e2e-tests',
+            });
+            if (checks.check_runs.length > 0) {
+              const checkRun = checks.check_runs[0];
+              await github.rest.checks.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                check_run_id: checkRun.id,
+                name: `e2e-tests - ${process.env.PERCENTAGE} coverage`,
+              });
             }
 
       - name: Print container logs on failure

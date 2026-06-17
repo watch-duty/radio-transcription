@@ -232,21 +232,29 @@ jobs:
           if [ -f unit-coverage.txt ]; then
             PCT=$(grep -i "TOTAL" unit-coverage.txt | awk '{print $NF}')
             if [ -n "$PCT" ]; then
-              echo "percentage=$PCT" >> $GITHUB_OUTPUT
+              echo "PERCENTAGE=$PCT" >> $GITHUB_ENV
             fi
           fi
-      - name: Create Coverage Check
-        uses: LouisBrunner/checks-action@v2.0.0
-        if: always() && steps.extract_cov.outputs.percentage != ''
+      - name: Rename Check Run
+        uses: actions/github-script@v7
+        if: always() && env.PERCENTAGE != ''
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          name: "Unit Test Coverage: ${{ steps.extract_cov.outputs.percentage }}"
-          conclusion: success
-          status: completed
-          output: |
-            {
-              "title": "Unit Test Coverage: ${{ steps.extract_cov.outputs.percentage }}",
-              "summary": "Detailed coverage report is available in the workflow logs."
+          script: |
+            const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
+            const { data: checks } = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: ref,
+              check_name: 'run-backend-tests',
+            });
+            if (checks.check_runs.length > 0) {
+              const checkRun = checks.check_runs[0];
+              await github.rest.checks.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                check_run_id: checkRun.id,
+                name: `run-backend-tests - ${process.env.PERCENTAGE} coverage`,
+              });
             }
 
   run-frontend-tests:
@@ -276,21 +284,8 @@ jobs:
           FILE="frontend/api/coverage/coverage-summary.json"
           if [ -f "$FILE" ]; then
             PCT=$(jq '.total.statements.pct' "$FILE")%
-            echo "percentage=$PCT" >> $GITHUB_OUTPUT
+            echo "PROXY_PERCENTAGE=$PCT" >> $GITHUB_ENV
           fi
-      - name: Create Proxy Coverage Check
-        uses: LouisBrunner/checks-action@v2.0.0
-        if: always() && steps.extract_proxy_cov.outputs.percentage != ''
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          name: "Frontend Proxy API Coverage: ${{ steps.extract_proxy_cov.outputs.percentage }}"
-          conclusion: success
-          status: completed
-          output: |
-            {
-              "title": "Frontend Proxy API Coverage: ${{ steps.extract_proxy_cov.outputs.percentage }}",
-              "summary": "Detailed vitest coverage report is available in the workflow logs."
-            }
       - name: Run UI tests
         working-directory: frontend/transcription-ui
         run: yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text
@@ -301,20 +296,31 @@ jobs:
           FILE="frontend/transcription-ui/coverage/coverage-summary.json"
           if [ -f "$FILE" ]; then
             PCT=$(jq '.total.statements.pct' "$FILE")%
-            echo "percentage=$PCT" >> $GITHUB_OUTPUT
+            echo "UI_PERCENTAGE=$PCT" >> $GITHUB_ENV
           fi
-      - name: Create UI Coverage Check
-        uses: LouisBrunner/checks-action@v2.0.0
-        if: always() && steps.extract_ui_cov.outputs.percentage != ''
+      - name: Rename Check Run
+        uses: actions/github-script@v7
+        if: always() && (env.PROXY_PERCENTAGE != '' || env.UI_PERCENTAGE != '')
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          name: "Frontend UI Coverage: ${{ steps.extract_ui_cov.outputs.percentage }}"
-          conclusion: success
-          status: completed
-          output: |
-            {
-              "title": "Frontend UI Coverage: ${{ steps.extract_ui_cov.outputs.percentage }}",
-              "summary": "Detailed vitest coverage report is available in the workflow logs."
+          script: |
+            const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
+            const { data: checks } = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: ref,
+              check_name: 'run-frontend-tests',
+            });
+            if (checks.check_runs.length > 0) {
+              const checkRun = checks.check_runs[0];
+              const proxy = process.env.PROXY_PERCENTAGE ? `Proxy: ${process.env.PROXY_PERCENTAGE}` : '';
+              const ui = process.env.UI_PERCENTAGE ? `UI: ${process.env.UI_PERCENTAGE}` : '';
+              const coverageStr = [proxy, ui].filter(Boolean).join(', ');
+              await github.rest.checks.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                check_run_id: checkRun.id,
+                name: `run-frontend-tests - ${coverageStr} coverage`,
+              });
             }
 
   # Builds each service's Dockerfile and verifies all transitive imports resolve
