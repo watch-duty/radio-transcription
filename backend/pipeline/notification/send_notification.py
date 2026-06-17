@@ -10,6 +10,7 @@ from cloudevents.http.event import CloudEvent
 from backend.pipeline.common import env
 from backend.pipeline.common.clients.feeds_client import FeedsClient
 from backend.pipeline.common.constants import MS_PER_SECOND, NANOS_PER_MS
+from backend.pipeline.common.container_helper import ForkDetector, fork_checked
 from backend.pipeline.common.exceptions import NonRetryableError
 from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.storage.redis_service import RedisService
@@ -39,10 +40,26 @@ class NotificationServiceContainer:
     """Encapsulates the warm-started cached service container instances for GCF."""
 
     def __init__(self) -> None:
+        self._fork_detector = ForkDetector(self.reset_clients)
         self._deduplication: NotificationDeduplication | None = None
         self._request_handler: RequestHandler | None = None
         self._feeds_client: FeedsClient | None = None
 
+    def reset_clients(self) -> None:
+        if self._deduplication is not None:
+            try:
+                redis_service = getattr(self._deduplication, "cache", None)
+                if redis_service is not None:
+                    client = getattr(redis_service, "client", None)
+                    if client is not None:
+                        client.close()
+            except Exception:
+                logger.exception("Failed to close Redis client on fork reset")
+        self._deduplication = None
+        self._request_handler = None
+        self._feeds_client = None
+
+    @fork_checked
     def get_deduplication(self) -> NotificationDeduplication:
         """Warms up and caches the NotificationDeduplication instance."""
         if self._deduplication is None:
@@ -50,6 +67,7 @@ class NotificationServiceContainer:
             self._deduplication = NotificationDeduplication(RedisService())
         return self._deduplication
 
+    @fork_checked
     def get_request_handler(self) -> RequestHandler:
         """Warms up and caches the RequestHandler instance."""
         if self._request_handler is None:
@@ -75,6 +93,7 @@ class NotificationServiceContainer:
             raise ValueError(msg)
         return feeds_api_url.strip()
 
+    @fork_checked
     def get_feeds_client(self) -> FeedsClient:
         """Warms up and caches the FeedsClient instance."""
         if self._feeds_client is None:
