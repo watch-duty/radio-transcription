@@ -20,6 +20,7 @@ from backend.pipeline.common.constants import (
 )
 from backend.pipeline.common.tracing_utils import (
     inject_otel_context,
+    record_pipeline_stage,
     with_tracer_context,
 )
 from backend.pipeline.schema_types.normalized_audio_pb2 import (
@@ -59,6 +60,7 @@ class TranscriptionEventProcessor:
 
     def process_event(self, cloud_event: CloudEvent) -> None:
         """Decodes, processes, and transcribes the given CloudEvent."""
+        record_pipeline_stage("transcription", "start")
         pubsub_message = cloud_event.data.get("message", {}) or {}
         attributes = pubsub_message.get("attributes", {}) or {}
 
@@ -92,6 +94,7 @@ class TranscriptionEventProcessor:
                     segment_id,
                     feed_id,
                 )
+                record_pipeline_stage("transcription", "skipped")
                 return
 
             try:
@@ -146,6 +149,7 @@ class TranscriptionEventProcessor:
                     **attrs,
                 )
                 message_id = future.result()
+                record_pipeline_stage("transcription", "success")
                 logger.info(
                     "Successfully transcribed and published egress message %s for transmission %s (feed %s)",
                     message_id,
@@ -153,6 +157,7 @@ class TranscriptionEventProcessor:
                     feed_id,
                 )
             except Exception as e:
+                record_pipeline_stage("transcription", "error")
                 if _is_transient_exception(e):
                     logger.warning(
                         "Transient failure processing transcription claim for transmission %s (feed %s): %s. "

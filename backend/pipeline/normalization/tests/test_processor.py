@@ -31,6 +31,16 @@ class NormalizationEventProcessorTest(unittest.TestCase):
 
         self.mock_segments_client = MagicMock()
 
+        self.record_pipeline_stage_patch = patch(
+            "backend.pipeline.normalization.processor.record_pipeline_stage"
+        )
+        self.mock_record_pipeline_stage = (
+            self.record_pipeline_stage_patch.start()
+        )
+
+    def tearDown(self) -> None:
+        self.record_pipeline_stage_patch.stop()
+
     @patch("backend.pipeline.normalization.audio_processor.AudioProcessor")
     @patch("backend.pipeline.common.storage.gcs_uploader.GCSAudioUploader")
     def test_process_event_source_flac_success(
@@ -171,6 +181,12 @@ class NormalizationEventProcessorTest(unittest.TestCase):
         self.assertEqual(saved_payload["feed_id"], "feed-2222")
         self.assertEqual(
             saved_payload["external_audio_segment_id"], "ext-id-1234"
+        )
+        self.mock_record_pipeline_stage.assert_any_call(
+            "normalization", "start"
+        )
+        self.mock_record_pipeline_stage.assert_any_call(
+            "normalization", "success"
         )
 
     @patch("backend.pipeline.normalization.audio_processor.AudioProcessor")

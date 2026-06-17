@@ -7,7 +7,7 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from opentelemetry import baggage
+from opentelemetry import baggage, metrics
 from opentelemetry.baggage.propagation import W3CBaggagePropagator
 from opentelemetry.context import Context, attach, detach, get_current
 from opentelemetry.exporter.cloud_monitoring import (
@@ -46,6 +46,18 @@ from backend.pipeline.common.env import is_gcp_env
 
 _setup_lock = threading.Lock()
 telemetry_logger = logging.getLogger("telemetry.validation")
+
+# Shared pipeline stage counter
+_pipeline_meter = metrics.get_meter("pipeline_telemetry")
+_pipeline_stage_counter = _pipeline_meter.create_counter(
+    "pipeline_stage_count",
+    description="Number of audio chunks that reached each pipeline stage",
+)
+
+
+def record_pipeline_stage(stage: str, status: str = "start") -> None:
+    """Records that an audio chunk has reached a stage/status in the pipeline."""
+    _pipeline_stage_counter.add(1, {"stage": stage, "status": status})
 
 
 class ContextPropagationValidator(SpanProcessor):

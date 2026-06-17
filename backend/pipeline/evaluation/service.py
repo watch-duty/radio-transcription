@@ -4,6 +4,7 @@ import logging
 from google.protobuf.duration_pb2 import Duration
 from opentelemetry import baggage, metrics
 
+from backend.pipeline.common.tracing_utils import record_pipeline_stage
 from backend.pipeline.evaluation.rules_evaluation import evaluator
 from backend.pipeline.schema_types import (
     evaluated_transcribed_audio_pb2 as evaluated_pb2,
@@ -95,6 +96,7 @@ class EvaluationService:
         Returns:
             The evaluated payload or None if processing was skipped.
         """
+        record_pipeline_stage("evaluation", "start")
         try:
             segment_id = new_audio.segment_id
             # Safeguard offset durations against sign mismatches (e.g. from negative timedeltas)
@@ -114,6 +116,7 @@ class EvaluationService:
                     "No transcript for ID: %s. Skipping evaluation.",
                     segment_id,
                 )
+                record_pipeline_stage("evaluation", "skipped")
                 return None
 
             # 2. Call the evaluator
@@ -165,8 +168,10 @@ class EvaluationService:
 
             # 5. Record End-to-End Latency Metric via OpenTelemetry
             _record_e2e_latency(new_audio.feed_id)
+            record_pipeline_stage("evaluation", "success")
 
         except Exception:
+            record_pipeline_stage("evaluation", "error")
             logger.exception("Error processing new audio message")
             raise
         else:
