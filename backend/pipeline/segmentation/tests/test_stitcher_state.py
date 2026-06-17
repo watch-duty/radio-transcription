@@ -341,3 +341,77 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
             mock_audio_chunk(15000, 15000, []), self.ctx
         )
         self.assertTrue(any(isinstance(a, AppendBufferAction) for a in actions))
+
+    def test_traceparent_preservation_across_resets(self) -> None:
+        """Verifies that traceparent and baggage are preserved when VAD resets the transmission context."""
+        self.ctx.traceparent = "test-traceparent-xyz"
+        self.ctx.baggage = "test-baggage-xyz"
+
+        # Chunk 1: Speech from 1.0s to 12.0s. Trailing silence triggers a VAD flush,
+        # which in turn calls _reset_transmission_context internally to start the silence window.
+        chunk = mock_audio_chunk(0, 15000, [(1.0, 12.0)], "gs://fake/1.flac")
+        actions = self._process(chunk)
+
+        # Verify that the old transmission was successfully flushed
+        self.assertTrue(any(isinstance(a, FlushAction) for a in actions))
+
+        # Verify that the traceparent and baggage are STILL preserved in the context!
+        self.assertEqual(self.ctx.traceparent, "test-traceparent-xyz")
+        self.assertEqual(self.ctx.baggage, "test-baggage-xyz")
+
+    def test_traceparent_preservation_across_max_duration_flush(self) -> None:
+        """Verifies that traceparent and baggage are preserved when a flush is triggered by exceeding max transmission duration."""
+        self.ctx.traceparent = "test-traceparent-xyz"
+        self.ctx.baggage = "test-baggage-xyz"
+
+        # Start a non-speech transmission window
+        chunk1 = mock_audio_chunk(0, 15000, [], "gs://fake/1.flac")
+        self._process(chunk1)
+
+        # Process a second silent chunk that pushes the total duration to 65s (> 60s max limit),
+        # triggering a "Maximum non-speech transmission duration exceeded" flush.
+        chunk2 = mock_audio_chunk(15000, 50000, [], "gs://fake/2.flac")
+        actions = self._process(chunk2)
+
+        # Verify that the maximum duration flush occurred
+        flush_action = next(
+            (a for a in actions if isinstance(a, FlushAction)), None
+        )
+        self.assertIsNotNone(flush_action)
+        assert flush_action is not None
+        self.assertEqual(
+            flush_action.reason,
+            "Maximum non-speech transmission duration exceeded",
+        )
+
+        # Verify that the traceparent and baggage are STILL preserved in the context!
+        self.assertEqual(self.ctx.traceparent, "test-traceparent-xyz")
+        self.assertEqual(self.ctx.baggage, "test-baggage-xyz")
+
+    def test_traceparent_preservation_across_upstream_gap_flush(self) -> None:
+        """Verifies that traceparent and baggage are preserved when a flush is triggered by an upstream audio gap."""
+        self.ctx.traceparent = "test-traceparent-xyz"
+        self.ctx.baggage = "test-baggage-xyz"
+
+        # Start an active transmission
+        chunk1 = mock_audio_chunk(0, 3000, [(1.0, 2.0)], "gs://fake/1.flac")
+        self._process(chunk1)
+
+        # Process a second chunk that jumps ahead by 10 seconds (creating an upstream gap),
+        # which will force-flush the active transmission and call _reset_transmission_context.
+        chunk2 = mock_audio_chunk(10000, 3000, [], "gs://fake/2.flac")
+        actions = self._process(chunk2)
+
+        # Verify that the upstream gap flush occurred
+        flush_action = next(
+            (a for a in actions if isinstance(a, FlushAction)), None
+        )
+        self.assertIsNotNone(flush_action)
+        assert flush_action is not None
+        self.assertEqual(
+            flush_action.reason, "Forced flush due to upstream audio chunk gap"
+        )
+
+        # Verify that the traceparent and baggage are STILL preserved in the context!
+        self.assertEqual(self.ctx.traceparent, "test-traceparent-xyz")
+        self.assertEqual(self.ctx.baggage, "test-baggage-xyz")

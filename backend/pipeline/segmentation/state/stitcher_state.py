@@ -288,15 +288,20 @@ class AudioStitchingStateMachine:
         return filtered_actions
 
     def _reset_transmission_context(self, ctx: StitcherContext) -> None:
-        """Resets the ongoing state metrics (timers, timestamps) to begin a fresh transmission window."""
+        """Resets the ongoing state metrics (timers, timestamps) to begin a fresh transmission window.
+
+        Note: We deliberately do NOT clear ctx.traceparent or ctx.baggage here. Any immediate
+        subsequent sub-windows or timers within the same processing bundle must retain the active
+        transaction trace context. Once the session ends, a clearing flush will transition the
+        persistent state to IdleFeedState, which safely purges the tracing context from the database
+        (preventing Trace Context Hijacking).
+        """
         ctx.transmission_start_time_ms = None
         ctx.buffer_start_time_ms = None
         ctx.contributing_audio_uris.clear()
         ctx.start_audio_offset_ms = None
         ctx.buffer_duration_ms = 0
         ctx.speech_segments.clear()
-        ctx.traceparent = None
-        ctx.baggage = None
 
     def _process_silent_chunk(
         self, chunk_data: AudioChunkData, ctx: StitcherContext
