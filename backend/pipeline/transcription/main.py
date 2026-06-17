@@ -11,6 +11,7 @@ import functions_framework
 from cloudevents.http.event import CloudEvent
 from google.cloud import pubsub_v1
 
+from backend.pipeline.common import ForkAwareContainer
 from backend.pipeline.common.clients import audio_segments_client
 from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
@@ -24,13 +25,28 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
-class TranscriptionServiceContainer:
+class TranscriptionServiceContainer(ForkAwareContainer):
     """Encapsulates the warm-started cached service container instances for GCF."""
 
     def __init__(self) -> None:
+        super().__init__()
         self._transcriber: Transcriber | None = None
         self._publisher: pubsub_v1.PublisherClient | None = None
         self._processor: TranscriptionEventProcessor | None = None
+
+    def reset_clients(self) -> None:
+        if self._publisher is not None:
+            try:
+                close_fn = getattr(self._publisher, "close", None)
+                if close_fn is not None:
+                    close_fn()
+            except Exception:
+                logger.exception(
+                    "Failed to close Pub/Sub publisher client on fork reset"
+                )
+        self._transcriber = None
+        self._publisher = None
+        self._processor = None
 
     def get_transcriber(self, project_id: str) -> Transcriber:
         """Warms up and caches the transcriber instance.
@@ -41,6 +57,7 @@ class TranscriptionServiceContainer:
         Returns:
             The cached Transcriber instance.
         """
+        self.check_fork()
         if self._transcriber is None:
             t_type_str = os.environ.get("TRANSCRIBER_TYPE", "GOOGLE_CHIRP_V3")
             t_config_json = os.environ.get("TRANSCRIBER_CONFIG", "{}")
@@ -58,6 +75,7 @@ class TranscriptionServiceContainer:
         Returns:
             The cached PubSub PublisherClient instance.
         """
+        self.check_fork()
         if self._publisher is None:
             logger.info("Initializing Pub/Sub PublisherClient")
             publisher_options = pubsub_v1.types.PublisherOptions(
@@ -77,6 +95,7 @@ class TranscriptionServiceContainer:
         Raises:
             ValueError: If the OUTPUT_TOPIC environment variable is not set.
         """
+        self.check_fork()
         if self._processor is None:
             project_id = os.environ.get("PROJECT_ID", "watch-duty-dev")
             output_topic = os.environ.get("OUTPUT_TOPIC")

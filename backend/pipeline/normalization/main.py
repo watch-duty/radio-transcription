@@ -11,6 +11,7 @@ import functions_framework
 from cloudevents.http.event import CloudEvent
 from google.cloud import pubsub_v1, storage
 
+from backend.pipeline.common import ForkAwareContainer
 from backend.pipeline.common.clients.audio_segments_client import (
     AudioSegmentsClient,
 )
@@ -23,13 +24,28 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
-class NormalizationServiceContainer:
+class NormalizationServiceContainer(ForkAwareContainer):
     """Encapsulates the warm-started cached service container instances for GCF."""
 
     def __init__(self) -> None:
+        super().__init__()
         self._processor: NormalizationEventProcessor | None = None
         self._publisher: pubsub_v1.PublisherClient | None = None
         self._gcs_client: storage.Client | None = None
+
+    def reset_clients(self) -> None:
+        if self._publisher is not None:
+            try:
+                close_fn = getattr(self._publisher, "close", None)
+                if close_fn is not None:
+                    close_fn()
+            except Exception:
+                logger.exception(
+                    "Failed to close Pub/Sub publisher client on fork reset"
+                )
+        self._processor = None
+        self._publisher = None
+        self._gcs_client = None
 
     def get_publisher(self) -> pubsub_v1.PublisherClient:
         """Warms up and caches the Pub/Sub publisher client with ordering enabled.
@@ -37,6 +53,7 @@ class NormalizationServiceContainer:
         Returns:
             The cached PubSub PublisherClient instance.
         """
+        self.check_fork()
         if self._publisher is None:
             logger.info("Initializing Pub/Sub PublisherClient")
             publisher_options = pubsub_v1.types.PublisherOptions(
@@ -56,6 +73,7 @@ class NormalizationServiceContainer:
         Returns:
             The cached storage.Client instance.
         """
+        self.check_fork()
         if self._gcs_client is None:
             logger.info("Initializing GCS Client")
             self._gcs_client = storage.Client(project=project_id)
@@ -70,6 +88,7 @@ class NormalizationServiceContainer:
         Raises:
             ValueError: If required environment variables are not set.
         """
+        self.check_fork()
         if self._processor is None:
             project_id = os.environ.get("PROJECT_ID", "watch-duty-dev")
             canonical_audio_bucket = os.environ.get("AUDIO_CANONICAL_BUCKET")
