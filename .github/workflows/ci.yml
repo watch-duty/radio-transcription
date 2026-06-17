@@ -220,7 +220,15 @@ jobs:
           docker pull google/alloydbomni:15 || true
           docker pull fsouza/fake-gcs-server:latest || true
       - name: Run tests
-        run: uv run python -m pytest backend/ -q
+        run: |
+          set -o pipefail
+          uv run python -m pytest backend/ -q --cov=backend/pipeline --cov-report=term-missing | tee unit-coverage.txt
+      - name: Comment Coverage
+        uses: MishaKav/pytest-coverage-comment@main
+        if: always()
+        with:
+          pytest-coverage-path: ./unit-coverage.txt
+          title: Unit Tests Coverage
 
   run-frontend-tests:
     needs: [setup]

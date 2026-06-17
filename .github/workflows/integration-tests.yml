@@ -43,7 +43,16 @@ jobs:
         run: mise run generate:protos
 
       - name: Run component tests
-        run: mise run test:component
+        run: |
+          set -o pipefail
+          uv run pytest integration_tests/storage/ --cov=backend/pipeline --cov-report=term-missing | tee storage-coverage.txt
+          
+      - name: Comment Coverage
+        uses: MishaKav/pytest-coverage-comment@main
+        if: always()
+        with:
+          pytest-coverage-path: ./storage-coverage.txt
+          title: Storage Integration Tests Coverage
 
   e2e-tests:
     runs-on: ubuntu-24.04
@@ -74,7 +83,15 @@ jobs:
 
       - name: Run E2E tests
         run: |
-          docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run --rm integration-tests sh -c "pip install -q uv && uv sync && uv run python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto && uv run pytest integration_tests/ --ignore=integration_tests/storage/ -n auto -v -s --log-cli-level=INFO"
+          set -o pipefail
+          docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run --rm integration-tests sh -c "pip install -q uv && uv sync && uv run python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto && uv run pytest integration_tests/ --ignore=integration_tests/storage/ -n auto -v -s --log-cli-level=INFO --cov=backend/pipeline --cov-report=term-missing" | tee e2e-coverage.txt
+
+      - name: Comment Coverage
+        uses: MishaKav/pytest-coverage-comment@main
+        if: always()
+        with:
+          pytest-coverage-path: ./e2e-coverage.txt
+          title: E2E Integration Tests Coverage
 
       - name: Print container logs on failure
         if: failure()
