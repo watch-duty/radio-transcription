@@ -98,7 +98,10 @@ def get_test_stitch_config(**kwargs: Any) -> StitchAudioConfig:
 
 
 class ParseAndKeyTimestampTest(unittest.TestCase):
-    def test_parse_and_key_success(self) -> None:
+    @patch(
+        "backend.pipeline.segmentation.transforms.stateless.record_pipeline_stage"
+    )
+    def test_parse_and_key_success(self, mock_record_stage) -> None:
         """Verifies that well-formed Pub/Sub messages containing a serialized ContinuousAudio and feed_id are correctly unmarshalled and keyed by feed."""
         chunk = ContinuousAudio(
             gcs_uri="gs://test-bucket/path/to/test.flac",
@@ -146,6 +149,7 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
                 equal_to([]),
                 label="CheckEmptyDLQ",
             )
+        mock_record_stage.assert_called_once_with("segmentation", "start")
 
     def test_parse_and_key_dlq(self) -> None:
         """Verifies that incoming data missing a critical routing attribute like 'feed_id' is gracefully intercepted and routed to the Dead Letter Queue."""

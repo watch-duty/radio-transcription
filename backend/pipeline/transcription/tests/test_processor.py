@@ -2,7 +2,7 @@
 
 import base64
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import grpc
 import requests
@@ -23,6 +23,17 @@ from backend.services.audio_segments import models as audio_segments_models
 
 
 class TranscriptionEventProcessorTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.record_pipeline_stage_patch = patch(
+            "backend.pipeline.transcription.processor.record_pipeline_stage"
+        )
+        self.mock_record_pipeline_stage = (
+            self.record_pipeline_stage_patch.start()
+        )
+
+    def tearDown(self) -> None:
+        self.record_pipeline_stage_patch.stop()
+
     def test_process_event_success(self) -> None:
         """Verifies successful end-to-end claim-check Pub/Sub CloudEvent processing."""
         # Setup mocks
@@ -111,6 +122,12 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         )
         self.assertEqual(
             out_proto.playback_audio_uri, "gs://bucket/normalized.m4a"
+        )
+        self.mock_record_pipeline_stage.assert_any_call(
+            "transcription", "start"
+        )
+        self.mock_record_pipeline_stage.assert_any_call(
+            "transcription", "success"
         )
 
         # Verify add_audio_segment_annotation was called
