@@ -28,7 +28,9 @@ _FN_POLL_HTTP_POLICY = http_status.HTTPStatusPolicy(
     exact={
         **http_status.DEFAULT_HTTP_STATUS_POLICY.exact,
     },
-    default_4xx=feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+    default_4xx=(
+        feed_store.FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID
+    ),
     default_5xx=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
     default_other_failure=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
 )
@@ -147,7 +149,9 @@ class FireNotificationsRestClient(FireNotificationsClient):
             reason_prefix="fn_api_http",
             status_policy=_FN_POLL_HTTP_POLICY,
             validate_payload=validate_payload,
-            invalid_payload_status_reason=feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            invalid_payload_status_reason=(
+                feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID
+            ),
             invalid_payload_reason="fn_api_payload_malformed",
             transport_status_reason=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
             transport_reason="source_unreachable",
@@ -159,7 +163,7 @@ class FireNotificationsRestClient(FireNotificationsClient):
         if not isinstance(files_raw, list):
             msg = "fn_api_payload_malformed"
             raise FeedFailure(
-                feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
                 msg,
             )
 
