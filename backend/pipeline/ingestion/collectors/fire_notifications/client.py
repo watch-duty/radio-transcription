@@ -164,6 +164,7 @@ class FireNotificationsRestClient(FireNotificationsClient):
             )
 
         resolved_files = []
+        seen_filenames = set()
         for f in files_raw:
             if not isinstance(f, dict):
                 continue
@@ -172,6 +173,13 @@ class FireNotificationsRestClient(FireNotificationsClient):
             name = f.get("name", "")
             if not name.endswith(".mp3"):
                 continue
+
+            if name in seen_filenames:
+                # TODO(https://linear.app/watchduty/issue/GOO-634): Handle duplicate segments with the same timestamp better once the new API is available.
+                # For now just select the first one seen.
+                continue
+            seen_filenames.add(name)
+
             file_uuid = f.get("uuid")
             if not file_uuid:
                 continue
