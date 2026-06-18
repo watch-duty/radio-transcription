@@ -49,7 +49,7 @@ runs:
                 status: 'completed',
                 conclusion: 'success',
                 output: {
-                  title: `${coverageHealth} ${nameInput}: ${pct}`,
+                  title: `${nameInput}: ${pct}`,
                   summary: `### Coverage Report (${healthText})\n\n${codeBlock}\n${content}\n${codeBlock}`,
                 }
               });

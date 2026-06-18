@@ -57,7 +57,7 @@ runs:
                 status: 'completed',
                 conclusion: 'success',
                 output: {
-                  title: `${coverageHealth} ${testName}: ${coveragePct}%`,
+                  title: `${testName}: ${coveragePct}%`,
                   summary: summary,
                 }
               });
