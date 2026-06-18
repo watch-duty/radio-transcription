@@ -42,7 +42,11 @@ runs:
               const codeBlock = '```';
               let summary = 'No coverage report found';
               if (fs.existsSync(reportFile)) {
-                summary = `### Coverage Report\n\n${codeBlock}\n${fs.readFileSync(reportFile, 'utf8')}\n${codeBlock}`;
+                summary = `### Coverage Report
+
+${codeBlock}
+${fs.readFileSync(reportFile, 'utf8')}
+${codeBlock}`;
               }
               
               await github.rest.checks.create({
