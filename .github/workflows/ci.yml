@@ -259,17 +259,17 @@ jobs:
             let summary = 'No coverage report found';
             if (fs.existsSync('unit-coverage.txt')) {
               const content = fs.readFileSync('unit-coverage.txt', 'utf8');
-              summary = `### Unit Test Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
+              summary = `### Backend Unit Test Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
             }
             await github.rest.checks.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
               head_sha: ref,
-              name: `Unit Test Coverage: ${process.env.PERCENTAGE}`,
+              name: `Backend Unit Test Coverage: ${process.env.PERCENTAGE}`,
               status: 'completed',
               conclusion: 'success',
               output: {
-                title: `Unit Test Coverage: ${process.env.PERCENTAGE}`,
+                title: `Backend Unit Test Coverage: ${process.env.PERCENTAGE}`,
                 summary: summary,
               }
             });
