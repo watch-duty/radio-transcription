@@ -25,8 +25,14 @@ def main() -> None:
     cov = []
 
     for line in sys.stdin:
-        is_pytest_cov = "================================ tests coverage ================================" in line
-        is_vitest_cov = "-------------------|---------|----------|---------|---------|-------------------" in line
+        is_pytest_cov = (
+            "================================ tests coverage ================================"
+            in line
+        )
+        is_vitest_cov = (
+            "-------------------|---------|----------|---------|---------|-------------------"
+            in line
+        )
 
         if is_pytest_cov or is_vitest_cov:
             is_cov = True
