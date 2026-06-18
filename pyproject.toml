@@ -228,7 +228,7 @@ known-first-party = ["backend", "local_dev"]
   "T201",   # `print()` found
 ]
 ".github/scripts/**.py" = [
-  "INP001", # Implicit namespaces (no __init__.py needed)
+  "INP001", # Implicit namespaces (no __init__.py needed for standalone scripts)
 ]
 
 [tool.ruff.lint.pydocstyle]
