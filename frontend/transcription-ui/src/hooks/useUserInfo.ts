@@ -8,6 +8,6 @@ export function useUserInfo(token: string | null) {
     queryKey: ['userInfo', token],
     queryFn: () => getUserInfo(token!),
     enabled: !!token,
-    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
+    staleTime: 24 * 60 * 60 * 1000, // Cache for 1 day
   });
 }
