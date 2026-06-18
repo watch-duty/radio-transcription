@@ -103,9 +103,9 @@ export function TranscriptRow({
       return theme.palette.grey[200];
     }
     if (isCurrentlyPlaying) {
-      return theme.palette.primary.main;
+      return theme.palette.primary.contrastText;
     }
-    return theme.palette.primary.light;
+    return theme.palette.primary.main;
   };
 
   return (

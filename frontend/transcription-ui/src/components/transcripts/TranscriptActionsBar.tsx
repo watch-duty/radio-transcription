@@ -29,9 +29,6 @@ export interface TranscriptActionsBarProps {
   onClickViewLatest: () => void;
 }
 
-const APPLIED_FILTER_BG_COLOR = '#bbdefb';
-const DEFAULT_FILTER_BG_COLOR = '#f9bf90';
-
 export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   hasNewerAudioSegments,
   redactTranscripts,
@@ -43,8 +40,6 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   onClickViewLatest,
 }) => {
   const theme = useTheme();
-  const isDarkTheme = theme.palette.mode === 'dark';
-
   const [filterAnchorEl, setFilterAnchorEl] = useState<HTMLElement | null>(
     null
   );
@@ -202,24 +197,17 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
 
         <Chip
           sx={
-            isDarkTheme
-              ? {
-                  backgroundColor: dateTime
-                    ? theme.palette.primary.main
-                    : '#f9bf90',
-                  color: 'black',
-                  '& .MuiChip-deleteIcon': {
-                    color: 'black',
-                  },
-                }
-              : {
-                  backgroundColor: dateTime
-                    ? APPLIED_FILTER_BG_COLOR
-                    : DEFAULT_FILTER_BG_COLOR,
-                  color: 'black',
-                }
-          }
-          label={
+              {
+              backgroundColor: dateTime
+                ? theme.palette.warning.light
+                : theme.palette.warning.dark,
+              color: theme.palette.warning.contrastText,
+              '& .MuiChip-deleteIcon': {
+                color: theme.palette.warning.contrastText,
+              },
+            }
+        }
+        label={
             dateTime ? (
               <Box>
                 <b>Date/time:</b>{' '}
@@ -238,8 +226,11 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
         {alertFilter === 'alerts' && (
           <Chip
             sx={{
-              backgroundColor: APPLIED_FILTER_BG_COLOR,
-              color: 'black',
+              backgroundColor: theme.palette.warning.light,
+              color: theme.palette.warning.contrastText,
+              '& .MuiChip-deleteIcon': {
+                color: theme.palette.warning.contrastText,
+              },
             }}
             label={
               <Box>
