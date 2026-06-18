@@ -1,13 +1,13 @@
-name: 'Post Vitest Coverage'
+name: 'Post Frontend Coverage'
 description: 'Emits frontend test coverage as a Check Run'
 inputs:
   name:
     description: 'Name of the tests that the coverage is for'
     required: true
-  coverage-report-path:
+  coverage-report-location:
     description: 'Path to the text coverage report file'
     required: true
-  json-summary-path:
+  json-summary-location:
     description: 'Path to the JSON coverage summary file'
     required: true
 
@@ -19,20 +19,23 @@ runs:
       with:
         script: |
           const fs = require('fs');
+          // Use HEAD for pull requests, and all other types of runs (e.g. manual trigger)
+          // will use the commit SHA.
           const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
           
           const testName = `${{ inputs.name }}`;
-          const reportFile = `${{ inputs.coverage-report-path }}`;
-          const jsonSummary = `${{ inputs.json-summary-path }}`;
+          const reportFile = `${{ inputs.coverage-report-location }}`;
+          const jsonSummary = `${{ inputs.json-summary-location }}`;
           
           if (fs.existsSync(jsonSummary)) {
             try {
               const data = JSON.parse(fs.readFileSync(jsonSummary, 'utf8'));
               const coveragePct = `${data.total.statements.pct}%`;
               
+              const codeBlock = '```';
               let summary = 'No coverage report found';
               if (fs.existsSync(reportFile)) {
-                summary = `### Coverage Report\n\n\`\`\`\n${fs.readFileSync(reportFile, 'utf8')}\n\`\`\``;
+                summary = `### Coverage Report\n\n${codeBlock}\n${fs.readFileSync(reportFile, 'utf8')}\n${codeBlock}`;
               }
               
               await github.rest.checks.create({

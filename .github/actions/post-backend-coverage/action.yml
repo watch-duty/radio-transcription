@@ -28,6 +28,7 @@ runs:
               const parts = totalLine.trim().split(/\s+/);
               const pct = parts[parts.length - 1];
               
+              const codeBlock = '```';
               await github.rest.checks.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -37,7 +38,7 @@ runs:
                 conclusion: 'success',
                 output: {
                   title: `${nameInput}: ${pct}`,
-                  summary: `### Coverage Report\n\n\`\`\`\n${content}\n\`\`\``,
+                  summary: `### Coverage Report\n\n${codeBlock}\n${content}\n${codeBlock}`,
                 }
               });
             } else {
