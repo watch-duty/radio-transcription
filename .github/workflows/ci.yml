@@ -223,27 +223,14 @@ jobs:
       - name: Run tests
         run: |
           set -o pipefail
-          uv run python -m pytest backend/ -q --cov=backend/pipeline --cov-report=term-missing --color=no | python3 -c "
-          import sys
-          in_cov = False
-          cov = []
-          for line in sys.stdin:
-              if 'tests coverage' in line and '====' in line:
-                  in_cov = True
-              if in_cov:
-                  cov.append(line)
-              else:
-                  sys.stdout.write(line)
-                  sys.stdout.flush()
-          with open('unit-coverage.txt', 'w') as f:
-              f.writelines(cov)
-          "
+          uv run python -m pytest backend/ -q --cov=backend/pipeline --cov-report=term-missing --color=no \
+            | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o backend_unit_test_coverage.txt
       - name: Extract Coverage
         id: extract_cov
         if: always()
         run: |
-          if [ -f unit-coverage.txt ]; then
-            PCT=$(grep -i "TOTAL" unit-coverage.txt | awk '{print $NF}')
+          if [ -f backend_unit_test_coverage.txt ]; then
+            PCT=$(grep -i "TOTAL" backend_unit_test_coverage.txt | awk '{print $NF}')
             if [ -n "$PCT" ]; then
               echo "PERCENTAGE=$PCT" >> $GITHUB_ENV
             fi
@@ -256,8 +243,8 @@ jobs:
             const fs = require('fs');
             const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
             let summary = 'No coverage report found';
-            if (fs.existsSync('unit-coverage.txt')) {
-              const content = fs.readFileSync('unit-coverage.txt', 'utf8');
+            if (fs.existsSync('backend_unit_test_coverage.txt')) {
+              const content = fs.readFileSync('backend_unit_test_coverage.txt', 'utf8');
               summary = `### Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
             }
             await github.rest.checks.create({
@@ -294,21 +281,8 @@ jobs:
         working-directory: frontend/api
         run: |
           set -o pipefail
-          yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text --no-color | python3 -c "
-          import sys
-          in_cov = False
-          cov = []
-          for line in sys.stdin:
-              if '------|' in line and '|' in line:
-                  in_cov = True
-              if in_cov:
-                  cov.append(line)
-              else:
-                  sys.stdout.write(line)
-                  sys.stdout.flush()
-          with open('proxy-coverage.txt', 'w') as f:
-              f.writelines(cov)
-          "
+          yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text --no-color \
+            | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o frontend_proxy_test_coverage.txt
       - name: Extract Proxy Coverage
         id: extract_proxy_cov
         if: always()
@@ -322,21 +296,8 @@ jobs:
         working-directory: frontend/transcription-ui
         run: |
           set -o pipefail
-          yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text --no-color | python3 -c "
-          import sys
-          in_cov = False
-          cov = []
-          for line in sys.stdin:
-              if '------|' in line and '|' in line:
-                  in_cov = True
-              if in_cov:
-                  cov.append(line)
-              else:
-                  sys.stdout.write(line)
-                  sys.stdout.flush()
-          with open('ui-coverage.txt', 'w') as f:
-              f.writelines(cov)
-          "
+          yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text --no-color \
+            | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o frontend_ui_test_coverage.txt
       - name: Extract UI Coverage
         id: extract_ui_cov
         if: always()
@@ -356,8 +317,8 @@ jobs:
             
             if (process.env.PROXY_PERCENTAGE) {
               let summary = 'No coverage report found';
-              if (fs.existsSync('frontend/api/proxy-coverage.txt')) {
-                const content = fs.readFileSync('frontend/api/proxy-coverage.txt', 'utf8');
+              if (fs.existsSync('frontend/api/frontend_proxy_test_coverage.txt')) {
+                const content = fs.readFileSync('frontend/api/frontend_proxy_test_coverage.txt', 'utf8');
                 summary = `### Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
               }
               await github.rest.checks.create({
@@ -376,8 +337,8 @@ jobs:
             
             if (process.env.UI_PERCENTAGE) {
               let summary = 'No coverage report found';
-              if (fs.existsSync('frontend/transcription-ui/ui-coverage.txt')) {
-                const content = fs.readFileSync('frontend/transcription-ui/ui-coverage.txt', 'utf8');
+              if (fs.existsSync('frontend/transcription-ui/frontend_ui_test_coverage.txt')) {
+                const content = fs.readFileSync('frontend/transcription-ui/frontend_ui_test_coverage.txt', 'utf8');
                 summary = `### Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
               }
               await github.rest.checks.create({

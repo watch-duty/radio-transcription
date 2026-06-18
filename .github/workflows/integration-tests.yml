@@ -49,28 +49,15 @@ jobs:
       - name: Run component tests
         run: |
           set -o pipefail
-          mise run test:component --cov=backend/pipeline --cov-report=term-missing --color=no | python3 -c "
-          import sys
-          in_cov = False
-          cov = []
-          for line in sys.stdin:
-              if 'tests coverage' in line and '====' in line:
-                  in_cov = True
-              if in_cov:
-                  cov.append(line)
-              else:
-                  sys.stdout.write(line)
-                  sys.stdout.flush()
-          with open('storage-coverage.txt', 'w') as f:
-              f.writelines(cov)
-          "
+          mise run test:component --cov=backend/pipeline --cov-report=term-missing --color=no \
+            | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o storage_component_test_coverage.txt
           
       - name: Extract Storage Coverage
         id: extract_storage_cov
         if: always()
         run: |
-          if [ -f storage-coverage.txt ]; then
-            PCT=$(grep -i "TOTAL" storage-coverage.txt | awk '{print $NF}')
+          if [ -f storage_component_test_coverage.txt ]; then
+            PCT=$(grep -i "TOTAL" storage_component_test_coverage.txt | awk '{print $NF}')
             if [ -n "$PCT" ]; then
               echo "PERCENTAGE=$PCT" >> $GITHUB_ENV
             fi
@@ -83,8 +70,8 @@ jobs:
             const fs = require('fs');
             const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
             let summary = 'No coverage report found';
-            if (fs.existsSync('storage-coverage.txt')) {
-              const content = fs.readFileSync('storage-coverage.txt', 'utf8');
+            if (fs.existsSync('storage_component_test_coverage.txt')) {
+              const content = fs.readFileSync('storage_component_test_coverage.txt', 'utf8');
               summary = `### Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
             }
             await github.rest.checks.create({
@@ -130,28 +117,15 @@ jobs:
       - name: Run E2E tests
         run: |
           set -o pipefail
-          docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run --rm integration-tests sh -c "pip install -q uv && uv sync && uv run python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto && uv run pytest integration_tests/ --ignore=integration_tests/storage/ -n auto -v -s --log-cli-level=INFO --cov=backend/pipeline --cov-report=term-missing --color=no" | python3 -c "
-          import sys
-          in_cov = False
-          cov = []
-          for line in sys.stdin:
-              if 'tests coverage' in line and '====' in line:
-                  in_cov = True
-              if in_cov:
-                  cov.append(line)
-              else:
-                  sys.stdout.write(line)
-                  sys.stdout.flush()
-          with open('e2e-coverage.txt', 'w') as f:
-              f.writelines(cov)
-          "
+          docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run --rm integration-tests sh -c "pip install -q uv && uv sync && uv run python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto && uv run pytest integration_tests/ --ignore=integration_tests/storage/ -n auto -v -s --log-cli-level=INFO --cov=backend/pipeline --cov-report=term-missing --color=no" \
+            | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o e2e_integration_test_coverage.txt
 
       - name: Extract E2E Coverage
         id: extract_e2e_cov
         if: always()
         run: |
-          if [ -f e2e-coverage.txt ]; then
-            PCT=$(grep -i "TOTAL" e2e-coverage.txt | awk '{print $NF}')
+          if [ -f e2e_integration_test_coverage.txt ]; then
+            PCT=$(grep -i "TOTAL" e2e_integration_test_coverage.txt | awk '{print $NF}')
             if [ -n "$PCT" ]; then
               echo "PERCENTAGE=$PCT" >> $GITHUB_ENV
             fi
@@ -164,8 +138,8 @@ jobs:
             const fs = require('fs');
             const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
             let summary = 'No coverage report found';
-            if (fs.existsSync('e2e-coverage.txt')) {
-              const content = fs.readFileSync('e2e-coverage.txt', 'utf8');
+            if (fs.existsSync('e2e_integration_test_coverage.txt')) {
+              const content = fs.readFileSync('e2e_integration_test_coverage.txt', 'utf8');
               summary = `### Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
             }
             await github.rest.checks.create({
