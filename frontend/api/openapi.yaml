@@ -428,6 +428,17 @@ components:
         - code
       type: object
       additionalProperties: false
+    UserResponse:
+      properties:
+        email:
+          type: string
+        isAdmin:
+          type: boolean
+      required:
+        - email
+        - isAdmin
+      type: object
+      additionalProperties: false
     AudioClassification:
       enum:
         - UNSPECIFIED
@@ -1585,6 +1596,44 @@ paths:
       tags:
         - Auth
       security: []
+      parameters: []
+      x-google-backend: radio-transcription-api
+  /api/v1/users:
+    get:
+      operationId: GetUserInfo
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      tags:
+        - Users
+      security:
+        - google_id_token: []
       parameters: []
       x-google-backend: radio-transcription-api
   /api/v1/audioSegments/{feedId}:
