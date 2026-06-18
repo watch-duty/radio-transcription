@@ -444,3 +444,47 @@ def extract_cloud_event_attributes(
             )
 
     return combined_attributes
+
+
+def parse_pubsub_cloudevent(
+    cloud_event: CloudEvent | dict[str, object],
+) -> tuple[dict[str, str], str]:
+    """Parses a CloudEvent containing a Pub/Sub message, validating its structure.
+
+    Args:
+        cloud_event: The incoming CloudEvent triggered by GCP triggers/PubSub.
+
+    Returns:
+        A tuple of (combined_attributes, raw_data).
+
+    Raises:
+        ValueError: If the CloudEvent envelope or Pub/Sub message structure is invalid.
+        TypeError: If the Pub/Sub message is not a dictionary.
+    """
+    if isinstance(cloud_event, dict):
+        envelope = cloud_event
+    else:
+        envelope = cloud_event.data
+
+    if (
+        not envelope
+        or not isinstance(envelope, dict)
+        or "message" not in envelope
+    ):
+        err_msg = "Invalid CloudEvent envelope structure."
+        raise ValueError(err_msg)
+
+    pubsub_message = envelope.get("message")
+    if not isinstance(pubsub_message, dict):
+        type_err = "Invalid Pub/Sub message structure inside CloudEvent."
+        raise TypeError(type_err)
+
+    message_dict = {str(k): v for k, v in pubsub_message.items()}
+    raw_val = message_dict.get("data", "")
+    if isinstance(raw_val, bytes):
+        raw_data = raw_val.decode("utf-8")
+    else:
+        raw_data = str(raw_val)
+    combined_attributes = extract_cloud_event_attributes(cloud_event)
+
+    return combined_attributes, raw_data
