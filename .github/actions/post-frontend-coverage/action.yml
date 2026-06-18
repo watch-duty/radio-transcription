@@ -33,25 +33,30 @@ runs:
             try {
               const data = JSON.parse(fs.readFileSync(jsonSummary, 'utf8'));
               const coveragePct = parseFloat(data.total.statements.pct);
-              const coverageHealth = coveragePct < 50
-                ? 'failure'
-                : coveragePct < 80 ? 'neutral' : 'success';
+              let coverageHealth = '🟢';
+              let healthText = 'Healthy';
+              if (coveragePct < 50) {
+                coverageHealth = '🔴';
+                healthText = 'Critical (<50%)';
+              } else if (coveragePct < 80) {
+                coverageHealth = '🟡';
+                healthText = 'Warning (<80%)';
+              }
 
               const codeBlock = '```';
               let summary = 'No coverage report found';
               if (fs.existsSync(reportFile)) {
-                summary = `### Coverage Report\n\n${codeBlock}\n${fs.readFileSync(reportFile, 'utf8')}\n${codeBlock}`;
+                summary = `### Coverage Report (${healthText})\n\n${codeBlock}\n${fs.readFileSync(reportFile, 'utf8')}\n${codeBlock}`;
               }
               
               await github.rest.checks.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 head_sha: ref,
-                name: `${testName}: ${coveragePct}%`,
+                name: `${coverageHealth} ${testName}: ${coveragePct}%`,
                 status: 'completed',
-                conclusion: coverageHealth,
                 output: {
-                  title: `${testName}: ${coveragePct}%`,
+                  title: `${coverageHealth} ${testName}: ${coveragePct}%`,
                   summary: summary,
                 }
               });
