@@ -51,6 +51,6 @@ runs:
               core.warning(`Could not find TOTAL coverage percent in pytest report for ${nameInput}`);
             }
           } else {
-            # Silently failing this so that the focus can be on the test themselves.
+            // Silently failing this so that the focus can be on the test themselves.
             core.warning(`Coverage report file not found at ${reportFile}`);
           }

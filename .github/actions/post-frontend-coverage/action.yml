@@ -59,6 +59,6 @@ runs:
               core.warning(`Failed to parse json summary for ${testName}: ${e}`);
             }
           } else {
-            # Silently failing this so that the focus can be on the test themselves.
+            // Silently failing this so that the focus can be on the test themselves.
             core.warning(`JSON summary file not found at ${jsonSummary}`);
           }
