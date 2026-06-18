@@ -45,11 +45,7 @@ runs:
                 conclusion: conclusion,
                 output: {
                   title: `${nameInput}: ${pct}`,
-                  summary: `### Coverage Report
-
-${codeBlock}
-${content}
-${codeBlock}`,
+                  summary: `### Coverage Report\n\n${codeBlock}\n${content}\n${codeBlock}`,
                 }
               });
 
