@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { RouterProvider, createMemoryRouter } from 'react-router';
 
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 
 import { useAuth } from '../../context/AuthContext';
 import { getUserInfo } from '../../service/getUserInfo';
@@ -26,6 +27,7 @@ vi.mock('../../service/getUserInfo', () => ({
 }));
 
 // Mock useAuth
+const mockSetToken = vi.fn();
 const mockSetIsAdmin = vi.fn();
 let mockToken: string | null = null;
 let mockIsAdmin = false;
@@ -33,10 +35,25 @@ let mockIsAdmin = false;
 vi.mock('../../context/AuthContext', () => ({
   useAuth: vi.fn(() => ({
     token: mockToken,
+    setToken: mockSetToken,
     isAdmin: mockIsAdmin,
     setIsAdmin: mockSetIsAdmin,
   })),
 }));
+
+const renderWithQueryClient = (ui: React.ReactElement) => {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+        gcTime: 0,
+      },
+    },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
+  );
+};
 
 describe('RequireAdmin component', () => {
   beforeEach(() => {
@@ -68,7 +85,7 @@ describe('RequireAdmin component', () => {
       { initialEntries: ['/admin'] }
     );
 
-    render(<RouterProvider router={router} />);
+    renderWithQueryClient(<RouterProvider router={router} />);
 
     expect(router.state.location.pathname).toBe('/login');
   });
@@ -79,6 +96,7 @@ describe('RequireAdmin component', () => {
     // Mock useAuth to change isAdmin state to true after verify completes
     vi.mocked(useAuth).mockImplementation(() => ({
       token: 'test-token-admin',
+      setToken: mockSetToken,
       isAdmin: mockIsAdmin,
       setIsAdmin: (val) => {
         mockIsAdmin = val;
@@ -100,19 +118,15 @@ describe('RequireAdmin component', () => {
       { initialEntries: ['/admin'] }
     );
 
-    await act(async () => {
-      render(<RouterProvider router={router} />);
-    });
+    renderWithQueryClient(<RouterProvider router={router} />);
 
-    // Wait for the verification promise to resolve
-    await act(async () => {
-      await Promise.resolve();
-    });
+    // Wait for the verification to complete and "Admin Page" to render
+    const adminPage = await screen.findByText('Admin Page');
+    expect(adminPage).toBeTruthy();
 
     expect(getUserInfo).toHaveBeenCalledWith('test-token-admin');
     expect(mockSetIsAdmin).toHaveBeenCalledWith(true);
     expect(screen.queryByRole('progressbar')).toBeNull();
-    expect(screen.getByText('Admin Page')).toBeTruthy();
   });
 
   it('redirects to / if verification determines user is not admin', async () => {
@@ -121,6 +135,7 @@ describe('RequireAdmin component', () => {
     // Mock useAuth
     vi.mocked(useAuth).mockImplementation(() => ({
       token: 'test-token-user',
+      setToken: mockSetToken,
       isAdmin: mockIsAdmin,
       setIsAdmin: (val) => {
         mockIsAdmin = val;
@@ -146,18 +161,15 @@ describe('RequireAdmin component', () => {
       { initialEntries: ['/admin'] }
     );
 
-    await act(async () => {
-      render(<RouterProvider router={router} />);
-    });
+    renderWithQueryClient(<RouterProvider router={router} />);
 
-    // Wait for promise
-    await act(async () => {
-      await Promise.resolve();
+    // Wait for the redirection to complete
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/');
     });
 
     expect(getUserInfo).toHaveBeenCalledWith('test-token-user');
     expect(mockSetIsAdmin).toHaveBeenCalledWith(false);
-    expect(router.state.location.pathname).toBe('/');
   });
 
   it('redirects to / and sets isAdmin=false if getUserInfo API throws', async () => {
@@ -166,6 +178,7 @@ describe('RequireAdmin component', () => {
     // Mock useAuth
     vi.mocked(useAuth).mockImplementation(() => ({
       token: 'test-token-error',
+      setToken: mockSetToken,
       isAdmin: mockIsAdmin,
       setIsAdmin: (val) => {
         mockIsAdmin = val;
@@ -191,17 +204,14 @@ describe('RequireAdmin component', () => {
       { initialEntries: ['/admin'] }
     );
 
-    await act(async () => {
-      render(<RouterProvider router={router} />);
-    });
+    renderWithQueryClient(<RouterProvider router={router} />);
 
-    // Wait for promise
-    await act(async () => {
-      await Promise.resolve();
+    // Wait for the redirection to complete
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe('/');
     });
 
     expect(getUserInfo).toHaveBeenCalledWith('test-token-error');
     expect(mockSetIsAdmin).toHaveBeenCalledWith(false);
-    expect(router.state.location.pathname).toBe('/');
   });
 });
