@@ -16,7 +16,9 @@ runs:
       with:
         script: |
           const fs = require('fs');
-          const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
+          const ref = context.payload.pull_request
+            ? context.payload.pull_request.head.sha
+            : context.sha;
           
           const nameInput = `${{ inputs.name }}`;
           const reportFile = `${{ inputs.coverage-report-location }}`;

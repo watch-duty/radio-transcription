@@ -21,7 +21,9 @@ runs:
           const fs = require('fs');
           // Use HEAD for pull requests, and all other types of runs (e.g. manual trigger)
           // will use the commit SHA.
-          const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
+          const ref = context.payload.pull_request
+            ? context.payload.pull_request.head.sha
+            : context.sha;
           
           const testName = `${{ inputs.name }}`;
           const reportFile = `${{ inputs.coverage-report-location }}`;
@@ -30,14 +32,12 @@ runs:
           if (fs.existsSync(jsonSummary)) {
             try {
               const data = JSON.parse(fs.readFileSync(jsonSummary, 'utf8'));
+              const pct = parseFloat(data.total.statements.pct);
+              const conclusion = pct < 50
+                ? 'failure'
+                : pct < 80 ? 'neutral' : 'success';
+
               const coveragePct = `${data.total.statements.pct}%`;
-              const pctNumber = parseFloat(data.total.statements.pct);
-              let conclusion = 'success';
-              if (pctNumber < 50) {
-                conclusion = 'failure';
-              } else if (pctNumber < 80) {
-                conclusion = 'neutral';
-              }
 
               const codeBlock = '```';
               let summary = 'No coverage report found';
@@ -61,5 +61,6 @@ runs:
               core.warning(`Failed to parse json summary for ${testName}: ${e}`);
             }
           } else {
-            core.info(`JSON summary file not found at ${jsonSummary}`);
+            # Silently failing this so that the focus can be on the test themselves.
+            core.warning(`JSON summary file not found at ${jsonSummary}`);
           }
