@@ -62,8 +62,6 @@ export default function AppContainer({
     handleDrawerClose();
   };
 
-  const showAdminNavItems = token && isAdmin;
-
   return (
     <Box sx={{ display: 'flex' }}>
       <AppBar position="fixed">
@@ -144,7 +142,7 @@ export default function AppContainer({
               <ListItemText primary={'Feeds'} />
             </ListItemButton>
           </ListItem>
-          {showAdminNavItems && (
+          {isAdmin && (
             <ListItem disablePadding>
               <ListItemButton onClick={() => handleItemClick('/rules')}>
                 <ListItemIcon>
@@ -154,7 +152,7 @@ export default function AppContainer({
               </ListItemButton>
             </ListItem>
           )}
-          {showAdminNavItems && (
+          {isAdmin && (
             <ListItem disablePadding>
               <ListItemButton onClick={() => handleItemClick('/feeds')}>
                 <ListItemIcon>
@@ -164,7 +162,7 @@ export default function AppContainer({
               </ListItemButton>
             </ListItem>
           )}
-          {showAdminNavItems && (
+          {isAdmin && (
             <ListItem disablePadding>
               <ListItemButton onClick={() => handleItemClick('/docs')}>
                 <ListItemIcon>
