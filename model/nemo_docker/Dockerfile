@@ -10,8 +10,10 @@ ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 
 # Install ZSH, Git, FFmpeg, and set up ZSH
+COPY --from=mwader/static-ffmpeg:6.1.1 /ffmpeg /usr/local/bin/
+COPY --from=mwader/static-ffmpeg:6.1.1 /ffprobe /usr/local/bin/
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends zsh git wget ffmpeg && \
+    apt-get install -y --no-install-recommends zsh git wget && \
     wget -O- https://github.com/deluan/zsh-in-docker/releases/download/v1.1.5/zsh-in-docker.sh | sh -s -- -t robbyrussell && \
     rm -rf /var/lib/apt/lists/*
 

@@ -11,9 +11,8 @@ WORKDIR /app
 ENV PYTHONPATH=/app
 
 # 1. Install system dependencies (ffmpeg/ffprobe required by get_audio_duration)
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+COPY --from=mwader/static-ffmpeg:6.1.1 /ffmpeg /usr/local/bin/
+COPY --from=mwader/static-ffmpeg:6.1.1 /ffprobe /usr/local/bin/
 
 # 2. Install Python dependencies
 COPY --from=ghcr.io/astral-sh/uv:0.11.13 /uv /uvx /bin/

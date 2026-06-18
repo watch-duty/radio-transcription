@@ -8,7 +8,8 @@ ENV UV_LINK_MODE=copy
 WORKDIR /app
 
 # Install system dependencies (ffmpeg is needed for audio processing)
-RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
+COPY --from=mwader/static-ffmpeg:6.1.1 /ffmpeg /usr/local/bin/
+COPY --from=mwader/static-ffmpeg:6.1.1 /ffprobe /usr/local/bin/
 
 # Install dependencies
 COPY --from=ghcr.io/astral-sh/uv:0.7.12 /uv /uvx /bin/
