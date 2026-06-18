@@ -6,8 +6,8 @@ import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
 import Typography from '@mui/material/Typography';
 
+import { useUserInfo } from '../hooks/useUserInfo';
 import { authSession } from '../service/authSession';
-import { getUserInfo } from '../service/getUserInfo';
 import { AuthContext } from './AuthContext';
 
 const REFRESH_TOKEN_INTERVAL = 55 * 60 * 1000; // 55 minutes
@@ -20,24 +20,15 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [loading, setLoading] = useState(true);
   const isRefreshingRef = useRef(false);
 
+  const { data: userInfo, isError } = useUserInfo(token);
+
   useEffect(() => {
-    if (!token) {
+    if (userInfo) {
+      setIsAdmin(userInfo.isAdmin);
+    } else if (isError || !token) {
       setIsAdmin(false);
-      return;
     }
-
-    const fetchUserInfo = async () => {
-      try {
-        const info = await getUserInfo(token);
-        setIsAdmin(info.isAdmin);
-      } catch (error) {
-        console.error('Failed to fetch user info:', error);
-        setIsAdmin(false);
-      }
-    };
-
-    fetchUserInfo();
-  }, [token]);
+  }, [userInfo, isError, token]);
 
   /**
    * Effect which checks the user's session.

@@ -12,6 +12,11 @@ export const RequireAdmin = ({ children }: { children: React.ReactNode }) => {
   const location = useLocation();
   const { data: userInfo, isLoading, isError } = useUserInfo(token);
 
+  // We check useUserInfo locally to obtain the query's loading and error states.
+  // Since AuthProvider renders the application before the user info query finishes,
+  // we must wait for this query to resolve (showing a loading spinner in the meantime)
+  // to prevent premature redirection to the home page while isAdmin is still false.
+  // React Query will automatically deduplicate this request with the one in AuthProvider.
   useEffect(() => {
     if (userInfo) {
       setIsAdmin(userInfo.isAdmin);
