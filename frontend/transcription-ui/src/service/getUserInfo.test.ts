@@ -12,7 +12,7 @@ describe('getUserInfo', () => {
 
   it('should fetch user info successfully', async () => {
     const mockData = {
-      email: 'test@watchduty.org',
+      email: 'test@email.org',
       isAdmin: true,
     };
 

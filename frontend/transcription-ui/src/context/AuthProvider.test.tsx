@@ -19,7 +19,7 @@ vi.mock('../service/authSession', () => ({
 vi.mock('../service/getUserInfo', () => ({
   getUserInfo: vi
     .fn()
-    .mockResolvedValue({ email: 'test@watchduty.org', isAdmin: false }),
+    .mockResolvedValue({ email: 'test@email.org', isAdmin: false }),
 }));
 
 const TestConsumer = () => {

@@ -253,7 +253,7 @@ describe('UsersController', () => {
     const controller = new UsersController();
     const mockReq = {
       user: {
-        email: 'test@watchduty.org',
+        email: 'test@email.org',
         isAdmin: true,
       },
     } as unknown as express.Request;
@@ -261,7 +261,7 @@ describe('UsersController', () => {
     const result = await controller.getUserInfo(mockReq);
 
     expect(result).toEqual({
-      email: 'test@watchduty.org',
+      email: 'test@email.org',
       isAdmin: true,
     });
   });
