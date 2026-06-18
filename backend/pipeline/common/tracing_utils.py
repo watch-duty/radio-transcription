@@ -6,7 +6,7 @@ import threading
 import uuid
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, cast
 
 from cloudevents.http.event import CloudEvent
 from opentelemetry import baggage, metrics
@@ -427,7 +427,7 @@ def extract_cloud_event_attributes(
     """
     combined_attributes: dict[str, str] = {}
 
-    if isinstance(cloud_event, CloudEvent):
+    if hasattr(cloud_event, "data"):
         data = cloud_event.data
         ce_attrs = getattr(cloud_event, "attributes", None)
     else:
@@ -457,9 +457,10 @@ def extract_cloud_event_attributes(
     ]:
         try:
             val = cloud_event.get(k)
-            if val is not None:
-                # We intentionally coerce non-None values to str to handle robust type conversion
-                # for keys like traceparent/baggage which are expected to be scalar strings.
+            if isinstance(val, (str, bytes, int, float, bool)):
+                # We intentionally coerce scalar values to str to handle robust type conversion
+                # for keys like traceparent/baggage which are expected to be scalar strings,
+                # while ignoring complex objects or mock returns in unit tests.
                 combined_attributes[k] = _safe_str(val)
         except Exception as e:
             telemetry_logger.debug("Field %s extraction failed: %s", k, e)
@@ -485,7 +486,7 @@ def parse_pubsub_cloudevent(
         ValueError: If the CloudEvent envelope or Pub/Sub message structure is invalid.
         TypeError: If the Pub/Sub message is not a dictionary.
     """
-    if isinstance(cloud_event, CloudEvent):
+    if hasattr(cloud_event, "data"):
         envelope = cloud_event.data
     else:
         envelope = cloud_event
@@ -498,7 +499,7 @@ def parse_pubsub_cloudevent(
         err_msg = "Invalid CloudEvent envelope structure."
         raise ValueError(err_msg)
 
-    pubsub_message = envelope.get("message")
+    pubsub_message = cast("Any", envelope).get("message")
     if not isinstance(pubsub_message, dict):
         type_err = "Invalid Pub/Sub message structure inside CloudEvent."
         raise TypeError(type_err)
