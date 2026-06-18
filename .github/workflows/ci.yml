@@ -255,19 +255,19 @@ jobs:
           set -o pipefail
           yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text --no-color \
             | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o frontend_api_test_coverage.txt
-      - name: Run UI tests
-        working-directory: frontend/transcription-ui
-        run: |
-          set -o pipefail
-          yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text --no-color \
-            | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o frontend_ui_test_coverage.txt
-      - name: Create Proxy Coverage Check Run
+      - name: Create Frontend Proxy Coverage Check Run
         uses: ./.github/actions/post-frontend-coverage
         if: always()
         with:
           name: "Frontend Proxy API Coverage"
           coverage-report-location: "frontend/api/frontend_api_test_coverage.txt"
           json-summary-location: "frontend/api/coverage/coverage-summary.json"
+      - name: Run UI tests
+        working-directory: frontend/transcription-ui
+        run: |
+          set -o pipefail
+          yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text --no-color \
+            | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o frontend_ui_test_coverage.txt
       - name: Create UI Coverage Check Run
         uses: ./.github/actions/post-frontend-coverage
         if: always()
