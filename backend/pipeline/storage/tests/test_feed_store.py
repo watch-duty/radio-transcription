@@ -76,6 +76,7 @@ def _full_feed_row(**overrides: object) -> dict[str, object]:
         "created_at": datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
         "source_feed_id": "123",
         "tags": None,
+        "last_speech_segment_timestamp": None,
     }
     row.update(overrides)
     return row
@@ -301,6 +302,24 @@ class TestStatusReasonRowMapping(unittest.TestCase):
         self.assertIn("Unknown status reason", str(context.exception))
 
 
+class TestLastSpeechSegmentTimestampMapping(unittest.TestCase):
+    """Tests for mapping last_speech_segment_timestamp DB fields to Feed."""
+
+    def test_null_timestamp_maps_to_none(self) -> None:
+        store = FeedStore(make_mock_pool())
+        result = store._row_to_feed(cast("asyncpg.Record", _full_feed_row()))
+        self.assertIsNone(result["last_speech_segment_timestamp"])
+
+    def test_valid_timestamp_maps_correctly(self) -> None:
+        store = FeedStore(make_mock_pool())
+        timestamp = datetime.datetime(
+            2026, 6, 16, 18, 0, 0, tzinfo=datetime.UTC
+        )
+        row = _full_feed_row(last_speech_segment_timestamp=timestamp)
+        result = store._row_to_feed(cast("asyncpg.Record", row))
+        self.assertEqual(result["last_speech_segment_timestamp"], timestamp)
+
+
 class TestStatusReasonSqlProjection(unittest.TestCase):
     """Tests for full-feed SQL projection coverage."""
 
@@ -315,6 +334,21 @@ class TestStatusReasonSqlProjection(unittest.TestCase):
         ):
             self.assertRegex(sql, r"\bstatus_reason\b")
             self.assertRegex(sql, r"\bstatus_reason_updated_at\b")
+
+
+class TestLastSpeechSegmentTimestampSqlProjection(unittest.TestCase):
+    def test_full_feed_queries_project_last_speech_segment_timestamp(
+        self,
+    ) -> None:
+        for sql in (
+            feed_queries.CREATE_FEED_SQL,
+            feed_queries.GET_FEED_SQL,
+            feed_queries.LIST_FEEDS_DESC_SQL,
+            feed_queries.LIST_FEEDS_ASC_SQL,
+            feed_queries.RESET_FEED_SQL,
+            feed_queries.UPDATE_FEED_SQL,
+        ):
+            self.assertRegex(sql, r"\blast_speech_segment_timestamp\b")
 
 
 class TestStatusReasonLifecycleIsolation(unittest.TestCase):
