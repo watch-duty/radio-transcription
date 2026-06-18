@@ -7,6 +7,7 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 
+from cloudevents.http.event import CloudEvent
 from opentelemetry import baggage, metrics
 from opentelemetry.baggage.propagation import W3CBaggagePropagator
 from opentelemetry.context import Context, attach, detach, get_current
@@ -368,7 +369,9 @@ def with_baggage_and_span(
         yield span
 
 
-def extract_cloud_event_attributes(cloud_event: object) -> dict[str, str]:
+def extract_cloud_event_attributes(
+    cloud_event: CloudEvent | dict[str, object],
+) -> dict[str, str]:
     """Extracts combined attributes from a CloudEvent payload and metadata.
 
     Args:
@@ -379,13 +382,21 @@ def extract_cloud_event_attributes(cloud_event: object) -> dict[str, str]:
     """
     combined_attributes: dict[str, str] = {}
 
+    if isinstance(cloud_event, dict):
+        data = cloud_event.get("data")
+        ce_attrs = cloud_event.get("attributes")
+    else:
+        data = cloud_event.data
+        ce_attrs = None
+
     # 1. Try to extract from nested Pub/Sub message attributes
     try:
-        data = getattr(cloud_event, "data", None)
         if isinstance(data, dict):
-            pubsub_message = data.get("message")
+            data_dict = {str(k): v for k, v in data.items()}
+            pubsub_message = data_dict.get("message")
             if isinstance(pubsub_message, dict):
-                pubsub_attrs = pubsub_message.get("attributes")
+                msg_dict = {str(k): v for k, v in pubsub_message.items()}
+                pubsub_attrs = msg_dict.get("attributes")
                 if isinstance(pubsub_attrs, dict):
                     combined_attributes.update(
                         {
@@ -401,7 +412,6 @@ def extract_cloud_event_attributes(cloud_event: object) -> dict[str, str]:
 
     # 2. Try to extract from top-level CloudEvent attributes
     try:
-        ce_attrs = getattr(cloud_event, "attributes", None)
         if isinstance(ce_attrs, dict):
             combined_attributes.update(
                 {
@@ -425,11 +435,8 @@ def extract_cloud_event_attributes(cloud_event: object) -> dict[str, str]:
         "ce-tracestate",
     ]:
         try:
-            val = None
-            get_fn = getattr(cloud_event, "get", None)
-            if get_fn and callable(get_fn):
-                val = get_fn(k)
-            if val and isinstance(val, str):
+            val = cloud_event.get(k)
+            if isinstance(val, str):
                 combined_attributes[k] = val
         except Exception as e:
             telemetry_logger.debug(

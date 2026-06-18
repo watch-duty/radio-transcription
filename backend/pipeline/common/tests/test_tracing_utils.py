@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
+from cloudevents.http.event import CloudEvent
 from opentelemetry import baggage
 from opentelemetry.trace import get_current_span
 
@@ -160,34 +161,30 @@ class TestTracingUtils(unittest.TestCase):
 
     def test_extract_cloud_event_attributes(self) -> None:
         """Verifies that extract_cloud_event_attributes parses nested pub/sub, top-level attributes, and top-level fields."""
-
-        # Mock class/dict representing a CloudEvent
-        class MockCloudEvent:
-            def __init__(
-                self, data=None, attributes=None, extra_fields=None
-            ) -> None:
-                self.data = data
-                self.attributes = attributes
-                if extra_fields:
-                    for k, v in extra_fields.items():
-                        setattr(self, k, v)
-
-            def get(self, key, default=None):
-                return getattr(self, key, default)
-
         # 1. Pub/Sub attributes
-        ce1 = MockCloudEvent(
-            data={"message": {"attributes": {"traceparent": "tp1"}}}
+        ce1 = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test",
+            },
+            data={"message": {"attributes": {"traceparent": "tp1"}}},
         )
         attrs1 = extract_cloud_event_attributes(ce1)
         self.assertEqual(attrs1.get("traceparent"), "tp1")
 
         # 2. CloudEvent top-level attributes
-        ce2 = MockCloudEvent(attributes={"ce-traceparent": "tp2"})
+        ce2 = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test",
+                "ce-traceparent": "tp2",
+            },
+            data={},
+        )
         attrs2 = extract_cloud_event_attributes(ce2)
         self.assertEqual(attrs2.get("ce-traceparent"), "tp2")
 
-        # 3. Top-level direct keys
-        ce3 = MockCloudEvent(extra_fields={"traceparent": "tp3"})
+        # 3. Top-level direct keys via dict representation
+        ce3: dict[str, object] = {"traceparent": "tp3"}
         attrs3 = extract_cloud_event_attributes(ce3)
         self.assertEqual(attrs3.get("traceparent"), "tp3")
