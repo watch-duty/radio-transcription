@@ -376,6 +376,14 @@ def _extract_nested_pubsub_attributes(data: Any) -> dict[str, str]:
     if isinstance(data, dict):
         data_dict: dict[Any, Any] = data
         message = data_dict.get("message") or data_dict.get(b"message")
+
+        # Fallback: if there is no nested "message" field, but "attributes" is present at the top level,
+        # then the data dictionary itself is the message!
+        if message is None and (
+            "attributes" in data_dict or b"attributes" in data_dict
+        ):
+            message = data_dict
+
         if isinstance(message, dict):
             msg_dict: dict[Any, Any] = message
             attrs = msg_dict.get("attributes") or msg_dict.get(b"attributes")

@@ -213,3 +213,37 @@ class TestTracingUtils(unittest.TestCase):
         self.assertEqual(attrs4.get("traceparent"), "tp4")
         self.assertEqual(attrs4.get("numeric_val"), "12345")
         self.assertEqual(attrs4.get("bool_val"), "True")
+
+        # 5. Direct Message Payload (functions-framework style where data is the message itself)
+        ce5 = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test",
+            },
+            data={
+                "attributes": {
+                    "traceparent": "tp5",
+                    "baggage": "bg5",
+                },
+                "data": "CiQ...",
+            },
+        )
+        attrs5 = extract_cloud_event_attributes(ce5)
+        self.assertEqual(attrs5.get("traceparent"), "tp5")
+        self.assertEqual(attrs5.get("baggage"), "bg5")
+
+        # 6. Eventarc / CloudEvent Extensions (formal CloudEvent object with x-goog-pubsub-attr-)
+        ce6 = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test",
+                "x-goog-pubsub-attr-traceparent": "tp6",
+                "x-goog-pubsub-attr-baggage": "bg6",
+            },
+            data={},
+        )
+        attrs6 = extract_cloud_event_attributes(ce6)
+        self.assertEqual(attrs6.get("x-goog-pubsub-attr-traceparent"), "tp6")
+        self.assertEqual(attrs6.get("traceparent"), "tp6")
+        self.assertEqual(attrs6.get("x-goog-pubsub-attr-baggage"), "bg6")
+        self.assertEqual(attrs6.get("baggage"), "bg6")
