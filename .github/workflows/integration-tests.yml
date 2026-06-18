@@ -86,6 +86,7 @@ jobs:
             -f docker-compose.yml \
             --load
 
+      # Note that this is missing coverage stats from the Frontend API
       - name: Run E2E tests
         run: |
           set -o pipefail
