@@ -51,7 +51,7 @@ jobs:
           set -o pipefail
           mise run test:component --cov=backend/pipeline --cov-report=term-missing --color=no \
             | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o storage_integration_test_coverage.txt
-          
+
       - name: Create Coverage Check Run
         uses: ./.github/actions/post-backend-coverage
         if: always()
