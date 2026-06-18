@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.common.tracing_utils import (
+    extract_cloud_event_attributes,
     inject_otel_context,
     with_tracer_context,
 )
@@ -66,10 +67,11 @@ class EvaluationEventProcessor:
         Args:
             cloud_event: The CloudEvent triggered by Pub/Sub.
         """
-        pubsub_message = cloud_event.data.get("message", {})
-        attributes = pubsub_message.get("attributes", {}) or {}
+        combined_attributes = extract_cloud_event_attributes(cloud_event)
 
-        with with_tracer_context(attributes, "evaluate_rules", __name__):
+        with with_tracer_context(
+            combined_attributes, "evaluate_rules", __name__
+        ):
             # 1. Decode the Incoming Message
             # TODO (https://linear.app/watchduty/issue/GOO-245/): Handle parse failure.
             new_audio = self._parse_cloud_event(cloud_event)

@@ -20,6 +20,7 @@ from backend.pipeline.common.constants import (
 )
 from backend.pipeline.common.storage import gcs_uploader
 from backend.pipeline.common.tracing_utils import (
+    extract_cloud_event_attributes,
     inject_otel_context,
     record_pipeline_stage,
     with_tracer_context,
@@ -137,40 +138,8 @@ class NormalizationEventProcessor:
 
         raw_data = str(pubsub_message.get("data", ""))
 
-        combined_attributes: dict[str, str] = {}
-        combined_attributes.update(attributes)
-
-        # Merge CloudEvent attributes
-        if hasattr(cloud_event, "attributes") and isinstance(
-            cloud_event.attributes, dict
-        ):
-            combined_attributes.update(
-                {
-                    str(k): str(v)
-                    for k, v in cloud_event.attributes.items()
-                    if isinstance(k, str) and isinstance(v, str)
-                }
-            )
-
-        # Merge Top-level CloudEvent fields if dict-like or via get method
-        for k in [
-            "traceparent",
-            "baggage",
-            "tracestate",
-            "ce-traceparent",
-            "ce-baggage",
-            "ce-tracestate",
-        ]:
-            try:
-                val = None
-                if isinstance(cloud_event, dict) or hasattr(cloud_event, "get"):
-                    val = cloud_event.get(k)
-                if val and isinstance(val, str):
-                    combined_attributes[k] = val
-            except Exception as e:
-                logger.debug(
-                    "Field %s not found or extraction failed: %s", k, e
-                )
+        # Reuse generic trace extraction helper for combining attributes
+        combined_attributes = extract_cloud_event_attributes(cloud_event)
 
         # Log detailed info about pubsub_message keys and attributes
         logger.info(

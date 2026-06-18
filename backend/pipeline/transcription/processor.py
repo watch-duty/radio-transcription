@@ -19,6 +19,7 @@ from backend.pipeline.common.constants import (
     NANOS_PER_MS,
 )
 from backend.pipeline.common.tracing_utils import (
+    extract_cloud_event_attributes,
     inject_otel_context,
     record_pipeline_stage,
     with_tracer_context,
@@ -62,10 +63,10 @@ class TranscriptionEventProcessor:
         """Decodes, processes, and transcribes the given CloudEvent."""
         record_pipeline_stage("transcription", "start")
         pubsub_message = cloud_event.data.get("message", {}) or {}
-        attributes = pubsub_message.get("attributes", {}) or {}
+        combined_attributes = extract_cloud_event_attributes(cloud_event)
 
         with with_tracer_context(
-            attributes, "transcribe_claim_check", __name__
+            combined_attributes, "transcribe_claim_check", __name__
         ):
             errors = []
             transcript = ""

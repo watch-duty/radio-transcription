@@ -6,6 +6,7 @@ import threading
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import Any
 
 from opentelemetry import baggage, metrics
 from opentelemetry.baggage.propagation import W3CBaggagePropagator
@@ -366,3 +367,77 @@ def with_baggage_and_span(
         get_tracer(tracer_name).start_as_current_span(span_name) as span,
     ):
         yield span
+
+
+def extract_cloud_event_attributes(cloud_event: Any) -> dict[str, str]:
+    """Extracts combined attributes from a CloudEvent payload and metadata.
+
+    Args:
+        cloud_event: The incoming CloudEvent triggered by GCP triggers/PubSub.
+
+    Returns:
+        A dictionary of the combined attributes.
+    """
+    combined_attributes: dict[str, str] = {}
+
+    # 1. Try to extract from nested Pub/Sub message attributes
+    try:
+        data = cloud_event.data if hasattr(cloud_event, "data") else None
+        if isinstance(data, dict):
+            pubsub_message = data.get("message")
+            if isinstance(pubsub_message, dict):
+                pubsub_attrs = pubsub_message.get("attributes")
+                if isinstance(pubsub_attrs, dict):
+                    combined_attributes.update(
+                        {
+                            str(k): str(v)
+                            for k, v in pubsub_attrs.items()
+                            if isinstance(k, str) and isinstance(v, str)
+                        }
+                    )
+    except Exception as e:
+        telemetry_logger.debug(
+            "Failed to extract attributes from Pub/Sub message: %s", e
+        )
+
+    # 2. Try to extract from top-level CloudEvent attributes
+    try:
+        ce_attrs = (
+            cloud_event.attributes
+            if hasattr(cloud_event, "attributes")
+            else None
+        )
+        if isinstance(ce_attrs, dict):
+            combined_attributes.update(
+                {
+                    str(k): str(v)
+                    for k, v in ce_attrs.items()
+                    if isinstance(k, str) and isinstance(v, str)
+                }
+            )
+    except Exception as e:
+        telemetry_logger.debug(
+            "Failed to extract attributes from CloudEvent attributes: %s", e
+        )
+
+    # 3. Try to extract from top-level CloudEvent fields if dict-like or via get method
+    for k in [
+        "traceparent",
+        "baggage",
+        "tracestate",
+        "ce-traceparent",
+        "ce-baggage",
+        "ce-tracestate",
+    ]:
+        try:
+            val = None
+            if isinstance(cloud_event, dict) or hasattr(cloud_event, "get"):
+                val = cloud_event.get(k)
+            if val and isinstance(val, str):
+                combined_attributes[k] = val
+        except Exception as e:
+            telemetry_logger.debug(
+                "Field %s not found or extraction failed: %s", k, e
+            )
+
+    return combined_attributes

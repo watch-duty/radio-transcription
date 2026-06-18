@@ -6,6 +6,7 @@ from opentelemetry.trace import get_current_span
 
 from backend.pipeline.common.tracing_utils import (
     ContextPropagationValidator,
+    extract_cloud_event_attributes,
     extract_trace_context,
     get_current_traceparent,
     record_pipeline_stage,
@@ -156,3 +157,37 @@ class TestTracingUtils(unittest.TestCase):
         mock_counter.add.assert_called_once_with(
             1, {"stage": "transcription", "status": "success"}
         )
+
+    def test_extract_cloud_event_attributes(self) -> None:
+        """Verifies that extract_cloud_event_attributes parses nested pub/sub, top-level attributes, and top-level fields."""
+
+        # Mock class/dict representing a CloudEvent
+        class MockCloudEvent:
+            def __init__(
+                self, data=None, attributes=None, extra_fields=None
+            ) -> None:
+                self.data = data
+                self.attributes = attributes
+                if extra_fields:
+                    for k, v in extra_fields.items():
+                        setattr(self, k, v)
+
+            def get(self, key, default=None):
+                return getattr(self, key, default)
+
+        # 1. Pub/Sub attributes
+        ce1 = MockCloudEvent(
+            data={"message": {"attributes": {"traceparent": "tp1"}}}
+        )
+        attrs1 = extract_cloud_event_attributes(ce1)
+        self.assertEqual(attrs1.get("traceparent"), "tp1")
+
+        # 2. CloudEvent top-level attributes
+        ce2 = MockCloudEvent(attributes={"ce-traceparent": "tp2"})
+        attrs2 = extract_cloud_event_attributes(ce2)
+        self.assertEqual(attrs2.get("ce-traceparent"), "tp2")
+
+        # 3. Top-level direct keys
+        ce3 = MockCloudEvent(extra_fields={"traceparent": "tp3"})
+        attrs3 = extract_cloud_event_attributes(ce3)
+        self.assertEqual(attrs3.get("traceparent"), "tp3")

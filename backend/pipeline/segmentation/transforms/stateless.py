@@ -327,15 +327,6 @@ class UploadRawSegmentFn(beam.DoFn):
                 pubsub_attributes: dict[str, str] = {}
                 inject_otel_context(pubsub_attributes)
 
-                # Log egress tracing context details for diagnostic purposes
-                logger.info(
-                    "Egress tracing context debug: feed_id=%s, request_traceparent=%s, active_span_valid=%s, pubsub_attributes=%s",
-                    request.feed_id,
-                    getattr(request, "traceparent", None),
-                    trace.get_current_span().get_span_context().is_valid,
-                    pubsub_attributes,
-                )
-
                 yield PubsubMessage(
                     data=segmented_audio_pb.SerializeToString(),
                     attributes=pubsub_attributes,
