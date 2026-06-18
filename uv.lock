@@ -2918,6 +2918,7 @@ version = "0.1.0"
 source = { editable = "backend/pipeline/common" }
 dependencies = [
     { name = "aiohttp" },
+    { name = "cloudevents" },
     { name = "fastapi" },
     { name = "gcloud-aio-storage" },
     { name = "google-auth" },
@@ -2937,6 +2938,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.14.1" },
+    { name = "cloudevents", specifier = ">=1.12.0" },
     { name = "fastapi", specifier = ">=0.110.0" },
     { name = "gcloud-aio-storage", specifier = ">=9.6.4" },
     { name = "google-auth", specifier = ">=2.29.0" },

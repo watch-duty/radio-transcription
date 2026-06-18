@@ -20,6 +20,7 @@ from backend.pipeline.common.constants import (
 )
 from backend.pipeline.common.tracing_utils import (
     inject_otel_context,
+    parse_pubsub_cloudevent,
     record_pipeline_stage,
     with_tracer_context,
 )
@@ -61,16 +62,20 @@ class TranscriptionEventProcessor:
     def process_event(self, cloud_event: CloudEvent) -> None:
         """Decodes, processes, and transcribes the given CloudEvent."""
         record_pipeline_stage("transcription", "start")
-        pubsub_message = cloud_event.data.get("message", {}) or {}
-        attributes = pubsub_message.get("attributes", {}) or {}
+        try:
+            combined_attributes, raw_data = parse_pubsub_cloudevent(cloud_event)
+        except Exception as e:
+            logger.exception(
+                "Failed to parse CloudEvent payload envelope: %s", e
+            )
+            return
 
         with with_tracer_context(
-            attributes, "transcribe_claim_check", __name__
+            combined_attributes, "transcribe_claim_check", __name__
         ):
             errors = []
             transcript = ""
             segment_id = ""
-            raw_data = pubsub_message.get("data", "")
             if not raw_data:
                 logger.error("Bad Request: Missing Pub/Sub data payload")
                 return

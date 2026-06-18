@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.common.tracing_utils import (
     inject_otel_context,
+    parse_pubsub_cloudevent,
     with_tracer_context,
 )
 from backend.pipeline.schema_types import (
@@ -66,13 +67,20 @@ class EvaluationEventProcessor:
         Args:
             cloud_event: The CloudEvent triggered by Pub/Sub.
         """
-        pubsub_message = cloud_event.data.get("message", {})
-        attributes = pubsub_message.get("attributes", {}) or {}
+        try:
+            combined_attributes, raw_data = parse_pubsub_cloudevent(cloud_event)
+        except Exception as e:
+            logger.exception(
+                "Failed to parse CloudEvent payload envelope: %s", e
+            )
+            return
 
-        with with_tracer_context(attributes, "evaluate_rules", __name__):
+        with with_tracer_context(
+            combined_attributes, "evaluate_rules", __name__
+        ):
             # 1. Decode the Incoming Message
             # TODO (https://linear.app/watchduty/issue/GOO-245/): Handle parse failure.
-            new_audio = self._parse_cloud_event(cloud_event)
+            new_audio = self._parse_cloud_event(raw_data)
             if new_audio is None:
                 logger.error(
                     "Transcribed audio could not be parsed for cloud event %s. Skipping.",
@@ -164,23 +172,21 @@ class EvaluationEventProcessor:
                 )
 
     def _parse_cloud_event(
-        self, cloud_event: cloudevent.CloudEvent
+        self, raw_data: str
     ) -> transcribed_pb2.TranscribedAudio | None:
         """
-        Parses the CloudEvent into a TranscribedAudio proto.
+        Parses the raw Pub/Sub data string into a TranscribedAudio proto.
 
         Args:
-            cloud_event: The raw CloudEvent data.
+            raw_data: The raw Pub/Sub data payload.
 
         Returns:
             A TranscribedAudio object or None if parsing fails.
         """
-        pubsub_message = cloud_event.data.get("message", {})
-        transcribed_audio = transcribed_pb2.TranscribedAudio()
-        raw_data = pubsub_message.get("data", "")
         if not raw_data:
             logger.error("No data provided in CloudEvent")
             return None
+        transcribed_audio = transcribed_pb2.TranscribedAudio()
         decoded_data = base64.b64decode(raw_data)
         transcribed_audio.ParseFromString(decoded_data)
         return transcribed_audio

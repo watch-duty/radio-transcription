@@ -21,6 +21,7 @@ from backend.pipeline.common.constants import (
 from backend.pipeline.common.storage import gcs_uploader
 from backend.pipeline.common.tracing_utils import (
     inject_otel_context,
+    parse_pubsub_cloudevent,
     record_pipeline_stage,
     with_tracer_context,
 )
@@ -88,15 +89,8 @@ class NormalizationEventProcessor:
     def process_event(self, cloud_event: CloudEvent) -> None:
         """Main entrypoint triggered on Pub/Sub claim message push delivery."""
         record_pipeline_stage("normalization", "start")
-        # Parse envelope from Pub/Sub CloudEvent structure
         try:
-            envelope = cloud_event.data
-            if not envelope or "message" not in envelope:
-                logger.error("Invalid CloudEvent envelope structure.")
-                return
-            pubsub_message = envelope.get("message", {}) or {}
-            attributes = pubsub_message.get("attributes", {}) or {}
-            raw_data = pubsub_message.get("data", "")
+            combined_attributes, raw_data = parse_pubsub_cloudevent(cloud_event)
         except Exception as e:
             logger.exception(
                 "Failed to parse CloudEvent payload envelope: %s", e
@@ -104,7 +98,7 @@ class NormalizationEventProcessor:
             return
 
         with with_tracer_context(
-            attributes,
+            combined_attributes,
             "normalize_segmented_audio",
             __name__,
         ):
@@ -206,8 +200,8 @@ class NormalizationEventProcessor:
             except Exception as e:
                 # 1. Inspect delivery attempt counter from Eventarc / PubSub push envelope
                 delivery_attempt = int(
-                    attributes.get("googclient_deliveryattempt", 0)
-                    or attributes.get("delivery_attempt", 0)
+                    combined_attributes.get("googclient_deliveryattempt", 0)
+                    or combined_attributes.get("delivery_attempt", 0)
                     or 1
                 )
                 is_permanent = isinstance(
