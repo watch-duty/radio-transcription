@@ -4,7 +4,7 @@ inputs:
   name:
     description: 'The prefix for the check run name'
     required: true
-  report-file:
+  coverage-report-location:
     description: 'Path to the text coverage report file'
     required: true
   json-summary-file:
@@ -23,7 +23,7 @@ runs:
           const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
           
           const nameInput = `${{ inputs.name }}`;
-          const reportFile = `${{ inputs.report-file }}`;
+          const reportFile = `${{ inputs.coverage-report-location }}`;
           const jsonSummary = `${{ inputs.json-summary-file }}`;
           
           let pct = '';

@@ -230,7 +230,7 @@ jobs:
         if: always()
         with:
           name: "Backend Unit Test Coverage"
-          report-file: "backend_unit_test_coverage.txt"
+          coverage-report-location: "backend_unit_test_coverage.txt"
 
   run-frontend-tests:
     needs: [setup]
@@ -266,14 +266,14 @@ jobs:
         if: always()
         with:
           name: "Frontend Proxy API Coverage"
-          report-file: "frontend/api/frontend_api_test_coverage.txt"
+          coverage-report-location: "frontend/api/frontend_api_test_coverage.txt"
           json-summary-file: "frontend/api/coverage/coverage-summary.json"
       - name: Create UI Coverage Check Run
         uses: ./.github/actions/post-coverage
         if: always()
         with:
           name: "Frontend UI Coverage"
-          report-file: "frontend/transcription-ui/frontend_ui_test_coverage.txt"
+          coverage-report-location: "frontend/transcription-ui/frontend_ui_test_coverage.txt"
           json-summary-file: "frontend/transcription-ui/coverage/coverage-summary.json"
 
   # Builds each service's Dockerfile and verifies all transitive imports resolve

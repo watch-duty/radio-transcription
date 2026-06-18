@@ -57,7 +57,7 @@ jobs:
         if: always()
         with:
           name: "Storage Integration Coverage"
-          report-file: "storage_integration_test_coverage.txt"
+          coverage-report-location: "storage_integration_test_coverage.txt"
 
   e2e-tests:
     runs-on: ubuntu-24.04
@@ -97,7 +97,7 @@ jobs:
         if: always()
         with:
           name: "E2E Integration Coverage"
-          report-file: "e2e_integration_test_coverage.txt"
+          coverage-report-location: "e2e_integration_test_coverage.txt"
 
       - name: Print container logs on failure
         if: failure()
