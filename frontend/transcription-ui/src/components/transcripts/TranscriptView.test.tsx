@@ -803,8 +803,8 @@ describe('TranscriptView', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Active')).toBeTruthy();
-      expect(screen.getByText('Last updated: 10 minutes ago')).toBeTruthy();
-      expect(screen.getByText('Last transmission: 5 minutes ago')).toBeTruthy();
+      expect(screen.queryByText(/heartbeat|updated/i)).toBeNull();
+      expect(screen.getByText('Latest: 5 minutes ago')).toBeTruthy();
     });
 
     vi.useRealTimers();

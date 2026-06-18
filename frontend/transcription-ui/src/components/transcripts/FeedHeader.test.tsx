@@ -163,7 +163,7 @@ describe('FeedHeader', () => {
     expect(mockTriggerSnackbar).toHaveBeenCalledWith('Feed link copied');
   });
 
-  it('displays the human-friendly relative time string for both heartbeat and lastSpeechSegmentTimestamp', () => {
+  it('displays the human-friendly relative time string for lastSpeechSegmentTimestamp but hides heartbeat', () => {
     const fixedNow = new Date('2026-04-10T12:05:00Z');
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(fixedNow);
@@ -186,8 +186,8 @@ describe('FeedHeader', () => {
       );
 
       expect(screen.getByText('Active')).toBeTruthy();
-      expect(screen.getByText('Last updated: 10 minutes ago')).toBeTruthy();
-      expect(screen.getByText('Last transmission: 5 minutes ago')).toBeTruthy();
+      expect(screen.queryByText(/heartbeat|updated/i)).toBeNull();
+      expect(screen.getByText('Latest: 5 minutes ago')).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }
