@@ -99,6 +99,7 @@ from backend.pipeline.common.log_helper import get_logger, get_task_logger
 from backend.pipeline.segmentation import coders as trans_coders
 from backend.pipeline.segmentation import constants as trans_constants
 from backend.pipeline.segmentation import datatypes
+from backend.pipeline.segmentation import logging as segmentation_logging
 from backend.pipeline.segmentation.audio import vad
 from backend.pipeline.segmentation.constants import (
     MAX_CHUNKS_PER_WINDMILL_BUNDLE,
@@ -111,6 +112,12 @@ from backend.pipeline.segmentation.storage import (
 from backend.pipeline.segmentation.transforms import stitcher_engine
 
 SHARED_RESOURCE_HANDLE = Shared()
+
+# WARNING: Do NOT remove or bypass setup_logging().
+# It explicitly configures structured log propagation for the
+# Dataflow worker harness. Removing this will cause all worker logs
+# to be rendered as DEBUG severity in Cloud Logging.
+segmentation_logging.setup_logging()
 
 logger = get_task_logger(
     __name__, {"system": "transcription", "component": "ordered-stitcher"}
