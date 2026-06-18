@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 from backend.pipeline.storage import quarantine_reason
@@ -42,6 +43,7 @@ class TestResolveEchoFeed:
             "id": uuid.uuid4(),
             "status": "active",
             "failure_count": 0,
+            "created_at": datetime(2026, 1, 1, tzinfo=UTC),
         }
         conn.execute.return_value.fetchone.return_value = feed_row
         store = _make_store(conn)

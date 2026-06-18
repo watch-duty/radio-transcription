@@ -1,11 +1,13 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
+from cloudevents.http.event import CloudEvent
 from opentelemetry import baggage
 from opentelemetry.trace import get_current_span
 
 from backend.pipeline.common.tracing_utils import (
     ContextPropagationValidator,
+    extract_cloud_event_attributes,
     extract_trace_context,
     get_current_traceparent,
     record_pipeline_stage,
@@ -102,6 +104,32 @@ class TestTracingUtils(unittest.TestCase):
         ctx4 = extract_trace_context({"traceparent": None})  # type: ignore
         self.assertEqual(len(ctx4), 0)
 
+    def test_extract_trace_context_variations(self) -> None:
+        """Verifies that extract_trace_context correctly resolves trace context from different key formats and case variations."""
+        traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+        baggage_str = "key1=val1,key2=val2"
+
+        # 1. Uppercase keys
+        ctx_upper = extract_trace_context(
+            {"TRACEPARENT": traceparent, "BAGGAGE": baggage_str}
+        )
+        self.assertGreater(len(ctx_upper), 0)
+
+        # 2. Eventarc/CloudEvent style ce- prefix
+        ctx_ce = extract_trace_context(
+            {"ce-traceparent": traceparent, "ce-baggage": baggage_str}
+        )
+        self.assertGreater(len(ctx_ce), 0)
+
+        # 3. Pub/Sub unwrapped header style
+        ctx_pubsub = extract_trace_context(
+            {
+                "x-goog-pubsub-attr-traceparent": traceparent,
+                "x-goog-pubsub-attr-baggage": baggage_str,
+            }
+        )
+        self.assertGreater(len(ctx_pubsub), 0)
+
     def test_with_baggage_and_span(self) -> None:
         """Verifies that with_baggage_and_span attaches baggage and works within an active trace."""
         traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
@@ -130,3 +158,33 @@ class TestTracingUtils(unittest.TestCase):
         mock_counter.add.assert_called_once_with(
             1, {"stage": "transcription", "status": "success"}
         )
+
+    def test_extract_cloud_event_attributes(self) -> None:
+        """Verifies that extract_cloud_event_attributes parses nested pub/sub, top-level attributes, and top-level fields."""
+        # 1. Pub/Sub attributes
+        ce1 = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test",
+            },
+            data={"message": {"attributes": {"traceparent": "tp1"}}},
+        )
+        attrs1 = extract_cloud_event_attributes(ce1)
+        self.assertEqual(attrs1.get("traceparent"), "tp1")
+
+        # 2. CloudEvent top-level attributes
+        ce2 = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test",
+                "ce-traceparent": "tp2",
+            },
+            data={},
+        )
+        attrs2 = extract_cloud_event_attributes(ce2)
+        self.assertEqual(attrs2.get("ce-traceparent"), "tp2")
+
+        # 3. Top-level direct keys via dict representation
+        ce3: dict[str, object] = {"traceparent": "tp3"}
+        attrs3 = extract_cloud_event_attributes(ce3)
+        self.assertEqual(attrs3.get("traceparent"), "tp3")
