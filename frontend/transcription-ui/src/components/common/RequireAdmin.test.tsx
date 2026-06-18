@@ -14,10 +14,10 @@ import { RequireAdmin } from './RequireAdmin';
 vi.mock('../../service/getUserInfo', () => ({
   getUserInfo: vi.fn().mockImplementation(async (token: string) => {
     if (token === 'test-token-admin') {
-      return { email: 'admin@watchduty.org', isAdmin: true };
+      return { email: 'admin@email.org', isAdmin: true };
     }
     if (token === 'test-token-user') {
-      return { email: 'user@watchduty.org', isAdmin: false };
+      return { email: 'user@email.org', isAdmin: false };
     }
     if (token === 'test-token-error') {
       throw new Error('API error');
