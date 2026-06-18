@@ -9,7 +9,7 @@ from backend.pipeline.common.log_helper import (
     TaskJsonFormatter,
     get_logger,
 )
-from backend.pipeline.segmentation.logging import setup_logging
+from backend.pipeline.segmentation.log_config import setup_logging
 
 
 class TestTaskJsonFormatter(unittest.TestCase):

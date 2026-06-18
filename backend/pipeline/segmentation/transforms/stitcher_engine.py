@@ -24,8 +24,7 @@ from google.cloud import storage
 from backend.pipeline.common import constants as common_constants
 from backend.pipeline.common.log_helper import get_task_logger
 from backend.pipeline.segmentation import constants as trans_constants
-from backend.pipeline.segmentation import datatypes
-from backend.pipeline.segmentation import logging as segmentation_logging
+from backend.pipeline.segmentation import datatypes, log_config
 from backend.pipeline.segmentation import utils as trans_utils
 from backend.pipeline.segmentation.audio import processor as audio_processor
 from backend.pipeline.segmentation.audio import vad
@@ -35,7 +34,7 @@ from backend.pipeline.segmentation.state import stitcher_state
 # It explicitly configures structured log propagation for the
 # Dataflow worker harness. Removing this will cause all worker logs
 # to be rendered as DEBUG severity in Cloud Logging.
-segmentation_logging.setup_logging()
+log_config.setup_logging()
 
 logger = get_task_logger(
     __name__, {"system": "transcription", "component": "stitcher-engine"}
