@@ -6,7 +6,7 @@ This document outlines the architectural rationale, stream design patterns, and 
 
 Following the legacy streamlining refactoring, this pipeline has a focused single responsibility: **Ingesting continuous raw audio streams from emergency radio feeds, evaluating Voice Activity Detection (VAD), and correctly stitching those continuous audio chunks into coherent speech and non-speech segments.**
 
-It operates as an exactly-once streaming topology deployed on Google Cloud Dataflow (Apache Beam), linking upstream software-defined radio (SDR) / continuous audio collectors to downstream Whisper transcription and dispatch indexing services.
+It operates as an exactly-once streaming topology deployed on Google Cloud Dataflow (Apache Beam), linking upstream audio collectors to downstream evaluation, transcription and notification services.
 
 ```mermaid
 graph TD
@@ -40,12 +40,15 @@ To guarantee that active radio transmissions are cleanly flushed under all real-
 
 ---
 
-## 3. The Ordering / Jitter Buffer SLA (A Known Trade-off)
+## 3. The Ordering / Jitter Buffer SLA (Dual-Timer Restoration Pattern)
 
-Our `SequenceBuffer` maintains an out-of-order jitter buffer timer (`OUT_OF_ORDER_TIMER`) to allow a brief waiting period for delayed predecessor chunks to arrive before accepting a logical feed gap.
-* **Current Execution Domain**: Scheduled in `beam.TimeDomain.WATERMARK` (Event Time).
-* **The Distributed Edge Case**: If a live radio stream suffers an upstream disconnect or goes entirely silent, Dataflow's Event Time watermark *idles/halts*. Because `OUT_OF_ORDER_TIMER` is scheduled in Event Time, it will not trigger until the runner's watermark finally advances (often minutes later via runner-level idle watermark bumps).
-* **Maintainer Note / Future SLA Option**: If future operational requirements demand an absolute wall-clock bounded SLA (e.g., *"If a delayed audio segment fails to arrive within exactly 5 wall-clock seconds, flush what we have instantly"*), maintainers should migrate `OUT_OF_ORDER_TIMER` from `WATERMARK` to `REAL_TIME` (Processing Time).
+Our `SequenceBuffer` maintains out-of-order jitter buffer timers to allow a brief waiting period for delayed predecessor chunks to arrive before accepting a logical feed gap. To guarantee prompt data delivery under all operational states, the pipeline implements a dual-timer pattern:
+
+* **`gap_timer_event` (`beam.TimeDomain.WATERMARK`)**: Schedules the gap-timeout deadline in logical Event Time. During high-speed historical backfills, logical time moves much faster than wall-clock time, allowing gaps to be resolved instantly without introducing artificial wall-clock delays.
+* **`gap_timer_proc` (`beam.TimeDomain.REAL_TIME`)**: Schedules the gap-timeout deadline in wall-clock Processing Time. This timer acts as a fallback and is scheduled **only** during live streaming (when `is_backfill` is evaluated as False). 
+
+### Rationale for the Dual-Timer Pattern
+If a live radio stream suffers an upstream disconnect or goes entirely silent, the logical Event-Time watermark stalls. If the pipeline relied solely on a watermark-based timer, the buffered audio would remain trapped until the runner's watermark finally advanced. The processing-time timer guarantees that even during absolute stream silence, the gap timeout fires exactly after the configured timeout (e.g., 60 seconds) in real-world wall-clock time, releasing buffered audio downstream for immediate transcription and preventing global watermark/system-lag monitoring spikes.
 
 ---
 
