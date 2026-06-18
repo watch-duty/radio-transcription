@@ -174,9 +174,6 @@ describe('FeedHeader', () => {
           searchedFeed={mockFeed}
           onSelectFeed={vi.fn()}
           status="active"
-          lastHeartbeat={new Date(
-            fixedNow.getTime() - 10 * 60 * 1000
-          ).toISOString()}
           lastSpeechSegmentTimestamp={new Date(
             fixedNow.getTime() - 5 * 60 * 1000
           ).toISOString()}
