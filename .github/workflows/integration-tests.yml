@@ -53,33 +53,11 @@ jobs:
             | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o storage_integration_test_coverage.txt
           
       - name: Create Coverage Check Run
-        uses: actions/github-script@v7
+        uses: ./.github/actions/post-coverage
         if: always()
         with:
-          script: |
-            const fs = require('fs');
-            const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
-            const filePath = 'storage_integration_test_coverage.txt';
-            if (fs.existsSync(filePath)) {
-              const content = fs.readFileSync(filePath, 'utf8');
-              const totalLine = content.split('\n').find(line => line.trim().toUpperCase().startsWith('TOTAL'));
-              if (totalLine) {
-                const parts = totalLine.trim().split(/\s+/);
-                const pct = parts[parts.length - 1];
-                await github.rest.checks.create({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  head_sha: ref,
-                  name: `Storage Integration Coverage: ${pct}`,
-                  status: 'completed',
-                  conclusion: 'success',
-                  output: {
-                    title: `Storage Integration Coverage: ${pct}`,
-                    summary: `### Coverage Report\n\n\`\`\`\n${content}\n\`\`\``,
-                  }
-                });
-              }
-            }
+          name: "Storage Integration Coverage"
+          report-file: "storage_integration_test_coverage.txt"
 
   e2e-tests:
     runs-on: ubuntu-24.04
@@ -115,33 +93,11 @@ jobs:
             | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o e2e_integration_test_coverage.txt
 
       - name: Create Coverage Check Run
-        uses: actions/github-script@v7
+        uses: ./.github/actions/post-coverage
         if: always()
         with:
-          script: |
-            const fs = require('fs');
-            const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
-            const filePath = 'e2e_integration_test_coverage.txt';
-            if (fs.existsSync(filePath)) {
-              const content = fs.readFileSync(filePath, 'utf8');
-              const totalLine = content.split('\n').find(line => line.trim().toUpperCase().startsWith('TOTAL'));
-              if (totalLine) {
-                const parts = totalLine.trim().split(/\s+/);
-                const pct = parts[parts.length - 1];
-                await github.rest.checks.create({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  head_sha: ref,
-                  name: `E2E Integration Coverage: ${pct}`,
-                  status: 'completed',
-                  conclusion: 'success',
-                  output: {
-                    title: `E2E Integration Coverage: ${pct}`,
-                    summary: `### Coverage Report\n\n\`\`\`\n${content}\n\`\`\``,
-                  }
-                });
-              }
-            }
+          name: "E2E Integration Coverage"
+          report-file: "e2e_integration_test_coverage.txt"
 
       - name: Print container logs on failure
         if: failure()

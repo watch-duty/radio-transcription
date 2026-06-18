@@ -226,33 +226,11 @@ jobs:
           uv run python -m pytest backend/ -q --cov=backend/pipeline --cov-report=term-missing --color=no \
             | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o backend_unit_test_coverage.txt
       - name: Create Coverage Check Run
-        uses: actions/github-script@v7
+        uses: ./.github/actions/post-coverage
         if: always()
         with:
-          script: |
-            const fs = require('fs');
-            const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
-            const filePath = 'backend_unit_test_coverage.txt';
-            if (fs.existsSync(filePath)) {
-              const content = fs.readFileSync(filePath, 'utf8');
-              const totalLine = content.split('\n').find(line => line.trim().toUpperCase().startsWith('TOTAL'));
-              if (totalLine) {
-                const parts = totalLine.trim().split(/\s+/);
-                const pct = parts[parts.length - 1];
-                await github.rest.checks.create({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  head_sha: ref,
-                  name: `Backend Unit Test Coverage: ${pct}`,
-                  status: 'completed',
-                  conclusion: 'success',
-                  output: {
-                    title: `Backend Unit Test Coverage: ${pct}`,
-                    summary: `### Coverage Report\n\n\`\`\`\n${content}\n\`\`\``,
-                  }
-                });
-              }
-            }
+          name: "Backend Unit Test Coverage"
+          report-file: "backend_unit_test_coverage.txt"
 
   run-frontend-tests:
     needs: [setup]
@@ -283,61 +261,20 @@ jobs:
           set -o pipefail
           yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text --no-color \
             | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o frontend_ui_test_coverage.txt
-      - name: Create Coverage Check Runs
-        uses: actions/github-script@v7
+      - name: Create Proxy Coverage Check Run
+        uses: ./.github/actions/post-coverage
         if: always()
         with:
-          script: |
-            const fs = require('fs');
-            const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
-            
-            // Proxy API Coverage
-            const proxyJson = 'frontend/api/coverage/coverage-summary.json';
-            if (fs.existsSync(proxyJson)) {
-              const data = JSON.parse(fs.readFileSync(proxyJson, 'utf8'));
-              const pct = `${data.total.statements.pct}%`;
-              let summary = 'No coverage report found';
-              const reportPath = 'frontend/api/frontend_api_test_coverage.txt';
-              if (fs.existsSync(reportPath)) {
-                summary = `### Coverage Report\n\n\`\`\`\n${fs.readFileSync(reportPath, 'utf8')}\n\`\`\``;
-              }
-              await github.rest.checks.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                head_sha: ref,
-                name: `Frontend Proxy API Coverage: ${pct}`,
-                status: 'completed',
-                conclusion: 'success',
-                output: {
-                  title: `Frontend Proxy API Coverage: ${pct}`,
-                  summary: summary,
-                }
-              });
-            }
-            
-            // UI Coverage
-            const uiJson = 'frontend/transcription-ui/coverage/coverage-summary.json';
-            if (fs.existsSync(uiJson)) {
-              const data = JSON.parse(fs.readFileSync(uiJson, 'utf8'));
-              const pct = `${data.total.statements.pct}%`;
-              let summary = 'No coverage report found';
-              const reportPath = 'frontend/transcription-ui/frontend_ui_test_coverage.txt';
-              if (fs.existsSync(reportPath)) {
-                summary = `### Coverage Report\n\n\`\`\`\n${fs.readFileSync(reportPath, 'utf8')}\n\`\`\``;
-              }
-              await github.rest.checks.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                head_sha: ref,
-                name: `Frontend UI Coverage: ${pct}`,
-                status: 'completed',
-                conclusion: 'success',
-                output: {
-                  title: `Frontend UI Coverage: ${pct}`,
-                  summary: summary,
-                }
-              });
-            }
+          name: "Frontend Proxy API Coverage"
+          report-file: "frontend/api/frontend_api_test_coverage.txt"
+          json-summary-file: "frontend/api/coverage/coverage-summary.json"
+      - name: Create UI Coverage Check Run
+        uses: ./.github/actions/post-coverage
+        if: always()
+        with:
+          name: "Frontend UI Coverage"
+          report-file: "frontend/transcription-ui/frontend_ui_test_coverage.txt"
+          json-summary-file: "frontend/transcription-ui/coverage/coverage-summary.json"
 
   # Builds each service's Dockerfile and verifies all transitive imports resolve
   # and required environment variables are documented. This catches:

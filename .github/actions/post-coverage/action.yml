@@ -1,0 +1,72 @@
+name: 'Post Test Coverage'
+description: 'Parses coverage reports and publishes a Check Run to the pull request'
+inputs:
+  name:
+    description: 'The prefix for the check run name'
+    required: true
+  report-file:
+    description: 'Path to the text coverage report file'
+    required: true
+  json-summary-file:
+    description: 'Path to the JSON coverage summary file (optional)'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Create Coverage Check Run
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
+          
+          const nameInput = `${{ inputs.name }}`;
+          const reportFile = `${{ inputs.report-file }}`;
+          const jsonSummary = `${{ inputs.json-summary-file }}`;
+          
+          let pct = '';
+          let summary = 'No coverage report found';
+
+          // 1. Resolve coverage percentage
+          if (jsonSummary && fs.existsSync(jsonSummary)) {
+            try {
+              const data = JSON.parse(fs.readFileSync(jsonSummary, 'utf8'));
+              pct = `${data.total.statements.pct}%`;
+            } catch (e) {
+              core.warning(`Failed to parse json summary at ${jsonSummary}: ${e}`);
+            }
+          }
+          
+          if (!pct && fs.existsSync(reportFile)) {
+            const content = fs.readFileSync(reportFile, 'utf8');
+            const totalLine = content.split('\n').find(line => line.trim().toUpperCase().startsWith('TOTAL'));
+            if (totalLine) {
+              const parts = totalLine.trim().split(/\s+/);
+              pct = parts[parts.length - 1];
+            }
+          }
+
+          // 2. Read report summary content
+          if (fs.existsSync(reportFile)) {
+            summary = `### Coverage Report\n\n\`\`\`\n${fs.readFileSync(reportFile, 'utf8')}\n\`\`\``;
+          }
+
+          // 3. Create check run
+          if (pct) {
+            await github.rest.checks.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head_sha: ref,
+              name: `${nameInput}: ${pct}`,
+              status: 'completed',
+              conclusion: 'success',
+              output: {
+                title: `${nameInput}: ${pct}`,
+                summary: summary,
+              }
+            });
+          } else {
+            core.info(`Could not resolve coverage percentage for ${nameInput}`);
+          }
