@@ -7,8 +7,6 @@ FROM apache/beam_python3.13_sdk:2.74.0
 
 # Install OS dependencies needed at runtime
 USER root
-COPY --from=mwader/static-ffmpeg:6.1.1 /ffmpeg /usr/local/bin/
-COPY --from=mwader/static-ffmpeg:6.1.1 /ffprobe /usr/local/bin/
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     libatomic1 \
