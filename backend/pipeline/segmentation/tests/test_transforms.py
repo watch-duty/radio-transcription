@@ -2294,3 +2294,58 @@ class UploadRawSegmentFnTest(unittest.TestCase):
 
         # Verify that inject_otel_context was called to inject active context into egress attributes
         mock_inject_otel_context.assert_called_once()
+
+    @patch(
+        "backend.pipeline.segmentation.transforms.stateless.inject_otel_context"
+    )
+    @patch(
+        "backend.pipeline.segmentation.transforms.stateless.with_tracer_context"
+    )
+    @patch(
+        "backend.pipeline.segmentation.transforms.stateless.UploadRawSegmentFn._upload_raw_audio"
+    )
+    def test_process_with_decoded_flush_request(
+        self,
+        mock_upload_audio: MagicMock,
+        mock_with_tracer_context: MagicMock,
+        mock_inject_otel_context: MagicMock,
+    ) -> None:
+        """Verifies that process handles a deserialized FlushRequest with int classification."""
+        mock_ctx = MagicMock()
+        mock_with_tracer_context.return_value = mock_ctx
+        mock_upload_audio.return_value = "gs://bucket/raw.wav"
+
+        fn = UploadRawSegmentFn(
+            staging_audio_bucket="bucket", project_id="proj"
+        )
+        fn.gcs_client = MagicMock()
+        fn.segmentation_success = MagicMock()
+        fn.segmentation_error = MagicMock()
+
+        request = FlushRequest(
+            buffer=b"audio-data",
+            feed_id="test-feed",
+            session_id="test-session",
+            contributing_audio_uris=["gs://bucket/1.flac"],
+            time_range=TimeRange(start_ms=1000, end_ms=2000),
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
+            sample_rate=16000,
+            missing_prior_context=False,
+            missing_post_context=False,
+            start_audio_offset_ms=0,
+            end_audio_offset_ms=1000,
+            speech_segments=[],
+            segment_id="segment-123",
+            traceparent="test-traceparent",
+            baggage="test-baggage",
+            audio_classification=AudioClassification.AUDIO_CLASSIFICATION_SPEECH,
+        )
+
+        coder = trans_coders.FlushRequestCoder()
+        decoded_request = coder.decode(coder.encode(request))
+
+        # Execute the process generator and convert to list
+        results = list(fn.process(element=("test-feed", decoded_request)))
+
+        self.assertEqual(len(results), 1)
+        self.assertIsInstance(results[0], PubsubMessage)
