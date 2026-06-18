@@ -1,13 +1,13 @@
-name: 'Post Frontend Coverage'
-description: 'Parses frontend coverage summaries and publishes a Check Run to the pull request'
+name: 'Post Vitest Coverage'
+description: 'Emits frontend test coverage as a Check Run'
 inputs:
   name:
-    description: 'The prefix for the check run name'
+    description: 'Name of the tests that the coverage is for'
     required: true
-  coverage-report-location:
+  coverage-report-path:
     description: 'Path to the text coverage report file'
     required: true
-  json-summary-location:
+  json-summary-path:
     description: 'Path to the JSON coverage summary file'
     required: true
 
@@ -21,14 +21,14 @@ runs:
           const fs = require('fs');
           const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
           
-          const nameInput = `${{ inputs.name }}`;
-          const reportFile = `${{ inputs.coverage-report-location }}`;
-          const jsonSummary = `${{ inputs.json-summary-location }}`;
+          const testName = `${{ inputs.name }}`;
+          const reportFile = `${{ inputs.coverage-report-path }}`;
+          const jsonSummary = `${{ inputs.json-summary-path }}`;
           
           if (fs.existsSync(jsonSummary)) {
             try {
               const data = JSON.parse(fs.readFileSync(jsonSummary, 'utf8'));
-              const pct = `${data.total.statements.pct}%`;
+              const coveragePct = `${data.total.statements.pct}%`;
               
               let summary = 'No coverage report found';
               if (fs.existsSync(reportFile)) {
@@ -39,16 +39,16 @@ runs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 head_sha: ref,
-                name: `${nameInput}: ${pct}`,
+                name: `${testName}: ${coveragePct}`,
                 status: 'completed',
                 conclusion: 'success',
                 output: {
-                  title: `${nameInput}: ${pct}`,
+                  title: `${testName}: ${coveragePct}`,
                   summary: summary,
                 }
               });
             } catch (e) {
-              core.warning(`Failed to parse json summary for ${nameInput}: ${e}`);
+              core.warning(`Failed to parse json summary for ${testName}: ${e}`);
             }
           } else {
             core.info(`JSON summary file not found at ${jsonSummary}`);

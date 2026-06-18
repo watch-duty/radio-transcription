@@ -1,5 +1,5 @@
-name: 'Post Pytest Coverage'
-description: 'Parses pytest coverage reports and publishes a Check Run to the pull request'
+name: 'Post Backend Coverage'
+description: 'Parses backend coverage reports and publishes a Check Run to the pull request'
 inputs:
   name:
     description: 'The prefix for the check run name'

@@ -226,7 +226,7 @@ jobs:
           uv run python -m pytest backend/ -q --cov=backend/pipeline --cov-report=term-missing --color=no \
             | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o backend_unit_test_coverage.txt
       - name: Create Coverage Check Run
-        uses: ./.github/actions/post-pytest-coverage
+        uses: ./.github/actions/post-backend-coverage
         if: always()
         with:
           name: "Backend Unit Test Coverage"
