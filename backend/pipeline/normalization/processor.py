@@ -85,18 +85,110 @@ class NormalizationEventProcessor:
             gcs_client=self.gcs_client,
         )
 
+    def _extract_attributes(
+        self, cloud_event: CloudEvent
+    ) -> tuple[dict[str, str], dict[str, str], str]:
+        """Extracts envelope details, raw attributes and combined attributes from CloudEvent.
+
+        Returns:
+            A tuple of (attributes, combined_attributes, raw_data).
+        """
+        # Log raw CloudEvent headers and structure for instrumentation
+        try:
+            ce_attrs = (
+                cloud_event.attributes
+                if hasattr(cloud_event, "attributes")
+                else None
+            )
+            logger.info(
+                "CloudEvent structure log: attributes=%s, data_type=%s, data_keys=%s",
+                ce_attrs,
+                type(cloud_event.data),
+                list(cloud_event.data.keys())
+                if isinstance(cloud_event.data, dict)
+                else "not-a-dict",
+            )
+        except Exception as e:
+            logger.warning("Failed to log CloudEvent diagnostics: %s", e)
+
+        envelope = cloud_event.data
+        if (
+            not envelope
+            or not isinstance(envelope, dict)
+            or "message" not in envelope
+        ):
+            err_msg = "Invalid CloudEvent envelope structure."
+            raise ValueError(err_msg)
+
+        pubsub_message = envelope.get("message")
+        if not isinstance(pubsub_message, dict):
+            type_err = "Invalid Pub/Sub message structure inside CloudEvent."
+            raise TypeError(type_err)
+
+        # Type-safe parsing of attributes from pubsub_message
+        attributes: dict[str, str] = {}
+        pubsub_attrs = pubsub_message.get("attributes")
+        if isinstance(pubsub_attrs, dict):
+            attributes = {
+                str(k): str(v)
+                for k, v in pubsub_attrs.items()
+                if isinstance(k, str) and isinstance(v, str)
+            }
+
+        raw_data = str(pubsub_message.get("data", ""))
+
+        combined_attributes: dict[str, str] = {}
+        combined_attributes.update(attributes)
+
+        # Merge CloudEvent attributes
+        if hasattr(cloud_event, "attributes") and isinstance(
+            cloud_event.attributes, dict
+        ):
+            combined_attributes.update(
+                {
+                    str(k): str(v)
+                    for k, v in cloud_event.attributes.items()
+                    if isinstance(k, str) and isinstance(v, str)
+                }
+            )
+
+        # Merge Top-level CloudEvent fields if dict-like or via get method
+        for k in [
+            "traceparent",
+            "baggage",
+            "tracestate",
+            "ce-traceparent",
+            "ce-baggage",
+            "ce-tracestate",
+        ]:
+            try:
+                val = None
+                if isinstance(cloud_event, dict) or hasattr(cloud_event, "get"):
+                    val = cloud_event.get(k)
+                if val and isinstance(val, str):
+                    combined_attributes[k] = val
+            except Exception as e:
+                logger.debug(
+                    "Field %s not found or extraction failed: %s", k, e
+                )
+
+        # Log detailed info about pubsub_message keys and attributes
+        logger.info(
+            "Parsed Pub/Sub message details: message_keys=%s, attributes=%s, combined_attributes=%s",
+            list(pubsub_message.keys()),
+            attributes,
+            combined_attributes,
+        )
+
+        return attributes, combined_attributes, raw_data
+
     def process_event(self, cloud_event: CloudEvent) -> None:
         """Main entrypoint triggered on Pub/Sub claim message push delivery."""
         record_pipeline_stage("normalization", "start")
-        # Parse envelope from Pub/Sub CloudEvent structure
         try:
-            envelope = cloud_event.data
-            if not envelope or "message" not in envelope:
-                logger.error("Invalid CloudEvent envelope structure.")
-                return
-            pubsub_message = envelope.get("message", {}) or {}
-            attributes = pubsub_message.get("attributes", {}) or {}
-            raw_data = pubsub_message.get("data", "")
+            attributes, combined_attributes, raw_data = (
+                self._extract_attributes(cloud_event)
+            )
         except Exception as e:
             logger.exception(
                 "Failed to parse CloudEvent payload envelope: %s", e
@@ -104,7 +196,7 @@ class NormalizationEventProcessor:
             return
 
         with with_tracer_context(
-            attributes,
+            combined_attributes,
             "normalize_segmented_audio",
             __name__,
         ):

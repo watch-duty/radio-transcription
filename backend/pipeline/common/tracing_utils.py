@@ -277,13 +277,46 @@ def extract_trace_context(attributes: dict[str, str] | None) -> Context:
     if not attributes:
         return Context()
 
+    # Normalize keys to lowercase for robust lookup
+    normalized = {}
+    for k, v in attributes.items():
+        if isinstance(v, str):
+            normalized[k.lower()] = v
+
+    carrier = {}
+    traceparent_keys = [
+        "traceparent",
+        "ce-traceparent",
+        "x-goog-pubsub-attr-traceparent",
+    ]
+    for k in traceparent_keys:
+        if k in normalized:
+            carrier["traceparent"] = normalized[k]
+            break
+
+    baggage_keys = ["baggage", "ce-baggage", "x-goog-pubsub-attr-baggage"]
+    for k in baggage_keys:
+        if k in normalized:
+            carrier["baggage"] = normalized[k]
+            break
+
+    tracestate_keys = [
+        "tracestate",
+        "ce-tracestate",
+        "x-goog-pubsub-attr-tracestate",
+    ]
+    for k in tracestate_keys:
+        if k in normalized:
+            carrier["tracestate"] = normalized[k]
+            break
+
     ctx = Context()
-    if attributes.get("traceparent"):
+    if "traceparent" in carrier:
         ctx = TraceContextTextMapPropagator().extract(
-            carrier=attributes, context=ctx
+            carrier=carrier, context=ctx
         )
-    if attributes.get("baggage"):
-        ctx = W3CBaggagePropagator().extract(carrier=attributes, context=ctx)
+    if "baggage" in carrier:
+        ctx = W3CBaggagePropagator().extract(carrier=carrier, context=ctx)
 
     return ctx
 

@@ -102,6 +102,32 @@ class TestTracingUtils(unittest.TestCase):
         ctx4 = extract_trace_context({"traceparent": None})  # type: ignore
         self.assertEqual(len(ctx4), 0)
 
+    def test_extract_trace_context_variations(self) -> None:
+        """Verifies that extract_trace_context correctly resolves trace context from different key formats and case variations."""
+        traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+        baggage_str = "key1=val1,key2=val2"
+
+        # 1. Uppercase keys
+        ctx_upper = extract_trace_context(
+            {"TRACEPARENT": traceparent, "BAGGAGE": baggage_str}
+        )
+        self.assertGreater(len(ctx_upper), 0)
+
+        # 2. Eventarc/CloudEvent style ce- prefix
+        ctx_ce = extract_trace_context(
+            {"ce-traceparent": traceparent, "ce-baggage": baggage_str}
+        )
+        self.assertGreater(len(ctx_ce), 0)
+
+        # 3. Pub/Sub unwrapped header style
+        ctx_pubsub = extract_trace_context(
+            {
+                "x-goog-pubsub-attr-traceparent": traceparent,
+                "x-goog-pubsub-attr-baggage": baggage_str,
+            }
+        )
+        self.assertGreater(len(ctx_pubsub), 0)
+
     def test_with_baggage_and_span(self) -> None:
         """Verifies that with_baggage_and_span attaches baggage and works within an active trace."""
         traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"

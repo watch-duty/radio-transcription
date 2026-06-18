@@ -533,6 +533,79 @@ class NormalizationEventProcessorTest(unittest.TestCase):
         out_proto.ParseFromString(published_bytes)
         self.assertEqual(out_proto.transcription_audio_uri, "")
 
+    @patch("backend.pipeline.normalization.processor.with_tracer_context")
+    def test_process_event_restores_trace_context(
+        self, mock_with_tracer_context: MagicMock
+    ) -> None:
+        """Verifies that process_event extracts trace parent from different CloudEvent locations and passes them to with_tracer_context."""
+        # Create a mock context manager for with_tracer_context
+        mock_ctx = MagicMock()
+        mock_with_tracer_context.return_value = mock_ctx
+
+        processor = NormalizationEventProcessor(
+            project_id=self.project_id,
+            canonical_audio_bucket=self.canonical_bucket,
+            output_topic=self.output_topic,
+            audio_segments_client=self.mock_segments_client,
+            publisher=self.mock_publisher.return_value,
+            gcs_client=self.mock_gcs.return_value,
+        )
+        sentinel_exc = ValueError("Abort processing")
+
+        with patch.object(processor, "_parse_claim", side_effect=sentinel_exc):
+            # 1. Test case: trace parent in Pub/Sub attributes
+            envelope1 = {
+                "message": {
+                    "data": "dummy",
+                    "attributes": {"traceparent": "test-tp-1"},
+                }
+            }
+            event1 = CloudEvent(
+                attributes={
+                    "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                    "source": "test-source",
+                },
+                data=envelope1,
+            )
+            try:
+                processor.process_event(event1)
+            except ValueError as e:
+                if str(e) != "Abort processing":
+                    raise
+
+            mock_with_tracer_context.assert_called_with(
+                {"traceparent": "test-tp-1"},
+                "normalize_segmented_audio",
+                "backend.pipeline.normalization.processor",
+            )
+
+            # 2. Test case: trace parent in CloudEvent attributes (e.g. Eventarc format)
+            envelope2 = {
+                "message": {
+                    "data": "dummy",
+                    "attributes": {},
+                }
+            }
+            event2 = CloudEvent(
+                attributes={
+                    "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                    "source": "test-source",
+                    "traceparent": "test-tp-2",
+                },
+                data=envelope2,
+            )
+            try:
+                processor.process_event(event2)
+            except ValueError as e:
+                if str(e) != "Abort processing":
+                    raise
+
+            # It should merge traceparent into combined_attributes
+            self.assertEqual(
+                mock_with_tracer_context.call_args[0][0]["traceparent"],
+                "test-tp-2",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
