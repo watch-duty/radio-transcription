@@ -104,6 +104,7 @@ jobs:
                 -n auto -v -s \
                 --log-cli-level=INFO \
                 --cov=backend/pipeline \
+                --cov=backend/services \
                 --cov-report=term-missing \
                 --color=no
             " \
