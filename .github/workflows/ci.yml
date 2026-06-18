@@ -225,40 +225,34 @@ jobs:
           set -o pipefail
           uv run python -m pytest backend/ -q --cov=backend/pipeline --cov-report=term-missing --color=no \
             | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o backend_unit_test_coverage.txt
-      - name: Extract Coverage
-        id: extract_cov
-        if: always()
-        run: |
-          if [ -f backend_unit_test_coverage.txt ]; then
-            PCT=$(grep -i "TOTAL" backend_unit_test_coverage.txt | awk '{print $NF}')
-            if [ -n "$PCT" ]; then
-              echo "PERCENTAGE=$PCT" >> $GITHUB_ENV
-            fi
-          fi
-      - name: Rename Check Run
+      - name: Create Coverage Check Run
         uses: actions/github-script@v7
-        if: always() && env.PERCENTAGE != ''
+        if: always()
         with:
           script: |
             const fs = require('fs');
             const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
-            let summary = 'No coverage report found';
-            if (fs.existsSync('backend_unit_test_coverage.txt')) {
-              const content = fs.readFileSync('backend_unit_test_coverage.txt', 'utf8');
-              summary = `### Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
-            }
-            await github.rest.checks.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              head_sha: ref,
-              name: `Backend Unit Test Coverage: ${process.env.PERCENTAGE}`,
-              status: 'completed',
-              conclusion: 'success',
-              output: {
-                title: `Backend Unit Test Coverage: ${process.env.PERCENTAGE}`,
-                summary: summary,
+            const filePath = 'backend_unit_test_coverage.txt';
+            if (fs.existsSync(filePath)) {
+              const content = fs.readFileSync(filePath, 'utf8');
+              const totalLine = content.split('\n').find(line => line.trim().toUpperCase().startsWith('TOTAL'));
+              if (totalLine) {
+                const parts = totalLine.trim().split(/\s+/);
+                const pct = parts[parts.length - 1];
+                await github.rest.checks.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  head_sha: ref,
+                  name: `Backend Unit Test Coverage: ${pct}`,
+                  status: 'completed',
+                  conclusion: 'success',
+                  output: {
+                    title: `Backend Unit Test Coverage: ${pct}`,
+                    summary: `### Coverage Report\n\n\`\`\`\n${content}\n\`\`\``,
+                  }
+                });
               }
-            });
+            }
 
   run-frontend-tests:
     needs: [setup]
@@ -282,74 +276,64 @@ jobs:
         run: |
           set -o pipefail
           yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text --no-color \
-            | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o frontend_proxy_test_coverage.txt
-      - name: Extract Proxy Coverage
-        id: extract_proxy_cov
-        if: always()
-        run: |
-          FILE="frontend/api/coverage/coverage-summary.json"
-          if [ -f "$FILE" ]; then
-            PCT=$(jq '.total.statements.pct' "$FILE")%
-            echo "PROXY_PERCENTAGE=$PCT" >> $GITHUB_ENV
-          fi
+            | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o frontend_api_test_coverage.txt
       - name: Run UI tests
         working-directory: frontend/transcription-ui
         run: |
           set -o pipefail
           yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text --no-color \
             | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o frontend_ui_test_coverage.txt
-      - name: Extract UI Coverage
-        id: extract_ui_cov
-        if: always()
-        run: |
-          FILE="frontend/transcription-ui/coverage/coverage-summary.json"
-          if [ -f "$FILE" ]; then
-            PCT=$(jq '.total.statements.pct' "$FILE")%
-            echo "UI_PERCENTAGE=$PCT" >> $GITHUB_ENV
-          fi
-      - name: Rename Check Run
+      - name: Create Coverage Check Runs
         uses: actions/github-script@v7
-        if: always() && (env.PROXY_PERCENTAGE != '' || env.UI_PERCENTAGE != '')
+        if: always()
         with:
           script: |
             const fs = require('fs');
             const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
             
-            if (process.env.PROXY_PERCENTAGE) {
+            // Proxy API Coverage
+            const proxyJson = 'frontend/api/coverage/coverage-summary.json';
+            if (fs.existsSync(proxyJson)) {
+              const data = JSON.parse(fs.readFileSync(proxyJson, 'utf8'));
+              const pct = `${data.total.statements.pct}%`;
               let summary = 'No coverage report found';
-              if (fs.existsSync('frontend/api/frontend_proxy_test_coverage.txt')) {
-                const content = fs.readFileSync('frontend/api/frontend_proxy_test_coverage.txt', 'utf8');
-                summary = `### Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
+              const reportPath = 'frontend/api/frontend_api_test_coverage.txt';
+              if (fs.existsSync(reportPath)) {
+                summary = `### Coverage Report\n\n\`\`\`\n${fs.readFileSync(reportPath, 'utf8')}\n\`\`\``;
               }
               await github.rest.checks.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 head_sha: ref,
-                name: `Frontend Proxy API Coverage: ${process.env.PROXY_PERCENTAGE}`,
+                name: `Frontend Proxy API Coverage: ${pct}`,
                 status: 'completed',
                 conclusion: 'success',
                 output: {
-                  title: `Frontend Proxy API Coverage: ${process.env.PROXY_PERCENTAGE}`,
+                  title: `Frontend Proxy API Coverage: ${pct}`,
                   summary: summary,
                 }
               });
             }
             
-            if (process.env.UI_PERCENTAGE) {
+            // UI Coverage
+            const uiJson = 'frontend/transcription-ui/coverage/coverage-summary.json';
+            if (fs.existsSync(uiJson)) {
+              const data = JSON.parse(fs.readFileSync(uiJson, 'utf8'));
+              const pct = `${data.total.statements.pct}%`;
               let summary = 'No coverage report found';
-              if (fs.existsSync('frontend/transcription-ui/frontend_ui_test_coverage.txt')) {
-                const content = fs.readFileSync('frontend/transcription-ui/frontend_ui_test_coverage.txt', 'utf8');
-                summary = `### Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
+              const reportPath = 'frontend/transcription-ui/frontend_ui_test_coverage.txt';
+              if (fs.existsSync(reportPath)) {
+                summary = `### Coverage Report\n\n\`\`\`\n${fs.readFileSync(reportPath, 'utf8')}\n\`\`\``;
               }
               await github.rest.checks.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 head_sha: ref,
-                name: `Frontend UI Coverage: ${process.env.UI_PERCENTAGE}`,
+                name: `Frontend UI Coverage: ${pct}`,
                 status: 'completed',
                 conclusion: 'success',
                 output: {
-                  title: `Frontend UI Coverage: ${process.env.UI_PERCENTAGE}`,
+                  title: `Frontend UI Coverage: ${pct}`,
                   summary: summary,
                 }
               });

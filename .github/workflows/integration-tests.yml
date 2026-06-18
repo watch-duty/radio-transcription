@@ -50,42 +50,36 @@ jobs:
         run: |
           set -o pipefail
           mise run test:component --cov=backend/pipeline --cov-report=term-missing --color=no \
-            | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o storage_component_test_coverage.txt
+            | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o storage_integration_test_coverage.txt
           
-      - name: Extract Storage Coverage
-        id: extract_storage_cov
-        if: always()
-        run: |
-          if [ -f storage_component_test_coverage.txt ]; then
-            PCT=$(grep -i "TOTAL" storage_component_test_coverage.txt | awk '{print $NF}')
-            if [ -n "$PCT" ]; then
-              echo "PERCENTAGE=$PCT" >> $GITHUB_ENV
-            fi
-          fi
-      - name: Rename Check Run
+      - name: Create Coverage Check Run
         uses: actions/github-script@v7
-        if: always() && env.PERCENTAGE != ''
+        if: always()
         with:
           script: |
             const fs = require('fs');
             const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
-            let summary = 'No coverage report found';
-            if (fs.existsSync('storage_component_test_coverage.txt')) {
-              const content = fs.readFileSync('storage_component_test_coverage.txt', 'utf8');
-              summary = `### Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
-            }
-            await github.rest.checks.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              head_sha: ref,
-              name: `Storage Integration Coverage: ${process.env.PERCENTAGE}`,
-              status: 'completed',
-              conclusion: 'success',
-              output: {
-                title: `Storage Integration Coverage: ${process.env.PERCENTAGE}`,
-                summary: summary,
+            const filePath = 'storage_integration_test_coverage.txt';
+            if (fs.existsSync(filePath)) {
+              const content = fs.readFileSync(filePath, 'utf8');
+              const totalLine = content.split('\n').find(line => line.trim().toUpperCase().startsWith('TOTAL'));
+              if (totalLine) {
+                const parts = totalLine.trim().split(/\s+/);
+                const pct = parts[parts.length - 1];
+                await github.rest.checks.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  head_sha: ref,
+                  name: `Storage Integration Coverage: ${pct}`,
+                  status: 'completed',
+                  conclusion: 'success',
+                  output: {
+                    title: `Storage Integration Coverage: ${pct}`,
+                    summary: `### Coverage Report\n\n\`\`\`\n${content}\n\`\`\``,
+                  }
+                });
               }
-            });
+            }
 
   e2e-tests:
     runs-on: ubuntu-24.04
@@ -120,40 +114,34 @@ jobs:
           docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run --rm integration-tests sh -c "pip install -q uv && uv sync && uv run python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto && uv run pytest integration_tests/ --ignore=integration_tests/storage/ -n auto -v -s --log-cli-level=INFO --cov=backend/pipeline --cov-report=term-missing --color=no" \
             | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o e2e_integration_test_coverage.txt
 
-      - name: Extract E2E Coverage
-        id: extract_e2e_cov
-        if: always()
-        run: |
-          if [ -f e2e_integration_test_coverage.txt ]; then
-            PCT=$(grep -i "TOTAL" e2e_integration_test_coverage.txt | awk '{print $NF}')
-            if [ -n "$PCT" ]; then
-              echo "PERCENTAGE=$PCT" >> $GITHUB_ENV
-            fi
-          fi
-      - name: Rename Check Run
+      - name: Create Coverage Check Run
         uses: actions/github-script@v7
-        if: always() && env.PERCENTAGE != ''
+        if: always()
         with:
           script: |
             const fs = require('fs');
             const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
-            let summary = 'No coverage report found';
-            if (fs.existsSync('e2e_integration_test_coverage.txt')) {
-              const content = fs.readFileSync('e2e_integration_test_coverage.txt', 'utf8');
-              summary = `### Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
-            }
-            await github.rest.checks.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              head_sha: ref,
-              name: `E2E Integration Coverage: ${process.env.PERCENTAGE}`,
-              status: 'completed',
-              conclusion: 'success',
-              output: {
-                title: `E2E Integration Coverage: ${process.env.PERCENTAGE}`,
-                summary: summary,
+            const filePath = 'e2e_integration_test_coverage.txt';
+            if (fs.existsSync(filePath)) {
+              const content = fs.readFileSync(filePath, 'utf8');
+              const totalLine = content.split('\n').find(line => line.trim().toUpperCase().startsWith('TOTAL'));
+              if (totalLine) {
+                const parts = totalLine.trim().split(/\s+/);
+                const pct = parts[parts.length - 1];
+                await github.rest.checks.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  head_sha: ref,
+                  name: `E2E Integration Coverage: ${pct}`,
+                  status: 'completed',
+                  conclusion: 'success',
+                  output: {
+                    title: `E2E Integration Coverage: ${pct}`,
+                    summary: `### Coverage Report\n\n\`\`\`\n${content}\n\`\`\``,
+                  }
+                });
               }
-            });
+            }
 
       - name: Print container logs on failure
         if: failure()
