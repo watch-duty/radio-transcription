@@ -53,7 +53,7 @@ jobs:
             | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o storage_integration_test_coverage.txt
           
       - name: Create Coverage Check Run
-        uses: ./.github/actions/post-coverage
+        uses: ./.github/actions/post-pytest-coverage
         if: always()
         with:
           name: "Storage Integration Coverage"
@@ -93,7 +93,7 @@ jobs:
             | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o e2e_integration_test_coverage.txt
 
       - name: Create Coverage Check Run
-        uses: ./.github/actions/post-coverage
+        uses: ./.github/actions/post-pytest-coverage
         if: always()
         with:
           name: "E2E Integration Coverage"

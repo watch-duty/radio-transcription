@@ -1,0 +1,48 @@
+name: 'Post Pytest Coverage'
+description: 'Parses pytest coverage reports and publishes a Check Run to the pull request'
+inputs:
+  name:
+    description: 'The prefix for the check run name'
+    required: true
+  coverage-report-location:
+    description: 'Path to the text coverage report file'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Create Coverage Check Run
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
+          
+          const nameInput = `${{ inputs.name }}`;
+          const reportFile = `${{ inputs.coverage-report-location }}`;
+          
+          if (fs.existsSync(reportFile)) {
+            const content = fs.readFileSync(reportFile, 'utf8');
+            const totalLine = content.split('\n').find(line => line.trim().toUpperCase().startsWith('TOTAL'));
+            if (totalLine) {
+              const parts = totalLine.trim().split(/\s+/);
+              const pct = parts[parts.length - 1];
+              
+              await github.rest.checks.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                head_sha: ref,
+                name: `${nameInput}: ${pct}`,
+                status: 'completed',
+                conclusion: 'success',
+                output: {
+                  title: `${nameInput}: ${pct}`,
+                  summary: `### Coverage Report\n\n\`\`\`\n${content}\n\`\`\``,
+                }
+              });
+            } else {
+              core.warning(`Could not find TOTAL line in pytest report for ${nameInput}`);
+            }
+          } else {
+            core.info(`Coverage report file not found at ${reportFile}`);
+          }

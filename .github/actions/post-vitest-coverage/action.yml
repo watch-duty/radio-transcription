@@ -1,0 +1,55 @@
+name: 'Post Vitest Coverage'
+description: 'Parses vitest coverage summaries and publishes a Check Run to the pull request'
+inputs:
+  name:
+    description: 'The prefix for the check run name'
+    required: true
+  coverage-report-location:
+    description: 'Path to the text coverage report file'
+    required: true
+  json-summary-location:
+    description: 'Path to the JSON coverage summary file'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Create Coverage Check Run
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const ref = context.payload.pull_request ? context.payload.pull_request.head.sha : context.sha;
+          
+          const nameInput = `${{ inputs.name }}`;
+          const reportFile = `${{ inputs.coverage-report-location }}`;
+          const jsonSummary = `${{ inputs.json-summary-location }}`;
+          
+          if (fs.existsSync(jsonSummary)) {
+            try {
+              const data = JSON.parse(fs.readFileSync(jsonSummary, 'utf8'));
+              const pct = `${data.total.statements.pct}%`;
+              
+              let summary = 'No coverage report found';
+              if (fs.existsSync(reportFile)) {
+                summary = `### Coverage Report\n\n\`\`\`\n${fs.readFileSync(reportFile, 'utf8')}\n\`\`\``;
+              }
+              
+              await github.rest.checks.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                head_sha: ref,
+                name: `${nameInput}: ${pct}`,
+                status: 'completed',
+                conclusion: 'success',
+                output: {
+                  title: `${nameInput}: ${pct}`,
+                  summary: summary,
+                }
+              });
+            } catch (e) {
+              core.warning(`Failed to parse json summary for ${nameInput}: ${e}`);
+            }
+          } else {
+            core.info(`JSON summary file not found at ${jsonSummary}`);
+          }

@@ -226,7 +226,7 @@ jobs:
           uv run python -m pytest backend/ -q --cov=backend/pipeline --cov-report=term-missing --color=no \
             | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o backend_unit_test_coverage.txt
       - name: Create Coverage Check Run
-        uses: ./.github/actions/post-coverage
+        uses: ./.github/actions/post-pytest-coverage
         if: always()
         with:
           name: "Backend Unit Test Coverage"
@@ -262,19 +262,19 @@ jobs:
           yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text --no-color \
             | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o frontend_ui_test_coverage.txt
       - name: Create Proxy Coverage Check Run
-        uses: ./.github/actions/post-coverage
+        uses: ./.github/actions/post-vitest-coverage
         if: always()
         with:
           name: "Frontend Proxy API Coverage"
           coverage-report-location: "frontend/api/frontend_api_test_coverage.txt"
-          json-summary-file: "frontend/api/coverage/coverage-summary.json"
+          json-summary-location: "frontend/api/coverage/coverage-summary.json"
       - name: Create UI Coverage Check Run
-        uses: ./.github/actions/post-coverage
+        uses: ./.github/actions/post-vitest-coverage
         if: always()
         with:
           name: "Frontend UI Coverage"
           coverage-report-location: "frontend/transcription-ui/frontend_ui_test_coverage.txt"
-          json-summary-file: "frontend/transcription-ui/coverage/coverage-summary.json"
+          json-summary-location: "frontend/transcription-ui/coverage/coverage-summary.json"
 
   # Builds each service's Dockerfile and verifies all transitive imports resolve
   # and required environment variables are documented. This catches:
