@@ -55,6 +55,7 @@ runs:
                 head_sha: ref,
                 name: `${coverageHealth} ${testName}: ${coveragePct}%`,
                 status: 'completed',
+                conclusion: 'success',
                 output: {
                   title: `${coverageHealth} ${testName}: ${coveragePct}%`,
                   summary: summary,

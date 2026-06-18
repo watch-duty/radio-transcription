@@ -47,6 +47,7 @@ runs:
                 head_sha: ref,
                 name: `${coverageHealth} ${nameInput}: ${pct}`,
                 status: 'completed',
+                conclusion: 'success',
                 output: {
                   title: `${coverageHealth} ${nameInput}: ${pct}`,
                   summary: `### Coverage Report (${healthText})\n\n${codeBlock}\n${content}\n${codeBlock}`,
