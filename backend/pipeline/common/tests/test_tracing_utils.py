@@ -5,12 +5,12 @@ from cloudevents.http.event import CloudEvent
 from opentelemetry import baggage
 from opentelemetry.trace import get_current_span
 
+from backend.pipeline.common.log_helper import record_pipeline_stage
 from backend.pipeline.common.tracing_utils import (
     ContextPropagationValidator,
     extract_cloud_event_attributes,
     extract_trace_context,
     get_current_traceparent,
-    record_pipeline_stage,
     with_baggage_and_span,
     with_tracer_context,
 )
@@ -145,18 +145,32 @@ class TestTracingUtils(unittest.TestCase):
 
         self.assertEqual(baggage.get_baggage("test_key"), None)
 
-    @patch("backend.pipeline.common.tracing_utils._pipeline_stage_counter")
-    def test_record_pipeline_stage(self, mock_counter) -> None:
-        """Verifies that record_pipeline_stage increments the pipeline counter with correct labels."""
+    @patch("backend.pipeline.common.log_helper.pipeline_metrics_logger")
+    def test_record_pipeline_stage(self, mock_logger) -> None:
+        """Verifies that record_pipeline_stage emits a log with correct json_fields."""
         record_pipeline_stage("segmentation", "start")
-        mock_counter.add.assert_called_once_with(
-            1, {"stage": "segmentation", "status": "start"}
+        mock_logger.info.assert_called_once_with(
+            "Pipeline stage recorded",
+            extra={
+                "json_fields": {
+                    "event_type": "pipeline_stage",
+                    "stage": "segmentation",
+                    "status": "start",
+                }
+            },
         )
 
-        mock_counter.reset_mock()
+        mock_logger.reset_mock()
         record_pipeline_stage("transcription", "success")
-        mock_counter.add.assert_called_once_with(
-            1, {"stage": "transcription", "status": "success"}
+        mock_logger.info.assert_called_once_with(
+            "Pipeline stage recorded",
+            extra={
+                "json_fields": {
+                    "event_type": "pipeline_stage",
+                    "stage": "transcription",
+                    "status": "success",
+                }
+            },
         )
 
     def test_extract_cloud_event_attributes(self) -> None:

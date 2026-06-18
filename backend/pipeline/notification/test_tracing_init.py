@@ -27,5 +27,4 @@ class TestTracingInitialization(unittest.TestCase):
         mock_setup_tracing.assert_called_once_with(
             service_name="notification-service",
             use_batch=False,
-            setup_metrics=True,
         )
