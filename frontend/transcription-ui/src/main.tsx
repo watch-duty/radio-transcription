@@ -4,12 +4,18 @@ import { BrowserRouter } from 'react-router';
 
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import faviconUrl from '@theme/favicon.svg';
 
 import App from './App.tsx';
 import { AuthProvider } from './context/AuthProvider';
 
 import './index.css';
 import 'material-symbols/outlined.css';
+
+const link = document.querySelector("link[rel~='icon']") as HTMLLinkElement;
+if (link) {
+  link.href = faviconUrl;
+}
 
 const queryClient = new QueryClient();
 

@@ -29,4 +29,6 @@ dist-ssr
 # Environment files
 .env*
 !.env.example
-  
+
+# Custom theme overrides
+src/theme/custom/

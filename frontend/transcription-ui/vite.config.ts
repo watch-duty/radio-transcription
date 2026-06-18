@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { defineConfig, loadEnv, mergeConfig } from 'vite';
 import type { UserConfig } from 'vite';
 
@@ -10,9 +12,74 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const apiTarget = env.VITE_PROXY_API_TARGET || 'http://localhost:8080';
 
+  const themeResolverPlugin = {
+    name: 'theme-resolver',
+    resolveId(source: string) {
+      if (source.startsWith('@theme/')) {
+        let file = source.replace('@theme/', '');
+        const ext = path.extname(file);
+        if (ext) {
+          file = file.substring(0, file.length - ext.length);
+        }
+        const customThemePath = path.resolve(__dirname, 'src/theme/custom');
+        const defaultThemePath = path.resolve(__dirname, 'src/theme/default');
+
+        const candidatesMap: Record<string, string[]> = {
+          palette: [
+            'palette.ts',
+            'palette.tsx',
+            'palette/index.ts',
+            'palette/index.tsx',
+          ],
+          breakpoints: [
+            'breakpoints.ts',
+            'breakpoints.tsx',
+            'breakpoints/index.ts',
+            'breakpoints/index.tsx',
+          ],
+          components: [
+            'components.ts',
+            'components.tsx',
+            'components/index.ts',
+            'components/index.tsx',
+            'componentOverrides.ts',
+            'componentOverrides.tsx',
+            'componentOverrides/index.ts',
+            'componentOverrides/index.tsx',
+          ],
+          typography: [
+            'typography.ts',
+            'typography.tsx',
+            'typography/index.ts',
+            'typography/index.tsx',
+          ],
+          favicon: ['favicon.svg', 'favicon.ico', 'favicon.png'],
+        };
+
+        const candidates = candidatesMap[file] || [`${file}.ts`, `${file}.tsx`];
+
+        if (env.VITE_THEME_DIR) {
+          for (const candidate of candidates) {
+            const envFile = path.resolve(env.VITE_THEME_DIR, candidate);
+            if (fs.existsSync(envFile)) return envFile;
+          }
+        }
+
+        for (const candidate of candidates) {
+          const customFile = path.resolve(customThemePath, candidate);
+          if (fs.existsSync(customFile)) return customFile;
+        }
+
+        const defaultExt = file === 'favicon' ? 'svg' : 'ts';
+        return path.resolve(defaultThemePath, `${file}.${defaultExt}`);
+      }
+      return null;
+    },
+  };
+
   // Base configuration shared across all environments
   const baseConfig: UserConfig = {
-    plugins: [react()],
+    plugins: [react(), themeResolverPlugin],
     build: {
       outDir: 'dist',
     },

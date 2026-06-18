@@ -131,6 +131,7 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
                   display: 'flex',
                   alignItems: 'center',
                   gap: 0.5,
+                  textDecoration: 'none',
                 }}
               >
                 <OpenInNewOutlinedIcon fontSize="small" />
@@ -147,6 +148,7 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
                   display: 'flex',
                   alignItems: 'center',
                   gap: 0.5,
+                  textDecoration: 'none',
                 }}
               >
                 <InventoryIcon fontSize="small" />

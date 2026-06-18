@@ -284,7 +284,6 @@ export function FeedTable({
             sx={{
               fontWeight: 600,
               textDecoration: 'none',
-              color: 'primary.main',
               '&:hover': { textDecoration: 'underline' },
               textOverflow: 'ellipsis',
               maxWidth: '100%',
@@ -379,7 +378,6 @@ export function FeedTable({
                     target="_blank"
                     rel="noopener noreferrer"
                     underline="hover"
-                    sx={{ color: 'primary.main' }}
                   >
                     {feed.sourceUrl}
                   </Link>
@@ -397,7 +395,6 @@ export function FeedTable({
                     target="_blank"
                     rel="noopener noreferrer"
                     underline="hover"
-                    sx={{ color: 'primary.main' }}
                   >
                     {feed.archiveUrl}
                   </Link>

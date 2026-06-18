@@ -1,6 +1,9 @@
 {
   "compilerOptions": {
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "paths": {
+      "@theme/*": ["./src/theme/default/*"]
+    },
     "target": "ES2022",
     "useDefineForClassFields": true,
     "lib": [

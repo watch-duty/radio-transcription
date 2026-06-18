@@ -3,12 +3,7 @@ import { Route, Routes } from 'react-router';
 
 import { decodeJwt } from 'jose';
 
-import {
-  CssBaseline,
-  ThemeProvider,
-  createTheme,
-  useMediaQuery,
-} from '@mui/material';
+import { CssBaseline, ThemeProvider } from '@mui/material';
 import Alert, { type AlertProps } from '@mui/material/Alert';
 import AlertTitle from '@mui/material/AlertTitle';
 import Snackbar from '@mui/material/Snackbar';
@@ -23,6 +18,7 @@ import FeedSearchView from './components/feeds/FeedSearchView';
 import RuleConfigurationView from './components/rules/RuleConfigurationView';
 import TranscriptView from './components/transcripts/TranscriptView';
 import { useAuth } from './context/AuthContext';
+import { useAppTheme } from './theme';
 
 import './App.css';
 
@@ -132,33 +128,7 @@ function App() {
     [addAlert, token]
   );
 
-  const prefersDarkMode = useMediaQuery('(prefers-color-scheme: dark)');
-  const theme = createTheme({
-    breakpoints: {
-      values: {
-        xs: 0,
-        sm: 768,
-        md: 900,
-        lg: 1200,
-        xl: 1536,
-      },
-    },
-    palette: {
-      mode: prefersDarkMode ? 'dark' : 'light',
-    },
-    components: {
-      MuiBadge: {
-        styleOverrides: {
-          badge: ({ ownerState, theme }) => ({
-            ...(ownerState.color === 'default' && {
-              backgroundColor: theme.palette.text.secondary,
-              color: theme.palette.background.paper,
-            }),
-          }),
-        },
-      },
-    },
-  });
+  const theme = useAppTheme();
 
   return (
     <ThemeProvider theme={theme}>
