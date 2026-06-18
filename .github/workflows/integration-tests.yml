@@ -66,11 +66,12 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Load pre-compiled microservice binaries from GHA cache
-        run: |
-          docker buildx bake \
-            -f docker-compose.yml \
-            -f docker-bake.hcl \
-            --load
+        uses: docker/bake-action@v5
+        with:
+          files: |
+            docker-compose.yml
+            docker-bake.hcl
+          load: true
 
       - name: Run E2E tests
         run: |

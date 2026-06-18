@@ -35,9 +35,10 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Bake and push persistent staging base images to ghcr.io
-        run: |
-          docker buildx bake \
-            -f docker-compose.yml \
-            -f docker-bake.hcl \
-            --push
+        uses: docker/bake-action@v5
+        with:
+          files: |
+            docker-compose.yml
+            docker-bake.hcl
+          push: true
 
