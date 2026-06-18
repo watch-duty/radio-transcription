@@ -259,7 +259,7 @@ jobs:
             let summary = 'No coverage report found';
             if (fs.existsSync('unit-coverage.txt')) {
               const content = fs.readFileSync('unit-coverage.txt', 'utf8');
-              summary = `### Backend Unit Test Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
+              summary = `### Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
             }
             await github.rest.checks.create({
               owner: context.repo.owner,
@@ -359,7 +359,7 @@ jobs:
               let summary = 'No coverage report found';
               if (fs.existsSync('frontend/api/proxy-coverage.txt')) {
                 const content = fs.readFileSync('frontend/api/proxy-coverage.txt', 'utf8');
-                summary = `### Frontend Proxy API Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
+                summary = `### Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
               }
               await github.rest.checks.create({
                 owner: context.repo.owner,
@@ -379,7 +379,7 @@ jobs:
               let summary = 'No coverage report found';
               if (fs.existsSync('frontend/transcription-ui/ui-coverage.txt')) {
                 const content = fs.readFileSync('frontend/transcription-ui/ui-coverage.txt', 'utf8');
-                summary = `### Frontend UI Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
+                summary = `### Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
               }
               await github.rest.checks.create({
                 owner: context.repo.owner,

@@ -86,7 +86,7 @@ jobs:
             let summary = 'No coverage report found';
             if (fs.existsSync('storage-coverage.txt')) {
               const content = fs.readFileSync('storage-coverage.txt', 'utf8');
-              summary = `### Storage Integration Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
+              summary = `### Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
             }
             await github.rest.checks.create({
               owner: context.repo.owner,
@@ -167,7 +167,7 @@ jobs:
             let summary = 'No coverage report found';
             if (fs.existsSync('e2e-coverage.txt')) {
               const content = fs.readFileSync('e2e-coverage.txt', 'utf8');
-              summary = `### E2E Integration Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
+              summary = `### Coverage Report\n\n\`\`\`\n${content}\n\`\`\``;
             }
             await github.rest.checks.create({
               owner: context.repo.owner,
