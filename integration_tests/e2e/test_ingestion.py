@@ -1,5 +1,6 @@
 import logging
 import os
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -66,8 +67,9 @@ def test_ingestion_echo(test_echo_feed: tuple[str, str]) -> None:
         )
 
     channel_name = source_feed_id
-    date_str = "20260326"
-    time_str = "143022"
+    now = datetime.now(UTC)
+    date_str = now.strftime("%Y%m%d")
+    time_str = now.strftime("%H%M%S")
     filename = f"{channel_name}_{date_str}_{time_str}.mp3"
     gcs_path = f"{channel_name}/{date_str}/{filename}"
 
