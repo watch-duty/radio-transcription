@@ -183,7 +183,10 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
                 return
 
         # Skip historical recordings uploaded/created before the feed was registered in the database.
-        if start_ts < feed["created_at"]:
+        # Truncate the feed's created_at to second precision before comparison because start_ts
+        # from the filename only has second precision. This prevents race/precision bugs when
+        # a recording is created in the same second as the feed itself.
+        if start_ts < feed["created_at"].replace(microsecond=0):
             logger.info(
                 "Skipping historical Echo recording: %s (start_ts: %s < feed created_at: %s)",
                 name,

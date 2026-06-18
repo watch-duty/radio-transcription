@@ -257,6 +257,33 @@ class TestHandle:
         assert "Skipping historical Echo recording" in caplog.text
 
     @pytest.mark.usefixtures("_patch_globals")
+    def test_does_not_drop_same_second_recording(
+        self, mock_store, _patch_globals, caplog
+    ) -> None:
+        feed_id = uuid.uuid4()
+        self._set_feed(
+            mock_store,
+            {
+                "id": feed_id,
+                "name": "Central Fire",
+                "status": "active",
+                "failure_count": 0,
+                "created_at": datetime(
+                    2026, 3, 26, 14, 30, 22, 123456, tzinfo=UTC
+                ),
+            },
+        )
+        caplog.set_level(
+            logging.INFO,
+            logger="backend.pipeline.ingestion.collectors.echo.main",
+        )
+        # Event is at 2026-03-26 14:30:22 (which matches the feed's created_at second)
+        _handle(self._make_event("fire-ca/20260326/fire_20260326_143022.mp3"))
+        # It should not be dropped, so it should attempt to publish
+        _patch_globals["publisher"].publish.assert_called_once()
+        assert "Skipping historical Echo recording" not in caplog.text
+
+    @pytest.mark.usefixtures("_patch_globals")
     def test_filename_timestamp_wins_over_gcs_time_created(
         self, mock_store, _patch_globals
     ) -> None:
