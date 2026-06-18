@@ -899,6 +899,12 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         )
         formatted = _formatted_error_calls(self.mock_logger)
         self.assertIn("no finalized segment within", formatted)
+        self.assertIn("next_index=0", formatted)
+        self.assertIn("current_segment_exists=False", formatted)
+        self.assertIn("next_segment_exists=False", formatted)
+        self.assertIn("current_segment_size=None", formatted)
+        self.assertIn("next_segment_size=None", formatted)
+        self.assertIn("ffmpeg_pid=8888", formatted)
         self.assertIn("Connection timed out", formatted)
 
     @patch(

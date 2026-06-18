@@ -2417,6 +2417,60 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             [record for record in cm.records if record.levelno >= logging.ERROR]
         )
 
+    async def test_non_budgeted_source_payload_invalid_warns_without_stack(
+        self,
+    ) -> None:
+        """Typed invalid source payload evidence avoids traceback spam."""
+        retry_after = datetime.datetime(2026, 6, 15, tzinfo=datetime.UTC)
+
+        async def _failing_capture(feed, shutdown, _resources):
+            raise FeedFailure(
+                FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
+                "ffprobe exited with code 1",
+            )
+            yield _make_captured_chunk(b"audio")
+
+        rt = CollectorRuntime(
+            capture_fn=_failing_capture,
+            settings=_make_settings(),
+        )
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.release_non_budgeted_failure.return_value = "failing"
+        rt._releasing_feeds = set()
+
+        with (
+            mock.patch.object(
+                CollectorRuntime,
+                "_non_budgeted_retry_after",
+                return_value=retry_after,
+            ),
+            self.assertLogs(
+                "backend.pipeline.ingestion.collector_runtime",
+                level=logging.INFO,
+            ) as cm,
+        ):
+            await rt._process_feed(_FEED)
+
+        rt._store.report_feed_failure.assert_not_awaited()
+        rt._store.release_non_budgeted_failure.assert_awaited_once()
+        warning_records = [
+            record for record in cm.records if record.levelno == logging.WARNING
+        ]
+        self.assertTrue(
+            any(
+                "Feed source payload failure suppressed from quarantine budget"
+                in record.getMessage()
+                for record in warning_records
+            )
+        )
+        self.assertFalse(
+            [record for record in cm.records if record.levelno >= logging.ERROR]
+        )
+        self.assertFalse([record for record in cm.records if record.exc_info])
+
     async def test_non_budgeted_source_owner_uses_source_observation_log(
         self,
     ) -> None:

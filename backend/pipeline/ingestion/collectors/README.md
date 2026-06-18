@@ -81,7 +81,7 @@ the likely owner:
 | `system_source_configuration_invalid` | A source control-plane or provider API response says the configured feed/source path is invalid, but v1 keeps it non-budgeted because provider-side changes may recover without feed-row edits. |
 | `system_runtime_configuration_invalid` | Shared runtime, deployment, environment, source-class, or transport configuration is invalid and retry is not expected to repair it. |
 | `system_credential_access_failed` | Watch Duty could not retrieve or access internal credentials, such as Secret Manager access failure; this is not the same as upstream provider credential rejection. |
-| `system_source_payload_invalid` | A successful source response violates the collector payload contract, but v1 keeps it non-budgeted because the response may be transient, provider-owned, or later auto-recovered by a deploy. |
+| `system_source_payload_invalid` | A successful source response or downloaded source media violates the collector payload contract, but v1 keeps it non-budgeted because the response may be transient, provider-owned, or later auto-recovered by a deploy. |
 | `system_collector_error` | The collector cannot turn apparently available source data into a chunk, or all item failures are mixed/ambiguous. |
 | `system_pipeline_error` | Runtime or Echo post-capture processing fails after source data was obtained, such as GCS upload, bookmark writes, staging, duration probing, or heartbeat writes. |
 | `system_unexpected_error` | Defensive fallback for bugs or untyped exceptions that should become typed in a future collector fix. |
@@ -139,7 +139,10 @@ successful observation but does not advance a resume cursor.
 For Fire Notifications, yield `SourceObservation` when the poll succeeds and
 `files == []`, or when a non-empty file list produces no attempted items because
 all files were skipped before download. Non-empty file lists with at least one
-attempted item continue through `_process_file_list` item handling.
+attempted item continue through `_process_file_list` item handling. Downloaded
+MP3 bytes that ffprobe cannot parse are item-scoped
+`system_source_payload_invalid` failures; they promote only through the normal
+all-attempted-items-failed observation boundary.
 
 ## Failure Classification Model
 
@@ -203,6 +206,12 @@ endpoint has source-specific semantics, define a local policy near the
 collector code. For example, Icecast stream `404` is `source_offline`, while a
 poll endpoint `404` may be invalid configuration and an item URL `404` may be
 only one stale object.
+
+An Icecast "no finalized segment within timeout" event is ambiguous by itself:
+it means the collector did not observe a completed segment file, not that the
+source is conclusively offline. Classify it as a source condition only when
+terminal stream evidence, such as stderr HTTP status or the existing
+same-stream probe, supports that classification.
 
 Do not duplicate exact HTTP policy tables in this guide. The `HTTPStatusPolicy`
 instances in code and their tests are the source of truth; this document should
@@ -282,6 +291,8 @@ Minimum tests for an item-downloading VM collector:
 - partial item success suppresses `ItemBatchOutcome` promotion, all attempted
   item failures promote, and mixed canonical reasons promote as
   `mixed_item_failures`;
+- invalid downloaded media remains item-scoped until the observation boundary
+  promotes it;
 - completed item failures call `telemetry.emit_call_download_failed` instead of
   building `call_download_failed` JSON locally.
 

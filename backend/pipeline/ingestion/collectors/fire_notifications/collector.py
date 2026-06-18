@@ -104,14 +104,25 @@ async def _process_file_list(
             )
         except Exception as exc:
             reason = ffmpeg_classifier.ffprobe_exception_failure_reason(exc)
+            status_reason = (
+                feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID
+                if ffmpeg_classifier.classify_ffprobe_exception(exc) is not None
+                else feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR
+            )
             logger.warning(
-                "Failed to compute duration for uuid=%s: %s",
+                "Failed to compute duration for feed_id=%s source_feed_id=%s "
+                "uuid=%s filename=%s listed_size=%s downloaded_bytes=%d: %s",
+                feed["id"],
+                source_feed_id,
                 f.uuid,
+                f.filename,
+                f.size,
+                len(mp3_bytes),
                 reason,
             )
             outcome.record_failure(
                 ItemFailure(
-                    feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                    status_reason,
                     reason,
                 )
             )

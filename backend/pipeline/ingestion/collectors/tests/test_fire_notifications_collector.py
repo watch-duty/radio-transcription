@@ -730,11 +730,15 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(
             ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
         )
         self.assertEqual(str(ctx.exception), expected_reason)
         log_text = "\n".join(logs.output)
         self.assertIn(expected_reason, log_text)
+        self.assertIn("uuid1", log_text)
+        self.assertIn("CHAN 2026-05-20 12-00-00.mp3", log_text)
+        self.assertIn("listed_size=1000", log_text)
+        self.assertIn("downloaded_bytes=9", log_text)
         self.assertNotIn("Traceback", log_text)
         self.assertNotIn("uuid1", self.processed_uuids)
         mock_emit.assert_not_called()
