@@ -129,7 +129,9 @@ def get_pipeline(
             ),
             stitch_config=stitch_config,
         )
-    ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+    ).with_resource_hints(min_ram="8GB").with_outputs(
+        DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG
+    )
 
     dlq_list.append(stitching[DEAD_LETTER_QUEUE_TAG])
     dlq_list.append(parsed[DEAD_LETTER_QUEUE_TAG])
