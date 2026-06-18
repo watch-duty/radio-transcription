@@ -262,14 +262,14 @@ jobs:
           yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text --no-color \
             | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o frontend_ui_test_coverage.txt
       - name: Create Proxy Coverage Check Run
-        uses: ./.github/actions/post-vitest-coverage
+        uses: ./.github/actions/post-frontend-coverage
         if: always()
         with:
           name: "Frontend Proxy API Coverage"
           coverage-report-location: "frontend/api/frontend_api_test_coverage.txt"
           json-summary-location: "frontend/api/coverage/coverage-summary.json"
       - name: Create UI Coverage Check Run
-        uses: ./.github/actions/post-vitest-coverage
+        uses: ./.github/actions/post-frontend-coverage
         if: always()
         with:
           name: "Frontend UI Coverage"

@@ -1,5 +1,5 @@
-name: 'Post Vitest Coverage'
-description: 'Parses vitest coverage summaries and publishes a Check Run to the pull request'
+name: 'Post Frontend Coverage'
+description: 'Parses frontend coverage summaries and publishes a Check Run to the pull request'
 inputs:
   name:
     description: 'The prefix for the check run name'
