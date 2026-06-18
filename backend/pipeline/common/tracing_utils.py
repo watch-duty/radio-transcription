@@ -7,6 +7,7 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 
+from cloudevents.http.event import CloudEvent
 from opentelemetry import baggage, metrics
 from opentelemetry.baggage.propagation import W3CBaggagePropagator
 from opentelemetry.context import Context, attach, detach, get_current
@@ -277,13 +278,46 @@ def extract_trace_context(attributes: dict[str, str] | None) -> Context:
     if not attributes:
         return Context()
 
+    # Normalize keys to lowercase for robust lookup
+    normalized = {}
+    for k, v in attributes.items():
+        if isinstance(v, str):
+            normalized[k.lower()] = v
+
+    carrier = {}
+    traceparent_keys = [
+        "traceparent",
+        "ce-traceparent",
+        "x-goog-pubsub-attr-traceparent",
+    ]
+    for k in traceparent_keys:
+        if k in normalized:
+            carrier["traceparent"] = normalized[k]
+            break
+
+    baggage_keys = ["baggage", "ce-baggage", "x-goog-pubsub-attr-baggage"]
+    for k in baggage_keys:
+        if k in normalized:
+            carrier["baggage"] = normalized[k]
+            break
+
+    tracestate_keys = [
+        "tracestate",
+        "ce-tracestate",
+        "x-goog-pubsub-attr-tracestate",
+    ]
+    for k in tracestate_keys:
+        if k in normalized:
+            carrier["tracestate"] = normalized[k]
+            break
+
     ctx = Context()
-    if attributes.get("traceparent"):
+    if "traceparent" in carrier:
         ctx = TraceContextTextMapPropagator().extract(
-            carrier=attributes, context=ctx
+            carrier=carrier, context=ctx
         )
-    if attributes.get("baggage"):
-        ctx = W3CBaggagePropagator().extract(carrier=attributes, context=ctx)
+    if "baggage" in carrier:
+        ctx = W3CBaggagePropagator().extract(carrier=carrier, context=ctx)
 
     return ctx
 
@@ -333,3 +367,124 @@ def with_baggage_and_span(
         get_tracer(tracer_name).start_as_current_span(span_name) as span,
     ):
         yield span
+
+
+def extract_cloud_event_attributes(
+    cloud_event: CloudEvent | dict[str, object],
+) -> dict[str, str]:
+    """Extracts combined attributes from a CloudEvent payload and metadata.
+
+    Args:
+        cloud_event: The incoming CloudEvent triggered by GCP triggers/PubSub.
+
+    Returns:
+        A dictionary of the combined attributes.
+    """
+    combined_attributes: dict[str, str] = {}
+
+    if isinstance(cloud_event, dict):
+        data = cloud_event.get("data")
+        ce_attrs = cloud_event.get("attributes")
+    else:
+        data = cloud_event.data
+        ce_attrs = None
+
+    # 1. Try to extract from nested Pub/Sub message attributes
+    try:
+        if isinstance(data, dict):
+            data_dict = {str(k): v for k, v in data.items()}
+            pubsub_message = data_dict.get("message")
+            if isinstance(pubsub_message, dict):
+                msg_dict = {str(k): v for k, v in pubsub_message.items()}
+                pubsub_attrs = msg_dict.get("attributes")
+                if isinstance(pubsub_attrs, dict):
+                    combined_attributes.update(
+                        {
+                            str(k): str(v)
+                            for k, v in pubsub_attrs.items()
+                            if isinstance(k, str) and isinstance(v, str)
+                        }
+                    )
+    except Exception as e:
+        telemetry_logger.debug(
+            "Failed to extract attributes from Pub/Sub message: %s", e
+        )
+
+    # 2. Try to extract from top-level CloudEvent attributes
+    try:
+        if isinstance(ce_attrs, dict):
+            combined_attributes.update(
+                {
+                    str(k): str(v)
+                    for k, v in ce_attrs.items()
+                    if isinstance(k, str) and isinstance(v, str)
+                }
+            )
+    except Exception as e:
+        telemetry_logger.debug(
+            "Failed to extract attributes from CloudEvent attributes: %s", e
+        )
+
+    # 3. Try to extract from top-level CloudEvent fields if dict-like or via get method
+    for k in [
+        "traceparent",
+        "baggage",
+        "tracestate",
+        "ce-traceparent",
+        "ce-baggage",
+        "ce-tracestate",
+    ]:
+        try:
+            val = cloud_event.get(k)
+            if isinstance(val, str):
+                combined_attributes[k] = val
+        except Exception as e:
+            telemetry_logger.debug(
+                "Field %s not found or extraction failed: %s", k, e
+            )
+
+    return combined_attributes
+
+
+def parse_pubsub_cloudevent(
+    cloud_event: CloudEvent | dict[str, object],
+) -> tuple[dict[str, str], str]:
+    """Parses a CloudEvent containing a Pub/Sub message, validating its structure.
+
+    Args:
+        cloud_event: The incoming CloudEvent triggered by GCP triggers/PubSub.
+
+    Returns:
+        A tuple of (combined_attributes, raw_data).
+
+    Raises:
+        ValueError: If the CloudEvent envelope or Pub/Sub message structure is invalid.
+        TypeError: If the Pub/Sub message is not a dictionary.
+    """
+    if isinstance(cloud_event, dict):
+        envelope = cloud_event
+    else:
+        envelope = cloud_event.data
+
+    if (
+        not envelope
+        or not isinstance(envelope, dict)
+        or "message" not in envelope
+    ):
+        err_msg = "Invalid CloudEvent envelope structure."
+        raise ValueError(err_msg)
+
+    pubsub_message = envelope.get("message")
+    if not isinstance(pubsub_message, dict):
+        type_err = "Invalid Pub/Sub message structure inside CloudEvent."
+        raise TypeError(type_err)
+
+    message_dict = {str(k): v for k, v in pubsub_message.items()}
+    raw_val = message_dict.get("data", "")
+    if isinstance(raw_val, bytes):
+        raw_data = raw_val.decode("utf-8")
+    else:
+        raw_data = str(raw_val)
+    combined_attributes = extract_cloud_event_attributes(cloud_event)
+
+    return combined_attributes, raw_data
