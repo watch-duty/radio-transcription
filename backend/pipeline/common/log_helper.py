@@ -202,6 +202,9 @@ def get_logger(name: str) -> logging.Logger:
 
     if _LoggingState.structured_propagation:
         logger.propagate = True
+        # If any StreamHandlers were previously registered (e.g. if get_logger()
+        # was called prior to setup_logging() enabling structured propagation),
+        # remove them to prevent double-logging to stdout.
         logger.handlers = [
             h
             for h in logger.handlers

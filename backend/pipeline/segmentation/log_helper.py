@@ -24,5 +24,10 @@ def setup_logging() -> None:
     If running inside a Dataflow worker, it enables structured propagation
     logging to ensure correct severity levels are preserved in Cloud Logging.
     """
+    # NOTE: Detecting the Dataflow worker environment via the presence of
+    # '--logging_endpoint' in sys.argv is a highly stable heuristic based on
+    # the Beam SDK worker startup contract. While technically an SDK
+    # implementation detail, it is the most reliable way to detect worker
+    # execution before the pipeline starts running.
     if any("--logging_endpoint" in arg for arg in sys.argv):
         enable_structured_propagation()
