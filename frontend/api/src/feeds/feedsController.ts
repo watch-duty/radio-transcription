@@ -1,5 +1,3 @@
-import type { Request as ExpressRequest } from 'express';
-
 import type {
   BackendFeedStatus,
   BackendFeedStatusReason,
@@ -32,13 +30,9 @@ import {
   Tags,
 } from 'tsoa';
 
-import { GoogleUser } from '../authentication.js';
+import { AuthenticatedRequest } from '../authentication.js';
 import { FEEDS_STORE_API_URL } from '../config.js';
 import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
-
-interface AuthenticatedRequest extends ExpressRequest {
-  user?: GoogleUser;
-}
 
 interface BaseFeedBackend {
   name: string;
