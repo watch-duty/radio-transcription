@@ -281,16 +281,11 @@ components:
       type: string
       enum:
         - unknown
-        - pipeline_publish_after_bookmark_failed
         - source_offline
         - source_unreachable
         - source_rate_limited
         - system_authentication_failed
         - system_configuration_invalid
-        - system_source_configuration_invalid
-        - system_runtime_configuration_invalid
-        - system_credential_access_failed
-        - system_source_payload_invalid
         - system_collector_error
         - system_pipeline_error
         - system_unexpected_error
@@ -426,6 +421,17 @@ components:
           type: string
       required:
         - code
+      type: object
+      additionalProperties: false
+    UserResponse:
+      properties:
+        email:
+          type: string
+        isAdmin:
+          type: boolean
+      required:
+        - email
+        - isAdmin
       type: object
       additionalProperties: false
     AudioClassification:
@@ -1585,6 +1591,44 @@ paths:
       tags:
         - Auth
       security: []
+      parameters: []
+      x-google-backend: radio-transcription-api
+  /api/v1/users:
+    get:
+      operationId: GetUserInfo
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      tags:
+        - Users
+      security:
+        - google_id_token: []
       parameters: []
       x-google-backend: radio-transcription-api
   /api/v1/audioSegments/{feedId}:
