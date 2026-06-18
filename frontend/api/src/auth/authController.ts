@@ -1,5 +1,6 @@
 import * as express from 'express';
 
+import { UserResponse } from '@transcription/common';
 import { OAuth2Client } from 'google-auth-library';
 import {
   Body,
@@ -10,9 +11,11 @@ import {
   Request,
   Response,
   Route,
+  Security,
   Tags,
 } from 'tsoa';
 
+import { AuthenticatedRequest } from '../authentication.js';
 import {
   ALLOWED_ORIGIN,
   GOOGLE_AUTH_CLIENT_ID,
@@ -130,5 +133,27 @@ export class AuthController extends Controller {
   public async logout(@Request() request: express.Request): Promise<void> {
     request.res?.clearCookie('refresh_token');
     this.setStatus(204);
+  }
+}
+
+@Route('api/v1/users')
+@Tags('Users')
+export class UsersController extends Controller {
+  @Get('')
+  @Security('google_id_token')
+  @Response<{ message: string }>(401, 'Unauthorized')
+  @Response<{ message: string }>(500, 'Internal Server Error')
+  @Extension('x-google-backend', 'radio-transcription-api')
+  public async getUserInfo(
+    @Request() request: AuthenticatedRequest
+  ): Promise<UserResponse> {
+    if (!request.user) {
+      throw new HttpError(401, 'Unauthorized');
+    }
+
+    return {
+      email: request.user.email,
+      isAdmin: !!request.user.isAdmin,
+    };
   }
 }
