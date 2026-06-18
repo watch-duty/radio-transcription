@@ -68,8 +68,8 @@ jobs:
       - name: Load pre-compiled microservice binaries from GHA cache
         run: |
           docker buildx bake \
-            --set *.cache-from=type=gha,scope=integration-tests \
             -f docker-compose.yml \
+            -f docker-bake.hcl \
             --load
 
       - name: Run E2E tests
