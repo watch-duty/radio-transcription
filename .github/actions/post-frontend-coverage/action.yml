@@ -32,12 +32,10 @@ runs:
           if (fs.existsSync(jsonSummary)) {
             try {
               const data = JSON.parse(fs.readFileSync(jsonSummary, 'utf8'));
-              const pct = parseFloat(data.total.statements.pct);
-              const conclusion = pct < 50
+              const coveragePct = parseFloat(data.total.statements.pct);
+              const coverageHealth = coveragePct < 50
                 ? 'failure'
-                : pct < 80 ? 'neutral' : 'success';
-
-              const coveragePct = `${data.total.statements.pct}%`;
+                : coveragePct < 80 ? 'neutral' : 'success';
 
               const codeBlock = '```';
               let summary = 'No coverage report found';
@@ -49,11 +47,11 @@ runs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 head_sha: ref,
-                name: `${testName}: ${coveragePct}`,
+                name: `${testName}: ${coveragePct}%`,
                 status: 'completed',
-                conclusion: conclusion,
+                conclusion: coverageHealth,
                 output: {
-                  title: `${testName}: ${coveragePct}`,
+                  title: `${testName}: ${coveragePct}%`,
                   summary: summary,
                 }
               });

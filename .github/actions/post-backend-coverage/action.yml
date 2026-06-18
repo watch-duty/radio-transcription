@@ -1,8 +1,8 @@
 name: 'Post Backend Coverage'
-description: 'Parses backend coverage reports and publishes a Check Run to the pull request'
+description: 'Emits backend test coverage as a Check Run'
 inputs:
   name:
-    description: 'The prefix for the check run name'
+    description: 'Name of the tests that the coverage is for'
     required: true
   coverage-report-location:
     description: 'Path to the text coverage report file'
@@ -29,13 +29,10 @@ runs:
             if (totalLine) {
               const parts = totalLine.trim().split(/\s+/);
               const pct = parts[parts.length - 1];
-              const pctNumber = parseFloat(pct.replace('%', ''));
-              let conclusion = 'success';
-              if (pctNumber < 50) {
-                conclusion = 'failure';
-              } else if (pctNumber < 80) {
-                conclusion = 'neutral';
-              }
+              const coveragePct = parseFloat(pct.replace('%', ''));
+              const coverageHealth = coveragePct < 50
+                ? 'failure'
+                : coveragePct < 80 ? 'neutral' : 'success';
 
               const codeBlock = '```';
               await github.rest.checks.create({
@@ -44,21 +41,16 @@ runs:
                 head_sha: ref,
                 name: `${nameInput}: ${pct}`,
                 status: 'completed',
-                conclusion: conclusion,
+                conclusion: coverageHealth,
                 output: {
                   title: `${nameInput}: ${pct}`,
                   summary: `### Coverage Report\n\n${codeBlock}\n${content}\n${codeBlock}`,
                 }
               });
-
-              if (conclusion === 'failure') {
-                core.setFailed(`Coverage for ${nameInput} is ${pct}, which is below the 50% failure threshold.`);
-              } else if (conclusion === 'neutral') {
-                core.warning(`Coverage for ${nameInput} is ${pct}, which is below the 80% warning threshold.`);
-              }
             } else {
-              core.warning(`Could not find TOTAL line in pytest report for ${nameInput}`);
+              core.warning(`Could not find TOTAL coverage percent in pytest report for ${nameInput}`);
             }
           } else {
-            core.info(`Coverage report file not found at ${reportFile}`);
+            # Silently failing this so that the focus can be on the test themselves.
+            core.warning(`Coverage report file not found at ${reportFile}`);
           }
