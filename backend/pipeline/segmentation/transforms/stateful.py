@@ -263,10 +263,11 @@ def _manage_out_of_order_timers(
        The previous drain stopped early to stay under Windmill's 300-second bundle
        lease. Setting the timer to `timestamp` (current watermark) causes Dataflow
        to fire handle_gap_timeout in the very next bundle, draining the next slice.
-       Bundles chain this way until the buffer is empty. This is the core of the
-       Windmill poison-pill fix: instead of one oversized bundle that gets aborted
-       and replayed (triggered by pipeline restarts, lock-induced slowdowns, or
-       traffic spikes), we emit in bounded bites and chain to the next bundle.
+       Bundles chain this way until the buffer is empty. This prevents
+       emitting oversized bundles that could exceed Windmill's bundle lease
+       and get aborted/replayed (e.g., triggered by pipeline restarts,
+       lock-induced slowdowns, or traffic spikes) by processing the queue in
+       bounded bites and chaining to the next bundle.
 
     2. NORMAL GAP (buffer has chunks, drain was not clamped): schedule the
        standard gap-timeout deadline so we eventually flush even if some
