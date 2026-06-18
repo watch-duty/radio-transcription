@@ -22,6 +22,8 @@ export type ListAudioSegmentsData = {
 export type AlertFilter = 'all' | 'alerts';
 
 const MAX_AUDIO_SEGMENTS_POLLING_ITERATIONS = 10;
+// 90-second look-back buffer for late-arriving segments
+const POLLING_LOOKBACK_BUFFER_MS = 90 * 1000;
 
 // How often the live "newer segments" poll runs while at the head of the stream.
 const POLL_INTERVAL_MS = 10000;
@@ -179,7 +181,8 @@ export function useAudioSegments({
             token,
             /*limit=*/ undefined,
             currentNextToken,
-            /*startTime=*/ new Date(newestTimestamp).getTime(),
+            /*startTime=*/ new Date(newestTimestamp).getTime() -
+              POLLING_LOOKBACK_BUFFER_MS,
             /*endTime=*/ undefined,
             /*order=*/ 'asc',
             alertFilter === 'alerts' ? true : undefined
