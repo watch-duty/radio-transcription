@@ -10,16 +10,16 @@ import IconButton from '@mui/material/IconButton';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import { type Theme, useTheme } from '@mui/material/styles';
-import { type AudioSegment } from '@transcription/common';
 import WavesurferPlayer from '@wavesurfer/react';
 
+import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
 import { findEvaluationAnnotationData } from '../../utils/annotationUtils';
 import { getAudioUrl } from '../../utils/audioUtils';
 import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { CustomAlertIcon } from '../common/AlertIcon';
 
 interface AudioDisplayProps {
-  audioSegments: AudioSegment[];
+  audioSegments: RenderableAudioSegment[];
   currentlyPlayingSegmentId: string | null;
   highlightedSegmentId: string | null;
   onClipClick: (segmentId: string) => void;
@@ -50,6 +50,7 @@ interface TimelineClipProps {
     isAudioPlaying: boolean;
     isHighlighted: boolean;
     hasAlert: boolean;
+    isOutageBundle?: boolean;
   };
   onClipClick: (segmentId: string) => void;
   isDarkTheme: boolean;
@@ -91,6 +92,34 @@ const TimelineClip = React.memo(
         wsRef.current.setTime(0);
       }
     }, [clip.isAudioPlaying, currentTimeSeconds]);
+
+    if (clip.isOutageBundle) {
+      return (
+        <Box
+          sx={{
+            position: 'absolute',
+            left: `${clip.left}%`,
+            width: `${clip.width}%`,
+            height: '100%',
+            borderLeft: isDarkTheme
+              ? '1px dashed rgba(255, 255, 255, 0.15)'
+              : '1px dashed rgba(0, 0, 0, 0.15)',
+            borderRight: isDarkTheme
+              ? '1px dashed rgba(255, 255, 255, 0.15)'
+              : '1px dashed rgba(0, 0, 0, 0.15)',
+            background: isDarkTheme
+              ? 'repeating-linear-gradient(45deg, ' +
+                'rgba(255, 255, 255, 0.02), ' +
+                'rgba(255, 255, 255, 0.02) 10px, ' +
+                'transparent 10px, transparent 20px)'
+              : 'repeating-linear-gradient(45deg, ' +
+                'rgba(0, 0, 0, 0.02), ' +
+                'rgba(0, 0, 0, 0.02) 10px, ' +
+                'transparent 10px, transparent 20px)',
+          }}
+        />
+      );
+    }
 
     return (
       <Box
@@ -181,6 +210,7 @@ const TimelineClip = React.memo(
       prevProps.clip.isAudioPlaying === nextProps.clip.isAudioPlaying &&
       prevProps.clip.isHighlighted === nextProps.clip.isHighlighted &&
       prevProps.clip.hasAlert === nextProps.clip.hasAlert &&
+      prevProps.clip.isOutageBundle === nextProps.clip.isOutageBundle &&
       prevProps.isDarkTheme === nextProps.isDarkTheme &&
       prevProps.theme === nextProps.theme &&
       prevProps.currentTimeSeconds === nextProps.currentTimeSeconds
@@ -409,6 +439,7 @@ export function AudioDisplay({
           isHighlighted: t.id === highlightedSegmentId,
           hasAlert:
             !!evaluationAnnotation && evaluationAnnotation.decisions.length > 0,
+          isOutageBundle: !!t.isOutageBundle,
         };
       });
 
