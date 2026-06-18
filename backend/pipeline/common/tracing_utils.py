@@ -4,7 +4,7 @@ import logging
 import os
 import threading
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from typing import Any
 
@@ -370,6 +370,13 @@ def with_baggage_and_span(
         yield span
 
 
+def _safe_str(val: Any) -> str:
+    """Safely converts string or bytes to a standard string."""
+    if isinstance(val, bytes):
+        return val.decode("utf-8", errors="ignore")
+    return str(val)
+
+
 def _extract_nested_pubsub_attributes(data: Any) -> dict[str, str]:
     """Helper to extract attributes from nested Pub/Sub messages."""
     attrs_dict: dict[str, str] = {}
@@ -388,7 +395,9 @@ def _extract_nested_pubsub_attributes(data: Any) -> dict[str, str]:
             msg_dict: dict[Any, Any] = message
             attrs = msg_dict.get("attributes") or msg_dict.get(b"attributes")
             if isinstance(attrs, dict):
-                attrs_dict.update({str(k): str(v) for k, v in attrs.items()})
+                attrs_dict.update(
+                    {_safe_str(k): _safe_str(v) for k, v in attrs.items()}
+                )
     return attrs_dict
 
 
@@ -406,7 +415,7 @@ def _normalize_prefixed_attributes(attributes: dict[str, str]) -> None:
 
 
 def extract_cloud_event_attributes(
-    cloud_event: CloudEvent | dict[str, object],
+    cloud_event: CloudEvent | Mapping[Any, Any],
 ) -> dict[str, str]:
     """Extracts combined attributes from a CloudEvent payload and metadata.
 
@@ -418,12 +427,13 @@ def extract_cloud_event_attributes(
     """
     combined_attributes: dict[str, str] = {}
 
-    if isinstance(cloud_event, dict):
-        data = cloud_event.get("data")
-        ce_attrs = cloud_event.get("attributes")
-    else:
+    if isinstance(cloud_event, CloudEvent):
         data = cloud_event.data
         ce_attrs = getattr(cloud_event, "attributes", None)
+    else:
+        data_dict: Mapping[Any, Any] = cloud_event
+        data = data_dict.get("data") or data_dict.get(b"data")
+        ce_attrs = data_dict.get("attributes") or data_dict.get(b"attributes")
 
     # 1. Extract from nested Pub/Sub message attributes
     combined_attributes.update(_extract_nested_pubsub_attributes(data))
@@ -431,7 +441,7 @@ def extract_cloud_event_attributes(
     # 2. Extract from top-level CloudEvent attributes
     if isinstance(ce_attrs, dict):
         combined_attributes.update(
-            {str(k): str(v) for k, v in ce_attrs.items()}
+            {_safe_str(k): _safe_str(v) for k, v in ce_attrs.items()}
         )
 
     # 3. Extract from top-level CloudEvent fields if dict-like or via get method
@@ -448,7 +458,9 @@ def extract_cloud_event_attributes(
         try:
             val = cloud_event.get(k)
             if val is not None:
-                combined_attributes[k] = str(val)
+                # We intentionally coerce non-None values to str to handle robust type conversion
+                # for keys like traceparent/baggage which are expected to be scalar strings.
+                combined_attributes[k] = _safe_str(val)
         except Exception as e:
             telemetry_logger.debug("Field %s extraction failed: %s", k, e)
 
@@ -459,7 +471,7 @@ def extract_cloud_event_attributes(
 
 
 def parse_pubsub_cloudevent(
-    cloud_event: CloudEvent | dict[str, object],
+    cloud_event: CloudEvent | Mapping[Any, Any],
 ) -> tuple[dict[str, str], str]:
     """Parses a CloudEvent containing a Pub/Sub message, validating its structure.
 
@@ -473,10 +485,10 @@ def parse_pubsub_cloudevent(
         ValueError: If the CloudEvent envelope or Pub/Sub message structure is invalid.
         TypeError: If the Pub/Sub message is not a dictionary.
     """
-    if isinstance(cloud_event, dict):
-        envelope = cloud_event
-    else:
+    if isinstance(cloud_event, CloudEvent):
         envelope = cloud_event.data
+    else:
+        envelope = cloud_event
 
     if (
         not envelope

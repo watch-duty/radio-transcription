@@ -247,3 +247,32 @@ class TestTracingUtils(unittest.TestCase):
         self.assertEqual(attrs6.get("traceparent"), "tp6")
         self.assertEqual(attrs6.get("x-goog-pubsub-attr-baggage"), "bg6")
         self.assertEqual(attrs6.get("baggage"), "bg6")
+
+        # 7. Byte-key support (handling binary keys for top-level, message, and attributes)
+        ce7: dict[bytes, object] = {
+            b"data": {
+                b"message": {
+                    b"attributes": {
+                        b"traceparent": b"tp7",
+                        b"baggage": b"bg7",
+                    }
+                }
+            }
+        }
+        attrs7 = extract_cloud_event_attributes(ce7)
+        self.assertEqual(attrs7.get("traceparent"), "tp7")
+        self.assertEqual(attrs7.get("baggage"), "bg7")
+
+        # 8. Prefix normalization priority under conflict (plain key should not be overwritten)
+        ce8 = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test",
+                "traceparent": "tp_plain",
+                "ce-traceparent": "tp_prefixed",
+                "x-goog-pubsub-attr-traceparent": "tp_goog_prefixed",
+            },
+            data={},
+        )
+        attrs8 = extract_cloud_event_attributes(ce8)
+        self.assertEqual(attrs8.get("traceparent"), "tp_plain")
