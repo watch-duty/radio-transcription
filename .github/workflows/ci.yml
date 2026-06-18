@@ -224,7 +224,21 @@ jobs:
       - name: Run tests
         run: |
           set -o pipefail
-          uv run python -m pytest backend/ -q --cov=backend/pipeline --cov-report=term-missing --color=no > unit-coverage.txt
+          uv run python -m pytest backend/ -q --cov=backend/pipeline --cov-report=term-missing --color=no | python3 -c "
+          import sys
+          in_cov = False
+          cov = []
+          for line in sys.stdin:
+              if 'tests coverage' in line and '====' in line:
+                  in_cov = True
+              if in_cov:
+                  cov.append(line)
+              else:
+                  sys.stdout.write(line)
+                  sys.stdout.flush()
+          with open('unit-coverage.txt', 'w') as f:
+              f.writelines(cov)
+          "
       - name: Extract Coverage
         id: extract_cov
         if: always()
@@ -281,7 +295,21 @@ jobs:
         working-directory: frontend/api
         run: |
           set -o pipefail
-          yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text --no-color > proxy-coverage.txt
+          yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text --no-color | python3 -c "
+          import sys
+          in_cov = False
+          cov = []
+          for line in sys.stdin:
+              if '------|' in line and '|' in line:
+                  in_cov = True
+              if in_cov:
+                  cov.append(line)
+              else:
+                  sys.stdout.write(line)
+                  sys.stdout.flush()
+          with open('proxy-coverage.txt', 'w') as f:
+              f.writelines(cov)
+          "
       - name: Extract Proxy Coverage
         id: extract_proxy_cov
         if: always()
@@ -295,7 +323,21 @@ jobs:
         working-directory: frontend/transcription-ui
         run: |
           set -o pipefail
-          yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text --no-color > ui-coverage.txt
+          yarn test --watch=false --coverage --coverage.reporter=json-summary --coverage.reporter=text --no-color | python3 -c "
+          import sys
+          in_cov = False
+          cov = []
+          for line in sys.stdin:
+              if '------|' in line and '|' in line:
+                  in_cov = True
+              if in_cov:
+                  cov.append(line)
+              else:
+                  sys.stdout.write(line)
+                  sys.stdout.flush()
+          with open('ui-coverage.txt', 'w') as f:
+              f.writelines(cov)
+          "
       - name: Extract UI Coverage
         id: extract_ui_cov
         if: always()
