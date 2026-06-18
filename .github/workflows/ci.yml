@@ -189,7 +189,6 @@ jobs:
         uses: awalsh128/cache-apt-pkgs-action@v1
         with:
           packages: ffmpeg
-          recommends: false
       - name: Install mise, install tools
         # mise installs uv and other project-specific tools. see: .tool-versions
         uses: jdx/mise-action@v3
