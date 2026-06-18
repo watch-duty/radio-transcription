@@ -185,8 +185,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 100
-      - name: Set up FFmpeg
-        uses: FedericoCarboni/setup-ffmpeg@v3
       - name: Install mise, install tools
         # mise installs uv and other project-specific tools. see: .tool-versions
         uses: jdx/mise-action@v3
