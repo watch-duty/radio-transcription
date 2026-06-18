@@ -86,7 +86,10 @@ jobs:
             -f docker-compose.yml \
             --load
 
-      # Note that this is missing coverage stats from the Frontend API
+      # Note we are not collecting test coverage stats because the tests are run
+      # in Docker, so it'll be difficult to collect true coverage.
+      # What's more important is that the connections between each service are
+      # properly tested.
       - name: Run E2E tests
         run: |
           set -o pipefail
@@ -108,15 +111,7 @@ jobs:
                 --cov=backend/services \
                 --cov-report=term-missing \
                 --color=no
-            " \
-            | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o e2e_integration_test_coverage.txt
-
-      - name: Create Coverage Check Run
-        uses: ./.github/actions/post-backend-coverage
-        if: always()
-        with:
-          name: "E2E Integration Coverage"
-          coverage-report-location: "e2e_integration_test_coverage.txt"
+            "
 
       - name: Print container logs on failure
         if: failure()
