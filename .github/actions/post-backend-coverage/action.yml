@@ -27,7 +27,14 @@ runs:
             if (totalLine) {
               const parts = totalLine.trim().split(/\s+/);
               const pct = parts[parts.length - 1];
-              
+              const pctNumber = parseFloat(pct.replace('%', ''));
+              let conclusion = 'success';
+              if (pctNumber < 50) {
+                conclusion = 'failure';
+              } else if (pctNumber < 80) {
+                conclusion = 'neutral';
+              }
+
               const codeBlock = '```';
               await github.rest.checks.create({
                 owner: context.repo.owner,
@@ -35,12 +42,18 @@ runs:
                 head_sha: ref,
                 name: `${nameInput}: ${pct}`,
                 status: 'completed',
-                conclusion: 'success',
+                conclusion: conclusion,
                 output: {
                   title: `${nameInput}: ${pct}`,
                   summary: `### Coverage Report\n\n${codeBlock}\n${content}\n${codeBlock}`,
                 }
               });
+
+              if (conclusion === 'failure') {
+                core.setFailed(`Coverage for ${nameInput} is ${pct}, which is below the 50% failure threshold.`);
+              } else if (conclusion === 'neutral') {
+                core.warning(`Coverage for ${nameInput} is ${pct}, which is below the 80% warning threshold.`);
+              }
             } else {
               core.warning(`Could not find TOTAL line in pytest report for ${nameInput}`);
             }

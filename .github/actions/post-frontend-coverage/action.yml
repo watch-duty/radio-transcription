@@ -31,7 +31,14 @@ runs:
             try {
               const data = JSON.parse(fs.readFileSync(jsonSummary, 'utf8'));
               const coveragePct = `${data.total.statements.pct}%`;
-              
+              const pctNumber = parseFloat(data.total.statements.pct);
+              let conclusion = 'success';
+              if (pctNumber < 50) {
+                conclusion = 'failure';
+              } else if (pctNumber < 80) {
+                conclusion = 'neutral';
+              }
+
               const codeBlock = '```';
               let summary = 'No coverage report found';
               if (fs.existsSync(reportFile)) {
@@ -44,12 +51,18 @@ runs:
                 head_sha: ref,
                 name: `${testName}: ${coveragePct}`,
                 status: 'completed',
-                conclusion: 'success',
+                conclusion: conclusion,
                 output: {
                   title: `${testName}: ${coveragePct}`,
                   summary: summary,
                 }
               });
+
+              if (conclusion === 'failure') {
+                core.setFailed(`Coverage for ${testName} is ${coveragePct}, which is below the 50% failure threshold.`);
+              } else if (conclusion === 'neutral') {
+                core.warning(`Coverage for ${testName} is ${coveragePct}, which is below the 80% warning threshold.`);
+              }
             } catch (e) {
               core.warning(`Failed to parse json summary for ${testName}: ${e}`);
             }
