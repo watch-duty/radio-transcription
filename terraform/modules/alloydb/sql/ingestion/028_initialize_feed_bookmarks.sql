@@ -1,6 +1,9 @@
 -- Ensure new polling-based feeds (bcfy_calls, fire_notifications) default to NOW()
--- for last_bookmark_time, while preserving NULL for other feed types.
+-- for last_bookmark_time, while preserving NULL for other feed types (e.g. echo).
+-- Note: 'echo' is push-based and filters historical records at ingestion time by comparing
+-- event start_ts with feed created_at, so it doesn't use last_bookmark_time.
 
+-- Drop any pre-existing default value from prior implementation attempts before setting up the trigger.
 ALTER TABLE feeds ALTER COLUMN last_bookmark_time DROP DEFAULT;
 
 CREATE OR REPLACE FUNCTION set_default_feed_bookmarks()

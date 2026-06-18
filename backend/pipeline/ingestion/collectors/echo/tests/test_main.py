@@ -234,7 +234,7 @@ class TestHandle:
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_drops_historical_recording(
-        self, mock_store, _patch_globals
+        self, mock_store, _patch_globals, caplog
     ) -> None:
         feed_id = uuid.uuid4()
         self._set_feed(
@@ -247,9 +247,14 @@ class TestHandle:
                 "created_at": datetime(2026, 3, 27, tzinfo=UTC),
             },
         )
+        caplog.set_level(
+            logging.INFO,
+            logger="backend.pipeline.ingestion.collectors.echo.main",
+        )
         _handle(self._make_event())
         mock_store.record_heartbeat.assert_not_called()
         _patch_globals["publisher"].publish.assert_not_called()
+        assert "Skipping historical Echo recording" in caplog.text
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_filename_timestamp_wins_over_gcs_time_created(
