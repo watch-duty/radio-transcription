@@ -172,19 +172,44 @@ class TestTracingUtils(unittest.TestCase):
         attrs1 = extract_cloud_event_attributes(ce1)
         self.assertEqual(attrs1.get("traceparent"), "tp1")
 
-        # 2. CloudEvent top-level attributes
+        # 2. CloudEvent top-level attributes (with prefix normalization)
         ce2 = CloudEvent(
             attributes={
                 "type": "google.cloud.pubsub.topic.v1.messagePublished",
                 "source": "test",
                 "ce-traceparent": "tp2",
+                "x-goog-pubsub-attr-baggage": "bg2",
             },
             data={},
         )
         attrs2 = extract_cloud_event_attributes(ce2)
         self.assertEqual(attrs2.get("ce-traceparent"), "tp2")
+        self.assertEqual(attrs2.get("traceparent"), "tp2")
+        self.assertEqual(attrs2.get("x-goog-pubsub-attr-baggage"), "bg2")
+        self.assertEqual(attrs2.get("baggage"), "bg2")
 
         # 3. Top-level direct keys via dict representation
         ce3: dict[str, object] = {"traceparent": "tp3"}
         attrs3 = extract_cloud_event_attributes(ce3)
         self.assertEqual(attrs3.get("traceparent"), "tp3")
+
+        # 4. Non-string type conversion and robust extraction
+        ce4 = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test",
+            },
+            data={
+                "message": {
+                    "attributes": {
+                        "traceparent": "tp4",
+                        "numeric_val": 12345,
+                        "bool_val": True,
+                    }
+                }
+            },
+        )
+        attrs4 = extract_cloud_event_attributes(ce4)
+        self.assertEqual(attrs4.get("traceparent"), "tp4")
+        self.assertEqual(attrs4.get("numeric_val"), "12345")
+        self.assertEqual(attrs4.get("bool_val"), "True")

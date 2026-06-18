@@ -6,6 +6,7 @@ import threading
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import Any
 
 from cloudevents.http.event import CloudEvent
 from opentelemetry import baggage, metrics
@@ -369,6 +370,33 @@ def with_baggage_and_span(
         yield span
 
 
+def _extract_nested_pubsub_attributes(data: Any) -> dict[str, str]:
+    """Helper to extract attributes from nested Pub/Sub messages."""
+    attrs_dict: dict[str, str] = {}
+    if isinstance(data, dict):
+        data_dict: dict[Any, Any] = data
+        message = data_dict.get("message") or data_dict.get(b"message")
+        if isinstance(message, dict):
+            msg_dict: dict[Any, Any] = message
+            attrs = msg_dict.get("attributes") or msg_dict.get(b"attributes")
+            if isinstance(attrs, dict):
+                attrs_dict.update({str(k): str(v) for k, v in attrs.items()})
+    return attrs_dict
+
+
+def _normalize_prefixed_attributes(attributes: dict[str, str]) -> None:
+    """Helper to normalize prefixed CloudEvent/PubSub attributes in-place."""
+    for k, v in list(attributes.items()):
+        clean_key = None
+        if k.startswith("x-goog-pubsub-attr-"):
+            clean_key = k[19:]
+        elif k.startswith("ce-"):
+            clean_key = k[3:]
+
+        if clean_key and clean_key not in attributes:
+            attributes[clean_key] = v
+
+
 def extract_cloud_event_attributes(
     cloud_event: CloudEvent | dict[str, object],
 ) -> dict[str, str]:
@@ -387,45 +415,18 @@ def extract_cloud_event_attributes(
         ce_attrs = cloud_event.get("attributes")
     else:
         data = cloud_event.data
-        ce_attrs = None
+        ce_attrs = getattr(cloud_event, "attributes", None)
 
-    # 1. Try to extract from nested Pub/Sub message attributes
-    try:
-        if isinstance(data, dict):
-            data_dict = {str(k): v for k, v in data.items()}
-            pubsub_message = data_dict.get("message")
-            if isinstance(pubsub_message, dict):
-                msg_dict = {str(k): v for k, v in pubsub_message.items()}
-                pubsub_attrs = msg_dict.get("attributes")
-                if isinstance(pubsub_attrs, dict):
-                    combined_attributes.update(
-                        {
-                            str(k): str(v)
-                            for k, v in pubsub_attrs.items()
-                            if isinstance(k, str) and isinstance(v, str)
-                        }
-                    )
-    except Exception as e:
-        telemetry_logger.debug(
-            "Failed to extract attributes from Pub/Sub message: %s", e
+    # 1. Extract from nested Pub/Sub message attributes
+    combined_attributes.update(_extract_nested_pubsub_attributes(data))
+
+    # 2. Extract from top-level CloudEvent attributes
+    if isinstance(ce_attrs, dict):
+        combined_attributes.update(
+            {str(k): str(v) for k, v in ce_attrs.items()}
         )
 
-    # 2. Try to extract from top-level CloudEvent attributes
-    try:
-        if isinstance(ce_attrs, dict):
-            combined_attributes.update(
-                {
-                    str(k): str(v)
-                    for k, v in ce_attrs.items()
-                    if isinstance(k, str) and isinstance(v, str)
-                }
-            )
-    except Exception as e:
-        telemetry_logger.debug(
-            "Failed to extract attributes from CloudEvent attributes: %s", e
-        )
-
-    # 3. Try to extract from top-level CloudEvent fields if dict-like or via get method
+    # 3. Extract from top-level CloudEvent fields if dict-like or via get method
     for k in [
         "traceparent",
         "baggage",
@@ -433,15 +434,18 @@ def extract_cloud_event_attributes(
         "ce-traceparent",
         "ce-baggage",
         "ce-tracestate",
+        "x-goog-pubsub-attr-traceparent",
+        "x-goog-pubsub-attr-baggage",
     ]:
         try:
             val = cloud_event.get(k)
-            if isinstance(val, str):
-                combined_attributes[k] = val
+            if val is not None:
+                combined_attributes[k] = str(val)
         except Exception as e:
-            telemetry_logger.debug(
-                "Field %s not found or extraction failed: %s", k, e
-            )
+            telemetry_logger.debug("Field %s extraction failed: %s", k, e)
+
+    # 4. Normalize prefixed attributes
+    _normalize_prefixed_attributes(combined_attributes)
 
     return combined_attributes
 
