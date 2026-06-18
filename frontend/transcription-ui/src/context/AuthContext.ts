@@ -1,8 +1,17 @@
 import { createContext, useContext } from 'react';
 
-export const AuthContext = createContext<{
+interface AuthContextType {
   token: string | null;
   setToken: (token: string | null) => void;
-}>({ token: null, setToken: () => {} });
+  isAdmin: boolean;
+  setIsAdmin: (isAdmin: boolean) => void;
+}
+
+export const AuthContext = createContext<AuthContextType>({
+  token: null,
+  setToken: () => {},
+  isAdmin: false,
+  setIsAdmin: () => {},
+});
 
 export const useAuth = () => useContext(AuthContext);

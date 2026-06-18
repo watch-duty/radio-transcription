@@ -16,6 +16,12 @@ vi.mock('../service/authSession', () => ({
   authSession: vi.fn(),
 }));
 
+vi.mock('../service/getUserInfo', () => ({
+  getUserInfo: vi
+    .fn()
+    .mockResolvedValue({ email: 'test@watchduty.org', isAdmin: false }),
+}));
+
 const TestConsumer = () => {
   const { token } = useAuth();
   return <div data-testid="token-display">{token || 'no-token'}</div>;
