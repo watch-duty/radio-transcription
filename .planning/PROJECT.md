@@ -36,6 +36,17 @@ from durable backend data instead of relying on short-lived logs.
   when feeds transition to `quarantined` — existing
 - ✓ Existing AlloyDB migration workflow supports ordered ingestion schema
   changes and pg_cron maintenance jobs — existing
+- ✓ Feed Audit Event contract defines domain meaning, action vocabulary, actor
+  ID vocabulary, deletion snapshot semantics, raw capped diagnostic-detail
+  tradeoff, retention target, v1 boundaries, and future consumer derivation —
+  validated in Phase 1
+- ✓ AlloyDB schema foundation adds `feeds.status_reason_detail`,
+  `feed_audit_events`, `feed_audit_event_sequences`, delete-safe feed identity,
+  occurred time, per-feed sequence, actor/action constraints, JSON object
+  checks, and HOT guard coverage — validated in Phase 1
+- ✓ Text-level contract tests protect the Phase 1 docs, SQL migration,
+  actor/action constraints, delete-survival semantics, diagnostic-detail bounds,
+  and HOT guard behavior — validated in Phase 1
 
 ### Active
 
@@ -45,14 +56,13 @@ from durable backend data instead of relying on short-lived logs.
 - [ ] Capture enough event context to explain the mutation: feed identity,
   per-feed sequence, action, occurred time, actor, status reason, bounded human
   detail, and before/after values.
-- [ ] Add `status_reason_detail` as the canonical bounded diagnostic detail for
-  the current feed row while keeping `quarantine_reason` populated as a
-  compatibility alias for one release.
+- [ ] Wire storage, service, and runtime paths to populate
+  `status_reason_detail` as the canonical bounded diagnostic detail while
+  keeping `quarantine_reason` populated as a compatibility alias for one
+  release.
 - [ ] Write feed row mutations and their audit events transactionally so the
   current state and history cannot diverge on success.
 - [ ] Retain audit history for 18 months and enforce retention in v1.
-- [ ] Document the Feed Audit Event contract and update repository terminology
-  so future WD delivery and admin timeline work builds on the same model.
 - [ ] Verify storage, service, API compatibility, failure/quarantine, recovery,
   deletion, and retention behavior with focused automated tests.
 
@@ -123,11 +133,11 @@ events without duplicating the audit ledger.
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Use the canonical term Feed Audit Event | Linear asks for audit history broader than lifecycle webhook payloads | — Pending |
-| Name the durable table `feed_audit_events` | Keeps v1 focused on auditability, not delivery mechanics | — Pending |
-| Keep `feeds` as current-state source of truth | Avoids an invasive event-sourcing rewrite of lease and failure paths | — Pending |
-| Store `before_values` and `after_values` JSON objects | Directly answers what changed without forcing consumers to diff rows | — Pending |
-| Add `status_reason_detail` and keep `quarantine_reason` as an alias for one release | Generalizes diagnostic detail beyond quarantine while preserving compatibility | — Pending |
+| Use the canonical term Feed Audit Event | Linear asks for audit history broader than lifecycle webhook payloads | Validated in Phase 1 |
+| Name the durable table `feed_audit_events` | Keeps v1 focused on auditability, not delivery mechanics | Validated in Phase 1 |
+| Keep `feeds` as current-state source of truth | Avoids an invasive event-sourcing rewrite of lease and failure paths | Validated in Phase 1 |
+| Store `before_values` and `after_values` JSON objects | Directly answers what changed without forcing consumers to diff rows | Validated in Phase 1 |
+| Add `status_reason_detail` and keep `quarantine_reason` as an alias for one release | Generalizes diagnostic detail beyond quarantine while preserving compatibility | Schema validated in Phase 1; compatibility behavior pending |
 | Emit one `feed.quarantined` event when threshold crossing occurs | Avoids duplicate `failure_reported` plus `quarantined` events for the same outcome | — Pending |
 | Treat all persisted non-quarantine failures as audit-worthy | Operators need repeated failure context, not only terminal quarantine state | — Pending |
 | Do not audit routine lease churn in v1 | Lease handoffs are high-noise scheduler mechanics, not admin-facing history | — Pending |

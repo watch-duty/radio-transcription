@@ -12,7 +12,7 @@ Feed Audit Events V1 establishes a durable backend audit ledger beside the exist
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Contract and Schema Foundation** - Define the Feed Audit Event contract, canonical diagnostic detail, deletion-safe audit schema, actor vocabulary, and per-feed ordering foundation.
+- [x] **Phase 1: Contract and Schema Foundation** - Define the Feed Audit Event contract, canonical diagnostic detail, deletion-safe audit schema, actor vocabulary, and per-feed ordering foundation.
 - [ ] **Phase 2: Transactional Storage Writes** - Make admin/storage feed mutations create audit rows atomically with current-state changes.
 - [ ] **Phase 3: Service and Compatibility Surface** - Preserve existing API/BFF/frontend compatibility while carrying trusted admin actor context and exposing canonical diagnostic detail.
 - [ ] **Phase 4: Runtime Event Integration** - Add runtime, failure, quarantine, recovery, and Echo audit semantics without polluting history with lease churn.
