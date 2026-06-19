@@ -97,8 +97,13 @@ def test_migration_defines_delete_safe_audit_schema() -> None:
     ):
         assert token in normalized
 
+    feed_fk_pattern = (
+        r"REFERENCES\s+(?:ONLY\s+)?"
+        r"(?:(?:[A-Za-z_][\w$]*|\"[^\"]+\")\.)?"
+        r"(?:feeds|\"feeds\")(?=\s|\()"
+    )
     for pattern in (
-        r"REFERENCES\s+feeds",
+        feed_fk_pattern,
         r"ON\s+DELETE\s+CASCADE",
         r"pg_cron",
         r"dispatcher",
@@ -186,6 +191,7 @@ def test_migration_defines_status_reason_detail_and_hot_guard() -> None:
     sql = _sql_without_comments(migration)
     guard_sql = _sql_without_comments(hot_guard)
     normalized = _normalized_sql(migration)
+    normalized_guard = _normalized_sql(hot_guard)
 
     for token in (
         "ADD COLUMN IF NOT EXISTS status_reason_detail TEXT",
@@ -195,11 +201,17 @@ def test_migration_defines_status_reason_detail_and_hot_guard() -> None:
     ):
         assert token in normalized
 
+    assert "WITH guarded_columns(attname) AS" in guard_sql
+    assert "('status_reason_detail')" in guard_sql
+    assert "x.indpred IS NOT NULL" in normalized_guard
+    assert "pg_get_expr(x.indpred, x.indrelid)" in normalized_guard
     assert re.search(
-        r"a\.attname\s+IN\s*\([^)]*'status_reason_detail'",
+        r"NOT\s*\(\s*c\.relname\s*=\s*'idx_feeds_failing_retryable'"
+        r"\s+AND\s+g\.attname\s*=\s*'retry_after'\s*\)",
         guard_sql,
         flags=re.IGNORECASE | re.DOTALL,
     )
+    assert "c.relname <> 'idx_feeds_failing_retryable'" not in guard_sql
     assert (
         re.search(
             r"CREATE\s+INDEX(?:\s+IF\s+NOT\s+EXISTS)?\s+\S+\s+"
