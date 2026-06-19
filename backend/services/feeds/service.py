@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_FEEDS_SERVICE_ACTOR_ID = "service:feeds-service"
+
 
 class FeedService:
     """Service for managing feeds, handling interaction with the data from the FeedStore."""
@@ -33,6 +35,7 @@ class FeedService:
             tags=[t.model_dump() for t in feed_in.tags]
             if feed_in.tags
             else None,
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
         )
         return Feed.model_validate(store_feed)
 
@@ -51,6 +54,7 @@ class FeedService:
             tags=[t.model_dump() for t in feed_in.tags]
             if feed_in.tags
             else None,
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
         )
         if not store_feed:
             return None

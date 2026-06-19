@@ -21,6 +21,8 @@ from backend.pipeline.storage.feed_store import (
     SourceType,
 )
 
+_TEST_ACTOR_ID = "service:feeds-service"
+
 
 @pytest.fixture
 async def store(db_pool: asyncpg.Pool) -> FeedStore:
@@ -1610,6 +1612,7 @@ async def test_create_feed_succeeds(
         name="New Integration Feed",
         source_type="bcfy_feeds",
         source_feed_id="src_123",
+        actor_id=_TEST_ACTOR_ID,
     )
 
     assert feed is not None
@@ -1638,6 +1641,7 @@ async def test_create_feed_already_exists(
         name="New Integration Feed",
         source_type="bcfy_feeds",
         source_feed_id="src_123",
+        actor_id=_TEST_ACTOR_ID,
     )
 
     with pytest.raises(FeedAlreadyExistsError) as cm:
@@ -1645,6 +1649,7 @@ async def test_create_feed_already_exists(
             name="Another Feed Name",
             source_type="bcfy_feeds",
             source_feed_id="src_123",
+            actor_id=_TEST_ACTOR_ID,
         )
 
     assert (
@@ -1661,11 +1666,13 @@ async def test_update_feed_succeeds(
         name="Original Name",
         source_type="bcfy_feeds",
         source_feed_id="src_123",
+        actor_id=_TEST_ACTOR_ID,
     )
 
     updated_feed = await store.update_feed(
         feed_id=feed["id"],
         name="Updated Name",
+        actor_id=_TEST_ACTOR_ID,
     )
 
     assert updated_feed is not None
@@ -1693,18 +1700,21 @@ async def test_update_feed_already_exists(
         name="Existing Feed",
         source_type="bcfy_feeds",
         source_feed_id="src_456",
+        actor_id=_TEST_ACTOR_ID,
     )
 
     feed = await store.create_feed(
         name="Original Name",
         source_type="bcfy_feeds",
         source_feed_id="src_123",
+        actor_id=_TEST_ACTOR_ID,
     )
 
     with pytest.raises(FeedNameAlreadyExistsError):
         await store.update_feed(
             feed_id=feed["id"],
             name="Existing Feed",
+            actor_id=_TEST_ACTOR_ID,
         )
 
 
@@ -1925,12 +1935,14 @@ async def test_list_feeds_filter_by_tags(store: FeedStore) -> None:
         source_type="bcfy_feeds",
         source_feed_id="src_a",
         tags=[{"key": "region", "value": "West"}],
+        actor_id=_TEST_ACTOR_ID,
     )
     feed_b = await store.create_feed(
         name="Feed B",
         source_type="bcfy_feeds",
         source_feed_id="src_b",
         tags=[{"key": "region", "value": "East"}],
+        actor_id=_TEST_ACTOR_ID,
     )
 
     # Filter matching tag
