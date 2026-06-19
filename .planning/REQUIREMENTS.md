@@ -150,49 +150,49 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| AUD-01 | TBD | Pending |
-| AUD-02 | TBD | Pending |
-| AUD-03 | TBD | Pending |
-| AUD-04 | TBD | Pending |
-| AUD-05 | TBD | Pending |
-| EVT-01 | TBD | Pending |
-| EVT-02 | TBD | Pending |
-| EVT-03 | TBD | Pending |
-| EVT-04 | TBD | Pending |
-| EVT-05 | TBD | Pending |
-| EVT-06 | TBD | Pending |
-| EVT-07 | TBD | Pending |
-| EVT-08 | TBD | Pending |
-| EVT-09 | TBD | Pending |
-| DIAG-01 | TBD | Pending |
-| DIAG-02 | TBD | Pending |
-| DIAG-03 | TBD | Pending |
-| DIAG-04 | TBD | Pending |
-| ACT-01 | TBD | Pending |
-| ACT-02 | TBD | Pending |
-| ACT-03 | TBD | Pending |
-| CON-01 | TBD | Pending |
-| CON-02 | TBD | Pending |
-| CON-03 | TBD | Pending |
-| CON-04 | TBD | Pending |
-| COMP-01 | TBD | Pending |
-| COMP-02 | TBD | Pending |
-| COMP-03 | TBD | Pending |
-| COMP-04 | TBD | Pending |
-| DOC-01 | TBD | Pending |
-| DOC-02 | TBD | Pending |
-| DOC-03 | TBD | Pending |
-| VER-01 | TBD | Pending |
-| VER-02 | TBD | Pending |
-| VER-03 | TBD | Pending |
-| VER-04 | TBD | Pending |
-| VER-05 | TBD | Pending |
+| AUD-01 | Phase 4 | Pending |
+| AUD-02 | Phase 1 | Pending |
+| AUD-03 | Phase 1 | Pending |
+| AUD-04 | Phase 2 | Pending |
+| AUD-05 | Phase 5 | Pending |
+| EVT-01 | Phase 2 | Pending |
+| EVT-02 | Phase 2 | Pending |
+| EVT-03 | Phase 2 | Pending |
+| EVT-04 | Phase 2 | Pending |
+| EVT-05 | Phase 2 | Pending |
+| EVT-06 | Phase 4 | Pending |
+| EVT-07 | Phase 4 | Pending |
+| EVT-08 | Phase 4 | Pending |
+| EVT-09 | Phase 4 | Pending |
+| DIAG-01 | Phase 1 | Pending |
+| DIAG-02 | Phase 4 | Pending |
+| DIAG-03 | Phase 4 | Pending |
+| DIAG-04 | Phase 3 | Pending |
+| ACT-01 | Phase 1 | Pending |
+| ACT-02 | Phase 3 | Pending |
+| ACT-03 | Phase 4 | Pending |
+| CON-01 | Phase 2 | Pending |
+| CON-02 | Phase 2 | Pending |
+| CON-03 | Phase 2 | Pending |
+| CON-04 | Phase 2 | Pending |
+| COMP-01 | Phase 3 | Pending |
+| COMP-02 | Phase 3 | Pending |
+| COMP-03 | Phase 3 | Pending |
+| COMP-04 | Phase 4 | Pending |
+| DOC-01 | Phase 1 | Pending |
+| DOC-02 | Phase 1 | Pending |
+| DOC-03 | Phase 1 | Pending |
+| VER-01 | Phase 5 | Pending |
+| VER-02 | Phase 5 | Pending |
+| VER-03 | Phase 5 | Pending |
+| VER-04 | Phase 5 | Pending |
+| VER-05 | Phase 5 | Pending |
 
 **Coverage:**
-- v1 requirements: 36 total
-- Mapped to phases: 0
-- Unmapped: 36
+- v1 requirements: 37 total
+- Mapped to phases: 37
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-06-19*
-*Last updated: 2026-06-19 after initial definition*
+*Last updated: 2026-06-19 after roadmap creation*
