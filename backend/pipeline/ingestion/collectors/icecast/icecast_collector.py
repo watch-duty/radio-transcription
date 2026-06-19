@@ -270,14 +270,14 @@ def _segment_path(directory: Path, index: int) -> Path:
 def _path_size(path: Path) -> int | None:
     try:
         return path.stat().st_size
-    except FileNotFoundError:
+    except OSError:
         return None
 
 
 def _path_mtime(path: Path) -> float | None:
     try:
         return path.stat().st_mtime
-    except FileNotFoundError:
+    except OSError:
         return None
 
 

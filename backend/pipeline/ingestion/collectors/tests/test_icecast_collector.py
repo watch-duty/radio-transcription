@@ -145,6 +145,17 @@ def _formatted_error_calls(mock_logger: MagicMock) -> str:
     )
 
 
+class TestPathDiagnostics(unittest.TestCase):
+    """Tests for local file diagnostics used in timeout logging."""
+
+    def test_stat_oserror_returns_none(self) -> None:
+        """Diagnostic helpers must not mask the original collector failure."""
+        path = Path("/tmp/unreadable_segment.flac")  # noqa: S108
+        with patch.object(Path, "stat", side_effect=PermissionError):
+            self.assertIsNone(icecast_collector._path_size(path))
+            self.assertIsNone(icecast_collector._path_mtime(path))
+
+
 async def _collect_chunks(
     gen,
     *,
