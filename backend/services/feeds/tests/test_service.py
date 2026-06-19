@@ -22,6 +22,7 @@ def _store_feed(**overrides: object) -> dict[str, object]:
         "last_heartbeat": None,
         "quarantine_reason": None,
         "status_reason": None,
+        "status_reason_detail": None,
         "last_speech_segment_timestamp": None,
         "tags": None,
     }
@@ -36,6 +37,7 @@ class TestFeedServiceAuditActor(unittest.IsolatedAsyncioTestCase):
         store = mock.AsyncMock()
         store.create_feed.return_value = _store_feed(
             tags=[{"key": "county", "value": "Fulton"}],
+            status_reason_detail="provider timeout",
         )
         service = FeedService(store)
         feed_in = BcfyFeedsCreate(
@@ -48,6 +50,7 @@ class TestFeedServiceAuditActor(unittest.IsolatedAsyncioTestCase):
         result = await service.create_feed(feed_in)
 
         self.assertEqual(result.id, _FEED_ID)
+        self.assertEqual(result.status_reason_detail, "provider timeout")
         store.create_feed.assert_awaited_once_with(
             name="Test Feed",
             source_type=SourceType.BCFY_FEEDS,
