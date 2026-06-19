@@ -83,7 +83,7 @@ Plans:
 - [x] 03-01-PLAN.md - Backend diagnostic detail service contract.
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 03-02-PLAN.md - BFF/frontend diagnostic detail migration.
+- [x] 03-02-PLAN.md - BFF/frontend diagnostic detail migration.
 
 **Wave 3** *(blocked on Wave 2 completion)*
 - [ ] 03-03-PLAN.md - Trusted admin actor propagation.

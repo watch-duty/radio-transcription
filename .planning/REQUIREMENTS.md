@@ -80,7 +80,7 @@ short-lived logs.
   fields they depend on during the compatibility window.
 - [x] **COMP-02**: Feed API responses expose the new canonical diagnostic detail
   without breaking existing clients.
-- [ ] **COMP-03**: Existing frontend/BFF feed status and status-reason behavior
+- [x] **COMP-03**: Existing frontend/BFF feed status and status-reason behavior
   remains compatible with the v1 backend change.
 - [ ] **COMP-04**: Echo and other sync ingestion paths receive equivalent audit
   coverage for the v1 event types they can produce.
@@ -179,7 +179,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CON-04 | Phase 2 | Complete |
 | COMP-01 | Phase 3 | Complete |
 | COMP-02 | Phase 3 | Complete |
-| COMP-03 | Phase 3 | Pending |
+| COMP-03 | Phase 3 | Complete |
 | COMP-04 | Phase 4 | Pending |
 | DOC-01 | Phase 1 | Complete |
 | DOC-02 | Phase 1 | Complete |
