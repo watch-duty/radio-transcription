@@ -35,7 +35,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 Plans:
 **Wave 1**
 - [x] 01-01-PLAN.md - Domain contract documentation and repository terminology.
-- [ ] 01-02-PLAN.md - SQL migration and HOT guard schema foundation.
+- [x] 01-02-PLAN.md - SQL migration and HOT guard schema foundation.
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 01-03-PLAN.md - Text-level contract verification tests.
