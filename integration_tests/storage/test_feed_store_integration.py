@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import json
 import uuid
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    import asyncpg
-
+import asyncpg
 import pytest
 
 from backend.pipeline.common.exceptions import (
@@ -22,6 +20,7 @@ from backend.pipeline.storage.feed_store import (
 )
 
 _TEST_ACTOR_ID = "service:feeds-service"
+_INVALID_ACTOR_ID = "system:legacy"
 
 
 @pytest.fixture
@@ -105,6 +104,45 @@ async def _get_feed_diagnostics(
         msg = "Expected a row from query"
         raise AssertionError(msg)
     return dict(row)
+
+
+async def _fetch_audit_events(
+    pool: asyncpg.Pool,
+    feed_id: uuid.UUID,
+) -> list[asyncpg.Record]:
+    """Return audit rows for one feed in deterministic timeline order."""
+    return await pool.fetch(
+        "SELECT id, action, actor_id, feed_sequence, occurred_at,"
+        " status::text AS status, before_values, after_values"
+        " FROM feed_audit_events"
+        " WHERE feed_id = $1"
+        " ORDER BY feed_sequence, occurred_at, id",
+        feed_id,
+    )
+
+
+async def _get_audit_sequence_next(
+    pool: asyncpg.Pool,
+    feed_id: uuid.UUID,
+) -> int | None:
+    """Return the stored next feed audit sequence for one feed."""
+    return await pool.fetchval(
+        "SELECT next_sequence FROM feed_audit_event_sequences"
+        " WHERE feed_id = $1",
+        feed_id,
+    )
+
+
+def _decode_json_object(value: object) -> dict[str, object]:
+    """Decode asyncpg JSONB results across default codec variants."""
+    if isinstance(value, str):
+        decoded = json.loads(value)
+    else:
+        decoded = value
+    if not isinstance(decoded, dict):
+        msg = f"Expected JSON object, got {type(decoded).__name__}"
+        raise AssertionError(msg)
+    return decoded
 
 
 # -- Tests: acquire_feeds_batch (per-type CTE) -----------------------
@@ -1718,6 +1756,114 @@ async def test_update_feed_already_exists(
             name="Existing Feed",
             actor_id=_TEST_ACTOR_ID,
         )
+
+
+# -- Tests: audited transaction rollback ------------------------------
+
+
+async def test_create_feed_audit_failure_rolls_back_feed_and_sequence(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """A rejected audit actor rolls back the attempted feed creation."""
+    name = f"Rollback Create {uuid.uuid4()}"
+    source_feed_id = f"rollback-{uuid.uuid4()}"
+    sequence_count_before = await db_pool.fetchval(
+        "SELECT COUNT(*) FROM feed_audit_event_sequences"
+    )
+
+    with pytest.raises(asyncpg.CheckViolationError):
+        await store.create_feed(
+            name=name,
+            source_type="bcfy_feeds",
+            source_feed_id=source_feed_id,
+            actor_id=_INVALID_ACTOR_ID,
+        )
+
+    feed_row = await db_pool.fetchrow(
+        "SELECT f.id FROM feeds f"
+        " JOIN feed_properties fp ON fp.feed_id = f.id"
+        " WHERE f.name = $1 AND fp.source_feed_id = $2",
+        name,
+        source_feed_id,
+    )
+    audit_rows = await db_pool.fetch(
+        "SELECT 1 FROM feed_audit_events WHERE feed_name = $1",
+        name,
+    )
+    sequence_count_after = await db_pool.fetchval(
+        "SELECT COUNT(*) FROM feed_audit_event_sequences"
+    )
+
+    assert feed_row is None
+    assert audit_rows == []
+    assert sequence_count_after == sequence_count_before
+
+
+async def test_update_feed_audit_failure_rolls_back_state_and_sequence(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """A rejected audit actor leaves an existing feed unchanged."""
+    feed = await store.create_feed(
+        name=f"Rollback Update Original {uuid.uuid4()}",
+        source_type="bcfy_feeds",
+        source_feed_id=f"rollback-update-{uuid.uuid4()}",
+        tags=[{"key": "phase", "value": "before"}],
+        actor_id=_TEST_ACTOR_ID,
+    )
+    sequence_before = await _get_audit_sequence_next(db_pool, feed["id"])
+
+    with pytest.raises(asyncpg.CheckViolationError):
+        await store.update_feed(
+            feed_id=feed["id"],
+            name=f"Rollback Update Failed {uuid.uuid4()}",
+            tags=[{"key": "phase", "value": "after"}],
+            actor_id=_INVALID_ACTOR_ID,
+        )
+
+    row = await db_pool.fetchrow(
+        "SELECT f.name, fp.tags FROM feeds f"
+        " JOIN feed_properties fp ON fp.feed_id = f.id"
+        " WHERE f.id = $1",
+        feed["id"],
+    )
+    audit_rows = await _fetch_audit_events(db_pool, feed["id"])
+    sequence_after = await _get_audit_sequence_next(db_pool, feed["id"])
+
+    assert row is not None
+    assert row["name"] == feed["name"]
+    assert json.loads(row["tags"]) == [{"key": "phase", "value": "before"}]
+    assert [event["action"] for event in audit_rows] == ["feed.created"]
+    assert sequence_after == sequence_before
+
+
+@pytest.mark.parametrize("actor_id", ("user:", "service: "))
+async def test_invalid_actor_values_are_not_rewritten_by_storage(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+    actor_id: str,
+) -> None:
+    """Storage passes invalid actor values through to DB rejection."""
+    feed = await store.create_feed(
+        name=f"Invalid Actor {uuid.uuid4()}",
+        source_type="bcfy_feeds",
+        source_feed_id=f"invalid-actor-{uuid.uuid4()}",
+        actor_id=_TEST_ACTOR_ID,
+    )
+
+    with pytest.raises(asyncpg.CheckViolationError):
+        await store.deactivate_feed(feed["id"], actor_id=actor_id)
+
+    row = await _get_feed_status(db_pool, feed["id"])
+    audit_rows = await _fetch_audit_events(db_pool, feed["id"])
+
+    assert row["status"] == "unclaimed"
+    assert [event["action"] for event in audit_rows] == ["feed.created"]
+    assert all(event["actor_id"] != actor_id for event in audit_rows)
+    assert all(
+        event["action"] != "feed.deactivated" for event in audit_rows
+    )
 
 
 # -- Tests: get_feed --------------------------------------------------
