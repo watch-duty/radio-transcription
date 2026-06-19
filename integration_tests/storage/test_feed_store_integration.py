@@ -1866,6 +1866,74 @@ async def test_invalid_actor_values_are_not_rewritten_by_storage(
     )
 
 
+# -- Tests: audited concurrent ordering -------------------------------
+
+
+async def test_concurrent_same_feed_updates_allocate_contiguous_sequences(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """Concurrent same-feed updates remain uniquely sequence-orderable."""
+    feed = await store.create_feed(
+        name=f"Concurrent Original {uuid.uuid4()}",
+        source_type="bcfy_feeds",
+        source_feed_id=f"concurrent-{uuid.uuid4()}",
+        tags=[{"key": "phase", "value": "original"}],
+        actor_id=_TEST_ACTOR_ID,
+    )
+    update_inputs: tuple[tuple[str, list[dict[str, str]]], ...] = (
+        (
+            f"Concurrent First {uuid.uuid4()}",
+            [{"key": "phase", "value": "first"}],
+        ),
+        (
+            f"Concurrent Second {uuid.uuid4()}",
+            [{"key": "phase", "value": "second"}],
+        ),
+    )
+
+    results = await asyncio.gather(
+        *[
+            store.update_feed(
+                feed_id=feed["id"],
+                name=name,
+                tags=tags,
+                actor_id=_TEST_ACTOR_ID,
+            )
+            for name, tags in update_inputs
+        ],
+        return_exceptions=True,
+    )
+
+    assert all(not isinstance(result, BaseException) for result in results)
+    assert all(result is not None for result in results)
+
+    audit_rows = await _fetch_audit_events(db_pool, feed["id"])
+    feed_sequences = [row["feed_sequence"] for row in audit_rows]
+    update_events = [
+        row for row in audit_rows if row["action"] == "feed.updated"
+    ]
+    duplicate_sequence_count = await db_pool.fetchval(
+        "SELECT COUNT(*) FROM ("
+        " SELECT feed_sequence FROM feed_audit_events"
+        " WHERE feed_id = $1"
+        " GROUP BY feed_sequence HAVING COUNT(*) > 1"
+        ") duplicates",
+        feed["id"],
+    )
+
+    assert [row["action"] for row in audit_rows].count("feed.created") == 1
+    assert len(update_events) == 2
+    assert len(feed_sequences) == len(set(feed_sequences))
+    assert feed_sequences == list(range(1, len(feed_sequences) + 1))
+    assert duplicate_sequence_count == 0
+    assert await _get_audit_sequence_next(db_pool, feed["id"]) == 4
+    assert {
+        _decode_json_object(row["after_values"])["name"]
+        for row in update_events
+    } == {name for name, _tags in update_inputs}
+
+
 # -- Tests: get_feed --------------------------------------------------
 
 
