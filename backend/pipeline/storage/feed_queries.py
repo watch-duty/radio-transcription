@@ -431,6 +431,68 @@ JOIN feed_properties fp ON f.id = fp.feed_id
 WHERE f.id = $1
 """
 
+GET_AUDIT_FEED_SNAPSHOT_SQL = """\
+SELECT
+    f.id,
+    f.name,
+    f.source_type,
+    f.status,
+    f.failure_count,
+    f.retry_after,
+    f.status_reason,
+    f.status_reason_updated_at,
+    f.status_reason_detail,
+    f.quarantine_reason,
+    f.last_bookmark_time,
+    f.created_at,
+    fp.source_feed_id AS "feed_properties.source_feed_id",
+    fp.tags AS "feed_properties.tags"
+FROM feeds f
+JOIN feed_properties fp ON fp.feed_id = f.id
+WHERE f.id = $1
+FOR UPDATE
+"""
+
+ALLOCATE_FEED_AUDIT_SEQUENCE_SQL = """\
+INSERT INTO feed_audit_event_sequences (feed_id, next_sequence)
+VALUES ($1, 2)
+ON CONFLICT (feed_id) DO UPDATE
+SET next_sequence = feed_audit_event_sequences.next_sequence + 1,
+    updated_at = NOW()
+RETURNING next_sequence - 1 AS feed_sequence
+"""
+
+INSERT_FEED_AUDIT_EVENT_SQL = """\
+INSERT INTO feed_audit_events (
+    feed_id,
+    feed_name,
+    source_type,
+    action,
+    actor_id,
+    feed_sequence,
+    status,
+    status_reason,
+    status_reason_detail,
+    before_values,
+    after_values,
+    metadata
+)
+VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7::feed_status,
+    $8,
+    $9,
+    $10::jsonb,
+    $11::jsonb,
+    COALESCE($12::jsonb, '{}'::jsonb)
+)
+"""
+
 LIST_FEEDS_DESC_SQL = """\
 SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
