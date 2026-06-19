@@ -587,6 +587,9 @@ class OrderedStitchAudioTest(unittest.TestCase):
             def clear(self):
                 self.items = []
 
+            def write(self, val):
+                self.items = val
+
         class MockValueState:
             def __init__(self, initial=None) -> None:
                 self.val = initial
@@ -925,6 +928,9 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
             def clear(self):
                 self.items = []
 
+            def write(self, val):
+                self.items = val
+
         mock_state_context = MockValueState(
             ActiveStitchingState(
                 session_id="session-1",
@@ -1041,6 +1047,9 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
             def clear(self):
                 self.items = []
 
+            def write(self, val):
+                self.items = val
+
         mock_state_context = MockValueState(
             ActiveStitchingState(
                 session_id="session-1",
@@ -1132,6 +1141,9 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
 
             def clear(self):
                 self.items = []
+
+            def write(self, val):
+                self.items = val
 
         mock_state_context = MockValueState(
             ActiveStitchingState(
@@ -1239,6 +1251,9 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
 
             def clear(self):
                 self.items = []
+
+            def write(self, val):
+                self.items = val
 
         mock_state_context = MockValueState(
             ActiveStitchingState(
@@ -1485,6 +1500,9 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
             def clear(self):
                 self.items = []
 
+            def write(self, val):
+                self.items = val
+
         mock_state_context = MockValueState(
             ActiveStitchingState(
                 session_id="session-silence",
@@ -1585,6 +1603,9 @@ class DlqTaggingTest(unittest.TestCase):
 
             def clear(self) -> None:
                 self.items = []
+
+            def write(self, val: list[Any]) -> None:
+                self.items = val
 
         ctx = ActiveStitchingState(
             session_id="test-session",

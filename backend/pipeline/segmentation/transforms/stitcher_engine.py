@@ -65,7 +65,8 @@ def _get_audio_buffer(
         return local_buffer
     # Fallback to reading directly from state and converting to np.ndarray
     return [
-        np.frombuffer(b, dtype=np.int16) for b in transmission_buffer.read()
+        np.frombuffer(b, dtype=np.int16)
+        for b in (transmission_buffer.read() or [])
     ]
 
 
@@ -598,9 +599,9 @@ class StitcherEngine:
         # Read the existing transmission buffer state once at the start.
         # This avoids multiple redundant reads and guarantees that we don't hit runner-specific state cache issues
         # when reading after clearing/adding within the same element processing.
+        local_buffer_bytes = transmission_buffer_state.read() or []
         local_buffer = [
-            np.frombuffer(b, dtype=np.int16)
-            for b in transmission_buffer_state.read()
+            np.frombuffer(b, dtype=np.int16) for b in local_buffer_bytes
         ]
 
         buffer_cleared = False
@@ -697,8 +698,13 @@ class StitcherEngine:
 
         # Commit final buffer state to Beam runner
         if buffer_cleared:
+            final_buffer_bytes = newly_appended
+        else:
+            final_buffer_bytes = local_buffer_bytes + newly_appended
+
+        if not final_buffer_bytes:
             transmission_buffer_state.clear()
-        for item in newly_appended:
-            transmission_buffer_state.add(item)
+        else:
+            transmission_buffer_state.write(final_buffer_bytes)
 
         return chunk_outputs, new_context

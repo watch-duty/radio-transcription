@@ -84,8 +84,6 @@ from typing import Any, override
 
 import apache_beam as beam
 from apache_beam.transforms.userstate import (
-    BagRuntimeState,
-    BagStateSpec,
     ReadModifyWriteRuntimeState,
     ReadModifyWriteStateSpec,
     RuntimeTimer,
@@ -495,8 +493,8 @@ class OrderedStitchAudioFn(beam.DoFn):
 
     # --- State Specs ---
 
-    TRANSMISSION_BUFFER_SPEC = BagStateSpec(
-        "transmission_buffer", beam.coders.BytesCoder()
+    TRANSMISSION_BUFFER_SPEC = ReadModifyWriteStateSpec(
+        "transmission_buffer", beam.coders.ListCoder(beam.coders.BytesCoder())
     )
     TRANSMISSION_BUFFER_STATE = beam.DoFn.StateParam(TRANSMISSION_BUFFER_SPEC)
 
@@ -608,7 +606,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         self,
         element: tuple[str, datatypes.ChunkMetadata],
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
-        transmission_buffer_state: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
+        transmission_buffer_state: ReadModifyWriteRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
         gap_timer_event: RuntimeTimer = GAP_TIMER_EVENT,  # type: ignore
@@ -789,7 +787,7 @@ class OrderedStitchAudioFn(beam.DoFn):
     def handle_gap_timeout_event(
         self,
         feed_id: str = beam.DoFn.KeyParam,  # type: ignore
-        transmission_buffer_state: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
+        transmission_buffer_state: ReadModifyWriteRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
@@ -818,7 +816,7 @@ class OrderedStitchAudioFn(beam.DoFn):
     def handle_gap_timeout_processing(
         self,
         feed_id: str = beam.DoFn.KeyParam,  # type: ignore
-        transmission_buffer_state: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
+        transmission_buffer_state: ReadModifyWriteRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
@@ -846,7 +844,7 @@ class OrderedStitchAudioFn(beam.DoFn):
     def _handle_gap_timeout_common(
         self,
         feed_id: str,
-        transmission_buffer_state: BagRuntimeState,
+        transmission_buffer_state: ReadModifyWriteRuntimeState,
         transmission_context_state: ReadModifyWriteRuntimeState,
         last_start_ms_state: ReadModifyWriteRuntimeState,
         stale_timer_event: RuntimeTimer,
@@ -994,7 +992,7 @@ class OrderedStitchAudioFn(beam.DoFn):
     def handle_deferred_drain(
         self,
         feed_id: str = beam.DoFn.KeyParam,  # type: ignore
-        transmission_buffer_state: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
+        transmission_buffer_state: ReadModifyWriteRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
@@ -1105,7 +1103,7 @@ class OrderedStitchAudioFn(beam.DoFn):
     def handle_stale_transmission_event(
         self,
         key: str = beam.DoFn.KeyParam,  # type: ignore
-        transmission_buffer: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
+        transmission_buffer: ReadModifyWriteRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
@@ -1131,7 +1129,7 @@ class OrderedStitchAudioFn(beam.DoFn):
     def handle_stale_transmission_proc(
         self,
         key: str = beam.DoFn.KeyParam,  # type: ignore
-        transmission_buffer: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
+        transmission_buffer: ReadModifyWriteRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
