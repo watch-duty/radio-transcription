@@ -48,3 +48,35 @@ def test_quarantine_reason_storage_value_caps_reason() -> None:
     assert result is not None
     assert len(result) == quarantine_reason.MAX_QUARANTINE_REASON_LENGTH
     assert result.endswith("[truncated]")
+
+
+def test_status_reason_detail_storage_value_normalizes_whitespace() -> None:
+    result = feed_lifecycle.status_reason_detail_storage_value(
+        " provider\n\n timeout\twhile connecting "
+    )
+
+    assert result == "provider timeout while connecting"
+
+
+def test_status_reason_detail_storage_value_redacts_credentials() -> None:
+    result = feed_lifecycle.status_reason_detail_storage_value(
+        "Authorization: Bearer abc.def password=hunter2 "
+        "api_key=sk-testvalue123 secret='hidden'"
+    )
+
+    assert result is not None
+    assert "abc.def" not in result
+    assert "hunter2" not in result
+    assert "sk-testvalue123" not in result
+    assert "hidden" not in result
+    assert result.count("[redacted]") >= 3
+
+
+def test_status_reason_detail_storage_value_caps_reason() -> None:
+    long_reason = "x" * (quarantine_reason.MAX_QUARANTINE_REASON_LENGTH + 1)
+
+    result = feed_lifecycle.status_reason_detail_storage_value(long_reason)
+
+    assert result is not None
+    assert len(result) == quarantine_reason.MAX_QUARANTINE_REASON_LENGTH
+    assert result.endswith("[truncated]")

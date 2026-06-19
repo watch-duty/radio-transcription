@@ -635,6 +635,9 @@ class FeedStore:
             status_reason
         )
         stored_reason = feed_lifecycle.quarantine_reason_storage_value(reason)
+        status_reason_detail = (
+            feed_lifecycle.status_reason_detail_storage_value(reason)
+        )
         row = await self._pool.fetchrow(
             feed_queries.REPORT_FAILURE_SQL,
             feed_id,
@@ -645,6 +648,7 @@ class FeedStore:
             backoff_base_sec,
             stored_reason,  # $7 — populates quarantine_reason on transition
             status_reason_value,
+            status_reason_detail,
         )
         if row is None:
             return None
@@ -679,6 +683,7 @@ class FeedStore:
         *,
         retry_after: datetime.datetime,
         status_reason: FeedStatusReason,
+        reason: str | None = None,
     ) -> str | None:
         """Release a non-feed-budgeted failure into retryable failing state.
 
@@ -695,6 +700,7 @@ class FeedStore:
             fencing_token,
             retry_after,
             status_reason.value,
+            feed_lifecycle.status_reason_detail_storage_value(reason),
         )
         if row is None:
             return None

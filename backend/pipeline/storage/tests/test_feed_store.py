@@ -411,6 +411,7 @@ class TestLastSpeechSegmentTimestampMapping(unittest.TestCase):
         result = store._row_to_feed(cast("asyncpg.Record", row))
         self.assertEqual(result["last_speech_segment_timestamp"], timestamp)
 
+
 class TestStatusReasonSqlProjection(unittest.TestCase):
     """Tests for full-feed SQL projection coverage."""
 
@@ -671,6 +672,7 @@ class TestReportFailureSqlStatusReason(unittest.TestCase):
             "status_reason = COALESCE($8, 'system_unexpected_error')",
             sql,
         )
+        self.assertIn("status_reason_detail = $9", sql)
         self.assertRegex(
             sql,
             r"status_reason_updated_at = CASE\s+"
@@ -707,6 +709,7 @@ class TestNonBudgetedFailureSql(unittest.TestCase):
         self.assertIn("failure_count = 0", sql)
         self.assertIn("retry_after = $4", sql)
         self.assertIn("status_reason = $5", sql)
+        self.assertIn("status_reason_detail = $6", sql)
         self.assertIn("worker_id = NULL", sql)
         self.assertIn("WHERE id = $1 AND worker_id = $2", sql)
         self.assertIn("AND fencing_token = $3", sql)
@@ -1150,6 +1153,7 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
                 15,
                 "ffmpeg_exit_1",
                 "system_collector_error",
+                "ffmpeg_exit_1",
             ),
         )
 
@@ -1174,7 +1178,8 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         )
 
         args = pool.fetchrow.call_args[0]
-        self.assertIsNone(args[-1])
+        self.assertIsNone(args[-2])
+        self.assertEqual(args[-1], "raw")
 
     async def test_caps_quarantine_reason_at_persistence_boundary(
         self,
@@ -1197,12 +1202,37 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
             reason=long_reason,
         )
 
-        reason_arg = pool.fetchrow.call_args[0][-2]
+        reason_arg = pool.fetchrow.call_args[0][-1]
         self.assertEqual(
             len(reason_arg),
             quarantine_reason.MAX_QUARANTINE_REASON_LENGTH,
         )
         self.assertTrue(reason_arg.endswith("[truncated]"))
+
+    async def test_sanitizes_status_reason_detail_at_persistence_boundary(
+        self,
+    ) -> None:
+        """Credential-like values are redacted before detail persistence."""
+        pool = make_mock_pool(
+            fetchrow_result={
+                "status": "failing",
+                "failure_count": 1,
+                "retry_after": None,
+            },
+        )
+        store = FeedStore(pool)
+
+        await store.report_feed_failure(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            reason="Authorization: Bearer abc.def password=hunter2",
+        )
+
+        detail_arg = pool.fetchrow.call_args[0][-1]
+        self.assertNotIn("abc.def", detail_arg)
+        self.assertNotIn("hunter2", detail_arg)
+        self.assertIn("[redacted]", detail_arg)
 
 
 class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
@@ -1284,8 +1314,36 @@ class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
                 1,
                 retry_after,
                 "source_offline",
+                None,
             ),
         )
+
+    async def test_passes_sanitized_status_reason_detail(self) -> None:
+        """Non-budgeted failures can persist sanitized diagnostic detail."""
+        retry_after = datetime.datetime(
+            2026, 6, 14, 12, 15, tzinfo=datetime.UTC
+        )
+        pool = make_mock_pool(
+            fetchrow_result={
+                "status": "failing",
+                "failure_count": 0,
+                "retry_after": retry_after,
+            },
+        )
+        store = FeedStore(pool)
+
+        await store.release_non_budgeted_failure(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            retry_after=retry_after,
+            status_reason=FeedStatusReason.SOURCE_OFFLINE,
+            reason="api_key=sk-testvalue123",
+        )
+
+        detail_arg = pool.fetchrow.call_args[0][-1]
+        self.assertNotIn("sk-testvalue123", detail_arg)
+        self.assertEqual(detail_arg, "api_key=[redacted]")
 
 
 class TestReleaseFeed(unittest.IsolatedAsyncioTestCase):

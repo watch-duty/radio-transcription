@@ -124,6 +124,7 @@ class TestReportFailureSqlStatusReason(unittest.TestCase):
             "status_reason = COALESCE($8, 'system_unexpected_error')",
             sql,
         )
+        self.assertIn("status_reason_detail = $9", sql)
         self.assertRegex(
             sql,
             r"status_reason_updated_at = CASE\s+"
@@ -160,6 +161,7 @@ class TestNonBudgetedFailureSql(unittest.TestCase):
         self.assertIn("failure_count = 0", sql)
         self.assertIn("retry_after = $4", sql)
         self.assertIn("status_reason = $5", sql)
+        self.assertIn("status_reason_detail = $6", sql)
         self.assertIn("worker_id = NULL", sql)
         self.assertIn("WHERE id = $1 AND worker_id = $2", sql)
         self.assertIn("AND fencing_token = $3", sql)
@@ -521,6 +523,18 @@ class TestAsyncSyncFailureSqlContracts(unittest.TestCase):
             "quarantine_reason",
             _sql_without_comments(
                 sync_feed_queries.RECORD_NON_BUDGETED_FAILURE_SQL
+            ),
+        )
+
+    def test_async_failure_sql_writes_status_reason_detail(self) -> None:
+        self.assertIn(
+            "status_reason_detail = $9",
+            _sql_without_comments(feed_queries.REPORT_FAILURE_SQL),
+        )
+        self.assertIn(
+            "status_reason_detail = $6",
+            _sql_without_comments(
+                feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL
             ),
         )
 

@@ -373,6 +373,7 @@ SET status = CASE WHEN failure_count + 1 >= $3
     -- rather than overwriting it with NULL. A real reason still wins.
     quarantine_reason = CASE WHEN failure_count + 1 >= $3 THEN COALESCE($7, quarantine_reason) ELSE quarantine_reason END,
     status_reason = COALESCE($8, 'system_unexpected_error'),
+    status_reason_detail = $9,
     status_reason_updated_at = CASE
         WHEN status_reason IS DISTINCT FROM COALESCE($8, 'system_unexpected_error')
             THEN NOW()
@@ -391,6 +392,7 @@ SET status = 'failing'::feed_status,
     retry_after = $4,
     unclaimed_since = NOW(),
     status_reason = $5,
+    status_reason_detail = $6,
     status_reason_updated_at = CASE
         WHEN status_reason IS DISTINCT FROM $5 THEN NOW()
         ELSE status_reason_updated_at
