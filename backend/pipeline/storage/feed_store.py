@@ -1125,7 +1125,12 @@ class FeedStore:
         feeds = [self._row_to_feed(row) for row in rows]
         return PaginatedFeeds(feeds, new_next_token, total)
 
-    async def deactivate_feed(self, feed_id: uuid.UUID) -> bool:
+    async def deactivate_feed(
+        self,
+        feed_id: uuid.UUID,
+        *,
+        actor_id: str,
+    ) -> bool:
         """Deactivate a feed by ID.
 
         Deactivation is an administrative terminal state until reset. The
@@ -1134,8 +1139,41 @@ class FeedStore:
 
         Returns True if the feed status was set to deactivated, False otherwise.
         """
-        result = await self._pool.execute(DEACTIVATE_FEED_SQL, feed_id)
-        return result == "UPDATE 1"
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                before_row = await conn.fetchrow(
+                    GET_AUDIT_FEED_SNAPSHOT_SQL,
+                    feed_id,
+                )
+                if before_row is None:
+                    return False
+
+                before_values = self._audit_snapshot(before_row)
+                result = await conn.execute(DEACTIVATE_FEED_SQL, feed_id)
+                if result != "UPDATE 1":
+                    msg = f"Failed to deactivate feed {feed_id}"
+                    raise ValueError(msg)
+
+                after_row = await conn.fetchrow(
+                    GET_AUDIT_FEED_SNAPSHOT_SQL,
+                    feed_id,
+                )
+                if after_row is None:
+                    msg = (
+                        "Failed to read deactivated audit snapshot for "
+                        f"feed {feed_id}"
+                    )
+                    raise ValueError(msg)
+
+                await self._insert_feed_audit_event(
+                    conn,
+                    action="feed.deactivated",
+                    actor_id=actor_id,
+                    before_values=before_values,
+                    after_values=self._audit_snapshot(after_row),
+                    identity_row=after_row,
+                )
+        return True
 
     async def delete_feed(self, feed_id: uuid.UUID) -> bool:
         """Hard delete a feed by ID.
@@ -1148,7 +1186,12 @@ class FeedStore:
         result = await self._pool.execute(DELETE_FEED_SQL, feed_id)
         return result == "DELETE 1"
 
-    async def reset_feed(self, feed_id: uuid.UUID) -> Feed | None:
+    async def reset_feed(
+        self,
+        feed_id: uuid.UUID,
+        *,
+        actor_id: str,
+    ) -> Feed | None:
         """Reset a feed to an unclaimed, unassigned state.
 
         This is the explicit reactivation path for deactivated or quarantined
@@ -1163,7 +1206,40 @@ class FeedStore:
             The updated ``Feed`` dict, or ``None`` if the feed was not found.
 
         """
-        row = await self._pool.fetchrow(RESET_FEED_SQL, feed_id)
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                before_row = await conn.fetchrow(
+                    GET_AUDIT_FEED_SNAPSHOT_SQL,
+                    feed_id,
+                )
+                if before_row is None:
+                    return None
+
+                before_values = self._audit_snapshot(before_row)
+                row = await conn.fetchrow(RESET_FEED_SQL, feed_id)
+                if row is None:
+                    msg = f"Failed to reset feed {feed_id}"
+                    raise ValueError(msg)
+
+                after_row = await conn.fetchrow(
+                    GET_AUDIT_FEED_SNAPSHOT_SQL,
+                    feed_id,
+                )
+                if after_row is None:
+                    msg = (
+                        "Failed to read reset audit snapshot for "
+                        f"feed {feed_id}"
+                    )
+                    raise ValueError(msg)
+
+                await self._insert_feed_audit_event(
+                    conn,
+                    action="feed.reset",
+                    actor_id=actor_id,
+                    before_values=before_values,
+                    after_values=self._audit_snapshot(after_row),
+                    identity_row=after_row,
+                )
         if row is None:
             return None
         return self._row_to_feed(row)
