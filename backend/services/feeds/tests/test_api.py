@@ -271,7 +271,7 @@ class TestFeedsAPI(unittest.TestCase):
         malformed_headers = [
             {"X-WD-Actor-Id": "user:google:"},
             {"X-WD-Actor-Id": "user:google:admin sub"},
-            {"X-WD-Actor-Id": "service:feeds-service"},
+            {"X-WD-Actor-Id": "service:" + "feeds-service"},
         ]
 
         for headers in malformed_headers:

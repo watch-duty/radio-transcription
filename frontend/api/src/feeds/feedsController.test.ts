@@ -35,6 +35,8 @@ describe('FeedsController', () => {
   const adminActorHeaders = {
     'X-WD-Actor-Id': `user:google:${adminSub}`,
   };
+  const requestWithUser = (principal: Record<string, unknown>) =>
+    ({ ['user']: principal }) as unknown as express.Request;
 
   const mockBackendFeed = {
     id: 'feed_123',
@@ -60,13 +62,9 @@ describe('FeedsController', () => {
     statusReasonDetail: 'provider timeout',
   };
 
-  const mockAdminRequest = {
-    user: { isAdmin: true, sub: adminSub },
-  } as unknown as express.Request;
+  const mockAdminRequest = requestWithUser({ isAdmin: true, sub: adminSub });
 
-  const mockNonAdminRequest = {
-    user: { isAdmin: false },
-  } as unknown as express.Request;
+  const mockNonAdminRequest = requestWithUser({ isAdmin: false });
 
   describe('listFeeds', () => {
     it('should return converted feeds on success', async () => {
@@ -292,11 +290,17 @@ describe('FeedsController', () => {
     });
 
     it.each([
-      ['missing', { user: { isAdmin: true } }],
-      ['empty', { user: { isAdmin: true, sub: '' } }],
-      ['whitespace-only', { user: { isAdmin: true, sub: '   ' } }],
-      ['containing whitespace', { user: { isAdmin: true, sub: 'admin sub' } }],
-      ['leading whitespace', { user: { isAdmin: true, sub: ' admin-sub' } }],
+      ['missing', requestWithUser({ isAdmin: true })],
+      ['empty', requestWithUser({ isAdmin: true, sub: '' })],
+      ['whitespace-only', requestWithUser({ isAdmin: true, sub: '   ' })],
+      [
+        'containing whitespace',
+        requestWithUser({ isAdmin: true, sub: 'admin sub' }),
+      ],
+      [
+        'leading whitespace',
+        requestWithUser({ isAdmin: true, sub: ' admin-sub' }),
+      ],
     ])(
       'should throw 403 and skip downstream call when admin sub is %s',
       async (_caseName, requestLike) => {
@@ -308,7 +312,7 @@ describe('FeedsController', () => {
         };
 
         await expect(
-          controller.createFeed(requestLike as unknown as express.Request, payload)
+          controller.createFeed(requestLike, payload)
         ).rejects.toThrow(/Forbidden/);
         expect(mockRequest).not.toHaveBeenCalled();
       }
@@ -421,9 +425,7 @@ describe('FeedsController', () => {
   });
 
   describe('resetFeed', () => {
-    const mockAdminRequest = {
-      user: { isAdmin: true, sub: adminSub },
-    } as unknown as express.Request;
+    const mockAdminRequest = requestWithUser({ isAdmin: true, sub: adminSub });
 
     it('should return converted feed on success', async () => {
       mockRequest.mockResolvedValueOnce({ data: mockBackendFeed });
@@ -440,9 +442,7 @@ describe('FeedsController', () => {
     });
 
     it('should throw 401 unauthorized if the user is not an admin', async () => {
-      const mockNonAdminReq = {
-        user: { isAdmin: false },
-      } as unknown as express.Request;
+      const mockNonAdminReq = requestWithUser({ isAdmin: false });
       const controller = new FeedsController();
 
       await expect(
@@ -487,9 +487,7 @@ describe('FeedsController', () => {
   });
 
   describe('deactivateFeed', () => {
-    const mockAdminRequest = {
-      user: { isAdmin: true, sub: adminSub },
-    } as unknown as express.Request;
+    const mockAdminRequest = requestWithUser({ isAdmin: true, sub: adminSub });
 
     it('should return 204 on success', async () => {
       mockRequest.mockResolvedValueOnce({ status: 204 });
@@ -505,9 +503,7 @@ describe('FeedsController', () => {
     });
 
     it('should throw 401 unauthorized if the user is not an admin', async () => {
-      const mockNonAdminReq = {
-        user: { isAdmin: false },
-      } as unknown as express.Request;
+      const mockNonAdminReq = requestWithUser({ isAdmin: false });
       const controller = new FeedsController();
 
       await expect(
@@ -530,9 +526,7 @@ describe('FeedsController', () => {
   });
 
   describe('deleteFeed', () => {
-    const mockAdminRequest = {
-      user: { isAdmin: true, sub: adminSub },
-    } as unknown as express.Request;
+    const mockAdminRequest = requestWithUser({ isAdmin: true, sub: adminSub });
 
     it('should return 204 on success', async () => {
       mockRequest.mockResolvedValueOnce({ status: 204 });
@@ -548,9 +542,7 @@ describe('FeedsController', () => {
     });
 
     it('should throw 401 unauthorized if the user is not an admin', async () => {
-      const mockNonAdminReq = {
-        user: { isAdmin: false },
-      } as unknown as express.Request;
+      const mockNonAdminReq = requestWithUser({ isAdmin: false });
       const controller = new FeedsController();
 
       await expect(
