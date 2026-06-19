@@ -88,6 +88,9 @@ class FeedStatus(enum.StrEnum):
     DEACTIVATED = "deactivated"
 
 
+_RUNTIME_ABNORMAL_STATUSES = frozenset(
+    {FeedStatus.FAILING, FeedStatus.QUARANTINED}
+)
 _FEED_STATUS_REASON_OWNERS = frozenset({"source", "system", "pipeline"})
 
 
@@ -382,6 +385,7 @@ class FeedStore:
         before_values: dict[str, object],
         after_values: dict[str, object],
         identity_row: asyncpg.Record,
+        metadata: dict[str, object] | None = None,
     ) -> None:
         """Insert one storage-owned feed audit event."""
         identity = self._audit_event_identity(identity_row)
@@ -411,7 +415,7 @@ class FeedStore:
                 default=self._json_default,
                 sort_keys=True,
             ),
-            json.dumps({}, sort_keys=True),
+            json.dumps(metadata or {}, sort_keys=True),
         )
 
     @staticmethod
@@ -428,6 +432,88 @@ class FeedStore:
         except ValueError as e:
             msg = f"Unknown status reason {raw!r} for feed {feed_id}"
             raise ValueError(msg) from e
+
+    @staticmethod
+    def _parse_feed_status(raw: str, *, feed_id: object) -> FeedStatus:
+        """Parse feed lifecycle status text from database rows."""
+        try:
+            return FeedStatus(raw)
+        except ValueError as e:
+            msg = f"Unknown status {raw!r} for feed {feed_id}"
+            raise ValueError(msg) from e
+
+    def _runtime_prior_metadata(
+        self,
+        *,
+        previous_status: FeedStatus,
+        previous_failure_count: int,
+        previous_status_reason: FeedStatusReason | None,
+    ) -> dict[str, object]:
+        """Return non-secret runtime prior-state metadata for audit rows."""
+        return {
+            "previous_status": previous_status.value,
+            "previous_failure_count": previous_failure_count,
+            "previous_status_reason": (
+                previous_status_reason.value
+                if previous_status_reason is not None
+                else None
+            ),
+        }
+
+    def _runtime_failure_audit_action(
+        self,
+        *,
+        previous_status: FeedStatus,
+        previous_failure_count: int,
+        previous_status_reason: FeedStatusReason | None,
+        after_row: asyncpg.Record,
+    ) -> str | None:
+        """Return the runtime failure/quarantine event action, if any."""
+        after_status = self._parse_feed_status(
+            after_row["status"],
+            feed_id=after_row["id"],
+        )
+        after_reason = self._parse_status_reason(
+            after_row["status_reason"],
+            feed_id=after_row["id"],
+        )
+        if after_status == FeedStatus.QUARANTINED:
+            if (
+                previous_status != FeedStatus.QUARANTINED
+                and after_row["failure_count"] > previous_failure_count
+            ):
+                return "feed.quarantined"
+            return None
+        if after_status != FeedStatus.FAILING:
+            return None
+        if previous_status != FeedStatus.FAILING:
+            return "feed.failure_reported"
+        if previous_status_reason != after_reason:
+            return "feed.failure_reported"
+        return None
+
+    def _runtime_recovery_audit_action(
+        self,
+        *,
+        previous_status: FeedStatus,
+        after_row: asyncpg.Record,
+    ) -> str | None:
+        """Return the runtime recovery event action, if any."""
+        if previous_status not in _RUNTIME_ABNORMAL_STATUSES:
+            return None
+        after_status = self._parse_feed_status(
+            after_row["status"],
+            feed_id=after_row["id"],
+        )
+        if after_status in _RUNTIME_ABNORMAL_STATUSES:
+            return None
+        after_reason = self._parse_status_reason(
+            after_row["status_reason"],
+            feed_id=after_row["id"],
+        )
+        if after_reason is not None or after_row["failure_count"] != 0:
+            return None
+        return "feed.recovered"
 
     def _row_to_leased_feed(self, row: asyncpg.Record) -> LeasedFeed:
         """Convert a claim/lease-path row to a LeasedFeed dict.
@@ -474,6 +560,11 @@ class FeedStore:
         new_gcs_path: str,
         fencing_token: int,
         last_bookmark_time: datetime.datetime | None,
+        *,
+        actor_id: str | None = None,
+        previous_status: FeedStatus | None = None,
+        previous_failure_count: int = 0,
+        previous_status_reason: FeedStatusReason | None = None,
     ) -> bool:
         """
         Update the feed's bookmark and heartbeat after a successful write.
@@ -495,14 +586,63 @@ class FeedStore:
             lease was lost.
 
         """
-        result = await self._pool.execute(
-            feed_queries.UPDATE_PROGRESS_SQL,
-            new_gcs_path,
-            feed_id,
-            worker_id,
-            fencing_token,
-            last_bookmark_time,
-        )
+        if previous_status is None or actor_id is None:
+            result = await self._pool.execute(
+                feed_queries.UPDATE_PROGRESS_SQL,
+                new_gcs_path,
+                feed_id,
+                worker_id,
+                fencing_token,
+                last_bookmark_time,
+            )
+            return result == "UPDATE 1"
+
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                before_row = await conn.fetchrow(
+                    feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
+                    feed_id,
+                )
+                if before_row is None:
+                    return False
+                result = await conn.execute(
+                    feed_queries.UPDATE_PROGRESS_SQL,
+                    new_gcs_path,
+                    feed_id,
+                    worker_id,
+                    fencing_token,
+                    last_bookmark_time,
+                )
+                if result != "UPDATE 1":
+                    return False
+                after_row = await conn.fetchrow(
+                    feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
+                    feed_id,
+                )
+                if after_row is None:
+                    msg = (
+                        "Failed to read runtime recovery audit snapshot for "
+                        f"feed {feed_id}"
+                    )
+                    raise ValueError(msg)
+                action = self._runtime_recovery_audit_action(
+                    previous_status=previous_status,
+                    after_row=after_row,
+                )
+                if action is not None:
+                    await self._insert_feed_audit_event(
+                        conn,
+                        action=action,
+                        actor_id=actor_id,
+                        before_values=self._audit_snapshot(before_row),
+                        after_values=self._audit_snapshot(after_row),
+                        identity_row=after_row,
+                        metadata=self._runtime_prior_metadata(
+                            previous_status=previous_status,
+                            previous_failure_count=previous_failure_count,
+                            previous_status_reason=previous_status_reason,
+                        ),
+                    )
         return result == "UPDATE 1"
 
     async def record_source_observation(
@@ -511,6 +651,11 @@ class FeedStore:
         worker_id: uuid.UUID,
         fencing_token: int,
         resume_position: datetime.datetime | None,
+        *,
+        actor_id: str | None = None,
+        previous_status: FeedStatus | None = None,
+        previous_failure_count: int = 0,
+        previous_status_reason: FeedStatusReason | None = None,
     ) -> SourceObservationResult:
         """Record a non-audio source success through a fenced diagnostic path.
 
@@ -518,13 +663,88 @@ class FeedStore:
         claiming audio progress. If *resume_position* is provided, it advances
         the source cursor in ``last_bookmark_time``.
         """
-        row = await self._pool.fetchrow(
-            feed_queries.RECORD_SOURCE_OBSERVATION_SQL,
-            feed_id,
-            worker_id,
-            fencing_token,
-            resume_position,
-        )
+        if previous_status is None or actor_id is None:
+            row = await self._pool.fetchrow(
+                feed_queries.RECORD_SOURCE_OBSERVATION_SQL,
+                feed_id,
+                worker_id,
+                fencing_token,
+                resume_position,
+            )
+            if row is None:
+                return SourceObservationResult(
+                    id=feed_id,
+                    current_worker=None,
+                    current_status=None,
+                    current_fencing_token=None,
+                    recorded=False,
+                )
+            return SourceObservationResult(
+                id=row["id"],
+                current_worker=row["current_worker"],
+                current_status=row["current_status"],
+                current_fencing_token=row["current_fencing_token"],
+                recorded=row["recorded"],
+            )
+
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                before_row = await conn.fetchrow(
+                    feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
+                    feed_id,
+                )
+                if before_row is None:
+                    return SourceObservationResult(
+                        id=feed_id,
+                        current_worker=None,
+                        current_status=None,
+                        current_fencing_token=None,
+                        recorded=False,
+                    )
+                row = await conn.fetchrow(
+                    feed_queries.RECORD_SOURCE_OBSERVATION_SQL,
+                    feed_id,
+                    worker_id,
+                    fencing_token,
+                    resume_position,
+                )
+                if row is None:
+                    return SourceObservationResult(
+                        id=feed_id,
+                        current_worker=None,
+                        current_status=None,
+                        current_fencing_token=None,
+                        recorded=False,
+                    )
+                if row["recorded"]:
+                    after_row = await conn.fetchrow(
+                        feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
+                        feed_id,
+                    )
+                    if after_row is None:
+                        msg = (
+                            "Failed to read source observation audit "
+                            f"snapshot for feed {feed_id}"
+                        )
+                        raise ValueError(msg)
+                    action = self._runtime_recovery_audit_action(
+                        previous_status=previous_status,
+                        after_row=after_row,
+                    )
+                    if action is not None:
+                        await self._insert_feed_audit_event(
+                            conn,
+                            action=action,
+                            actor_id=actor_id,
+                            before_values=self._audit_snapshot(before_row),
+                            after_values=self._audit_snapshot(after_row),
+                            identity_row=after_row,
+                            metadata=self._runtime_prior_metadata(
+                                previous_status=previous_status,
+                                previous_failure_count=previous_failure_count,
+                                previous_status_reason=previous_status_reason,
+                            ),
+                        )
         if row is None:
             return SourceObservationResult(
                 id=feed_id,
@@ -588,6 +808,10 @@ class FeedStore:
         backoff_base_sec: int = feed_lifecycle.DEFAULT_BACKOFF_BASE_SEC,
         backoff_max_sec: int = feed_lifecycle.DEFAULT_BACKOFF_MAX_SEC,
         *,
+        actor_id: str,
+        previous_status: FeedStatus,
+        previous_failure_count: int,
+        previous_status_reason: FeedStatusReason | None,
         reason: str | None = None,
         status_reason: FeedStatusReason | None = None,
     ) -> str | None:
@@ -638,18 +862,58 @@ class FeedStore:
         status_reason_detail = (
             feed_lifecycle.status_reason_detail_storage_value(reason)
         )
-        row = await self._pool.fetchrow(
-            feed_queries.REPORT_FAILURE_SQL,
-            feed_id,
-            worker_id,
-            failure_threshold,
-            fencing_token,
-            backoff_max_sec,
-            backoff_base_sec,
-            stored_reason,  # $7 — populates quarantine_reason on transition
-            status_reason_value,
-            status_reason_detail,
-        )
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                before_row = await conn.fetchrow(
+                    feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
+                    feed_id,
+                )
+                if before_row is None:
+                    return None
+                row = await conn.fetchrow(
+                    feed_queries.REPORT_FAILURE_SQL,
+                    feed_id,
+                    worker_id,
+                    failure_threshold,
+                    fencing_token,
+                    backoff_max_sec,
+                    backoff_base_sec,
+                    stored_reason,
+                    status_reason_value,
+                    status_reason_detail,
+                )
+                if row is None:
+                    return None
+                after_row = await conn.fetchrow(
+                    feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
+                    feed_id,
+                )
+                if after_row is None:
+                    msg = (
+                        "Failed to read runtime failure audit snapshot for "
+                        f"feed {feed_id}"
+                    )
+                    raise ValueError(msg)
+                action = self._runtime_failure_audit_action(
+                    previous_status=previous_status,
+                    previous_failure_count=previous_failure_count,
+                    previous_status_reason=previous_status_reason,
+                    after_row=after_row,
+                )
+                if action is not None:
+                    await self._insert_feed_audit_event(
+                        conn,
+                        action=action,
+                        actor_id=actor_id,
+                        before_values=self._audit_snapshot(before_row),
+                        after_values=self._audit_snapshot(after_row),
+                        identity_row=after_row,
+                        metadata=self._runtime_prior_metadata(
+                            previous_status=previous_status,
+                            previous_failure_count=previous_failure_count,
+                            previous_status_reason=previous_status_reason,
+                        ),
+                    )
         if row is None:
             return None
 
@@ -683,6 +947,10 @@ class FeedStore:
         *,
         retry_after: datetime.datetime,
         status_reason: FeedStatusReason,
+        actor_id: str,
+        previous_status: FeedStatus,
+        previous_failure_count: int,
+        previous_status_reason: FeedStatusReason | None,
         reason: str | None = None,
     ) -> str | None:
         """Release a non-feed-budgeted failure into retryable failing state.
@@ -693,15 +961,55 @@ class FeedStore:
         leaves ``quarantine_reason`` untouched, resets any previous
         consecutive feed budget, and releases the lease for later retry.
         """
-        row = await self._pool.fetchrow(
-            feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL,
-            feed_id,
-            worker_id,
-            fencing_token,
-            retry_after,
-            status_reason.value,
-            feed_lifecycle.status_reason_detail_storage_value(reason),
-        )
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                before_row = await conn.fetchrow(
+                    feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
+                    feed_id,
+                )
+                if before_row is None:
+                    return None
+                row = await conn.fetchrow(
+                    feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL,
+                    feed_id,
+                    worker_id,
+                    fencing_token,
+                    retry_after,
+                    status_reason.value,
+                    feed_lifecycle.status_reason_detail_storage_value(reason),
+                )
+                if row is None:
+                    return None
+                after_row = await conn.fetchrow(
+                    feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
+                    feed_id,
+                )
+                if after_row is None:
+                    msg = (
+                        "Failed to read non-budgeted failure audit snapshot "
+                        f"for feed {feed_id}"
+                    )
+                    raise ValueError(msg)
+                action = self._runtime_failure_audit_action(
+                    previous_status=previous_status,
+                    previous_failure_count=previous_failure_count,
+                    previous_status_reason=previous_status_reason,
+                    after_row=after_row,
+                )
+                if action is not None:
+                    await self._insert_feed_audit_event(
+                        conn,
+                        action=action,
+                        actor_id=actor_id,
+                        before_values=self._audit_snapshot(before_row),
+                        after_values=self._audit_snapshot(after_row),
+                        identity_row=after_row,
+                        metadata=self._runtime_prior_metadata(
+                            previous_status=previous_status,
+                            previous_failure_count=previous_failure_count,
+                            previous_status_reason=previous_status_reason,
+                        ),
+                    )
         if row is None:
             return None
         return row["status"]

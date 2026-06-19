@@ -35,6 +35,7 @@ _STATUS_REASON_UPDATED_AT = datetime.datetime(
     2026, 5, 29, 12, 0, tzinfo=datetime.UTC
 )
 _FEEDS_SERVICE_ACTOR_ID = "service:feeds-service"
+_COLLECTOR_RUNTIME_ACTOR_ID = "service:collector-runtime"
 
 _FEED_STATUS_REASON_VALUES = {
     "pipeline_publish_after_bookmark_failed",
@@ -96,6 +97,41 @@ def _audit_snapshot_row(**overrides: object) -> dict[str, object]:
     row["feed_properties.source_feed_id"] = row["source_feed_id"]
     row["feed_properties.tags"] = row["tags"]
     return row
+
+
+def _runtime_prior_kwargs(
+    *,
+    previous_status: FeedStatus = FeedStatus.ACTIVE,
+    previous_failure_count: int = 0,
+    previous_status_reason: FeedStatusReason | None = None,
+) -> dict[str, object]:
+    return {
+        "actor_id": _COLLECTOR_RUNTIME_ACTOR_ID,
+        "previous_status": previous_status,
+        "previous_failure_count": previous_failure_count,
+        "previous_status_reason": previous_status_reason,
+    }
+
+
+def _failure_update_row(
+    *,
+    status: str = "failing",
+    failure_count: int = 1,
+    retry_after: datetime.datetime | None = None,
+) -> dict[str, object]:
+    return {
+        "status": status,
+        "failure_count": failure_count,
+        "retry_after": retry_after,
+    }
+
+
+def _audit_insert_calls(conn: mock.AsyncMock) -> list[tuple[object, ...]]:
+    return [
+        call.args
+        for call in conn.execute.await_args_list
+        if call.args[0] == feed_queries.INSERT_FEED_AUDIT_EVENT_SQL
+    ]
 
 
 def _unique_violation(
@@ -554,6 +590,8 @@ class TestFeedAuditStorageBoundary(unittest.TestCase):
             "deactivate_feed",
             "delete_feed",
             "reset_feed",
+            "report_feed_failure",
+            "release_non_budgeted_failure",
         ):
             with self.subTest(method_name=method_name):
                 signature = inspect.signature(getattr(FeedStore, method_name))
@@ -1084,63 +1122,103 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
 
     async def test_returns_status_when_lease_held(self) -> None:
         """Status string is returned when the RETURNING row is present."""
-        pool = make_mock_pool(
-            fetchrow_result={
-                "status": "failing",
-                "failure_count": 1,
-                "retry_after": None,
-            },
-        )
+        pool = make_mock_pool(transaction=True)
+        pool.acquired_connection.fetchrow.side_effect = [
+            _audit_snapshot_row(status="active"),
+            _failure_update_row(),
+            _audit_snapshot_row(
+                status="failing",
+                failure_count=1,
+                status_reason="system_unexpected_error",
+            ),
+        ]
         store = FeedStore(pool)
 
-        result = await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
+        result = await store.report_feed_failure(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            **_runtime_prior_kwargs(),
+        )
 
         self.assertEqual(result, "failing")
 
     async def test_returns_none_when_lease_lost(self) -> None:
         """None is returned when RETURNING yields no row."""
-        pool = make_mock_pool(fetchrow_result=None)
+        pool = make_mock_pool(transaction=True)
+        pool.acquired_connection.fetchrow.side_effect = [
+            _audit_snapshot_row(status="active"),
+            None,
+        ]
         store = FeedStore(pool)
 
-        result = await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
+        result = await store.report_feed_failure(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            **_runtime_prior_kwargs(),
+        )
 
         self.assertIsNone(result)
+        pool.acquired_connection.execute.assert_not_awaited()
 
     async def test_returns_quarantined_status(self) -> None:
         """Quarantined status string is returned at threshold."""
-        pool = make_mock_pool(
-            fetchrow_result={
-                "status": "quarantined",
-                "failure_count": 5,
-                "retry_after": None,
-            },
-        )
+        pool = make_mock_pool(transaction=True)
+        pool.acquired_connection.fetchrow.side_effect = [
+            _audit_snapshot_row(
+                status="active",
+                failure_count=4,
+                status_reason="system_unexpected_error",
+            ),
+            _failure_update_row(status="quarantined", failure_count=5),
+            _audit_snapshot_row(
+                status="quarantined",
+                failure_count=5,
+                status_reason="system_unexpected_error",
+            ),
+        ]
         store = FeedStore(pool)
 
-        result = await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
+        result = await store.report_feed_failure(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            **_runtime_prior_kwargs(
+                previous_status=FeedStatus.FAILING,
+                previous_failure_count=4,
+                previous_status_reason=(
+                    FeedStatusReason.SYSTEM_UNEXPECTED_ERROR
+                ),
+            ),
+        )
 
         self.assertEqual(result, "quarantined")
 
     async def test_passes_correct_parameters(self) -> None:
         """Parameters are passed in the correct order to the atomic SQL."""
-        pool = make_mock_pool(
-            fetchrow_result={
-                "status": "failing",
-                "failure_count": 1,
-                "retry_after": None,
-            },
-        )
+        pool = make_mock_pool(transaction=True)
+        pool.acquired_connection.fetchrow.side_effect = [
+            _audit_snapshot_row(status="active"),
+            _failure_update_row(),
+            _audit_snapshot_row(
+                status="failing",
+                failure_count=1,
+                status_reason="system_collector_error",
+            ),
+        ]
         store = FeedStore(pool)
 
         await store.report_feed_failure(
             _FEED_ID,
             _WORKER_ID,
             1,
+            **_runtime_prior_kwargs(),
             reason="ffmpeg_exit_1",
             status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
         )
 
-        args = pool.fetchrow.call_args[0]
+        args = pool.acquired_connection.fetchrow.await_args_list[1].args
         self.assertIs(args[0], feed_queries.REPORT_FAILURE_SQL)
         self.assertEqual(
             args[1:],
@@ -1161,23 +1239,27 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """Omitted status_reason lets SQL apply the compatibility fallback."""
-        pool = make_mock_pool(
-            fetchrow_result={
-                "status": "failing",
-                "failure_count": 1,
-                "retry_after": None,
-            },
-        )
+        pool = make_mock_pool(transaction=True)
+        pool.acquired_connection.fetchrow.side_effect = [
+            _audit_snapshot_row(status="active"),
+            _failure_update_row(),
+            _audit_snapshot_row(
+                status="failing",
+                failure_count=1,
+                status_reason="system_unexpected_error",
+            ),
+        ]
         store = FeedStore(pool)
 
         await store.report_feed_failure(
             _FEED_ID,
             _WORKER_ID,
             1,
+            **_runtime_prior_kwargs(),
             reason="raw",
         )
 
-        args = pool.fetchrow.call_args[0]
+        args = pool.acquired_connection.fetchrow.await_args_list[1].args
         self.assertIsNone(args[-2])
         self.assertEqual(args[-1], "raw")
 
@@ -1185,13 +1267,16 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """Long reasons are capped only before database writes."""
-        pool = make_mock_pool(
-            fetchrow_result={
-                "status": "failing",
-                "failure_count": 1,
-                "retry_after": None,
-            },
-        )
+        pool = make_mock_pool(transaction=True)
+        pool.acquired_connection.fetchrow.side_effect = [
+            _audit_snapshot_row(status="active"),
+            _failure_update_row(),
+            _audit_snapshot_row(
+                status="failing",
+                failure_count=1,
+                status_reason="system_unexpected_error",
+            ),
+        ]
         store = FeedStore(pool)
         long_reason = "x" * (quarantine_reason.MAX_QUARANTINE_REASON_LENGTH + 1)
 
@@ -1199,10 +1284,13 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
             _FEED_ID,
             _WORKER_ID,
             1,
+            **_runtime_prior_kwargs(),
             reason=long_reason,
         )
 
-        reason_arg = pool.fetchrow.call_args[0][-1]
+        reason_arg = pool.acquired_connection.fetchrow.await_args_list[1].args[
+            -1
+        ]
         self.assertEqual(
             len(reason_arg),
             quarantine_reason.MAX_QUARANTINE_REASON_LENGTH,
@@ -1213,23 +1301,29 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """Credential-like values are redacted before detail persistence."""
-        pool = make_mock_pool(
-            fetchrow_result={
-                "status": "failing",
-                "failure_count": 1,
-                "retry_after": None,
-            },
-        )
+        pool = make_mock_pool(transaction=True)
+        pool.acquired_connection.fetchrow.side_effect = [
+            _audit_snapshot_row(status="active"),
+            _failure_update_row(),
+            _audit_snapshot_row(
+                status="failing",
+                failure_count=1,
+                status_reason="system_unexpected_error",
+            ),
+        ]
         store = FeedStore(pool)
 
         await store.report_feed_failure(
             _FEED_ID,
             _WORKER_ID,
             1,
+            **_runtime_prior_kwargs(),
             reason="Authorization: Bearer abc.def password=hunter2",
         )
 
-        detail_arg = pool.fetchrow.call_args[0][-1]
+        detail_arg = pool.acquired_connection.fetchrow.await_args_list[1].args[
+            -1
+        ]
         self.assertNotIn("abc.def", detail_arg)
         self.assertNotIn("hunter2", detail_arg)
         self.assertIn("[redacted]", detail_arg)
@@ -1243,13 +1337,16 @@ class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
         retry_after = datetime.datetime(
             2026, 6, 14, 12, 15, tzinfo=datetime.UTC
         )
-        pool = make_mock_pool(
-            fetchrow_result={
-                "status": "failing",
-                "failure_count": 0,
-                "retry_after": retry_after,
-            },
-        )
+        pool = make_mock_pool(transaction=True)
+        pool.acquired_connection.fetchrow.side_effect = [
+            _audit_snapshot_row(status="active"),
+            _failure_update_row(failure_count=0, retry_after=retry_after),
+            _audit_snapshot_row(
+                status="failing",
+                failure_count=0,
+                status_reason="pipeline_publish_after_bookmark_failed",
+            ),
+        ]
         store = FeedStore(pool)
 
         result = await store.release_non_budgeted_failure(
@@ -1260,6 +1357,7 @@ class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
             status_reason=(
                 FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
             ),
+            **_runtime_prior_kwargs(),
         )
 
         self.assertEqual(result, "failing")
@@ -1269,7 +1367,11 @@ class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
         retry_after = datetime.datetime(
             2026, 6, 14, 12, 15, tzinfo=datetime.UTC
         )
-        pool = make_mock_pool(fetchrow_result=None)
+        pool = make_mock_pool(transaction=True)
+        pool.acquired_connection.fetchrow.side_effect = [
+            _audit_snapshot_row(status="active"),
+            None,
+        ]
         store = FeedStore(pool)
 
         result = await store.release_non_budgeted_failure(
@@ -1278,22 +1380,27 @@ class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
             1,
             retry_after=retry_after,
             status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            **_runtime_prior_kwargs(),
         )
 
         self.assertIsNone(result)
+        pool.acquired_connection.execute.assert_not_awaited()
 
     async def test_passes_correct_parameters(self) -> None:
         """Parameters are passed in the correct order."""
         retry_after = datetime.datetime(
             2026, 6, 14, 12, 15, tzinfo=datetime.UTC
         )
-        pool = make_mock_pool(
-            fetchrow_result={
-                "status": "failing",
-                "failure_count": 0,
-                "retry_after": retry_after,
-            },
-        )
+        pool = make_mock_pool(transaction=True)
+        pool.acquired_connection.fetchrow.side_effect = [
+            _audit_snapshot_row(status="active"),
+            _failure_update_row(failure_count=0, retry_after=retry_after),
+            _audit_snapshot_row(
+                status="failing",
+                failure_count=0,
+                status_reason="source_offline",
+            ),
+        ]
         store = FeedStore(pool)
 
         await store.release_non_budgeted_failure(
@@ -1302,9 +1409,10 @@ class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
             1,
             retry_after=retry_after,
             status_reason=FeedStatusReason.SOURCE_OFFLINE,
+            **_runtime_prior_kwargs(),
         )
 
-        args = pool.fetchrow.call_args[0]
+        args = pool.acquired_connection.fetchrow.await_args_list[1].args
         self.assertIs(args[0], feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL)
         self.assertEqual(
             args[1:],
@@ -1323,13 +1431,16 @@ class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
         retry_after = datetime.datetime(
             2026, 6, 14, 12, 15, tzinfo=datetime.UTC
         )
-        pool = make_mock_pool(
-            fetchrow_result={
-                "status": "failing",
-                "failure_count": 0,
-                "retry_after": retry_after,
-            },
-        )
+        pool = make_mock_pool(transaction=True)
+        pool.acquired_connection.fetchrow.side_effect = [
+            _audit_snapshot_row(status="active"),
+            _failure_update_row(failure_count=0, retry_after=retry_after),
+            _audit_snapshot_row(
+                status="failing",
+                failure_count=0,
+                status_reason="source_offline",
+            ),
+        ]
         store = FeedStore(pool)
 
         await store.release_non_budgeted_failure(
@@ -1338,12 +1449,312 @@ class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
             1,
             retry_after=retry_after,
             status_reason=FeedStatusReason.SOURCE_OFFLINE,
+            **_runtime_prior_kwargs(),
             reason="api_key=sk-testvalue123",
         )
 
-        detail_arg = pool.fetchrow.call_args[0][-1]
+        detail_arg = pool.acquired_connection.fetchrow.await_args_list[1].args[
+            -1
+        ]
         self.assertNotIn("sk-testvalue123", detail_arg)
         self.assertEqual(detail_arg, "api_key=[redacted]")
+
+
+class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
+    """Tests for storage-owned async runtime audit event gates."""
+
+    async def test_first_abnormal_failure_emits_failure_reported(self) -> None:
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [
+            _audit_snapshot_row(status="active"),
+            _failure_update_row(),
+            _audit_snapshot_row(
+                status="failing",
+                failure_count=1,
+                status_reason="system_collector_error",
+                status_reason_detail="collector failed",
+            ),
+        ]
+        conn.fetchval.return_value = 7
+        store = FeedStore(pool)
+
+        result = await store.report_feed_failure(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            **_runtime_prior_kwargs(),
+            reason="collector failed",
+            status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        )
+
+        self.assertEqual(result, "failing")
+        audit_args = _audit_insert_calls(conn)[0]
+        self.assertEqual(audit_args[4], "feed.failure_reported")
+        self.assertEqual(audit_args[5], _COLLECTOR_RUNTIME_ACTOR_ID)
+        before_values = json.loads(audit_args[10])
+        after_values = json.loads(audit_args[11])
+        metadata = json.loads(audit_args[12])
+        self.assertEqual(before_values["status"], "active")
+        self.assertEqual(after_values["status"], "failing")
+        self.assertEqual(metadata["previous_status"], "active")
+        self.assertEqual(metadata["previous_failure_count"], 0)
+
+    async def test_same_combo_retry_emits_no_event(self) -> None:
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [
+            _audit_snapshot_row(
+                status="active",
+                failure_count=1,
+                status_reason="system_collector_error",
+            ),
+            _failure_update_row(failure_count=2),
+            _audit_snapshot_row(
+                status="failing",
+                failure_count=2,
+                status_reason="system_collector_error",
+            ),
+        ]
+        store = FeedStore(pool)
+
+        result = await store.report_feed_failure(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            **_runtime_prior_kwargs(
+                previous_status=FeedStatus.FAILING,
+                previous_failure_count=1,
+                previous_status_reason=(
+                    FeedStatusReason.SYSTEM_COLLECTOR_ERROR
+                ),
+            ),
+            reason="new detail only",
+            status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        )
+
+        self.assertEqual(result, "failing")
+        conn.fetchval.assert_not_awaited()
+        self.assertEqual(_audit_insert_calls(conn), [])
+
+    async def test_reason_change_emits_failure_reported(self) -> None:
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [
+            _audit_snapshot_row(
+                status="active",
+                failure_count=1,
+                status_reason="system_authentication_failed",
+            ),
+            _failure_update_row(failure_count=2),
+            _audit_snapshot_row(
+                status="failing",
+                failure_count=2,
+                status_reason="system_configuration_invalid",
+            ),
+        ]
+        conn.fetchval.return_value = 8
+        store = FeedStore(pool)
+
+        await store.report_feed_failure(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            **_runtime_prior_kwargs(
+                previous_status=FeedStatus.FAILING,
+                previous_failure_count=1,
+                previous_status_reason=(
+                    FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED
+                ),
+            ),
+            status_reason=FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        )
+
+        audit_args = _audit_insert_calls(conn)[0]
+        self.assertEqual(audit_args[4], "feed.failure_reported")
+        metadata = json.loads(audit_args[12])
+        self.assertEqual(
+            metadata["previous_status_reason"],
+            "system_authentication_failed",
+        )
+
+    async def test_threshold_crossing_emits_only_quarantined(self) -> None:
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [
+            _audit_snapshot_row(
+                status="active",
+                failure_count=4,
+                status_reason="source_unreachable",
+            ),
+            _failure_update_row(status="quarantined", failure_count=5),
+            _audit_snapshot_row(
+                status="quarantined",
+                failure_count=5,
+                status_reason="source_unreachable",
+            ),
+        ]
+        conn.fetchval.return_value = 9
+        store = FeedStore(pool)
+
+        await store.report_feed_failure(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            **_runtime_prior_kwargs(
+                previous_status=FeedStatus.FAILING,
+                previous_failure_count=4,
+                previous_status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+            ),
+            status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+
+        audit_actions = [args[4] for args in _audit_insert_calls(conn)]
+        self.assertEqual(audit_actions, ["feed.quarantined"])
+
+    async def test_successful_progress_from_failing_emits_recovered(
+        self,
+    ) -> None:
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [
+            _audit_snapshot_row(
+                status="active",
+                failure_count=2,
+                status_reason="source_unreachable",
+            ),
+            _audit_snapshot_row(status="active", failure_count=0),
+        ]
+        conn.execute.side_effect = ["UPDATE 1", "INSERT 0 1"]
+        conn.fetchval.return_value = 10
+        store = FeedStore(pool)
+
+        result = await store.update_feed_progress(
+            _FEED_ID,
+            _WORKER_ID,
+            "gs://bucket/path/file.ogg",
+            1,
+            None,
+            **_runtime_prior_kwargs(
+                previous_status=FeedStatus.FAILING,
+                previous_failure_count=2,
+                previous_status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+            ),
+        )
+
+        self.assertTrue(result)
+        audit_args = _audit_insert_calls(conn)[0]
+        self.assertEqual(audit_args[4], "feed.recovered")
+        after_values = json.loads(audit_args[11])
+        self.assertEqual(after_values["status"], "active")
+        self.assertIsNone(after_values["status_reason"])
+
+    async def test_clean_progress_emits_no_event(self) -> None:
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [
+            _audit_snapshot_row(status="active"),
+            _audit_snapshot_row(status="active", failure_count=0),
+        ]
+        conn.execute.return_value = "UPDATE 1"
+        store = FeedStore(pool)
+
+        result = await store.update_feed_progress(
+            _FEED_ID,
+            _WORKER_ID,
+            "gs://bucket/path/file.ogg",
+            1,
+            None,
+            **_runtime_prior_kwargs(previous_status=FeedStatus.ACTIVE),
+        )
+
+        self.assertTrue(result)
+        conn.fetchval.assert_not_awaited()
+        self.assertEqual(_audit_insert_calls(conn), [])
+
+    async def test_clean_source_observation_emits_no_event(self) -> None:
+        resume_position = datetime.datetime(2026, 6, 8, tzinfo=datetime.UTC)
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [
+            _audit_snapshot_row(status="active"),
+            {
+                "id": _FEED_ID,
+                "current_worker": _WORKER_ID,
+                "current_status": "active",
+                "current_fencing_token": 1,
+                "recorded": True,
+            },
+            _audit_snapshot_row(status="active", failure_count=0),
+        ]
+        store = FeedStore(pool)
+
+        result = await store.record_source_observation(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            resume_position,
+            **_runtime_prior_kwargs(previous_status=FeedStatus.ACTIVE),
+        )
+
+        self.assertTrue(result["recorded"])
+        conn.fetchval.assert_not_awaited()
+        self.assertEqual(_audit_insert_calls(conn), [])
+
+    async def test_lease_style_noop_emits_no_event(self) -> None:
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [
+            _audit_snapshot_row(status="active"),
+            {
+                "id": _FEED_ID,
+                "current_worker": _WORKER_ID,
+                "current_status": "active",
+                "current_fencing_token": 1,
+                "recorded": False,
+            },
+        ]
+        store = FeedStore(pool)
+
+        result = await store.record_source_observation(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            None,
+            **_runtime_prior_kwargs(
+                previous_status=FeedStatus.FAILING,
+                previous_failure_count=1,
+                previous_status_reason=FeedStatusReason.SOURCE_OFFLINE,
+            ),
+        )
+
+        self.assertFalse(result["recorded"])
+        conn.fetchval.assert_not_awaited()
+        self.assertEqual(_audit_insert_calls(conn), [])
+
+    async def test_failed_fenced_progress_emits_no_event(self) -> None:
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.return_value = _audit_snapshot_row(status="active")
+        conn.execute.return_value = "UPDATE 0"
+        store = FeedStore(pool)
+
+        result = await store.update_feed_progress(
+            _FEED_ID,
+            _WORKER_ID,
+            "gs://bucket/path/file.ogg",
+            1,
+            None,
+            **_runtime_prior_kwargs(
+                previous_status=FeedStatus.FAILING,
+                previous_failure_count=1,
+                previous_status_reason=FeedStatusReason.SOURCE_OFFLINE,
+            ),
+        )
+
+        self.assertFalse(result)
+        conn.fetchval.assert_not_awaited()
+        self.assertEqual(_audit_insert_calls(conn), [])
 
 
 class TestReleaseFeed(unittest.IsolatedAsyncioTestCase):
@@ -1558,36 +1969,51 @@ class TestReportFeedFailureWithThreshold(unittest.IsolatedAsyncioTestCase):
 
     async def test_custom_threshold_passed_to_sql(self) -> None:
         """Custom failure_threshold is passed as $3 parameter."""
-        pool = make_mock_pool(
-            fetchrow_result={
-                "status": "failing",
-                "failure_count": 1,
-                "retry_after": None,
-            },
-        )
+        pool = make_mock_pool(transaction=True)
+        pool.acquired_connection.fetchrow.side_effect = [
+            _audit_snapshot_row(status="active"),
+            _failure_update_row(),
+            _audit_snapshot_row(
+                status="failing",
+                failure_count=1,
+                status_reason="system_unexpected_error",
+            ),
+        ]
         store = FeedStore(pool)
 
         await store.report_feed_failure(
-            _FEED_ID, _WORKER_ID, 1, failure_threshold=5
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            failure_threshold=5,
+            **_runtime_prior_kwargs(),
         )
 
-        args = pool.fetchrow.call_args[0]
+        args = pool.acquired_connection.fetchrow.await_args_list[1].args
         self.assertEqual(args[3], 5)  # $3 = threshold
 
     async def test_default_threshold_is_5(self) -> None:
         """Default threshold is 5."""
-        pool = make_mock_pool(
-            fetchrow_result={
-                "status": "failing",
-                "failure_count": 1,
-                "retry_after": None,
-            },
-        )
+        pool = make_mock_pool(transaction=True)
+        pool.acquired_connection.fetchrow.side_effect = [
+            _audit_snapshot_row(status="active"),
+            _failure_update_row(),
+            _audit_snapshot_row(
+                status="failing",
+                failure_count=1,
+                status_reason="system_unexpected_error",
+            ),
+        ]
         store = FeedStore(pool)
 
-        await store.report_feed_failure(_FEED_ID, _WORKER_ID, 1)
+        await store.report_feed_failure(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            **_runtime_prior_kwargs(),
+        )
 
-        args = pool.fetchrow.call_args[0]
+        args = pool.acquired_connection.fetchrow.await_args_list[1].args
         self.assertEqual(args[3], 5)
 
 
