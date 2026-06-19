@@ -1,4 +1,9 @@
-"""SQL queries for feed storage operations."""
+"""SQL queries for async VM feed storage operations.
+
+These queries use asyncpg ``$N`` parameters and VM lease fencing fields such as
+``worker_id`` and ``fencing_token``. Keep lifecycle SQL explicit here so
+quarantine-sensitive transitions remain locally auditable.
+"""
 
 from __future__ import annotations
 

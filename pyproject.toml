@@ -227,6 +227,9 @@ known-first-party = ["backend", "local_dev"]
   "S113",   # requests.* require timeout=
   "T201",   # `print()` found
 ]
+".github/scripts/**.py" = [
+  "INP001", # Implicit namespaces (no __init__.py needed for standalone scripts)
+]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
