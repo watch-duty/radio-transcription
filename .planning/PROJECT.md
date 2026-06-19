@@ -1,0 +1,155 @@
+# Feed Audit Events V1
+
+## What This Is
+
+Feed Audit Events V1 adds durable, queryable history for meaningful feed
+mutations in the radio transcription backend. It is for Watch Duty engineers
+and future admin tooling that need to answer what happened to a feed, when it
+happened, what changed, and whether the cause was a human action or system
+runtime behavior.
+
+This project is not full event sourcing. The current `feeds` row remains the
+authoritative current-state model; the new work adds an append-only audit
+history and a cleaner current diagnostic detail field.
+
+## Core Value
+
+Operators can reconstruct meaningful feed lifecycle and configuration changes
+from durable backend data instead of relying on short-lived logs.
+
+## Requirements
+
+### Validated
+
+- ✓ Existing ingestion runtime leases feeds and manages current feed status
+  through `unclaimed`, `active`, `failing`, `quarantined`, and `deactivated`
+  states — existing
+- ✓ Existing feed failure policy records retryable failures, failure counts,
+  retry windows, status reasons, and quarantine transitions in AlloyDB —
+  existing
+- ✓ Existing feed service supports feed create, update, deactivate, reset,
+  delete, and list/read operations through FastAPI and storage-layer methods —
+  existing
+- ✓ Existing UI and BFF consume feed status and status reason fields for
+  operator-facing feed views — existing
+- ✓ Existing quarantine telemetry emits structured logs and optional metrics
+  when feeds transition to `quarantined` — existing
+- ✓ Existing AlloyDB migration workflow supports ordered ingestion schema
+  changes and pg_cron maintenance jobs — existing
+
+### Active
+
+- [ ] Persist one append-only audit event for each meaningful feed mutation:
+  create, update, deactivate, reset, delete, failure reported, quarantined, and
+  recovered.
+- [ ] Capture enough event context to explain the mutation: feed identity,
+  per-feed sequence, action, occurred time, actor, status reason, bounded human
+  detail, and before/after values.
+- [ ] Add `status_reason_detail` as the canonical bounded diagnostic detail for
+  the current feed row while keeping `quarantine_reason` populated as a
+  compatibility alias for one release.
+- [ ] Write feed row mutations and their audit events transactionally so the
+  current state and history cannot diverge on success.
+- [ ] Retain audit history for 18 months and enforce retention in v1.
+- [ ] Document the Feed Audit Event contract and update repository terminology
+  so future WD delivery and admin timeline work builds on the same model.
+- [ ] Verify storage, service, API compatibility, failure/quarantine, recovery,
+  deletion, and retention behavior with focused automated tests.
+
+### Out of Scope
+
+- Watch Duty backend webhook delivery — GOO-431/GOO-629 need the contract, but
+  delivery workers, signatures, retries, and receiver integration are deferred.
+- Admin timeline read APIs and frontend UI — GOO-574 can consume the durable
+  data later, but v1 is write-only.
+- Full feed event sourcing — the current `feeds` table remains the source of
+  current state.
+- Routine worker lease churn — `active`/`unclaimed` lease handoffs are
+  scheduler mechanics and should not pollute the default audit history.
+- Historical baseline/backfill events for existing feeds — no synthetic
+  `snapshot_initialized` events in v1.
+- Reworking quarantine policy thresholds or source-specific failure
+  classification — v1 records the existing policy outcomes.
+
+## Context
+
+The Linear tickets describe one broader product problem rather than three
+separate implementation tasks. GOO-557 asks for per-feed history that survives
+log retention and includes who changed fields, not just status-machine
+transitions. GOO-431 and GOO-629 point toward downstream propagation to the
+Watch Duty backend, but the first useful step is to establish a durable backend
+event contract that can later be delivered.
+
+The current implementation stores the latest feed state in AlloyDB and emits
+quarantine telemetry only when a feed crosses into `quarantined`. That is useful
+for monitoring but insufficient for support and forensic questions because logs
+are short-lived, not feed-history-shaped, and not available to future admin UI
+queries.
+
+The feed lifecycle also mixes product-significant state with worker scheduling.
+`active` and `unclaimed` are lease states; `failing`, `quarantined`, and
+`deactivated` are more useful as operator-facing lifecycle outcomes. Audit
+events should therefore focus on meaningful changes and explicit causes, while
+leaving heartbeat-scale scheduler noise out of the default event stream.
+
+The most important modeling decision from the design review is to avoid storing
+an HTTP-shaped webhook payload as canonical data. V1 should store domain audit
+event data. Future delivery can derive webhook payloads from the same durable
+events without duplicating the audit ledger.
+
+## Constraints
+
+- **Brownfield architecture**: Preserve the existing current-state `feeds`
+  model, storage-layer SQL patterns, and FastAPI service boundaries — the
+  ingestion runtime already depends on current-state lease queries and fenced
+  writes.
+- **Database consistency**: Feed mutations and audit inserts must commit or
+  roll back together — audit history is only useful if it cannot drift from
+  successful state changes.
+- **Compatibility**: Existing consumers of `quarantine_reason` must keep
+  working during the v1 rollout — add `status_reason_detail` without removing
+  the old field immediately.
+- **Signal quality**: Do not audit routine heartbeat or lease churn by default
+  — the audit table must stay understandable and affordable.
+- **Retention**: Keep feed audit events for 18 months — this is the v1 product
+  target and should be enforced, not just documented.
+- **Security**: Do not persist secrets, tokens, raw credential-bearing
+  exception strings, or unbounded provider responses in diagnostic detail —
+  persisted reason text must be bounded and scrubbed where needed.
+- **Delivery boundary**: WD backend delivery is a later phase — v1 schema should
+  support it without introducing dispatcher state or webhook attempts yet.
+
+## Key Decisions
+
+| Decision | Rationale | Outcome |
+|----------|-----------|---------|
+| Use the canonical term Feed Audit Event | Linear asks for audit history broader than lifecycle webhook payloads | — Pending |
+| Name the durable table `feed_audit_events` | Keeps v1 focused on auditability, not delivery mechanics | — Pending |
+| Keep `feeds` as current-state source of truth | Avoids an invasive event-sourcing rewrite of lease and failure paths | — Pending |
+| Store `before_values` and `after_values` JSON objects | Directly answers what changed without forcing consumers to diff rows | — Pending |
+| Add `status_reason_detail` and keep `quarantine_reason` as an alias for one release | Generalizes diagnostic detail beyond quarantine while preserving compatibility | — Pending |
+| Emit one `feed.quarantined` event when threshold crossing occurs | Avoids duplicate `failure_reported` plus `quarantined` events for the same outcome | — Pending |
+| Treat all persisted non-quarantine failures as audit-worthy | Operators need repeated failure context, not only terminal quarantine state | — Pending |
+| Do not audit routine lease churn in v1 | Lease handoffs are high-noise scheduler mechanics, not admin-facing history | — Pending |
+| Do not create synthetic baseline events for existing feeds | Avoids misleading history that did not actually happen | — Pending |
+| Defer WD webhook delivery and admin timeline reads | Establish durable data first; downstream propagation and UI can build on it later | — Pending |
+
+## Evolution
+
+This document evolves at phase transitions and milestone boundaries.
+
+**After each phase transition** (via `$gsd-transition`):
+1. Requirements invalidated? → Move to Out of Scope with reason
+2. Requirements validated? → Move to Validated with phase reference
+3. New requirements emerged? → Add to Active
+4. Decisions to log? → Add to Key Decisions
+5. "What This Is" still accurate? → Update if drifted
+
+**After each milestone** (via `$gsd-complete-milestone`):
+1. Full review of all sections
+2. Core Value check — still the right priority?
+3. Audit Out of Scope — reasons still valid?
+4. Update Context with current state
+
+---
+*Last updated: 2026-06-19 after initialization*
