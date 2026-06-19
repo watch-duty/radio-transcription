@@ -34,6 +34,9 @@ import { AuthenticatedRequest } from '../authentication.js';
 import { FEEDS_STORE_API_URL } from '../config.js';
 import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
 
+const INTERNAL_ACTOR_ID_HEADER = 'X-WD-Actor-Id';
+const ADMIN_GOOGLE_ACTOR_PREFIX = 'user:google:';
+
 interface BaseFeedBackend {
   name: string;
   source_type: SourceType;
@@ -164,6 +167,32 @@ function convertFeedUpdate(update: FeedUpdate): FeedUpdateBackend {
   };
 }
 
+function getAdminActorId(request: AuthenticatedRequest): string {
+  if (!request.user?.isAdmin) {
+    throw new HttpError(403, 'Forbidden');
+  }
+
+  const rawSub = request.user.sub;
+  if (typeof rawSub !== 'string') {
+    throw new HttpError(403, 'Forbidden');
+  }
+
+  const sub = rawSub.trim();
+  if (!sub || /\s/.test(rawSub)) {
+    throw new HttpError(403, 'Forbidden');
+  }
+
+  return `${ADMIN_GOOGLE_ACTOR_PREFIX}${sub}`;
+}
+
+function getAdminActorHeaders(
+  request: AuthenticatedRequest
+): Record<string, string> {
+  return {
+    [INTERNAL_ACTOR_ID_HEADER]: getAdminActorId(request),
+  };
+}
+
 @Route('api/v1/feeds')
 @Tags('Feeds')
 @Response(401, 'Unauthorized')
@@ -256,15 +285,14 @@ export class FeedsController extends Controller {
     @Request() request: AuthenticatedRequest,
     @Body() requestBody: FeedCreate
   ): Promise<Feed> {
-    if (!request.user?.isAdmin) {
-      throw new HttpError(403, 'Forbidden');
-    }
+    const actorHeaders = getAdminActorHeaders(request);
 
     try {
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       const response = await client.request<FeedBackend>({
         url: FEEDS_STORE_API_URL,
         method: 'POST',
+        headers: actorHeaders,
         data: convertFeedCreate(requestBody),
       });
       return convertFeedBackend(response.data);
@@ -290,15 +318,14 @@ export class FeedsController extends Controller {
     @Path() feedId: string,
     @Body() requestBody: FeedUpdate
   ): Promise<Feed> {
-    if (!request.user?.isAdmin) {
-      throw new HttpError(403, 'Forbidden');
-    }
+    const actorHeaders = getAdminActorHeaders(request);
 
     try {
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       const response = await client.request<FeedBackend>({
         url: `${FEEDS_STORE_API_URL}/${feedId}`,
         method: 'PUT',
+        headers: actorHeaders,
         data: convertFeedUpdate(requestBody),
       });
       return convertFeedBackend(response.data);
@@ -322,15 +349,14 @@ export class FeedsController extends Controller {
     @Path() feedId: string,
     @Request() request: AuthenticatedRequest
   ): Promise<Feed> {
-    if (!request.user?.isAdmin) {
-      throw new HttpError(403, 'Forbidden');
-    }
+    const actorHeaders = getAdminActorHeaders(request);
 
     const client = await getServiceClient(FEEDS_STORE_API_URL);
     try {
       const response = await client.request<FeedBackend>({
         url: `${FEEDS_STORE_API_URL}/${feedId}/reset`,
         method: 'POST',
+        headers: actorHeaders,
       });
       return convertFeedBackend(response.data);
     } catch (error: unknown) {
@@ -358,15 +384,14 @@ export class FeedsController extends Controller {
     @Path() feedId: string,
     @Request() request: AuthenticatedRequest
   ): Promise<void> {
-    if (!request.user?.isAdmin) {
-      throw new HttpError(403, 'Forbidden');
-    }
+    const actorHeaders = getAdminActorHeaders(request);
 
     const client = await getServiceClient(FEEDS_STORE_API_URL);
     try {
       await client.request({
         url: `${FEEDS_STORE_API_URL}/${feedId}/deactivate`,
         method: 'POST',
+        headers: actorHeaders,
       });
     } catch (error: unknown) {
       const { status, message } = handleBackendError(
@@ -393,15 +418,14 @@ export class FeedsController extends Controller {
     @Path() feedId: string,
     @Request() request: AuthenticatedRequest
   ): Promise<void> {
-    if (!request.user?.isAdmin) {
-      throw new HttpError(403, 'Forbidden');
-    }
+    const actorHeaders = getAdminActorHeaders(request);
 
     const client = await getServiceClient(FEEDS_STORE_API_URL);
     try {
       await client.request({
         url: `${FEEDS_STORE_API_URL}/${feedId}`,
         method: 'DELETE',
+        headers: actorHeaders,
       });
     } catch (error: unknown) {
       const { status, message } = handleBackendError(
