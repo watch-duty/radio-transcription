@@ -73,8 +73,8 @@ export class ListFeedsQueryParams {
   order?: 'asc' | 'desc';
   sourceTypes?: string;
   statuses?: string;
-  // Tag strings must be in the format of {"key": "<val>", "value": "<val>"}
-  tags?: string[];
+  // Tag string must be a JSON list: [{"key": "<val>", "value": "<val>"}]
+  tags?: string;
   name?: string;
 }
 
@@ -206,6 +206,26 @@ function appendValidatedLimit(
   queryParams.append('limit', limit.toString());
 }
 
+function appendNormalizedTags(
+  queryParams: URLSearchParams,
+  tags: string | string[] | undefined
+): void {
+  if (!tags) return;
+
+  const rawTags = Array.isArray(tags) ? tags : [tags];
+  if (rawTags.length === 0) return;
+
+  try {
+    const parsedTags = rawTags.flatMap((rawTag) => {
+      const parsed = JSON.parse(rawTag) as unknown;
+      return Array.isArray(parsed) ? parsed : [parsed];
+    });
+    queryParams.append('tags', JSON.stringify(parsedTags));
+  } catch {
+    throw new HttpError(400, 'tags must be valid JSON');
+  }
+}
+
 @Route('api/v1/feeds')
 @Tags('Feeds')
 @Response(401, 'Unauthorized')
@@ -230,11 +250,7 @@ export class FeedsController extends Controller {
       if (query?.statuses) {
         queryParams.append('statuses', query.statuses);
       }
-      if (query?.tags) {
-        for (const tag of query.tags) {
-          queryParams.append('tags', tag);
-        }
-      }
+      appendNormalizedTags(queryParams, query?.tags);
       if (query?.name) {
         queryParams.append('name', query.name);
       }
