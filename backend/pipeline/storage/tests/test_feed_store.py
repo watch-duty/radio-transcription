@@ -2378,26 +2378,86 @@ class TestListFeeds(unittest.IsolatedAsyncioTestCase):
 class TestDeactivateFeed(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.deactivate_feed."""
 
-    async def test_delete_succeeds(self) -> None:
-        """True is returned when a feed is deactivated."""
-        pool = make_mock_pool(execute_result="UPDATE 1")
+    async def test_success_writes_feed_deactivated_audit_event(self) -> None:
+        """Successful deactivation emits one feed.deactivated audit row."""
+        before = _audit_snapshot_row(
+            status="active",
+            status_reason_detail="before deactivation detail",
+        )
+        after = _audit_snapshot_row(
+            status="deactivated",
+            status_reason_detail="after deactivation detail",
+        )
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [before, after]
+        conn.execute.side_effect = ["UPDATE 1", "INSERT 0 1"]
+        conn.fetchval.return_value = 3
         store = FeedStore(pool)
 
-        result = await store.deactivate_feed(_FEED_ID)
-
-        self.assertTrue(result)
-        pool.execute.assert_called_once_with(
-            feed_queries.DEACTIVATE_FEED_SQL, _FEED_ID
+        result = await store.deactivate_feed(
+            _FEED_ID,
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
         )
 
-    async def test_delete_fails_when_not_found(self) -> None:
-        """False is returned when no feed is deactivated."""
-        pool = make_mock_pool(execute_result="UPDATE 0")
+        self.assertTrue(result)
+        self.assertEqual(
+            [call.args[0] for call in conn.fetchrow.await_args_list],
+            [
+                feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
+                feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
+            ],
+        )
+        self.assertEqual(
+            conn.execute.await_args_list[0].args,
+            (feed_queries.DEACTIVATE_FEED_SQL, _FEED_ID),
+        )
+        conn.fetchval.assert_awaited_once_with(
+            feed_queries.ALLOCATE_FEED_AUDIT_SEQUENCE_SQL,
+            _FEED_ID,
+        )
+        audit_args = conn.execute.await_args_list[1].args
+        self.assertEqual(audit_args[0], feed_queries.INSERT_FEED_AUDIT_EVENT_SQL)
+        self.assertEqual(
+            audit_args[1:10],
+            (
+                _FEED_ID,
+                "My Feed",
+                "bcfy_feeds",
+                "feed.deactivated",
+                _FEEDS_SERVICE_ACTOR_ID,
+                3,
+                "deactivated",
+                None,
+                "after deactivation detail",
+            ),
+        )
+        before_values = json.loads(audit_args[10])
+        after_values = json.loads(audit_args[11])
+        self.assertEqual(before_values["status"], "active")
+        self.assertEqual(after_values["status"], "deactivated")
+        self.assertEqual(before_values["feed_properties.source_feed_id"], "123")
+        self.assertNotIn("worker_id", before_values)
+        self.assertNotIn("last_heartbeat", after_values)
+
+    async def test_missing_feed_returns_false_without_audit(self) -> None:
+        """Missing deactivate target does not allocate sequence or audit."""
+        pool = make_mock_pool(transaction=True)
         store = FeedStore(pool)
 
-        result = await store.deactivate_feed(_FEED_ID)
+        result = await store.deactivate_feed(
+            _FEED_ID,
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
+        )
 
         self.assertFalse(result)
+        conn = pool.acquired_connection
+        conn.fetchrow.assert_awaited_once_with(
+            feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
+            _FEED_ID,
+        )
+        conn.fetchval.assert_not_awaited()
+        conn.execute.assert_not_awaited()
 
 
 class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
@@ -2428,27 +2488,89 @@ class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
 class TestResetFeed(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.reset_feed."""
 
-    async def test_reset_succeeds(self) -> None:
-        """The feed is reset successfully."""
-        row = _full_feed_row(status="quarantined", failure_count=5)
-        pool = make_mock_pool(fetchrow_result=row)
+    async def test_success_writes_feed_reset_audit_event(self) -> None:
+        """Successful reset emits one feed.reset audit row."""
+        before = _audit_snapshot_row(
+            status="quarantined",
+            failure_count=5,
+            status_reason="source_offline",
+            status_reason_detail="before reset detail",
+        )
+        reset_row = _full_feed_row(status="unclaimed", failure_count=0)
+        after = _audit_snapshot_row(
+            status="unclaimed",
+            failure_count=0,
+            status_reason_detail=None,
+        )
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [before, reset_row, after]
+        conn.execute.return_value = "INSERT 0 1"
+        conn.fetchval.return_value = 4
         store = FeedStore(pool)
 
-        result = await store.reset_feed(_FEED_ID)
-
-        self.assertIsNotNone(result)
-        pool.fetchrow.assert_called_once_with(
-            feed_queries.RESET_FEED_SQL, _FEED_ID
+        result = await store.reset_feed(
+            _FEED_ID,
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
         )
 
-    async def test_reset_fails_when_not_found(self) -> None:
-        """None is returned when no feed is found."""
-        pool = make_mock_pool(fetchrow_result=None)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["status"], FeedStatus.UNCLAIMED)
+        self.assertEqual(
+            [call.args[0] for call in conn.fetchrow.await_args_list],
+            [
+                feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
+                feed_queries.RESET_FEED_SQL,
+                feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
+            ],
+        )
+        conn.fetchval.assert_awaited_once_with(
+            feed_queries.ALLOCATE_FEED_AUDIT_SEQUENCE_SQL,
+            _FEED_ID,
+        )
+        audit_args = conn.execute.await_args.args
+        self.assertEqual(audit_args[0], feed_queries.INSERT_FEED_AUDIT_EVENT_SQL)
+        self.assertEqual(
+            audit_args[1:10],
+            (
+                _FEED_ID,
+                "My Feed",
+                "bcfy_feeds",
+                "feed.reset",
+                _FEEDS_SERVICE_ACTOR_ID,
+                4,
+                "unclaimed",
+                None,
+                None,
+            ),
+        )
+        before_values = json.loads(audit_args[10])
+        after_values = json.loads(audit_args[11])
+        self.assertEqual(before_values["status"], "quarantined")
+        self.assertEqual(before_values["failure_count"], 5)
+        self.assertEqual(after_values["status"], "unclaimed")
+        self.assertEqual(after_values["failure_count"], 0)
+        self.assertNotIn("worker_id", before_values)
+        self.assertNotIn("last_heartbeat", after_values)
+
+    async def test_missing_feed_returns_none_without_audit(self) -> None:
+        """Missing reset target does not allocate sequence or audit."""
+        pool = make_mock_pool(transaction=True)
         store = FeedStore(pool)
 
-        result = await store.reset_feed(_FEED_ID)
+        result = await store.reset_feed(
+            _FEED_ID,
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
+        )
 
         self.assertIsNone(result)
+        conn = pool.acquired_connection
+        conn.fetchrow.assert_awaited_once_with(
+            feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
+            _FEED_ID,
+        )
+        conn.fetchval.assert_not_awaited()
+        conn.execute.assert_not_awaited()
 
 
 if __name__ == "__main__":
