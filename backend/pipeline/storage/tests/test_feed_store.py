@@ -88,6 +88,10 @@ def _sql_without_comments(text: str) -> str:
     )
 
 
+def _normalized_sql(text: str) -> str:
+    return " ".join(_sql_without_comments(text).split())
+
+
 class TestStatusReasonMigrationContract(unittest.TestCase):
     """Contract tests for the Phase 1 status reason migration."""
 
@@ -349,6 +353,105 @@ class TestLastSpeechSegmentTimestampSqlProjection(unittest.TestCase):
             feed_queries.UPDATE_FEED_SQL,
         ):
             self.assertRegex(sql, r"\blast_speech_segment_timestamp\b")
+
+
+class TestFeedAuditSql(unittest.TestCase):
+    """Text-level contract tests for storage-owned audit SQL primitives."""
+
+    def test_snapshot_query_projects_maintained_allowlist(self) -> None:
+        sql = _sql_without_comments(
+            feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL
+        )
+
+        for token in (
+            "f.id",
+            "f.name",
+            "f.source_type",
+            "f.status",
+            "f.failure_count",
+            "f.retry_after",
+            "f.status_reason",
+            "f.status_reason_updated_at",
+            "f.status_reason_detail",
+            "f.quarantine_reason",
+            "f.last_bookmark_time",
+            "f.created_at",
+            'fp.source_feed_id AS "feed_properties.source_feed_id"',
+            'fp.tags AS "feed_properties.tags"',
+        ):
+            self.assertIn(token, sql)
+
+        self.assertIn("FROM feeds f", sql)
+        self.assertIn("JOIN feed_properties fp ON fp.feed_id = f.id", sql)
+        self.assertIn("WHERE f.id = $1", sql)
+        self.assertRegex(sql, r"\bFOR\s+UPDATE\b")
+
+    def test_snapshot_query_avoids_raw_and_noisy_fields(self) -> None:
+        sql = _sql_without_comments(
+            feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL
+        )
+
+        for forbidden in (
+            "SELECT f.*",
+            "SELECT fp.*",
+            "worker_id",
+            "fencing_token",
+            "last_heartbeat",
+            "last_processed_filename",
+            "unclaimed_since",
+        ):
+            self.assertNotIn(forbidden, sql)
+
+    def test_sequence_allocation_uses_counter_table_upsert(self) -> None:
+        sql = _normalized_sql(
+            feed_queries.ALLOCATE_FEED_AUDIT_SEQUENCE_SQL
+        )
+
+        self.assertIn(
+            "INSERT INTO feed_audit_event_sequences "
+            "(feed_id, next_sequence)",
+            sql,
+        )
+        self.assertIn("VALUES ($1, 2)", sql)
+        self.assertIn("ON CONFLICT (feed_id) DO UPDATE", sql)
+        self.assertIn(
+            "SET next_sequence = "
+            "feed_audit_event_sequences.next_sequence + 1",
+            sql,
+        )
+        self.assertIn("updated_at = NOW()", sql)
+        self.assertIn(
+            "RETURNING next_sequence - 1 AS feed_sequence",
+            sql,
+        )
+        self.assertNotIn("MAX(feed_sequence", sql)
+
+    def test_insert_audit_event_targets_storage_owned_columns(self) -> None:
+        sql = _normalized_sql(feed_queries.INSERT_FEED_AUDIT_EVENT_SQL)
+
+        for token in (
+            "INSERT INTO feed_audit_events",
+            "feed_id",
+            "feed_name",
+            "source_type",
+            "action",
+            "actor_id",
+            "feed_sequence",
+            "status",
+            "status_reason",
+            "status_reason_detail",
+            "before_values",
+            "after_values",
+            "metadata",
+            "$7::feed_status",
+            "$10::jsonb",
+            "$11::jsonb",
+            "COALESCE($12::jsonb, '{}'::jsonb)",
+        ):
+            self.assertIn(token, sql)
+
+        self.assertNotIn("event_payload", sql)
+        self.assertNotIn("MAX(feed_sequence", sql)
 
 
 class TestStatusReasonLifecycleIsolation(unittest.TestCase):
