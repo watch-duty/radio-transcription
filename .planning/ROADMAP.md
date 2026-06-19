@@ -75,8 +75,18 @@ Plans:
   3. Feed API responses expose `status_reason_detail` without breaking existing clients.
   4. Existing BFF/frontend feed status and status-reason behavior remains compatible while diagnostic-detail display moves from `quarantine_reason` to `status_reason_detail`.
   5. Actor attribution cannot be forged through untrusted request body fields.
-**Plans**: TBD
+**Plans**: 3 plans
 **UI hint**: yes
+
+Plans:
+**Wave 1**
+- [ ] 03-01-PLAN.md - Backend diagnostic detail service contract.
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 03-02-PLAN.md - BFF/frontend diagnostic detail migration.
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 03-03-PLAN.md - Trusted admin actor propagation.
 
 ### Phase 4: Runtime Event Integration
 **Goal**: Runtime and Echo paths produce the meaningful failure, quarantine, recovery, and no-noise audit behavior promised by v1.
@@ -111,6 +121,6 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 |-------|----------------|--------|-----------|
 | 1. Contract and Schema Foundation | 3/3 | Complete | 2026-06-19 |
 | 2. Transactional Storage Writes | 4/4 | Complete | 2026-06-19 |
-| 3. Service and Compatibility Surface | 0/TBD | Not started | - |
+| 3. Service and Compatibility Surface | 0/3 | Planned | - |
 | 4. Runtime Event Integration | 0/TBD | Not started | - |
 | 5. Retention and Verification Hardening | 0/TBD | Not started | - |
