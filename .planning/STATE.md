@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 4 context gathered
-last_updated: "2026-06-19T23:39:34.645Z"
-last_activity: 2026-06-19 -- Phase 04 execution started
+stopped_at: Completed 04-01-PLAN.md
+last_updated: "2026-06-19T23:58:28.040Z"
+last_activity: 2026-06-19
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 14
-  completed_plans: 10
-  percent: 71
+  completed_plans: 11
+  percent: 79
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-19)
 ## Current Position
 
 Phase: 04 (runtime-event-integration) — EXECUTING
-Plan: 1 of 4
-Status: Executing Phase 04
-Last activity: 2026-06-19 -- Phase 04 execution started
+Plan: 2 of 4
+Status: Ready to execute
+Last activity: 2026-06-19
 
-Progress: [████████__] 80%
+Progress: [████████░░] 79%
 
 ## Performance Metrics
 
@@ -61,6 +61,7 @@ Progress: [████████__] 80%
 | Phase 02-transactional-storage-writes P02 | 13 min | 3 tasks | 7 files |
 | Phase 02-transactional-storage-writes P03 | 7 min | 3 tasks | 5 files |
 | Phase 02-transactional-storage-writes P04 | 8 min | 3 tasks | 2 files |
+| Phase 04-runtime-event-integration P01 | 15 min | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -94,6 +95,9 @@ Recent decisions affecting current work:
 - [Phase 02-transactional-storage-writes]: Rollback integration tests force database actor-constraint failures. — This lets CI prove state, audit rows, and feed_audit_event_sequences allocation roll back together under real AlloyDB/PostgreSQL constraints.
 - [Phase 02-transactional-storage-writes]: Final hardening combines persisted integration assertions with storage-boundary unit scans. — The integration assertions verify actual audit rows for audited mutations, while unit scans guard explicit actor signatures, no parallel audited methods, and no service-side audit row construction.
 - [Phase 03-service-and-compatibility-surface]: Phase 3 is planned as three sequential waves. — Backend diagnostic detail service contract first, BFF/frontend diagnostic migration second, and trusted admin actor propagation third.
+- [Phase 04-runtime-event-integration]: Runtime audit event actions are selected in FeedStore from caller-supplied prior logical state plus storage-maintained after snapshots. — Recorded in 04-01-SUMMARY.md after implementing async runtime storage audit gates.
+- [Phase 04-runtime-event-integration]: status_reason_detail and the compatibility quarantine_reason mirror use the same bounded redaction helper before persistence. — Recorded in 04-01-SUMMARY.md after adding diagnostic detail storage-boundary sanitization.
+- [Phase 04-runtime-event-integration]: Runtime failure methods require explicit actor_id and prior-state inputs; recovery-capable success methods accept optional actor/prior-state inputs. — Recorded in 04-01-SUMMARY.md after updating FeedStore runtime write signatures.
 
 ### Pending Todos
 
@@ -113,6 +117,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-19T20:25:09.181Z
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-runtime-event-integration/04-CONTEXT.md
+Last session: 2026-06-19T23:58:27.781Z
+Stopped at: Completed 04-01-PLAN.md
+Resume file: None

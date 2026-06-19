@@ -100,7 +100,7 @@ Plans:
   5. Echo/sync ingestion paths receive equivalent v1 audit coverage, while routine worker lease churn, heartbeats, and clean progress paths do not emit default audit events.
 **Plans**:
 **Wave 1**
-- [ ] 04-01-PLAN.md - Shared async storage runtime audit primitives.
+- [x] 04-01-PLAN.md - Shared async storage runtime audit primitives.
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 04-02-PLAN.md - Async collector runtime actor and prior-state wiring.

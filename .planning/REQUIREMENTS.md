@@ -9,7 +9,7 @@ short-lived logs.
 
 ### Audit History
 
-- [ ] **AUD-01**: The system records durable audit history for meaningful feed
+- [x] **AUD-01**: The system records durable audit history for meaningful feed
   creation, configuration, lifecycle, failure, quarantine, recovery, reset,
   deactivation, and deletion events.
 - [x] **AUD-02**: Each audited event identifies the affected feed even when the
@@ -29,14 +29,14 @@ short-lived logs.
 - [x] **EVT-04**: Feed reset emits one audit event.
 - [x] **EVT-05**: Feed deletion emits one audit event before the feed is
   removed from current-state storage.
-- [ ] **EVT-06**: Persisted non-terminal feed failures emit failure audit
+- [x] **EVT-06**: Persisted non-terminal feed failures emit failure audit
   events.
-- [ ] **EVT-07**: A failure that causes quarantine emits one quarantine outcome
+- [x] **EVT-07**: A failure that causes quarantine emits one quarantine outcome
   event rather than duplicate failure and quarantine events for the same state
   change.
-- [ ] **EVT-08**: A feed emits a recovery audit event when successful runtime
+- [x] **EVT-08**: A feed emits a recovery audit event when successful runtime
   activity clears previously persisted abnormal failure state.
-- [ ] **EVT-09**: Routine worker lease churn, heartbeats, and clean successful
+- [x] **EVT-09**: Routine worker lease churn, heartbeats, and clean successful
   runtime activity do not emit default audit events.
 
 ### Diagnostic Detail
@@ -44,10 +44,10 @@ short-lived logs.
 - [x] **DIAG-01**: Current feed state includes a canonical bounded diagnostic
   detail field that can explain abnormal status for both quarantine and
   non-quarantine failures.
-- [ ] **DIAG-02**: Diagnostic detail follows the same lifecycle as the typed
+- [x] **DIAG-02**: Diagnostic detail follows the same lifecycle as the typed
   status reason: it is set with abnormal state and cleared when abnormal state
   is cleared.
-- [ ] **DIAG-03**: Persisted diagnostic detail is bounded and does not retain
+- [x] **DIAG-03**: Persisted diagnostic detail is bounded and does not retain
   secrets, credentials, or unbounded provider responses.
 - [x] **DIAG-04**: Existing feed API/BFF/frontend flows continue working while
   diagnostic-detail consumers migrate from legacy `quarantine_reason` to
@@ -60,7 +60,7 @@ short-lived logs.
 - [x] **ACT-02**: Admin-initiated feed mutations preserve the authenticated
   admin identity when that identity is available at the trusted service
   boundary.
-- [ ] **ACT-03**: Runtime-generated feed events use stable system actor values
+- [x] **ACT-03**: Runtime-generated feed events use stable system actor values
   that distinguish runtime, source-specific, and service-originated changes.
 
 ### Consistency
@@ -152,7 +152,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| AUD-01 | Phase 4 | Pending |
+| AUD-01 | Phase 4 | Complete |
 | AUD-02 | Phase 1 | Complete |
 | AUD-03 | Phase 1 | Complete |
 | AUD-04 | Phase 2 | Complete |
@@ -162,17 +162,17 @@ Which phases cover which requirements. Updated during roadmap creation.
 | EVT-03 | Phase 2 | Complete |
 | EVT-04 | Phase 2 | Complete |
 | EVT-05 | Phase 2 | Complete |
-| EVT-06 | Phase 4 | Pending |
-| EVT-07 | Phase 4 | Pending |
-| EVT-08 | Phase 4 | Pending |
-| EVT-09 | Phase 4 | Pending |
+| EVT-06 | Phase 4 | Complete |
+| EVT-07 | Phase 4 | Complete |
+| EVT-08 | Phase 4 | Complete |
+| EVT-09 | Phase 4 | Complete |
 | DIAG-01 | Phase 1 | Complete |
-| DIAG-02 | Phase 4 | Pending |
-| DIAG-03 | Phase 4 | Pending |
+| DIAG-02 | Phase 4 | Complete |
+| DIAG-03 | Phase 4 | Complete |
 | DIAG-04 | Phase 3 | Complete |
 | ACT-01 | Phase 1 | Complete |
 | ACT-02 | Phase 3 | Complete |
-| ACT-03 | Phase 4 | Pending |
+| ACT-03 | Phase 4 | Complete |
 | CON-01 | Phase 2 | Complete |
 | CON-02 | Phase 2 | Complete |
 | CON-03 | Phase 2 | Complete |
