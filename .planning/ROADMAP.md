@@ -98,7 +98,16 @@ Plans:
   3. A failure that crosses the quarantine threshold emits one `feed.quarantined` outcome event rather than duplicate failure and quarantine events.
   4. Successful runtime activity that clears previously persisted abnormal state emits a recovery audit event and clears diagnostic detail; clean success does not emit an audit event.
   5. Echo/sync ingestion paths receive equivalent v1 audit coverage, while routine worker lease churn, heartbeats, and clean progress paths do not emit default audit events.
-**Plans**: TBD
+**Plans**:
+**Wave 1**
+- [ ] 04-01-PLAN.md - Shared async storage runtime audit primitives.
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 04-02-PLAN.md - Async collector runtime actor and prior-state wiring.
+- [ ] 04-03-PLAN.md - Echo and sync-store audit parity.
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 04-04-PLAN.md - Runtime audit contract documentation and verification hardening.
 
 ### Phase 5: Retention and Verification Hardening
 **Goal**: Feed audit events are retained for the required window and the implementation is proven against the v1 behavioral contract.
