@@ -49,7 +49,7 @@ short-lived logs.
   is cleared.
 - [ ] **DIAG-03**: Persisted diagnostic detail is bounded and does not retain
   secrets, credentials, or unbounded provider responses.
-- [ ] **DIAG-04**: Existing feed API/BFF/frontend flows continue working while
+- [x] **DIAG-04**: Existing feed API/BFF/frontend flows continue working while
   diagnostic-detail consumers migrate from legacy `quarantine_reason` to
   canonical `status_reason_detail`.
 
@@ -76,9 +76,9 @@ short-lived logs.
 
 ### Compatibility
 
-- [ ] **COMP-01**: Existing feed API callers continue to receive the current
+- [x] **COMP-01**: Existing feed API callers continue to receive the current
   fields they depend on during the compatibility window.
-- [ ] **COMP-02**: Feed API responses expose the new canonical diagnostic detail
+- [x] **COMP-02**: Feed API responses expose the new canonical diagnostic detail
   without breaking existing clients.
 - [ ] **COMP-03**: Existing frontend/BFF feed status and status-reason behavior
   remains compatible with the v1 backend change.
@@ -169,7 +169,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DIAG-01 | Phase 1 | Complete |
 | DIAG-02 | Phase 4 | Pending |
 | DIAG-03 | Phase 4 | Pending |
-| DIAG-04 | Phase 3 | Pending |
+| DIAG-04 | Phase 3 | Complete |
 | ACT-01 | Phase 1 | Complete |
 | ACT-02 | Phase 3 | Pending |
 | ACT-03 | Phase 4 | Pending |
@@ -177,8 +177,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CON-02 | Phase 2 | Complete |
 | CON-03 | Phase 2 | Complete |
 | CON-04 | Phase 2 | Complete |
-| COMP-01 | Phase 3 | Pending |
-| COMP-02 | Phase 3 | Pending |
+| COMP-01 | Phase 3 | Complete |
+| COMP-02 | Phase 3 | Complete |
 | COMP-03 | Phase 3 | Pending |
 | COMP-04 | Phase 4 | Pending |
 | DOC-01 | Phase 1 | Complete |

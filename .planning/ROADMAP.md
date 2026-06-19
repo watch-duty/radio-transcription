@@ -80,7 +80,7 @@ Plans:
 
 Plans:
 **Wave 1**
-- [ ] 03-01-PLAN.md - Backend diagnostic detail service contract.
+- [x] 03-01-PLAN.md - Backend diagnostic detail service contract.
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 03-02-PLAN.md - BFF/frontend diagnostic detail migration.
