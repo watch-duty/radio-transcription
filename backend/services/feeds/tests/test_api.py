@@ -70,6 +70,13 @@ class TestFeedsAPI(unittest.TestCase):
             FeedStatusReason | None,
         )
 
+    def test_feed_model_exposes_status_reason_detail_not_quarantine_reason(
+        self,
+    ) -> None:
+        """The feed API response uses canonical diagnostic detail only."""
+        self.assertIn("status_reason_detail", Feed.model_fields)
+        self.assertNotIn("quarantine_reason", Feed.model_fields)
+
     def test_unrecognized_status_reason_fails_backend_validation(
         self,
     ) -> None:
@@ -262,6 +269,28 @@ class TestFeedsAPI(unittest.TestCase):
         self.assertEqual(
             data["last_speech_segment_timestamp"], "2026-06-16T18:00:00Z"
         )
+
+    def test_get_feed_with_status_reason_detail(self) -> None:
+        """Test fetching an existing feed with canonical diagnostic detail."""
+        feed_id = uuid.uuid4()
+        mock_feed = Feed(
+            id=feed_id,
+            name="Test Feed",
+            source_type=SourceType.BCFY_FEEDS,
+            source_feed_id="123",
+            status=FeedStatus.FAILING,
+            status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+            status_reason_detail="provider timed out",
+            last_heartbeat=None,
+        )
+        self.mock_service.get_feed.return_value = mock_feed
+
+        response = self.client.get(f"/v1/feeds/{feed_id}")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertEqual(data["status_reason_detail"], "provider timed out")
+        self.assertNotIn("quarantine_reason", data)
 
     def test_get_feed_not_found(self) -> None:
         """Test fetching a non-existent feed returns 404."""
