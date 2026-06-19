@@ -117,6 +117,32 @@ record existed and contained empty text.
 A configured upstream audio source that the ingestion system may claim, poll,
 stream, and process. A feed has one lifecycle status at a time.
 
+### Current Feed State
+
+The authoritative current row for a feed in `feeds`. Current feed state answers
+what the system should do with the feed now, including lifecycle status,
+failure counters, retry timing, and current diagnostic fields.
+
+### Audit History
+
+The append-only history of meaningful feed mutations in `feed_audit_events`.
+Audit history answers what changed over time and must remain useful even when a
+current `feeds` row is later hard-deleted.
+
+### Feed Audit Event
+
+A durable domain event for a meaningful feed mutation, including action,
+`actor_id`, event time, per-feed sequence, and allowlisted before/after values.
+See `documentation/feed-audit-events.md` for the contract, vocabulary, and
+phase boundaries.
+
+### Actor ID
+
+The required namespaced causal actor string on each Feed Audit Event. An
+`actor_id` identifies the human admin, service, system component, scheduled
+job, GCP service account fallback, or explicit unknown actor that caused the
+event.
+
 ### Leased Feed
 
 A feed currently owned by one worker through a fencing token. A leased feed can
@@ -239,6 +265,13 @@ promotes it to a more precise operator-actionable failure.
 
 The current canonical abnormal-condition label for a feed. It is visible to
 operators and is the v1 routing key for failure policy decisions.
+
+### Status Reason Detail
+
+The bounded explanatory text stored as `status_reason_detail` for current feed
+state and Feed Audit Events. It gives diagnostic context, does not drive
+control flow, and is distinct from the legacy `quarantine_reason`
+compatibility alias.
 
 ### Status Reason Owner
 
