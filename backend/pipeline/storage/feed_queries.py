@@ -15,9 +15,10 @@ SET last_processed_filename = $1,
     last_bookmark_time = COALESCE($5, last_bookmark_time),
     failure_count = 0,
     status_reason_updated_at = CASE
-        WHEN status_reason IS NOT NULL THEN NOW()
+        WHEN status_reason IS NOT NULL OR status_reason_detail IS NOT NULL THEN NOW()
         ELSE status_reason_updated_at
     END,
+    status_reason_detail = NULL,
     status_reason = NULL
 WHERE id = $2 AND worker_id = $3 AND fencing_token = $4
 """
@@ -34,9 +35,10 @@ do_update AS (
     SET failure_count = 0,
         last_bookmark_time = GREATEST(last_bookmark_time, $4),
         status_reason_updated_at = CASE
-            WHEN status_reason IS NOT NULL THEN NOW()
+            WHEN status_reason IS NOT NULL OR status_reason_detail IS NOT NULL THEN NOW()
             ELSE status_reason_updated_at
         END,
+        status_reason_detail = NULL,
         status_reason = NULL
     FROM current_state
     WHERE feeds.id = current_state.id
@@ -579,7 +581,7 @@ WITH updated AS (
         status_reason_detail = NULL,
         last_heartbeat = NOW(),
         status_reason_updated_at = CASE
-            WHEN status_reason IS NOT NULL THEN NOW()
+            WHEN status_reason IS NOT NULL OR status_reason_detail IS NOT NULL THEN NOW()
             ELSE status_reason_updated_at
         END,
         status_reason = NULL

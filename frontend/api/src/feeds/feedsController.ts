@@ -65,6 +65,8 @@ interface FeedUpdateBackend {
 export class ListFeedsQueryParams {
   /**
    * @isInt
+   * @minimum 1
+   * @maximum 500
    */
   limit?: number;
   nextToken?: string;
@@ -193,6 +195,17 @@ function getAdminActorHeaders(
   };
 }
 
+function appendValidatedLimit(
+  queryParams: URLSearchParams,
+  limit: number | undefined
+): void {
+  if (limit === undefined) return;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+    throw new HttpError(400, 'limit must be between 1 and 500');
+  }
+  queryParams.append('limit', limit.toString());
+}
+
 @Route('api/v1/feeds')
 @Tags('Feeds')
 @Response(401, 'Unauthorized')
@@ -208,7 +221,7 @@ export class FeedsController extends Controller {
   ): Promise<ListFeedsResponse | Feed[]> {
     try {
       const queryParams = new URLSearchParams();
-      if (query?.limit) queryParams.append('limit', query.limit.toString());
+      appendValidatedLimit(queryParams, query?.limit);
       if (query?.nextToken) queryParams.append('next_token', query.nextToken);
       if (query?.order) queryParams.append('order', query.order);
       if (query?.sourceTypes) {

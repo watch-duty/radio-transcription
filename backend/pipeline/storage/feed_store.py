@@ -1114,6 +1114,10 @@ class FeedStore:
         Retrieves feeds ordered by creation time, using timestamp+ID-based
         keyset pagination.
         """
+        if limit < 1:
+            msg = "limit must be >= 1"
+            raise ValueError(msg)
+
         cursor_ts = None
         cursor_uid = None
         if next_token:

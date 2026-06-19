@@ -193,7 +193,7 @@ export function FeedTable({
   };
 
   const sortFeeds = useMemo(() => {
-    return feeds.sort((a, b) => {
+    return [...feeds].sort((a, b) => {
       let comparison = 0;
       if (sortConfig.column === 'name') {
         comparison = a.name.localeCompare(b.name);

@@ -359,6 +359,8 @@ components:
         limit:
           type: integer
           format: int32
+          minimum: 1
+          maximum: 500
         nextToken:
           type: string
         order:
@@ -1047,6 +1049,8 @@ paths:
           schema:
             format: int32
             type: integer
+            minimum: 1
+            maximum: 500
         - in: query
           name: nextToken
           required: false

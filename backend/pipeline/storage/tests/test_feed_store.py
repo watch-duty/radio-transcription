@@ -765,10 +765,12 @@ class TestStatusReasonClearSql(unittest.TestCase):
         sql = _sql_without_comments(feed_queries.UPDATE_PROGRESS_SQL)
 
         self.assertIn("status_reason = NULL", sql)
+        self.assertIn("status_reason_detail = NULL", sql)
         self.assertRegex(
             sql,
             r"status_reason_updated_at = CASE\s+"
-            r"WHEN status_reason IS NOT NULL THEN NOW\(\)\s+"
+            r"WHEN status_reason IS NOT NULL OR status_reason_detail IS NOT NULL "
+            r"THEN NOW\(\)\s+"
             r"ELSE status_reason_updated_at\s+END",
         )
         self.assertIn("failure_count = 0", sql)
@@ -785,10 +787,12 @@ class TestStatusReasonClearSql(unittest.TestCase):
 
         self.assertIn("quarantine_reason = NULL", sql)
         self.assertIn("status_reason = NULL", sql)
+        self.assertIn("status_reason_detail = NULL", sql)
         self.assertRegex(
             sql,
             r"status_reason_updated_at = CASE\s+"
-            r"WHEN status_reason IS NOT NULL THEN NOW\(\)\s+"
+            r"WHEN status_reason IS NOT NULL OR status_reason_detail IS NOT NULL "
+            r"THEN NOW\(\)\s+"
             r"ELSE status_reason_updated_at\s+END",
         )
         self.assertIn("status = 'unclaimed'::feed_status", sql)
@@ -804,10 +808,12 @@ class TestStatusReasonClearSql(unittest.TestCase):
             sql,
         )
         self.assertIn("status_reason = NULL", sql)
+        self.assertIn("status_reason_detail = NULL", sql)
         self.assertRegex(
             sql,
             r"status_reason_updated_at = CASE\s+"
-            r"WHEN status_reason IS NOT NULL THEN NOW\(\)\s+"
+            r"WHEN status_reason IS NOT NULL OR status_reason_detail IS NOT NULL "
+            r"THEN NOW\(\)\s+"
             r"ELSE status_reason_updated_at\s+END",
         )
         self.assertIn("current_state.worker_id = $2", sql)
@@ -2401,6 +2407,18 @@ class TestGetFeed(unittest.IsolatedAsyncioTestCase):
 
 class TestListFeeds(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.list_feeds."""
+
+    async def test_list_feeds_rejects_non_positive_limit_before_query(
+        self,
+    ) -> None:
+        pool = make_mock_pool()
+        store = FeedStore(pool)
+
+        with self.assertRaisesRegex(ValueError, "limit must be >= 1"):
+            await store.list_feeds(limit=0)
+
+        pool.fetch.assert_not_awaited()
+        pool.fetchval.assert_not_awaited()
 
     async def test_returns_list_of_feeds(self) -> None:
         """A list of Feed dicts is returned."""

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 
 from backend.pipeline.common.auth import verify_oidc_token
 from backend.pipeline.common.env import is_gcp_env
@@ -208,7 +208,7 @@ async def update_feed(
 )
 async def list_feeds(
     request: Request,
-    limit: int = 100,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
     next_token: str | None = None,
     order: SortOrder = SortOrder.DESC,
     source_types: str | None = None,

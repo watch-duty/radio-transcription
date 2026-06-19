@@ -150,6 +150,18 @@ describe('FeedsController', () => {
         method: 'GET',
       });
     });
+
+    it.each([0, -1, 501])(
+      'should reject invalid limit %s before backend request',
+      async (limit) => {
+        const controller = new FeedsController();
+
+        await expect(controller.listFeeds({ limit })).rejects.toThrow(
+          /limit must be between 1 and 500/
+        );
+        expect(mockRequest).not.toHaveBeenCalled();
+      }
+    );
   });
 
   describe('getFeed', () => {
@@ -215,6 +227,9 @@ describe('FeedsController', () => {
 
       expect(openApiYaml).toContain('statusReasonDetail:');
       expect(openApiYaml).not.toContain(`${legacyDetailField}:`);
+      expect(openApiYaml).toMatch(
+        /ListFeedsQueryParams:[\s\S]*limit:[\s\S]*minimum: 1[\s\S]*maximum: 500/
+      );
     });
   });
 
