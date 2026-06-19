@@ -1,6 +1,8 @@
 import datetime
+import os
 import unittest
 import uuid
+from unittest import mock
 from unittest.mock import AsyncMock
 
 from fastapi import status
@@ -20,6 +22,12 @@ from backend.pipeline.storage.feed_store import (
 from backend.pipeline.storage.pagination_utils import SortOrder
 from backend.services.feeds.main import app
 from backend.services.feeds.models import Feed, ListFeedsResponse, Tag
+
+_ACTOR_ID = "user:google:admin-sub-123"
+_ACTOR_HEADERS = {"X-WD-Actor-Id": _ACTOR_ID}
+_TRUSTED_ACTOR_FORWARDING_SERVICE_ACCOUNTS_ENV = (
+    "TRUSTED_ACTOR_FORWARDING_SERVICE_ACCOUNTS"
+)
 
 
 async def skip_auth() -> dict[str, str]:
@@ -112,12 +120,20 @@ class TestFeedsAPI(unittest.TestCase):
         )
         self.mock_service.create_feed.return_value = mock_feed
 
-        response = self.client.post("/v1/feeds", json=payload)
+        response = self.client.post(
+            "/v1/feeds",
+            json=payload,
+            headers=_ACTOR_HEADERS,
+        )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         data = response.json()
         self.assertEqual(data["id"], str(feed_id))
         self.mock_service.create_feed.assert_called_once()
+        self.assertEqual(
+            self.mock_service.create_feed.call_args.kwargs,
+            {"actor_id": _ACTOR_ID},
+        )
 
     def test_create_feed_contract_has_no_actor_field(self) -> None:
         """Create requests and responses stay actor-field-free."""
@@ -136,13 +152,21 @@ class TestFeedsAPI(unittest.TestCase):
         )
         self.mock_service.create_feed.return_value = mock_feed
 
-        response = self.client.post("/v1/feeds", json=payload)
+        response = self.client.post(
+            "/v1/feeds",
+            json=payload,
+            headers=_ACTOR_HEADERS,
+        )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         service_feed_in = self.mock_service.create_feed.call_args.args[0]
         self.assertNotIn("actor_id", service_feed_in.model_dump())
         self.assertFalse(hasattr(service_feed_in, "actor_id"))
         self.assertNotIn("actor_id", response.json())
+        self.assertEqual(
+            self.mock_service.create_feed.call_args.kwargs,
+            {"actor_id": _ACTOR_ID},
+        )
 
     def test_create_feed_already_exists(self) -> None:
         """Test creating a feed that already exists returns 409."""
@@ -155,7 +179,11 @@ class TestFeedsAPI(unittest.TestCase):
             "bcfy_feeds", "123"
         )
 
-        response = self.client.post("/v1/feeds", json=payload)
+        response = self.client.post(
+            "/v1/feeds",
+            json=payload,
+            headers=_ACTOR_HEADERS,
+        )
 
         self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
         self.assertIn(
@@ -163,6 +191,10 @@ class TestFeedsAPI(unittest.TestCase):
             response.json()["detail"],
         )
         self.mock_service.create_feed.assert_called_once()
+        self.assertEqual(
+            self.mock_service.create_feed.call_args.kwargs,
+            {"actor_id": _ACTOR_ID},
+        )
 
     def test_create_feed_validation_error(self) -> None:
         """Test creating a feed with invalid data."""
@@ -171,7 +203,11 @@ class TestFeedsAPI(unittest.TestCase):
             # missing source_type
             "source_feed_id": "123",
         }
-        response = self.client.post("/v1/feeds", json=payload)
+        response = self.client.post(
+            "/v1/feeds",
+            json=payload,
+            headers=_ACTOR_HEADERS,
+        )
         self.assertEqual(
             response.status_code, status.HTTP_422_UNPROCESSABLE_CONTENT
         )
@@ -196,13 +232,132 @@ class TestFeedsAPI(unittest.TestCase):
         )
         self.mock_service.create_feed.return_value = mock_feed
 
-        response = self.client.post("/v1/feeds", json=payload)
+        response = self.client.post(
+            "/v1/feeds",
+            json=payload,
+            headers=_ACTOR_HEADERS,
+        )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         data = response.json()
         self.assertEqual(data["id"], str(feed_id))
         self.assertEqual(data["tags"], [{"key": "county", "value": "Fulton"}])
         self.mock_service.create_feed.assert_called_once()
+        self.assertEqual(
+            self.mock_service.create_feed.call_args.kwargs,
+            {"actor_id": _ACTOR_ID},
+        )
+
+    def test_create_feed_missing_actor_header_rejects(self) -> None:
+        """Mutation routes require forwarded actor context."""
+        payload = {
+            "name": "Test Feed",
+            "source_type": "bcfy_feeds",
+            "source_feed_id": "123",
+        }
+
+        response = self.client.post("/v1/feeds", json=payload)
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.mock_service.create_feed.assert_not_called()
+
+    def test_create_feed_malformed_actor_header_rejects(self) -> None:
+        """Actor context must be a non-empty Google-sub actor ID."""
+        payload = {
+            "name": "Test Feed",
+            "source_type": "bcfy_feeds",
+            "source_feed_id": "123",
+        }
+        malformed_headers = [
+            {"X-WD-Actor-Id": "user:google:"},
+            {"X-WD-Actor-Id": "user:google:admin sub"},
+            {"X-WD-Actor-Id": "service:feeds-service"},
+        ]
+
+        for headers in malformed_headers:
+            with self.subTest(headers=headers):
+                self.mock_service.create_feed.reset_mock()
+
+                response = self.client.post(
+                    "/v1/feeds",
+                    json=payload,
+                    headers=headers,
+                )
+
+                self.assertEqual(
+                    response.status_code,
+                    status.HTTP_403_FORBIDDEN,
+                )
+                self.mock_service.create_feed.assert_not_called()
+
+    def test_create_feed_untrusted_gcp_caller_rejects(self) -> None:
+        """GCP mode requires the caller email to be allowlisted."""
+        payload = {
+            "name": "Test Feed",
+            "source_type": "bcfy_feeds",
+            "source_feed_id": "123",
+        }
+
+        with (
+            mock.patch(
+                "backend.services.feeds.main.is_gcp_env", return_value=True
+            ),
+            mock.patch.dict(
+                os.environ,
+                {
+                    _TRUSTED_ACTOR_FORWARDING_SERVICE_ACCOUNTS_ENV: "trusted@example.com"
+                },
+            ),
+        ):
+            response = self.client.post(
+                "/v1/feeds",
+                json=payload,
+                headers=_ACTOR_HEADERS,
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.mock_service.create_feed.assert_not_called()
+
+    def test_create_feed_trusted_gcp_caller_accepts_actor_header(self) -> None:
+        """An explicitly trusted GCP caller may forward the admin actor."""
+        payload = {
+            "name": "Test Feed",
+            "source_type": "bcfy_feeds",
+            "source_feed_id": "123",
+        }
+        mock_feed = Feed(
+            id=uuid.uuid4(),
+            name="Test Feed",
+            source_type=SourceType.BCFY_FEEDS,
+            source_feed_id="123",
+            status=FeedStatus.ACTIVE,
+            last_heartbeat=None,
+        )
+        self.mock_service.create_feed.return_value = mock_feed
+
+        with (
+            mock.patch(
+                "backend.services.feeds.main.is_gcp_env", return_value=True
+            ),
+            mock.patch.dict(
+                os.environ,
+                {
+                    _TRUSTED_ACTOR_FORWARDING_SERVICE_ACCOUNTS_ENV: "test@example.com"
+                },
+            ),
+        ):
+            response = self.client.post(
+                "/v1/feeds",
+                json=payload,
+                headers=_ACTOR_HEADERS,
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.mock_service.create_feed.assert_called_once()
+        self.assertEqual(
+            self.mock_service.create_feed.call_args.kwargs,
+            {"actor_id": _ACTOR_ID},
+        )
 
     def test_get_feed_success(self) -> None:
         """Test fetching an existing feed."""
@@ -496,16 +651,25 @@ class TestFeedsAPI(unittest.TestCase):
         feed_id = uuid.uuid4()
         self.mock_service.deactivate_feed.return_value = True
 
-        response = self.client.post(f"/v1/feeds/{feed_id}/deactivate")
+        response = self.client.post(
+            f"/v1/feeds/{feed_id}/deactivate",
+            headers=_ACTOR_HEADERS,
+        )
 
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
-        self.mock_service.deactivate_feed.assert_called_once_with(str(feed_id))
+        self.mock_service.deactivate_feed.assert_called_once_with(
+            str(feed_id),
+            actor_id=_ACTOR_ID,
+        )
 
     def test_deactivate_feed_not_found(self) -> None:
         """Test deactivating a non-existent feed returns 404."""
         feed_id = uuid.uuid4()
         self.mock_service.deactivate_feed.return_value = False
-        response = self.client.post(f"/v1/feeds/{feed_id}/deactivate")
+        response = self.client.post(
+            f"/v1/feeds/{feed_id}/deactivate",
+            headers=_ACTOR_HEADERS,
+        )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_delete_feed_success(self) -> None:
@@ -513,16 +677,25 @@ class TestFeedsAPI(unittest.TestCase):
         feed_id = uuid.uuid4()
         self.mock_service.delete_feed.return_value = True
 
-        response = self.client.delete(f"/v1/feeds/{feed_id}")
+        response = self.client.delete(
+            f"/v1/feeds/{feed_id}",
+            headers=_ACTOR_HEADERS,
+        )
 
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
-        self.mock_service.delete_feed.assert_called_once_with(str(feed_id))
+        self.mock_service.delete_feed.assert_called_once_with(
+            str(feed_id),
+            actor_id=_ACTOR_ID,
+        )
 
     def test_delete_feed_not_found(self) -> None:
         """Test deleting a non-existent feed returns 404."""
         feed_id = uuid.uuid4()
         self.mock_service.delete_feed.return_value = False
-        response = self.client.delete(f"/v1/feeds/{feed_id}")
+        response = self.client.delete(
+            f"/v1/feeds/{feed_id}",
+            headers=_ACTOR_HEADERS,
+        )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_reset_feed_success(self) -> None:
@@ -538,19 +711,28 @@ class TestFeedsAPI(unittest.TestCase):
         )
         self.mock_service.reset_feed.return_value = mock_feed
 
-        response = self.client.post(f"/v1/feeds/{feed_id}/reset")
+        response = self.client.post(
+            f"/v1/feeds/{feed_id}/reset",
+            headers=_ACTOR_HEADERS,
+        )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data = response.json()
         self.assertEqual(data["id"], str(feed_id))
-        self.mock_service.reset_feed.assert_called_once_with(str(feed_id))
+        self.mock_service.reset_feed.assert_called_once_with(
+            str(feed_id),
+            actor_id=_ACTOR_ID,
+        )
 
     def test_reset_feed_not_found(self) -> None:
         """Test resetting a non-existent feed returns 404."""
         feed_id = uuid.uuid4()
         self.mock_service.reset_feed.return_value = None
 
-        response = self.client.post(f"/v1/feeds/{feed_id}/reset")
+        response = self.client.post(
+            f"/v1/feeds/{feed_id}/reset",
+            headers=_ACTOR_HEADERS,
+        )
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
@@ -570,13 +752,21 @@ class TestFeedsAPI(unittest.TestCase):
         )
         self.mock_service.update_feed.return_value = mock_feed
 
-        response = self.client.put(f"/v1/feeds/{feed_id}", json=payload)
+        response = self.client.put(
+            f"/v1/feeds/{feed_id}",
+            json=payload,
+            headers=_ACTOR_HEADERS,
+        )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data = response.json()
         self.assertEqual(data["id"], str(feed_id))
         self.assertEqual(data["name"], "Updated Feed")
         self.mock_service.update_feed.assert_called_once()
+        self.assertEqual(
+            self.mock_service.update_feed.call_args.kwargs,
+            {"actor_id": _ACTOR_ID},
+        )
 
     def test_update_feed_contract_has_no_actor_field(self) -> None:
         """Update requests and responses stay actor-field-free."""
@@ -594,13 +784,21 @@ class TestFeedsAPI(unittest.TestCase):
         )
         self.mock_service.update_feed.return_value = mock_feed
 
-        response = self.client.put(f"/v1/feeds/{feed_id}", json=payload)
+        response = self.client.put(
+            f"/v1/feeds/{feed_id}",
+            json=payload,
+            headers=_ACTOR_HEADERS,
+        )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         service_feed_in = self.mock_service.update_feed.call_args.args[1]
         self.assertNotIn("actor_id", service_feed_in.model_dump())
         self.assertFalse(hasattr(service_feed_in, "actor_id"))
         self.assertNotIn("actor_id", response.json())
+        self.assertEqual(
+            self.mock_service.update_feed.call_args.kwargs,
+            {"actor_id": _ACTOR_ID},
+        )
 
     def test_update_feed_not_found(self) -> None:
         """Test updating a non-existent feed returns 404."""
@@ -610,7 +808,11 @@ class TestFeedsAPI(unittest.TestCase):
         }
         self.mock_service.update_feed.return_value = None
 
-        response = self.client.put(f"/v1/feeds/{feed_id}", json=payload)
+        response = self.client.put(
+            f"/v1/feeds/{feed_id}",
+            json=payload,
+            headers=_ACTOR_HEADERS,
+        )
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
@@ -624,7 +826,11 @@ class TestFeedsAPI(unittest.TestCase):
             "Updated Feed"
         )
 
-        response = self.client.put(f"/v1/feeds/{feed_id}", json=payload)
+        response = self.client.put(
+            f"/v1/feeds/{feed_id}",
+            json=payload,
+            headers=_ACTOR_HEADERS,
+        )
 
         self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
 
@@ -643,12 +849,20 @@ class TestFeedsAPI(unittest.TestCase):
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
-        response = self.client.post("/v1/feeds", json=payload)
+        response = self.client.post(
+            "/v1/feeds",
+            json=payload,
+            headers=_ACTOR_HEADERS,
+        )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
         # Invalid format
         payload["source_feed_id"] = "123"
-        response = self.client.post("/v1/feeds", json=payload)
+        response = self.client.post(
+            "/v1/feeds",
+            json=payload,
+            headers=_ACTOR_HEADERS,
+        )
         self.assertEqual(
             response.status_code, status.HTTP_422_UNPROCESSABLE_CONTENT
         )
@@ -668,12 +882,20 @@ class TestFeedsAPI(unittest.TestCase):
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
-        response = self.client.post("/v1/feeds", json=payload)
+        response = self.client.post(
+            "/v1/feeds",
+            json=payload,
+            headers=_ACTOR_HEADERS,
+        )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
         # Invalid format
         payload["source_feed_id"] = "123-456"
-        response = self.client.post("/v1/feeds", json=payload)
+        response = self.client.post(
+            "/v1/feeds",
+            json=payload,
+            headers=_ACTOR_HEADERS,
+        )
         self.assertEqual(
             response.status_code, status.HTTP_422_UNPROCESSABLE_CONTENT
         )
@@ -693,12 +915,20 @@ class TestFeedsAPI(unittest.TestCase):
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
-        response = self.client.post("/v1/feeds", json=payload)
+        response = self.client.post(
+            "/v1/feeds",
+            json=payload,
+            headers=_ACTOR_HEADERS,
+        )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
         # Invalid format
         payload["source_feed_id"] = "feed.123"
-        response = self.client.post("/v1/feeds", json=payload)
+        response = self.client.post(
+            "/v1/feeds",
+            json=payload,
+            headers=_ACTOR_HEADERS,
+        )
         self.assertEqual(
             response.status_code, status.HTTP_422_UNPROCESSABLE_CONTENT
         )
@@ -718,12 +948,20 @@ class TestFeedsAPI(unittest.TestCase):
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
-        response = self.client.post("/v1/feeds", json=payload)
+        response = self.client.post(
+            "/v1/feeds",
+            json=payload,
+            headers=_ACTOR_HEADERS,
+        )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
         # Invalid format (lowercase)
         payload["source_feed_id"] = "recordings/san-jose"
-        response = self.client.post("/v1/feeds", json=payload)
+        response = self.client.post(
+            "/v1/feeds",
+            json=payload,
+            headers=_ACTOR_HEADERS,
+        )
         self.assertEqual(
             response.status_code, status.HTTP_422_UNPROCESSABLE_CONTENT
         )
@@ -743,12 +981,20 @@ class TestFeedsAPI(unittest.TestCase):
             status=FeedStatus.ACTIVE,
             last_heartbeat=None,
         )
-        response = self.client.post("/v1/feeds", json=payload)
+        response = self.client.post(
+            "/v1/feeds",
+            json=payload,
+            headers=_ACTOR_HEADERS,
+        )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
         # Invalid format (dash)
         payload["source_feed_id"] = "open-mhz"
-        response = self.client.post("/v1/feeds", json=payload)
+        response = self.client.post(
+            "/v1/feeds",
+            json=payload,
+            headers=_ACTOR_HEADERS,
+        )
         self.assertEqual(
             response.status_code, status.HTTP_422_UNPROCESSABLE_CONTENT
         )

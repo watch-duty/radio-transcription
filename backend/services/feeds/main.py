@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated, Any
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -11,6 +12,7 @@ if TYPE_CHECKING:
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 
 from backend.pipeline.common.auth import verify_oidc_token
+from backend.pipeline.common.env import is_gcp_env
 from backend.pipeline.common.exceptions import (
     FeedAlreadyExistsError,
     FeedNameAlreadyExistsError,
@@ -31,6 +33,14 @@ from .models import Feed, FeedCreate, FeedUpdate, ListFeedsResponse, Tag
 from .service import FeedService
 
 logger = logging.getLogger(__name__)
+
+TokenClaims = Annotated[dict[str, Any], Depends(verify_oidc_token)]
+
+_INTERNAL_ACTOR_ID_HEADER = "X-WD-Actor-Id"
+_ADMIN_ACTOR_ID_PREFIX = "user:google:"
+_TRUSTED_ACTOR_FORWARDING_SERVICE_ACCOUNTS_ENV = (
+    "TRUSTED_ACTOR_FORWARDING_SERVICE_ACCOUNTS"
+)
 
 
 @asynccontextmanager
@@ -53,6 +63,61 @@ app = FastAPI(
 setup_fastapi_tracing(app, service_name="feeds-service")
 
 
+def _trusted_actor_forwarding_service_accounts() -> frozenset[str]:
+    raw_value = os.environ.get(
+        _TRUSTED_ACTOR_FORWARDING_SERVICE_ACCOUNTS_ENV,
+        "",
+    )
+    return frozenset(
+        service_account.strip().lower()
+        for service_account in raw_value.split(",")
+        if service_account.strip()
+    )
+
+
+def _is_well_formed_admin_actor_id(actor_id: str) -> bool:
+    if not actor_id.startswith(_ADMIN_ACTOR_ID_PREFIX):
+        return False
+
+    google_sub = actor_id[len(_ADMIN_ACTOR_ID_PREFIX) :]
+    return bool(google_sub) and not any(char.isspace() for char in google_sub)
+
+
+def _caller_can_forward_actor(token_claims: dict[str, Any]) -> bool:
+    if not is_gcp_env():
+        return True
+
+    trusted_callers = _trusted_actor_forwarding_service_accounts()
+    if not trusted_callers:
+        return False
+
+    caller_email = token_claims.get("email")
+    if not isinstance(caller_email, str) or not caller_email.strip():
+        return False
+
+    return caller_email.strip().lower() in trusted_callers
+
+
+def _resolve_admin_actor_id(
+    request: Request,
+    token_claims: dict[str, Any],
+) -> str:
+    if not _caller_can_forward_actor(token_claims):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Trusted actor context required",
+        )
+
+    actor_id = request.headers.get(_INTERNAL_ACTOR_ID_HEADER)
+    if actor_id is None or not _is_well_formed_admin_actor_id(actor_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Trusted actor context required",
+        )
+
+    return actor_id
+
+
 @app.post(
     "/v1/feeds",
     status_code=status.HTTP_201_CREATED,
@@ -62,11 +127,13 @@ setup_fastapi_tracing(app, service_name="feeds-service")
 async def create_feed(
     request: Request,
     feed_in: FeedCreate,
+    token_claims: TokenClaims,
 ) -> Feed:
     """Create a new feed."""
     service: FeedService = request.app.state.feed_service
+    actor_id = _resolve_admin_actor_id(request, token_claims)
     try:
-        return await service.create_feed(feed_in)
+        return await service.create_feed(feed_in, actor_id=actor_id)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -108,11 +175,13 @@ async def update_feed(
     request: Request,
     feed_id: str,
     feed_in: FeedUpdate,
+    token_claims: TokenClaims,
 ) -> Feed:
     """Update an existing feed."""
     service: FeedService = request.app.state.feed_service
+    actor_id = _resolve_admin_actor_id(request, token_claims)
     try:
-        feed = await service.update_feed(feed_id, feed_in)
+        feed = await service.update_feed(feed_id, feed_in, actor_id=actor_id)
         if not feed:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -221,10 +290,12 @@ async def list_feeds(
 async def deactivate_feed(
     request: Request,
     feed_id: str,
+    token_claims: TokenClaims,
 ) -> None:
     """Deactivate a feed until an explicit reset."""
     service: FeedService = request.app.state.feed_service
-    success = await service.deactivate_feed(feed_id)
+    actor_id = _resolve_admin_actor_id(request, token_claims)
+    success = await service.deactivate_feed(feed_id, actor_id=actor_id)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -240,10 +311,12 @@ async def deactivate_feed(
 async def delete_feed(
     request: Request,
     feed_id: str,
+    token_claims: TokenClaims,
 ) -> None:
     """Hard delete a feed, along with all its transcripts and audio segments."""
     service: FeedService = request.app.state.feed_service
-    success = await service.delete_feed(feed_id)
+    actor_id = _resolve_admin_actor_id(request, token_claims)
+    success = await service.delete_feed(feed_id, actor_id=actor_id)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -259,10 +332,12 @@ async def delete_feed(
 async def reset_feed(
     request: Request,
     feed_id: str,
+    token_claims: TokenClaims,
 ) -> Feed:
     """Reset a feed to unclaimed status with zero failure count."""
     service: FeedService = request.app.state.feed_service
-    feed = await service.reset_feed(feed_id)
+    actor_id = _resolve_admin_actor_id(request, token_claims)
+    feed = await service.reset_feed(feed_id, actor_id=actor_id)
     if not feed:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

@@ -17,8 +17,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_FEEDS_SERVICE_ACTOR_ID = "service:feeds-service"
-
 
 class FeedService:
     """Service for managing feeds, handling interaction with the data from the FeedStore."""
@@ -26,7 +24,7 @@ class FeedService:
     def __init__(self, store: FeedStore) -> None:
         self._store = store
 
-    async def create_feed(self, feed_in: FeedCreate) -> Feed:
+    async def create_feed(self, feed_in: FeedCreate, *, actor_id: str) -> Feed:
         """Creates a new feed."""
         store_feed = await self._store.create_feed(
             name=feed_in.name,
@@ -35,12 +33,16 @@ class FeedService:
             tags=[t.model_dump() for t in feed_in.tags]
             if feed_in.tags
             else None,
-            actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            actor_id=actor_id,
         )
         return Feed.model_validate(store_feed)
 
     async def update_feed(
-        self, feed_id: str, feed_in: FeedUpdate
+        self,
+        feed_id: str,
+        feed_in: FeedUpdate,
+        *,
+        actor_id: str,
     ) -> Feed | None:
         """Updates an existing feed."""
         try:
@@ -54,7 +56,7 @@ class FeedService:
             tags=[t.model_dump() for t in feed_in.tags]
             if feed_in.tags
             else None,
-            actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            actor_id=actor_id,
         )
         if not store_feed:
             return None
@@ -99,7 +101,7 @@ class FeedService:
             total=store_feeds.total,
         )
 
-    async def deactivate_feed(self, feed_id: str) -> bool:
+    async def deactivate_feed(self, feed_id: str, *, actor_id: str) -> bool:
         """Deactivates a feed by ID."""
         try:
             uid = uuid.UUID(feed_id)
@@ -107,7 +109,7 @@ class FeedService:
             return False
         success = await self._store.deactivate_feed(
             uid,
-            actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            actor_id=actor_id,
         )
         if success:
             logger.info(
@@ -121,7 +123,7 @@ class FeedService:
             )
         return success
 
-    async def delete_feed(self, feed_id: str) -> bool:
+    async def delete_feed(self, feed_id: str, *, actor_id: str) -> bool:
         """Hard deletes a feed by ID, along with all referencing data."""
         try:
             uid = uuid.UUID(feed_id)
@@ -129,7 +131,7 @@ class FeedService:
             return False
         success = await self._store.delete_feed(
             uid,
-            actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            actor_id=actor_id,
         )
         if success:
             logger.info(
@@ -143,7 +145,7 @@ class FeedService:
             )
         return success
 
-    async def reset_feed(self, feed_id: str) -> Feed | None:
+    async def reset_feed(self, feed_id: str, *, actor_id: str) -> Feed | None:
         """Reset a failed, quarantined, or deactivated feed to an unclaimed state.
 
         This clears the claim state, resets the failure count, clears
@@ -155,7 +157,7 @@ class FeedService:
             return None
         store_feed = await self._store.reset_feed(
             uid,
-            actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            actor_id=actor_id,
         )
         if not store_feed:
             return None
