@@ -30,7 +30,15 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. The schema and contract support occurred time plus a stable per-feed sequence that future timelines can order by.
   4. The current feed schema exposes `status_reason_detail` as the canonical bounded diagnostic detail field.
   5. Future Watch Duty delivery and admin timeline work can derive consumer payloads from the domain audit contract without changing v1 audit meaning.
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+**Wave 1**
+- [ ] 01-01-PLAN.md - Domain contract documentation and repository terminology.
+- [ ] 01-02-PLAN.md - SQL migration and HOT guard schema foundation.
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 01-03-PLAN.md - Text-level contract verification tests.
 
 ### Phase 2: Transactional Storage Writes
 **Goal**: Storage-owned feed mutations persist current-state changes and their audit events together for admin and service lifecycle actions.
