@@ -49,8 +49,9 @@ short-lived logs.
   is cleared.
 - [ ] **DIAG-03**: Persisted diagnostic detail is bounded and does not retain
   secrets, credentials, or unbounded provider responses.
-- [ ] **DIAG-04**: Existing `quarantine_reason` consumers continue receiving
-  equivalent detail during the v1 compatibility window.
+- [ ] **DIAG-04**: Existing feed API/BFF/frontend flows continue working while
+  diagnostic-detail consumers migrate from legacy `quarantine_reason` to
+  canonical `status_reason_detail`.
 
 ### Actor Attribution
 
@@ -93,8 +94,8 @@ short-lived logs.
   and admin timeline work can derive consumer payloads without changing the
   v1 audit meaning.
 - [x] **DOC-03**: Repository terminology distinguishes current feed state,
-  audit history, typed status reasons, diagnostic detail, and the legacy
-  quarantine reason compatibility alias.
+  audit history, typed status reasons, diagnostic detail, and the deprecated
+  legacy quarantine reason field.
 
 ### Verification
 
@@ -103,7 +104,8 @@ short-lived logs.
 - [ ] **VER-02**: Automated tests verify transaction rollback behavior and
   concurrent per-feed event ordering.
 - [ ] **VER-03**: Automated tests verify diagnostic-detail lifecycle,
-  compatibility alias behavior, and secret/detail bounding behavior.
+  public API migration away from `quarantine_reason`, and secret/detail
+  bounding behavior.
 - [ ] **VER-04**: Automated tests verify delete-survival and retention behavior.
 - [ ] **VER-05**: Automated tests verify that lease churn and clean heartbeat or
   progress paths do not emit default audit events.

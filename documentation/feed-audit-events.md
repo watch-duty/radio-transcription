@@ -38,8 +38,9 @@ the stable value future policy and routing logic can use.
 `status_reason_detail` is bounded explanatory text. It gives operators raw
 diagnostic context and must not drive control flow.
 
-`quarantine_reason` remains a compatibility alias for one release and is not
-removed or renamed here.
+`quarantine_reason` is a deprecated legacy field. New service, BFF, and
+frontend contracts should use `status_reason_detail`; existing database cleanup
+can happen separately from the public API migration.
 
 ## Action Vocabulary
 
@@ -67,8 +68,10 @@ namespaced and stable enough for filtering. V1 does not add separate
 Canonical actor forms are:
 
 - `user:google:<sub>` for a human admin identified by the Google subject claim.
-- `user-email:<normalized_email>` when a human admin has no available Google
-  subject claim.
+- `user-email:<normalized_email>` for future trusted human identity paths where
+  a Google subject claim is not available and policy explicitly allows an email
+  actor. Phase 3 Google admin mutations require `user:google:<sub>` and must
+  reject missing or invalid `sub` values.
 - `service:<service_name>` for a semantic service actor.
 - `job:<job_name>` for scheduled or maintenance job actors.
 - `gcp-sa:<service_account_email>` only when the authenticated workload
@@ -145,8 +148,9 @@ preserves debugging value, but it can persist sensitive text if upstream
 failure strings contain it. Later hardening can revise the contract to add
 redaction or transformation before persistence.
 
-`quarantine_reason` remains a compatibility alias for one release and is not
-removed or renamed here.
+`quarantine_reason` is not the canonical diagnostic-detail API. It may remain
+in storage or audit snapshots during migration, but new code should not add
+public alias behavior around it.
 
 Decision coverage: D-14, D-15, D-16, and D-17.
 

@@ -64,8 +64,7 @@ from durable backend data instead of relying on short-lived logs.
   reported, quarantined, and recovered.
 - [ ] Wire storage, service, and runtime paths to populate
   `status_reason_detail` as the canonical bounded diagnostic detail while
-  keeping `quarantine_reason` populated as a compatibility alias for one
-  release.
+  retiring `quarantine_reason` from public service/BFF/frontend contracts.
 - [ ] Preserve authenticated admin identity at the trusted service boundary
   while keeping untrusted request bodies from spoofing actors.
 - [ ] Retain audit history for 18 months and enforce retention in v1.
@@ -122,9 +121,10 @@ events without duplicating the audit ledger.
 - **Database consistency**: Feed mutations and audit inserts must commit or
   roll back together — audit history is only useful if it cannot drift from
   successful state changes.
-- **Compatibility**: Existing consumers of `quarantine_reason` must keep
-  working during the v1 rollout — add `status_reason_detail` without removing
-  the old field immediately.
+- **Compatibility**: Existing feed API and UI flows must keep working during
+  the v1 rollout while public diagnostic-detail consumers move to
+  `status_reason_detail`; `quarantine_reason` is deprecated and should not be
+  preserved as a public alias.
 - **Signal quality**: Do not audit routine heartbeat or lease churn by default
   — the audit table must stay understandable and affordable.
 - **Retention**: Keep feed audit events for 18 months — this is the v1 product
@@ -143,7 +143,7 @@ events without duplicating the audit ledger.
 | Name the durable table `feed_audit_events` | Keeps v1 focused on auditability, not delivery mechanics | Validated in Phase 1 |
 | Keep `feeds` as current-state source of truth | Avoids an invasive event-sourcing rewrite of lease and failure paths | Validated in Phase 1 |
 | Store `before_values` and `after_values` JSON objects | Directly answers what changed without forcing consumers to diff rows | Validated in Phase 1 |
-| Add `status_reason_detail` and keep `quarantine_reason` as an alias for one release | Generalizes diagnostic detail beyond quarantine while preserving compatibility | Schema validated in Phase 1; compatibility behavior pending |
+| Add `status_reason_detail` and deprecate `quarantine_reason` as a public field | Generalizes diagnostic detail beyond quarantine while keeping app flows compatible through the canonical field | Schema validated in Phase 1; public contract decision updated in Phase 3 discussion |
 | Keep audit creation inside existing `FeedStore` mutation methods | Prevents service/runtime callers from constructing divergent state and audit history | Validated in Phase 2 |
 | Use `feed_audit_event_sequences` for per-feed ordering | Avoids racy `MAX(feed_sequence) + 1` allocation under concurrent writes | Validated in Phase 2 |
 | Use `service:feeds-service` as the Phase 2 actor fallback | Avoids nullable or spoofable user actors until trusted admin identity forwarding lands | Validated in Phase 2; human actor forwarding pending |

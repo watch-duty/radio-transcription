@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Contract and Schema Foundation** - Define the Feed Audit Event contract, canonical diagnostic detail, deletion-safe audit schema, actor vocabulary, and per-feed ordering foundation.
 - [x] **Phase 2: Transactional Storage Writes** - Make admin/storage feed mutations create audit rows atomically with current-state changes.
-- [ ] **Phase 3: Service and Compatibility Surface** - Preserve existing API/BFF/frontend compatibility while carrying trusted admin actor context and exposing canonical diagnostic detail.
+- [ ] **Phase 3: Service and Compatibility Surface** - Preserve existing API/BFF/frontend flows while carrying trusted admin actor context and moving public diagnostic detail to `status_reason_detail`.
 - [ ] **Phase 4: Runtime Event Integration** - Add runtime, failure, quarantine, recovery, and Echo audit semantics without polluting history with lease churn.
 - [ ] **Phase 5: Retention and Verification Hardening** - Enforce 18-month retention and prove the audit contract with focused automated tests.
 
@@ -66,14 +66,14 @@ Plans:
 - [x] 02-04-PLAN.md - Rollback/concurrency integration coverage and final hardening.
 
 ### Phase 3: Service and Compatibility Surface
-**Goal**: Existing feed API consumers remain compatible while admin-initiated changes carry trusted actor identity and canonical diagnostic detail.
+**Goal**: Existing feed API flows remain compatible while admin-initiated changes carry trusted actor identity and public feed responses expose canonical diagnostic detail.
 **Depends on**: Phase 2
 **Requirements**: DIAG-04, ACT-02, COMP-01, COMP-02, COMP-03
 **Success Criteria** (what must be TRUE):
   1. Admin-initiated feed mutations preserve the authenticated admin identity when it is available at the trusted service boundary.
   2. Existing feed API callers continue receiving the current fields they depend on during the compatibility window.
   3. Feed API responses expose `status_reason_detail` without breaking existing clients.
-  4. Existing BFF/frontend feed status, status-reason, and `quarantine_reason` behavior remains compatible with the backend change.
+  4. Existing BFF/frontend feed status and status-reason behavior remains compatible while diagnostic-detail display moves from `quarantine_reason` to `status_reason_detail`.
   5. Actor attribution cannot be forged through untrusted request body fields.
 **Plans**: TBD
 **UI hint**: yes
@@ -98,7 +98,7 @@ Plans:
   1. Audit rows are retained for 18 months and expired only through the approved retention mechanism.
   2. Automated tests verify audit events for feed create, update, deactivate, reset, delete, failure, quarantine, and recovery paths.
   3. Automated tests verify transaction rollback behavior and concurrent per-feed event ordering.
-  4. Automated tests verify diagnostic-detail lifecycle, compatibility alias behavior, secret/detail bounding, delete-survival, and retention behavior.
+  4. Automated tests verify diagnostic-detail lifecycle, public API migration away from `quarantine_reason`, secret/detail bounding, delete-survival, and retention behavior.
   5. Automated tests verify that lease churn and clean heartbeat or progress paths do not emit default audit events.
 **Plans**: TBD
 
