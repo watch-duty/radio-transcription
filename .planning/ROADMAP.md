@@ -60,7 +60,7 @@ Plans:
 - [x] 02-02-PLAN.md - Transactional create/update writes and service actor fallback.
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 02-03-PLAN.md - Transactional deactivate/reset/delete writes.
+- [x] 02-03-PLAN.md - Transactional deactivate/reset/delete writes.
 
 **Wave 4** *(blocked on Wave 3 completion)*
 - [ ] 02-04-PLAN.md - Rollback/concurrency integration coverage and final hardening.
@@ -110,7 +110,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Contract and Schema Foundation | 3/3 | Complete | 2026-06-19 |
-| 2. Transactional Storage Writes | 0/4 | Ready to execute | - |
+| 2. Transactional Storage Writes | 3/4 | In Progress|  |
 | 3. Service and Compatibility Surface | 0/TBD | Not started | - |
 | 4. Runtime Event Integration | 0/TBD | Not started | - |
 | 5. Retention and Verification Hardening | 0/TBD | Not started | - |

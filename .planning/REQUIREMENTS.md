@@ -25,9 +25,9 @@ short-lived logs.
 
 - [x] **EVT-01**: Feed creation emits one audit event.
 - [x] **EVT-02**: Meaningful feed configuration changes emit audit events.
-- [ ] **EVT-03**: Feed deactivation emits one audit event.
-- [ ] **EVT-04**: Feed reset emits one audit event.
-- [ ] **EVT-05**: Feed deletion emits one audit event before the feed is
+- [x] **EVT-03**: Feed deactivation emits one audit event.
+- [x] **EVT-04**: Feed reset emits one audit event.
+- [x] **EVT-05**: Feed deletion emits one audit event before the feed is
   removed from current-state storage.
 - [ ] **EVT-06**: Persisted non-terminal feed failures emit failure audit
   events.
@@ -157,9 +157,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AUD-05 | Phase 5 | Pending |
 | EVT-01 | Phase 2 | Complete |
 | EVT-02 | Phase 2 | Complete |
-| EVT-03 | Phase 2 | Pending |
-| EVT-04 | Phase 2 | Pending |
-| EVT-05 | Phase 2 | Pending |
+| EVT-03 | Phase 2 | Complete |
+| EVT-04 | Phase 2 | Complete |
+| EVT-05 | Phase 2 | Complete |
 | EVT-06 | Phase 4 | Pending |
 | EVT-07 | Phase 4 | Pending |
 | EVT-08 | Phase 4 | Pending |

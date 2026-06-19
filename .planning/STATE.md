@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 02-02-PLAN.md
-last_updated: "2026-06-19T14:42:31.289Z"
+stopped_at: Completed 02-03-PLAN.md
+last_updated: "2026-06-19T14:56:26.673Z"
 last_activity: 2026-06-19
 progress:
   total_phases: 5
   completed_phases: 1
   total_plans: 7
-  completed_plans: 5
-  percent: 71
+  completed_plans: 6
+  percent: 86
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-19)
 ## Current Position
 
 Phase: 02 (transactional-storage-writes) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 Status: Ready to execute
 Last activity: 2026-06-19
 
-Progress: [███████░░░] 71%
+Progress: [█████████░] 86%
 
 ## Performance Metrics
 
@@ -57,6 +57,7 @@ Progress: [███████░░░] 71%
 | Phase 01-contract-and-schema-foundation P03 | 5 min | 1 tasks | 1 files |
 | Phase 02-transactional-storage-writes P01 | 5 min | 3 tasks | 6 files |
 | Phase 02-transactional-storage-writes P02 | 13 min | 3 tasks | 7 files |
+| Phase 02-transactional-storage-writes P03 | 7 min | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -83,6 +84,9 @@ Recent decisions affecting current work:
 - [Phase 02-transactional-storage-writes]: FeedStore create_feed and update_feed require explicit keyword-only actor_id and own audit event construction. — Recorded in 02-02-SUMMARY.md after implementing audited create/update storage writes.
 - [Phase 02-transactional-storage-writes]: No-op update compares normalized stored name/tags before mutation and returns the current feed without allocating audit sequence. — Recorded in 02-02-SUMMARY.md after adding no-op update suppression tests.
 - [Phase 02-transactional-storage-writes]: Feeds service uses service:feeds-service as the Phase 2 causal actor until trusted admin forwarding lands in Phase 3. — Recorded in 02-02-SUMMARY.md after wiring service create/update storage calls.
+- [Phase 02-transactional-storage-writes]: FeedStore deactivate_feed, reset_feed, and delete_feed require explicit keyword-only actor_id and own lifecycle/delete audit construction. — Recorded in 02-03-SUMMARY.md after implementing audited lifecycle storage writes.
+- [Phase 02-transactional-storage-writes]: feed.deleted is inserted before DELETE_FEED_SQL using the locked full before snapshot and empty after_values. — Recorded in 02-03-SUMMARY.md after implementing audited hard delete.
+- [Phase 02-transactional-storage-writes]: Feeds service lifecycle mutations continue using service:feeds-service as the Phase 2 causal actor. — Recorded in 02-03-SUMMARY.md after wiring lifecycle service actor propagation.
 
 ### Pending Todos
 
@@ -102,6 +106,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-19T14:42:31.284Z
-Stopped at: Completed 02-02-PLAN.md
+Last session: 2026-06-19T14:56:26.667Z
+Stopped at: Completed 02-03-PLAN.md
 Resume file: None
