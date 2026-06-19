@@ -30,7 +30,7 @@ from backend.pipeline.ingestion.failure_classifiers import (
     ffmpeg as ffmpeg_classifier,
 )
 from backend.pipeline.ingestion.settings import _require_env
-from backend.pipeline.storage.feed_store import FeedStatusReason
+from backend.pipeline.storage.feed_store import FeedStatus, FeedStatusReason
 from backend.pipeline.storage.sync_connection import connect_db
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
 
@@ -127,14 +127,14 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
 
     if not feed:
         return
-    if feed["status"] == "deactivated":
+    if feed["status"] is FeedStatus.DEACTIVATED:
         logger.info(
             "Draining deactivated feed %s (channel: %s)",
             feed["id"],
             channel_name,
         )
         return
-    if feed["status"] == "quarantined":
+    if feed["status"] is FeedStatus.QUARANTINED:
         logger.warning(
             "Feed %s is quarantined (channel: %s), dropping event",
             feed["id"],

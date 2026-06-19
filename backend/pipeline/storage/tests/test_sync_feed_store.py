@@ -6,8 +6,10 @@ import uuid
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from backend.pipeline.storage import quarantine_reason
-from backend.pipeline.storage.feed_store import FeedStatusReason
+from backend.pipeline.storage.feed_store import FeedStatus, FeedStatusReason
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
 
 
@@ -37,22 +39,34 @@ def _make_mock_conn() -> MagicMock:
 
 
 class TestResolveEchoFeed:
-    def test_returns_feed_dict(self) -> None:
+    def test_returns_typed_feed_row(self) -> None:
         conn = _make_mock_conn()
+        feed_id = uuid.uuid4()
+        created_at = datetime(2026, 1, 1, tzinfo=UTC)
         feed_row = {
-            "id": uuid.uuid4(),
+            "id": feed_id,
+            "name": "Fire CA",
             "status": "active",
-            "failure_count": 0,
-            "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+            "created_at": created_at,
         }
         conn.execute.return_value.fetchone.return_value = feed_row
         store = _make_store(conn)
 
         result = store.resolve_echo_feed("fire-ca")
 
-        assert result == feed_row
+        assert result == {
+            "id": feed_id,
+            "name": "Fire CA",
+            "status": FeedStatus.ACTIVE,
+            "created_at": created_at,
+        }
         conn.execute.assert_called_once()
-        assert conn.execute.call_args[0][1] == ("fire-ca",)
+        sql, params = conn.execute.call_args[0]
+        assert "f.failure_count" not in sql
+        assert "failure_count" not in sql
+        assert "AND fp.source_type = 'echo'" in sql
+        assert "AND f.source_type = 'echo'" in sql
+        assert params == ("fire-ca",)
 
     def test_returns_none_for_unknown_channel(self) -> None:
         conn = _make_mock_conn()
@@ -61,6 +75,19 @@ class TestResolveEchoFeed:
         result = store.resolve_echo_feed("unknown")
 
         assert result is None
+
+    def test_raises_value_error_for_unknown_status(self) -> None:
+        conn = _make_mock_conn()
+        conn.execute.return_value.fetchone.return_value = {
+            "id": uuid.uuid4(),
+            "name": "Fire CA",
+            "status": "not-a-status",
+            "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+        }
+        store = _make_store(conn)
+
+        with pytest.raises(ValueError, match="Unknown feed status"):
+            store.resolve_echo_feed("fire-ca")
 
 
 class TestRecordHeartbeat:

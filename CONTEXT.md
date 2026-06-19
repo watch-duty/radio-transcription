@@ -257,21 +257,15 @@ condition and is distinct from retry, quarantine, and logging policy.
 
 ### Failure Policy Action
 
-The side-effect-free runtime action selected from a `FeedStatusReason`.
-Current actions are:
-
-- `increment_feed_failure_budget`: call `report_feed_failure`, which can move
-  a feed toward quarantine.
-- `retry_without_feed_budget`: release the feed for retry without consuming
-  feed quarantine budget.
-- `record_post_bookmark_publish_gap`: use the non-budgeted retry lane while
-  emitting explicit post-bookmark publish-gap telemetry.
+A runtime handling category selected from a canonical status reason. Budgeted
+actions can move a feed toward quarantine. Non-budgeted actions make the
+failure visible while keeping it out of the feed quarantine budget.
 
 ### Routing Policy
 
-The canonical `FeedStatusReason -> failure policy action` mapping in
-`backend/pipeline/ingestion/failure_policy.py`. The mapping is intentionally
-status-only in v1 so routing changes are localized to one policy table.
+The central mapping from canonical status reason to runtime handling category.
+In v1, this mapping is status-only so routing changes stay localized and can be
+switched without changing collector evidence extraction.
 
 ### Unexpected System Failure
 

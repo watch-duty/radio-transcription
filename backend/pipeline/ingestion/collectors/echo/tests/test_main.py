@@ -19,7 +19,7 @@ from backend.pipeline.ingestion.collectors.echo.main import (
     _parse_timestamp,
 )
 from backend.pipeline.schema_types.segmented_audio_pb2 import SegmentedAudio
-from backend.pipeline.storage.feed_store import FeedStatusReason
+from backend.pipeline.storage.feed_store import FeedStatus, FeedStatusReason
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
 
 
@@ -184,8 +184,7 @@ class TestHandle:
             {
                 "id": uuid.uuid4(),
                 "name": "Central Fire",
-                "status": "quarantined",
-                "failure_count": 5,
+                "status": FeedStatus.QUARANTINED,
             },
         )
         _handle(self._make_event())
@@ -200,8 +199,7 @@ class TestHandle:
             {
                 "id": uuid.uuid4(),
                 "name": "Central Fire",
-                "status": "deactivated",
-                "failure_count": 0,
+                "status": FeedStatus.DEACTIVATED,
             },
         )
         _handle(self._make_event())
@@ -217,8 +215,7 @@ class TestHandle:
             {
                 "id": feed_id,
                 "name": "Central Fire",
-                "status": "active",
-                "failure_count": 0,
+                "status": FeedStatus.ACTIVE,
             },
         )
 
@@ -260,8 +257,7 @@ class TestHandle:
             {
                 "id": feed_id,
                 "name": "Central Fire",
-                "status": "active",
-                "failure_count": 0,
+                "status": FeedStatus.ACTIVE,
                 "created_at": datetime(2026, 3, 27, tzinfo=UTC),
             },
         )
@@ -284,8 +280,7 @@ class TestHandle:
             {
                 "id": feed_id,
                 "name": "Central Fire",
-                "status": "active",
-                "failure_count": 0,
+                "status": FeedStatus.ACTIVE,
                 "created_at": datetime(
                     2026, 3, 26, 14, 30, 22, 123456, tzinfo=UTC
                 ),
@@ -312,8 +307,7 @@ class TestHandle:
             {
                 "id": feed_id,
                 "name": "Central Fire",
-                "status": "active",
-                "failure_count": 0,
+                "status": FeedStatus.ACTIVE,
             },
         )
 
@@ -344,8 +338,7 @@ class TestHandle:
             {
                 "id": feed_id,
                 "name": "Central Fire",
-                "status": "active",
-                "failure_count": 0,
+                "status": FeedStatus.ACTIVE,
             },
         )
 
@@ -373,8 +366,7 @@ class TestHandle:
             {
                 "id": feed_id,
                 "name": "Central Fire",
-                "status": "active",
-                "failure_count": 0,
+                "status": FeedStatus.ACTIVE,
             },
         )
 
@@ -400,8 +392,7 @@ class TestHandle:
             {
                 "id": feed_id,
                 "name": "Central Fire",
-                "status": "active",
-                "failure_count": 0,
+                "status": FeedStatus.ACTIVE,
             },
         )
 
@@ -439,8 +430,7 @@ class TestHandle:
                 "id": feed_id,
                 "name": "Central Fire",
                 "external_id": "ext-id",
-                "status": "active",
-                "failure_count": 0,
+                "status": FeedStatus.ACTIVE,
             },
         )
         expected_reason = (
@@ -483,8 +473,7 @@ class TestHandle:
                 "id": feed_id,
                 "name": "Central Fire",
                 "external_id": "ext-id",
-                "status": "active",
-                "failure_count": 0,
+                "status": FeedStatus.ACTIVE,
             },
         )
         expected_reason = "ValueError: bad mp3"
@@ -518,8 +507,7 @@ class TestHandle:
                 "id": feed_id,
                 "name": "Central Fire",
                 "external_id": "ext-id",
-                "status": "active",
-                "failure_count": 0,
+                "status": FeedStatus.ACTIVE,
             },
         )
         upload_call = _patch_globals[
@@ -547,8 +535,7 @@ class TestHandle:
             {
                 "id": feed_id,
                 "name": "Central Fire",
-                "status": "active",
-                "failure_count": 0,
+                "status": FeedStatus.ACTIVE,
             },
         )
 
@@ -594,8 +581,7 @@ class TestHandle:
             {
                 "id": uuid.uuid4(),
                 "name": "Central Fire",
-                "status": "active",
-                "failure_count": 0,
+                "status": FeedStatus.ACTIVE,
             },
         )
 
@@ -616,8 +602,7 @@ class TestHandle:
             {
                 "id": uuid.uuid4(),
                 "name": "Central Fire",
-                "status": "active",
-                "failure_count": 0,
+                "status": FeedStatus.ACTIVE,
             },
         )
         event = self._make_event(name="fire-ca/20260326/badname.mp3")
@@ -640,8 +625,7 @@ class TestHandle:
             {
                 "id": feed_id,
                 "name": "Central Fire",
-                "status": "active",
-                "failure_count": 0,
+                "status": FeedStatus.ACTIVE,
             },
         )
 
@@ -668,8 +652,7 @@ class TestHandle:
                 "id": feed_id,
                 "name": "Central Fire",
                 "external_id": "ext-id",
-                "status": "active",
-                "failure_count": 0,
+                "status": FeedStatus.ACTIVE,
             },
         )
         _patch_globals["pubsub"].get_publisher.side_effect = Exception(
@@ -696,8 +679,7 @@ class TestHandle:
                 "id": feed_id,
                 "name": "Central Fire",
                 "external_id": "ext-id",
-                "status": "active",
-                "failure_count": 0,
+                "status": FeedStatus.ACTIVE,
             },
         )
         mock_store.record_heartbeat.side_effect = Exception("heartbeat error")
@@ -719,8 +701,7 @@ class TestHandle:
                 "id": feed_id,
                 "name": "Central Fire",
                 "external_id": "ext-id",
-                "status": "active",
-                "failure_count": 0,
+                "status": FeedStatus.ACTIVE,
             },
         )
 
@@ -748,8 +729,7 @@ class TestHandle:
                 "id": feed_id,
                 "name": "Central Fire",
                 "external_id": "ext-id",
-                "status": "active",
-                "failure_count": 0,
+                "status": FeedStatus.ACTIVE,
             },
         )
         message = "token=secret-value " + ("x" * 300)
@@ -774,8 +754,7 @@ class TestHandle:
         return {
             "id": uuid.uuid4(),
             "name": "Central Fire",
-            "status": "active",
-            "failure_count": 0,
+            "status": FeedStatus.ACTIVE,
         }
 
     @pytest.mark.usefixtures("_patch_globals")

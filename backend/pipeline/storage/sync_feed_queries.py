@@ -1,15 +1,18 @@
 """Synchronous feed lifecycle SQL queries.
 
 psycopg v3 uses ``%s`` parameters, so these stay separate from the async
-``feed_queries`` module which uses asyncpg's ``$1`` parameter style.
+``feed_queries`` module which uses asyncpg's ``$1`` parameter style. Echo
+lifecycle writes also rely on terminal-state guards instead of VM lease
+fencing.
 """
 
 RESOLVE_ECHO_FEED_SQL = """\
-SELECT f.id, f.name, f.status, f.failure_count, f.created_at
+SELECT f.id, f.name, f.status, f.created_at
 FROM feeds f
 JOIN feed_properties fp ON fp.feed_id = f.id
 WHERE fp.source_feed_id = %s
 AND fp.source_type = 'echo'
+AND f.source_type = 'echo'
 """
 
 HEARTBEAT_SQL = """\
