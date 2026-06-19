@@ -38,6 +38,7 @@ describe('FeedsController', () => {
     status: 'active',
     substatus: 'active',
     last_heartbeat: '2024-01-01T00:00:00Z',
+    status_reason_detail: 'provider timeout',
   };
 
   const expectedFrontendFeed = {
@@ -50,6 +51,7 @@ describe('FeedsController', () => {
     status: 'active',
     substatus: 'active',
     lastHeartbeat: '2024-01-01T00:00:00Z',
+    statusReasonDetail: 'provider timeout',
   };
 
   const mockAdminRequest = {
@@ -185,6 +187,16 @@ describe('FeedsController', () => {
 
       const controller = new FeedsController();
       await expect(controller.getFeed('feed_123')).rejects.toThrow(/Not Found/);
+    });
+
+    it('maps canonical status detail and omits legacy quarantineReason', async () => {
+      mockRequest.mockResolvedValueOnce({ data: mockBackendFeed });
+
+      const controller = new FeedsController();
+      const result = await controller.getFeed('feed_123');
+
+      expect(result.statusReasonDetail).toBe('provider timeout');
+      expect('quarantineReason' in result).toBe(false);
     });
   });
 

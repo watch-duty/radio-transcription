@@ -50,8 +50,8 @@ export interface Feed extends BaseFeed {
   substatus: BackendFeedStatus;
   lastHeartbeat?: string;
   tags?: Tag[];
-  quarantineReason?: string;
   statusReason?: BackendFeedStatusReason;
+  statusReasonDetail?: string;
 }
 
 export interface FeedCreate extends BaseFeed {
