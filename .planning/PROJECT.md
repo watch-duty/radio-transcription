@@ -47,24 +47,30 @@ from durable backend data instead of relying on short-lived logs.
 - ✓ Text-level contract tests protect the Phase 1 docs, SQL migration,
   actor/action constraints, delete-survival semantics, diagnostic-detail bounds,
   and HOT guard behavior — validated in Phase 1
+- ✓ Storage-owned feed create, meaningful update, deactivate, reset, and delete
+  mutations persist audit events transactionally with their current-state
+  changes — validated in Phase 2
+- ✓ Phase 2 audit rows capture feed identity, actor ID, per-feed sequence,
+  action, status/status reason/detail, and maintained before/after snapshots
+  for storage lifecycle mutations — validated in Phase 2
+- ✓ Feed Audit Event sequence allocation uses the
+  `feed_audit_event_sequences` table inside the same storage transaction, with
+  rollback and concurrent ordering coverage assigned to CI for DB execution —
+  validated in Phase 2
 
 ### Active
 
-- [ ] Persist one append-only audit event for each meaningful feed mutation:
-  create, update, deactivate, reset, delete, failure reported, quarantined, and
-  recovered.
-- [ ] Capture enough event context to explain the mutation: feed identity,
-  per-feed sequence, action, occurred time, actor, status reason, bounded human
-  detail, and before/after values.
+- [ ] Persist audit events for the remaining runtime outcomes: failure
+  reported, quarantined, and recovered.
 - [ ] Wire storage, service, and runtime paths to populate
   `status_reason_detail` as the canonical bounded diagnostic detail while
   keeping `quarantine_reason` populated as a compatibility alias for one
   release.
-- [ ] Write feed row mutations and their audit events transactionally so the
-  current state and history cannot diverge on success.
+- [ ] Preserve authenticated admin identity at the trusted service boundary
+  while keeping untrusted request bodies from spoofing actors.
 - [ ] Retain audit history for 18 months and enforce retention in v1.
-- [ ] Verify storage, service, API compatibility, failure/quarantine, recovery,
-  deletion, and retention behavior with focused automated tests.
+- [ ] Verify service/API compatibility, failure/quarantine, recovery, retention,
+  and no-lease-churn behavior with focused automated tests.
 
 ### Out of Scope
 
@@ -138,6 +144,9 @@ events without duplicating the audit ledger.
 | Keep `feeds` as current-state source of truth | Avoids an invasive event-sourcing rewrite of lease and failure paths | Validated in Phase 1 |
 | Store `before_values` and `after_values` JSON objects | Directly answers what changed without forcing consumers to diff rows | Validated in Phase 1 |
 | Add `status_reason_detail` and keep `quarantine_reason` as an alias for one release | Generalizes diagnostic detail beyond quarantine while preserving compatibility | Schema validated in Phase 1; compatibility behavior pending |
+| Keep audit creation inside existing `FeedStore` mutation methods | Prevents service/runtime callers from constructing divergent state and audit history | Validated in Phase 2 |
+| Use `feed_audit_event_sequences` for per-feed ordering | Avoids racy `MAX(feed_sequence) + 1` allocation under concurrent writes | Validated in Phase 2 |
+| Use `service:feeds-service` as the Phase 2 actor fallback | Avoids nullable or spoofable user actors until trusted admin identity forwarding lands | Validated in Phase 2; human actor forwarding pending |
 | Emit one `feed.quarantined` event when threshold crossing occurs | Avoids duplicate `failure_reported` plus `quarantined` events for the same outcome | — Pending |
 | Treat all persisted non-quarantine failures as audit-worthy | Operators need repeated failure context, not only terminal quarantine state | — Pending |
 | Do not audit routine lease churn in v1 | Lease handoffs are high-noise scheduler mechanics, not admin-facing history | — Pending |
@@ -162,4 +171,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-19 after initialization*
+*Last updated: 2026-06-19 after Phase 2 completion*
