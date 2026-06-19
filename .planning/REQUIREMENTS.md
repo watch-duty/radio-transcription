@@ -23,8 +23,8 @@ short-lived logs.
 
 ### Event Semantics
 
-- [ ] **EVT-01**: Feed creation emits one audit event.
-- [ ] **EVT-02**: Meaningful feed configuration changes emit audit events.
+- [x] **EVT-01**: Feed creation emits one audit event.
+- [x] **EVT-02**: Meaningful feed configuration changes emit audit events.
 - [ ] **EVT-03**: Feed deactivation emits one audit event.
 - [ ] **EVT-04**: Feed reset emits one audit event.
 - [ ] **EVT-05**: Feed deletion emits one audit event before the feed is
@@ -64,9 +64,9 @@ short-lived logs.
 
 ### Consistency
 
-- [ ] **CON-01**: A successful audited feed mutation and its audit event commit
+- [x] **CON-01**: A successful audited feed mutation and its audit event commit
   together.
-- [ ] **CON-02**: A failed or rolled-back feed mutation does not leave behind an
+- [x] **CON-02**: A failed or rolled-back feed mutation does not leave behind an
   audit event.
 - [x] **CON-03**: Concurrent audited mutations for the same feed preserve a
   unique, deterministic per-feed order.
@@ -155,8 +155,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AUD-03 | Phase 1 | Complete |
 | AUD-04 | Phase 2 | Complete |
 | AUD-05 | Phase 5 | Pending |
-| EVT-01 | Phase 2 | Pending |
-| EVT-02 | Phase 2 | Pending |
+| EVT-01 | Phase 2 | Complete |
+| EVT-02 | Phase 2 | Complete |
 | EVT-03 | Phase 2 | Pending |
 | EVT-04 | Phase 2 | Pending |
 | EVT-05 | Phase 2 | Pending |
@@ -171,8 +171,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ACT-01 | Phase 1 | Complete |
 | ACT-02 | Phase 3 | Pending |
 | ACT-03 | Phase 4 | Pending |
-| CON-01 | Phase 2 | Pending |
-| CON-02 | Phase 2 | Pending |
+| CON-01 | Phase 2 | Complete |
+| CON-02 | Phase 2 | Complete |
 | CON-03 | Phase 2 | Complete |
 | CON-04 | Phase 2 | Complete |
 | COMP-01 | Phase 3 | Pending |
