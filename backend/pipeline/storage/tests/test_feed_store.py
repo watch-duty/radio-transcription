@@ -69,13 +69,15 @@ def _full_feed_row(**overrides: object) -> dict[str, object]:
         "status_reason_updated_at": None,
         "quarantine_reason": None,
         "failure_count": 0,
+        "retry_after": None,
         "worker_id": None,
         "last_heartbeat": None,
         "last_processed_filename": None,
         "last_bookmark_time": None,
         "created_at": datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
+        "status_reason_detail": None,
         "source_feed_id": "123",
-        "tags": None,
+        "tags": "[]",
         "last_speech_segment_timestamp": None,
     }
     row.update(overrides)
@@ -90,6 +92,61 @@ def _sql_without_comments(text: str) -> str:
 
 def _normalized_sql(text: str) -> str:
     return " ".join(_sql_without_comments(text).split())
+
+
+class TestTransactionMockPool(unittest.IsolatedAsyncioTestCase):
+    """Tests for transaction-capable storage mock helpers."""
+
+    async def test_pool_acquire_returns_inspectable_connection(self) -> None:
+        pool = make_mock_pool(transaction=True)
+
+        async with pool.acquire() as conn:
+            self.assertIs(conn, pool.acquired_connection)
+
+        pool.acquire_context.__aenter__.assert_awaited_once()
+        pool.acquire_context.__aexit__.assert_awaited_once()
+
+    async def test_connection_exposes_transaction_and_query_mocks(
+        self,
+    ) -> None:
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+
+        async with conn.transaction():
+            await conn.fetchrow("select row")
+            await conn.fetchval("select value")
+            await conn.fetch("select rows")
+            await conn.execute("update row")
+
+        pool.transaction_context.__aenter__.assert_awaited_once()
+        pool.transaction_context.__aexit__.assert_awaited_once()
+        conn.fetchrow.assert_awaited_once_with("select row")
+        conn.fetchval.assert_awaited_once_with("select value")
+        conn.fetch.assert_awaited_once_with("select rows")
+        conn.execute.assert_awaited_once_with("update row")
+
+    async def test_pool_level_behavior_remains_available(self) -> None:
+        row = _full_feed_row()
+        pool = make_mock_pool(fetchrow_result=row, transaction=True)
+
+        self.assertIs(await pool.fetchrow("select feed"), row)
+        self.assertEqual(await pool.execute("update feed"), "UPDATE 0")
+        self.assertEqual(await pool.fetch("select feeds"), [])
+        self.assertEqual(await pool.fetchval("select count"), 0)
+
+    def test_full_feed_row_includes_audit_snapshot_fields(self) -> None:
+        row = _full_feed_row(
+            tags='[{"key": "county", "value": "Fulton"}]',
+            status_reason_detail="provider timeout",
+            retry_after=datetime.datetime(2026, 4, 11, tzinfo=datetime.UTC),
+        )
+
+        self.assertEqual(row["status_reason_detail"], "provider timeout")
+        self.assertIsNotNone(row["retry_after"])
+        self.assertEqual(
+            json.loads(cast(str, row["tags"])),
+            [{"key": "county", "value": "Fulton"}],
+        )
 
 
 class TestStatusReasonMigrationContract(unittest.TestCase):
