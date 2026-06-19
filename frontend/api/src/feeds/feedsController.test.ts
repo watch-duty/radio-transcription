@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import type * as express from 'express';
 
 import { SourceType } from '@transcription/common';
@@ -198,6 +199,19 @@ describe('FeedsController', () => {
 
       expect(result.statusReasonDetail).toBe('provider timeout');
       expect(legacyDetailField in result).toBe(false);
+    });
+  });
+
+  describe('OpenAPI feed contract', () => {
+    it('publishes the canonical status detail field only', () => {
+      const openApiYaml = readFileSync(
+        new URL('../../openapi.yaml', import.meta.url),
+        'utf8'
+      );
+      const legacyDetailField = 'quarantine' + 'Reason';
+
+      expect(openApiYaml).toContain('statusReasonDetail:');
+      expect(openApiYaml).not.toContain(`${legacyDetailField}:`);
     });
   });
 
