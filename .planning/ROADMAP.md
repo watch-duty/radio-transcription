@@ -86,7 +86,7 @@ Plans:
 - [x] 03-02-PLAN.md - BFF/frontend diagnostic detail migration.
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 03-03-PLAN.md - Trusted admin actor propagation.
+- [x] 03-03-PLAN.md - Trusted admin actor propagation.
 
 ### Phase 4: Runtime Event Integration
 **Goal**: Runtime and Echo paths produce the meaningful failure, quarantine, recovery, and no-noise audit behavior promised by v1.

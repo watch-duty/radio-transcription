@@ -57,7 +57,7 @@ short-lived logs.
 
 - [x] **ACT-01**: Each audit event attributes the cause to a human admin,
   service component, runtime worker, scheduled job, or explicit unknown actor.
-- [ ] **ACT-02**: Admin-initiated feed mutations preserve the authenticated
+- [x] **ACT-02**: Admin-initiated feed mutations preserve the authenticated
   admin identity when that identity is available at the trusted service
   boundary.
 - [ ] **ACT-03**: Runtime-generated feed events use stable system actor values
@@ -171,7 +171,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DIAG-03 | Phase 4 | Pending |
 | DIAG-04 | Phase 3 | Complete |
 | ACT-01 | Phase 1 | Complete |
-| ACT-02 | Phase 3 | Pending |
+| ACT-02 | Phase 3 | Complete |
 | ACT-03 | Phase 4 | Pending |
 | CON-01 | Phase 2 | Complete |
 | CON-02 | Phase 2 | Complete |
