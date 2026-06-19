@@ -6,7 +6,7 @@
 -- Invariant: no index on the feeds table may reference a column that the
 -- hot write path mutates, because PostgreSQL's Heap-Only Tuple optimization
 -- is disabled for an UPDATE whenever any indexed column is modified. The
--- eight guarded columns below are all mutated at high frequency by claim,
+-- nine guarded columns below are all mutated at high frequency by claim,
 -- heartbeat, progress, release, or failure paths.
 --
 -- The one allow-list exception is idx_feeds_failing_retryable: it indexes
@@ -45,6 +45,7 @@ SELECT c.relname AS indexname, a.attname
        'last_processed_filename',
        'last_bookmark_time',
        'failure_count',
-       'retry_after'
+       'retry_after',
+       'status_reason_detail'
    )
    AND c.relname <> 'idx_feeds_failing_retryable';
