@@ -90,3 +90,60 @@ class TestFeedServiceAuditActor(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(result)
         store.update_feed.assert_not_awaited()
+
+    async def test_deactivate_feed_passes_service_actor_to_store(self) -> None:
+        store = mock.AsyncMock()
+        store.deactivate_feed.return_value = True
+        service = FeedService(store)
+
+        result = await service.deactivate_feed(str(_FEED_ID))
+
+        self.assertTrue(result)
+        store.deactivate_feed.assert_awaited_once_with(
+            _FEED_ID,
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
+        )
+
+    async def test_delete_feed_passes_service_actor_to_store(self) -> None:
+        store = mock.AsyncMock()
+        store.delete_feed.return_value = True
+        service = FeedService(store)
+
+        result = await service.delete_feed(str(_FEED_ID))
+
+        self.assertTrue(result)
+        store.delete_feed.assert_awaited_once_with(
+            _FEED_ID,
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
+        )
+
+    async def test_reset_feed_passes_service_actor_to_store(self) -> None:
+        store = mock.AsyncMock()
+        store.reset_feed.return_value = _store_feed(status=FeedStatus.UNCLAIMED)
+        service = FeedService(store)
+
+        result = await service.reset_feed(str(_FEED_ID))
+
+        assert result is not None
+        self.assertEqual(result.id, _FEED_ID)
+        store.reset_feed.assert_awaited_once_with(
+            _FEED_ID,
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
+        )
+
+    async def test_lifecycle_methods_reject_invalid_uuid_before_store(
+        self,
+    ) -> None:
+        store = mock.AsyncMock()
+        service = FeedService(store)
+
+        deactivate_result = await service.deactivate_feed("not-a-uuid")
+        delete_result = await service.delete_feed("not-a-uuid")
+        reset_result = await service.reset_feed("not-a-uuid")
+
+        self.assertFalse(deactivate_result)
+        self.assertFalse(delete_result)
+        self.assertIsNone(reset_result)
+        store.deactivate_feed.assert_not_awaited()
+        store.delete_feed.assert_not_awaited()
+        store.reset_feed.assert_not_awaited()
