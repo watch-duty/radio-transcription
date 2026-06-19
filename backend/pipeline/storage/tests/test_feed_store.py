@@ -13,6 +13,10 @@ from unittest import mock
 import asyncpg
 import yaml
 
+from backend.pipeline.common.exceptions import (
+    FeedAlreadyExistsError,
+    FeedNameAlreadyExistsError,
+)
 from backend.pipeline.storage import feed_queries, feed_store, quarantine_reason
 from backend.pipeline.storage.feed_store import (
     FeedStatus,
@@ -93,6 +97,14 @@ def _audit_snapshot_row(**overrides: object) -> dict[str, object]:
     return row
 
 
+def _unique_violation(
+    constraint_name: str,
+) -> asyncpg.exceptions.UniqueViolationError:
+    error = asyncpg.exceptions.UniqueViolationError("duplicate key")
+    error.constraint_name = constraint_name
+    return error
+
+
 def _sql_without_comments(text: str) -> str:
     return "\n".join(
         line for line in text.splitlines() if not line.lstrip().startswith("--")
@@ -153,7 +165,7 @@ class TestTransactionMockPool(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["status_reason_detail"], "provider timeout")
         self.assertIsNotNone(row["retry_after"])
         self.assertEqual(
-            json.loads(cast(str, row["tags"])),
+            json.loads(cast("str", row["tags"])),
             [{"key": "county", "value": "Fulton"}],
         )
 
@@ -510,6 +522,15 @@ class TestFeedAuditSql(unittest.TestCase):
 
         self.assertNotIn("event_payload", sql)
         self.assertNotIn("MAX(feed_sequence", sql)
+
+    def test_reset_sql_clears_and_returns_status_reason_detail(self) -> None:
+        sql = _normalized_sql(feed_queries.RESET_FEED_SQL)
+
+        self.assertIn("status_reason_detail = NULL", sql)
+        self.assertRegex(
+            sql,
+            r"RETURNING\b.*\bquarantine_reason,\s*status_reason_detail\b",
+        )
 
 
 class TestFeedAuditStorageBoundary(unittest.TestCase):
@@ -2024,6 +2045,59 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
                 actor_id=_FEEDS_SERVICE_ACTOR_ID,
             )
 
+    async def test_create_feed_translates_source_unique_violation(self) -> None:
+        """The source lookup unique index remains a feed duplicate error."""
+        pool = make_mock_pool(transaction=True)
+        pool.acquired_connection.fetchrow.side_effect = _unique_violation(
+            "idx_feed_properties_source_lookup"
+        )
+        store = FeedStore(pool)
+
+        with self.assertRaises(FeedAlreadyExistsError):
+            await store.create_feed(
+                "New Feed",
+                "bcfy_feeds",
+                "123",
+                actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            )
+
+    async def test_create_feed_translates_name_unique_violation(self) -> None:
+        """The feeds name constraint remains a feed duplicate error."""
+        pool = make_mock_pool(transaction=True)
+        pool.acquired_connection.fetchrow.side_effect = _unique_violation(
+            "feeds_name_key"
+        )
+        store = FeedStore(pool)
+
+        with self.assertRaises(FeedAlreadyExistsError):
+            await store.create_feed(
+                "New Feed",
+                "bcfy_feeds",
+                "123",
+                actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            )
+
+    async def test_create_feed_reraises_audit_unique_violation(self) -> None:
+        """Audit uniqueness failures must not look like feed duplicates."""
+        row = _full_feed_row(name="New Feed")
+        snapshot = _audit_snapshot_row(name="New Feed")
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [row, snapshot]
+        conn.fetchval.return_value = 1
+        conn.execute.side_effect = _unique_violation(
+            "feed_audit_events_feed_sequence_unique"
+        )
+        store = FeedStore(pool)
+
+        with self.assertRaises(asyncpg.exceptions.UniqueViolationError):
+            await store.create_feed(
+                "New Feed",
+                "bcfy_feeds",
+                "123",
+                actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            )
+
     async def test_raises_value_error_on_failure(self) -> None:
         """ValueError is raised if the DB returns no row."""
         pool = make_mock_pool(transaction=True)
@@ -2239,6 +2313,45 @@ class TestUpdateFeedAuditing(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result)
         pool.acquired_connection.fetchval.assert_not_awaited()
         pool.acquired_connection.execute.assert_not_awaited()
+
+    async def test_update_feed_translates_name_unique_violation(self) -> None:
+        """The feeds name constraint remains a feed name conflict."""
+        before = _audit_snapshot_row(name="Old Feed")
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [
+            before,
+            _unique_violation("feeds_name_key"),
+        ]
+        store = FeedStore(pool)
+
+        with self.assertRaises(FeedNameAlreadyExistsError):
+            await store.update_feed(
+                _FEED_ID,
+                "Conflicting Feed",
+                actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            )
+
+    async def test_update_feed_reraises_audit_unique_violation(self) -> None:
+        """Audit uniqueness failures must not look like name conflicts."""
+        before = _audit_snapshot_row(name="Old Feed")
+        updated_row = _full_feed_row(name="Updated Feed")
+        after = _audit_snapshot_row(name="Updated Feed")
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [before, updated_row, after]
+        conn.fetchval.return_value = 2
+        conn.execute.side_effect = _unique_violation(
+            "feed_audit_events_feed_sequence_unique"
+        )
+        store = FeedStore(pool)
+
+        with self.assertRaises(asyncpg.exceptions.UniqueViolationError):
+            await store.update_feed(
+                _FEED_ID,
+                "Updated Feed",
+                actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            )
 
 
 class TestGetFeed(unittest.IsolatedAsyncioTestCase):
@@ -2691,6 +2804,10 @@ class TestResetFeed(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(before_values["failure_count"], 5)
         self.assertEqual(after_values["status"], "unclaimed")
         self.assertEqual(after_values["failure_count"], 0)
+        self.assertEqual(
+            before_values["status_reason_detail"], "before reset detail"
+        )
+        self.assertIsNone(after_values["status_reason_detail"])
         self.assertNotIn("worker_id", before_values)
         self.assertNotIn("last_heartbeat", after_values)
 

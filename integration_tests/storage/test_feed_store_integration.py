@@ -141,7 +141,7 @@ def _decode_json_object(value: object) -> dict[str, object]:
         decoded = value
     if not isinstance(decoded, dict):
         msg = f"Expected JSON object, got {type(decoded).__name__}"
-        raise AssertionError(msg)
+        raise TypeError(msg)
     return decoded
 
 
@@ -1870,7 +1870,7 @@ async def test_update_feed_audit_failure_rolls_back_state_and_sequence(
     assert sequence_after == sequence_before
 
 
-@pytest.mark.parametrize("actor_id", ("user:", "service: "))
+@pytest.mark.parametrize("actor_id", ["user:", "service: "])
 async def test_invalid_actor_values_are_not_rewritten_by_storage(
     db_pool: asyncpg.Pool,
     store: FeedStore,
@@ -2433,6 +2433,51 @@ async def test_reset_clears_stale_status_reason_with_clear_timestamp_and_raw_qua
     assert status_reason_updated_at > old_reason_ts
     row = await _get_feed_diagnostics(db_pool, feed_id)
     assert row["quarantine_reason"] is None
+
+
+async def test_reset_clears_status_reason_detail_in_row_and_audit(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """Reset clears stale diagnostic detail from state and audit snapshot."""
+    feed_id = await _insert_feed(
+        db_pool,
+        "Detail Reset Feed",
+        status="quarantined",
+        failure_count=5,
+    )
+    await db_pool.execute(
+        "UPDATE feeds SET status_reason = $1,"
+        " status_reason_detail = $2 WHERE id = $3",
+        FeedStatusReason.SOURCE_UNREACHABLE.value,
+        "provider timeout from previous quarantine",
+        feed_id,
+    )
+
+    feed = await store.reset_feed(feed_id, actor_id=_TEST_ACTOR_ID)
+
+    assert feed is not None
+    assert feed["status_reason"] is None
+    assert feed["status_reason_detail"] is None
+    row = await db_pool.fetchrow(
+        "SELECT status_reason, status_reason_detail FROM feeds WHERE id = $1",
+        feed_id,
+    )
+    assert row is not None
+    assert row["status_reason"] is None
+    assert row["status_reason_detail"] is None
+
+    audit_rows = await _fetch_audit_events(db_pool, feed_id)
+    assert len(audit_rows) == 1
+    audit_row = audit_rows[0]
+    before_values = _decode_json_object(audit_row["before_values"])
+    after_values = _decode_json_object(audit_row["after_values"])
+    assert audit_row["action"] == "feed.reset"
+    assert (
+        before_values["status_reason_detail"]
+        == "provider timeout from previous quarantine"
+    )
+    assert after_values["status_reason_detail"] is None
 
 
 async def test_reset_with_null_status_reason_leaves_reason_timestamp_unchanged(

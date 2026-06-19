@@ -18,14 +18,14 @@ from backend.pipeline.common.exceptions import (
 )
 from backend.pipeline.storage import quarantine_reason
 from backend.pipeline.storage.feed_queries import (
+    ALLOCATE_FEED_AUDIT_SEQUENCE_SQL,
     COUNT_FEEDS_SQL,
     COUNT_HELD_BY_TYPE_SQL,
     CREATE_FEED_SQL,
     DEACTIVATE_FEED_SQL,
     DELETE_FEED_SQL,
-    GET_FEED_SQL,
     GET_AUDIT_FEED_SNAPSHOT_SQL,
-    ALLOCATE_FEED_AUDIT_SEQUENCE_SQL,
+    GET_FEED_SQL,
     INSERT_FEED_AUDIT_EVENT_SQL,
     LIST_FEEDS_ASC_SQL,
     LIST_FEEDS_DESC_SQL,
@@ -51,6 +51,14 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
+
+_CREATE_FEED_UNIQUE_CONSTRAINTS = frozenset(
+    {
+        "feeds_name_key",
+        "idx_feed_properties_source_lookup",
+    }
+)
+_UPDATE_FEED_UNIQUE_CONSTRAINTS = frozenset({"feeds_name_key"})
 
 
 class SourceType(enum.StrEnum):
@@ -296,6 +304,14 @@ class FeedStore:
             tags=tags,
             last_speech_segment_timestamp=row["last_speech_segment_timestamp"],
         )
+
+    @staticmethod
+    def _is_expected_unique_violation(
+        error: asyncpg.exceptions.UniqueViolationError,
+        expected_constraints: frozenset[str],
+    ) -> bool:
+        constraint_name = getattr(error, "constraint_name", None)
+        return constraint_name in expected_constraints
 
     @staticmethod
     def _json_default(value: object) -> str:
@@ -955,6 +971,11 @@ class FeedStore:
                         identity_row=snapshot_row,
                     )
         except asyncpg.exceptions.UniqueViolationError as e:
+            if not self._is_expected_unique_violation(
+                e,
+                _CREATE_FEED_UNIQUE_CONSTRAINTS,
+            ):
+                raise
             logger.warning(
                 "Feed already exists",
                 extra={
@@ -1042,6 +1063,11 @@ class FeedStore:
                         identity_row=after_row,
                     )
         except asyncpg.exceptions.UniqueViolationError as e:
+            if not self._is_expected_unique_violation(
+                e,
+                _UPDATE_FEED_UNIQUE_CONSTRAINTS,
+            ):
+                raise
             logger.warning(
                 "Feed update conflicts with existing feed name",
                 extra={
@@ -1226,6 +1252,7 @@ class FeedStore:
 
         Args:
             feed_id: UUID of the feed to reset.
+            actor_id: Required audit actor ID for the reset event.
 
         Returns:
             The updated ``Feed`` dict, or ``None`` if the feed was not found.

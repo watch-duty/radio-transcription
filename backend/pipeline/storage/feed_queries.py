@@ -572,6 +572,7 @@ WITH updated AS (
         worker_id = NULL,
         unclaimed_since = NOW(),
         quarantine_reason = NULL,
+        status_reason_detail = NULL,
         last_heartbeat = NOW(),
         status_reason_updated_at = CASE
             WHEN status_reason IS NOT NULL THEN NOW()
@@ -582,7 +583,7 @@ WITH updated AS (
     RETURNING id, name, source_type, status, failure_count, worker_id,
               status_reason, status_reason_updated_at, last_heartbeat,
               last_processed_filename, last_bookmark_time, created_at,
-              quarantine_reason
+              quarantine_reason, status_reason_detail
 )
 SELECT u.*, fp.source_feed_id, fp.tags,
        (

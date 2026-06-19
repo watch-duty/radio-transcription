@@ -190,6 +190,17 @@ def test_replacement_migration_removes_system_actor_constraint() -> None:
         in normalized
     )
     assert "ADD CONSTRAINT feed_audit_events_actor_id_check" in normalized
+    assert (
+        "INSERT INTO feed_audit_event_sequences (feed_id, next_sequence)"
+        in normalized
+    )
+    assert "SELECT feed_id, MAX(feed_sequence) + 1" in normalized
+    assert "FROM feed_audit_events" in normalized
+    assert "ON CONFLICT (feed_id) DO UPDATE" in normalized
+    assert (
+        "GREATEST( feed_audit_event_sequences.next_sequence, "
+        "EXCLUDED.next_sequence )" in normalized
+    )
 
     recreated_constraint = sql.split(
         "ADD CONSTRAINT feed_audit_events_actor_id_check",
