@@ -105,7 +105,10 @@ class FeedService:
             uid = uuid.UUID(feed_id)
         except ValueError:
             return False
-        success = await self._store.deactivate_feed(uid)
+        success = await self._store.deactivate_feed(
+            uid,
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
+        )
         if success:
             logger.info(
                 "Feed deactivated",
@@ -124,7 +127,10 @@ class FeedService:
             uid = uuid.UUID(feed_id)
         except ValueError:
             return False
-        success = await self._store.delete_feed(uid)
+        success = await self._store.delete_feed(
+            uid,
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
+        )
         if success:
             logger.info(
                 "Feed hard deleted",
@@ -147,7 +153,10 @@ class FeedService:
             uid = uuid.UUID(feed_id)
         except ValueError:
             return None
-        store_feed = await self._store.reset_feed(uid)
+        store_feed = await self._store.reset_feed(
+            uid,
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
+        )
         if not store_feed:
             return None
         logger.info(
