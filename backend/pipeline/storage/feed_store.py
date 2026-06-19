@@ -1175,7 +1175,12 @@ class FeedStore:
                 )
         return True
 
-    async def delete_feed(self, feed_id: uuid.UUID) -> bool:
+    async def delete_feed(
+        self,
+        feed_id: uuid.UUID,
+        *,
+        actor_id: str,
+    ) -> bool:
         """Hard delete a feed by ID.
 
         Deletes the feed itself, along with all referencing database entities
@@ -1183,8 +1188,28 @@ class FeedStore:
 
         Returns True if the feed was successfully deleted, False otherwise.
         """
-        result = await self._pool.execute(DELETE_FEED_SQL, feed_id)
-        return result == "DELETE 1"
+        async with self._pool.acquire() as conn:
+            async with conn.transaction():
+                before_row = await conn.fetchrow(
+                    GET_AUDIT_FEED_SNAPSHOT_SQL,
+                    feed_id,
+                )
+                if before_row is None:
+                    return False
+
+                await self._insert_feed_audit_event(
+                    conn,
+                    action="feed.deleted",
+                    actor_id=actor_id,
+                    before_values=self._audit_snapshot(before_row),
+                    after_values={},
+                    identity_row=before_row,
+                )
+                result = await conn.execute(DELETE_FEED_SQL, feed_id)
+                if result != "DELETE 1":
+                    msg = f"Failed to delete feed {feed_id}"
+                    raise ValueError(msg)
+        return True
 
     async def reset_feed(
         self,
