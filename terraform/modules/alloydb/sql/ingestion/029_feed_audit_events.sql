@@ -118,15 +118,6 @@ BEGIN
                         ) !~ '[[:space:]]'
                     )
                     OR (
-                        actor_id LIKE 'system:%'
-                        AND substring(
-                            actor_id FROM char_length('system:') + 1
-                        ) <> ''
-                        AND substring(
-                            actor_id FROM char_length('system:') + 1
-                        ) !~ '[[:space:]]'
-                    )
-                    OR (
                         actor_id LIKE 'job:%'
                         AND substring(
                             actor_id FROM char_length('job:') + 1

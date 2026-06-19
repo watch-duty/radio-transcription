@@ -70,11 +70,10 @@ Canonical actor forms are:
 - `user-email:<normalized_email>` when a human admin has no available Google
   subject claim.
 - `service:<service_name>` for a semantic service actor.
-- `system:<component_name>` for a semantic system component.
 - `job:<job_name>` for scheduled or maintenance job actors.
 - `gcp-sa:<service_account_email>` only when the authenticated workload
-  principal is the best available actor and no semantic service, system, or job
-  actor is known.
+  principal is the best available actor and no semantic service or job actor is
+  known.
 - `unknown:unknown` as the explicit fallback. It should be rare and visible in
   later tests and monitoring.
 

@@ -20,7 +20,6 @@ _ACTOR_STRINGS = (
     "user:google:",
     "user-email:",
     "service:",
-    "system:",
     "job:",
     "gcp-sa:",
     "unknown:unknown",
@@ -57,6 +56,8 @@ def test_documentation_defines_feed_audit_event_contract() -> None:
         "admin timeline",
     ):
         assert token in text
+
+    assert "system:" not in text
 
 
 def test_repository_glossary_defines_audit_terms() -> None:
@@ -127,6 +128,8 @@ def test_migration_defines_actor_and_action_constraints() -> None:
     ):
         assert token in sql
 
+    assert "system:%" not in sql
+
 
 def test_migration_rejects_malformed_actor_id_suffixes() -> None:
     text = _read(
@@ -137,7 +140,6 @@ def test_migration_rejects_malformed_actor_id_suffixes() -> None:
     rejected_actor_ids = (
         "user:google:",
         "service:",
-        "system:",
         "job:",
         "gcp-sa:",
         "user-email:",
@@ -170,6 +172,30 @@ def test_migration_rejects_malformed_actor_id_suffixes() -> None:
         sql,
         flags=re.IGNORECASE,
     )
+
+
+def test_replacement_migration_removes_system_actor_constraint() -> None:
+    text = _read(
+        "terraform/modules/alloydb/sql/ingestion/"
+        "030_feed_audit_events_actor_constraint.sql"
+    )
+    sql = _sql_without_comments(text)
+    normalized = _normalized_sql(text)
+
+    assert "actor_id LIKE 'system:%'" in normalized
+    assert "RAISE EXCEPTION" in normalized
+    assert "clean or remap those rows" in normalized
+    assert (
+        "DROP CONSTRAINT IF EXISTS feed_audit_events_actor_id_check"
+        in normalized
+    )
+    assert "ADD CONSTRAINT feed_audit_events_actor_id_check" in normalized
+
+    recreated_constraint = sql.split(
+        "ADD CONSTRAINT feed_audit_events_actor_id_check",
+        maxsplit=1,
+    )[1]
+    assert "system:%" not in recreated_constraint
 
 
 def test_migration_uses_schema_qualified_constraint_guards() -> None:
