@@ -34,7 +34,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 Plans:
 **Wave 1**
-- [ ] 01-01-PLAN.md - Domain contract documentation and repository terminology.
+- [x] 01-01-PLAN.md - Domain contract documentation and repository terminology.
 - [ ] 01-02-PLAN.md - SQL migration and HOT guard schema foundation.
 
 **Wave 2** *(blocked on Wave 1 completion)*
@@ -96,7 +96,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Contract and Schema Foundation | 0/TBD | Not started | - |
+| 1. Contract and Schema Foundation | 1/3 | In Progress | - |
 | 2. Transactional Storage Writes | 0/TBD | Not started | - |
 | 3. Service and Compatibility Surface | 0/TBD | Not started | - |
 | 4. Runtime Event Integration | 0/TBD | Not started | - |

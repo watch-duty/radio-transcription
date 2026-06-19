@@ -12,9 +12,9 @@ short-lived logs.
 - [ ] **AUD-01**: The system records durable audit history for meaningful feed
   creation, configuration, lifecycle, failure, quarantine, recovery, reset,
   deactivation, and deletion events.
-- [ ] **AUD-02**: Each audited event identifies the affected feed even when the
+- [x] **AUD-02**: Each audited event identifies the affected feed even when the
   current feed row is later deleted.
-- [ ] **AUD-03**: Each audited event records when the event occurred and has a
+- [x] **AUD-03**: Each audited event records when the event occurred and has a
   stable per-feed ordering that future timelines can use.
 - [ ] **AUD-04**: Audit history preserves the meaningful values before and
   after each audited change.
@@ -41,7 +41,7 @@ short-lived logs.
 
 ### Diagnostic Detail
 
-- [ ] **DIAG-01**: Current feed state includes a canonical bounded diagnostic
+- [x] **DIAG-01**: Current feed state includes a canonical bounded diagnostic
   detail field that can explain abnormal status for both quarantine and
   non-quarantine failures.
 - [ ] **DIAG-02**: Diagnostic detail follows the same lifecycle as the typed
@@ -54,7 +54,7 @@ short-lived logs.
 
 ### Actor Attribution
 
-- [ ] **ACT-01**: Each audit event attributes the cause to a human admin,
+- [x] **ACT-01**: Each audit event attributes the cause to a human admin,
   service component, runtime worker, scheduled job, or explicit unknown actor.
 - [ ] **ACT-02**: Admin-initiated feed mutations preserve the authenticated
   admin identity when that identity is available at the trusted service
@@ -86,13 +86,13 @@ short-lived logs.
 
 ### Contract And Documentation
 
-- [ ] **DOC-01**: Repository documentation defines the Feed Audit Event concept,
+- [x] **DOC-01**: Repository documentation defines the Feed Audit Event concept,
   action vocabulary, actor vocabulary, diagnostic-detail semantics, retention
   policy, and v1 boundaries.
-- [ ] **DOC-02**: The contract is written so future Watch Duty backend delivery
+- [x] **DOC-02**: The contract is written so future Watch Duty backend delivery
   and admin timeline work can derive consumer payloads without changing the
   v1 audit meaning.
-- [ ] **DOC-03**: Repository terminology distinguishes current feed state,
+- [x] **DOC-03**: Repository terminology distinguishes current feed state,
   audit history, typed status reasons, diagnostic detail, and the legacy
   quarantine reason compatibility alias.
 
@@ -151,8 +151,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | AUD-01 | Phase 4 | Pending |
-| AUD-02 | Phase 1 | Pending |
-| AUD-03 | Phase 1 | Pending |
+| AUD-02 | Phase 1 | Complete |
+| AUD-03 | Phase 1 | Complete |
 | AUD-04 | Phase 2 | Pending |
 | AUD-05 | Phase 5 | Pending |
 | EVT-01 | Phase 2 | Pending |
@@ -164,11 +164,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | EVT-07 | Phase 4 | Pending |
 | EVT-08 | Phase 4 | Pending |
 | EVT-09 | Phase 4 | Pending |
-| DIAG-01 | Phase 1 | Pending |
+| DIAG-01 | Phase 1 | Complete |
 | DIAG-02 | Phase 4 | Pending |
 | DIAG-03 | Phase 4 | Pending |
 | DIAG-04 | Phase 3 | Pending |
-| ACT-01 | Phase 1 | Pending |
+| ACT-01 | Phase 1 | Complete |
 | ACT-02 | Phase 3 | Pending |
 | ACT-03 | Phase 4 | Pending |
 | CON-01 | Phase 2 | Pending |
@@ -179,9 +179,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | COMP-02 | Phase 3 | Pending |
 | COMP-03 | Phase 3 | Pending |
 | COMP-04 | Phase 4 | Pending |
-| DOC-01 | Phase 1 | Pending |
-| DOC-02 | Phase 1 | Pending |
-| DOC-03 | Phase 1 | Pending |
+| DOC-01 | Phase 1 | Complete |
+| DOC-02 | Phase 1 | Complete |
+| DOC-03 | Phase 1 | Complete |
 | VER-01 | Phase 5 | Pending |
 | VER-02 | Phase 5 | Pending |
 | VER-03 | Phase 5 | Pending |
