@@ -193,6 +193,7 @@ class Feed(TypedDict):
     status: FeedStatus
     status_reason: FeedStatusReason | None
     status_reason_updated_at: datetime.datetime | None
+    status_reason_detail: str | None
     quarantine_reason: str | None
     failure_count: int
     worker_id: uuid.UUID | None
@@ -293,6 +294,7 @@ class FeedStore:
             status=status,
             status_reason=status_reason,
             status_reason_updated_at=row["status_reason_updated_at"],
+            status_reason_detail=row["status_reason_detail"],
             quarantine_reason=row["quarantine_reason"],
             failure_count=row["failure_count"],
             worker_id=row["worker_id"],

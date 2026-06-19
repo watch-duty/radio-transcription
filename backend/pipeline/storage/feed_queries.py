@@ -399,7 +399,8 @@ WITH new_feed AS (
     RETURNING id, name, source_type, status, status_reason,
               status_reason_updated_at, failure_count, worker_id,
               last_heartbeat, last_processed_filename,
-              last_bookmark_time, created_at, quarantine_reason
+              last_bookmark_time, created_at, quarantine_reason,
+              status_reason_detail
 ),
 new_props AS (
     INSERT INTO feed_properties (feed_id, source_feed_id, source_type, tags)
@@ -417,6 +418,7 @@ SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
        f.last_bookmark_time, f.created_at, f.quarantine_reason,
+       f.status_reason_detail,
        fp.source_feed_id, fp.tags,
        (
            SELECT s.end_timestamp
@@ -498,6 +500,7 @@ SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
        f.last_bookmark_time, f.created_at, f.quarantine_reason,
+       f.status_reason_detail,
        fp.source_feed_id, fp.tags,
        (
            SELECT s.end_timestamp
@@ -523,6 +526,7 @@ SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
        f.last_bookmark_time, f.created_at, f.quarantine_reason,
+       f.status_reason_detail,
        fp.source_feed_id, fp.tags,
        (
            SELECT s.end_timestamp
@@ -606,7 +610,8 @@ WITH updated_feed AS (
     RETURNING id, name, source_type, status, status_reason,
               status_reason_updated_at, failure_count, worker_id,
               last_heartbeat, last_processed_filename,
-              last_bookmark_time, created_at, quarantine_reason
+              last_bookmark_time, created_at, quarantine_reason,
+              status_reason_detail
 ),
 updated_props AS (
     UPDATE feed_properties

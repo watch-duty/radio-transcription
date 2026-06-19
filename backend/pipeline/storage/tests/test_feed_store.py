@@ -356,6 +356,15 @@ class TestStatusReasonRowMapping(unittest.TestCase):
 
         self.assertIsNone(result["status_reason"])
         self.assertIsNone(result["status_reason_updated_at"])
+        self.assertIsNone(result["status_reason_detail"])
+
+    def test_status_reason_detail_maps_to_feed(self) -> None:
+        store = FeedStore(make_mock_pool())
+        row = _full_feed_row(status_reason_detail="provider timeout")
+
+        result = store._row_to_feed(cast("asyncpg.Record", row))
+
+        self.assertEqual(result["status_reason_detail"], "provider timeout")
 
     def test_valid_reason_maps_to_enum(self) -> None:
         store = FeedStore(make_mock_pool())
@@ -416,6 +425,7 @@ class TestStatusReasonSqlProjection(unittest.TestCase):
         ):
             self.assertRegex(sql, r"\bstatus_reason\b")
             self.assertRegex(sql, r"\bstatus_reason_updated_at\b")
+            self.assertRegex(sql, r"\bstatus_reason_detail\b")
 
 
 class TestLastSpeechSegmentTimestampSqlProjection(unittest.TestCase):
