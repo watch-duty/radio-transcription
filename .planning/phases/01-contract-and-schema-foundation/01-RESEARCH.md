@@ -439,7 +439,7 @@ CREATE TABLE IF NOT EXISTS feed_audit_events (
 );
 ```
 
-### Actor ID Prefix Check
+### Actor ID Namespace And Suffix Check
 
 ```sql
 -- Source: 01-CONTEXT.md actor decisions.
@@ -447,12 +447,30 @@ ALTER TABLE feed_audit_events
     ADD CONSTRAINT feed_audit_events_actor_id_check
     CHECK (
         actor_id = 'unknown:unknown'
-        OR actor_id LIKE 'user:google:%'
-        OR actor_id LIKE 'user-email:%'
-        OR actor_id LIKE 'service:%'
-        OR actor_id LIKE 'system:%'
-        OR actor_id LIKE 'job:%'
-        OR actor_id LIKE 'gcp-sa:%'
+        OR (
+            actor_id LIKE 'user:google:%'
+            AND char_length(actor_id) > char_length('user:google:')
+        )
+        OR (
+            actor_id LIKE 'user-email:%'
+            AND char_length(actor_id) > char_length('user-email:')
+        )
+        OR (
+            actor_id LIKE 'service:%'
+            AND char_length(actor_id) > char_length('service:')
+        )
+        OR (
+            actor_id LIKE 'system:%'
+            AND char_length(actor_id) > char_length('system:')
+        )
+        OR (
+            actor_id LIKE 'job:%'
+            AND char_length(actor_id) > char_length('job:')
+        )
+        OR (
+            actor_id LIKE 'gcp-sa:%'
+            AND char_length(actor_id) > char_length('gcp-sa:')
+        )
     );
 ```
 
@@ -495,17 +513,26 @@ This helper mirrors current cap-only behavior; Phase 1 must not add redaction be
 
 **If this table is empty:** All claims in this research were verified or cited — no user confirmation needed.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Should `feed_audit_event_sequences` be created in Phase 1 or deferred to Phase 2 storage writes?**
-   - What we know: Phase 1 must support stable per-feed ordering, and the user delegated sequence allocator mechanism to the planner/researcher. [VERIFIED: .planning/ROADMAP.md; VERIFIED: 01-CONTEXT.md]
-   - What's unclear: The roadmap does not explicitly require the allocator table itself in Phase 1, only the contract/schema support. [VERIFIED: .planning/ROADMAP.md]
-   - Recommendation: Add the counter table in Phase 1 because it is schema foundation and prevents Phase 2 from inventing a weaker allocator. [CITED: https://www.postgresql.org/docs/current/applevel-consistency.html]
+1. **RESOLVED: `feed_audit_event_sequences` is created in Phase 1.**
+   - Resolution: Phase 1 creates `feed_audit_event_sequences` because stable
+     per-feed sequence is required by Phase 1 success criteria and later
+     storage writers need the schema object to exist. [VERIFIED:
+     .planning/ROADMAP.md; VERIFIED: 01-CONTEXT.md]
+   - Planning impact: `01-02-PLAN.md` includes the sequence foundation in the
+     ordered schema migration before Phase 2 storage writers allocate sequence
+     values atomically. [VERIFIED:
+     .planning/phases/01-contract-and-schema-foundation/01-02-PLAN.md]
 
-2. **Should Phase 1 touch FastAPI/Pydantic feed response models?**
-   - What we know: Phase 1 success criteria say the current feed schema exposes `status_reason_detail`; Phase 3 success criteria separately say API responses expose it. [VERIFIED: .planning/ROADMAP.md]
-   - What's unclear: "Schema exposes" can mean database schema only or database plus backend typed feed shape. [VERIFIED: .planning/ROADMAP.md]
-   - Recommendation: In Phase 1, add database column and storage/domain contract only; plan API response fields in Phase 3 to match requirement ownership. [VERIFIED: .planning/ROADMAP.md]
+2. **RESOLVED: FastAPI/Pydantic/API exposure is deferred to Phase 3.**
+   - Resolution: FastAPI/Pydantic/API exposure is deferred to Phase 3 because
+     Phase 1 is contract/schema foundation only. [VERIFIED:
+     .planning/ROADMAP.md]
+   - Planning impact: Phase 1 adds the database column and domain contract;
+     Phase 3 owns feed response models, BFF/frontend compatibility, and API
+     exposure for `status_reason_detail`. [VERIFIED: .planning/ROADMAP.md;
+     VERIFIED: .planning/REQUIREMENTS.md]
 
 ## Environment Availability
 
