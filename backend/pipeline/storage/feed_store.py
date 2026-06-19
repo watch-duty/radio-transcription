@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import enum
 import json
 import logging
+import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypedDict
 
@@ -22,6 +24,9 @@ from backend.pipeline.storage.feed_queries import (
     DEACTIVATE_FEED_SQL,
     DELETE_FEED_SQL,
     GET_FEED_SQL,
+    GET_AUDIT_FEED_SNAPSHOT_SQL,
+    ALLOCATE_FEED_AUDIT_SEQUENCE_SQL,
+    INSERT_FEED_AUDIT_EVENT_SQL,
     LIST_FEEDS_ASC_SQL,
     LIST_FEEDS_DESC_SQL,
     RECORD_SOURCE_OBSERVATION_SQL,
@@ -43,8 +48,6 @@ from backend.pipeline.storage.pagination_utils import (
 )
 
 if TYPE_CHECKING:
-    import datetime
-    import uuid
     from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
@@ -292,6 +295,124 @@ class FeedStore:
             source_feed_id=row["source_feed_id"],
             tags=tags,
             last_speech_segment_timestamp=row["last_speech_segment_timestamp"],
+        )
+
+    @staticmethod
+    def _json_default(value: object) -> str:
+        """Serialize database scalar values for audit JSON payloads."""
+        if isinstance(value, uuid.UUID):
+            return str(value)
+        if isinstance(value, datetime.datetime):
+            return value.isoformat()
+        if isinstance(value, enum.StrEnum):
+            return value.value
+        msg = f"Object of type {type(value).__name__} is not JSON serializable"
+        raise TypeError(msg)
+
+    @staticmethod
+    def _decode_json_array(value: object) -> list[dict[str, str]]:
+        """Decode nullable JSON array values returned by asyncpg."""
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return json.loads(value)
+        return list(value)
+
+    @staticmethod
+    def _audit_event_identity(row: asyncpg.Record) -> dict[str, object]:
+        """Return the audit event identity columns from a snapshot row."""
+        source_type = row["source_type"]
+        if isinstance(source_type, enum.StrEnum):
+            source_type = source_type.value
+        status = row["status"]
+        if isinstance(status, enum.StrEnum):
+            status = status.value
+        return {
+            "feed_id": row["id"],
+            "feed_name": row["name"],
+            "source_type": source_type,
+            "status": status,
+            "status_reason": row["status_reason"],
+            "status_reason_detail": row["status_reason_detail"],
+        }
+
+    def _audit_snapshot(self, row: asyncpg.Record) -> dict[str, object]:
+        """Serialize the maintained feed audit snapshot allowlist."""
+        return {
+            "id": self._json_default(row["id"]),
+            "name": row["name"],
+            "source_type": row["source_type"],
+            "status": row["status"],
+            "failure_count": row["failure_count"],
+            "retry_after": row["retry_after"],
+            "status_reason": row["status_reason"],
+            "status_reason_updated_at": row["status_reason_updated_at"],
+            "status_reason_detail": row["status_reason_detail"],
+            "quarantine_reason": row["quarantine_reason"],
+            "last_bookmark_time": row["last_bookmark_time"],
+            "created_at": row["created_at"],
+            "feed_properties.source_feed_id": row[
+                "feed_properties.source_feed_id"
+            ],
+            "feed_properties.tags": self._decode_json_array(
+                row["feed_properties.tags"]
+            ),
+        }
+
+    async def _allocate_feed_sequence(
+        self,
+        conn: asyncpg.Connection,
+        feed_id: uuid.UUID,
+    ) -> int:
+        """Allocate the next per-feed audit sequence in the open transaction."""
+        feed_sequence = await conn.fetchval(
+            ALLOCATE_FEED_AUDIT_SEQUENCE_SQL,
+            feed_id,
+        )
+        if feed_sequence is None:
+            msg = f"Failed to allocate audit sequence for feed {feed_id}"
+            raise ValueError(msg)
+        return int(feed_sequence)
+
+    async def _insert_feed_audit_event(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        action: str,
+        actor_id: str,
+        before_values: dict[str, object],
+        after_values: dict[str, object],
+        identity_row: asyncpg.Record,
+    ) -> None:
+        """Insert one storage-owned feed audit event."""
+        identity = self._audit_event_identity(identity_row)
+        feed_id = identity["feed_id"]
+        if not isinstance(feed_id, uuid.UUID):
+            msg = f"Invalid feed ID for audit event: {feed_id!r}"
+            raise TypeError(msg)
+        feed_sequence = await self._allocate_feed_sequence(conn, feed_id)
+        await conn.execute(
+            INSERT_FEED_AUDIT_EVENT_SQL,
+            feed_id,
+            identity["feed_name"],
+            identity["source_type"],
+            action,
+            actor_id,
+            feed_sequence,
+            identity["status"],
+            identity["status_reason"],
+            identity["status_reason_detail"],
+            json.dumps(
+                before_values,
+                default=self._json_default,
+                sort_keys=True,
+            ),
+            json.dumps(
+                after_values,
+                default=self._json_default,
+                sort_keys=True,
+            ),
+            json.dumps({}, sort_keys=True),
         )
 
     @staticmethod
@@ -780,6 +901,8 @@ class FeedStore:
         source_type: str | SourceType,
         source_feed_id: str,
         tags: list[dict[str, str]] | None = None,
+        *,
+        actor_id: str,
     ) -> Feed:
         """Create a new feed record.
 
@@ -802,13 +925,35 @@ class FeedStore:
             source_type_str = source_type.value
 
         try:
-            row = await self._pool.fetchrow(
-                CREATE_FEED_SQL,
-                name,
-                source_type_str,
-                source_feed_id,
-                json.dumps(tags or []),
-            )
+            async with self._pool.acquire() as conn:
+                async with conn.transaction():
+                    row = await conn.fetchrow(
+                        CREATE_FEED_SQL,
+                        name,
+                        source_type_str,
+                        source_feed_id,
+                        json.dumps(tags or []),
+                    )
+                    if row is None:
+                        msg = f"Failed to create feed {name}"
+                        raise ValueError(msg)
+
+                    snapshot_row = await conn.fetchrow(
+                        GET_AUDIT_FEED_SNAPSHOT_SQL,
+                        row["id"],
+                    )
+                    if snapshot_row is None:
+                        msg = f"Failed to read audit snapshot for feed {name}"
+                        raise ValueError(msg)
+
+                    await self._insert_feed_audit_event(
+                        conn,
+                        action="feed.created",
+                        actor_id=actor_id,
+                        before_values={},
+                        after_values=self._audit_snapshot(snapshot_row),
+                        identity_row=snapshot_row,
+                    )
         except asyncpg.exceptions.UniqueViolationError as e:
             logger.warning(
                 "Feed already exists",
@@ -828,10 +973,6 @@ class FeedStore:
             msg = f"Invalid source type '{source_type_str}'"
             raise ValueError(msg) from e
 
-        if row is None:
-            msg = f"Failed to create feed {name}"
-            raise ValueError(msg)
-
         return self._row_to_feed(row)
 
     async def update_feed(
@@ -839,6 +980,8 @@ class FeedStore:
         feed_id: uuid.UUID,
         name: str,
         tags: list[dict[str, str]] | None = None,
+        *,
+        actor_id: str,
     ) -> Feed | None:
         """Update an existing feed record.
 
@@ -846,12 +989,58 @@ class FeedStore:
         properties in the `feed_properties` table.
         """
         try:
-            row = await self._pool.fetchrow(
-                UPDATE_FEED_SQL,
-                feed_id,
-                name,
-                json.dumps(tags or []),
-            )
+            async with self._pool.acquire() as conn:
+                async with conn.transaction():
+                    before_row = await conn.fetchrow(
+                        GET_AUDIT_FEED_SNAPSHOT_SQL,
+                        feed_id,
+                    )
+                    if before_row is None:
+                        return None
+
+                    requested_tags = tags or []
+                    before_values = self._audit_snapshot(before_row)
+                    if (
+                        before_values["name"] == name
+                        and before_values["feed_properties.tags"]
+                        == requested_tags
+                    ):
+                        current_row = await conn.fetchrow(
+                            GET_FEED_SQL,
+                            feed_id,
+                        )
+                        if current_row is None:
+                            return None
+                        return self._row_to_feed(current_row)
+
+                    row = await conn.fetchrow(
+                        UPDATE_FEED_SQL,
+                        feed_id,
+                        name,
+                        json.dumps(requested_tags),
+                    )
+                    if row is None:
+                        return None
+
+                    after_row = await conn.fetchrow(
+                        GET_AUDIT_FEED_SNAPSHOT_SQL,
+                        feed_id,
+                    )
+                    if after_row is None:
+                        msg = (
+                            "Failed to read updated audit snapshot for "
+                            f"feed {feed_id}"
+                        )
+                        raise ValueError(msg)
+
+                    await self._insert_feed_audit_event(
+                        conn,
+                        action="feed.updated",
+                        actor_id=actor_id,
+                        before_values=before_values,
+                        after_values=self._audit_snapshot(after_row),
+                        identity_row=after_row,
+                    )
         except asyncpg.exceptions.UniqueViolationError as e:
             logger.warning(
                 "Feed update conflicts with existing feed name",
@@ -860,9 +1049,6 @@ class FeedStore:
                 },
             )
             raise FeedNameAlreadyExistsError(name) from e
-
-        if row is None:
-            return None
 
         logger.info(
             "Feed updated successfully",
