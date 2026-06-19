@@ -29,6 +29,7 @@ _WORKER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _STATUS_REASON_UPDATED_AT = datetime.datetime(
     2026, 5, 29, 12, 0, tzinfo=datetime.UTC
 )
+_FEEDS_SERVICE_ACTOR_ID = "service:feeds-service"
 
 _FEED_STATUS_REASON_VALUES = {
     "pipeline_publish_after_bookmark_failed",
@@ -81,6 +82,13 @@ def _full_feed_row(**overrides: object) -> dict[str, object]:
         "last_speech_segment_timestamp": None,
     }
     row.update(overrides)
+    return row
+
+
+def _audit_snapshot_row(**overrides: object) -> dict[str, object]:
+    row = _full_feed_row(**overrides)
+    row["feed_properties.source_feed_id"] = row["source_feed_id"]
+    row["feed_properties.tags"] = row["tags"]
     return row
 
 
@@ -416,9 +424,7 @@ class TestFeedAuditSql(unittest.TestCase):
     """Text-level contract tests for storage-owned audit SQL primitives."""
 
     def test_snapshot_query_projects_maintained_allowlist(self) -> None:
-        sql = _sql_without_comments(
-            feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL
-        )
+        sql = _sql_without_comments(feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL)
 
         for token in (
             "f.id",
@@ -444,9 +450,7 @@ class TestFeedAuditSql(unittest.TestCase):
         self.assertRegex(sql, r"\bFOR\s+UPDATE\b")
 
     def test_snapshot_query_avoids_raw_and_noisy_fields(self) -> None:
-        sql = _sql_without_comments(
-            feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL
-        )
+        sql = _sql_without_comments(feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL)
 
         for forbidden in (
             "SELECT f.*",
@@ -460,20 +464,16 @@ class TestFeedAuditSql(unittest.TestCase):
             self.assertNotIn(forbidden, sql)
 
     def test_sequence_allocation_uses_counter_table_upsert(self) -> None:
-        sql = _normalized_sql(
-            feed_queries.ALLOCATE_FEED_AUDIT_SEQUENCE_SQL
-        )
+        sql = _normalized_sql(feed_queries.ALLOCATE_FEED_AUDIT_SEQUENCE_SQL)
 
         self.assertIn(
-            "INSERT INTO feed_audit_event_sequences "
-            "(feed_id, next_sequence)",
+            "INSERT INTO feed_audit_event_sequences (feed_id, next_sequence)",
             sql,
         )
         self.assertIn("VALUES ($1, 2)", sql)
         self.assertIn("ON CONFLICT (feed_id) DO UPDATE", sql)
         self.assertIn(
-            "SET next_sequence = "
-            "feed_audit_event_sequences.next_sequence + 1",
+            "SET next_sequence = feed_audit_event_sequences.next_sequence + 1",
             sql,
         )
         self.assertIn("updated_at = NOW()", sql)
@@ -1907,52 +1907,84 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
     async def test_returns_feed_on_success(self) -> None:
         """A created feed is returned as a Feed dict."""
         row = _full_feed_row(name="New Feed")
-        pool = make_mock_pool(fetchrow_result=row)
+        snapshot = _audit_snapshot_row(name="New Feed")
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [row, snapshot]
+        conn.fetchval.return_value = 1
         store = FeedStore(pool)
 
-        result = await store.create_feed("New Feed", "bcfy_feeds", "123")
+        result = await store.create_feed(
+            "New Feed",
+            "bcfy_feeds",
+            "123",
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
+        )
 
         self.assertEqual(result["id"], _FEED_ID)
         self.assertEqual(result["name"], "New Feed")
         self.assertEqual(result["source_type"], SourceType.BCFY_FEEDS)
+        pool.transaction_context.__aenter__.assert_awaited_once()
 
     async def test_create_feed_with_tags(self) -> None:
         """Tags are passed to the SQL and returned in the Feed."""
+        tags = [{"key": "env", "value": "prod"}]
         row = _full_feed_row(
             name="New Feed",
             tags='[{"key": "env", "value": "prod"}]',
         )
-        pool = make_mock_pool(fetchrow_result=row)
+        snapshot = _audit_snapshot_row(
+            name="New Feed",
+            tags='[{"key": "env", "value": "prod"}]',
+        )
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [row, snapshot]
+        conn.fetchval.return_value = 1
         store = FeedStore(pool)
 
-        tags = [{"key": "env", "value": "prod"}]
         result = await store.create_feed(
-            "New Feed", "bcfy_feeds", "123", tags=tags
+            "New Feed",
+            "bcfy_feeds",
+            "123",
+            tags=tags,
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
         )
 
         self.assertEqual(result["tags"], tags)
-        args = pool.fetchrow.call_args[0]
+        args = conn.fetchrow.await_args_list[0].args
         self.assertEqual(args[4], json.dumps(tags))
 
     async def test_create_feed_invalid_tags(self) -> None:
         """CheckViolationError is raised when DB constraint fails for invalid tags."""
-        pool = make_mock_pool()
-        pool.fetchrow.side_effect = asyncpg.CheckViolationError(
-            "valid_tags_schema"
+        pool = make_mock_pool(transaction=True)
+        pool.acquired_connection.fetchrow.side_effect = (
+            asyncpg.CheckViolationError("valid_tags_schema")
         )
         store = FeedStore(pool)
 
         tags = [{"invalid": "shape"}]
         with self.assertRaises(asyncpg.CheckViolationError):
-            await store.create_feed("New Feed", "bcfy_feeds", "123", tags=tags)
+            await store.create_feed(
+                "New Feed",
+                "bcfy_feeds",
+                "123",
+                tags=tags,
+                actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            )
 
     async def test_raises_value_error_on_failure(self) -> None:
         """ValueError is raised if the DB returns no row."""
-        pool = make_mock_pool(fetchrow_result=None)
+        pool = make_mock_pool(transaction=True)
         store = FeedStore(pool)
 
         with self.assertRaises(ValueError):
-            await store.create_feed("New Feed", "bcfy_feeds", "123")
+            await store.create_feed(
+                "New Feed",
+                "bcfy_feeds",
+                "123",
+                actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            )
 
     async def test_create_feed_invalid_source_type(self) -> None:
         """ValueError is raised when an invalid source type is passed."""
@@ -1964,8 +1996,198 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
                 name="Test Feed",
                 source_type="invalid_type",
                 source_feed_id="src_123",
+                actor_id=_FEEDS_SERVICE_ACTOR_ID,
             )
         self.assertIn("Invalid source type", str(cm.exception))
+
+    async def test_writes_feed_created_audit_event(self) -> None:
+        """Successful create emits one feed.created audit row."""
+        tags = [{"key": "env", "value": "prod"}]
+        row = _full_feed_row(
+            name="Created Feed",
+            tags='[{"key": "env", "value": "prod"}]',
+        )
+        snapshot = _audit_snapshot_row(
+            name="Created Feed",
+            tags='[{"key": "env", "value": "prod"}]',
+            status_reason_detail="created detail",
+        )
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [row, snapshot]
+        conn.fetchval.return_value = 1
+        store = FeedStore(pool)
+
+        result = await store.create_feed(
+            "Created Feed",
+            "bcfy_feeds",
+            "123",
+            tags=tags,
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
+        )
+
+        self.assertEqual(result["name"], "Created Feed")
+        self.assertEqual(
+            conn.fetchrow.await_args_list[0].args[0],
+            feed_queries.CREATE_FEED_SQL,
+        )
+        self.assertEqual(
+            conn.fetchrow.await_args_list[1].args,
+            (feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL, _FEED_ID),
+        )
+        conn.fetchval.assert_awaited_once_with(
+            feed_queries.ALLOCATE_FEED_AUDIT_SEQUENCE_SQL,
+            _FEED_ID,
+        )
+        args = conn.execute.await_args.args
+        self.assertEqual(args[0], feed_queries.INSERT_FEED_AUDIT_EVENT_SQL)
+        self.assertEqual(
+            args[1:10],
+            (
+                _FEED_ID,
+                "Created Feed",
+                "bcfy_feeds",
+                "feed.created",
+                _FEEDS_SERVICE_ACTOR_ID,
+                1,
+                "unclaimed",
+                None,
+                "created detail",
+            ),
+        )
+        self.assertEqual(json.loads(args[10]), {})
+        after_values = json.loads(args[11])
+        self.assertEqual(after_values["id"], str(_FEED_ID))
+        self.assertEqual(after_values["name"], "Created Feed")
+        self.assertEqual(after_values["feed_properties.tags"], tags)
+        self.assertNotIn("worker_id", after_values)
+        self.assertNotIn("last_heartbeat", after_values)
+        self.assertEqual(json.loads(args[12]), {})
+
+
+class TestUpdateFeedAuditing(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.update_feed audit behavior."""
+
+    async def test_meaningful_update_writes_feed_updated_audit_event(
+        self,
+    ) -> None:
+        tags = [{"key": "env", "value": "prod"}]
+        before = _audit_snapshot_row(
+            name="Old Feed",
+            tags='[{"key": "env", "value": "stage"}]',
+            status_reason_detail="before detail",
+        )
+        updated_row = _full_feed_row(
+            name="Updated Feed",
+            tags='[{"key": "env", "value": "prod"}]',
+        )
+        after = _audit_snapshot_row(
+            name="Updated Feed",
+            tags='[{"key": "env", "value": "prod"}]',
+            status_reason_detail="after detail",
+        )
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [before, updated_row, after]
+        conn.fetchval.return_value = 2
+        store = FeedStore(pool)
+
+        result = await store.update_feed(
+            _FEED_ID,
+            "Updated Feed",
+            tags=tags,
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
+        )
+
+        assert result is not None
+        self.assertEqual(result["name"], "Updated Feed")
+        self.assertEqual(
+            [call.args[0] for call in conn.fetchrow.await_args_list],
+            [
+                feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
+                feed_queries.UPDATE_FEED_SQL,
+                feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
+            ],
+        )
+        conn.fetchval.assert_awaited_once_with(
+            feed_queries.ALLOCATE_FEED_AUDIT_SEQUENCE_SQL,
+            _FEED_ID,
+        )
+        args = conn.execute.await_args.args
+        self.assertEqual(args[0], feed_queries.INSERT_FEED_AUDIT_EVENT_SQL)
+        self.assertEqual(
+            args[1:10],
+            (
+                _FEED_ID,
+                "Updated Feed",
+                "bcfy_feeds",
+                "feed.updated",
+                _FEEDS_SERVICE_ACTOR_ID,
+                2,
+                "unclaimed",
+                None,
+                "after detail",
+            ),
+        )
+        before_values = json.loads(args[10])
+        after_values = json.loads(args[11])
+        self.assertEqual(before_values["name"], "Old Feed")
+        self.assertEqual(after_values["name"], "Updated Feed")
+        self.assertEqual(after_values["feed_properties.tags"], tags)
+        self.assertNotIn("worker_id", before_values)
+        self.assertNotIn("last_heartbeat", after_values)
+
+    async def test_noop_update_returns_current_feed_without_audit(
+        self,
+    ) -> None:
+        tags = [{"key": "env", "value": "prod"}]
+        before = _audit_snapshot_row(
+            name="Same Feed",
+            tags='[{"key": "env", "value": "prod"}]',
+        )
+        current = _full_feed_row(
+            name="Same Feed",
+            tags='[{"key": "env", "value": "prod"}]',
+        )
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [before, current]
+        store = FeedStore(pool)
+
+        result = await store.update_feed(
+            _FEED_ID,
+            "Same Feed",
+            tags=tags,
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
+        )
+
+        assert result is not None
+        self.assertEqual(result["name"], "Same Feed")
+        self.assertEqual(
+            [call.args[0] for call in conn.fetchrow.await_args_list],
+            [
+                feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
+                feed_queries.GET_FEED_SQL,
+            ],
+        )
+        conn.fetchval.assert_not_awaited()
+        conn.execute.assert_not_awaited()
+
+    async def test_missing_update_target_returns_none_without_audit(
+        self,
+    ) -> None:
+        pool = make_mock_pool(transaction=True)
+        store = FeedStore(pool)
+
+        result = await store.update_feed(
+            _FEED_ID,
+            "Missing Feed",
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
+        )
+
+        self.assertIsNone(result)
+        pool.acquired_connection.fetchval.assert_not_awaited()
+        pool.acquired_connection.execute.assert_not_awaited()
 
 
 class TestGetFeed(unittest.IsolatedAsyncioTestCase):
