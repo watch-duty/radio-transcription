@@ -2463,26 +2463,110 @@ class TestDeactivateFeed(unittest.IsolatedAsyncioTestCase):
 class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.delete_feed."""
 
-    async def test_delete_succeeds(self) -> None:
-        """True is returned when the feed is successfully deleted."""
-        pool = make_mock_pool(execute_result="DELETE 1")
+    async def test_success_writes_feed_deleted_before_delete(self) -> None:
+        """Successful hard delete inserts feed.deleted before deletion."""
+        before = _audit_snapshot_row(status="deactivated")
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.return_value = before
+        conn.fetchval.return_value = 5
+        conn.execute.side_effect = ["INSERT 0 1", "DELETE 1"]
         store = FeedStore(pool)
 
-        result = await store.delete_feed(_FEED_ID)
-
-        self.assertTrue(result)
-        pool.execute.assert_called_once_with(
-            feed_queries.DELETE_FEED_SQL, _FEED_ID
+        result = await store.delete_feed(
+            _FEED_ID,
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
         )
 
-    async def test_delete_fails_when_not_found(self) -> None:
-        """False is returned when no feed is deleted."""
-        pool = make_mock_pool(execute_result="DELETE 0")
+        self.assertTrue(result)
+        conn.fetchrow.assert_awaited_once_with(
+            feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
+            _FEED_ID,
+        )
+        conn.fetchval.assert_awaited_once_with(
+            feed_queries.ALLOCATE_FEED_AUDIT_SEQUENCE_SQL,
+            _FEED_ID,
+        )
+        self.assertEqual(
+            conn.execute.await_args_list[0].args[0],
+            feed_queries.INSERT_FEED_AUDIT_EVENT_SQL,
+        )
+        self.assertEqual(
+            conn.execute.await_args_list[1].args,
+            (feed_queries.DELETE_FEED_SQL, _FEED_ID),
+        )
+
+    async def test_feed_deleted_uses_full_before_snapshot_and_empty_after(
+        self,
+    ) -> None:
+        """feed.deleted has full before_values and empty after_values."""
+        tags = [{"key": "county", "value": "Fulton"}]
+        before = _audit_snapshot_row(
+            status="deactivated",
+            failure_count=2,
+            status_reason_detail="retiring feed",
+            tags=json.dumps(tags),
+        )
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.return_value = before
+        conn.fetchval.return_value = 6
+        conn.execute.side_effect = ["INSERT 0 1", "DELETE 1"]
         store = FeedStore(pool)
 
-        result = await store.delete_feed(_FEED_ID)
+        result = await store.delete_feed(
+            _FEED_ID,
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
+        )
+
+        self.assertTrue(result)
+        audit_args = conn.execute.await_args_list[0].args
+        self.assertEqual(audit_args[0], feed_queries.INSERT_FEED_AUDIT_EVENT_SQL)
+        self.assertEqual(
+            audit_args[1:10],
+            (
+                _FEED_ID,
+                "My Feed",
+                "bcfy_feeds",
+                "feed.deleted",
+                _FEEDS_SERVICE_ACTOR_ID,
+                6,
+                "deactivated",
+                None,
+                "retiring feed",
+            ),
+        )
+        before_values = json.loads(audit_args[10])
+        after_values = json.loads(audit_args[11])
+        self.assertEqual(before_values["id"], str(_FEED_ID))
+        self.assertEqual(before_values["status"], "deactivated")
+        self.assertEqual(before_values["failure_count"], 2)
+        self.assertEqual(before_values["feed_properties.source_feed_id"], "123")
+        self.assertEqual(before_values["feed_properties.tags"], tags)
+        self.assertEqual(after_values, {})
+        self.assertNotIn("worker_id", before_values)
+        self.assertNotIn("last_heartbeat", before_values)
+
+    async def test_missing_feed_returns_false_without_audit_or_delete(
+        self,
+    ) -> None:
+        """Missing delete target skips sequence, audit, and hard delete."""
+        pool = make_mock_pool(transaction=True)
+        store = FeedStore(pool)
+
+        result = await store.delete_feed(
+            _FEED_ID,
+            actor_id=_FEEDS_SERVICE_ACTOR_ID,
+        )
 
         self.assertFalse(result)
+        conn = pool.acquired_connection
+        conn.fetchrow.assert_awaited_once_with(
+            feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
+            _FEED_ID,
+        )
+        conn.fetchval.assert_not_awaited()
+        conn.execute.assert_not_awaited()
 
 
 class TestResetFeed(unittest.IsolatedAsyncioTestCase):
