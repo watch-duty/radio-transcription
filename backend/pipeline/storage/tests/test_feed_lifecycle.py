@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import typing
+
 import pytest
 
 from backend.pipeline.storage import feed_lifecycle, quarantine_reason
@@ -26,12 +28,16 @@ def test_status_reason_storage_value_accepts_enum_or_none() -> None:
 
 def test_status_reason_storage_value_rejects_raw_string() -> None:
     with pytest.raises(TypeError):
-        feed_lifecycle.status_reason_storage_value("system_pipeline_error")
+        feed_lifecycle.status_reason_storage_value(
+            typing.cast("typing.Any", "system_pipeline_error"),
+        )
 
 
 def test_status_reason_storage_value_rejects_other_enums() -> None:
     with pytest.raises(TypeError):
-        feed_lifecycle.status_reason_storage_value(FeedStatus.ACTIVE)
+        feed_lifecycle.status_reason_storage_value(
+            typing.cast("typing.Any", FeedStatus.ACTIVE),
+        )
 
 
 def test_quarantine_reason_storage_value_caps_reason() -> None:
