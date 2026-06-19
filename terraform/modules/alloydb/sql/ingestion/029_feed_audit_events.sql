@@ -8,7 +8,8 @@ DO $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.table_constraints
-        WHERE table_name = 'feeds'
+        WHERE table_schema = current_schema()
+          AND table_name = 'feeds'
           AND constraint_name = 'feeds_status_reason_detail_length'
     ) THEN
         ALTER TABLE feeds
@@ -51,7 +52,8 @@ DO $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.table_constraints
-        WHERE table_name = 'feed_audit_events'
+        WHERE table_schema = current_schema()
+          AND table_name = 'feed_audit_events'
           AND constraint_name = 'feed_audit_events_action_check'
     ) THEN
         ALTER TABLE feed_audit_events
@@ -75,36 +77,73 @@ DO $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.table_constraints
-        WHERE table_name = 'feed_audit_events'
+        WHERE table_schema = current_schema()
+          AND table_name = 'feed_audit_events'
           AND constraint_name = 'feed_audit_events_actor_id_check'
     ) THEN
         ALTER TABLE feed_audit_events
             ADD CONSTRAINT feed_audit_events_actor_id_check
             CHECK (
-                actor_id = 'unknown:unknown'
-                OR (
-                    actor_id LIKE 'user:google:%'
-                    AND char_length(actor_id) > char_length('user:google:')
-                )
-                OR (
-                    actor_id LIKE 'user-email:%'
-                    AND char_length(actor_id) > char_length('user-email:')
-                )
-                OR (
-                    actor_id LIKE 'service:%'
-                    AND char_length(actor_id) > char_length('service:')
-                )
-                OR (
-                    actor_id LIKE 'system:%'
-                    AND char_length(actor_id) > char_length('system:')
-                )
-                OR (
-                    actor_id LIKE 'job:%'
-                    AND char_length(actor_id) > char_length('job:')
-                )
-                OR (
-                    actor_id LIKE 'gcp-sa:%'
-                    AND char_length(actor_id) > char_length('gcp-sa:')
+                char_length(actor_id) <= 512
+                AND (
+                    actor_id = 'unknown:unknown'
+                    OR (
+                        actor_id LIKE 'user:google:%'
+                        AND substring(
+                            actor_id FROM char_length('user:google:') + 1
+                        ) <> ''
+                        AND substring(
+                            actor_id FROM char_length('user:google:') + 1
+                        ) !~ '[[:space:]]'
+                    )
+                    OR (
+                        actor_id LIKE 'user-email:%'
+                        AND substring(
+                            actor_id FROM char_length('user-email:') + 1
+                        ) <> ''
+                        AND substring(
+                            actor_id FROM char_length('user-email:') + 1
+                        ) !~ '[[:space:]]'
+                        AND substring(
+                            actor_id FROM char_length('user-email:') + 1
+                        ) LIKE '%@%'
+                    )
+                    OR (
+                        actor_id LIKE 'service:%'
+                        AND substring(
+                            actor_id FROM char_length('service:') + 1
+                        ) <> ''
+                        AND substring(
+                            actor_id FROM char_length('service:') + 1
+                        ) !~ '[[:space:]]'
+                    )
+                    OR (
+                        actor_id LIKE 'system:%'
+                        AND substring(
+                            actor_id FROM char_length('system:') + 1
+                        ) <> ''
+                        AND substring(
+                            actor_id FROM char_length('system:') + 1
+                        ) !~ '[[:space:]]'
+                    )
+                    OR (
+                        actor_id LIKE 'job:%'
+                        AND substring(
+                            actor_id FROM char_length('job:') + 1
+                        ) <> ''
+                        AND substring(
+                            actor_id FROM char_length('job:') + 1
+                        ) !~ '[[:space:]]'
+                    )
+                    OR (
+                        actor_id LIKE 'gcp-sa:%'
+                        AND substring(
+                            actor_id FROM char_length('gcp-sa:') + 1
+                        ) <> ''
+                        AND substring(
+                            actor_id FROM char_length('gcp-sa:') + 1
+                        ) !~ '[[:space:]]'
+                    )
                 )
             );
     END IF;
@@ -114,7 +153,8 @@ DO $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.table_constraints
-        WHERE table_name = 'feed_audit_events'
+        WHERE table_schema = current_schema()
+          AND table_name = 'feed_audit_events'
           AND constraint_name = 'feed_audit_events_sequence_positive'
     ) THEN
         ALTER TABLE feed_audit_events
@@ -127,7 +167,8 @@ DO $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.table_constraints
-        WHERE table_name = 'feed_audit_events'
+        WHERE table_schema = current_schema()
+          AND table_name = 'feed_audit_events'
           AND constraint_name = 'feed_audit_events_detail_length'
     ) THEN
         ALTER TABLE feed_audit_events
@@ -143,12 +184,31 @@ DO $$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.table_constraints
-        WHERE table_name = 'feed_audit_events'
+        WHERE table_schema = current_schema()
+          AND table_name = 'feed_audit_events'
           AND constraint_name = 'feed_audit_events_feed_sequence_unique'
     ) THEN
         ALTER TABLE feed_audit_events
             ADD CONSTRAINT feed_audit_events_feed_sequence_unique
             UNIQUE (feed_id, feed_sequence);
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE table_schema = current_schema()
+          AND table_name = 'feed_audit_events'
+          AND constraint_name = 'feed_audit_events_json_object_shape'
+    ) THEN
+        ALTER TABLE feed_audit_events
+            ADD CONSTRAINT feed_audit_events_json_object_shape
+            CHECK (
+                jsonb_typeof(before_values) = 'object'
+                AND jsonb_typeof(after_values) = 'object'
+                AND jsonb_typeof(metadata) = 'object'
+            );
     END IF;
 END $$;
 

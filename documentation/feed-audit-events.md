@@ -83,6 +83,10 @@ transport service account, per D-13. Future implementation must derive admin
 actors from trusted authentication context, not from an untrusted request body
 field.
 
+The schema foundation caps `actor_id` at 512 characters and rejects empty or
+whitespace-containing stable-id suffixes for every namespaced actor form.
+`unknown:unknown` is the only non-namespaced value.
+
 Decision coverage: D-06 through D-13.
 
 ## Before And After Values
@@ -91,6 +95,10 @@ Decision coverage: D-06 through D-13.
 domain values before and after an audited mutation. They are not raw row dumps
 and should exclude high-noise operational fields unless a later phase proves
 they are needed.
+
+The schema stores `before_values`, `after_values`, and `metadata` as JSON
+objects. Arrays, scalars, booleans, and JSON null are not valid audit snapshot
+shapes.
 
 `feed.deleted` uses normal `before_values` as the self-contained deleted-feed
 snapshot. It does not get a delete-specific identity blob. It uses the same

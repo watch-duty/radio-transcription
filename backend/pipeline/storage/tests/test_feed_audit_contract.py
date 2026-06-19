@@ -86,9 +86,14 @@ def test_migration_defines_delete_safe_audit_schema() -> None:
         "source_type TEXT NOT NULL REFERENCES source_types(slug)",
         "before_values JSONB NOT NULL DEFAULT '{}'::jsonb",
         "after_values JSONB NOT NULL DEFAULT '{}'::jsonb",
+        "metadata JSONB NOT NULL DEFAULT '{}'::jsonb",
         "feed_sequence BIGINT NOT NULL",
         "occurred_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()",
         "feed_audit_events_feed_sequence_unique",
+        "feed_audit_events_json_object_shape",
+        "jsonb_typeof(before_values) = 'object'",
+        "jsonb_typeof(after_values) = 'object'",
+        "jsonb_typeof(metadata) = 'object'",
     ):
         assert token in normalized
 
@@ -107,6 +112,7 @@ def test_migration_defines_actor_and_action_constraints() -> None:
     text = _read(
         "terraform/modules/alloydb/sql/ingestion/029_feed_audit_events.sql"
     )
+    sql = _sql_without_comments(text)
 
     for token in (
         "feed_audit_events_action_check",
@@ -114,14 +120,15 @@ def test_migration_defines_actor_and_action_constraints() -> None:
         *_ACTIONS,
         *_ACTOR_STRINGS,
     ):
-        assert token in text
+        assert token in sql
 
 
-def test_migration_rejects_empty_actor_id_suffixes() -> None:
+def test_migration_rejects_malformed_actor_id_suffixes() -> None:
     text = _read(
         "terraform/modules/alloydb/sql/ingestion/029_feed_audit_events.sql"
     )
     sql = _sql_without_comments(text)
+    normalized = _normalized_sql(text)
     rejected_actor_ids = (
         "user:google:",
         "service:",
@@ -132,17 +139,41 @@ def test_migration_rejects_empty_actor_id_suffixes() -> None:
     )
 
     assert "actor_id = 'unknown:unknown'" in sql
+    assert "char_length(actor_id) <= 512" in normalized
 
     for prefix in rejected_actor_ids:
-        branch_pattern = (
-            r"actor_id\s+LIKE\s+'"
+        suffix_pattern = (
+            r"substring\s*\(\s*actor_id\s+FROM\s+char_length\('"
             + re.escape(prefix)
-            + r"%'\s+AND\s+char_length\(actor_id\)\s*>\s*"
-            + r"char_length\('"
-            + re.escape(prefix)
-            + r"'\)"
+            + r"'\)\s*\+\s*1\s*\)"
         )
-        assert re.search(branch_pattern, sql, flags=re.IGNORECASE), prefix
+        assert f"actor_id LIKE '{prefix}%'" in normalized
+        assert re.search(
+            suffix_pattern + r"\s*<>\s*''",
+            sql,
+            flags=re.IGNORECASE,
+        ), prefix
+        assert re.search(
+            suffix_pattern + r"\s*!~\s*'\[\[:space:\]\]'",
+            sql,
+            flags=re.IGNORECASE,
+        ), prefix
+
+    assert re.search(
+        r"substring\s*\(\s*actor_id\s+FROM\s+"
+        r"char_length\('user-email:'\)\s*\+\s*1\s*\)\s+LIKE\s+'%@%'",
+        sql,
+        flags=re.IGNORECASE,
+    )
+
+
+def test_migration_uses_schema_qualified_constraint_guards() -> None:
+    text = _read(
+        "terraform/modules/alloydb/sql/ingestion/029_feed_audit_events.sql"
+    )
+    normalized = _normalized_sql(text)
+
+    assert normalized.count("table_schema = current_schema()") >= 7
 
 
 def test_migration_defines_status_reason_detail_and_hot_guard() -> None:
@@ -153,6 +184,7 @@ def test_migration_defines_status_reason_detail_and_hot_guard() -> None:
         "terraform/modules/alloydb/sql/ci/hot_protection_check.sql"
     )
     sql = _sql_without_comments(migration)
+    guard_sql = _sql_without_comments(hot_guard)
     normalized = _normalized_sql(migration)
 
     for token in (
@@ -163,7 +195,11 @@ def test_migration_defines_status_reason_detail_and_hot_guard() -> None:
     ):
         assert token in normalized
 
-    assert "'status_reason_detail'" in hot_guard
+    assert re.search(
+        r"a\.attname\s+IN\s*\([^)]*'status_reason_detail'",
+        guard_sql,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
     assert (
         re.search(
             r"CREATE\s+INDEX(?:\s+IF\s+NOT\s+EXISTS)?\s+\S+\s+"
