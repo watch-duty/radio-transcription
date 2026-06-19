@@ -617,19 +617,19 @@ return True
 
 | # | Claim | Section | Risk if Wrong |
 |---|-------|---------|---------------|
-| A1 | Live production databases contain no manually inserted `feed_audit_events` rows using `actor_id LIKE 'system:%'`; repository evidence shows no writer, but live data was not queried. [ASSUMED] | Runtime State Inventory | Tightening the actor constraint could fail or require a data cleanup if manual rows exist. |
+| A1 | Live production database contents were not queried during planning; repository evidence shows no writer, but manually inserted `feed_audit_events.actor_id LIKE 'system:%'` rows remain theoretically possible. [ASSUMED] | Runtime State Inventory | Resolved by requiring a fail-closed schema migration that prechecks legacy `system:%` rows before replacing the stale actor constraint. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Has `029_feed_audit_events.sql` already been applied to any shared/live database with manual audit rows?** [ASSUMED]
+1. **RESOLVED: Has `029_feed_audit_events.sql` already been applied to any shared/live database with manual audit rows?** [ASSUMED]
    - What we know: The repository has no implemented audit writer yet. [VERIFIED: rg audit writer search]
-   - What's unclear: Live database contents were not inspected. [ASSUMED]
-   - Recommendation: Planner should include a safe precheck or migration note before removing `system:` from the actor constraint if shared databases may already have the Phase 1 schema. [VERIFIED: terraform/modules/alloydb/sql/ingestion/029_feed_audit_events.sql]
+   - Decision: Phase 2 does not depend on proving live databases are empty. Plan 01 must add a follow-up migration after `029_feed_audit_events.sql` that prechecks for legacy `actor_id LIKE 'system:%'` rows, raises an explicit operator-facing exception if any exist, and otherwise drops/recreates `feed_audit_events_actor_id_check` without the `system:%` branch. [VERIFIED: terraform/modules/alloydb/sql/ingestion/029_feed_audit_events.sql; VERIFIED: .planning/phases/02-transactional-storage-writes/02-01-PLAN.md]
+   - Consequence: Fresh schemas and already-applied schemas converge on the same accepted actor vocabulary before Phase 2 storage writers emit audit rows. A shared database with manual `system:%` rows fails closed instead of silently retaining the stale accepting constraint. [VERIFIED: 02-CONTEXT.md]
 
-2. **Should `status_reason_detail` enter the `Feed` TypedDict in Phase 2 or remain audit-only until Phase 3?** [VERIFIED: backend/pipeline/storage/feed_store.py; VERIFIED: backend/services/feeds/models.py]
+2. **RESOLVED: Should `status_reason_detail` enter the `Feed` TypedDict in Phase 2 or remain audit-only until Phase 3?** [VERIFIED: backend/pipeline/storage/feed_store.py; VERIFIED: backend/services/feeds/models.py]
    - What we know: Snapshot allowlist includes `status_reason_detail`, but the current public feeds service model does not expose it. [VERIFIED: documentation/feed-audit-events.md; VERIFIED: backend/services/feeds/models.py]
-   - What's unclear: Whether implementers prefer extending internal storage return types now or using an audit-only row shape. [VERIFIED: 02-CONTEXT.md]
-   - Recommendation: Keep `status_reason_detail` in audit-specific snapshot rows for Phase 2 unless a task explicitly coordinates Phase 3 compatibility. [VERIFIED: .planning/ROADMAP.md]
+   - Decision: Keep `status_reason_detail` audit-only in Phase 2. Add it to audit-specific snapshot SQL/helper output, but do not require adding it to the public `Feed` TypedDict or feeds-service response models until Phase 3 compatibility work. [VERIFIED: .planning/ROADMAP.md; VERIFIED: .planning/phases/02-transactional-storage-writes/02-01-PLAN.md]
+   - Consequence: Phase 2 can persist full audit snapshots without expanding API response compatibility scope. Phase 3 remains responsible for exposing canonical diagnostic detail to existing clients. [VERIFIED: .planning/ROADMAP.md]
 
 ## Environment Availability
 

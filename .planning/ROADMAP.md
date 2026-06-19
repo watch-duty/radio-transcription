@@ -50,7 +50,20 @@ Plans:
   3. Feed deletion records a `feed.deleted` audit event before current-state storage removes the row.
   4. A successful audited mutation and its audit row commit together, while a failed or rolled-back mutation leaves no audit row behind.
   5. Concurrent audited mutations for the same feed produce unique deterministic per-feed ordering without service or runtime callers inserting audit rows directly.
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+**Wave 1**
+- [ ] 02-01-PLAN.md - Contract/schema cleanup and audit SQL foundation.
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 02-02-PLAN.md - Transactional create/update writes and service actor fallback.
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 02-03-PLAN.md - Transactional deactivate/reset/delete writes.
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 02-04-PLAN.md - Rollback/concurrency integration coverage and final hardening.
 
 ### Phase 3: Service and Compatibility Surface
 **Goal**: Existing feed API consumers remain compatible while admin-initiated changes carry trusted actor identity and canonical diagnostic detail.
@@ -97,7 +110,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Contract and Schema Foundation | 3/3 | Complete | 2026-06-19 |
-| 2. Transactional Storage Writes | 0/TBD | Not started | - |
+| 2. Transactional Storage Writes | 0/4 | Ready to execute | - |
 | 3. Service and Compatibility Surface | 0/TBD | Not started | - |
 | 4. Runtime Event Integration | 0/TBD | Not started | - |
 | 5. Retention and Verification Hardening | 0/TBD | Not started | - |
