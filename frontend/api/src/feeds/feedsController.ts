@@ -274,6 +274,9 @@ export class FeedsController extends Controller {
             total: data.total,
           };
     } catch (error: unknown) {
+      if (error instanceof HttpError) {
+        throw error;
+      }
       const { status, message } = handleBackendError(error, 'fetching feeds');
       throw new HttpError(status, message);
     }

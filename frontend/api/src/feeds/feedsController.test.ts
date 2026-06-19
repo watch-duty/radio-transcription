@@ -29,6 +29,21 @@ vi.mock('google-auth-library', () => {
   };
 });
 
+async function expectHttpErrorStatus(
+  action: () => Promise<unknown>,
+  status: number,
+  message: RegExp
+) {
+  try {
+    await action();
+    throw new Error('Expected action to reject');
+  } catch (error) {
+    expect(error).toMatchObject({ status });
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(message);
+  }
+}
+
 describe('FeedsController', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -171,7 +186,9 @@ describe('FeedsController', () => {
     it('should reject invalid tags JSON before backend request', async () => {
       const controller = new FeedsController();
 
-      await expect(controller.listFeeds({ tags: 'not-json' })).rejects.toThrow(
+      await expectHttpErrorStatus(
+        () => controller.listFeeds({ tags: 'not-json' }),
+        400,
         /tags must be valid JSON/
       );
       expect(mockRequest).not.toHaveBeenCalled();
@@ -182,7 +199,9 @@ describe('FeedsController', () => {
       async (limit) => {
         const controller = new FeedsController();
 
-        await expect(controller.listFeeds({ limit })).rejects.toThrow(
+        await expectHttpErrorStatus(
+          () => controller.listFeeds({ limit }),
+          400,
           /limit must be between 1 and 500/
         );
         expect(mockRequest).not.toHaveBeenCalled();
