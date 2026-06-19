@@ -77,8 +77,10 @@ class TestStatusReasonLifecycleIsolation(unittest.TestCase):
             stripped = _sql_without_comments(sql)
             self.assertIn("feeds.failure_count", stripped)
             self.assertIn("feeds.status_reason", stripped)
+            self.assertIn("status::text AS previous_status", stripped)
             self.assertIn("leased.failure_count", stripped)
             self.assertIn("leased.status_reason", stripped)
+            self.assertIn("leased.previous_status", stripped)
             self.assertNotIn("status_reason =", stripped)
 
 
@@ -353,32 +355,32 @@ class TestBuildAcquireFeedsBatchSql(unittest.TestCase):
         expected = (
             "WITH\n"
             "    bcfy_feeds_claim AS MATERIALIZED (\n"
-            "        SELECT id FROM feeds\n"
+            "        SELECT id, status::text AS previous_status FROM feeds\n"
             "        WHERE source_type = 'bcfy_feeds' AND status = 'unclaimed'::feed_status\n"
             "        ORDER BY id\n"
             "        LIMIT $2\n"
             "        FOR NO KEY UPDATE SKIP LOCKED\n"
             "    ),\n"
             "    bcfy_calls_claim AS MATERIALIZED (\n"
-            "        SELECT id FROM feeds\n"
+            "        SELECT id, status::text AS previous_status FROM feeds\n"
             "        WHERE source_type = 'bcfy_calls' AND status = 'unclaimed'::feed_status\n"
             "        ORDER BY id\n"
             "        LIMIT $3\n"
             "        FOR NO KEY UPDATE SKIP LOCKED\n"
             "    ),\n"
             "    openmhz_claim AS MATERIALIZED (\n"
-            "        SELECT id FROM feeds\n"
+            "        SELECT id, status::text AS previous_status FROM feeds\n"
             "        WHERE source_type = 'openmhz' AND status = 'unclaimed'::feed_status\n"
             "        ORDER BY id\n"
             "        LIMIT $4\n"
             "        FOR NO KEY UPDATE SKIP LOCKED\n"
             "    ),\n"
             "    claimed AS MATERIALIZED (\n"
-            "        SELECT id FROM bcfy_feeds_claim\n"
+            "        SELECT id, previous_status FROM bcfy_feeds_claim\n"
             "        UNION ALL\n"
-            "        SELECT id FROM bcfy_calls_claim\n"
+            "        SELECT id, previous_status FROM bcfy_calls_claim\n"
             "        UNION ALL\n"
-            "        SELECT id FROM openmhz_claim\n"
+            "        SELECT id, previous_status FROM openmhz_claim\n"
             "    ),\n"
             "leased AS (\n"
             "    UPDATE feeds\n"
@@ -392,12 +394,14 @@ class TestBuildAcquireFeedsBatchSql(unittest.TestCase):
             "    RETURNING feeds.id, feeds.name, feeds.source_type,\n"
             "              feeds.last_processed_filename, feeds.last_bookmark_time,\n"
             "              feeds.fencing_token, feeds.failure_count,\n"
-            "              feeds.status_reason\n"
+            "              feeds.status_reason,\n"
+            "              claimed.previous_status\n"
             ")\n"
             "SELECT leased.id, leased.name, leased.source_type,\n"
             "       leased.last_processed_filename, leased.last_bookmark_time,\n"
             "       leased.fencing_token, leased.failure_count,\n"
-            "       leased.status_reason, fpi.source_feed_id\n"
+            "       leased.status_reason, leased.previous_status,\n"
+            "       fpi.source_feed_id\n"
             "FROM leased\n"
             "JOIN feed_properties fpi ON fpi.feed_id = leased.id\n"
         )

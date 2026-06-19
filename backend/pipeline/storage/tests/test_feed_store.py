@@ -61,6 +61,7 @@ _LEASE_ROW = {
     "fencing_token": 1,
     "failure_count": 0,
     "status_reason": None,
+    "previous_status": "unclaimed",
     "source_feed_id": "123",
 }
 
@@ -623,8 +624,10 @@ class TestStatusReasonLifecycleIsolation(unittest.TestCase):
             stripped = _sql_without_comments(sql)
             self.assertIn("feeds.failure_count", stripped)
             self.assertIn("feeds.status_reason", stripped)
+            self.assertIn("status::text AS previous_status", stripped)
             self.assertIn("leased.failure_count", stripped)
             self.assertIn("leased.status_reason", stripped)
+            self.assertIn("leased.previous_status", stripped)
             self.assertNotIn("status_reason =", stripped)
 
 
@@ -1339,6 +1342,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
                 "fencing_token": 1,
                 "failure_count": 0,
                 "status_reason": None,
+                "previous_status": "unclaimed",
                 "source_feed_id": "123",
             },
             {
@@ -1350,6 +1354,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
                 "fencing_token": 1,
                 "failure_count": 2,
                 "status_reason": "source_unreachable",
+                "previous_status": "failing",
                 "source_feed_id": None,
             },
         ]
@@ -1567,6 +1572,7 @@ class TestRowToLeasedFeed(unittest.TestCase):
         self.assertEqual(result["fencing_token"], 1)
         self.assertEqual(result["failure_count"], 0)
         self.assertIsNone(result["status_reason"])
+        self.assertEqual(result["previous_status"], FeedStatus.UNCLAIMED)
 
     def test_invalid_source_type_raises(self) -> None:
         bad_row = {**_LEASE_ROW, "source_type": "not_a_real_type"}
@@ -1578,6 +1584,25 @@ class TestRowToLeasedFeed(unittest.TestCase):
         self.assertIn(
             "Unknown source type 'not_a_real_type'", str(context.exception)
         )
+
+    def test_invalid_previous_status_raises(self) -> None:
+        bad_row = {**_LEASE_ROW, "previous_status": "paused"}
+        store = FeedStore(make_mock_pool())
+
+        with self.assertRaises(ValueError) as context:
+            store._row_to_leased_feed(cast("asyncpg.Record", bad_row))
+
+        self.assertIn(
+            "Unknown previous status 'paused'", str(context.exception)
+        )
+
+    def test_recovery_previous_status_maps_to_enum(self) -> None:
+        row = {**_LEASE_ROW, "previous_status": "failing"}
+        store = FeedStore(make_mock_pool())
+
+        result = store._row_to_leased_feed(cast("asyncpg.Record", row))
+
+        self.assertEqual(result["previous_status"], FeedStatus.FAILING)
 
 
 class TestAcquireFeedsRecovery(unittest.IsolatedAsyncioTestCase):
