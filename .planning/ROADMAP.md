@@ -63,7 +63,7 @@ Plans:
 - [x] 02-03-PLAN.md - Transactional deactivate/reset/delete writes.
 
 **Wave 4** *(blocked on Wave 3 completion)*
-- [ ] 02-04-PLAN.md - Rollback/concurrency integration coverage and final hardening.
+- [x] 02-04-PLAN.md - Rollback/concurrency integration coverage and final hardening.
 
 ### Phase 3: Service and Compatibility Surface
 **Goal**: Existing feed API consumers remain compatible while admin-initiated changes carry trusted actor identity and canonical diagnostic detail.
@@ -110,7 +110,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Contract and Schema Foundation | 3/3 | Complete | 2026-06-19 |
-| 2. Transactional Storage Writes | 3/4 | In Progress|  |
+| 2. Transactional Storage Writes | 4/4 | Complete | 2026-06-19 |
 | 3. Service and Compatibility Surface | 0/TBD | Not started | - |
 | 4. Runtime Event Integration | 0/TBD | Not started | - |
 | 5. Retention and Verification Hardening | 0/TBD | Not started | - |

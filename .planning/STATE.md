@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 02-03-PLAN.md
-last_updated: "2026-06-19T14:56:26.673Z"
+status: verifying
+stopped_at: Completed 02-04-PLAN.md
+last_updated: "2026-06-19T16:05:39.776Z"
 last_activity: 2026-06-19
 progress:
   total_phases: 5
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 7
-  completed_plans: 6
-  percent: 86
+  completed_plans: 7
+  percent: 100
 ---
 
 # Project State
@@ -25,12 +25,12 @@ See: .planning/PROJECT.md (updated 2026-06-19)
 
 ## Current Position
 
-Phase: 02 (transactional-storage-writes) — EXECUTING
+Phase: 02 (transactional-storage-writes) — VERIFYING
 Plan: 4 of 4
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-06-19
 
-Progress: [█████████░] 86%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -58,6 +58,7 @@ Progress: [█████████░] 86%
 | Phase 02-transactional-storage-writes P01 | 5 min | 3 tasks | 6 files |
 | Phase 02-transactional-storage-writes P02 | 13 min | 3 tasks | 7 files |
 | Phase 02-transactional-storage-writes P03 | 7 min | 3 tasks | 5 files |
+| Phase 02-transactional-storage-writes P04 | 8 min | 3 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -87,6 +88,9 @@ Recent decisions affecting current work:
 - [Phase 02-transactional-storage-writes]: FeedStore deactivate_feed, reset_feed, and delete_feed require explicit keyword-only actor_id and own lifecycle/delete audit construction. — Recorded in 02-03-SUMMARY.md after implementing audited lifecycle storage writes.
 - [Phase 02-transactional-storage-writes]: feed.deleted is inserted before DELETE_FEED_SQL using the locked full before snapshot and empty after_values. — Recorded in 02-03-SUMMARY.md after implementing audited hard delete.
 - [Phase 02-transactional-storage-writes]: Feeds service lifecycle mutations continue using service:feeds-service as the Phase 2 causal actor. — Recorded in 02-03-SUMMARY.md after wiring lifecycle service actor propagation.
+- [Phase 02-transactional-storage-writes]: AlloyDB Omni/Testcontainers integration execution for 02-04 was deferred to CI by user decision. — Local execution used py_compile, pytest collection, unit/contract/service tests, Ruff formatting, and git diff checks; CI must run the Docker-backed integration command.
+- [Phase 02-transactional-storage-writes]: Rollback integration tests force database actor-constraint failures. — This lets CI prove state, audit rows, and feed_audit_event_sequences allocation roll back together under real AlloyDB/PostgreSQL constraints.
+- [Phase 02-transactional-storage-writes]: Final hardening combines persisted integration assertions with storage-boundary unit scans. — The integration assertions verify actual audit rows for audited mutations, while unit scans guard explicit actor signatures, no parallel audited methods, and no service-side audit row construction.
 
 ### Pending Todos
 
@@ -106,6 +110,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-19T14:56:26.667Z
-Stopped at: Completed 02-03-PLAN.md
+Last session: 2026-06-19T16:05:39.771Z
+Stopped at: Completed 02-04-PLAN.md
 Resume file: None
