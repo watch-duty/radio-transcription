@@ -977,7 +977,9 @@ async def test_failure_update_fails_after_deactivation_without_rewriting_reason(
         old_reason_ts,
         feed_id,
     )
-    assert await store.deactivate_feed(feed_id) is True
+    assert (
+        await store.deactivate_feed(feed_id, actor_id=_TEST_ACTOR_ID) is True
+    )
 
     result = await store.report_feed_failure(
         feed_id,
@@ -2009,7 +2011,7 @@ async def test_delete_feed_succeeds(
     )
 
     # 5. Perform the delete_feed call
-    result = await store.delete_feed(feed_id)
+    result = await store.delete_feed(feed_id, actor_id=_TEST_ACTOR_ID)
 
     assert result is True
 
@@ -2044,7 +2046,7 @@ async def test_delete_feed_succeeds(
 
 async def test_delete_feed_returns_false_if_not_found(store: FeedStore) -> None:
     """delete_feed returns False for a non-existent feed ID."""
-    result = await store.delete_feed(uuid.uuid4())
+    result = await store.delete_feed(uuid.uuid4(), actor_id=_TEST_ACTOR_ID)
     assert result is False
 
 
@@ -2065,7 +2067,7 @@ async def test_reset_feed_succeeds(
         last_heartbeat_age_seconds=1000,
     )
 
-    feed = await store.reset_feed(feed_id)
+    feed = await store.reset_feed(feed_id, actor_id=_TEST_ACTOR_ID)
 
     assert feed is not None
     assert feed["id"] == feed_id
@@ -2104,7 +2106,7 @@ async def test_reset_clears_stale_status_reason_with_clear_timestamp_and_raw_qua
         feed_id,
     )
 
-    feed = await store.reset_feed(feed_id)
+    feed = await store.reset_feed(feed_id, actor_id=_TEST_ACTOR_ID)
 
     assert feed is not None
     assert feed["status"] == "unclaimed"
@@ -2138,7 +2140,7 @@ async def test_reset_with_null_status_reason_leaves_reason_timestamp_unchanged(
         feed_id,
     )
 
-    feed = await store.reset_feed(feed_id)
+    feed = await store.reset_feed(feed_id, actor_id=_TEST_ACTOR_ID)
 
     assert feed is not None
     assert feed["status_reason"] is None
@@ -2148,5 +2150,5 @@ async def test_reset_with_null_status_reason_leaves_reason_timestamp_unchanged(
 
 async def test_reset_feed_returns_none_if_not_found(store: FeedStore) -> None:
     """reset_feed returns None for non-existent ID."""
-    result = await store.reset_feed(uuid.uuid4())
+    result = await store.reset_feed(uuid.uuid4(), actor_id=_TEST_ACTOR_ID)
     assert result is None
