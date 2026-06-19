@@ -5,7 +5,7 @@ psycopg v3 uses ``%s`` parameters, so these stay separate from the async
 """
 
 RESOLVE_ECHO_FEED_SQL = """\
-SELECT f.id, f.name, f.status, f.failure_count
+SELECT f.id, f.name, f.status, f.failure_count, f.created_at
 FROM feeds f
 JOIN feed_properties fp ON fp.feed_id = f.id
 WHERE fp.source_feed_id = %s

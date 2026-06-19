@@ -14,7 +14,9 @@ from google.cloud import pubsub_v1
 from backend.pipeline.common.clients import audio_segments_client
 from backend.pipeline.common.container_helper import ForkDetector, fork_checked
 from backend.pipeline.common.log_helper import setup_logging
-from backend.pipeline.common.tracing_utils import setup_tracing
+from backend.pipeline.common.tracing_utils import (
+    setup_tracing,
+)
 from backend.pipeline.transcription.enums import TranscriberType
 from backend.pipeline.transcription.processor import TranscriptionEventProcessor
 from backend.pipeline.transcription.transcribers.base import Transcriber
@@ -155,5 +157,6 @@ def transcribe_claim_check(cloud_event: CloudEvent) -> None:
         cloud_event: The triggered Pub/Sub CloudEvent.
     """
     setup_tracing(service_name="transcription-service", use_batch=False)
+
     processor = container.get_processor()
     processor.process_event(cloud_event)

@@ -4,10 +4,12 @@ import logging
 import os
 import threading
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from typing import Any, cast
 
-from opentelemetry import baggage
+from cloudevents.http.event import CloudEvent
+from opentelemetry import baggage, metrics
 from opentelemetry.baggage.propagation import W3CBaggagePropagator
 from opentelemetry.context import Context, attach, detach, get_current
 from opentelemetry.exporter.cloud_monitoring import (
@@ -46,6 +48,18 @@ from backend.pipeline.common.env import is_gcp_env
 
 _setup_lock = threading.Lock()
 telemetry_logger = logging.getLogger("telemetry.validation")
+
+# Shared pipeline stage counter
+_pipeline_meter = metrics.get_meter("pipeline_telemetry")
+_pipeline_stage_counter = _pipeline_meter.create_counter(
+    "pipeline_stage_count",
+    description="Number of audio chunks that reached each pipeline stage",
+)
+
+
+def record_pipeline_stage(stage: str, status: str = "start") -> None:
+    """Records that an audio chunk has reached a stage/status in the pipeline."""
+    _pipeline_stage_counter.add(1, {"stage": stage, "status": status})
 
 
 class ContextPropagationValidator(SpanProcessor):
@@ -265,13 +279,46 @@ def extract_trace_context(attributes: dict[str, str] | None) -> Context:
     if not attributes:
         return Context()
 
+    # Normalize keys to lowercase for robust lookup
+    normalized = {}
+    for k, v in attributes.items():
+        if isinstance(v, str):
+            normalized[k.lower()] = v
+
+    carrier = {}
+    traceparent_keys = [
+        "traceparent",
+        "ce-traceparent",
+        "x-goog-pubsub-attr-traceparent",
+    ]
+    for k in traceparent_keys:
+        if k in normalized:
+            carrier["traceparent"] = normalized[k]
+            break
+
+    baggage_keys = ["baggage", "ce-baggage", "x-goog-pubsub-attr-baggage"]
+    for k in baggage_keys:
+        if k in normalized:
+            carrier["baggage"] = normalized[k]
+            break
+
+    tracestate_keys = [
+        "tracestate",
+        "ce-tracestate",
+        "x-goog-pubsub-attr-tracestate",
+    ]
+    for k in tracestate_keys:
+        if k in normalized:
+            carrier["tracestate"] = normalized[k]
+            break
+
     ctx = Context()
-    if attributes.get("traceparent"):
+    if "traceparent" in carrier:
         ctx = TraceContextTextMapPropagator().extract(
-            carrier=attributes, context=ctx
+            carrier=carrier, context=ctx
         )
-    if attributes.get("baggage"):
-        ctx = W3CBaggagePropagator().extract(carrier=attributes, context=ctx)
+    if "baggage" in carrier:
+        ctx = W3CBaggagePropagator().extract(carrier=carrier, context=ctx)
 
     return ctx
 
@@ -321,3 +368,148 @@ def with_baggage_and_span(
         get_tracer(tracer_name).start_as_current_span(span_name) as span,
     ):
         yield span
+
+
+def _safe_str(val: Any) -> str:
+    """Safely converts string or bytes to a standard string."""
+    if isinstance(val, bytes):
+        return val.decode("utf-8", errors="ignore")
+    return str(val)
+
+
+def _extract_nested_pubsub_attributes(data: Any) -> dict[str, str]:
+    """Helper to extract attributes from nested Pub/Sub messages."""
+    attrs_dict: dict[str, str] = {}
+    if isinstance(data, dict):
+        data_dict: dict[Any, Any] = data
+        message = data_dict.get("message") or data_dict.get(b"message")
+
+        # Fallback: if there is no nested "message" field, but "attributes" is present at the top level,
+        # then the data dictionary itself is the message!
+        if message is None and (
+            "attributes" in data_dict or b"attributes" in data_dict
+        ):
+            message = data_dict
+
+        if isinstance(message, dict):
+            msg_dict: dict[Any, Any] = message
+            attrs = msg_dict.get("attributes") or msg_dict.get(b"attributes")
+            if isinstance(attrs, dict):
+                attrs_dict.update(
+                    {_safe_str(k): _safe_str(v) for k, v in attrs.items()}
+                )
+    return attrs_dict
+
+
+def _normalize_prefixed_attributes(attributes: dict[str, str]) -> None:
+    """Helper to normalize prefixed CloudEvent/PubSub attributes in-place."""
+    for k, v in list(attributes.items()):
+        clean_key = None
+        if k.startswith("x-goog-pubsub-attr-"):
+            clean_key = k[19:]
+        elif k.startswith("ce-"):
+            clean_key = k[3:]
+
+        if clean_key and clean_key not in attributes:
+            attributes[clean_key] = v
+
+
+def extract_cloud_event_attributes(
+    cloud_event: CloudEvent | Mapping[Any, Any],
+) -> dict[str, str]:
+    """Extracts combined attributes from a CloudEvent payload and metadata.
+
+    Args:
+        cloud_event: The incoming CloudEvent triggered by GCP triggers/PubSub.
+
+    Returns:
+        A dictionary of the combined attributes.
+    """
+    combined_attributes: dict[str, str] = {}
+
+    if hasattr(cloud_event, "data"):
+        data = cloud_event.data
+        ce_attrs = getattr(cloud_event, "attributes", None)
+    else:
+        data_dict: Mapping[Any, Any] = cloud_event
+        data = data_dict.get("data") or data_dict.get(b"data")
+        ce_attrs = data_dict.get("attributes") or data_dict.get(b"attributes")
+
+    # 1. Extract from nested Pub/Sub message attributes
+    combined_attributes.update(_extract_nested_pubsub_attributes(data))
+
+    # 2. Extract from top-level CloudEvent attributes
+    if isinstance(ce_attrs, dict):
+        combined_attributes.update(
+            {_safe_str(k): _safe_str(v) for k, v in ce_attrs.items()}
+        )
+
+    # 3. Extract from top-level CloudEvent fields if dict-like or via get method
+    for k in [
+        "traceparent",
+        "baggage",
+        "tracestate",
+        "ce-traceparent",
+        "ce-baggage",
+        "ce-tracestate",
+        "x-goog-pubsub-attr-traceparent",
+        "x-goog-pubsub-attr-baggage",
+    ]:
+        try:
+            val = cloud_event.get(k)
+            if isinstance(val, (str, bytes, int, float, bool)):
+                # We intentionally coerce scalar values to str to handle robust type conversion
+                # for keys like traceparent/baggage which are expected to be scalar strings,
+                # while ignoring complex objects or mock returns in unit tests.
+                combined_attributes[k] = _safe_str(val)
+        except Exception as e:
+            telemetry_logger.debug("Field %s extraction failed: %s", k, e)
+
+    # 4. Normalize prefixed attributes
+    _normalize_prefixed_attributes(combined_attributes)
+
+    return combined_attributes
+
+
+def parse_pubsub_cloudevent(
+    cloud_event: CloudEvent | Mapping[Any, Any],
+) -> tuple[dict[str, str], str]:
+    """Parses a CloudEvent containing a Pub/Sub message, validating its structure.
+
+    Args:
+        cloud_event: The incoming CloudEvent triggered by GCP triggers/PubSub.
+
+    Returns:
+        A tuple of (combined_attributes, raw_data).
+
+    Raises:
+        ValueError: If the CloudEvent envelope or Pub/Sub message structure is invalid.
+        TypeError: If the Pub/Sub message is not a dictionary.
+    """
+    if hasattr(cloud_event, "data"):
+        envelope = cloud_event.data
+    else:
+        envelope = cloud_event
+
+    if (
+        not envelope
+        or not isinstance(envelope, dict)
+        or "message" not in envelope
+    ):
+        err_msg = "Invalid CloudEvent envelope structure."
+        raise ValueError(err_msg)
+
+    pubsub_message = cast("Any", envelope).get("message")
+    if not isinstance(pubsub_message, dict):
+        type_err = "Invalid Pub/Sub message structure inside CloudEvent."
+        raise TypeError(type_err)
+
+    message_dict = {str(k): v for k, v in pubsub_message.items()}
+    raw_val = message_dict.get("data", "")
+    if isinstance(raw_val, bytes):
+        raw_data = raw_val.decode("utf-8")
+    else:
+        raw_data = str(raw_val)
+    combined_attributes = extract_cloud_event_attributes(cloud_event)
+
+    return combined_attributes, raw_data

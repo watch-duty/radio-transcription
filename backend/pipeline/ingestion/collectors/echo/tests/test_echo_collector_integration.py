@@ -158,8 +158,8 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         self, channel_name: str, *, status: str = "active"
     ) -> uuid.UUID:
         row = self.conn.execute(
-            "INSERT INTO feeds (name, source_type, status)"
-            " VALUES (%s, 'echo', %s::feed_status)"
+            "INSERT INTO feeds (name, source_type, status, created_at)"
+            " VALUES (%s, 'echo', %s::feed_status, '2026-01-01 00:00:00+00'::timestamptz)"
             " RETURNING id",
             (channel_name, status),
         ).fetchone()

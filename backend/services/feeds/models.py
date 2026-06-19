@@ -87,6 +87,7 @@ class Feed(FeedBase):
     last_heartbeat: datetime.datetime | None
     quarantine_reason: str | None = None
     status_reason: FeedStatusReason | None = None
+    last_speech_segment_timestamp: datetime.datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

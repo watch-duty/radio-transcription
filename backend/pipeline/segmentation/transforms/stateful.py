@@ -60,12 +60,13 @@ timer* pattern:
 1. `drain_ready_elements` is called with `max_emit=MAX_CHUNKS_PER_WINDMILL_BUNDLE`
    to cap the number of chunks processed in a single bundle.
 2. If the buffer still has remaining chunks after the cap is hit (`clamped=True`),
-   the DoFn immediately sets `out_of_order_timer` to the current watermark
-   timestamp (`out_of_order_timer.set(timestamp)`).
-3. Because the timer fires at or before the current watermark, Windmill schedules
-   a new bundle immediately, which calls `handle_gap_timeout` and drains the next
+   the DoFn immediately sets `gap_timer_event` to the current watermark
+   timestamp (`gap_timer_event.set(timestamp)`). If running in live
+   streaming, it also schedules `gap_timer_proc` in processing time.
+3. Because the watermark timer fires at or before the current watermark, Windmill schedules
+   a new bundle immediately, which calls the gap timeout handler and drains the next
    slice of up to `MAX_CHUNKS_PER_WINDMILL_BUNDLE` chunks.
-4. This continues until the buffer is empty, at which point no timer is set and
+4. This continues until the buffer is empty, at which point both timers are cleared and
    normal gap-timeout behavior resumes.
 
 The constant `MAX_CHUNKS_PER_WINDMILL_BUNDLE` (defined in `constants.py`) is
@@ -198,25 +199,16 @@ class StaleTimerManager:
         self.proc_timer.clear()
 
 
-def process_ordering(
-    element: tuple[str, datatypes.ChunkMetadata],
-    timestamp: Timestamp,
+def _handle_session_transition(
     curr_context: datatypes.TransmissionContext,
-    out_of_order_timer: RuntimeTimer,
-    order_config: datatypes.OrderRestorerConfig,
-    max_emit: int = MAX_CHUNKS_PER_WINDMILL_BUNDLE,
-) -> tuple[list[datatypes.BufferedChunk], datatypes.ActiveStitchingState, bool]:
-    """Handles session change detection and chronological ordering via SequenceBuffer."""
-    feed_id, metadata = element
-    session_changed = False
-
-    task_logger = _get_task_logger(
-        feed_id, metadata.session_id, "sequence-buffer"
-    )
-
-    # Explicitly transition IdleFeedState to ActiveStitchingState on startup
+    metadata: datatypes.ChunkMetadata,
+    gap_timer_event: RuntimeTimer,
+    gap_timer_proc: RuntimeTimer,
+    task_logger: Any,
+) -> tuple[datatypes.ActiveStitchingState, bool]:
+    """Handles transitions between active sessions or initialization from IdleFeedState."""
     if isinstance(curr_context, datatypes.IdleFeedState):
-        curr_context = datatypes.ActiveStitchingState(
+        new_context = datatypes.ActiveStitchingState(
             session_id=metadata.session_id,
             feed_metadata=metadata.feed_metadata,
             out_of_order_buffer=curr_context.out_of_order_buffer,
@@ -225,21 +217,138 @@ def process_ordering(
             or tracing_utils.get_current_traceparent(),
             baggage=metadata.baggage,
         )
-        session_changed = True
-        out_of_order_timer.clear()
-    elif curr_context.session_id != metadata.session_id:
+        gap_timer_event.clear()
+        gap_timer_proc.clear()
+        return new_context, True
+
+    if curr_context.session_id != metadata.session_id:
         task_logger.info(
             f"Session ID changed from {curr_context.session_id} to {metadata.session_id}. Resetting state."
         )
-        session_changed = True
-        out_of_order_timer.clear()
-        curr_context = datatypes.ActiveStitchingState(
+        gap_timer_event.clear()
+        gap_timer_proc.clear()
+        new_context = datatypes.ActiveStitchingState(
             session_id=metadata.session_id,
             feed_metadata=metadata.feed_metadata,
             traceparent=metadata.traceparent
             or tracing_utils.get_current_traceparent(),
             baggage=metadata.baggage,
         )
+        return new_context, True
+
+    if not isinstance(curr_context, datatypes.ActiveStitchingState):
+        msg = "Invalid context type"
+        raise TypeError(msg)
+    return curr_context, False
+
+
+def _manage_out_of_order_timers(
+    gap_timer_event: RuntimeTimer,
+    gap_timer_proc: RuntimeTimer,
+    order_config: datatypes.OrderRestorerConfig,
+    *,
+    timestamp: Timestamp,
+    clamped: bool,
+    has_buffer_elements: bool,
+    order_timer_active: bool,
+    is_backfill: bool,
+    old_expected_ts: int | None,
+    new_expected_next_ts: int | None,
+) -> bool:
+    """Manages scheduling and clearing of out-of-order restoration timers.
+
+    Timer management after a clamped or normal drain — three cases:
+
+    1. CLAMPED (buffer still has chunks AND drain hit MAX_CHUNKS_PER_WINDMILL_BUNDLE):
+       The previous drain stopped early to stay under Windmill's 300-second bundle
+       lease. Setting the timer to `timestamp` (current watermark) causes Dataflow
+       to fire handle_gap_timeout in the very next bundle, draining the next slice.
+       Bundles chain this way until the buffer is empty. This prevents
+       emitting oversized bundles that could exceed Windmill's bundle lease
+       and get aborted/replayed (e.g., triggered by pipeline restarts,
+       lock-induced slowdowns, or traffic spikes) by processing the queue in
+       bounded bites and chaining to the next bundle.
+
+    2. NORMAL GAP (buffer has chunks, drain was not clamped): schedule the
+       standard gap-timeout deadline so we eventually flush even if some
+       predecessors never arrive.
+
+    3. DRAINED (buffer is now empty): clear the timer to avoid spurious firing.
+
+    Returns the new state of order_timer_active.
+    """
+    if has_buffer_elements:
+        if clamped:
+            emitted_duration_ms = (
+                (new_expected_next_ts - old_expected_ts)
+                if (
+                    old_expected_ts is not None
+                    and new_expected_next_ts is not None
+                )
+                else 0
+            )
+            advance_sec = max(
+                WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                float(emitted_duration_ms)
+                / float(common_constants.MS_PER_SECOND),
+            )
+            gap_timer_event.set(timestamp + advance_sec)
+            if is_backfill:
+                gap_timer_proc.clear()
+            else:
+                gap_timer_proc.set(Timestamp(seconds=time.time() + advance_sec))
+            return True
+
+        if not order_timer_active:
+            deadline_watermark = timestamp + (
+                order_config.out_of_order_timeout_ms
+                / float(common_constants.MS_PER_SECOND)
+            )
+            gap_timer_event.set(deadline_watermark)
+            if is_backfill:
+                gap_timer_proc.clear()
+            else:
+                deadline_proc = time.time() + (
+                    order_config.out_of_order_timeout_ms
+                    / float(common_constants.MS_PER_SECOND)
+                )
+                gap_timer_proc.set(Timestamp(seconds=deadline_proc))
+            return True
+
+        return order_timer_active
+
+    if order_timer_active:
+        gap_timer_event.clear()
+        gap_timer_proc.clear()
+        return False
+
+    return order_timer_active
+
+
+def process_ordering(
+    element: tuple[str, datatypes.ChunkMetadata],
+    timestamp: Timestamp,
+    curr_context: datatypes.TransmissionContext,
+    gap_timer_event: RuntimeTimer,
+    gap_timer_proc: RuntimeTimer,
+    order_config: datatypes.OrderRestorerConfig,
+    *,
+    is_backfill: bool,
+    max_emit: int = MAX_CHUNKS_PER_WINDMILL_BUNDLE,
+) -> tuple[list[datatypes.BufferedChunk], datatypes.ActiveStitchingState, bool]:
+    """Handles session change detection and chronological ordering via SequenceBuffer."""
+    feed_id, metadata = element
+    task_logger = _get_task_logger(
+        feed_id, metadata.session_id, "sequence-buffer"
+    )
+
+    curr_context, session_changed = _handle_session_transition(
+        curr_context=curr_context,
+        metadata=metadata,
+        gap_timer_event=gap_timer_event,
+        gap_timer_proc=gap_timer_proc,
+        task_logger=task_logger,
+    )
 
     seq_buf = sequence_buffer.SequenceBuffer(order_config)
     buffer_elements = curr_context.out_of_order_buffer
@@ -249,10 +358,6 @@ def process_ordering(
         else int(float(timestamp) * common_constants.MS_PER_SECOND)
     )
 
-    # Process chunk through jitter buffer. max_emit caps this bundle's output at
-    # ~75 s of audio (MAX_CHUNKS_PER_WINDMILL_BUNDLE × ~15 s/chunk under load),
-    # safely under Windmill's 300-second lease limit. If the drain hits the cap,
-    # the timer block below re-arms immediately so the next bundle drains the rest.
     (
         new_expected_next_ts,
         new_buffer_elements,
@@ -287,51 +392,20 @@ def process_ordering(
         out_of_order_buffer=new_buffer_elements,
     )
 
-    # Timer management after a clamped or normal drain — three cases:
-    #
-    # 1. CLAMPED (buffer still has chunks AND drain hit MAX_CHUNKS_PER_WINDMILL_BUNDLE):
-    #    The previous drain stopped early to stay under Windmill's 300-second bundle
-    #    lease. Setting the timer to `timestamp` (current watermark) causes Dataflow
-    #    to fire handle_gap_timeout in the very next bundle, draining the next slice.
-    #    Bundles chain this way until the buffer is empty. This is the core of the
-    #    Windmill poison-pill fix: instead of one oversized bundle that gets aborted
-    #    and replayed (triggered by pipeline restarts, lock-induced slowdowns, or
-    #    traffic spikes), we emit in bounded bites and chain to the next bundle.
-    #
-    # 2. NORMAL GAP (buffer has chunks, drain was not clamped): schedule the
-    #    standard gap-timeout deadline so we eventually flush even if some
-    #    predecessors never arrive.
-    #
-    # 3. DRAINED (buffer is now empty): clear the timer to avoid spurious firing.
     clamped = len(elements_to_emit) >= max_emit
-    if new_buffer_elements:
-        if clamped:
-            # 1. Self-Chaining Invariant: Drains are capped at max_emit to stay
-            #    under Windmill's 300s bundle lease limit. Entering this block re-arms a recursive callback.
-            # 2. Domain-Driven Forward Progression: We advance the timer by exactly the cumulative physical
-            #    Event-Time duration of the audio chunks successfully emitted in this bundle (or our robust safety min).
-            emitted_duration_ms = (
-                (new_expected_next_ts - old_expected_ts)
-                if old_expected_ts is not None
-                else 0
-            )
-            advance_sec = max(
-                WINDMILL_TIMER_MIN_ADVANCE_SECS,
-                float(emitted_duration_ms)
-                / float(common_constants.MS_PER_SECOND),
-            )
-            out_of_order_timer.set(timestamp + advance_sec)
-            curr_context = replace(curr_context, order_timer_active=True)
-        elif not curr_context.order_timer_active:
-            deadline = timestamp + (
-                order_config.out_of_order_timeout_ms
-                / float(common_constants.MS_PER_SECOND)
-            )
-            out_of_order_timer.set(deadline)
-            curr_context = replace(curr_context, order_timer_active=True)
-    elif not new_buffer_elements and curr_context.order_timer_active:
-        out_of_order_timer.clear()
-        curr_context = replace(curr_context, order_timer_active=False)
+    new_timer_active = _manage_out_of_order_timers(
+        gap_timer_event=gap_timer_event,
+        gap_timer_proc=gap_timer_proc,
+        order_config=order_config,
+        timestamp=timestamp,
+        clamped=clamped,
+        has_buffer_elements=bool(new_buffer_elements),
+        order_timer_active=curr_context.order_timer_active,
+        is_backfill=is_backfill,
+        old_expected_ts=old_expected_ts,
+        new_expected_next_ts=new_expected_next_ts,
+    )
+    curr_context = replace(curr_context, order_timer_active=new_timer_active)
 
     return elements_to_emit, curr_context, session_changed
 
@@ -354,6 +428,45 @@ def _evaluate_is_backfill(current_ts_ms: int, threshold_ms: int) -> bool:
     """
     lateness = time.time() * common_constants.MS_PER_SECOND - current_ts_ms
     return lateness >= threshold_ms
+
+
+def _reschedule_gap_timeout(
+    gap_timer_event: RuntimeTimer,
+    gap_timer_proc: RuntimeTimer,
+    order_config: datatypes.OrderRestorerConfig,
+    *,
+    timestamp: Timestamp,
+    clamped: bool,
+    is_backfill: bool,
+    new_expected: int | None,
+    new_expected_next_ts: int | None,
+) -> bool:
+    """Reschedules out-of-order restoration timers after a timeout drain."""
+    if clamped:
+        emitted_duration_ms = (
+            (new_expected_next_ts - new_expected)
+            if (new_expected is not None and new_expected_next_ts is not None)
+            else 0
+        )
+        advance_sec = max(
+            WINDMILL_TIMER_MIN_ADVANCE_SECS,
+            float(emitted_duration_ms) / float(common_constants.MS_PER_SECOND),
+        )
+        deadline_watermark = timestamp + advance_sec
+        deadline_proc = time.time() + advance_sec
+    else:
+        timeout_sec = order_config.out_of_order_timeout_ms / float(
+            common_constants.MS_PER_SECOND
+        )
+        deadline_watermark = timestamp + timeout_sec
+        deadline_proc = time.time() + timeout_sec
+
+    gap_timer_event.set(deadline_watermark)
+    if is_backfill:
+        gap_timer_proc.clear()
+    else:
+        gap_timer_proc.set(Timestamp(seconds=deadline_proc))
+    return True
 
 
 @beam.typehints.with_input_types(tuple[str, datatypes.ChunkMetadata])
@@ -399,10 +512,13 @@ class OrderedStitchAudioFn(beam.DoFn):
 
     # --- Timers ---
 
-    OUT_OF_ORDER_TIMER_SPEC = TimerSpec(
-        "out_of_order_timer", beam.TimeDomain.WATERMARK
+    GAP_TIMER_EVENT_SPEC = TimerSpec(
+        "gap_timer_event", beam.TimeDomain.WATERMARK
     )
-    OUT_OF_ORDER_TIMER = beam.DoFn.TimerParam(OUT_OF_ORDER_TIMER_SPEC)
+    GAP_TIMER_EVENT = beam.DoFn.TimerParam(GAP_TIMER_EVENT_SPEC)
+
+    GAP_TIMER_PROC_SPEC = TimerSpec("gap_timer_proc", beam.TimeDomain.REAL_TIME)
+    GAP_TIMER_PROC = beam.DoFn.TimerParam(GAP_TIMER_PROC_SPEC)
 
     STALE_TIMER_EVENT_SPEC = TimerSpec(
         "stale_timer_event", beam.TimeDomain.WATERMARK
@@ -495,7 +611,8 @@ class OrderedStitchAudioFn(beam.DoFn):
         transmission_buffer_state: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
-        out_of_order_timer: RuntimeTimer = OUT_OF_ORDER_TIMER,  # type: ignore
+        gap_timer_event: RuntimeTimer = GAP_TIMER_EVENT,  # type: ignore
+        gap_timer_proc: RuntimeTimer = GAP_TIMER_PROC,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
         deferred_drain_timer: RuntimeTimer = DEFERRED_DRAIN_TIMER,  # type: ignore
@@ -579,6 +696,10 @@ class OrderedStitchAudioFn(beam.DoFn):
             current_ts_ms = int(
                 float(timestamp) * common_constants.MS_PER_SECOND
             )
+            is_backfill = _evaluate_is_backfill(
+                current_ts_ms,
+                self.stitch_config.backfill_lateness_threshold_ms,
+            )
             curr_context = (
                 transmission_context_state.read() or datatypes.IdleFeedState()
             )
@@ -593,8 +714,10 @@ class OrderedStitchAudioFn(beam.DoFn):
                 element,
                 timestamp,
                 curr_context,
-                out_of_order_timer,
+                gap_timer_event,
+                gap_timer_proc,
                 self.order_config,
+                is_backfill=is_backfill,
                 max_emit=trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
                 - self.processed_in_bundle,
             )
@@ -662,8 +785,8 @@ class OrderedStitchAudioFn(beam.DoFn):
 
         yield from self._yield_tagged_outputs(results)
 
-    @on_timer(OUT_OF_ORDER_TIMER_SPEC)
-    def handle_gap_timeout(
+    @on_timer(GAP_TIMER_EVENT_SPEC)
+    def handle_gap_timeout_event(
         self,
         feed_id: str = beam.DoFn.KeyParam,  # type: ignore
         transmission_buffer_state: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
@@ -672,11 +795,71 @@ class OrderedStitchAudioFn(beam.DoFn):
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
-        out_of_order_timer: RuntimeTimer = OUT_OF_ORDER_TIMER,  # type: ignore
+        gap_timer_event: RuntimeTimer = GAP_TIMER_EVENT,  # type: ignore
+        gap_timer_proc: RuntimeTimer = GAP_TIMER_PROC,  # type: ignore
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
     ]:
-        """Handles the gap timeout by advancing the expected sequence."""
+        """Handles the gap timeout triggered by the event-time watermark."""
+        yield from self._handle_gap_timeout_common(
+            feed_id=feed_id,
+            transmission_buffer_state=transmission_buffer_state,
+            transmission_context_state=transmission_context_state,
+            last_start_ms_state=last_start_ms_state,
+            stale_timer_event=stale_timer_event,
+            stale_timer_proc=stale_timer_proc,
+            timestamp=timestamp,
+            gap_timer_event=gap_timer_event,
+            gap_timer_proc=gap_timer_proc,
+            timer_type="event",
+        )
+
+    @on_timer(GAP_TIMER_PROC_SPEC)
+    def handle_gap_timeout_processing(
+        self,
+        feed_id: str = beam.DoFn.KeyParam,  # type: ignore
+        transmission_buffer_state: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
+        transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
+        last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
+        stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
+        stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
+        timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
+        gap_timer_event: RuntimeTimer = GAP_TIMER_EVENT,  # type: ignore
+        gap_timer_proc: RuntimeTimer = GAP_TIMER_PROC,  # type: ignore
+    ) -> Iterator[
+        tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
+    ]:
+        """Handles the gap timeout triggered by the processing-time clock."""
+        yield from self._handle_gap_timeout_common(
+            feed_id=feed_id,
+            transmission_buffer_state=transmission_buffer_state,
+            transmission_context_state=transmission_context_state,
+            last_start_ms_state=last_start_ms_state,
+            stale_timer_event=stale_timer_event,
+            stale_timer_proc=stale_timer_proc,
+            timestamp=timestamp,
+            gap_timer_event=gap_timer_event,
+            gap_timer_proc=gap_timer_proc,
+            timer_type="processing",
+        )
+
+    def _handle_gap_timeout_common(
+        self,
+        feed_id: str,
+        transmission_buffer_state: BagRuntimeState,
+        transmission_context_state: ReadModifyWriteRuntimeState,
+        last_start_ms_state: ReadModifyWriteRuntimeState,
+        stale_timer_event: RuntimeTimer,
+        stale_timer_proc: RuntimeTimer,
+        timestamp: Timestamp,
+        gap_timer_event: RuntimeTimer,
+        gap_timer_proc: RuntimeTimer,
+        *,
+        timer_type: str,
+    ) -> Iterator[
+        tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
+    ]:
+        """Handles the gap timeout by advancing the expected sequence (common logic)."""
         curr_context = (
             transmission_context_state.read() or datatypes.IdleFeedState()
         )
@@ -696,6 +879,8 @@ class OrderedStitchAudioFn(beam.DoFn):
         with tracing_utils.with_tracer_context(
             trace_attrs, "handle_audio_gap", __name__
         ):
+            gap_timer_event.clear()
+            gap_timer_proc.clear()
             curr_context = replace(curr_context, order_timer_active=False)
             _write_transmission_context(
                 transmission_context_state, curr_context
@@ -709,7 +894,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                 new_expected = sorted_elements[0].timestamp_ms
 
                 logger.warning(
-                    f"[{feed_id}] Gap timeout! Advancing expected from {curr_context.expected_next_chunk_start_ms} to {new_expected}."
+                    f"[{feed_id}] Gap timeout ({timer_type})! Advancing expected from {curr_context.expected_next_chunk_start_ms} to {new_expected}."
                 )
 
                 curr_context = replace(
@@ -732,27 +917,28 @@ class OrderedStitchAudioFn(beam.DoFn):
                     )
                 )
 
+                first_chunk_ts = sorted_elements[0].timestamp_ms
+                is_backfill = _evaluate_is_backfill(
+                    first_chunk_ts,
+                    self.stitch_config.backfill_lateness_threshold_ms,
+                )
+
                 clamped = (
                     len(elements_to_emit) >= MAX_CHUNKS_PER_WINDMILL_BUNDLE
                 )
-                if clamped and new_buffer_elements:
-                    # 1. Self-Chaining Invariant: Drains are capped at MAX_CHUNKS_PER_WINDMILL_BUNDLE to stay
-                    #    under Windmill's 300s bundle lease limit. Entering this block re-arms a recursive callback.
-                    # 2. Domain-Driven Forward Progression: We advance the timer by exactly the cumulative physical
-                    #    Event-Time duration of the audio chunks successfully emitted in this bundle (or our robust safety min).
-                    emitted_duration_ms = (
-                        (new_expected_next_ts - new_expected)
-                        if new_expected is not None
-                        else 0
+                if new_buffer_elements:
+                    timer_active = _reschedule_gap_timeout(
+                        gap_timer_event=gap_timer_event,
+                        gap_timer_proc=gap_timer_proc,
+                        order_config=self.order_config,
+                        timestamp=timestamp,
+                        clamped=clamped,
+                        is_backfill=is_backfill,
+                        new_expected=new_expected,
+                        new_expected_next_ts=new_expected_next_ts,
                     )
-                    advance_sec = max(
-                        WINDMILL_TIMER_MIN_ADVANCE_SECS,
-                        float(emitted_duration_ms)
-                        / float(common_constants.MS_PER_SECOND),
-                    )
-                    out_of_order_timer.set(timestamp + advance_sec)
                     curr_context = replace(
-                        curr_context, order_timer_active=True
+                        curr_context, order_timer_active=timer_active
                     )
 
                 curr_context = replace(
@@ -770,8 +956,6 @@ class OrderedStitchAudioFn(beam.DoFn):
                         stale_timer_event, stale_timer_proc, self.stitch_config
                     )
 
-                    # Assume backfill in timeout!
-                    is_backfill = True
                     previous_expected_ts = new_expected
 
                     for chunk in elements_to_emit:

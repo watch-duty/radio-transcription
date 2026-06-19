@@ -15,6 +15,8 @@ from backend.pipeline.common.exceptions import NonRetryableError
 from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.storage.redis_service import RedisService
 from backend.pipeline.common.tracing_utils import (
+    parse_pubsub_cloudevent,
+    record_pipeline_stage,
     setup_tracing,
     with_tracer_context,
 )
@@ -128,12 +130,10 @@ container.eager_warmup()
 
 
 def parse_cloud_event(
-    cloud_event: CloudEvent,
+    raw_data: str,
 ) -> EvaluatedTranscribedAudio | None:
-    pubsub_message = cloud_event.data.get("message", {})
-    evaluated_transcribed_audio = EvaluatedTranscribedAudio()
-    raw_data = pubsub_message.get("data", "")
     if raw_data:
+        evaluated_transcribed_audio = EvaluatedTranscribedAudio()
         decoded_data = base64.b64decode(raw_data)
         evaluated_transcribed_audio.ParseFromString(decoded_data)
         return evaluated_transcribed_audio
@@ -194,12 +194,18 @@ def convert_to_notification(
 @functions_framework.cloud_event
 def send_notification(cloud_event: CloudEvent) -> None:
     setup_tracing(service_name="notification-service", use_batch=False)
-    pubsub_message = cloud_event.data.get("message", {})
-    attributes = pubsub_message.get("attributes", {}) or {}
+    try:
+        combined_attributes, raw_data = parse_pubsub_cloudevent(cloud_event)
+    except Exception as e:
+        logger.exception("Failed to parse CloudEvent payload envelope: %s", e)
+        return
 
-    with with_tracer_context(attributes, "send_notification", __name__):
+    with with_tracer_context(
+        combined_attributes, "send_notification", __name__
+    ):
+        record_pipeline_stage("notification", "start")
         # Process the incoming CloudEvent message
-        evaluated_transcribed_audio = parse_cloud_event(cloud_event)
+        evaluated_transcribed_audio = parse_cloud_event(raw_data)
         if not evaluated_transcribed_audio:
             logger.warning("Unable to parse incoming message")
             return
@@ -209,6 +215,7 @@ def send_notification(cloud_event: CloudEvent) -> None:
         if not deduplication.process_notification(notification_id):
             message = f"Duplicate segment_id detected, skipping notification with ID: {notification_id}"
             logger.info(message)
+            record_pipeline_stage("notification", "skipped")
             return
 
         try:
@@ -229,12 +236,15 @@ def send_notification(cloud_event: CloudEvent) -> None:
             try:
                 request_handler = container.get_request_handler()
                 request_handler.send_notification(alert_notification)
+                record_pipeline_stage("notification", "success")
             except NonRetryableError:
+                record_pipeline_stage("notification", "error")
                 logger.exception(
                     "Failed to send notification for audio segment (segment_id: %s) due to client (4xx) error. Message will not be retried.",
                     notification_id,
                 )
         except Exception:
+            record_pipeline_stage("notification", "error")
             try:
                 deduplication.clear_notification(notification_id)
             except Exception as e:
