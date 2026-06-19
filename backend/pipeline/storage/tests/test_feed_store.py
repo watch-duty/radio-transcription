@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import inspect
 import json
 import pathlib
 import re
@@ -509,6 +510,56 @@ class TestFeedAuditSql(unittest.TestCase):
 
         self.assertNotIn("event_payload", sql)
         self.assertNotIn("MAX(feed_sequence", sql)
+
+
+class TestFeedAuditStorageBoundary(unittest.TestCase):
+    """Hardening checks for the storage-owned audit boundary."""
+
+    def test_audited_mutations_require_explicit_keyword_actor(self) -> None:
+        for method_name in (
+            "create_feed",
+            "update_feed",
+            "deactivate_feed",
+            "delete_feed",
+            "reset_feed",
+        ):
+            with self.subTest(method_name=method_name):
+                signature = inspect.signature(getattr(FeedStore, method_name))
+                actor = signature.parameters.get("actor_id")
+
+                self.assertIsNotNone(actor)
+                assert actor is not None
+                self.assertEqual(
+                    actor.kind,
+                    inspect.Parameter.KEYWORD_ONLY,
+                )
+                self.assertIs(actor.default, inspect.Parameter.empty)
+
+    def test_no_parallel_with_audit_mutation_methods_exist(self) -> None:
+        method_names = {
+            name
+            for name in dir(FeedStore)
+            if "with_audit" in name and callable(getattr(FeedStore, name))
+        }
+
+        self.assertEqual(method_names, set())
+
+    def test_feed_request_models_do_not_accept_actor_id(self) -> None:
+        text = pathlib.Path("backend/services/feeds/models.py").read_text()
+
+        self.assertNotIn("actor_id", text)
+
+    def test_feeds_service_does_not_build_audit_rows_directly(self) -> None:
+        for path in (
+            pathlib.Path("backend/services/feeds/main.py"),
+            pathlib.Path("backend/services/feeds/service.py"),
+        ):
+            with self.subTest(path=str(path)):
+                text = path.read_text()
+
+                self.assertNotIn("feed_audit_events", text)
+                self.assertNotIn("INSERT_FEED_AUDIT_EVENT_SQL", text)
+                self.assertNotIn("_insert_feed_audit_event", text)
 
 
 class TestStatusReasonLifecycleIsolation(unittest.TestCase):
@@ -2417,7 +2468,9 @@ class TestDeactivateFeed(unittest.IsolatedAsyncioTestCase):
             _FEED_ID,
         )
         audit_args = conn.execute.await_args_list[1].args
-        self.assertEqual(audit_args[0], feed_queries.INSERT_FEED_AUDIT_EVENT_SQL)
+        self.assertEqual(
+            audit_args[0], feed_queries.INSERT_FEED_AUDIT_EVENT_SQL
+        )
         self.assertEqual(
             audit_args[1:10],
             (
@@ -2521,7 +2574,9 @@ class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result)
         audit_args = conn.execute.await_args_list[0].args
-        self.assertEqual(audit_args[0], feed_queries.INSERT_FEED_AUDIT_EVENT_SQL)
+        self.assertEqual(
+            audit_args[0], feed_queries.INSERT_FEED_AUDIT_EVENT_SQL
+        )
         self.assertEqual(
             audit_args[1:10],
             (
@@ -2613,7 +2668,9 @@ class TestResetFeed(unittest.IsolatedAsyncioTestCase):
             _FEED_ID,
         )
         audit_args = conn.execute.await_args.args
-        self.assertEqual(audit_args[0], feed_queries.INSERT_FEED_AUDIT_EVENT_SQL)
+        self.assertEqual(
+            audit_args[0], feed_queries.INSERT_FEED_AUDIT_EVENT_SQL
+        )
         self.assertEqual(
             audit_args[1:10],
             (

@@ -1015,9 +1015,7 @@ async def test_failure_update_fails_after_deactivation_without_rewriting_reason(
         old_reason_ts,
         feed_id,
     )
-    assert (
-        await store.deactivate_feed(feed_id, actor_id=_TEST_ACTOR_ID) is True
-    )
+    assert await store.deactivate_feed(feed_id, actor_id=_TEST_ACTOR_ID) is True
 
     result = await store.report_feed_failure(
         feed_id,
@@ -1672,6 +1670,23 @@ async def test_create_feed_succeeds(
     assert row["name"] == "New Integration Feed"
     assert row["source_feed_id"] == "src_123"
 
+    audit_rows = await _fetch_audit_events(db_pool, feed["id"])
+    assert len(audit_rows) == 1
+    audit_row = audit_rows[0]
+    before_values = _decode_json_object(audit_row["before_values"])
+    after_values = _decode_json_object(audit_row["after_values"])
+    assert audit_row["action"] == "feed.created"
+    assert audit_row["actor_id"] == _TEST_ACTOR_ID
+    assert audit_row["feed_sequence"] == 1
+    assert before_values == {}
+    assert after_values["name"] == "New Integration Feed"
+    assert after_values["source_type"] == "bcfy_feeds"
+    assert after_values["status"] == "unclaimed"
+    assert after_values["feed_properties.source_feed_id"] == "src_123"
+    assert after_values["feed_properties.tags"] == []
+    assert "worker_id" not in after_values
+    assert "last_heartbeat" not in after_values
+
 
 async def test_create_feed_already_exists(
     db_pool: asyncpg.Pool, store: FeedStore
@@ -1730,6 +1745,23 @@ async def test_update_feed_succeeds(
     assert row is not None
     assert row["name"] == "Updated Name"
     assert row["source_feed_id"] == "src_123"
+
+    audit_rows = await _fetch_audit_events(db_pool, feed["id"])
+    assert [row["action"] for row in audit_rows] == [
+        "feed.created",
+        "feed.updated",
+    ]
+    assert [row["feed_sequence"] for row in audit_rows] == [1, 2]
+    audit_row = audit_rows[1]
+    before_values = _decode_json_object(audit_row["before_values"])
+    after_values = _decode_json_object(audit_row["after_values"])
+    assert audit_row["actor_id"] == _TEST_ACTOR_ID
+    assert before_values["name"] == "Original Name"
+    assert before_values["feed_properties.tags"] == []
+    assert after_values["name"] == "Updated Name"
+    assert after_values["feed_properties.source_feed_id"] == "src_123"
+    assert "worker_id" not in before_values
+    assert "last_heartbeat" not in after_values
 
 
 async def test_update_feed_already_exists(
@@ -1861,9 +1893,7 @@ async def test_invalid_actor_values_are_not_rewritten_by_storage(
     assert row["status"] == "unclaimed"
     assert [event["action"] for event in audit_rows] == ["feed.created"]
     assert all(event["actor_id"] != actor_id for event in audit_rows)
-    assert all(
-        event["action"] != "feed.deactivated" for event in audit_rows
-    )
+    assert all(event["action"] != "feed.deactivated" for event in audit_rows)
 
 
 # -- Tests: audited concurrent ordering -------------------------------
@@ -2182,6 +2212,44 @@ async def test_list_feeds_filter_by_tags(store: FeedStore) -> None:
     assert len(result_none.feeds) == 0
 
 
+# -- Tests: deactivate_feed -------------------------------------------
+
+
+async def test_deactivate_feed_succeeds(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """deactivate_feed persists state and one feed.deactivated audit row."""
+    feed_id = await _insert_feed(
+        db_pool,
+        "Deactivate Audit Feed",
+        status="active",
+        source_feed_id=f"deactivate-{uuid.uuid4()}",
+    )
+
+    result = await store.deactivate_feed(feed_id, actor_id=_TEST_ACTOR_ID)
+
+    assert result is True
+    row = await _get_feed_status(db_pool, feed_id)
+    audit_rows = await _fetch_audit_events(db_pool, feed_id)
+    assert row["status"] == "deactivated"
+    assert len(audit_rows) == 1
+    audit_row = audit_rows[0]
+    before_values = _decode_json_object(audit_row["before_values"])
+    after_values = _decode_json_object(audit_row["after_values"])
+    assert audit_row["action"] == "feed.deactivated"
+    assert audit_row["actor_id"] == _TEST_ACTOR_ID
+    assert audit_row["feed_sequence"] == 1
+    assert before_values["status"] == "active"
+    assert after_values["status"] == "deactivated"
+    assert before_values["feed_properties.source_feed_id"].startswith(
+        "deactivate-"
+    )
+    assert after_values["feed_properties.tags"] == []
+    assert "worker_id" not in before_values
+    assert "last_heartbeat" not in after_values
+
+
 # -- Tests: delete_feed ------------------------------------------------
 
 
@@ -2257,6 +2325,23 @@ async def test_delete_feed_succeeds(
     )
     assert row_annots is None
 
+    # 11. Verify delete audit history survives hard delete.
+    audit_rows = await _fetch_audit_events(db_pool, feed_id)
+    assert len(audit_rows) == 1
+    audit_row = audit_rows[0]
+    before_values = _decode_json_object(audit_row["before_values"])
+    after_values = _decode_json_object(audit_row["after_values"])
+    assert audit_row["action"] == "feed.deleted"
+    assert audit_row["actor_id"] == _TEST_ACTOR_ID
+    assert audit_row["feed_sequence"] == 1
+    assert before_values["id"] == str(feed_id)
+    assert before_values["name"] == "Hard Delete Test Feed"
+    assert before_values["feed_properties.source_feed_id"].startswith("src_")
+    assert before_values["feed_properties.tags"] == []
+    assert after_values == {}
+    assert "worker_id" not in before_values
+    assert "last_heartbeat" not in before_values
+
 
 async def test_delete_feed_returns_false_if_not_found(store: FeedStore) -> None:
     """delete_feed returns False for a non-existent feed ID."""
@@ -2294,6 +2379,22 @@ async def test_reset_feed_succeeds(
     assert row["status"] == "unclaimed"
     assert row["failure_count"] == 0
     assert row["worker_id"] is None
+
+    audit_rows = await _fetch_audit_events(db_pool, feed_id)
+    assert len(audit_rows) == 1
+    audit_row = audit_rows[0]
+    before_values = _decode_json_object(audit_row["before_values"])
+    after_values = _decode_json_object(audit_row["after_values"])
+    assert audit_row["action"] == "feed.reset"
+    assert audit_row["actor_id"] == _TEST_ACTOR_ID
+    assert audit_row["feed_sequence"] == 1
+    assert before_values["status"] == "quarantined"
+    assert before_values["failure_count"] == 5
+    assert after_values["status"] == "unclaimed"
+    assert after_values["failure_count"] == 0
+    assert after_values["feed_properties.tags"] == []
+    assert "worker_id" not in before_values
+    assert "last_heartbeat" not in after_values
 
 
 async def test_reset_clears_stale_status_reason_with_clear_timestamp_and_raw_quarantine_reason(
