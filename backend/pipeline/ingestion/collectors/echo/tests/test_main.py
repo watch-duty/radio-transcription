@@ -370,7 +370,7 @@ class TestHandle:
         )
         mock_store.record_heartbeat.assert_not_called()
         _patch_globals["publisher"].publish.assert_not_called()
-        assert "will ACK Eventarc event" in caplog.text
+        assert "will return success for object notification" in caplog.text
         assert "echo_recording_download_failed" in caplog.text
         assert "GCS error" in caplog.text
         assert "Traceback" in caplog.text
@@ -416,7 +416,7 @@ class TestHandle:
         mock_store.record_heartbeat.assert_not_called()
         _patch_globals["publisher"].publish.assert_not_called()
         assert expected_reason in caplog.text
-        assert "will ACK Eventarc event" in caplog.text
+        assert "will return success for object notification" in caplog.text
         assert "Traceback" in caplog.text
 
     @pytest.mark.usefixtures("_patch_globals")
@@ -451,7 +451,7 @@ class TestHandle:
         mock_store.record_heartbeat.assert_not_called()
         _patch_globals["publisher"].publish.assert_not_called()
         assert expected_reason in caplog.text
-        assert "will ACK Eventarc event" in caplog.text
+        assert "will return success for object notification" in caplog.text
         assert "Traceback" in caplog.text
 
     @pytest.mark.usefixtures("_patch_globals")
@@ -485,7 +485,7 @@ class TestHandle:
         _patch_globals["publisher"].publish.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_non_budgeted_recording_db_error_keeps_ack_policy(
+    def test_non_budgeted_recording_db_error_keeps_return_success_policy(
         self, mock_store, _patch_globals
     ) -> None:
         feed_id = uuid.uuid4()
@@ -522,7 +522,8 @@ class TestHandle:
         first_call, second_call = mock_logger.exception.call_args_list
         log_args, log_kwargs = first_call
         assert log_args[:4] == (
-            "Echo processing failure will ACK Eventarc event: "
+            "Echo processing failure will return success for "
+            "object notification: "
             "feed=%s status_reason=%s reason=%s",
             feed_id,
             "system_pipeline_error",

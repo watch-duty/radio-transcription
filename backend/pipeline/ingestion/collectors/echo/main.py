@@ -61,7 +61,9 @@ _RECORDING_DOWNLOAD_FAILED = "echo_recording_download_failed"
 _STAGING_UPLOAD_FAILED = "echo_staging_upload_failed"
 _PUBSUB_PUBLISH_FAILED = "echo_pubsub_publish_failed"
 _HEARTBEAT_WRITE_FAILED = "echo_heartbeat_write_failed"
-_ACK_RECORDED_STATUS_REASONS = {
+# Returning success prevents the same object notification from being retried.
+# This is separate from feed-budget routing, which is handled by failure_policy.
+_RETURN_SUCCESS_AFTER_FAILURE_RECORD_ATTEMPT_STATUS_REASONS = {
     FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
     FeedStatusReason.SYSTEM_PIPELINE_ERROR,
 }
@@ -245,19 +247,22 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
             FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
             _unexpected_failure_reason(exc),
         )
-        should_ack = _should_ack_after_recorded_failure(
-            classification.status_reason
+        should_return_success = (
+            _should_return_success_after_failure_record_attempt(
+                classification.status_reason
+            )
         )
-        if should_ack:
+        if should_return_success:
             logger.exception(
-                "Echo processing failure will ACK Eventarc event: "
+                "Echo processing failure will return success for "
+                "object notification: "
                 "feed=%s status_reason=%s reason=%s",
                 feed["id"],
                 classification.status_reason.value,
                 classification.reason,
             )
         _record_failure_by_policy(feed["id"], classification)
-        if should_ack:
+        if should_return_success:
             return
         raise
 
@@ -313,10 +318,13 @@ def _record_failure_by_policy(
         logger.exception("Failed to record failure for feed %s", feed_id)
 
 
-def _should_ack_after_recorded_failure(
+def _should_return_success_after_failure_record_attempt(
     status_reason: FeedStatusReason,
 ) -> bool:
-    return status_reason in _ACK_RECORDED_STATUS_REASONS
+    return (
+        status_reason
+        in _RETURN_SUCCESS_AFTER_FAILURE_RECORD_ATTEMPT_STATUS_REASONS
+    )
 
 
 def _unexpected_failure_reason(exc: Exception) -> str:

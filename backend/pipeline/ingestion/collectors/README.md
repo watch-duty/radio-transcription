@@ -43,9 +43,10 @@ Echo is the exception to the VM runtime shape: it runs as a synchronous Cloud
 Function. It writes the same canonical status-reason field through
 `SyncFeedStore` and routes recorded failures through `failure_policy` before
 choosing the budgeted or non-budgeted sync-store path. Echo v1 centralizes its
-Eventarc ACK/retry policy in the handler and ACKs object-scoped and pipeline
-failures after a best-effort non-budgeted status recording attempt so one
-object cannot quarantine the feed or create a retry loop.
+object-notification completion policy in the handler and returns success for
+object-scoped and pipeline failures after a best-effort non-budgeted status
+recording attempt so one object cannot quarantine the feed or create a retry
+loop.
 
 ## Status Reason Policy
 

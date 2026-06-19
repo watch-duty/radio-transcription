@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from backend.pipeline.storage import quarantine_reason
+from backend.pipeline.storage import quarantine_reason, sync_feed_queries
 
 logger = logging.getLogger(__name__)
 
@@ -23,73 +23,6 @@ if TYPE_CHECKING:
     import psycopg
 
     from backend.pipeline.storage.feed_store import FeedStatusReason
-
-# ---------------------------------------------------------------------------
-# SQL — psycopg v3 uses %s params (not asyncpg's $1)
-# ---------------------------------------------------------------------------
-
-_RESOLVE_ECHO_FEED_SQL = """\
-SELECT f.id, f.name, f.status, f.failure_count
-FROM feeds f
-JOIN feed_properties fp ON fp.feed_id = f.id
-WHERE fp.source_feed_id = %s
-AND fp.source_type = 'echo'
-"""
-
-_HEARTBEAT_SQL = """\
-UPDATE feeds
-SET last_heartbeat = NOW(),
-    failure_count = CASE WHEN failure_count > 0 THEN 0 ELSE failure_count END,
-    status = 'active'::feed_status,
-    status_reason_updated_at = CASE
-        WHEN status_reason IS NOT NULL THEN NOW()
-        ELSE status_reason_updated_at
-    END,
-    status_reason = NULL
-WHERE id = %s
-  AND status NOT IN ('quarantined'::feed_status, 'deactivated'::feed_status)
-"""
-
-# Backoff formula: base * 2^(failure_count), capped at max, plus 0-10s jitter.
-# Matches _REPORT_FAILURE_SQL in feed_store.py (minus worker_id/fencing_token).
-_RECORD_FAILURE_SQL = """\
-UPDATE feeds
-SET status = CASE WHEN failure_count + 1 >= %s
-                  THEN 'quarantined'::feed_status
-                  ELSE 'failing'::feed_status END,
-    failure_count = failure_count + 1,
-    last_heartbeat = NOW(),
-    retry_after = CASE WHEN failure_count + 1 < %s
-                       THEN NOW() + LEAST(
-                            %s * INTERVAL '1 second',
-                            %s * INTERVAL '1 second' * POWER(2, failure_count)
-                       ) + (RANDOM() * INTERVAL '10 seconds')
-                       ELSE NULL END,
-    quarantine_reason = CASE WHEN failure_count + 1 >= %s THEN COALESCE(%s, quarantine_reason) ELSE quarantine_reason END,
-    status_reason = COALESCE(%s, 'system_unexpected_error'),
-    status_reason_updated_at = CASE
-        WHEN status_reason IS DISTINCT FROM COALESCE(%s, 'system_unexpected_error')
-            THEN NOW()
-        ELSE status_reason_updated_at
-    END
-WHERE id = %s
-  AND status NOT IN ('quarantined'::feed_status, 'deactivated'::feed_status)
-"""
-
-_RECORD_NON_BUDGETED_FAILURE_SQL = """\
-UPDATE feeds
-SET status = 'failing'::feed_status,
-    failure_count = 0,
-    last_heartbeat = NOW(),
-    retry_after = NULL,
-    status_reason = %s,
-    status_reason_updated_at = CASE
-        WHEN status_reason IS DISTINCT FROM %s THEN NOW()
-        ELSE status_reason_updated_at
-    END
-WHERE id = %s
-  AND status NOT IN ('quarantined'::feed_status, 'deactivated'::feed_status)
-"""
 
 
 class SyncFeedStore:
@@ -130,7 +63,7 @@ class SyncFeedStore:
         """
         with self._connect_db() as conn:
             return conn.execute(
-                _RESOLVE_ECHO_FEED_SQL, (channel_name,)
+                sync_feed_queries.RESOLVE_ECHO_FEED_SQL, (channel_name,)
             ).fetchone()
 
     # ------------------------------------------------------------------
@@ -144,7 +77,7 @@ class SyncFeedStore:
         feed was previously in a failing state.
         """
         with self._connect_db() as conn:
-            conn.execute(_HEARTBEAT_SQL, (feed_id,))
+            conn.execute(sync_feed_queries.HEARTBEAT_SQL, (feed_id,))
 
     def record_failure(
         self,
@@ -168,7 +101,7 @@ class SyncFeedStore:
         )
         with self._connect_db() as conn:
             conn.execute(
-                _RECORD_FAILURE_SQL,
+                sync_feed_queries.RECORD_FAILURE_SQL,
                 (
                     self._failure_threshold,
                     self._failure_threshold,
@@ -194,13 +127,13 @@ class SyncFeedStore:
     ) -> None:
         """Record a visible failure without consuming quarantine budget.
 
-        Echo retries are Eventarc-driven, so this sync path clears
+        Echo receives source object notifications, so this sync path clears
         ``retry_after`` instead of scheduling DB-based retry. It also leaves
         ``quarantine_reason`` untouched because no quarantine threshold crossed.
         """
         with self._connect_db() as conn:
             conn.execute(
-                _RECORD_NON_BUDGETED_FAILURE_SQL,
+                sync_feed_queries.RECORD_NON_BUDGETED_FAILURE_SQL,
                 (
                     status_reason.value,
                     status_reason.value,
