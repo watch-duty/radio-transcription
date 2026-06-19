@@ -320,7 +320,7 @@ export function FeedTable({
             status={feed.status}
             substatus={feed.substatus}
             statusReason={feed.statusReason}
-            quarantineReason={feed.quarantineReason}
+            statusReasonDetail={feed.statusReasonDetail}
             lastHeartbeat={feed.lastHeartbeat}
           />
         </TableCell>

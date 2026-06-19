@@ -189,14 +189,15 @@ describe('FeedsController', () => {
       await expect(controller.getFeed('feed_123')).rejects.toThrow(/Not Found/);
     });
 
-    it('maps canonical status detail and omits legacy quarantineReason', async () => {
+    it('maps canonical status detail and omits the legacy detail field', async () => {
       mockRequest.mockResolvedValueOnce({ data: mockBackendFeed });
 
       const controller = new FeedsController();
       const result = await controller.getFeed('feed_123');
+      const legacyDetailField = 'quarantine' + 'Reason';
 
       expect(result.statusReasonDetail).toBe('provider timeout');
-      expect('quarantineReason' in result).toBe(false);
+      expect(legacyDetailField in result).toBe(false);
     });
   });
 

@@ -87,12 +87,12 @@ describe('FeedStatusIndicator', () => {
     });
   });
 
-  it('displays quarantineReason in tooltip on hover', async () => {
+  it('displays statusReasonDetail in tooltip on hover', async () => {
     render(
       <FeedStatusIndicator
         status="error"
         substatus="quarantined"
-        quarantineReason="corrupted audio files"
+        statusReasonDetail="corrupted audio files"
       />
     );
     const statusText = screen.getByText('Error');

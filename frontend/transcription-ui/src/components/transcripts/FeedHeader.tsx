@@ -86,7 +86,7 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
               status={status}
               substatus={searchedFeed.substatus}
               statusReason={searchedFeed.statusReason}
-              quarantineReason={searchedFeed.quarantineReason}
+              statusReasonDetail={searchedFeed.statusReasonDetail}
               lastHeartbeat={lastHeartbeat}
             />
           </Box>
