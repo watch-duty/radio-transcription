@@ -112,6 +112,31 @@ class TestFeedsAPI(unittest.TestCase):
         self.assertEqual(data["id"], str(feed_id))
         self.mock_service.create_feed.assert_called_once()
 
+    def test_create_feed_contract_has_no_actor_field(self) -> None:
+        """Create requests and responses stay actor-field-free."""
+        payload = {
+            "name": "Test Feed",
+            "source_type": "bcfy_feeds",
+            "source_feed_id": "123",
+        }
+        mock_feed = Feed(
+            id=uuid.uuid4(),
+            name="Test Feed",
+            source_type=SourceType.BCFY_FEEDS,
+            source_feed_id="123",
+            status=FeedStatus.ACTIVE,
+            last_heartbeat=None,
+        )
+        self.mock_service.create_feed.return_value = mock_feed
+
+        response = self.client.post("/v1/feeds", json=payload)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        service_feed_in = self.mock_service.create_feed.call_args.args[0]
+        self.assertNotIn("actor_id", service_feed_in.model_dump())
+        self.assertFalse(hasattr(service_feed_in, "actor_id"))
+        self.assertNotIn("actor_id", response.json())
+
     def test_create_feed_already_exists(self) -> None:
         """Test creating a feed that already exists returns 409."""
         payload = {
@@ -523,6 +548,30 @@ class TestFeedsAPI(unittest.TestCase):
         self.assertEqual(data["id"], str(feed_id))
         self.assertEqual(data["name"], "Updated Feed")
         self.mock_service.update_feed.assert_called_once()
+
+    def test_update_feed_contract_has_no_actor_field(self) -> None:
+        """Update requests and responses stay actor-field-free."""
+        feed_id = uuid.uuid4()
+        payload = {
+            "name": "Updated Feed",
+        }
+        mock_feed = Feed(
+            id=feed_id,
+            name="Updated Feed",
+            source_type=SourceType.BCFY_FEEDS,
+            source_feed_id="123",
+            status=FeedStatus.ACTIVE,
+            last_heartbeat=None,
+        )
+        self.mock_service.update_feed.return_value = mock_feed
+
+        response = self.client.put(f"/v1/feeds/{feed_id}", json=payload)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        service_feed_in = self.mock_service.update_feed.call_args.args[1]
+        self.assertNotIn("actor_id", service_feed_in.model_dump())
+        self.assertFalse(hasattr(service_feed_in, "actor_id"))
+        self.assertNotIn("actor_id", response.json())
 
     def test_update_feed_not_found(self) -> None:
         """Test updating a non-existent feed returns 404."""
