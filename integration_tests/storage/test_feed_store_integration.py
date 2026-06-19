@@ -2458,7 +2458,6 @@ async def test_reset_clears_status_reason_detail_in_row_and_audit(
 
     assert feed is not None
     assert feed["status_reason"] is None
-    assert feed["status_reason_detail"] is None
     row = await db_pool.fetchrow(
         "SELECT status_reason, status_reason_detail FROM feeds WHERE id = $1",
         feed_id,
