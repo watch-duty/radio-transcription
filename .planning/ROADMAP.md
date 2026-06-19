@@ -54,7 +54,7 @@ Plans:
 
 Plans:
 **Wave 1**
-- [ ] 02-01-PLAN.md - Contract/schema cleanup and audit SQL foundation.
+- [x] 02-01-PLAN.md - Contract/schema cleanup and audit SQL foundation.
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 02-02-PLAN.md - Transactional create/update writes and service actor fallback.

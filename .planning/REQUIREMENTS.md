@@ -16,7 +16,7 @@ short-lived logs.
   current feed row is later deleted.
 - [x] **AUD-03**: Each audited event records when the event occurred and has a
   stable per-feed ordering that future timelines can use.
-- [ ] **AUD-04**: Audit history preserves the meaningful values before and
+- [x] **AUD-04**: Audit history preserves the meaningful values before and
   after each audited change.
 - [ ] **AUD-05**: Audit rows are retained for 18 months and expired only by the
   approved retention mechanism.
@@ -68,9 +68,9 @@ short-lived logs.
   together.
 - [ ] **CON-02**: A failed or rolled-back feed mutation does not leave behind an
   audit event.
-- [ ] **CON-03**: Concurrent audited mutations for the same feed preserve a
+- [x] **CON-03**: Concurrent audited mutations for the same feed preserve a
   unique, deterministic per-feed order.
-- [ ] **CON-04**: Audit event creation is owned by backend storage boundaries so
+- [x] **CON-04**: Audit event creation is owned by backend storage boundaries so
   service and runtime callers cannot accidentally create state/history drift.
 
 ### Compatibility
@@ -153,7 +153,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AUD-01 | Phase 4 | Pending |
 | AUD-02 | Phase 1 | Complete |
 | AUD-03 | Phase 1 | Complete |
-| AUD-04 | Phase 2 | Pending |
+| AUD-04 | Phase 2 | Complete |
 | AUD-05 | Phase 5 | Pending |
 | EVT-01 | Phase 2 | Pending |
 | EVT-02 | Phase 2 | Pending |
@@ -173,8 +173,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ACT-03 | Phase 4 | Pending |
 | CON-01 | Phase 2 | Pending |
 | CON-02 | Phase 2 | Pending |
-| CON-03 | Phase 2 | Pending |
-| CON-04 | Phase 2 | Pending |
+| CON-03 | Phase 2 | Complete |
+| CON-04 | Phase 2 | Complete |
 | COMP-01 | Phase 3 | Pending |
 | COMP-02 | Phase 3 | Pending |
 | COMP-03 | Phase 3 | Pending |
