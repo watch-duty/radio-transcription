@@ -636,6 +636,10 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             1,
             resume_position,
+            actor_id="service:collector-runtime",
+            previous_status=FeedStatus.UNCLAIMED,
+            previous_failure_count=0,
+            previous_status_reason=None,
         )
         self.assertEqual(feed["failure_count"], 0)
         self.assertIsNone(feed["status_reason"])
@@ -664,6 +668,7 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
                 _FEED,
                 failure_count=2,
                 status_reason=(FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED),
+                previous_status=FeedStatus.FAILING,
             ),
         )
         rt = CollectorRuntime(
@@ -691,6 +696,12 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             1,
             resume_position,
+            actor_id="service:collector-runtime",
+            previous_status=FeedStatus.FAILING,
+            previous_failure_count=2,
+            previous_status_reason=(
+                FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED
+            ),
         )
         self.assertEqual(feed["failure_count"], 0)
         self.assertIsNone(feed["status_reason"])
@@ -3198,10 +3209,9 @@ class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
 
     Contract: the feed's persisted last_bookmark_time is the chunk's
     resume_position when the collector sets it (bcfy_calls), and falls back
-    to chunk_end_time when it is None (stream/push collectors). The runtime
-    invokes update_feed_progress positionally via retry_with_lease_check as
-    (feed_id, worker_id, gcs_uri, fencing_token, last_bookmark_time) — so the
-    bookmark is the 5th positional argument.
+    to chunk_end_time when it is None (stream/push collectors). The bookmark
+    remains the 5th positional argument while audit causal inputs are forwarded
+    as storage-owned keyword-only arguments.
     """
 
     _BOOKMARK_ARG_INDEX = 4
@@ -3226,15 +3236,32 @@ class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress.return_value = True
         rt._releasing_feeds = set()
+        feed = cast(
+            "LeasedFeed",
+            dict(
+                _FEED,
+                failure_count=2,
+                status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+                previous_status=FeedStatus.FAILING,
+            ),
+        )
 
         with _mock_upload_audio(), _mock_pubsub_publish():
-            await rt._process_feed(_FEED)
+            await rt._process_feed(feed)
 
         rt._store.update_feed_progress.assert_awaited_once()
         bookmark = rt._store.update_feed_progress.await_args.args[
             self._BOOKMARK_ARG_INDEX
         ]
         self.assertEqual(bookmark, resume)
+        kwargs = rt._store.update_feed_progress.await_args.kwargs
+        self.assertEqual(kwargs["actor_id"], "service:collector-runtime")
+        self.assertIs(kwargs["previous_status"], FeedStatus.FAILING)
+        self.assertEqual(kwargs["previous_failure_count"], 2)
+        self.assertIs(
+            kwargs["previous_status_reason"],
+            FeedStatusReason.SOURCE_UNREACHABLE,
+        )
 
     async def test_falls_back_to_chunk_end_time_when_resume_position_none(
         self,
@@ -3266,6 +3293,11 @@ class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
             self._BOOKMARK_ARG_INDEX
         ]
         self.assertEqual(bookmark, end_time)
+        kwargs = rt._store.update_feed_progress.await_args.kwargs
+        self.assertEqual(kwargs["actor_id"], "service:collector-runtime")
+        self.assertIs(kwargs["previous_status"], FeedStatus.UNCLAIMED)
+        self.assertEqual(kwargs["previous_failure_count"], 0)
+        self.assertIsNone(kwargs["previous_status_reason"])
 
 
 if __name__ == "__main__":

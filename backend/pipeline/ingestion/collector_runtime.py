@@ -54,6 +54,7 @@ from backend.pipeline.storage.feed_store import (
     FeedStore,
     HeartbeatResult,
     LeasedFeed,
+    SourceObservationResult,
     SourceType,
 )
 
@@ -769,6 +770,21 @@ class CollectorRuntime:
                 status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
             ) from exc
 
+        async def _update_progress() -> bool:
+            return await self._store.update_feed_progress(
+                feed["id"],
+                worker_id,
+                gcs_uri,
+                fencing_token,
+                # bcfy_calls supplies the API `ts` resume cursor;
+                # stream collectors leave it None -> end_ts fallback.
+                captured_chunk.resume_position or captured_chunk.chunk_end_time,
+                actor_id=COLLECTOR_RUNTIME_ACTOR_ID,
+                previous_status=feed["previous_status"],
+                previous_failure_count=feed["failure_count"],
+                previous_status_reason=feed["status_reason"],
+            )
+
         duration_ms = int(
             (
                 captured_chunk.chunk_end_time - captured_chunk.chunk_start_time
@@ -777,14 +793,7 @@ class CollectorRuntime:
         )
         try:
             ok = await retry_with_lease_check(
-                self._store.update_feed_progress,
-                feed["id"],
-                worker_id,
-                gcs_uri,
-                fencing_token,
-                # bcfy_calls supplies the API `ts` resume cursor;
-                # stream collectors leave it None -> end_ts fallback.
-                captured_chunk.resume_position or captured_chunk.chunk_end_time,
+                _update_progress,
                 lease_lost=self._lease_lost,
                 shutdown=self._shutdown,
                 max_retries=settings.bookmark_max_retries,
@@ -1087,13 +1096,21 @@ class CollectorRuntime:
         ):
             return True
 
-        try:
-            result = await retry_with_lease_check(
-                self._store.record_source_observation,
+        async def _record_observation() -> SourceObservationResult:
+            return await self._store.record_source_observation(
                 feed["id"],
                 worker_id,
                 fencing_token,
                 observation.resume_position,
+                actor_id=COLLECTOR_RUNTIME_ACTOR_ID,
+                previous_status=feed["previous_status"],
+                previous_failure_count=feed["failure_count"],
+                previous_status_reason=feed["status_reason"],
+            )
+
+        try:
+            result = await retry_with_lease_check(
+                _record_observation,
                 lease_lost=self._lease_lost,
                 shutdown=self._shutdown,
                 max_retries=self._collector_settings.bookmark_max_retries,
