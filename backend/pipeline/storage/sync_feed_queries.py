@@ -7,7 +7,7 @@ fencing.
 """
 
 RESOLVE_ECHO_FEED_SQL = """\
-SELECT f.id, f.name, f.status, f.created_at
+SELECT f.id, f.name, f.status, f.failure_count, f.status_reason, f.created_at
 FROM feeds f
 JOIN feed_properties fp ON fp.feed_id = f.id
 WHERE fp.source_feed_id = %s
@@ -21,9 +21,11 @@ SET last_heartbeat = NOW(),
     failure_count = CASE WHEN failure_count > 0 THEN 0 ELSE failure_count END,
     status = 'active'::feed_status,
     status_reason_updated_at = CASE
-        WHEN status_reason IS NOT NULL THEN NOW()
+        WHEN status_reason IS NOT NULL OR status_reason_detail IS NOT NULL
+            THEN NOW()
         ELSE status_reason_updated_at
     END,
+    status_reason_detail = NULL,
     status_reason = NULL
 WHERE id = %s
   AND status NOT IN ('quarantined'::feed_status, 'deactivated'::feed_status)
@@ -46,6 +48,7 @@ SET status = CASE WHEN failure_count + 1 >= %s
                        ELSE NULL END,
     quarantine_reason = CASE WHEN failure_count + 1 >= %s THEN COALESCE(%s, quarantine_reason) ELSE quarantine_reason END,
     status_reason = COALESCE(%s, 'system_unexpected_error'),
+    status_reason_detail = %s,
     status_reason_updated_at = CASE
         WHEN status_reason IS DISTINCT FROM COALESCE(%s, 'system_unexpected_error')
             THEN NOW()
@@ -62,10 +65,73 @@ SET status = 'failing'::feed_status,
     last_heartbeat = NOW(),
     retry_after = NULL,
     status_reason = %s,
+    status_reason_detail = %s,
     status_reason_updated_at = CASE
         WHEN status_reason IS DISTINCT FROM %s THEN NOW()
         ELSE status_reason_updated_at
     END
 WHERE id = %s
   AND status NOT IN ('quarantined'::feed_status, 'deactivated'::feed_status)
+"""
+
+GET_AUDIT_FEED_SNAPSHOT_SQL = """\
+SELECT
+    f.id,
+    f.name,
+    f.source_type,
+    f.status,
+    f.failure_count,
+    f.retry_after,
+    f.status_reason,
+    f.status_reason_updated_at,
+    f.status_reason_detail,
+    f.quarantine_reason,
+    f.last_bookmark_time,
+    f.created_at,
+    fp.source_feed_id AS "feed_properties.source_feed_id",
+    fp.tags AS "feed_properties.tags"
+FROM feeds f
+JOIN feed_properties fp ON fp.feed_id = f.id
+WHERE f.id = %s
+FOR UPDATE
+"""
+
+ALLOCATE_FEED_AUDIT_SEQUENCE_SQL = """\
+INSERT INTO feed_audit_event_sequences (feed_id, next_sequence)
+VALUES (%s, 2)
+ON CONFLICT (feed_id) DO UPDATE
+SET next_sequence = feed_audit_event_sequences.next_sequence + 1,
+    updated_at = NOW()
+RETURNING next_sequence - 1 AS feed_sequence
+"""
+
+INSERT_FEED_AUDIT_EVENT_SQL = """\
+INSERT INTO feed_audit_events (
+    feed_id,
+    feed_name,
+    source_type,
+    action,
+    actor_id,
+    feed_sequence,
+    status,
+    status_reason,
+    status_reason_detail,
+    before_values,
+    after_values,
+    metadata
+)
+VALUES (
+    %s,
+    %s,
+    %s,
+    %s,
+    %s,
+    %s,
+    %s::feed_status,
+    %s,
+    %s,
+    %s::jsonb,
+    %s::jsonb,
+    COALESCE(%s::jsonb, '{}'::jsonb)
+)
 """

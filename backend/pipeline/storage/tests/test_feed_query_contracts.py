@@ -538,6 +538,27 @@ class TestAsyncSyncFailureSqlContracts(unittest.TestCase):
             ),
         )
 
+    def test_sync_failure_sql_writes_status_reason_detail(self) -> None:
+        self.assertIn(
+            "status_reason_detail = %s",
+            _sql_without_comments(sync_feed_queries.RECORD_FAILURE_SQL),
+        )
+        self.assertIn(
+            "status_reason_detail = %s",
+            _sql_without_comments(
+                sync_feed_queries.RECORD_NON_BUDGETED_FAILURE_SQL
+            ),
+        )
+
+    def test_sync_heartbeat_sql_clears_status_reason_detail(self) -> None:
+        sql = _sql_without_comments(sync_feed_queries.HEARTBEAT_SQL)
+
+        self.assertIn("status_reason_detail = NULL", sql)
+        self.assertIn(
+            "status_reason IS NOT NULL OR status_reason_detail IS NOT NULL",
+            sql,
+        )
+
     def test_status_reason_timestamp_updates_are_conditional(self) -> None:
         for sql in (
             feed_queries.REPORT_FAILURE_SQL,
