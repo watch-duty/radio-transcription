@@ -2488,11 +2488,12 @@ class UploadRawSegmentFnTest(unittest.TestCase):
 
         mock_bucket.blob.side_effect = mock_blob_mapping
 
-        # 2. Instantiate UploadRawSegmentFn
+        # 2. Instantiate UploadRawSegmentFn and trigger setup lifecycle to initialize metrics
         fn = UploadRawSegmentFn(
             staging_audio_bucket="test-staging-bucket",
             project_id="test-project",
         )
+        fn.setup()
         fn.gcs_client = mock_gcs_client
 
         # 3. Create a FlushRequest with 2 contributing chunks and 2 speech segments:

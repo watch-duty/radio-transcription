@@ -221,6 +221,12 @@ class UploadRawSegmentFn(beam.DoFn):
         self.segmentation_error = Metrics.counter(
             self.__class__, "segmentation_error"
         )
+        self.gcs_chunks_downloaded = Metrics.counter(
+            self.__class__, "gcs_chunks_downloaded"
+        )
+        self.stitched_segments_uploaded = Metrics.counter(
+            self.__class__, "stitched_segments_uploaded"
+        )
 
     def _pcm_to_flac(self, pcm_bytes: bytes, sample_rate: int) -> bytes:
         audio_arr = np.frombuffer(pcm_bytes, dtype=np.int16)
@@ -268,6 +274,7 @@ class UploadRawSegmentFn(beam.DoFn):
             # Decode FLAC using soundfile
             samples, sr = sf.read(in_mem_file, dtype="int16")
             decoded_chunks[chunk.gcs_uri] = (samples, sr, chunk.timestamp_ms)
+            self.gcs_chunks_downloaded.inc()
 
         # 2. Extract and concatenate the speech segments
         stitched_segments = []
@@ -320,6 +327,7 @@ class UploadRawSegmentFn(beam.DoFn):
         bucket = self.gcs_client.bucket(self.staging_audio_bucket)
         blob = bucket.blob(flac_path)
         blob.upload_from_string(flac_bytes, content_type="audio/flac")
+        self.stitched_segments_uploaded.inc()
 
         task_logger.info(
             f"[Stateless Stitch] Successfully uploaded stitched FLAC: gs://{self.staging_audio_bucket}/{flac_path}"
