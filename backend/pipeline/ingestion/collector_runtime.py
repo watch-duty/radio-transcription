@@ -68,6 +68,7 @@ CaptureFn = Callable[
 ]
 logger = logging.getLogger(__name__)
 
+COLLECTOR_RUNTIME_ACTOR_ID = "service:collector-runtime"
 _PIPELINE_GCS_UPLOAD_FAILED = "gcs_upload_failed"
 _PIPELINE_BOOKMARK_WRITE_FAILED = "bookmark_write_failed"
 _NON_BUDGETED_RETRY_MIN_SEC = 5 * 60
@@ -945,6 +946,10 @@ class CollectorRuntime:
                 worker_id,
                 fencing_token,
                 self._collector_settings.feed_failure_threshold,
+                actor_id=COLLECTOR_RUNTIME_ACTOR_ID,
+                previous_status=feed["previous_status"],
+                previous_failure_count=feed["failure_count"],
+                previous_status_reason=feed["status_reason"],
                 reason=reason,
                 status_reason=status_reason,
             )
@@ -1031,6 +1036,11 @@ class CollectorRuntime:
                 fencing_token,
                 retry_after=retry_after,
                 status_reason=status_reason,
+                actor_id=COLLECTOR_RUNTIME_ACTOR_ID,
+                previous_status=feed["previous_status"],
+                previous_failure_count=feed["failure_count"],
+                previous_status_reason=feed["status_reason"],
+                reason=reason,
             )
         except Exception:
             # 60s abandonment window is the safety net if this fails.

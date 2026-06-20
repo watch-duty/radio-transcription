@@ -31,6 +31,7 @@ from backend.pipeline.ingestion.models import (
     SourceObservation,
 )
 from backend.pipeline.storage.feed_store import (
+    FeedStatus,
     FeedStatusReason,
     HeartbeatResult,
     LeasedFeed,
@@ -72,6 +73,7 @@ _FEED = LeasedFeed(
     fencing_token=1,
     failure_count=0,
     status_reason=None,
+    previous_status=FeedStatus.UNCLAIMED,
     source_feed_id="123",
 )
 
@@ -962,6 +964,7 @@ class TestProcessFeedTopicRouting(unittest.IsolatedAsyncioTestCase):
             fencing_token=1,
             failure_count=0,
             status_reason=None,
+            previous_status=FeedStatus.UNCLAIMED,
             source_feed_id="123",
         )
 
@@ -995,6 +998,7 @@ class TestProcessFeedTopicRouting(unittest.IsolatedAsyncioTestCase):
             fencing_token=1,
             failure_count=0,
             status_reason=None,
+            previous_status=FeedStatus.UNCLAIMED,
             source_feed_id="123",
         )
 
@@ -2041,6 +2045,15 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         rt._store.update_feed_progress.return_value = True
         rt._store.report_feed_failure.return_value = "quarantined"
         rt._releasing_feeds = set()
+        feed = cast(
+            "LeasedFeed",
+            dict(
+                _FEED,
+                failure_count=2,
+                status_reason=(FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED),
+                previous_status=FeedStatus.FAILING,
+            ),
+        )
 
         with (
             _mock_upload_audio(),
@@ -2054,9 +2067,21 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             ) as cm,
         ):
             mock_telemetry.emit_quarantine_event = mock.AsyncMock()
-            await rt._process_feed(_FEED)
+            await rt._process_feed(feed)
 
         rt._store.report_feed_failure.assert_awaited_once()
+        failure_kwargs = rt._store.report_feed_failure.await_args.kwargs
+        self.assertEqual(
+            failure_kwargs["actor_id"],
+            "service:collector-runtime",
+        )
+        self.assertIs(failure_kwargs["previous_status"], FeedStatus.FAILING)
+        self.assertEqual(failure_kwargs["previous_failure_count"], 2)
+        self.assertIs(
+            failure_kwargs["previous_status_reason"],
+            FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+        )
+        self.assertEqual(failure_kwargs["reason"], "missing_source_feed_id")
         rt._store.release_non_budgeted_failure.assert_not_awaited()
         mock_telemetry.emit_quarantine_event.assert_awaited_once_with(
             feed_id=str(_FEED_ID),
@@ -2108,6 +2133,15 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         rt._store = mock.AsyncMock()
         rt._store.release_non_budgeted_failure.return_value = "failing"
         rt._releasing_feeds = set()
+        feed = cast(
+            "LeasedFeed",
+            dict(
+                _FEED,
+                failure_count=1,
+                status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+                previous_status=FeedStatus.FAILING,
+            ),
+        )
 
         with (
             mock.patch(
@@ -2115,11 +2149,27 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             ) as mock_telemetry,
         ):
             mock_telemetry.emit_quarantine_event = mock.AsyncMock()
-            await rt._process_feed(_FEED)
+            await rt._process_feed(feed)
 
         mock_telemetry.emit_quarantine_event.assert_not_awaited()
         rt._store.report_feed_failure.assert_not_awaited()
         rt._store.release_non_budgeted_failure.assert_awaited_once()
+        release_kwargs = (
+            rt._store.release_non_budgeted_failure.await_args.kwargs
+        )
+        self.assertEqual(
+            release_kwargs["actor_id"],
+            "service:collector-runtime",
+        )
+        self.assertIs(release_kwargs["previous_status"], FeedStatus.FAILING)
+        self.assertEqual(release_kwargs["previous_failure_count"], 1)
+        self.assertIs(
+            release_kwargs["previous_status_reason"],
+            FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+        self.assertEqual(
+            release_kwargs["reason"], "RuntimeError: capture_failed"
+        )
 
     async def test_untyped_runtime_exception_preserves_full_reason(
         self,
