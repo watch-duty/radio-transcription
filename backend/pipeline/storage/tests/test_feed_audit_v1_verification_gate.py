@@ -43,11 +43,27 @@ def test_v1_audit_event_behavior_tests_are_registered() -> None:
             "feed.quarantined",
         ),
         (
+            "test_repeated_quarantine_same_reason_emits_no_event",
+            "feed.quarantined",
+        ),
+        (
+            "test_repeated_quarantine_reason_change_emits_no_event",
+            "feed.quarantined",
+        ),
+        (
             "test_successful_progress_from_failing_emits_recovered",
             "feed.recovered",
         ),
         (
             "test_successful_progress_from_quarantined_emits_recovered",
+            "feed.recovered",
+        ),
+        (
+            "test_successful_progress_from_active_failure_count_emits_recovered",
+            "feed.recovered",
+        ),
+        (
+            "test_successful_progress_from_active_status_reason_emits_recovered",
             "feed.recovered",
         ),
     ):
@@ -65,8 +81,12 @@ def test_v1_sync_echo_runtime_parity_tests_are_registered() -> None:
             "feed.failure_reported",
             "test_threshold_crossing_emits_only_quarantined",
             "feed.quarantined",
+            "test_repeated_quarantine_same_reason_emits_no_event",
+            "test_repeated_quarantine_reason_change_emits_no_event",
             "test_recovery_heartbeat_from_failing_emits_recovered",
             "feed.recovered",
+            "test_recovery_heartbeat_from_active_failure_count_emits_recovered",
+            "test_recovery_heartbeat_from_active_status_reason_emits_recovered",
             "test_clean_heartbeat_emits_no_event",
             "test_detail_only_heartbeat_clear_from_normal_emits_no_event",
             "test_no_row_mutation_emits_no_event",

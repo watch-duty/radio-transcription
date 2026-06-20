@@ -443,6 +443,68 @@ class TestSyncRuntimeAuditEvents:
         actions = [call[1][1] for call in _audit_insert_calls(conn)]
         assert actions == ["feed.quarantined"]
 
+    def test_repeated_quarantine_same_reason_emits_no_event(self) -> None:
+        feed_id = uuid.uuid4()
+        conn = _make_transactional_conn(
+            _make_cursor(
+                row=_audit_snapshot_row(
+                    id=feed_id,
+                    status="quarantined",
+                    failure_count=5,
+                    status_reason="source_unreachable",
+                )
+            ),
+            _make_cursor(
+                row=_audit_snapshot_row(
+                    id=feed_id,
+                    status="quarantined",
+                    failure_count=6,
+                    status_reason="source_unreachable",
+                    status_reason_detail="new detail",
+                )
+            ),
+        )
+        store = _make_store(conn)
+
+        store.record_failure(
+            feed_id,
+            **_sync_prior_kwargs(),
+            reason="new detail",
+            status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+
+        assert _audit_insert_calls(conn) == []
+
+    def test_repeated_quarantine_reason_change_emits_no_event(self) -> None:
+        feed_id = uuid.uuid4()
+        conn = _make_transactional_conn(
+            _make_cursor(
+                row=_audit_snapshot_row(
+                    id=feed_id,
+                    status="quarantined",
+                    failure_count=5,
+                    status_reason="source_unreachable",
+                )
+            ),
+            _make_cursor(
+                row=_audit_snapshot_row(
+                    id=feed_id,
+                    status="quarantined",
+                    failure_count=6,
+                    status_reason="system_collector_error",
+                )
+            ),
+        )
+        store = _make_store(conn)
+
+        store.record_failure(
+            feed_id,
+            **_sync_prior_kwargs(),
+            status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        )
+
+        assert _audit_insert_calls(conn) == []
+
     def test_recovery_heartbeat_from_failing_emits_recovered(self) -> None:
         feed_id = uuid.uuid4()
         conn = _make_transactional_conn(
@@ -476,6 +538,76 @@ class TestSyncRuntimeAuditEvents:
         assert audit_params[1] == "feed.recovered"
         after_values = _load_json_object(audit_params[5])
         assert after_values["status"] == "active"
+        assert after_values["status_reason"] is None
+
+    def test_recovery_heartbeat_from_active_failure_count_emits_recovered(
+        self,
+    ) -> None:
+        feed_id = uuid.uuid4()
+        conn = _make_transactional_conn(
+            _make_cursor(
+                row=_audit_snapshot_row(
+                    id=feed_id,
+                    status="active",
+                    failure_count=2,
+                    status_reason=None,
+                )
+            ),
+            _make_cursor(
+                row=_audit_snapshot_row(
+                    id=feed_id,
+                    status="active",
+                    failure_count=0,
+                    status_reason=None,
+                    feed_revision=12,
+                )
+            ),
+            _make_cursor(),
+        )
+        store = _make_store(conn)
+
+        store.record_heartbeat(feed_id, **_sync_prior_kwargs())
+
+        audit_params = _audit_insert_calls(conn)[0][1]
+        assert audit_params[1] == "feed.recovered"
+        after_values = _load_json_object(audit_params[5])
+        assert after_values["status"] == "active"
+        assert after_values["failure_count"] == 0
+        assert after_values["status_reason"] is None
+
+    def test_recovery_heartbeat_from_active_status_reason_emits_recovered(
+        self,
+    ) -> None:
+        feed_id = uuid.uuid4()
+        conn = _make_transactional_conn(
+            _make_cursor(
+                row=_audit_snapshot_row(
+                    id=feed_id,
+                    status="active",
+                    failure_count=0,
+                    status_reason="source_unreachable",
+                )
+            ),
+            _make_cursor(
+                row=_audit_snapshot_row(
+                    id=feed_id,
+                    status="active",
+                    failure_count=0,
+                    status_reason=None,
+                    feed_revision=13,
+                )
+            ),
+            _make_cursor(),
+        )
+        store = _make_store(conn)
+
+        store.record_heartbeat(feed_id, **_sync_prior_kwargs())
+
+        audit_params = _audit_insert_calls(conn)[0][1]
+        assert audit_params[1] == "feed.recovered"
+        after_values = _load_json_object(audit_params[5])
+        assert after_values["status"] == "active"
+        assert after_values["failure_count"] == 0
         assert after_values["status_reason"] is None
 
     def test_second_heartbeat_with_stale_resolved_prior_emits_no_event(

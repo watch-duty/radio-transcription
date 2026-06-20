@@ -1501,7 +1501,9 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
         metadata = _load_json_object(audit_args[7])
         self.assertEqual(before_values["status"], "active")
         self.assertEqual(after_values["status"], "failing")
-        self.assertEqual(after_values["status_reason"], "system_collector_error")
+        self.assertEqual(
+            after_values["status_reason"], "system_collector_error"
+        )
         self.assertEqual(metadata, {})
 
     async def test_same_combo_retry_emits_no_event(self) -> None:
@@ -1589,6 +1591,70 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
 
         audit_actions = [args[2] for args in _audit_insert_calls(conn)]
         self.assertEqual(audit_actions, ["feed.quarantined"])
+
+    async def test_repeated_quarantine_same_reason_emits_no_event(
+        self,
+    ) -> None:
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [
+            _audit_snapshot_row(
+                status="quarantined",
+                failure_count=5,
+                status_reason="source_unreachable",
+            ),
+            _failure_update_row(
+                status="quarantined",
+                failure_count=6,
+                status_reason="source_unreachable",
+                status_reason_detail="new detail",
+            ),
+        ]
+        store = FeedStore(pool)
+
+        result = await store.report_feed_failure(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            **_runtime_prior_kwargs(),
+            reason="new detail",
+            status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+
+        self.assertEqual(result, "quarantined")
+        conn.fetchval.assert_not_awaited()
+        self.assertEqual(_audit_insert_calls(conn), [])
+
+    async def test_repeated_quarantine_reason_change_emits_no_event(
+        self,
+    ) -> None:
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [
+            _audit_snapshot_row(
+                status="quarantined",
+                failure_count=5,
+                status_reason="source_unreachable",
+            ),
+            _failure_update_row(
+                status="quarantined",
+                failure_count=6,
+                status_reason="system_collector_error",
+            ),
+        ]
+        store = FeedStore(pool)
+
+        result = await store.report_feed_failure(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            **_runtime_prior_kwargs(),
+            status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        )
+
+        self.assertEqual(result, "quarantined")
+        conn.fetchval.assert_not_awaited()
+        self.assertEqual(_audit_insert_calls(conn), [])
 
     async def test_successful_progress_from_failing_emits_recovered(
         self,
@@ -1712,6 +1778,80 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(audit_args[2], "feed.recovered")
         metadata = _load_json_object(audit_args[7])
         self.assertEqual(metadata, {})
+
+    async def test_successful_progress_from_active_failure_count_emits_recovered(
+        self,
+    ) -> None:
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [
+            _audit_snapshot_row(
+                status="active",
+                failure_count=2,
+                status_reason=None,
+            ),
+            _audit_snapshot_row(
+                status="active",
+                failure_count=0,
+                status_reason=None,
+            ),
+        ]
+        conn.execute.return_value = "INSERT 0 1"
+        store = FeedStore(pool)
+
+        result = await store.update_feed_progress(
+            _FEED_ID,
+            _WORKER_ID,
+            "gs://bucket/path/file.ogg",
+            1,
+            None,
+            **_runtime_prior_kwargs(),
+        )
+
+        self.assertTrue(result)
+        audit_args = _audit_insert_calls(conn)[0]
+        self.assertEqual(audit_args[2], "feed.recovered")
+        after_values = _load_json_object(audit_args[6])
+        self.assertEqual(after_values["status"], "active")
+        self.assertEqual(after_values["failure_count"], 0)
+        self.assertIsNone(after_values["status_reason"])
+
+    async def test_successful_progress_from_active_status_reason_emits_recovered(
+        self,
+    ) -> None:
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [
+            _audit_snapshot_row(
+                status="active",
+                failure_count=0,
+                status_reason="source_unreachable",
+            ),
+            _audit_snapshot_row(
+                status="active",
+                failure_count=0,
+                status_reason=None,
+            ),
+        ]
+        conn.execute.return_value = "INSERT 0 1"
+        store = FeedStore(pool)
+
+        result = await store.update_feed_progress(
+            _FEED_ID,
+            _WORKER_ID,
+            "gs://bucket/path/file.ogg",
+            1,
+            None,
+            **_runtime_prior_kwargs(),
+        )
+
+        self.assertTrue(result)
+        audit_args = _audit_insert_calls(conn)[0]
+        self.assertEqual(audit_args[2], "feed.recovered")
+        after_values = _load_json_object(audit_args[6])
+        self.assertEqual(after_values["status"], "active")
+        self.assertEqual(after_values["failure_count"], 0)
+        self.assertIsNone(after_values["status_reason"])
 
     async def test_clean_progress_emits_no_event(self) -> None:
         pool = make_mock_pool(transaction=True)
@@ -3172,6 +3312,12 @@ class TestResetFeed(unittest.IsolatedAsyncioTestCase):
         )
         before_values = json.loads(audit_args[5])
         after_values = json.loads(audit_args[6])
+        audit_actions = [
+            call.args[2]
+            for call in conn.execute.await_args_list
+            if call.args[0] == feed_queries.INSERT_FEED_AUDIT_EVENT_SQL
+        ]
+        self.assertNotIn("feed.recovered", audit_actions)
         self.assertEqual(before_values["status"], "quarantined")
         self.assertEqual(before_values["failure_count"], 5)
         self.assertEqual(after_values["status"], "unclaimed")
