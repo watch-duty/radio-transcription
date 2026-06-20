@@ -121,6 +121,36 @@ async def _fetch_audit_events(
     )
 
 
+async def _report_feed_failure_for_test(
+    store: FeedStore,
+    pool: asyncpg.Pool,
+    feed_id: uuid.UUID,
+    worker_id: uuid.UUID,
+    fencing_token: int = 0,
+    *,
+    reason: str | None = None,
+    status_reason: FeedStatusReason | None = None,
+) -> str | None:
+    """Call report_feed_failure with prior state from the current feed row."""
+    prior = await _get_feed_diagnostics(pool, feed_id)
+    previous_status_reason = (
+        FeedStatusReason(prior["status_reason"])
+        if prior["status_reason"] is not None
+        else None
+    )
+    return await store.report_feed_failure(
+        feed_id,
+        worker_id,
+        fencing_token,
+        actor_id=_TEST_ACTOR_ID,
+        previous_status=FeedStatus(prior["status"]),
+        previous_failure_count=prior["failure_count"],
+        previous_status_reason=previous_status_reason,
+        reason=reason,
+        status_reason=status_reason,
+    )
+
+
 async def _get_audit_sequence_next(
     pool: asyncpg.Pool,
     feed_id: uuid.UUID,
@@ -558,7 +588,13 @@ async def test_report_failure_does_not_touch_last_heartbeat(
     )
     before = await _read_last_heartbeat(db_pool, feed_id)
 
-    result = await store.report_feed_failure(feed_id, worker, fencing_token=0)
+    result = await _report_feed_failure_for_test(
+        store,
+        db_pool,
+        feed_id,
+        worker,
+        fencing_token=0,
+    )
 
     assert result is not None
     after = await _read_last_heartbeat(db_pool, feed_id)
@@ -928,7 +964,7 @@ async def test_failure_sets_status_to_failing(
         last_heartbeat_age_seconds=10,
     )
 
-    await store.report_feed_failure(feed_id, worker, 0)
+    await _report_feed_failure_for_test(store, db_pool, feed_id, worker, 0)
 
     row = await _get_feed_status(db_pool, feed_id)
     assert row["status"] == "failing"
@@ -950,7 +986,9 @@ async def test_failure_records_canonical_reason_and_timestamp(
         last_heartbeat_age_seconds=10,
     )
 
-    await store.report_feed_failure(
+    await _report_feed_failure_for_test(
+        store,
+        db_pool,
         feed_id,
         worker,
         0,
@@ -981,7 +1019,9 @@ async def test_failure_without_status_reason_records_unexpected_fallback(
         last_heartbeat_age_seconds=10,
     )
 
-    await store.report_feed_failure(
+    await _report_feed_failure_for_test(
+        store,
+        db_pool,
         feed_id,
         worker,
         0,
@@ -1017,7 +1057,9 @@ async def test_failure_update_fails_after_deactivation_without_rewriting_reason(
     )
     assert await store.deactivate_feed(feed_id, actor_id=_TEST_ACTOR_ID) is True
 
-    result = await store.report_feed_failure(
+    result = await _report_feed_failure_for_test(
+        store,
+        db_pool,
         feed_id,
         worker,
         0,
@@ -1048,7 +1090,7 @@ async def test_failure_escalation_to_quarantine(
         failure_count=4,
     )
 
-    await store.report_feed_failure(feed_id, worker, 0)
+    await _report_feed_failure_for_test(store, db_pool, feed_id, worker, 0)
 
     row = await _get_feed_status(db_pool, feed_id)
     assert row["status"] == "quarantined"
@@ -1069,7 +1111,13 @@ async def test_failure_preserves_deactivated_feed(
         failure_count=2,
     )
 
-    result = await store.report_feed_failure(feed_id, worker, 0)
+    result = await _report_feed_failure_for_test(
+        store,
+        db_pool,
+        feed_id,
+        worker,
+        0,
+    )
 
     assert result is None
     row = await _get_feed_status(db_pool, feed_id)
@@ -1093,7 +1141,9 @@ async def test_quarantine_preserves_raw_reason_separately_from_canonical_reason(
         failure_count=4,
     )
 
-    await store.report_feed_failure(
+    await _report_feed_failure_for_test(
+        store,
+        db_pool,
         feed_id,
         worker,
         0,
@@ -1122,7 +1172,7 @@ async def test_failing_feed_not_leased_before_retry_after(
         worker_id=worker,
         last_heartbeat_age_seconds=10,
     )
-    await store.report_feed_failure(feed_id, worker, 0)
+    await _report_feed_failure_for_test(store, db_pool, feed_id, worker, 0)
     leased = await store.acquire_feeds_recovery(
         uuid.uuid4(),
         abandonment_window_sec=60.0,
@@ -1143,7 +1193,7 @@ async def test_failing_feed_leased_after_retry_after_expires(
         worker_id=worker,
         last_heartbeat_age_seconds=10,
     )
-    await store.report_feed_failure(feed_id, worker, 0)
+    await _report_feed_failure_for_test(store, db_pool, feed_id, worker, 0)
     await db_pool.execute(
         "UPDATE feeds SET retry_after = NOW() - INTERVAL '1 second'"
         " WHERE id = $1",
@@ -1170,7 +1220,7 @@ async def test_lease_preserves_failure_count(
         worker_id=worker,
         last_heartbeat_age_seconds=10,
     )
-    await store.report_feed_failure(feed_id, worker, 0)
+    await _report_feed_failure_for_test(store, db_pool, feed_id, worker, 0)
     await db_pool.execute(
         "UPDATE feeds SET retry_after = NOW() - INTERVAL '1 second'"
         " WHERE id = $1",
@@ -1203,7 +1253,7 @@ async def test_successful_processing_resets_failure_count(
         worker_id=worker,
         last_heartbeat_age_seconds=10,
     )
-    await store.report_feed_failure(feed_id, worker, 0)
+    await _report_feed_failure_for_test(store, db_pool, feed_id, worker, 0)
     await db_pool.execute(
         "UPDATE feeds SET retry_after = NOW() - INTERVAL '1 second'"
         " WHERE id = $1",
@@ -1548,7 +1598,13 @@ async def test_report_feed_failure_fails_with_wrong_fencing_token(
         last_heartbeat_age_seconds=10,
     )
 
-    result = await store.report_feed_failure(feed_id, worker, 999)
+    result = await _report_feed_failure_for_test(
+        store,
+        db_pool,
+        feed_id,
+        worker,
+        999,
+    )
 
     assert result is None
     # Verify feed state unchanged (failure was rejected)
@@ -1579,7 +1635,9 @@ async def test_report_feed_failure_fails_with_wrong_fencing_token_leaves_reason_
         feed_id,
     )
 
-    result = await store.report_feed_failure(
+    result = await _report_feed_failure_for_test(
+        store,
+        db_pool,
         feed_id,
         worker,
         999,
