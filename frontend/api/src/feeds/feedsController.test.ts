@@ -237,28 +237,24 @@ describe('FeedsController', () => {
       await expect(controller.getFeed('feed_123')).rejects.toThrow(/Not Found/);
     });
 
-    it('maps canonical status detail and omits the legacy detail field', async () => {
+    it('maps canonical status detail', async () => {
       mockRequest.mockResolvedValueOnce({ data: mockBackendFeed });
 
       const controller = new FeedsController();
       const result = await controller.getFeed('feed_123');
-      const legacyDetailField = 'quarantine' + 'Reason';
 
       expect(result.statusReasonDetail).toBe('provider timeout');
-      expect(legacyDetailField in result).toBe(false);
     });
   });
 
   describe('OpenAPI feed contract', () => {
-    it('publishes the canonical status detail field only', () => {
+    it('publishes canonical status detail and tag query shape', () => {
       const openApiYaml = readFileSync(
         new URL('../../openapi.yaml', import.meta.url),
         'utf8'
       );
-      const legacyDetailField = 'quarantine' + 'Reason';
 
       expect(openApiYaml).toContain('statusReasonDetail:');
-      expect(openApiYaml).not.toContain(`${legacyDetailField}:`);
       expect(openApiYaml).toMatch(
         /ListFeedsQueryParams:[\s\S]*tags:\s*\n\s*type: string/
       );

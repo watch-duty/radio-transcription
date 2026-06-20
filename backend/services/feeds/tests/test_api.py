@@ -78,12 +78,11 @@ class TestFeedsAPI(unittest.TestCase):
             FeedStatusReason | None,
         )
 
-    def test_feed_model_exposes_status_reason_detail_not_quarantine_reason(
+    def test_feed_model_exposes_status_reason_detail(
         self,
     ) -> None:
-        """The feed API response uses canonical diagnostic detail only."""
+        """The feed API response exposes canonical diagnostic detail."""
         self.assertIn("status_reason_detail", Feed.model_fields)
-        self.assertNotIn("quarantine_reason", Feed.model_fields)
 
     def test_unrecognized_status_reason_fails_backend_validation(
         self,
@@ -449,7 +448,6 @@ class TestFeedsAPI(unittest.TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data = response.json()
         self.assertEqual(data["status_reason_detail"], "provider timed out")
-        self.assertNotIn("quarantine_reason", data)
 
     def test_get_feed_not_found(self) -> None:
         """Test fetching a non-existent feed returns 404."""

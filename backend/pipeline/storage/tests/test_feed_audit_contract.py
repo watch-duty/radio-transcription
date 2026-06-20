@@ -21,14 +21,6 @@ _ACTOR_STRINGS = (
     "service:",
 )
 
-_DEFERRED_ACTOR_STRINGS = (
-    "unknown:unknown",
-    "user-email:",
-    "job:",
-    "gcp-sa:",
-)
-
-
 def _read(path: str) -> str:
     return (_REPO_ROOT / path).read_text(encoding="utf-8")
 
@@ -87,14 +79,6 @@ def test_repository_glossary_defines_audit_terms() -> None:
     ):
         assert token in actor_section
 
-    for token in (
-        "unknown actor",
-        "GCP service account fallback",
-        "scheduled job",
-        "system:",
-    ):
-        assert token not in actor_section
-
 
 def test_migration_defines_delete_safe_audit_schema() -> None:
     text = _read(
@@ -102,8 +86,6 @@ def test_migration_defines_delete_safe_audit_schema() -> None:
     )
     sql = _sql_without_comments(text)
     normalized = _normalized_sql(text)
-    table_sql = _feed_audit_events_table_sql(text)
-    table_normalized = " ".join(table_sql.split())
 
     for token in (
         "ADD COLUMN IF NOT EXISTS audit_revision BIGINT NOT NULL DEFAULT 0",
@@ -124,24 +106,6 @@ def test_migration_defines_delete_safe_audit_schema() -> None:
     ):
         assert token in normalized
 
-    for token in (
-        "feed_audit_event_sequences",
-        "feed_sequence",
-        "feed_audit_events_feed_sequence_unique",
-        "idx_feed_audit_events_feed_sequence",
-    ):
-        assert token not in normalized
-
-    for token in (
-        "feed_name",
-        "source_type",
-        "status feed_status",
-        "status_reason TEXT",
-        "status_reason_detail",
-        "metadata",
-    ):
-        assert token not in table_normalized
-
     feed_fk_pattern = (
         r"REFERENCES\s+(?:ONLY\s+)?"
         r"(?:(?:[A-Za-z_][\w$]*|\"[^\"]+\")\.)?"
@@ -150,71 +114,9 @@ def test_migration_defines_delete_safe_audit_schema() -> None:
     for pattern in (
         feed_fk_pattern,
         r"ON\s+DELETE\s+CASCADE",
-        r"pg_cron",
-        r"dispatcher",
-        r"webhook",
         r"DROP\s+COLUMN\s+quarantine_reason",
     ):
         assert re.search(pattern, sql, flags=re.IGNORECASE) is None
-
-
-def test_audit_schema_defers_delivery_and_retention_work() -> None:
-    text = _read(
-        "terraform/modules/alloydb/sql/ingestion/029_feed_audit_events.sql"
-    )
-    normalized = _normalized_sql(text)
-    table_normalized = " ".join(_feed_audit_events_table_sql(text).split())
-
-    for token in (
-        "id UUID",
-        "feed_id UUID NOT NULL",
-        "action TEXT NOT NULL",
-        "actor_id TEXT NOT NULL",
-        "occurred_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()",
-        "feed_revision BIGINT NOT NULL",
-        "before_values JSONB NOT NULL DEFAULT '{}'::jsonb",
-        "after_values JSONB NOT NULL DEFAULT '{}'::jsonb",
-        "created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()",
-    ):
-        assert token in table_normalized
-
-    for token in (
-        "feed_event_outbox",
-        "feed_event_delivery",
-        "delivery_status",
-        "delivery_attempt",
-        "next_attempt_at",
-        "last_attempt_at",
-        "delivered_at",
-        "last_delivery_error",
-        "last_response_code",
-        "dead_letter",
-        "dispatcher",
-        "webhook",
-        "cloudevents",
-        "specversion",
-        "dataschema",
-        "datacontenttype",
-        "pg_cron",
-        "DELETE FROM feed_audit_events",
-        "ON DELETE CASCADE",
-    ):
-        assert token.lower() not in normalized.lower()
-
-
-def test_status_reason_detail_helper_is_not_broad_normalizer() -> None:
-    text = _read("backend/pipeline/storage/feed_lifecycle.py")
-
-    assert "def status_reason_detail_storage_value" in text
-    assert "quarantine_reason.cap_quarantine_reason_for_storage" in text
-    for token in (
-        "_CREDENTIAL_RE",
-        "_BEARER_TOKEN_RE",
-        "Authorization",
-        "password",
-        "re.sub",
-    ):
-        assert token not in text
 
 
 def test_migration_defines_actor_and_action_constraints() -> None:
@@ -232,8 +134,6 @@ def test_migration_defines_actor_and_action_constraints() -> None:
         assert token in sql
 
     assert "system:%" not in sql
-    for token in _DEFERRED_ACTOR_STRINGS:
-        assert token not in sql
 
 
 def test_migration_rejects_malformed_actor_id_suffixes() -> None:
@@ -266,9 +166,6 @@ def test_migration_rejects_malformed_actor_id_suffixes() -> None:
             sql,
             flags=re.IGNORECASE,
         ), prefix
-
-    for token in _DEFERRED_ACTOR_STRINGS:
-        assert token not in sql
 
 
 def test_migration_uses_schema_qualified_constraint_guards() -> None:

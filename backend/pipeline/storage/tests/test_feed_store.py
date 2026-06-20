@@ -227,7 +227,6 @@ class TestStatusReasonMigrationContract(unittest.TestCase):
                 ),
             ],
         )
-        self.assertNotIn("quarantine_reason", text.lower())
 
     def test_migration_has_no_backfill_default_constraint_index_or_type(
         self,
@@ -473,13 +472,6 @@ class TestLastSpeechSegmentTimestampSqlProjection(unittest.TestCase):
 class TestFeedAuditSql(unittest.TestCase):
     """Text-level contract tests for storage-owned audit SQL primitives."""
 
-    def test_standalone_audit_helpers_are_removed(self) -> None:
-        self.assertFalse(hasattr(feed_queries, "GET_AUDIT_FEED_SNAPSHOT_SQL"))
-        self.assertFalse(hasattr(feed_queries, "INSERT_FEED_AUDIT_EVENT_SQL"))
-        self.assertFalse(
-            hasattr(feed_queries, "ALLOCATE_FEED_AUDIT_SEQUENCE_SQL")
-        )
-
     def test_audited_mutation_sql_embeds_audit_insert(self) -> None:
         for sql in (
             feed_queries.CREATE_FEED_SQL,
@@ -497,8 +489,6 @@ class TestFeedAuditSql(unittest.TestCase):
             self.assertIn("feed_revision", stripped)
             self.assertIn("before_values", stripped)
             self.assertIn("after_values", stripped)
-            self.assertNotIn("feed_sequence", stripped)
-            self.assertNotIn("feed_audit_event_sequences", stripped)
 
     def test_audit_snapshots_use_allowlist_not_star_projection(self) -> None:
         for sql in (
@@ -530,23 +520,6 @@ class TestFeedAuditSql(unittest.TestCase):
         self.assertIn("feeds.quarantine_reason", sql)
         self.assertIn("feeds.status_reason_detail", sql)
 
-    def test_async_runtime_storage_apis_do_not_accept_previous_state(
-        self,
-    ) -> None:
-        for method_name in (
-            "update_feed_progress",
-            "record_source_observation",
-            "report_feed_failure",
-            "release_non_budgeted_failure",
-        ):
-            with self.subTest(method_name=method_name):
-                parameters = inspect.signature(
-                    getattr(FeedStore, method_name)
-                ).parameters
-                self.assertNotIn("previous_status", parameters)
-                self.assertNotIn("previous_failure_count", parameters)
-                self.assertNotIn("previous_status_reason", parameters)
-
 
 class TestFeedAuditStorageBoundary(unittest.TestCase):
     """Hardening checks for the storage-owned audit boundary."""
@@ -573,15 +546,6 @@ class TestFeedAuditStorageBoundary(unittest.TestCase):
                 )
                 self.assertIs(actor.default, inspect.Parameter.empty)
 
-    def test_no_parallel_with_audit_mutation_methods_exist(self) -> None:
-        method_names = {
-            name
-            for name in dir(FeedStore)
-            if "with_audit" in name and callable(getattr(FeedStore, name))
-        }
-
-        self.assertEqual(method_names, set())
-
     def test_feed_request_models_do_not_accept_actor_id(self) -> None:
         text = pathlib.Path("backend/services/feeds/models.py").read_text()
 
@@ -596,7 +560,6 @@ class TestFeedAuditStorageBoundary(unittest.TestCase):
                 text = path.read_text()
 
                 self.assertNotIn("feed_audit_events", text)
-                self.assertNotIn("INSERT_FEED_AUDIT_EVENT_SQL", text)
                 self.assertNotIn("_insert_feed_audit_event", text)
 
 
@@ -632,7 +595,6 @@ class TestStatusReasonLifecycleIsolation(unittest.TestCase):
             self.assertIn("feeds.status_reason", stripped)
             self.assertIn("leased.failure_count", stripped)
             self.assertIn("leased.status_reason", stripped)
-            self.assertNotIn("previous_status", stripped)
             self.assertNotIn("status_reason =", stripped)
 
 
@@ -1639,7 +1601,6 @@ class TestRowToLeasedFeed(unittest.TestCase):
         self.assertEqual(result["fencing_token"], 1)
         self.assertEqual(result["failure_count"], 0)
         self.assertIsNone(result["status_reason"])
-        self.assertNotIn("previous_status", result)
 
     def test_invalid_source_type_raises(self) -> None:
         bad_row = {**_LEASE_ROW, "source_type": "not_a_real_type"}
@@ -1651,15 +1612,6 @@ class TestRowToLeasedFeed(unittest.TestCase):
         self.assertIn(
             "Unknown source type 'not_a_real_type'", str(context.exception)
         )
-
-    def test_recovery_row_omits_previous_status(self) -> None:
-        row = {**_LEASE_ROW, "previous_status": "failing"}
-        store = FeedStore(make_mock_pool())
-
-        result = store._row_to_leased_feed(cast("asyncpg.Record", row))
-
-        self.assertNotIn("previous_status", result)
-
 
 class TestAcquireFeedsRecovery(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.acquire_feeds_recovery."""

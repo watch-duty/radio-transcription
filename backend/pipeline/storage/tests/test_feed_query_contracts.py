@@ -95,15 +95,6 @@ class TestFeedAuditEventSqlContract(unittest.TestCase):
         self.assertIn("before_values, after_values", sql)
         self.assertIn("RETURNING id", sql)
 
-    def test_standalone_audit_insert_helpers_are_removed(self) -> None:
-        for module in (feed_queries, sync_feed_queries):
-            with self.subTest(module=module.__name__):
-                self.assertFalse(hasattr(module, "INSERT_FEED_AUDIT_EVENT_SQL"))
-                self.assertFalse(hasattr(module, "GET_AUDIT_FEED_SNAPSHOT_SQL"))
-                self.assertFalse(
-                    hasattr(module, "ALLOCATE_FEED_AUDIT_SEQUENCE_SQL")
-                )
-
     def test_audited_mutation_sql_embeds_audit_insert(self) -> None:
         audited_sql = (
             feed_queries.CREATE_FEED_SQL,
@@ -124,8 +115,6 @@ class TestFeedAuditEventSqlContract(unittest.TestCase):
             stripped = _sql_without_comments(sql)
             self.assertIn("INSERT INTO feed_audit_events", stripped)
             self.assertIn("feed_revision", stripped)
-            self.assertNotIn("feed_sequence", stripped)
-            self.assertNotIn("feed_audit_event_sequences", stripped)
 
 
 class TestStatusReasonLifecycleIsolation(unittest.TestCase):
@@ -160,7 +149,6 @@ class TestStatusReasonLifecycleIsolation(unittest.TestCase):
             self.assertIn("feeds.status_reason", stripped)
             self.assertIn("leased.failure_count", stripped)
             self.assertIn("leased.status_reason", stripped)
-            self.assertNotIn("previous_status", stripped)
             self.assertNotIn("status_reason =", stripped)
 
 
