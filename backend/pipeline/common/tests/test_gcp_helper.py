@@ -16,7 +16,6 @@ from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.schema_types.continuous_audio_pb2 import ContinuousAudio
 from backend.pipeline.schema_types.segmented_audio_pb2 import SegmentedAudio
 from backend.pipeline.storage.feed_store import (
-    FeedStatus,
     LeasedFeed,
     SourceType,
 )
@@ -41,7 +40,6 @@ def _make_feed(
         fencing_token=fencing_token,
         failure_count=0,
         status_reason=None,
-        previous_status=FeedStatus.UNCLAIMED,
         source_feed_id=None,
     )
 

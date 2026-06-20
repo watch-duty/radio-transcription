@@ -138,9 +138,7 @@ class TestEchoCollectorIntegration(unittest.TestCase):
                 row_factory=cast("Any", dict_row),
             ),
         )
-        self.conn.execute(
-            "TRUNCATE feed_audit_events, feeds CASCADE"
-        )
+        self.conn.execute("TRUNCATE feed_audit_events, feeds CASCADE")
 
         # Point GCS client at fake server
         os.environ["STORAGE_EMULATOR_HOST"] = self._gcs_url

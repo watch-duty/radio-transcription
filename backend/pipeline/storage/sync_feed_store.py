@@ -246,9 +246,8 @@ class SyncFeedStore:
             before_row["status_reason"],
             feed_id=before_row["id"],
         )
-        if (
-            before_status == feed_store.FeedStatus.ACTIVE
-            and (before_failure_count > 0 or before_status_reason is not None)
+        if before_status == feed_store.FeedStatus.ACTIVE and (
+            before_failure_count > 0 or before_status_reason is not None
         ):
             return (
                 feed_store.FeedStatus.FAILING,

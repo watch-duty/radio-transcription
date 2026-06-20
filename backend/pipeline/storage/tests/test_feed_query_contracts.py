@@ -53,9 +53,7 @@ class TestFeedAuditEventSqlContract(unittest.TestCase):
     def test_async_and_sync_insert_use_feed_revision(self) -> None:
         for module in (feed_queries, sync_feed_queries):
             with self.subTest(module=module.__name__):
-                sql = _sql_without_comments(
-                    module.INSERT_FEED_AUDIT_EVENT_SQL
-                )
+                sql = _sql_without_comments(module.INSERT_FEED_AUDIT_EVENT_SQL)
 
                 self.assertIn("feed_revision", sql)
                 self.assertNotIn("feed_sequence", sql)

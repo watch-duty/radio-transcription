@@ -132,21 +132,12 @@ async def _report_feed_failure_for_test(
     reason: str | None = None,
     status_reason: FeedStatusReason | None = None,
 ) -> str | None:
-    """Call report_feed_failure with prior state from the current feed row."""
-    prior = await _get_feed_diagnostics(pool, feed_id)
-    previous_status_reason = (
-        FeedStatusReason(prior["status_reason"])
-        if prior["status_reason"] is not None
-        else None
-    )
+    """Call report_feed_failure with DB-derived audit state."""
     return await store.report_feed_failure(
         feed_id,
         worker_id,
         fencing_token,
         actor_id=_TEST_ACTOR_ID,
-        previous_status=FeedStatus(prior["status"]),
-        previous_failure_count=prior["failure_count"],
-        previous_status_reason=previous_status_reason,
         reason=reason,
         status_reason=status_reason,
     )
