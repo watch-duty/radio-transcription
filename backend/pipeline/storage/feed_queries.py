@@ -368,14 +368,10 @@ SET status = CASE WHEN failure_count + 1 >= $3
                             $6 * INTERVAL '1 second' * POWER(2, failure_count))
                             + (RANDOM() * INTERVAL '10 seconds')
                        ELSE NULL END,
-    -- COALESCE protects against an edge call passing reason=None during
-    -- the quarantine transition: keep the previously-recorded reason
-    -- rather than overwriting it with NULL. A real reason still wins.
-    quarantine_reason = CASE WHEN failure_count + 1 >= $3 THEN COALESCE($7, quarantine_reason) ELSE quarantine_reason END,
-    status_reason = COALESCE($8, 'system_unexpected_error'),
-    status_reason_detail = $9,
+    status_reason = COALESCE($7, 'system_unexpected_error'),
+    status_reason_detail = $8,
     status_reason_updated_at = CASE
-        WHEN status_reason IS DISTINCT FROM COALESCE($8, 'system_unexpected_error')
+        WHEN status_reason IS DISTINCT FROM COALESCE($7, 'system_unexpected_error')
             THEN NOW()
         ELSE status_reason_updated_at
     END
@@ -478,14 +474,9 @@ RETURNING next_sequence - 1 AS feed_sequence
 INSERT_FEED_AUDIT_EVENT_SQL = """\
 INSERT INTO feed_audit_events (
     feed_id,
-    feed_name,
-    source_type,
     action,
     actor_id,
     feed_sequence,
-    status,
-    status_reason,
-    status_reason_detail,
     before_values,
     after_values,
     metadata
@@ -495,14 +486,9 @@ VALUES (
     $2,
     $3,
     $4,
-    $5,
-    $6,
-    $7::feed_status,
-    $8,
-    $9,
-    $10::jsonb,
-    $11::jsonb,
-    COALESCE($12::jsonb, '{}'::jsonb)
+    $5::jsonb,
+    $6::jsonb,
+    COALESCE($7::jsonb, '{}'::jsonb)
 )
 """
 

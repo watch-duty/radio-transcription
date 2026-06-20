@@ -156,24 +156,6 @@ class SyncFeedStore:
             msg = f"Unknown status {raw!r} for feed {feed_id}"
             raise ValueError(msg) from exc
 
-    @staticmethod
-    def _audit_event_identity(row: dict[str, Any]) -> dict[str, object]:
-        """Return the audit event identity columns from a snapshot row."""
-        source_type = row["source_type"]
-        if isinstance(source_type, enum.StrEnum):
-            source_type = source_type.value
-        status = row["status"]
-        if isinstance(status, enum.StrEnum):
-            status = status.value
-        return {
-            "feed_id": row["id"],
-            "feed_name": row["name"],
-            "source_type": source_type,
-            "status": status,
-            "status_reason": row["status_reason"],
-            "status_reason_detail": row["status_reason_detail"],
-        }
-
     def _audit_snapshot(self, row: dict[str, Any]) -> dict[str, object]:
         """Serialize the maintained feed audit snapshot allowlist."""
         return {
@@ -224,8 +206,7 @@ class SyncFeedStore:
         metadata: dict[str, object] | None = None,
     ) -> None:
         """Insert one storage-owned feed audit event."""
-        identity = self._audit_event_identity(identity_row)
-        feed_id = identity["feed_id"]
+        feed_id = identity_row["id"]
         if not isinstance(feed_id, uuid.UUID):
             msg = f"Invalid feed ID for audit event: {feed_id!r}"
             raise TypeError(msg)
@@ -234,14 +215,9 @@ class SyncFeedStore:
             sync_feed_queries.INSERT_FEED_AUDIT_EVENT_SQL,
             (
                 feed_id,
-                identity["feed_name"],
-                identity["source_type"],
                 action,
                 actor_id,
                 feed_sequence,
-                identity["status"],
-                identity["status_reason"],
-                identity["status_reason_detail"],
                 json.dumps(
                     before_values,
                     default=self._json_default,
@@ -492,8 +468,6 @@ class SyncFeedStore:
             self._failure_threshold,
             self._max_backoff_sec,
             self._base_backoff_sec,
-            self._failure_threshold,
-            status_reason_detail,
             status_reason_value,
             status_reason_detail,
             status_reason_value,

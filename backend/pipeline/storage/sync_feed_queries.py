@@ -46,7 +46,6 @@ SET status = CASE WHEN failure_count + 1 >= %s
                             %s * INTERVAL '1 second' * POWER(2, failure_count)
                        ) + (RANDOM() * INTERVAL '10 seconds')
                        ELSE NULL END,
-    quarantine_reason = CASE WHEN failure_count + 1 >= %s THEN COALESCE(%s, quarantine_reason) ELSE quarantine_reason END,
     status_reason = COALESCE(%s, 'system_unexpected_error'),
     status_reason_detail = %s,
     status_reason_updated_at = CASE
@@ -108,14 +107,9 @@ RETURNING next_sequence - 1 AS feed_sequence
 INSERT_FEED_AUDIT_EVENT_SQL = """\
 INSERT INTO feed_audit_events (
     feed_id,
-    feed_name,
-    source_type,
     action,
     actor_id,
     feed_sequence,
-    status,
-    status_reason,
-    status_reason_detail,
     before_values,
     after_values,
     metadata
@@ -123,11 +117,6 @@ INSERT INTO feed_audit_events (
 VALUES (
     %s,
     %s,
-    %s,
-    %s,
-    %s,
-    %s,
-    %s::feed_status,
     %s,
     %s,
     %s::jsonb,

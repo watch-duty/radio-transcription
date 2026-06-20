@@ -122,15 +122,15 @@ class TestReportFailureSqlStatusReason(unittest.TestCase):
         sql = _sql_without_comments(feed_queries.REPORT_FAILURE_SQL)
 
         self.assertIn(
-            "status_reason = COALESCE($8, 'system_unexpected_error')",
+            "status_reason = COALESCE($7, 'system_unexpected_error')",
             sql,
         )
-        self.assertIn("status_reason_detail = $9", sql)
+        self.assertIn("status_reason_detail = $8", sql)
         self.assertRegex(
             sql,
             r"status_reason_updated_at = CASE\s+"
             r"WHEN status_reason IS DISTINCT FROM COALESCE"
-            r"\(\$8, 'system_unexpected_error'\)\s+"
+            r"\(\$7, 'system_unexpected_error'\)\s+"
             r"THEN NOW\(\)\s+"
             r"ELSE status_reason_updated_at\s+END",
         )
@@ -139,13 +139,13 @@ class TestReportFailureSqlStatusReason(unittest.TestCase):
             sql,
         )
 
-    def test_report_failure_sql_keeps_raw_quarantine_reason_on_parameter_seven(
+    def test_report_failure_sql_does_not_write_quarantine_reason(
         self,
     ) -> None:
         sql = _sql_without_comments(feed_queries.REPORT_FAILURE_SQL)
 
-        self.assertIn("COALESCE($7, quarantine_reason)", sql)
-        self.assertNotIn("COALESCE($8, quarantine_reason)", sql)
+        self.assertNotIn("quarantine_reason =", sql)
+        self.assertNotIn("COALESCE($7, quarantine_reason)", sql)
 
 
 class TestNonBudgetedFailureSql(unittest.TestCase):
@@ -505,12 +505,12 @@ class TestAsyncSyncFailureSqlContracts(unittest.TestCase):
             ),
         )
 
-    def test_only_budgeted_failures_write_quarantine_reason(self) -> None:
-        self.assertIn(
+    def test_failure_sql_does_not_write_quarantine_reason(self) -> None:
+        self.assertNotIn(
             "quarantine_reason =",
             _sql_without_comments(feed_queries.REPORT_FAILURE_SQL),
         )
-        self.assertIn(
+        self.assertNotIn(
             "quarantine_reason =",
             _sql_without_comments(sync_feed_queries.RECORD_FAILURE_SQL),
         )
@@ -529,7 +529,7 @@ class TestAsyncSyncFailureSqlContracts(unittest.TestCase):
 
     def test_async_failure_sql_writes_status_reason_detail(self) -> None:
         self.assertIn(
-            "status_reason_detail = $9",
+            "status_reason_detail = $8",
             _sql_without_comments(feed_queries.REPORT_FAILURE_SQL),
         )
         self.assertIn(

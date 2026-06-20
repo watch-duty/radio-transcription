@@ -560,23 +560,26 @@ class TestFeedAuditSql(unittest.TestCase):
         for token in (
             "INSERT INTO feed_audit_events",
             "feed_id",
-            "feed_name",
-            "source_type",
             "action",
             "actor_id",
             "feed_sequence",
-            "status",
-            "status_reason",
-            "status_reason_detail",
             "before_values",
             "after_values",
             "metadata",
-            "$7::feed_status",
-            "$10::jsonb",
-            "$11::jsonb",
-            "COALESCE($12::jsonb, '{}'::jsonb)",
+            "$5::jsonb",
+            "$6::jsonb",
+            "COALESCE($7::jsonb, '{}'::jsonb)",
         ):
             self.assertIn(token, sql)
+
+        for token in (
+            "feed_name",
+            "source_type",
+            "status_reason",
+            "status_reason_detail",
+            "::feed_status",
+        ):
+            self.assertNotIn(token, sql)
 
         self.assertNotIn("event_payload", sql)
         self.assertNotIn("MAX(feed_sequence", sql)
@@ -718,15 +721,15 @@ class TestReportFailureSqlStatusReason(unittest.TestCase):
         sql = _sql_without_comments(feed_queries.REPORT_FAILURE_SQL)
 
         self.assertIn(
-            "status_reason = COALESCE($8, 'system_unexpected_error')",
+            "status_reason = COALESCE($7, 'system_unexpected_error')",
             sql,
         )
-        self.assertIn("status_reason_detail = $9", sql)
+        self.assertIn("status_reason_detail = $8", sql)
         self.assertRegex(
             sql,
             r"status_reason_updated_at = CASE\s+"
             r"WHEN status_reason IS DISTINCT FROM COALESCE"
-            r"\(\$8, 'system_unexpected_error'\)\s+"
+            r"\(\$7, 'system_unexpected_error'\)\s+"
             r"THEN NOW\(\)\s+"
             r"ELSE status_reason_updated_at\s+END",
         )
@@ -735,13 +738,13 @@ class TestReportFailureSqlStatusReason(unittest.TestCase):
             sql,
         )
 
-    def test_report_failure_sql_keeps_raw_quarantine_reason_on_parameter_seven(
+    def test_report_failure_sql_does_not_write_quarantine_reason(
         self,
     ) -> None:
         sql = _sql_without_comments(feed_queries.REPORT_FAILURE_SQL)
 
-        self.assertIn("COALESCE($7, quarantine_reason)", sql)
-        self.assertNotIn("COALESCE($8, quarantine_reason)", sql)
+        self.assertNotIn("quarantine_reason =", sql)
+        self.assertNotIn("COALESCE($7, quarantine_reason)", sql)
 
 
 class TestNonBudgetedFailureSql(unittest.TestCase):
@@ -1240,7 +1243,6 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
                 1,
                 600,
                 15,
-                "ffmpeg_exit_1",
                 "system_collector_error",
                 "ffmpeg_exit_1",
             ),
@@ -1274,10 +1276,10 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(args[-2])
         self.assertEqual(args[-1], "raw")
 
-    async def test_caps_quarantine_reason_at_persistence_boundary(
+    async def test_failure_write_has_no_separate_quarantine_reason_parameter(
         self,
     ) -> None:
-        """Long reasons are capped only before database writes."""
+        """Failure writes send status reason and detail only."""
         pool = make_mock_pool(transaction=True)
         pool.acquired_connection.fetchrow.side_effect = [
             _audit_snapshot_row(status="active"),
@@ -1299,9 +1301,10 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
             reason=long_reason,
         )
 
-        reason_arg = pool.acquired_connection.fetchrow.await_args_list[1].args[
-            -1
-        ]
+        args = pool.acquired_connection.fetchrow.await_args_list[1].args
+        self.assertEqual(len(args), 9)
+        self.assertIsNone(args[-2])
+        reason_arg = args[-1]
         self.assertEqual(
             len(reason_arg),
             quarantine_reason.MAX_QUARANTINE_REASON_LENGTH,
@@ -1503,11 +1506,11 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, "failing")
         audit_args = _audit_insert_calls(conn)[0]
-        self.assertEqual(audit_args[4], "feed.failure_reported")
-        self.assertEqual(audit_args[5], _COLLECTOR_RUNTIME_ACTOR_ID)
-        before_values = _load_json_object(audit_args[10])
-        after_values = _load_json_object(audit_args[11])
-        metadata = _load_json_object(audit_args[12])
+        self.assertEqual(audit_args[2], "feed.failure_reported")
+        self.assertEqual(audit_args[3], _COLLECTOR_RUNTIME_ACTOR_ID)
+        before_values = _load_json_object(audit_args[5])
+        after_values = _load_json_object(audit_args[6])
+        metadata = _load_json_object(audit_args[7])
         self.assertEqual(before_values["status"], "active")
         self.assertEqual(after_values["status"], "failing")
         self.assertEqual(metadata["previous_status"], "active")
@@ -1584,8 +1587,8 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
         )
 
         audit_args = _audit_insert_calls(conn)[0]
-        self.assertEqual(audit_args[4], "feed.failure_reported")
-        metadata = _load_json_object(audit_args[12])
+        self.assertEqual(audit_args[2], "feed.failure_reported")
+        metadata = _load_json_object(audit_args[7])
         self.assertEqual(
             metadata["previous_status_reason"],
             "system_authentication_failed",
@@ -1622,7 +1625,7 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
             status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
         )
 
-        audit_actions = [args[4] for args in _audit_insert_calls(conn)]
+        audit_actions = [args[2] for args in _audit_insert_calls(conn)]
         self.assertEqual(audit_actions, ["feed.quarantined"])
 
     async def test_successful_progress_from_failing_emits_recovered(
@@ -1657,8 +1660,8 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result)
         audit_args = _audit_insert_calls(conn)[0]
-        self.assertEqual(audit_args[4], "feed.recovered")
-        after_values = _load_json_object(audit_args[11])
+        self.assertEqual(audit_args[2], "feed.recovered")
+        after_values = _load_json_object(audit_args[6])
         self.assertEqual(after_values["status"], "active")
         self.assertIsNone(after_values["status_reason"])
 
@@ -1729,8 +1732,8 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
         )
 
         audit_args = _audit_insert_calls(conn)[0]
-        self.assertEqual(audit_args[4], "feed.failure_reported")
-        metadata = _load_json_object(audit_args[12])
+        self.assertEqual(audit_args[2], "feed.failure_reported")
+        metadata = _load_json_object(audit_args[7])
         self.assertEqual(metadata["previous_status"], "active")
         self.assertEqual(metadata["previous_failure_count"], 0)
         self.assertIsNone(metadata["previous_status_reason"])
@@ -1768,8 +1771,8 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result)
         audit_args = _audit_insert_calls(conn)[0]
-        self.assertEqual(audit_args[4], "feed.recovered")
-        metadata = _load_json_object(audit_args[12])
+        self.assertEqual(audit_args[2], "feed.recovered")
+        metadata = _load_json_object(audit_args[7])
         self.assertEqual(metadata["previous_status"], "quarantined")
 
     async def test_clean_progress_emits_no_event(self) -> None:
@@ -2658,27 +2661,24 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
         args = conn.execute.await_args.args
         self.assertEqual(args[0], feed_queries.INSERT_FEED_AUDIT_EVENT_SQL)
         self.assertEqual(
-            args[1:10],
+            args[1:5],
             (
                 _FEED_ID,
-                "Created Feed",
-                "bcfy_feeds",
                 "feed.created",
                 _FEEDS_SERVICE_ACTOR_ID,
                 1,
-                "unclaimed",
-                None,
-                "created detail",
             ),
         )
-        self.assertEqual(json.loads(args[10]), {})
-        after_values = json.loads(args[11])
+        self.assertEqual(json.loads(args[5]), {})
+        after_values = json.loads(args[6])
         self.assertEqual(after_values["id"], str(_FEED_ID))
         self.assertEqual(after_values["name"], "Created Feed")
+        self.assertEqual(after_values["source_type"], "bcfy_feeds")
+        self.assertEqual(after_values["status_reason_detail"], "created detail")
         self.assertEqual(after_values["feed_properties.tags"], tags)
         self.assertNotIn("worker_id", after_values)
         self.assertNotIn("last_heartbeat", after_values)
-        self.assertEqual(json.loads(args[12]), {})
+        self.assertEqual(json.loads(args[7]), {})
 
 
 class TestUpdateFeedAuditing(unittest.IsolatedAsyncioTestCase):
@@ -2732,23 +2732,20 @@ class TestUpdateFeedAuditing(unittest.IsolatedAsyncioTestCase):
         args = conn.execute.await_args.args
         self.assertEqual(args[0], feed_queries.INSERT_FEED_AUDIT_EVENT_SQL)
         self.assertEqual(
-            args[1:10],
+            args[1:5],
             (
                 _FEED_ID,
-                "Updated Feed",
-                "bcfy_feeds",
                 "feed.updated",
                 _FEEDS_SERVICE_ACTOR_ID,
                 2,
-                "unclaimed",
-                None,
-                "after detail",
             ),
         )
-        before_values = json.loads(args[10])
-        after_values = json.loads(args[11])
+        before_values = json.loads(args[5])
+        after_values = json.loads(args[6])
         self.assertEqual(before_values["name"], "Old Feed")
+        self.assertEqual(before_values["status_reason_detail"], "before detail")
         self.assertEqual(after_values["name"], "Updated Feed")
+        self.assertEqual(after_values["status_reason_detail"], "after detail")
         self.assertEqual(after_values["feed_properties.tags"], tags)
         self.assertNotIn("worker_id", before_values)
         self.assertNotIn("last_heartbeat", after_values)
@@ -3088,23 +3085,21 @@ class TestDeactivateFeed(unittest.IsolatedAsyncioTestCase):
             audit_args[0], feed_queries.INSERT_FEED_AUDIT_EVENT_SQL
         )
         self.assertEqual(
-            audit_args[1:10],
+            audit_args[1:5],
             (
                 _FEED_ID,
-                "My Feed",
-                "bcfy_feeds",
                 "feed.deactivated",
                 _FEEDS_SERVICE_ACTOR_ID,
                 3,
-                "deactivated",
-                None,
-                "after deactivation detail",
             ),
         )
-        before_values = json.loads(audit_args[10])
-        after_values = json.loads(audit_args[11])
+        before_values = json.loads(audit_args[5])
+        after_values = json.loads(audit_args[6])
         self.assertEqual(before_values["status"], "active")
         self.assertEqual(after_values["status"], "deactivated")
+        self.assertEqual(
+            after_values["status_reason_detail"], "after deactivation detail"
+        )
         self.assertEqual(before_values["feed_properties.source_feed_id"], "123")
         self.assertNotIn("worker_id", before_values)
         self.assertNotIn("last_heartbeat", after_values)
@@ -3194,23 +3189,19 @@ class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
             audit_args[0], feed_queries.INSERT_FEED_AUDIT_EVENT_SQL
         )
         self.assertEqual(
-            audit_args[1:10],
+            audit_args[1:5],
             (
                 _FEED_ID,
-                "My Feed",
-                "bcfy_feeds",
                 "feed.deleted",
                 _FEEDS_SERVICE_ACTOR_ID,
                 6,
-                "deactivated",
-                None,
-                "retiring feed",
             ),
         )
-        before_values = json.loads(audit_args[10])
-        after_values = json.loads(audit_args[11])
+        before_values = json.loads(audit_args[5])
+        after_values = json.loads(audit_args[6])
         self.assertEqual(before_values["id"], str(_FEED_ID))
         self.assertEqual(before_values["status"], "deactivated")
+        self.assertEqual(before_values["status_reason_detail"], "retiring feed")
         self.assertEqual(before_values["failure_count"], 2)
         self.assertEqual(before_values["feed_properties.source_feed_id"], "123")
         self.assertEqual(before_values["feed_properties.tags"], tags)
@@ -3288,21 +3279,16 @@ class TestResetFeed(unittest.IsolatedAsyncioTestCase):
             audit_args[0], feed_queries.INSERT_FEED_AUDIT_EVENT_SQL
         )
         self.assertEqual(
-            audit_args[1:10],
+            audit_args[1:5],
             (
                 _FEED_ID,
-                "My Feed",
-                "bcfy_feeds",
                 "feed.reset",
                 _FEEDS_SERVICE_ACTOR_ID,
                 4,
-                "unclaimed",
-                None,
-                None,
             ),
         )
-        before_values = json.loads(audit_args[10])
-        after_values = json.loads(audit_args[11])
+        before_values = json.loads(audit_args[5])
+        after_values = json.loads(audit_args[6])
         self.assertEqual(before_values["status"], "quarantined")
         self.assertEqual(before_values["failure_count"], 5)
         self.assertEqual(after_values["status"], "unclaimed")

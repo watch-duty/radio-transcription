@@ -222,8 +222,6 @@ class TestRecordFailure:
             5,
             600,
             15,
-            5,
-            "echo_pubsub_publish_failed",
             "system_pipeline_error",
             "echo_pubsub_publish_failed",
             "system_pipeline_error",
@@ -252,8 +250,6 @@ class TestRecordFailure:
             10,
             1200,
             30,
-            10,
-            "echo_heartbeat_write_failed",
             "system_pipeline_error",
             "echo_heartbeat_write_failed",
             "system_pipeline_error",
@@ -274,15 +270,13 @@ class TestRecordFailure:
             5,
             600,
             15,
-            5,
-            "raw",
             None,
             "raw",
             None,
             feed_id,
         )
 
-    def test_caps_quarantine_reason_at_persistence_boundary(self) -> None:
+    def test_caps_status_reason_detail_at_persistence_boundary(self) -> None:
         conn = _make_mock_conn()
         store = _make_store(conn)
         feed_id = uuid.uuid4()
@@ -437,9 +431,9 @@ class TestSyncRuntimeAuditEvents:
         )
 
         audit_params = _audit_insert_calls(conn)[0][1]
-        assert audit_params[3] == "feed.failure_reported"
-        assert audit_params[4] == _ECHO_ACTOR_ID
-        metadata = _load_json_object(audit_params[11])
+        assert audit_params[1] == "feed.failure_reported"
+        assert audit_params[2] == _ECHO_ACTOR_ID
+        metadata = _load_json_object(audit_params[6])
         assert metadata["previous_status_reason"] == (
             "system_authentication_failed"
         )
@@ -479,7 +473,7 @@ class TestSyncRuntimeAuditEvents:
             status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
         )
 
-        actions = [call[1][3] for call in _audit_insert_calls(conn)]
+        actions = [call[1][1] for call in _audit_insert_calls(conn)]
         assert actions == ["feed.quarantined"]
 
     def test_recovery_heartbeat_from_failing_emits_recovered(self) -> None:
@@ -517,8 +511,8 @@ class TestSyncRuntimeAuditEvents:
         )
 
         audit_params = _audit_insert_calls(conn)[0][1]
-        assert audit_params[3] == "feed.recovered"
-        after_values = _load_json_object(audit_params[10])
+        assert audit_params[1] == "feed.recovered"
+        after_values = _load_json_object(audit_params[5])
         assert after_values["status"] == "active"
         assert after_values["status_reason"] is None
 
@@ -596,8 +590,8 @@ class TestSyncRuntimeAuditEvents:
         )
 
         audit_params = _audit_insert_calls(conn)[0][1]
-        assert audit_params[3] == "feed.failure_reported"
-        metadata = _load_json_object(audit_params[11])
+        assert audit_params[1] == "feed.failure_reported"
+        metadata = _load_json_object(audit_params[6])
         assert metadata["previous_status"] == "active"
         assert metadata["previous_failure_count"] == 0
         assert metadata["previous_status_reason"] is None
