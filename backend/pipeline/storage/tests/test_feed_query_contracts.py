@@ -76,7 +76,6 @@ class TestStatusReasonLifecycleIsolation(unittest.TestCase):
             feed_queries.RELEASE_FEED_SQL,
             feed_queries.RELEASE_FEEDS_BATCH_SQL,
             feed_queries.COUNT_HELD_BY_TYPE_SQL,
-            feed_queries.DEACTIVATE_FEED_SQL,
         ]
 
         for sql in lifecycle_sql:
@@ -185,7 +184,7 @@ class TestNonBudgetedFailureSql(unittest.TestCase):
         self.assertIn("WHERE id = $1 AND worker_id = $2", sql)
         self.assertIn("AND fencing_token = $3", sql)
         self.assertIn("AND status = 'active'::feed_status", sql)
-        self.assertNotIn("quarantine_reason", sql)
+        self.assertNotIn("quarantine_reason =", sql)
         self.assertNotIn("failure_count + 1", sql)
 
     def test_non_budgeted_failure_sql_does_not_write_quarantine_reason(
@@ -203,7 +202,10 @@ class TestNonBudgetedFailureSql(unittest.TestCase):
             feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL
         )
 
-        self.assertIn("RETURNING status::text, failure_count, retry_after", sql)
+        self.assertIn("status::text AS status", sql)
+        self.assertIn("failure_count", sql)
+        self.assertIn("retry_after", sql)
+        self.assertIn("audit_revision AS feed_revision", sql)
 
     def test_non_budgeted_failure_sql_preserves_reason_change_time(
         self,
@@ -533,7 +535,7 @@ class TestAsyncSyncFailureSqlContracts(unittest.TestCase):
             _sql_without_comments(sync_feed_queries.RECORD_FAILURE_SQL),
         )
         self.assertNotIn(
-            "quarantine_reason",
+            "quarantine_reason =",
             _sql_without_comments(
                 feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL
             ),

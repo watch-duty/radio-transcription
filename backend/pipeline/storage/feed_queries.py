@@ -15,17 +15,30 @@ if TYPE_CHECKING:
     from backend.pipeline.storage.feed_store import SourceType
 
 UPDATE_PROGRESS_SQL = """\
-UPDATE feeds
-SET last_processed_filename = $1,
-    last_bookmark_time = COALESCE($5, last_bookmark_time),
-    failure_count = 0,
-    status_reason_updated_at = CASE
-        WHEN status_reason IS NOT NULL OR status_reason_detail IS NOT NULL THEN NOW()
-        ELSE status_reason_updated_at
-    END,
-    status_reason_detail = NULL,
-    status_reason = NULL
-WHERE id = $2 AND worker_id = $3 AND fencing_token = $4
+WITH updated AS (
+    UPDATE feeds
+    SET last_processed_filename = $1,
+        last_bookmark_time = COALESCE($5, last_bookmark_time),
+        audit_revision = CASE
+            WHEN failure_count <> 0 OR status_reason IS NOT NULL THEN audit_revision + 1
+            ELSE audit_revision
+        END,
+        failure_count = 0,
+        status_reason_updated_at = CASE
+            WHEN status_reason IS NOT NULL OR status_reason_detail IS NOT NULL THEN NOW()
+            ELSE status_reason_updated_at
+        END,
+        status_reason_detail = NULL,
+        status_reason = NULL
+    WHERE id = $2 AND worker_id = $3 AND fencing_token = $4
+    RETURNING id, name, source_type, status, failure_count, retry_after,
+              status_reason, status_reason_updated_at, status_reason_detail,
+              quarantine_reason, last_bookmark_time, created_at,
+              audit_revision AS feed_revision
+)
+SELECT u.*, fp.source_feed_id, fp.tags
+FROM updated u
+JOIN feed_properties fp ON fp.feed_id = u.id
 """
 
 RECORD_SOURCE_OBSERVATION_SQL = """\
@@ -39,6 +52,10 @@ do_update AS (
     UPDATE feeds
     SET failure_count = 0,
         last_bookmark_time = GREATEST(last_bookmark_time, $4),
+        audit_revision = CASE
+            WHEN failure_count <> 0 OR status_reason IS NOT NULL THEN audit_revision + 1
+            ELSE audit_revision
+        END,
         status_reason_updated_at = CASE
             WHEN status_reason IS NOT NULL OR status_reason_detail IS NOT NULL THEN NOW()
             ELSE status_reason_updated_at
@@ -50,16 +67,35 @@ do_update AS (
       AND current_state.worker_id = $2
       AND current_state.fencing_token = $3
       AND current_state.status = 'active'::feed_status
-    RETURNING feeds.id
+    RETURNING feeds.id, feeds.name, feeds.source_type, feeds.status,
+              feeds.failure_count, feeds.retry_after, feeds.status_reason,
+              feeds.status_reason_updated_at, feeds.status_reason_detail,
+              feeds.quarantine_reason, feeds.last_bookmark_time,
+              feeds.created_at, feeds.audit_revision AS feed_revision
 )
 SELECT
     current_state.id,
     current_state.worker_id AS current_worker,
     current_state.status::text AS current_status,
     current_state.fencing_token AS current_fencing_token,
-    (do_update.id IS NOT NULL) AS recorded
+    (do_update.id IS NOT NULL) AS recorded,
+    do_update.name,
+    do_update.source_type,
+    do_update.status,
+    do_update.failure_count,
+    do_update.retry_after,
+    do_update.status_reason,
+    do_update.status_reason_updated_at,
+    do_update.status_reason_detail,
+    do_update.quarantine_reason,
+    do_update.last_bookmark_time,
+    do_update.created_at,
+    do_update.feed_revision,
+    fp.source_feed_id,
+    fp.tags
 FROM current_state
-LEFT JOIN do_update ON current_state.id = do_update.id;
+LEFT JOIN do_update ON current_state.id = do_update.id
+LEFT JOIN feed_properties fp ON fp.feed_id = do_update.id;
 """
 
 RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL = """\
@@ -357,57 +393,76 @@ def build_acquire_feeds_recovery_sql(claim_types: Sequence[SourceType]) -> str:
 
 
 REPORT_FAILURE_SQL = """\
-UPDATE feeds
-SET status = CASE WHEN failure_count + 1 >= $3
-                  THEN 'quarantined'::feed_status
-                  ELSE 'failing'::feed_status END,
-    failure_count = failure_count + 1,
-    worker_id = NULL,
-    retry_after = CASE WHEN failure_count + 1 < $3
-                       THEN NOW() + LEAST($5 * INTERVAL '1 second',
-                            $6 * INTERVAL '1 second' * POWER(2, failure_count))
-                            + (RANDOM() * INTERVAL '10 seconds')
-                       ELSE NULL END,
-    status_reason = COALESCE($7, 'system_unexpected_error'),
-    status_reason_detail = $8,
-    status_reason_updated_at = CASE
-        WHEN status_reason IS DISTINCT FROM COALESCE($7, 'system_unexpected_error')
-            THEN NOW()
-        ELSE status_reason_updated_at
-    END
-WHERE id = $1 AND worker_id = $2 AND fencing_token = $4
-  AND status = 'active'::feed_status
-RETURNING status::text, failure_count, retry_after
+WITH updated AS (
+    UPDATE feeds
+    SET status = CASE WHEN failure_count + 1 >= $3
+                      THEN 'quarantined'::feed_status
+                      ELSE 'failing'::feed_status END,
+        audit_revision = audit_revision + 1,
+        failure_count = failure_count + 1,
+        worker_id = NULL,
+        retry_after = CASE WHEN failure_count + 1 < $3
+                           THEN NOW() + LEAST($5 * INTERVAL '1 second',
+                                $6 * INTERVAL '1 second' * POWER(2, failure_count))
+                                + (RANDOM() * INTERVAL '10 seconds')
+                           ELSE NULL END,
+        status_reason = COALESCE($7, 'system_unexpected_error'),
+        status_reason_detail = $8,
+        status_reason_updated_at = CASE
+            WHEN status_reason IS DISTINCT FROM COALESCE($7, 'system_unexpected_error')
+                THEN NOW()
+            ELSE status_reason_updated_at
+        END
+    WHERE id = $1 AND worker_id = $2 AND fencing_token = $4
+      AND status = 'active'::feed_status
+    RETURNING id, name, source_type, status::text AS status, failure_count,
+              retry_after, status_reason, status_reason_updated_at,
+              status_reason_detail, quarantine_reason, last_bookmark_time,
+              created_at, audit_revision AS feed_revision
+)
+SELECT u.*, fp.source_feed_id, fp.tags
+FROM updated u
+JOIN feed_properties fp ON fp.feed_id = u.id
 """
 
 RELEASE_NON_BUDGETED_FAILURE_SQL = """\
-UPDATE feeds
-SET status = 'failing'::feed_status,
-    failure_count = 0,
-    worker_id = NULL,
-    retry_after = $4,
-    unclaimed_since = NOW(),
-    status_reason = $5,
-    status_reason_detail = $6,
-    status_reason_updated_at = CASE
-        WHEN status_reason IS DISTINCT FROM $5 THEN NOW()
-        ELSE status_reason_updated_at
-    END
-WHERE id = $1 AND worker_id = $2
-  AND fencing_token = $3
-  AND status = 'active'::feed_status
-RETURNING status::text, failure_count, retry_after
+WITH updated AS (
+    UPDATE feeds
+    SET status = 'failing'::feed_status,
+        audit_revision = audit_revision + 1,
+        failure_count = 0,
+        worker_id = NULL,
+        retry_after = $4,
+        unclaimed_since = NOW(),
+        status_reason = $5,
+        status_reason_detail = $6,
+        status_reason_updated_at = CASE
+            WHEN status_reason IS DISTINCT FROM $5 THEN NOW()
+            ELSE status_reason_updated_at
+        END
+    WHERE id = $1 AND worker_id = $2
+      AND fencing_token = $3
+      AND status = 'active'::feed_status
+    RETURNING id, name, source_type, status::text AS status, failure_count,
+              retry_after, status_reason, status_reason_updated_at,
+              status_reason_detail, quarantine_reason, last_bookmark_time,
+              created_at, audit_revision AS feed_revision
+)
+SELECT u.*, fp.source_feed_id, fp.tags
+FROM updated u
+JOIN feed_properties fp ON fp.feed_id = u.id
 """
 
 CREATE_FEED_SQL = """\
 WITH new_feed AS (
-    INSERT INTO feeds (name, source_type)
-    VALUES ($1, $2)
+    INSERT INTO feeds (name, source_type, audit_revision)
+    VALUES ($1, $2, 1)
     RETURNING id, name, source_type, status, status_reason,
               status_reason_updated_at, failure_count, worker_id,
               last_heartbeat, last_processed_filename,
               last_bookmark_time, created_at, quarantine_reason,
-              status_reason_detail
+              status_reason_detail, retry_after,
+              audit_revision AS feed_revision
 ),
 new_props AS (
     INSERT INTO feed_properties (feed_id, source_feed_id, source_type, tags)
@@ -538,9 +593,19 @@ LIMIT $7
 
 
 DEACTIVATE_FEED_SQL = """\
-UPDATE feeds
-SET status = 'deactivated'::feed_status
-WHERE id = $1
+WITH updated AS (
+    UPDATE feeds
+    SET status = 'deactivated'::feed_status,
+        audit_revision = audit_revision + 1
+    WHERE id = $1
+    RETURNING id, name, source_type, status, failure_count, retry_after,
+              status_reason, status_reason_updated_at, status_reason_detail,
+              quarantine_reason, last_bookmark_time, created_at,
+              audit_revision AS feed_revision
+)
+SELECT u.*, fp.source_feed_id, fp.tags
+FROM updated u
+JOIN feed_properties fp ON fp.feed_id = u.id
 """
 # TODO(hard-delete): remove transcripts PR https://linear.app/watchduty/issue/GOO-458/remaining-legacy-cleanup
 DELETE_FEED_SQL = """\
@@ -556,6 +621,13 @@ DELETE FROM feeds
 WHERE id = $1
 """
 
+BUMP_FEED_AUDIT_REVISION_SQL = """\
+UPDATE feeds
+SET audit_revision = audit_revision + 1
+WHERE id = $1
+RETURNING id, audit_revision AS feed_revision
+"""
+
 
 RESET_FEED_SQL = """\
 WITH updated AS (
@@ -567,16 +639,19 @@ WITH updated AS (
         quarantine_reason = NULL,
         status_reason_detail = NULL,
         last_heartbeat = NOW(),
+        audit_revision = audit_revision + 1,
         status_reason_updated_at = CASE
             WHEN status_reason IS NOT NULL OR status_reason_detail IS NOT NULL THEN NOW()
             ELSE status_reason_updated_at
         END,
         status_reason = NULL
     WHERE id = $1
-    RETURNING id, name, source_type, status, failure_count, worker_id,
+    RETURNING id, name, source_type, status, failure_count, retry_after,
+              worker_id,
               status_reason, status_reason_updated_at, last_heartbeat,
               last_processed_filename, last_bookmark_time, created_at,
-              quarantine_reason, status_reason_detail
+              quarantine_reason, status_reason_detail,
+              audit_revision AS feed_revision
 )
 SELECT u.*, fp.source_feed_id, fp.tags,
        (
@@ -594,13 +669,15 @@ JOIN feed_properties fp ON fp.feed_id = u.id
 UPDATE_FEED_SQL = """\
 WITH updated_feed AS (
     UPDATE feeds
-    SET name = $2
+    SET name = $2,
+        audit_revision = audit_revision + 1
     WHERE id = $1
     RETURNING id, name, source_type, status, status_reason,
               status_reason_updated_at, failure_count, worker_id,
               last_heartbeat, last_processed_filename,
               last_bookmark_time, created_at, quarantine_reason,
-              status_reason_detail
+              status_reason_detail, retry_after,
+              audit_revision AS feed_revision
 ),
 updated_props AS (
     UPDATE feed_properties
