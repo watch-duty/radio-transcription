@@ -57,19 +57,20 @@ from durable backend data instead of relying on short-lived logs.
   `feed_audit_event_sequences` table inside the same storage transaction, with
   rollback and concurrent ordering coverage assigned to CI for DB execution —
   validated in Phase 2
+- ✓ Service, BFF, and frontend compatibility paths expose canonical
+  `status_reason_detail`, preserve legacy flows during the compatibility
+  window, and carry trusted admin actor context without accepting spoofable
+  request-body actors — validated in Phase 3
+- ✓ Runtime and Echo paths persist meaningful failure, quarantine, and recovery
+  audit events with bounded diagnostic detail while suppressing clean
+  progress, heartbeat, and lease-churn noise — validated in Phase 4
 
 ### Active
 
-- [ ] Persist audit events for the remaining runtime outcomes: failure
-  reported, quarantined, and recovered.
-- [ ] Wire storage, service, and runtime paths to populate
-  `status_reason_detail` as the canonical bounded diagnostic detail while
-  retiring `quarantine_reason` from public service/BFF/frontend contracts.
-- [ ] Preserve authenticated admin identity at the trusted service boundary
-  while keeping untrusted request bodies from spoofing actors.
 - [ ] Retain audit history for 18 months and enforce retention in v1.
-- [ ] Verify service/API compatibility, failure/quarantine, recovery, retention,
-  and no-lease-churn behavior with focused automated tests.
+- [ ] Harden final verification coverage for retention, delete survival,
+  rollback/concurrency, diagnostic-detail bounds, service/API compatibility,
+  failure/quarantine/recovery, and no-lease-churn behavior.
 
 ### Out of Scope
 
@@ -146,10 +147,10 @@ events without duplicating the audit ledger.
 | Add `status_reason_detail` and deprecate `quarantine_reason` as a public field | Generalizes diagnostic detail beyond quarantine while keeping app flows compatible through the canonical field | Schema validated in Phase 1; public contract decision updated in Phase 3 discussion |
 | Keep audit creation inside existing `FeedStore` mutation methods | Prevents service/runtime callers from constructing divergent state and audit history | Validated in Phase 2 |
 | Use `feed_audit_event_sequences` for per-feed ordering | Avoids racy `MAX(feed_sequence) + 1` allocation under concurrent writes | Validated in Phase 2 |
-| Use `service:feeds-service` as the Phase 2 actor fallback | Avoids nullable or spoofable user actors until trusted admin identity forwarding lands | Validated in Phase 2; human actor forwarding pending |
-| Emit one `feed.quarantined` event when threshold crossing occurs | Avoids duplicate `failure_reported` plus `quarantined` events for the same outcome | — Pending |
-| Treat all persisted non-quarantine failures as audit-worthy | Operators need repeated failure context, not only terminal quarantine state | — Pending |
-| Do not audit routine lease churn in v1 | Lease handoffs are high-noise scheduler mechanics, not admin-facing history | — Pending |
+| Use `service:feeds-service` as the Phase 2 actor fallback | Avoids nullable or spoofable user actors until trusted admin identity forwarding lands | Validated in Phase 2; trusted admin actor forwarding validated in Phase 3 |
+| Emit one `feed.quarantined` event when threshold crossing occurs | Avoids duplicate `failure_reported` plus `quarantined` events for the same outcome | Validated in Phase 4 |
+| Treat persisted non-quarantine failures as audit-worthy when they change the persisted `(status, status_reason)` combination | Operators need meaningful failure context, but repeated same-cause retries should not create noisy duplicate events | Validated in Phase 4 |
+| Do not audit routine lease churn in v1 | Lease handoffs are high-noise scheduler mechanics, not admin-facing history | Validated in Phase 4 |
 | Do not create synthetic baseline events for existing feeds | Avoids misleading history that did not actually happen | — Pending |
 | Defer WD webhook delivery and admin timeline reads | Establish durable data first; downstream propagation and UI can build on it later | — Pending |
 
@@ -171,4 +172,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-19 after Phase 2 completion*
+*Last updated: 2026-06-20 after Phase 4 completion*
