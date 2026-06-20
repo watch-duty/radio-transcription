@@ -123,8 +123,8 @@ Plans:
 
 Plans:
 **Wave 1**
-- [ ] 05-01-PLAN.md - Retention SQL scheduler and static contract coverage.
-- [ ] 05-02-PLAN.md - Low-resource v1 behavioral verification gate.
+- [x] 05-01-PLAN.md - Retention SQL scheduler and static contract coverage.
+- [x] 05-02-PLAN.md - Low-resource v1 behavioral verification gate.
 
 **Wave 2** *(blocked on 05-01 completion)*
 - [ ] 05-03-PLAN.md - DB-backed retention semantics and prepared-machine verification.
