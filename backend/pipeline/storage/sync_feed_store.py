@@ -280,6 +280,42 @@ class SyncFeedStore:
             ),
         }
 
+    def _runtime_effective_prior_state(
+        self,
+        before_row: dict[str, Any],
+        *,
+        claimed_previous_status: feed_store.FeedStatus,
+    ) -> tuple[
+        feed_store.FeedStatus,
+        int,
+        feed_store.FeedStatusReason | None,
+    ]:
+        """Derive runtime prior state from the locked pre-mutation snapshot."""
+        before_status = self._parse_feed_status(
+            before_row["status"],
+            feed_id=before_row["id"],
+        )
+        before_failure_count = before_row["failure_count"]
+        before_status_reason = self._parse_status_reason(
+            before_row["status_reason"],
+            feed_id=before_row["id"],
+        )
+        claim_carried_failure_state = (
+            before_status == feed_store.FeedStatus.ACTIVE
+            and claimed_previous_status in _RUNTIME_ABNORMAL_STATUSES
+            and (
+                before_failure_count > 0
+                or before_status_reason is not None
+            )
+        )
+        if claim_carried_failure_state:
+            return (
+                claimed_previous_status,
+                before_failure_count,
+                before_status_reason,
+            )
+        return before_status, before_failure_count, before_status_reason
+
     def _runtime_failure_audit_action(
         self,
         *,
@@ -407,17 +443,25 @@ class SyncFeedStore:
                         f"feed {feed_id}"
                     )
                     raise ValueError(msg)
+                (
+                    effective_previous_status,
+                    effective_previous_failure_count,
+                    effective_previous_status_reason,
+                ) = self._runtime_effective_prior_state(
+                    before_row,
+                    claimed_previous_status=previous_status,
+                )
                 action = self._runtime_recovery_audit_action(
-                    previous_status=previous_status,
+                    previous_status=effective_previous_status,
                     after_row=after_row,
                 )
                 self._maybe_insert_runtime_audit_event(
                     conn,
                     action=action,
                     actor_id=actor_id,
-                    previous_status=previous_status,
-                    previous_failure_count=previous_failure_count,
-                    previous_status_reason=previous_status_reason,
+                    previous_status=effective_previous_status,
+                    previous_failure_count=effective_previous_failure_count,
+                    previous_status_reason=effective_previous_status_reason,
                     before_row=before_row,
                     after_row=after_row,
                 )
@@ -492,19 +536,27 @@ class SyncFeedStore:
                         f"feed {feed_id}"
                     )
                     raise ValueError(msg)
+                (
+                    effective_previous_status,
+                    effective_previous_failure_count,
+                    effective_previous_status_reason,
+                ) = self._runtime_effective_prior_state(
+                    before_row,
+                    claimed_previous_status=previous_status,
+                )
                 action = self._runtime_failure_audit_action(
-                    previous_status=previous_status,
-                    previous_failure_count=previous_failure_count,
-                    previous_status_reason=previous_status_reason,
+                    previous_status=effective_previous_status,
+                    previous_failure_count=effective_previous_failure_count,
+                    previous_status_reason=effective_previous_status_reason,
                     after_row=after_row,
                 )
                 self._maybe_insert_runtime_audit_event(
                     conn,
                     action=action,
                     actor_id=actor_id,
-                    previous_status=previous_status,
-                    previous_failure_count=previous_failure_count,
-                    previous_status_reason=previous_status_reason,
+                    previous_status=effective_previous_status,
+                    previous_failure_count=effective_previous_failure_count,
+                    previous_status_reason=effective_previous_status_reason,
                     before_row=before_row,
                     after_row=after_row,
                 )
@@ -575,19 +627,27 @@ class SyncFeedStore:
                         f"snapshot for feed {feed_id}"
                     )
                     raise ValueError(msg)
+                (
+                    effective_previous_status,
+                    effective_previous_failure_count,
+                    effective_previous_status_reason,
+                ) = self._runtime_effective_prior_state(
+                    before_row,
+                    claimed_previous_status=previous_status,
+                )
                 action = self._runtime_failure_audit_action(
-                    previous_status=previous_status,
-                    previous_failure_count=previous_failure_count,
-                    previous_status_reason=previous_status_reason,
+                    previous_status=effective_previous_status,
+                    previous_failure_count=effective_previous_failure_count,
+                    previous_status_reason=effective_previous_status_reason,
                     after_row=after_row,
                 )
                 self._maybe_insert_runtime_audit_event(
                     conn,
                     action=action,
                     actor_id=actor_id,
-                    previous_status=previous_status,
-                    previous_failure_count=previous_failure_count,
-                    previous_status_reason=previous_status_reason,
+                    previous_status=effective_previous_status,
+                    previous_failure_count=effective_previous_failure_count,
+                    previous_status_reason=effective_previous_status_reason,
                     before_row=before_row,
                     after_row=after_row,
                 )

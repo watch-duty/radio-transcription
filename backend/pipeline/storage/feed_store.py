@@ -460,6 +460,45 @@ class FeedStore:
             ),
         }
 
+    def _runtime_effective_prior_state(
+        self,
+        before_row: asyncpg.Record,
+        *,
+        claimed_previous_status: FeedStatus,
+    ) -> tuple[FeedStatus, int, FeedStatusReason | None]:
+        """Derive runtime prior state from the locked pre-mutation snapshot.
+
+        Lease claiming can move a retryable failing feed to active before
+        runtime proves recovery. In that narrow dirty-lease case the claim-time
+        status preserves the logical prior state; otherwise the locked row is
+        authoritative and prevents stale caller inputs from duplicating or
+        suppressing events later in the same lease.
+        """
+        before_status = self._parse_feed_status(
+            before_row["status"],
+            feed_id=before_row["id"],
+        )
+        before_failure_count = before_row["failure_count"]
+        before_status_reason = self._parse_status_reason(
+            before_row["status_reason"],
+            feed_id=before_row["id"],
+        )
+        claim_carried_failure_state = (
+            before_status == FeedStatus.ACTIVE
+            and claimed_previous_status in _RUNTIME_ABNORMAL_STATUSES
+            and (
+                before_failure_count > 0
+                or before_status_reason is not None
+            )
+        )
+        if claim_carried_failure_state:
+            return (
+                claimed_previous_status,
+                before_failure_count,
+                before_status_reason,
+            )
+        return before_status, before_failure_count, before_status_reason
+
     def _runtime_failure_audit_action(
         self,
         *,
@@ -580,6 +619,10 @@ class FeedStore:
             new_gcs_path: The GCS object path of the last successfully written file.
             fencing_token: The fencing token received at lease acquisition.
             last_bookmark_time: Timestamp bookmark for the last processed audio.
+            actor_id: Optional causal actor for audited runtime recovery.
+            previous_status: Claim-time status for recovery audit decisions.
+            previous_failure_count: Claim-time failure count for audit metadata.
+            previous_status_reason: Claim-time status reason for audit metadata.
 
         Returns:
             ``True`` if the update succeeded (lease still held), ``False`` if the
@@ -625,8 +668,16 @@ class FeedStore:
                         f"feed {feed_id}"
                     )
                     raise ValueError(msg)
+                (
+                    effective_previous_status,
+                    effective_previous_failure_count,
+                    effective_previous_status_reason,
+                ) = self._runtime_effective_prior_state(
+                    before_row,
+                    claimed_previous_status=previous_status,
+                )
                 action = self._runtime_recovery_audit_action(
-                    previous_status=previous_status,
+                    previous_status=effective_previous_status,
                     after_row=after_row,
                 )
                 if action is not None:
@@ -638,9 +689,13 @@ class FeedStore:
                         after_values=self._audit_snapshot(after_row),
                         identity_row=after_row,
                         metadata=self._runtime_prior_metadata(
-                            previous_status=previous_status,
-                            previous_failure_count=previous_failure_count,
-                            previous_status_reason=previous_status_reason,
+                            previous_status=effective_previous_status,
+                            previous_failure_count=(
+                                effective_previous_failure_count
+                            ),
+                            previous_status_reason=(
+                                effective_previous_status_reason
+                            ),
                         ),
                     )
         return result == "UPDATE 1"
@@ -727,8 +782,16 @@ class FeedStore:
                             f"snapshot for feed {feed_id}"
                         )
                         raise ValueError(msg)
+                    (
+                        effective_previous_status,
+                        effective_previous_failure_count,
+                        effective_previous_status_reason,
+                    ) = self._runtime_effective_prior_state(
+                        before_row,
+                        claimed_previous_status=previous_status,
+                    )
                     action = self._runtime_recovery_audit_action(
-                        previous_status=previous_status,
+                        previous_status=effective_previous_status,
                         after_row=after_row,
                     )
                     if action is not None:
@@ -740,9 +803,13 @@ class FeedStore:
                             after_values=self._audit_snapshot(after_row),
                             identity_row=after_row,
                             metadata=self._runtime_prior_metadata(
-                                previous_status=previous_status,
-                                previous_failure_count=previous_failure_count,
-                                previous_status_reason=previous_status_reason,
+                                previous_status=effective_previous_status,
+                                previous_failure_count=(
+                                    effective_previous_failure_count
+                                ),
+                                previous_status_reason=(
+                                    effective_previous_status_reason
+                                ),
                             ),
                         )
         if row is None:
@@ -839,6 +906,10 @@ class FeedStore:
                 quarantine.
             backoff_base_sec: Base delay in seconds for the first retry.
             backoff_max_sec: Maximum backoff cap in seconds.
+            actor_id: Causal actor for audited runtime failure events.
+            previous_status: Claim-time status for audit decisions.
+            previous_failure_count: Claim-time failure count for audit metadata.
+            previous_status_reason: Claim-time status reason for audit metadata.
             reason: Diagnostic failure text. Persisted to
                 ``feeds.quarantine_reason`` on transition to quarantined,
                 after applying the storage boundary length cap.
@@ -894,10 +965,18 @@ class FeedStore:
                         f"feed {feed_id}"
                     )
                     raise ValueError(msg)
+                (
+                    effective_previous_status,
+                    effective_previous_failure_count,
+                    effective_previous_status_reason,
+                ) = self._runtime_effective_prior_state(
+                    before_row,
+                    claimed_previous_status=previous_status,
+                )
                 action = self._runtime_failure_audit_action(
-                    previous_status=previous_status,
-                    previous_failure_count=previous_failure_count,
-                    previous_status_reason=previous_status_reason,
+                    previous_status=effective_previous_status,
+                    previous_failure_count=effective_previous_failure_count,
+                    previous_status_reason=effective_previous_status_reason,
                     after_row=after_row,
                 )
                 if action is not None:
@@ -909,9 +988,13 @@ class FeedStore:
                         after_values=self._audit_snapshot(after_row),
                         identity_row=after_row,
                         metadata=self._runtime_prior_metadata(
-                            previous_status=previous_status,
-                            previous_failure_count=previous_failure_count,
-                            previous_status_reason=previous_status_reason,
+                            previous_status=effective_previous_status,
+                            previous_failure_count=(
+                                effective_previous_failure_count
+                            ),
+                            previous_status_reason=(
+                                effective_previous_status_reason
+                            ),
                         ),
                     )
         if row is None:
@@ -990,10 +1073,18 @@ class FeedStore:
                         f"for feed {feed_id}"
                     )
                     raise ValueError(msg)
+                (
+                    effective_previous_status,
+                    effective_previous_failure_count,
+                    effective_previous_status_reason,
+                ) = self._runtime_effective_prior_state(
+                    before_row,
+                    claimed_previous_status=previous_status,
+                )
                 action = self._runtime_failure_audit_action(
-                    previous_status=previous_status,
-                    previous_failure_count=previous_failure_count,
-                    previous_status_reason=previous_status_reason,
+                    previous_status=effective_previous_status,
+                    previous_failure_count=effective_previous_failure_count,
+                    previous_status_reason=effective_previous_status_reason,
                     after_row=after_row,
                 )
                 if action is not None:
@@ -1005,9 +1096,13 @@ class FeedStore:
                         after_values=self._audit_snapshot(after_row),
                         identity_row=after_row,
                         metadata=self._runtime_prior_metadata(
-                            previous_status=previous_status,
-                            previous_failure_count=previous_failure_count,
-                            previous_status_reason=previous_status_reason,
+                            previous_status=effective_previous_status,
+                            previous_failure_count=(
+                                effective_previous_failure_count
+                            ),
+                            previous_status_reason=(
+                                effective_previous_status_reason
+                            ),
                         ),
                     )
         if row is None:

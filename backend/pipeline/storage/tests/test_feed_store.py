@@ -1649,6 +1649,79 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(after_values["status"], "active")
         self.assertIsNone(after_values["status_reason"])
 
+    async def test_second_success_with_stale_claim_prior_emits_no_event(
+        self,
+    ) -> None:
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [
+            _audit_snapshot_row(
+                status="active",
+                failure_count=0,
+                status_reason=None,
+            ),
+            _audit_snapshot_row(status="active", failure_count=0),
+        ]
+        conn.execute.return_value = "UPDATE 1"
+        store = FeedStore(pool)
+
+        result = await store.update_feed_progress(
+            _FEED_ID,
+            _WORKER_ID,
+            "gs://bucket/path/file.ogg",
+            1,
+            None,
+            **_runtime_prior_kwargs(
+                previous_status=FeedStatus.FAILING,
+                previous_failure_count=2,
+                previous_status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+            ),
+        )
+
+        self.assertTrue(result)
+        conn.fetchval.assert_not_awaited()
+        self.assertEqual(_audit_insert_calls(conn), [])
+
+    async def test_failure_after_recovery_with_stale_prior_emits_event(
+        self,
+    ) -> None:
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [
+            _audit_snapshot_row(
+                status="active",
+                failure_count=0,
+                status_reason=None,
+            ),
+            _failure_update_row(failure_count=1),
+            _audit_snapshot_row(
+                status="failing",
+                failure_count=1,
+                status_reason="source_unreachable",
+            ),
+        ]
+        conn.fetchval.return_value = 12
+        store = FeedStore(pool)
+
+        await store.report_feed_failure(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            **_runtime_prior_kwargs(
+                previous_status=FeedStatus.FAILING,
+                previous_failure_count=2,
+                previous_status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+            ),
+            status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+
+        audit_args = _audit_insert_calls(conn)[0]
+        self.assertEqual(audit_args[4], "feed.failure_reported")
+        metadata = json.loads(audit_args[12])
+        self.assertEqual(metadata["previous_status"], "active")
+        self.assertEqual(metadata["previous_failure_count"], 0)
+        self.assertIsNone(metadata["previous_status_reason"])
+
     async def test_successful_progress_from_quarantined_emits_recovered(
         self,
     ) -> None:
