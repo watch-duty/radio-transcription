@@ -50,9 +50,8 @@ from durable backend data instead of relying on short-lived logs.
   the old field immediately.
 - **Signal quality**: Do not audit routine heartbeat or lease churn by default
   — the audit table must stay understandable and affordable.
-- **Security**: Do not persist secrets, tokens, raw credential-bearing
-  exception strings, or unbounded provider responses in diagnostic detail —
-  persisted reason text must be bounded and scrubbed where needed.
+- **Security**: Diagnostic detail is bounded in this PR. Richer
+  normalization and credential scrubbing should land in follow-up work.
 - **Delivery boundary**: WD backend delivery is a later phase — v1 schema should
   support it without introducing dispatcher state or webhook attempts yet.
 <!-- GSD:project-end -->

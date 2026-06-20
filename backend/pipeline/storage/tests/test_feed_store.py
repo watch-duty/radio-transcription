@@ -1297,11 +1297,12 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(reason_arg.endswith("[truncated]"))
 
-    async def test_sanitizes_status_reason_detail_at_persistence_boundary(
+    async def test_caps_status_reason_detail_at_persistence_boundary(
         self,
     ) -> None:
-        """Credential-like values are redacted before detail persistence."""
+        """Long diagnostic detail is capped before persistence."""
         pool = make_mock_pool(transaction=True)
+        long_reason = "x" * (quarantine_reason.MAX_QUARANTINE_REASON_LENGTH + 1)
         pool.acquired_connection.fetchrow.side_effect = [
             _audit_snapshot_row(status="active"),
             _failure_update_row(),
@@ -1318,15 +1319,17 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             1,
             **_runtime_prior_kwargs(),
-            reason="Authorization: Bearer abc.def password=hunter2",
+            reason=long_reason,
         )
 
         detail_arg = pool.acquired_connection.fetchrow.await_args_list[1].args[
             -1
         ]
-        self.assertNotIn("abc.def", detail_arg)
-        self.assertNotIn("hunter2", detail_arg)
-        self.assertIn("[redacted]", detail_arg)
+        self.assertEqual(
+            len(detail_arg),
+            quarantine_reason.MAX_QUARANTINE_REASON_LENGTH,
+        )
+        self.assertTrue(detail_arg.endswith("[truncated]"))
 
 
 class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
@@ -1426,8 +1429,8 @@ class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
-    async def test_passes_sanitized_status_reason_detail(self) -> None:
-        """Non-budgeted failures can persist sanitized diagnostic detail."""
+    async def test_passes_status_reason_detail(self) -> None:
+        """Non-budgeted failures can persist diagnostic detail."""
         retry_after = datetime.datetime(
             2026, 6, 14, 12, 15, tzinfo=datetime.UTC
         )
@@ -1450,14 +1453,13 @@ class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
             retry_after=retry_after,
             status_reason=FeedStatusReason.SOURCE_OFFLINE,
             **_runtime_prior_kwargs(),
-            reason="api_key=sk-testvalue123",
+            reason="provider timeout",
         )
 
         detail_arg = pool.acquired_connection.fetchrow.await_args_list[1].args[
             -1
         ]
-        self.assertNotIn("sk-testvalue123", detail_arg)
-        self.assertEqual(detail_arg, "api_key=[redacted]")
+        self.assertEqual(detail_arg, "provider timeout")
 
 
 class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):

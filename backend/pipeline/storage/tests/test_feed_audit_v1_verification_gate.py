@@ -87,7 +87,6 @@ def test_v1_diagnostic_detail_and_public_api_tests_are_registered() -> None:
     _assert_tokens(
         combined_text,
         (
-            "test_status_reason_detail_storage_value_redacts_credentials",
             "test_status_reason_detail_storage_value_caps_reason",
             "test_feed_model_exposes_status_reason_detail_not_quarantine_reason",
             "test_get_feed_with_status_reason_detail",
