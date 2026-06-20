@@ -271,7 +271,6 @@ class StitcherEngine:
                 yield (
                     feed_id,
                     datatypes.FlushRequest(
-                        buffer=b"",
                         feed_id=feed_id,
                         session_id=curr_ctx.session_id,
                         contributing_audio_uris=processed_uris,
@@ -365,7 +364,6 @@ class StitcherEngine:
             yield (
                 action.feed_id,
                 datatypes.FlushRequest(
-                    buffer=b"",
                     feed_id=action.feed_id,
                     session_id=session_id,
                     contributing_audio_uris=processed_uris,

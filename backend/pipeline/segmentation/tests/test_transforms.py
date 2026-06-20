@@ -2501,7 +2501,6 @@ class UploadRawSegmentFnTest(unittest.TestCase):
         # - Speech Segment 2: from 14000ms to 18000ms (absolute, entirely in chunk 2, which starts at 110000ms)
         # Total stitched duration = 4000ms + 4000ms = 8000ms.
         request = FlushRequest(
-            buffer=b"",
             feed_id="test-feed",
             session_id="test-session",
             contributing_audio_uris=[
