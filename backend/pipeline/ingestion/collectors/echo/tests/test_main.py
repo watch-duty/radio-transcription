@@ -171,9 +171,7 @@ class TestHandle:
             actor_id=ECHO_INGESTION_ACTOR_ID,
         )
 
-    def test_failure_policy_budgeted_call_uses_actor(
-        self, mock_store
-    ) -> None:
+    def test_failure_policy_budgeted_call_uses_actor(self, mock_store) -> None:
         feed_id = uuid.uuid4()
         feed = ResolvedEchoFeed(
             id=feed_id,

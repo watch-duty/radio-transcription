@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,6 +14,7 @@ from backend.pipeline.storage.feed_store import FeedStatus, FeedStatusReason
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
 
 _ECHO_ACTOR_ID = "service:echo-ingestion"
+_MISSING_ACTOR_ID = cast("str", None)
 
 
 def _make_store(
@@ -111,7 +113,7 @@ class TestRecordHeartbeat:
         store = _make_store(conn)
 
         with pytest.raises(ValueError, match="actor_id is required"):
-            store.record_heartbeat(uuid.uuid4(), actor_id=None)
+            store.record_heartbeat(uuid.uuid4(), actor_id=_MISSING_ACTOR_ID)
 
         conn.execute.assert_not_called()
 
@@ -239,7 +241,7 @@ class TestRecordFailure:
         store = _make_store(conn)
 
         with pytest.raises(ValueError, match="actor_id is required"):
-            store.record_failure(uuid.uuid4(), actor_id=None)
+            store.record_failure(uuid.uuid4(), actor_id=_MISSING_ACTOR_ID)
 
         conn.execute.assert_not_called()
 
@@ -305,7 +307,7 @@ class TestRecordNonBudgetedFailure:
         with pytest.raises(ValueError, match="actor_id is required"):
             store.record_non_budgeted_failure(
                 uuid.uuid4(),
-                actor_id=None,
+                actor_id=_MISSING_ACTOR_ID,
                 status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
             )
 

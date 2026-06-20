@@ -21,6 +21,7 @@ _ACTOR_STRINGS = (
     "service:",
 )
 
+
 def _read(path: str) -> str:
     return (_REPO_ROOT / path).read_text(encoding="utf-8")
 

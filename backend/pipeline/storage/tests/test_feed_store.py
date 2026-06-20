@@ -36,6 +36,7 @@ _STATUS_REASON_UPDATED_AT = datetime.datetime(
 )
 _FEEDS_SERVICE_ACTOR_ID = "service:feeds-service"
 _COLLECTOR_RUNTIME_ACTOR_ID = "service:collector-runtime"
+_MISSING_ACTOR_ID = cast("str", None)
 
 _FEED_STATUS_REASON_VALUES = {
     "pipeline_publish_after_bookmark_failed",
@@ -909,7 +910,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
                 "gs://bucket/path/file.ogg",
                 1,
                 None,
-                actor_id=None,
+                actor_id=_MISSING_ACTOR_ID,
             )
 
         pool.fetchrow.assert_not_awaited()
@@ -999,7 +1000,7 @@ class TestRecordSourceObservation(unittest.IsolatedAsyncioTestCase):
                 _WORKER_ID,
                 1,
                 None,
-                actor_id=None,
+                actor_id=_MISSING_ACTOR_ID,
             )
 
         pool.fetchrow.assert_not_awaited()
@@ -1283,7 +1284,7 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
                 _FEED_ID,
                 _WORKER_ID,
                 1,
-                actor_id=None,
+                actor_id=_MISSING_ACTOR_ID,
             )
 
         pool.acquire.assert_not_called()
@@ -1414,7 +1415,7 @@ class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
                 1,
                 retry_after=retry_after,
                 status_reason=FeedStatusReason.SOURCE_OFFLINE,
-                actor_id=None,
+                actor_id=_MISSING_ACTOR_ID,
             )
 
         pool.acquire.assert_not_called()
@@ -1712,6 +1713,7 @@ class TestRowToLeasedFeed(unittest.TestCase):
         self.assertIn(
             "Unknown source type 'not_a_real_type'", str(context.exception)
         )
+
 
 class TestAcquireFeedsRecovery(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.acquire_feeds_recovery."""
@@ -2081,7 +2083,7 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
                 "New Feed",
                 "bcfy_feeds",
                 "123",
-                actor_id=None,
+                actor_id=_MISSING_ACTOR_ID,
             )
 
         pool.acquire.assert_not_called()
@@ -2246,7 +2248,7 @@ class TestUpdateFeedAuditing(unittest.IsolatedAsyncioTestCase):
             await store.update_feed(
                 _FEED_ID,
                 "Updated Feed",
-                actor_id=None,
+                actor_id=_MISSING_ACTOR_ID,
             )
 
         pool.acquire.assert_not_called()
@@ -2511,7 +2513,7 @@ class TestDeactivateFeed(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         with self.assertRaisesRegex(ValueError, "actor_id is required"):
-            await store.deactivate_feed(_FEED_ID, actor_id=None)
+            await store.deactivate_feed(_FEED_ID, actor_id=_MISSING_ACTOR_ID)
 
         pool.acquire.assert_not_called()
 
@@ -2592,7 +2594,7 @@ class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         with self.assertRaisesRegex(ValueError, "actor_id is required"):
-            await store.delete_feed(_FEED_ID, actor_id=None)
+            await store.delete_feed(_FEED_ID, actor_id=_MISSING_ACTOR_ID)
 
         pool.acquire.assert_not_called()
 
@@ -2662,7 +2664,7 @@ class TestResetFeed(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         with self.assertRaisesRegex(ValueError, "actor_id is required"):
-            await store.reset_feed(_FEED_ID, actor_id=None)
+            await store.reset_feed(_FEED_ID, actor_id=_MISSING_ACTOR_ID)
 
         pool.acquire.assert_not_called()
 
