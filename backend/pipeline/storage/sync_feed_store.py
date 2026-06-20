@@ -142,13 +142,12 @@ class SyncFeedStore:
         )
         params = (
             feed_id,
+            status_reason_value,
             self._failure_threshold,
             self._failure_threshold,
             self._max_backoff_sec,
             self._base_backoff_sec,
-            status_reason_value,
             status_reason_detail,
-            status_reason_value,
             actor_id,
         )
         with self._connect_db() as conn:
@@ -179,7 +178,6 @@ class SyncFeedStore:
             feed_id,
             status_reason.value,
             feed_lifecycle.status_reason_detail_storage_value(reason),
-            status_reason.value,
             actor_id,
         )
         with self._connect_db() as conn:

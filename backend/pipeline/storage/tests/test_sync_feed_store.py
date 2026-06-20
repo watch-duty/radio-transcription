@@ -138,13 +138,12 @@ class TestRecordFailure:
         ) in sql
         assert params == (
             feed_id,
+            "system_pipeline_error",
             5,
             5,
             600,
             15,
-            "system_pipeline_error",
             "echo_pubsub_publish_failed",
-            "system_pipeline_error",
             None,
         )
 
@@ -167,13 +166,12 @@ class TestRecordFailure:
         params = conn.execute.call_args[0][1]
         assert params == (
             feed_id,
+            "system_pipeline_error",
             10,
             10,
             1200,
             30,
-            "system_pipeline_error",
             "echo_heartbeat_write_failed",
-            "system_pipeline_error",
             None,
         )
 
@@ -188,13 +186,12 @@ class TestRecordFailure:
 
         assert conn.execute.call_args[0][1] == (
             feed_id,
+            None,
             5,
             5,
             600,
             15,
-            None,
             "raw",
-            None,
             None,
         )
 
@@ -241,7 +238,10 @@ class TestRecordNonBudgetedFailure:
         assert "failure_count = 0" in sql
         assert "retry_after = NULL" in sql
         assert "status_reason_updated_at = CASE" in sql
-        assert "WHEN feeds.status_reason IS DISTINCT FROM %s THEN NOW()" in sql
+        assert (
+            "WHEN feeds.status_reason IS DISTINCT FROM "
+            "status_reason_input.status_reason THEN NOW()"
+        ) in sql
         assert (
             "status NOT IN ('quarantined'::feed_status, "
             "'deactivated'::feed_status)"
@@ -251,7 +251,6 @@ class TestRecordNonBudgetedFailure:
             feed_id,
             "system_pipeline_error",
             None,
-            "system_pipeline_error",
             None,
         )
 

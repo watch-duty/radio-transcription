@@ -14,6 +14,9 @@ _AUDIT_AFTER_SNAPSHOT_SQL = feed_audit_sql.audit_snapshot_sql("after_row")
 _AUDIT_ACTOR_CTE_SQL = """audit_actor AS (
     SELECT %s::text AS actor_id
 )"""
+_STATUS_REASON_INPUT_CTE_SQL = """status_reason_input AS (
+    SELECT %s::text AS status_reason
+)"""
 
 RESOLVE_ECHO_FEED_SQL = """\
 SELECT f.id, f.name, f.status, f.failure_count, f.status_reason, f.created_at
@@ -104,6 +107,7 @@ WITH before_row AS (
       AND f.status NOT IN ('quarantined'::feed_status, 'deactivated'::feed_status)
     FOR UPDATE
 ),
+{_STATUS_REASON_INPUT_CTE_SQL},
 updated AS (
     UPDATE feeds
     SET status = CASE WHEN feeds.failure_count + 1 >= %s
@@ -118,14 +122,15 @@ updated AS (
                                 %s * INTERVAL '1 second' * POWER(2, feeds.failure_count)
                            ) + (RANDOM() * INTERVAL '10 seconds')
                            ELSE NULL END,
-        status_reason = COALESCE(%s, 'system_unexpected_error'),
+        status_reason = COALESCE(status_reason_input.status_reason, 'system_unexpected_error'),
         status_reason_detail = %s,
         status_reason_updated_at = CASE
-            WHEN feeds.status_reason IS DISTINCT FROM COALESCE(%s, 'system_unexpected_error')
+            WHEN feeds.status_reason IS DISTINCT FROM COALESCE(status_reason_input.status_reason, 'system_unexpected_error')
                 THEN NOW()
             ELSE feeds.status_reason_updated_at
         END
     FROM before_row
+    CROSS JOIN status_reason_input
     WHERE feeds.id = before_row.id
     RETURNING feeds.id, feeds.name, feeds.source_type,
               feeds.status::text AS status, feeds.failure_count,
@@ -176,6 +181,7 @@ WITH before_row AS (
       AND f.status NOT IN ('quarantined'::feed_status, 'deactivated'::feed_status)
     FOR UPDATE
 ),
+{_STATUS_REASON_INPUT_CTE_SQL},
 updated AS (
     UPDATE feeds
     SET status = 'failing'::feed_status,
@@ -183,13 +189,14 @@ updated AS (
         failure_count = 0,
         last_heartbeat = NOW(),
         retry_after = NULL,
-        status_reason = %s,
+        status_reason = status_reason_input.status_reason,
         status_reason_detail = %s,
         status_reason_updated_at = CASE
-            WHEN feeds.status_reason IS DISTINCT FROM %s THEN NOW()
+            WHEN feeds.status_reason IS DISTINCT FROM status_reason_input.status_reason THEN NOW()
             ELSE feeds.status_reason_updated_at
         END
     FROM before_row
+    CROSS JOIN status_reason_input
     WHERE feeds.id = before_row.id
     RETURNING feeds.id, feeds.name, feeds.source_type,
               feeds.status::text AS status, feeds.failure_count,
