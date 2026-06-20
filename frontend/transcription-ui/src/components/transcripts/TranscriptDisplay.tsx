@@ -6,12 +6,7 @@ import CircularProgress from '@mui/material/CircularProgress';
 import ListItem from '@mui/material/ListItem';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
-import type {
-  InfiniteData,
-  InfiniteQueryObserverResult,
-} from '@tanstack/react-query';
 
-import type { ListAudioSegmentsData } from '../../hooks/useAudioSegments';
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
 import { getRelativeTimeString } from '../../utils/timeUtils';
 import TranscriptRow from './TranscriptRow';
@@ -24,15 +19,11 @@ export interface TranscriptDisplayProps {
   setIsViewAtTopOfAudioSegments: (atTop: boolean) => void;
   hasNewerAudioSegments: boolean;
   isFetchingNewerAudioSegments: boolean;
-  fetchNewerAudioSegments: () => Promise<
-    InfiniteQueryObserverResult<InfiniteData<ListAudioSegmentsData>, Error>
-  >;
+  fetchNewerAudioSegments: () => void;
   isAudioSegmentsPolling: boolean;
   hasOlderAudioSegments: boolean;
   isFetchingOlderAudioSegments: boolean;
-  fetchOlderAudioSegments: () => Promise<
-    InfiniteQueryObserverResult<InfiniteData<ListAudioSegmentsData>, Error>
-  >;
+  fetchOlderAudioSegments: () => void;
   // Unix timestamp in ms when the audio segments query last updated with a success.
   audioSegmentsLastUpdated: number | null;
   triggerSnackbar: (message: string) => void;
@@ -86,14 +77,10 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
         groupCounts={groupCounts}
         atTopStateChange={(atTop) => setIsViewAtTopOfAudioSegments(atTop)}
         startReached={() => {
-          if (hasNewerAudioSegments && !isFetchingNewerAudioSegments) {
-            fetchNewerAudioSegments();
-          }
+          if (hasNewerAudioSegments) fetchNewerAudioSegments();
         }}
         endReached={() => {
-          if (hasOlderAudioSegments && !isFetchingOlderAudioSegments) {
-            fetchOlderAudioSegments();
-          }
+          if (hasOlderAudioSegments) fetchOlderAudioSegments();
         }}
         groupContent={(index) => {
           const title = groupTitles[index];

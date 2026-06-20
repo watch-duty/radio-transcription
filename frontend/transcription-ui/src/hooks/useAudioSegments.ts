@@ -52,8 +52,8 @@ export function useAudioSegments({
 
   const {
     data: listAudioSegmentsResponse,
-    fetchNextPage: loadOlderAudioSegments,
-    fetchPreviousPage: loadNewerAudioSegments,
+    fetchNextPage,
+    fetchPreviousPage,
     hasNextPage: hasOlderAudioSegments,
     hasPreviousPage: hasNewerAudioSegments,
     isSuccess: isAudioSegmentsSuccess,
@@ -119,6 +119,14 @@ export function useAudioSegments({
     enabled: !!token && !!searchedFeedId && isFeedsSuccess,
     refetchOnWindowFocus: false,
   });
+
+  const loadOlderAudioSegments = useCallback(() => {
+    if (!isFetchingOlderAudioSegments) return fetchNextPage();
+  }, [fetchNextPage, isFetchingOlderAudioSegments]);
+
+  const loadNewerAudioSegments = useCallback(() => {
+    if (!isFetchingNewerAudioSegments) return fetchPreviousPage();
+  }, [fetchPreviousPage, isFetchingNewerAudioSegments]);
 
   const rawAudioSegments = useMemo(() => {
     const allSegments =
