@@ -76,12 +76,8 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
         ref={ref}
         groupCounts={groupCounts}
         atTopStateChange={(atTop) => setIsViewAtTopOfAudioSegments(atTop)}
-        startReached={() => {
-          if (hasNewerAudioSegments) fetchNewerAudioSegments();
-        }}
-        endReached={() => {
-          if (hasOlderAudioSegments) fetchOlderAudioSegments();
-        }}
+        startReached={fetchNewerAudioSegments}
+        endReached={fetchOlderAudioSegments}
         groupContent={(index) => {
           const title = groupTitles[index];
           return (

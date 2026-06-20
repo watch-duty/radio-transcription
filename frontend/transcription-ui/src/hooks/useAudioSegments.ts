@@ -121,12 +121,12 @@ export function useAudioSegments({
   });
 
   const loadOlderAudioSegments = useCallback(() => {
-    if (!isFetchingOlderAudioSegments) return fetchNextPage();
-  }, [fetchNextPage, isFetchingOlderAudioSegments]);
+    if (hasOlderAudioSegments && !isFetchingOlderAudioSegments) fetchNextPage();
+  }, [fetchNextPage, hasOlderAudioSegments, isFetchingOlderAudioSegments]);
 
   const loadNewerAudioSegments = useCallback(() => {
-    if (!isFetchingNewerAudioSegments) return fetchPreviousPage();
-  }, [fetchPreviousPage, isFetchingNewerAudioSegments]);
+    if (hasNewerAudioSegments && !isFetchingNewerAudioSegments) fetchPreviousPage();
+  }, [fetchPreviousPage, hasNewerAudioSegments, isFetchingNewerAudioSegments]);
 
   const rawAudioSegments = useMemo(() => {
     const allSegments =
