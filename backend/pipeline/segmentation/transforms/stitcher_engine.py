@@ -133,7 +133,6 @@ class StitcherEngine:
         feed_id: str,
         curr_context: datatypes.ActiveStitchingState,
         transmission_context_state: Any,
-        transmission_buffer_state: Any,
         last_start_ms_state: Any,
         timer_manager: Any,
         previous_expected_ts: int | None,
@@ -179,7 +178,6 @@ class StitcherEngine:
                 feed_id=feed_id,
                 curr_context=curr_context,
                 transmission_context_state=transmission_context_state,
-                transmission_buffer_state=transmission_buffer_state,
                 last_start_ms_state=last_start_ms_state,
                 timer_manager=timer_manager,
                 state_machine=state_machine,
@@ -204,7 +202,6 @@ class StitcherEngine:
     def handle_stale_transmission(
         self,
         key: str,
-        transmission_buffer: Any,
         transmission_context: Any,
         last_start_ms_state: Any,
         timer_manager: Any,
@@ -215,7 +212,6 @@ class StitcherEngine:
 
         Args:
             key: Unique key of the active feed partition.
-            transmission_buffer: Runtime Beam state mapping for audio buffer.
             transmission_context: Runtime Beam state mapping for contexts.
             last_start_ms_state: Runtime Beam state mapping for last start time.
             timer_manager: Contextual timer scheduler interface.
@@ -237,15 +233,9 @@ class StitcherEngine:
         start_time_ms = curr_ctx.stale_start_time_ms
         end_time_ms = curr_ctx.last_end_time_ms
         processed_uris = curr_ctx.contributing_audio_uris
-        raw_buffer = list(transmission_buffer.read())
-        audio_buffer = [
-            b if isinstance(b, np.ndarray) else np.frombuffer(b, dtype=np.int16)
-            for b in raw_buffer
-        ]
 
         if (
-            audio_buffer
-            and start_time_ms is not None
+            start_time_ms is not None
             and end_time_ms is not None
             and curr_ctx.buffer_start_time_ms is not None
         ):
@@ -275,10 +265,11 @@ class StitcherEngine:
                 yield (
                     feed_id,
                     datatypes.FlushRequest(
-                        buffer=np.concatenate(audio_buffer).tobytes(),
+                        buffer=b"",
                         feed_id=feed_id,
                         session_id=curr_ctx.session_id,
                         contributing_audio_uris=processed_uris,
+                        contributing_chunks=list(curr_ctx.contributing_chunks),
                         time_range=time_range,
                         missing_prior_context=curr_ctx.missing_prior_context,
                         missing_post_context=True,
@@ -309,20 +300,17 @@ class StitcherEngine:
 
         # Clear state context cleanly
         transmission_context.clear()
-        transmission_buffer.clear()
         timer_manager.clear()
 
     def _apply_flush_action(
         self,
         action: datatypes.FlushAction,
         transmission_context: Any,
-        transmission_buffer: Any,
         last_start_ms_state: Any,
         timer_manager: Any,
         session_id: str,
         curr_context: datatypes.ActiveStitchingState,
         chunk_data: datatypes.AudioChunkData | None = None,
-        local_buffer: list[np.ndarray] | None = None,
         *,
         is_backfill: bool = False,
     ) -> Iterator[tuple[str, datatypes.FlushRequest]]:
@@ -335,12 +323,9 @@ class StitcherEngine:
             curr_context.contributing_audio_uris
         )
 
-        raw_buffer = _get_audio_buffer(
-            action, local_buffer, transmission_buffer
-        )
+        contributing_chunks = list(curr_context.contributing_chunks)
 
-        if raw_buffer:
-            audio_buffer = raw_buffer
+        if processed_uris or contributing_chunks:
             segment_id = trans_utils.generate_segment_id(
                 session_id,
                 action.time_range,
@@ -374,10 +359,11 @@ class StitcherEngine:
             yield (
                 action.feed_id,
                 datatypes.FlushRequest(
-                    buffer=np.concatenate(audio_buffer).tobytes(),
+                    buffer=b"",
                     feed_id=action.feed_id,
                     session_id=session_id,
                     contributing_audio_uris=processed_uris,
+                    contributing_chunks=contributing_chunks,
                     time_range=action.time_range,
                     missing_prior_context=action.missing_prior_context,
                     missing_post_context=action.missing_post_context,
@@ -414,7 +400,6 @@ class StitcherEngine:
         feed_id: str,
         curr_context: datatypes.ActiveStitchingState,
         transmission_context_state: Any,
-        transmission_buffer_state: Any,
         last_start_ms_state: Any,
         timer_manager: Any,
         state_machine: stitcher_state.AudioStitchingStateMachine,
@@ -535,7 +520,6 @@ class StitcherEngine:
                     actions=actions,
                     curr_context=curr_context,
                     transmission_context_state=transmission_context_state,
-                    transmission_buffer_state=transmission_buffer_state,
                     last_start_ms_state=last_start_ms_state,
                     timer_manager=timer_manager,
                     chunk_data=chunk_data,
@@ -582,7 +566,6 @@ class StitcherEngine:
         actions: list[datatypes.StateMachineAction],
         curr_context: datatypes.ActiveStitchingState,
         transmission_context_state: Any,
-        transmission_buffer_state: Any,
         last_start_ms_state: Any,
         timer_manager: Any,
         chunk_data: datatypes.AudioChunkData,
@@ -603,19 +586,6 @@ class StitcherEngine:
 
         new_context: datatypes.TransmissionContext = curr_context
 
-        # Read the existing transmission buffer state once at the start.
-        # This avoids multiple redundant reads and guarantees that we don't hit runner-specific state cache issues
-        # when reading after clearing/adding within the same element processing.
-        local_buffer_bytes = (
-            [] if clear_buffer else (transmission_buffer_state.read() or [])
-        )
-        local_buffer = [
-            np.frombuffer(b, dtype=np.int16) for b in local_buffer_bytes
-        ]
-
-        buffer_cleared = False
-        newly_appended = []
-
         for action in actions:
             match action:
                 case datatypes.FlushAction():
@@ -624,23 +594,16 @@ class StitcherEngine:
                             self._apply_flush_action(
                                 action,
                                 transmission_context_state,
-                                transmission_buffer_state,
                                 last_start_ms_state,
                                 timer_manager,
                                 active_session_id or "unknown",
                                 active_context,
                                 chunk_data,
-                                local_buffer=local_buffer,
                                 is_backfill=is_backfill,
                             )
                         )
                     )
                     if action.clear_state:
-                        # Clear our local in-memory buffer
-                        local_buffer = []
-                        buffer_cleared = True
-                        newly_appended = []
-
                         # Force-transition the context back to IdleFeedState to prevent
                         # Trace Context Hijacking and session ID leaks into subsequent independent chunks.
                         new_context = datatypes.IdleFeedState(
@@ -650,8 +613,7 @@ class StitcherEngine:
                             order_timer_active=new_context.order_timer_active,
                         )
                 case datatypes.AppendBufferAction():
-                    local_buffer.append(action.audio_buffer)
-                    newly_appended.append(action.audio_buffer.tobytes())
+                    pass
                 case datatypes.UpdateStateAction():
                     # If we flushed/cleared active state but the same chunk immediately starts a new active
                     # transmission window (e.g. during split-segment forced flushes), we must transition the
@@ -687,6 +649,7 @@ class StitcherEngine:
                         new_context = replace(
                             new_context,
                             contributing_audio_uris=ctx.contributing_audio_uris,
+                            contributing_chunks=ctx.contributing_chunks,
                             last_end_time_ms=ctx.last_segment_end_time_ms,
                             stale_start_time_ms=ctx.transmission_start_time_ms,
                             buffer_start_time_ms=ctx.buffer_start_time_ms,
@@ -704,16 +667,6 @@ class StitcherEngine:
                         deadline_ms=action.deadline_ms,
                         is_backfill=is_backfill,
                     )
-
-        # Commit final buffer state to Beam runner
-        if buffer_cleared:
-            final_buffer_bytes = newly_appended
-        else:
-            final_buffer_bytes = local_buffer_bytes + newly_appended
-
-        if not final_buffer_bytes:
-            transmission_buffer_state.clear()
-        else:
-            transmission_buffer_state.write(final_buffer_bytes)
+        # Commit final context updates (no buffer updates needed)
 
         return chunk_outputs, new_context

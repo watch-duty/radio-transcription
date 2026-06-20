@@ -1,5 +1,7 @@
 """Tests for the StitchAudioFn, TranscribeAudioFn, and related transformations."""
 
+import datetime
+import io
 import logging as std_logging
 import time
 import unittest
@@ -9,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import apache_beam as beam
 import numpy as np
+import soundfile as sf
 from apache_beam.io.gcp.pubsub import PubsubMessage
 from apache_beam.options.pipeline_options import (
     PipelineOptions,
@@ -18,6 +21,7 @@ from apache_beam.testing.test_stream import TestStream
 from apache_beam.testing.util import assert_that, equal_to
 from apache_beam.transforms.window import TimestampedValue
 from apache_beam.utils.timestamp import Timestamp
+from google.cloud import storage
 from opentelemetry.trace import get_current_span
 
 from backend.pipeline.common.tracing_utils import (
@@ -353,7 +357,6 @@ class OrderedStitchAudioTest(unittest.TestCase):
             fn.process(
                 element=("test-feed", metadata),
                 timestamp=Timestamp(100),
-                transmission_buffer_state=MagicMock(),
                 transmission_context_state=mock_state,
                 last_start_ms_state=MagicMock(),
                 gap_timer_event=mock_timer,
@@ -405,7 +408,6 @@ class OrderedStitchAudioTest(unittest.TestCase):
         list(
             fn.handle_gap_timeout_event(
                 feed_id="test-feed",
-                transmission_buffer_state=MagicMock(),
                 transmission_context_state=mock_state,
                 last_start_ms_state=MagicMock(),
                 stale_timer_event=MagicMock(),
@@ -468,7 +470,6 @@ class OrderedStitchAudioTest(unittest.TestCase):
             fn.process(
                 element=("test-feed", metadata),
                 timestamp=Timestamp(100),
-                transmission_buffer_state=MagicMock(),
                 transmission_context_state=mock_state,
                 last_start_ms_state=MagicMock(),
                 gap_timer_event=MagicMock(),
@@ -530,7 +531,6 @@ class OrderedStitchAudioTest(unittest.TestCase):
             fn.process(
                 element=("test-feed", metadata),
                 timestamp=Timestamp(200),
-                transmission_buffer_state=MagicMock(),
                 transmission_context_state=mock_state,
                 last_start_ms_state=MagicMock(),
                 gap_timer_event=MagicMock(),
@@ -640,7 +640,6 @@ class OrderedStitchAudioTest(unittest.TestCase):
             fn.process(
                 element=element,
                 timestamp=timestamp,
-                transmission_buffer_state=transmission_buffer_state,  # type: ignore
                 transmission_context_state=transmission_context_state,  # type: ignore
                 gap_timer_event=gap_timer_event,
                 gap_timer_proc=gap_timer_proc,
@@ -864,7 +863,12 @@ class OrderedStitchAudioTest(unittest.TestCase):
                     assert feed_id == "test-feed-ooo"
 
                 lengths = [
-                    len(request.buffer) // 2 for feed_id, request in msgs
+                    sum(
+                        seg.end_ms - seg.start_ms
+                        for seg in request.speech_segments
+                    )
+                    * (request.sample_rate // 1000)
+                    for feed_id, request in msgs
                 ]
                 if len(msgs) == 1:
                     assert 48000 in lengths
@@ -937,7 +941,6 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
                 feed_metadata=FeedMetadata(feed_name="test-feed"),
             )
         )
-        mock_state_buffer = MockBagState()
         mock_last_start_ms = MockValueState(None)
 
         metadata = ChunkMetadata(
@@ -952,7 +955,6 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
             fn.process(
                 element=("test-feed", metadata),
                 timestamp=Timestamp(100),
-                transmission_buffer_state=mock_state_buffer,  # type: ignore
                 transmission_context_state=mock_state_context,  # type: ignore
                 last_start_ms_state=mock_last_start_ms,  # type: ignore
                 gap_timer_event=MagicMock(),
@@ -973,7 +975,6 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
         outputs = list(
             fn.handle_stale_transmission_event(
                 key="test-feed",
-                transmission_buffer=mock_state_buffer,  # type: ignore
                 transmission_context=mock_state_context,  # type: ignore
                 last_start_ms_state=mock_last_start_ms,  # type: ignore
                 stale_timer_event=MagicMock(),
@@ -1068,7 +1069,6 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
         outputs = list(
             fn.handle_stale_transmission_event(
                 key="test-feed",
-                transmission_buffer=mock_state_buffer,  # type: ignore
                 transmission_context=mock_state_context,  # type: ignore
                 last_start_ms_state=mock_last_start_ms,  # type: ignore
                 stale_timer_event=MagicMock(),
@@ -1151,7 +1151,6 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
                 feed_metadata=FeedMetadata(feed_name="test-feed"),
             )
         )
-        mock_state_buffer = MockBagState()
         mock_last_start_ms = MockValueState(None)
 
         metadata = ChunkMetadata(
@@ -1166,7 +1165,6 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
             fn.process(
                 element=("test-feed", metadata),
                 timestamp=Timestamp(100),
-                transmission_buffer_state=mock_state_buffer,  # type: ignore
                 transmission_context_state=mock_state_context,  # type: ignore
                 last_start_ms_state=mock_last_start_ms,  # type: ignore
                 gap_timer_event=MagicMock(),
@@ -1185,7 +1183,6 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
         list(
             fn.handle_stale_transmission_event(
                 key="test-feed",
-                transmission_buffer=mock_state_buffer,  # type: ignore
                 transmission_context=mock_state_context,  # type: ignore
                 last_start_ms_state=mock_last_start_ms,  # type: ignore
                 stale_timer_event=MagicMock(),
@@ -1261,7 +1258,6 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
                 feed_metadata=FeedMetadata(feed_name="test-feed"),
             )
         )
-        mock_state_buffer = MockBagState()
         mock_last_start_ms = MockValueState(None)
 
         metadata = ChunkMetadata(
@@ -1275,7 +1271,6 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
             fn.process(
                 element=("test-feed", metadata),
                 timestamp=Timestamp(100),
-                transmission_buffer_state=mock_state_buffer,  # type: ignore
                 transmission_context_state=mock_state_context,  # type: ignore
                 last_start_ms_state=mock_last_start_ms,  # type: ignore
                 gap_timer_event=MagicMock(),
@@ -1393,11 +1388,12 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
                     == AudioClassification.AUDIO_CLASSIFICATION_SPEECH
                 )
                 # Samples should correspond to [1000ms, 3000ms], which is [16000, 48000]
-                buf_1 = np.frombuffer(req_1.buffer, dtype=np.int16)
-                expected_buf_1 = audio_data[16000:48000]
-                np.testing.assert_array_equal(
-                    buf_1, expected_buf_1, err_msg="Flush 1 audio mismatch"
-                )
+                # Samples should correspond to [1000ms, 3000ms], which is [16000, 48000]
+                assert req_1.start_audio_offset_ms == 1000
+                assert req_1.end_audio_offset_ms == 2000
+                assert req_1.speech_segments == [
+                    TimeRange(start_ms=101000, end_ms=103000)
+                ]
 
                 # Check Flush 2 (Silence 1)
                 feed_id_2, req_2 = msgs[1]
@@ -1406,12 +1402,9 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
                     req_2.audio_classification
                     == AudioClassification.AUDIO_CLASSIFICATION_OTHER
                 )
-                # Samples should correspond to [3000ms, 7000ms], which is [48000, 112000]
-                buf_2 = np.frombuffer(req_2.buffer, dtype=np.int16)
-                expected_buf_2 = audio_data[48000:112000]
-                np.testing.assert_array_equal(
-                    buf_2, expected_buf_2, err_msg="Flush 2 audio mismatch"
-                )
+                assert req_2.start_audio_offset_ms == 3000
+                assert req_2.end_audio_offset_ms == 4000
+                assert len(req_2.speech_segments) == 0
 
                 # Check Flush 3 (Speech 2)
                 feed_id_3, req_3 = msgs[2]
@@ -1420,12 +1413,11 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
                     req_3.audio_classification
                     == AudioClassification.AUDIO_CLASSIFICATION_SPEECH
                 )
-                # Samples should correspond to [7000ms, 9000ms], which is [112000, 144000]
-                buf_3 = np.frombuffer(req_3.buffer, dtype=np.int16)
-                expected_buf_3 = audio_data[112000:144000]
-                np.testing.assert_array_equal(
-                    buf_3, expected_buf_3, err_msg="Flush 3 audio mismatch"
-                )
+                assert req_3.start_audio_offset_ms == 7000
+                assert req_3.end_audio_offset_ms == 2000
+                assert req_3.speech_segments == [
+                    TimeRange(start_ms=107000, end_ms=109000)
+                ]
 
                 # Check Flush 4 (Silence 2)
                 feed_id_4, req_4 = msgs[3]
@@ -1434,12 +1426,9 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
                     req_4.audio_classification
                     == AudioClassification.AUDIO_CLASSIFICATION_OTHER
                 )
-                # Samples should correspond to [9000ms, 10000ms], which is [144000, 160000]
-                buf_4 = np.frombuffer(req_4.buffer, dtype=np.int16)
-                expected_buf_4 = audio_data[144000:160000]
-                np.testing.assert_array_equal(
-                    buf_4, expected_buf_4, err_msg="Flush 4 audio mismatch"
-                )
+                assert req_4.start_audio_offset_ms == 9000
+                assert req_4.end_audio_offset_ms == 1000
+                assert len(req_4.speech_segments) == 0
 
             assert_that(results, assert_results)
 
@@ -1509,7 +1498,6 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
                 feed_metadata=FeedMetadata(feed_name="test-feed"),
             )
         )
-        mock_state_buffer = MockBagState()
         mock_last_start_ms = MockValueState(None)
 
         metadata = ChunkMetadata(
@@ -1523,7 +1511,6 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
             fn.process(
                 element=("test-feed", metadata),
                 timestamp=Timestamp(100),
-                transmission_buffer_state=mock_state_buffer,  # type: ignore
                 transmission_context_state=mock_state_context,  # type: ignore
                 last_start_ms_state=mock_last_start_ms,  # type: ignore
                 gap_timer_event=MagicMock(),
@@ -1664,7 +1651,7 @@ class DlqTaggingTest(unittest.TestCase):
         self,
         fn_class: type,
     ) -> tuple[Any, Any, Any, Any]:
-        """Returns (fn, mock_state_context, mock_state_buffer, mock_last_start_ms)."""
+        """Returns (fn, mock_state_context, _, mock_last_start_ms)."""
         order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
         stitch_config = get_test_stitch_config(stale_timeout_ms=5000)
         fn = fn_class(order_config=order_config, stitch_config=stitch_config)
@@ -1793,7 +1780,7 @@ class DlqTaggingTest(unittest.TestCase):
         )
         mock_processor_inst.download_audio_and_detect.return_value = chunk_data
 
-        fn, mock_state_context, mock_state_buffer, mock_last_start_ms = (
+        fn, mock_state_context, _, mock_last_start_ms = (
             self._make_fn_and_states(OrderedStitchAudioFn)
         )
         fn.setup()
@@ -1812,7 +1799,6 @@ class DlqTaggingTest(unittest.TestCase):
             fn.process(
                 element=("test-feed", metadata),
                 timestamp=Timestamp(100),
-                transmission_buffer_state=mock_state_buffer,
                 transmission_context_state=mock_state_context,
                 last_start_ms_state=mock_last_start_ms,
                 gap_timer_event=MagicMock(),
@@ -1825,7 +1811,6 @@ class DlqTaggingTest(unittest.TestCase):
         outputs = list(
             fn.handle_stale_transmission_event(
                 key="test-feed",
-                transmission_buffer=mock_state_buffer,
                 transmission_context=mock_state_context,
                 last_start_ms_state=mock_last_start_ms,
                 stale_timer_event=MagicMock(),
@@ -1864,7 +1849,7 @@ class DlqTaggingTest(unittest.TestCase):
         )
         mock_processor_inst.download_audio_and_detect.return_value = chunk_data
 
-        fn, mock_state_context, mock_state_buffer, mock_last_start_ms = (
+        fn, mock_state_context, _, mock_last_start_ms = (
             self._make_fn_and_states(OrderedStitchAudioFn)
         )
         fn.setup()
@@ -1880,7 +1865,6 @@ class DlqTaggingTest(unittest.TestCase):
             fn.process(
                 element=("test-feed", metadata),
                 timestamp=Timestamp(100),
-                transmission_buffer_state=mock_state_buffer,
                 transmission_context_state=mock_state_context,
                 last_start_ms_state=mock_last_start_ms,
                 gap_timer_event=MagicMock(),
@@ -1894,7 +1878,6 @@ class DlqTaggingTest(unittest.TestCase):
         outputs = list(
             fn.handle_stale_transmission_event(
                 key="test-feed",
-                transmission_buffer=mock_state_buffer,
                 transmission_context=mock_state_context,
                 last_start_ms_state=mock_last_start_ms,
                 stale_timer_event=MagicMock(),
@@ -1939,7 +1922,7 @@ class DlqTaggingTest(unittest.TestCase):
             chunk_data_2,
         ]
 
-        fn, mock_state_context, mock_state_buffer, mock_last_start_ms = (
+        fn, mock_state_context, _, mock_last_start_ms = (
             self._make_fn_and_states(OrderedStitchAudioFn)
         )
         fn.setup()
@@ -1956,7 +1939,6 @@ class DlqTaggingTest(unittest.TestCase):
             fn.process(
                 element=("test-feed", metadata_1),
                 timestamp=Timestamp(100),
-                transmission_buffer_state=mock_state_buffer,
                 transmission_context_state=mock_state_context,
                 last_start_ms_state=mock_last_start_ms,
                 gap_timer_event=MagicMock(),
@@ -1975,7 +1957,6 @@ class DlqTaggingTest(unittest.TestCase):
         list(
             fn.handle_stale_transmission_event(
                 key="test-feed",
-                transmission_buffer=mock_state_buffer,
                 transmission_context=mock_state_context,
                 last_start_ms_state=mock_last_start_ms,
                 stale_timer_event=MagicMock(),
@@ -1998,7 +1979,6 @@ class DlqTaggingTest(unittest.TestCase):
             fn.process(
                 element=("test-feed", metadata_2),
                 timestamp=Timestamp(200),
-                transmission_buffer_state=mock_state_buffer,
                 transmission_context_state=mock_state_context,
                 last_start_ms_state=mock_last_start_ms,
                 gap_timer_event=MagicMock(),
@@ -2047,7 +2027,7 @@ class DlqTaggingTest(unittest.TestCase):
         )
 
         # Create fn and states
-        fn, mock_state_context, mock_state_buffer, mock_last_start_ms = (
+        fn, mock_state_context, _, mock_last_start_ms = (
             self._make_fn_and_states(OrderedStitchAudioFn)
         )
         # Override config to ensure max_transmission_duration_ms=5000
@@ -2081,7 +2061,6 @@ class DlqTaggingTest(unittest.TestCase):
                 fn.process(
                     element=("test-feed", metadata_1),
                     timestamp=Timestamp(10),
-                    transmission_buffer_state=mock_state_buffer,
                     transmission_context_state=mock_state_context,
                     last_start_ms_state=mock_last_start_ms,
                     gap_timer_event=MagicMock(),
@@ -2135,7 +2114,6 @@ class DlqTaggingTest(unittest.TestCase):
                 fn.process(
                     element=("test-feed", metadata_2),
                     timestamp=Timestamp(10.1),
-                    transmission_buffer_state=mock_state_buffer,
                     transmission_context_state=mock_state_context,
                     last_start_ms_state=mock_last_start_ms,
                     gap_timer_event=MagicMock(),
@@ -2198,7 +2176,6 @@ class DlqTaggingTest(unittest.TestCase):
                 fn.process(
                     element=("test-feed", metadata_backfill),
                     timestamp=Timestamp(10),
-                    transmission_buffer_state=mock_state_buffer,
                     transmission_context_state=mock_state_context,
                     last_start_ms_state=mock_last_start_ms,
                     gap_timer_event=MagicMock(),
@@ -2276,7 +2253,6 @@ class DlqTaggingTest(unittest.TestCase):
             fn.process(
                 element=("test-feed", metadata),
                 timestamp=Timestamp(recent_ts_ms / 1000.0),
-                transmission_buffer_state=MagicMock(),
                 transmission_context_state=transmission_context_state,  # type: ignore
                 last_start_ms_state=MagicMock(),
                 gap_timer_event=watermark_timer,
@@ -2314,7 +2290,6 @@ class DlqTaggingTest(unittest.TestCase):
             fn.process(
                 element=("test-feed", metadata),
                 timestamp=Timestamp(old_ts_ms / 1000.0),
-                transmission_buffer_state=MagicMock(),
                 transmission_context_state=transmission_context_state,  # type: ignore
                 last_start_ms_state=MagicMock(),
                 gap_timer_event=watermark_timer,
@@ -2461,3 +2436,141 @@ class UploadRawSegmentFnTest(unittest.TestCase):
 
         self.assertEqual(len(results), 1)
         self.assertIsInstance(results[0], PubsubMessage)
+
+    @patch("backend.pipeline.segmentation.transforms.stateless.setup_tracing")
+    def test_upload_raw_audio_executes_stateless_stitching(
+        self, mock_setup_tracing: MagicMock
+    ) -> None:
+        # Verifies that _upload_raw_audio successfully downloads contributing chunks from GCS,
+        # slices them by speech segments, stitches them, encodes the result to FLAC, and uploads it.
+        # 1. Create mock GCS client, buckets, and blobs
+        mock_gcs_client = MagicMock(spec=storage.Client)
+        mock_bucket = MagicMock()
+        mock_blob_chunk_1 = MagicMock()
+        mock_blob_chunk_2 = MagicMock()
+        mock_blob_upload = MagicMock()
+
+        mock_gcs_client.bucket.return_value = mock_bucket
+
+        # We have 2 contributing chunks: chunk_1 (10s) and chunk_2 (10s).
+        # Sample rate is 16000 Hz.
+        # We write unique PCM sample values so we can verify the slicing and stitching.
+        sr = 16000
+        samples_1 = (np.arange(10 * sr) % 1000).astype(np.int16)
+        samples_2 = ((np.arange(10 * sr) % 1000) + 1000).astype(np.int16)
+
+        # Encode them to FLAC bytes in memory
+        flac_io_1 = io.BytesIO()
+        sf.write(flac_io_1, samples_1, sr, format="FLAC", subtype="PCM_16")
+        flac_bytes_1 = flac_io_1.getvalue()
+
+        flac_io_2 = io.BytesIO()
+        sf.write(flac_io_2, samples_2, sr, format="FLAC", subtype="PCM_16")
+        flac_bytes_2 = flac_io_2.getvalue()
+
+        # Mock downloading from GCS
+        def mock_download_to_file_1(file_obj, **kwargs):
+            file_obj.write(flac_bytes_1)
+
+        def mock_download_to_file_2(file_obj, **kwargs):
+            file_obj.write(flac_bytes_2)
+
+        mock_blob_chunk_1.download_to_file.side_effect = mock_download_to_file_1
+        mock_blob_chunk_2.download_to_file.side_effect = mock_download_to_file_2
+
+        # Map blobs by GCS URI
+        def mock_blob_mapping(path):
+            if "chunk_1.flac" in path:
+                return mock_blob_chunk_1
+            if "chunk_2.flac" in path:
+                return mock_blob_chunk_2
+            return mock_blob_upload
+
+        mock_bucket.blob.side_effect = mock_blob_mapping
+
+        # 2. Instantiate UploadRawSegmentFn
+        fn = UploadRawSegmentFn(
+            staging_audio_bucket="test-staging-bucket",
+            project_id="test-project",
+        )
+        fn.gcs_client = mock_gcs_client
+
+        # 3. Create a FlushRequest with 2 contributing chunks and 2 speech segments:
+        # - Speech Segment 1: from 2000ms to 6000ms (absolute, entirely in chunk 1, which starts at 100000ms)
+        # - Speech Segment 2: from 14000ms to 18000ms (absolute, entirely in chunk 2, which starts at 110000ms)
+        # Total stitched duration = 4000ms + 4000ms = 8000ms.
+        request = FlushRequest(
+            buffer=b"",
+            feed_id="test-feed",
+            session_id="test-session",
+            contributing_audio_uris=[
+                "gs://test-bucket/chunk_1.flac",
+                "gs://test-bucket/chunk_2.flac",
+            ],
+            contributing_chunks=[
+                BufferedChunk(
+                    gcs_uri="gs://test-bucket/chunk_1.flac",
+                    timestamp_ms=100000,
+                ),
+                BufferedChunk(
+                    gcs_uri="gs://test-bucket/chunk_2.flac",
+                    timestamp_ms=110000,
+                ),
+            ],
+            time_range=TimeRange(start_ms=100000, end_ms=120000),
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
+            sample_rate=sr,
+            missing_prior_context=False,
+            missing_post_context=False,
+            start_audio_offset_ms=2000,
+            end_audio_offset_ms=18000,
+            speech_segments=[
+                TimeRange(start_ms=102000, end_ms=106000),
+                TimeRange(start_ms=114000, end_ms=118000),
+            ],
+            segment_id="segment-uuid-123",
+            traceparent="test-traceparent",
+            baggage="test-baggage",
+            audio_classification=AudioClassification.AUDIO_CLASSIFICATION_SPEECH,
+        )
+
+        # We mock the upload target blob to capture the uploaded FLAC bytes
+        uploaded_bytes_captured = io.BytesIO()
+
+        def mock_upload_from_string(data, content_type=None):
+            uploaded_bytes_captured.write(data)
+
+        mock_blob_upload.upload_from_string.side_effect = (
+            mock_upload_from_string
+        )
+
+        # 4. Execute _upload_raw_audio
+        start_datetime = datetime.datetime(
+            2026, 6, 20, 12, 0, 0, tzinfo=datetime.UTC
+        )
+        uploaded_uri = fn._upload_raw_audio(request, start_datetime)
+
+        # 5. Verify the uploaded GCS URI
+        expected_path = "gs://test-staging-bucket/raw_segments/test-feed/2026/06/20/segment-uuid-123.flac"
+        self.assertEqual(uploaded_uri, expected_path)
+
+        # 6. Decode the uploaded FLAC bytes and verify the sliced, stitched samples!
+        uploaded_bytes_captured.seek(0)
+        stitched_samples, stitched_sr = sf.read(
+            uploaded_bytes_captured, dtype="int16"
+        )
+
+        self.assertEqual(stitched_sr, sr)
+        # Expected duration is 8 seconds (8 * 16000 = 128,000 samples)
+        self.assertEqual(len(stitched_samples), 8000 * (sr // 1000))
+
+        # Speech Segment 1: chunk_1 samples[2000ms:6000ms] -> samples_1[32000:96000]
+        # Speech Segment 2: chunk_2 samples[4000ms:8000ms] -> samples_2[64000:128000]
+        expected_stitched = np.concatenate(
+            [
+                samples_1[2000 * (sr // 1000) : 6000 * (sr // 1000)],
+                samples_2[4000 * (sr // 1000) : 8000 * (sr // 1000)],
+            ]
+        )
+
+        np.testing.assert_array_equal(stitched_samples, expected_stitched)

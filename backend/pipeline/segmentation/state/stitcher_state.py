@@ -299,6 +299,7 @@ class AudioStitchingStateMachine:
         ctx.transmission_start_time_ms = None
         ctx.buffer_start_time_ms = None
         ctx.contributing_audio_uris.clear()
+        ctx.contributing_chunks.clear()
         ctx.start_audio_offset_ms = None
         ctx.buffer_duration_ms = 0
         ctx.speech_segments.clear()
@@ -393,7 +394,7 @@ class AudioStitchingStateMachine:
                 ctx.transmission_start_time_ms = file_start_ms + append_end
                 ctx.buffer_start_time_ms = file_start_ms + append_end
                 ctx.start_audio_offset_ms = 0
-                ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
+                ctx.add_contributing_chunk(ctx.current_gcs_uri, file_start_ms)
                 actions.append(
                     AppendBufferAction(
                         audio_buffer=chunk_data.audio[
@@ -409,8 +410,7 @@ class AudioStitchingStateMachine:
             actions.append(ScheduleStaleTimerAction(deadline_ms=0))
             return actions
 
-        if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
-            ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
+        ctx.add_contributing_chunk(ctx.current_gcs_uri, file_start_ms)
 
         if ctx.last_segment_end_time_ms is not None:
             target_post_roll_end = (
@@ -478,8 +478,7 @@ class AudioStitchingStateMachine:
             ctx.start_audio_offset_ms = 0
             ctx.buffer_duration_ms = 0
 
-        if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
-            ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
+        ctx.add_contributing_chunk(ctx.current_gcs_uri, file_start_ms)
 
         # Append the whole chunk!
         actions.append(AppendBufferAction(audio_buffer=chunk_data.audio))
@@ -598,8 +597,7 @@ class AudioStitchingStateMachine:
         ctx.last_segment_end_time_ms = (
             chunk_data.start_ms + first_speech_start_rel_ms
         )
-        if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
-            ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
+        ctx.add_contributing_chunk(ctx.current_gcs_uri, chunk_data.start_ms)
 
         actions.append(
             self._flush_current_transmission(
@@ -657,8 +655,7 @@ class AudioStitchingStateMachine:
         ctx.buffer_start_time_ms = file_start_ms + silence_start_rel_ms
         ctx.start_audio_offset_ms = silence_start_rel_ms
         ctx.buffer_duration_ms = silence_duration_ms
-        if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
-            ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
+        ctx.add_contributing_chunk(ctx.current_gcs_uri, file_start_ms)
 
         actions.append(AppendBufferAction(audio_buffer=silence_samples))
         ctx.last_segment_end_time_ms = file_start_ms + speech_start_rel_ms
@@ -738,8 +735,7 @@ class AudioStitchingStateMachine:
             actions.append(AppendBufferAction(audio_buffer=speech_samples))
             ctx.buffer_duration_ms += global_end_ms - global_start_ms
 
-        if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
-            ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
+        ctx.add_contributing_chunk(ctx.current_gcs_uri, file_start_ms)
         ctx.last_segment_end_time_ms = file_start_ms + global_end_ms
         ctx.speech_segments.append(
             TimeRange(
@@ -786,8 +782,7 @@ class AudioStitchingStateMachine:
             )
             ctx.start_audio_offset_ms = current_file_cursor_ms
             ctx.buffer_duration_ms = 0
-            if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
-                ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
+            ctx.add_contributing_chunk(ctx.current_gcs_uri, chunk_data.start_ms)
 
         actions.append(AppendBufferAction(audio_buffer=silence_samples))
         ctx.buffer_duration_ms += silence_duration_ms
