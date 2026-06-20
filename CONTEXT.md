@@ -132,17 +132,18 @@ current `feeds` row is later hard-deleted.
 ### Feed Audit Event
 
 A durable domain event for a meaningful feed mutation, including action,
-`actor_id`, event time, per-feed sequence, and allowlisted before/after values.
-The feed audit event schema and storage writers define the v1 contract in this
-PR; delivery, timeline APIs, and broader operational lifecycle work remain
-separate follow-up concerns.
+`actor_id`, event time, feed-local `feed_revision`, and allowlisted
+before/after values. The feed audit event schema and storage writers define the
+v1 contract in this PR; delivery, timeline APIs, and broader operational
+lifecycle work remain separate follow-up concerns.
 
 ### Actor ID
 
 The required namespaced causal actor string on each Feed Audit Event. An
-`actor_id` identifies the human admin, service, system component, scheduled
-job, GCP service account fallback, or explicit unknown actor that caused the
-event.
+`actor_id` identifies the human admin or service/runtime component that caused
+the event. The current v1 accepted forms are `user:google:<sub>` for trusted
+admin-originated writes and `service:<name>` for service/runtime-originated
+writes.
 
 ### Leased Feed
 

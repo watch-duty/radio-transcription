@@ -140,3 +140,25 @@ def test_v1_no_noise_and_storage_ownership_tests_are_registered() -> None:
             "INSERT INTO feed_audit_events",
         ),
     )
+
+
+def test_v1_pr_boundary_tests_are_registered() -> None:
+    text = _read("backend/pipeline/storage/tests/test_feed_audit_contract.py")
+
+    _assert_tokens(
+        text,
+        (
+            "test_repository_glossary_defines_audit_terms",
+            "feed-local `feed_revision`",
+            "`user:google:<sub>`",
+            "`service:<name>`",
+            "test_audit_schema_defers_delivery_and_retention_work",
+            "feed_event_outbox",
+            "delivery_status",
+            "cloudevents",
+            "pg_cron",
+            "test_status_reason_detail_helper_is_not_broad_normalizer",
+            "_CREDENTIAL_RE",
+            "_BEARER_TOKEN_RE",
+        ),
+    )

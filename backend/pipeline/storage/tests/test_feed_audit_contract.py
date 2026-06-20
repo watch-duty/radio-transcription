@@ -53,6 +53,13 @@ def _feed_audit_events_table_sql(text: str) -> str:
     return match.group(1)
 
 
+def _markdown_section(text: str, heading: str) -> str:
+    pattern = r"^" + re.escape(heading) + r"\n(?P<body>.*?)(?=^### |\Z)"
+    match = re.search(pattern, text, flags=re.MULTILINE | re.DOTALL)
+    assert match is not None
+    return match.group("body")
+
+
 def test_repository_glossary_defines_audit_terms() -> None:
     text = _read("CONTEXT.md")
 
@@ -64,6 +71,29 @@ def test_repository_glossary_defines_audit_terms() -> None:
         "### Actor ID",
     ):
         assert heading in text
+
+    feed_event_section = _markdown_section(text, "### Feed Audit Event")
+    for token in (
+        "feed-local `feed_revision`",
+        "delivery, timeline APIs, and broader operational",
+        "separate follow-up concerns",
+    ):
+        assert token in feed_event_section
+
+    actor_section = _markdown_section(text, "### Actor ID")
+    for token in (
+        "`user:google:<sub>`",
+        "`service:<name>`",
+    ):
+        assert token in actor_section
+
+    for token in (
+        "unknown actor",
+        "GCP service account fallback",
+        "scheduled job",
+        "system:",
+    ):
+        assert token not in actor_section
 
 
 def test_migration_defines_delete_safe_audit_schema() -> None:
@@ -127,6 +157,66 @@ def test_migration_defines_delete_safe_audit_schema() -> None:
         r"DROP\s+COLUMN\s+quarantine_reason",
     ):
         assert re.search(pattern, sql, flags=re.IGNORECASE) is None
+
+
+def test_audit_schema_defers_delivery_and_retention_work() -> None:
+    text = _read(
+        "terraform/modules/alloydb/sql/ingestion/029_feed_audit_events.sql"
+    )
+    normalized = _normalized_sql(text)
+    table_normalized = " ".join(_feed_audit_events_table_sql(text).split())
+
+    for token in (
+        "id UUID",
+        "feed_id UUID NOT NULL",
+        "action TEXT NOT NULL",
+        "actor_id TEXT NOT NULL",
+        "occurred_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()",
+        "feed_revision BIGINT NOT NULL",
+        "before_values JSONB NOT NULL DEFAULT '{}'::jsonb",
+        "after_values JSONB NOT NULL DEFAULT '{}'::jsonb",
+        "metadata JSONB NOT NULL DEFAULT '{}'::jsonb",
+        "created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()",
+    ):
+        assert token in table_normalized
+
+    for token in (
+        "feed_event_outbox",
+        "feed_event_delivery",
+        "delivery_status",
+        "delivery_attempt",
+        "next_attempt_at",
+        "last_attempt_at",
+        "delivered_at",
+        "last_delivery_error",
+        "last_response_code",
+        "dead_letter",
+        "dispatcher",
+        "webhook",
+        "cloudevents",
+        "specversion",
+        "dataschema",
+        "datacontenttype",
+        "pg_cron",
+        "DELETE FROM feed_audit_events",
+        "ON DELETE CASCADE",
+    ):
+        assert token.lower() not in normalized.lower()
+
+
+def test_status_reason_detail_helper_is_not_broad_normalizer() -> None:
+    text = _read("backend/pipeline/storage/feed_lifecycle.py")
+
+    assert "def status_reason_detail_storage_value" in text
+    assert "quarantine_reason.cap_quarantine_reason_for_storage" in text
+    for token in (
+        "_CREDENTIAL_RE",
+        "_BEARER_TOKEN_RE",
+        "Authorization",
+        "password",
+        "re.sub",
+    ):
+        assert token not in text
 
 
 def test_migration_defines_actor_and_action_constraints() -> None:
