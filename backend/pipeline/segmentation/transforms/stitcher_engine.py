@@ -150,7 +150,6 @@ class StitcherEngine:
             feed_id: Unique identifier of the active feed.
             curr_context: The current transmission sequence context.
             transmission_context_state: Runtime Beam state mapping for contexts.
-            transmission_buffer_state: Runtime Beam state mapping for audio buffer.
             last_start_ms_state: Runtime Beam state mapping for last start time.
             timer_manager: Contextual timer scheduler interface.
             previous_expected_ts: The expected next sequence timestamp baseline.
@@ -418,7 +417,6 @@ class StitcherEngine:
             feed_id: Unique identifier of the active feed.
             curr_context: The current transmission sequence context.
             transmission_context_state: Runtime Beam state mapping for contexts.
-            transmission_buffer_state: Runtime Beam state mapping for audio buffer.
             last_start_ms_state: Runtime Beam state mapping for last start time.
             timer_manager: Contextual timer scheduler interface.
             state_machine: Audio stitching FSM logic.
