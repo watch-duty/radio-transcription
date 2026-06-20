@@ -272,6 +272,10 @@ class TestFeedsAPI(unittest.TestCase):
             {"X-WD-Actor-Id": "user:google:"},
             {"X-WD-Actor-Id": "user:google:admin sub"},
             {"X-WD-Actor-Id": "service:" + "feeds-service"},
+            {"X-WD-Actor-Id": "unknown:unknown"},
+            {"X-WD-Actor-Id": "user-email:admin@example.com"},
+            {"X-WD-Actor-Id": "job:maintenance-backfill"},
+            {"X-WD-Actor-Id": "gcp-sa:feeds@example.iam.gserviceaccount.com"},
         ]
 
         for headers in malformed_headers:
