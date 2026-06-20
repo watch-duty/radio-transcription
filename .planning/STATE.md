@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 04-01-PLAN.md
-last_updated: "2026-06-19T23:58:28.040Z"
-last_activity: 2026-06-19
+stopped_at: Completed 04-02-PLAN.md
+last_updated: "2026-06-20T00:14:58.024Z"
+last_activity: 2026-06-20
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 14
-  completed_plans: 11
-  percent: 79
+  completed_plans: 12
+  percent: 86
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-06-19)
 ## Current Position
 
 Phase: 04 (runtime-event-integration) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
-Last activity: 2026-06-19
+Last activity: 2026-06-20
 
-Progress: [████████░░] 79%
+Progress: [█████████░] 86%
 
 ## Performance Metrics
 
@@ -62,6 +62,7 @@ Progress: [████████░░] 79%
 | Phase 02-transactional-storage-writes P03 | 7 min | 3 tasks | 5 files |
 | Phase 02-transactional-storage-writes P04 | 8 min | 3 tasks | 2 files |
 | Phase 04-runtime-event-integration P01 | 15 min | 3 tasks | 6 files |
+| Phase 04-runtime-event-integration P02 | 11min | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -98,6 +99,9 @@ Recent decisions affecting current work:
 - [Phase 04-runtime-event-integration]: Runtime audit event actions are selected in FeedStore from caller-supplied prior logical state plus storage-maintained after snapshots. — Recorded in 04-01-SUMMARY.md after implementing async runtime storage audit gates.
 - [Phase 04-runtime-event-integration]: status_reason_detail and the compatibility quarantine_reason mirror use the same bounded redaction helper before persistence. — Recorded in 04-01-SUMMARY.md after adding diagnostic detail storage-boundary sanitization.
 - [Phase 04-runtime-event-integration]: Runtime failure methods require explicit actor_id and prior-state inputs; recovery-capable success methods accept optional actor/prior-state inputs. — Recorded in 04-01-SUMMARY.md after updating FeedStore runtime write signatures.
+- [Phase 04-runtime-event-integration]: Async collector runtime uses the stable semantic actor service:collector-runtime for all audit-capable runtime storage calls. — Recorded in 04-02-SUMMARY.md after wiring async runtime actor propagation.
+- [Phase 04-runtime-event-integration]: Runtime passes leased previous_status, failure_count, status_reason, and diagnostic reason to storage, while storage remains the only audit row writer. — Recorded in 04-02-SUMMARY.md after wiring runtime failure and success storage calls.
+- [Phase 04-runtime-event-integration]: Docker/Testcontainers collector integration tests were updated statically but not executed locally under AGENTS.md safety rules. — Recorded in 04-02-SUMMARY.md after applying explicit store signatures without starting local Docker lanes.
 
 ### Pending Todos
 
@@ -117,6 +121,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-19T23:58:27.781Z
-Stopped at: Completed 04-01-PLAN.md
+Last session: 2026-06-20T00:14:58.018Z
+Stopped at: Completed 04-02-PLAN.md
 Resume file: None

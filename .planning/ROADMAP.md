@@ -103,7 +103,7 @@ Plans:
 - [x] 04-01-PLAN.md - Shared async storage runtime audit primitives.
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 04-02-PLAN.md - Async collector runtime actor and prior-state wiring.
+- [x] 04-02-PLAN.md - Async collector runtime actor and prior-state wiring.
 - [ ] 04-03-PLAN.md - Echo and sync-store audit parity.
 
 **Wave 3** *(blocked on Wave 2 completion)*
