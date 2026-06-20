@@ -487,9 +487,8 @@ class SyncFeedStore:
         status_reason_value = feed_lifecycle.status_reason_storage_value(
             status_reason
         )
-        stored_reason = feed_lifecycle.quarantine_reason_storage_value(reason)
-        status_reason_detail = (
-            feed_lifecycle.status_reason_detail_storage_value(reason)
+        status_reason_detail = feed_lifecycle.status_reason_detail_storage_value(
+            reason
         )
         params = (
             self._failure_threshold,
@@ -497,7 +496,7 @@ class SyncFeedStore:
             self._max_backoff_sec,
             self._base_backoff_sec,
             self._failure_threshold,
-            stored_reason,
+            status_reason_detail,
             status_reason_value,
             status_reason_detail,
             status_reason_value,

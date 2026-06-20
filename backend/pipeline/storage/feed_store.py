@@ -929,9 +929,8 @@ class FeedStore:
         status_reason_value = feed_lifecycle.status_reason_storage_value(
             status_reason
         )
-        stored_reason = feed_lifecycle.quarantine_reason_storage_value(reason)
-        status_reason_detail = (
-            feed_lifecycle.status_reason_detail_storage_value(reason)
+        status_reason_detail = feed_lifecycle.status_reason_detail_storage_value(
+            reason
         )
         async with self._pool.acquire() as conn:
             async with conn.transaction():
@@ -949,7 +948,7 @@ class FeedStore:
                     fencing_token,
                     backoff_max_sec,
                     backoff_base_sec,
-                    stored_reason,
+                    status_reason_detail,
                     status_reason_value,
                     status_reason_detail,
                 )

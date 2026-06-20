@@ -38,11 +38,6 @@ def status_reason_storage_value(
     return status_reason.value
 
 
-def quarantine_reason_storage_value(reason: str | None) -> str | None:
-    """Return the database value for a nullable quarantine reason."""
-    return status_reason_detail_storage_value(reason)
-
-
 def status_reason_detail_storage_value(reason: str | None) -> str | None:
     """Return the bounded diagnostic detail for storage."""
     if reason is None:
