@@ -4,6 +4,7 @@ import json
 import logging
 import os
 from contextlib import asynccontextmanager
+from functools import cache
 from typing import TYPE_CHECKING, Annotated, Any
 
 if TYPE_CHECKING:
@@ -43,6 +44,17 @@ _TRUSTED_ACTOR_FORWARDING_SERVICE_ACCOUNTS_ENV = (
 )
 
 
+@cache
+def _parse_trusted_actor_forwarding_service_accounts(
+    raw_value: str,
+) -> frozenset[str]:
+    return frozenset(
+        service_account.strip().lower()
+        for service_account in raw_value.split(",")
+        if service_account.strip()
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage the lifecycle of the AlloyDB connection pool."""
@@ -68,11 +80,7 @@ def _trusted_actor_forwarding_service_accounts() -> frozenset[str]:
         _TRUSTED_ACTOR_FORWARDING_SERVICE_ACCOUNTS_ENV,
         "",
     )
-    return frozenset(
-        service_account.strip().lower()
-        for service_account in raw_value.split(",")
-        if service_account.strip()
-    )
+    return _parse_trusted_actor_forwarding_service_accounts(raw_value)
 
 
 def _is_well_formed_admin_actor_id(actor_id: str) -> bool:
