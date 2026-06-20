@@ -96,8 +96,8 @@ async def _get_feed_diagnostics(
     row = await pool.fetchrow(
         "SELECT status, failure_count, worker_id, fencing_token,"
         " retry_after, quarantine_reason, status_reason,"
-        " status_reason_updated_at, last_processed_filename,"
-        " last_bookmark_time"
+        " status_reason_updated_at, status_reason_detail,"
+        " last_processed_filename, last_bookmark_time"
         " FROM feeds WHERE id = $1::uuid",
         str(feed_id),
     )
@@ -1117,11 +1117,11 @@ async def test_failure_preserves_deactivated_feed(
     assert row["worker_id"] == worker
 
 
-async def test_quarantine_preserves_raw_reason_separately_from_canonical_reason(
+async def test_quarantine_preserves_diagnostic_detail_separately_from_canonical_reason(
     db_pool: asyncpg.Pool,
     store: FeedStore,
 ) -> None:
-    """Quarantine keeps raw forensic detail separate from canonical reason."""
+    """Quarantine keeps diagnostic detail separate from canonical reason."""
     worker = uuid.uuid4()
     feed_id = await _insert_feed(
         db_pool,
@@ -1145,8 +1145,8 @@ async def test_quarantine_preserves_raw_reason_separately_from_canonical_reason(
     row = await _get_feed_diagnostics(db_pool, feed_id)
     assert row["status"] == "quarantined"
     assert row["failure_count"] == 5
-    quarantine_reason = row["quarantine_reason"]
-    assert quarantine_reason == "ffmpeg_exit_1"
+    assert row["status_reason_detail"] == "ffmpeg_exit_1"
+    assert row["quarantine_reason"] is None
     assert row["status_reason"] == "system_collector_error"
     assert row["status_reason_updated_at"] is not None
 

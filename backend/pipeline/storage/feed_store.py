@@ -772,9 +772,9 @@ class FeedStore:
 
         Atomically increments ``failure_count``, computes ``retry_after``
         with exponential backoff + jitter, and transitions to
-        ``'quarantined'`` if *failure_threshold* is reached.  On quarantine
-        transition, ``quarantine_reason`` is populated from raw *reason*.
-        The canonical *status_reason* is stored in ``feeds.status_reason``.
+        ``'quarantined'`` if *failure_threshold* is reached. The canonical
+        *status_reason* is stored in ``feeds.status_reason``, and diagnostic
+        *reason* text is stored in ``feeds.status_reason_detail``.
 
         Backoff formula: ``min(backoff_base_sec * 2^failure_count,
         backoff_max_sec) + random(0-10s) jitter``.
