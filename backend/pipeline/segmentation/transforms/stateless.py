@@ -284,8 +284,17 @@ class UploadRawSegmentFn(beam.DoFn):
             self.gcs_chunks_downloaded.inc()
 
         # 2. Extract and concatenate the speech segments
+        # Defensively sort both speech segments and contributing chunks chronologically
+        # to guarantee 100% correct stitching order, eliminating any reliance on implicit upstream sorting.
+        sorted_chunks = sorted(
+            decoded_chunks.values(), key=lambda x: x[2]
+        )  # x[2] is chunk_start_ms
+        sorted_segments = sorted(
+            request.speech_segments, key=lambda r: r.start_ms
+        )
+
         stitched_segments = []
-        for segment in request.speech_segments:
+        for segment in sorted_segments:
             segment_start = segment.start_ms
             segment_end = segment.end_ms
 
@@ -293,7 +302,7 @@ class UploadRawSegmentFn(beam.DoFn):
                 samples,
                 sr,
                 chunk_start_ms,
-            ) in decoded_chunks.values():
+            ) in sorted_chunks:
                 chunk_duration_ms = int(len(samples) / sr * 1000)
                 chunk_end_ms = chunk_start_ms + chunk_duration_ms
 
