@@ -215,7 +215,6 @@ class AudioStitchingStateMachine:
             feed_id=ctx.feed_id,
             current_gcs_uri=ctx.current_gcs_uri,
             session_id=ctx.session_id,
-            contributing_chunks=[],
             file_start_ms=chunk_data.start_ms,
             missing_prior_context=True,
             last_segment_end_time_ms=None,
