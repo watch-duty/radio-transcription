@@ -295,21 +295,6 @@ class FeedStore:
         constraint_name = getattr(error, "constraint_name", None)
         return constraint_name in expected_constraints
 
-    @staticmethod
-    def _parse_status_reason(
-        raw: str | None,
-        *,
-        feed_id: object,
-    ) -> FeedStatusReason | None:
-        """Parse nullable status-reason text from database rows."""
-        if raw is None:
-            return None
-        try:
-            return FeedStatusReason(raw)
-        except ValueError as e:
-            msg = f"Unknown status reason {raw!r} for feed {feed_id}"
-            raise ValueError(msg) from e
-
     def _row_to_leased_feed(self, row: asyncpg.Record) -> LeasedFeed:
         """Convert a claim/lease-path row to a LeasedFeed dict.
 
@@ -324,6 +309,7 @@ class FeedStore:
         except ValueError as e:
             msg = f"Unknown source type {row['source_type']!r} for feed {row['id']}"
             raise ValueError(msg) from e
+        status_reason_raw = row["status_reason"]
         return LeasedFeed(
             id=row["id"],
             name=row["name"],
@@ -332,9 +318,10 @@ class FeedStore:
             last_bookmark_time=row["last_bookmark_time"],
             fencing_token=row["fencing_token"],
             failure_count=row["failure_count"],
-            status_reason=self._parse_status_reason(
-                row["status_reason"],
-                feed_id=row["id"],
+            status_reason=(
+                FeedStatusReason(status_reason_raw)
+                if status_reason_raw is not None
+                else None
             ),
             source_feed_id=row["source_feed_id"],
         )

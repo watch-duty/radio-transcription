@@ -90,9 +90,10 @@ class SyncFeedStore:
             "name": row["name"],
             "status": status,
             "failure_count": row["failure_count"],
-            "status_reason": self._parse_status_reason(
-                row["status_reason"],
-                feed_id=row["id"],
+            "status_reason": (
+                feed_store.FeedStatusReason(row["status_reason"])
+                if row["status_reason"] is not None
+                else None
             ),
             "created_at": row["created_at"],
         }
@@ -100,21 +101,6 @@ class SyncFeedStore:
     # ------------------------------------------------------------------
     # Generic lifecycle operations
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _parse_status_reason(
-        raw: str | None,
-        *,
-        feed_id: object,
-    ) -> feed_store.FeedStatusReason | None:
-        """Parse nullable status-reason text from database rows."""
-        if raw is None:
-            return None
-        try:
-            return feed_store.FeedStatusReason(raw)
-        except ValueError as exc:
-            msg = f"Unknown status reason {raw!r} for feed {feed_id}"
-            raise ValueError(msg) from exc
 
     def record_heartbeat(
         self,
