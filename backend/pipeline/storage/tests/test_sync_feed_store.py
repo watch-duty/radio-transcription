@@ -524,6 +524,40 @@ class TestSyncRuntimeAuditEvents:
 
         assert _audit_insert_calls(conn) == []
 
+    def test_detail_only_heartbeat_clear_from_normal_emits_no_event(
+        self,
+    ) -> None:
+        feed_id = uuid.uuid4()
+        conn = _make_transactional_conn(
+            _make_cursor(
+                row=_audit_snapshot_row(
+                    id=feed_id,
+                    status="active",
+                    failure_count=0,
+                    status_reason=None,
+                    status_reason_detail="stale detail",
+                )
+            ),
+            _make_cursor(rowcount=1),
+            _make_cursor(
+                row=_audit_snapshot_row(
+                    id=feed_id,
+                    status="active",
+                    failure_count=0,
+                    status_reason=None,
+                    status_reason_detail=None,
+                )
+            ),
+        )
+        store = _make_store(conn)
+
+        store.record_heartbeat(
+            feed_id,
+            **_sync_prior_kwargs(previous_status=FeedStatus.ACTIVE),
+        )
+
+        assert _audit_insert_calls(conn) == []
+
     def test_no_row_mutation_emits_no_event(self) -> None:
         feed_id = uuid.uuid4()
         conn = _make_transactional_conn(

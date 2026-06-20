@@ -1649,12 +1649,84 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(after_values["status"], "active")
         self.assertIsNone(after_values["status_reason"])
 
+    async def test_successful_progress_from_quarantined_emits_recovered(
+        self,
+    ) -> None:
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [
+            _audit_snapshot_row(
+                status="active",
+                failure_count=5,
+                status_reason="source_unreachable",
+                status_reason_detail="quarantined detail",
+            ),
+            _audit_snapshot_row(status="active", failure_count=0),
+        ]
+        conn.execute.side_effect = ["UPDATE 1", "INSERT 0 1"]
+        conn.fetchval.return_value = 11
+        store = FeedStore(pool)
+
+        result = await store.update_feed_progress(
+            _FEED_ID,
+            _WORKER_ID,
+            "gs://bucket/path/file.ogg",
+            1,
+            None,
+            **_runtime_prior_kwargs(
+                previous_status=FeedStatus.QUARANTINED,
+                previous_failure_count=5,
+                previous_status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+            ),
+        )
+
+        self.assertTrue(result)
+        audit_args = _audit_insert_calls(conn)[0]
+        self.assertEqual(audit_args[4], "feed.recovered")
+        metadata = json.loads(audit_args[12])
+        self.assertEqual(metadata["previous_status"], "quarantined")
+
     async def test_clean_progress_emits_no_event(self) -> None:
         pool = make_mock_pool(transaction=True)
         conn = pool.acquired_connection
         conn.fetchrow.side_effect = [
             _audit_snapshot_row(status="active"),
             _audit_snapshot_row(status="active", failure_count=0),
+        ]
+        conn.execute.return_value = "UPDATE 1"
+        store = FeedStore(pool)
+
+        result = await store.update_feed_progress(
+            _FEED_ID,
+            _WORKER_ID,
+            "gs://bucket/path/file.ogg",
+            1,
+            None,
+            **_runtime_prior_kwargs(previous_status=FeedStatus.ACTIVE),
+        )
+
+        self.assertTrue(result)
+        conn.fetchval.assert_not_awaited()
+        self.assertEqual(_audit_insert_calls(conn), [])
+
+    async def test_detail_only_progress_clear_from_normal_emits_no_event(
+        self,
+    ) -> None:
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.side_effect = [
+            _audit_snapshot_row(
+                status="active",
+                failure_count=0,
+                status_reason=None,
+                status_reason_detail="stale detail",
+            ),
+            _audit_snapshot_row(
+                status="active",
+                failure_count=0,
+                status_reason=None,
+                status_reason_detail=None,
+            ),
         ]
         conn.execute.return_value = "UPDATE 1"
         store = FeedStore(pool)

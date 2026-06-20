@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pathlib
 import unittest
 
 from backend.pipeline.storage import feed_queries, sync_feed_queries
@@ -592,3 +593,21 @@ class TestAsyncSyncFailureSqlContracts(unittest.TestCase):
             self.assertIn("quarantined", stripped)
             self.assertIn("deactivated", stripped)
             self.assertNotIn("fencing_token", stripped)
+
+
+class TestRuntimeAuditOwnership(unittest.TestCase):
+    """Static guards for storage-owned runtime audit insertion."""
+
+    def test_runtime_and_echo_sources_do_not_reference_audit_table(
+        self,
+    ) -> None:
+        paths = (
+            pathlib.Path("backend/pipeline/ingestion/collector_runtime.py"),
+            pathlib.Path("backend/pipeline/ingestion/collectors/echo/main.py"),
+        )
+
+        for path in paths:
+            with self.subTest(path=str(path)):
+                text = path.read_text()
+                self.assertNotIn("feed_audit_events", text)
+                self.assertNotIn("INSERT INTO feed_audit_events", text)
