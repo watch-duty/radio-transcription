@@ -64,13 +64,24 @@ from durable backend data instead of relying on short-lived logs.
 - ✓ Runtime and Echo paths persist meaningful failure, quarantine, and recovery
   audit events with bounded diagnostic detail while suppressing clean
   progress, heartbeat, and lease-churn noise — validated in Phase 4
+- ✓ Retention is implemented through an extension-free
+  `public.prune_feed_audit_events_retention()` procedure plus a separate
+  AlloyDB pg_cron scheduler migration, with static contract coverage and
+  documentation for the 18-month bounded policy — validated in Phase 5
+- ✓ Final low-resource verification coverage guards the v1 audit behavior
+  contract across storage, runtime, Echo, service/API, BFF, diagnostic-detail,
+  and no-noise paths — validated in Phase 5
+- ✓ DB-backed retention semantics tests exist for expiry, retained-event
+  survival, sequence gaps, live/deleted feed sequence preservation, and orphan
+  sequence pruning — source-validated in Phase 5; prepared-machine execution
+  remains tracked in UAT
 
 ### Active
 
-- [ ] Retain audit history for 18 months and enforce retention in v1.
-- [ ] Harden final verification coverage for retention, delete survival,
-  rollback/concurrency, diagnostic-detail bounds, service/API compatibility,
-  failure/quarantine/recovery, and no-lease-churn behavior.
+- [ ] Run the prepared-machine Testcontainers retention, rollback,
+  concurrency, and delete-survival lane recorded in Phase 5 UAT.
+- [ ] Run the prepared AlloyDB pg_cron scheduler verification lane recorded in
+  Phase 5 UAT.
 
 ### Out of Scope
 
@@ -151,6 +162,9 @@ events without duplicating the audit ledger.
 | Emit one `feed.quarantined` event when threshold crossing occurs | Avoids duplicate `failure_reported` plus `quarantined` events for the same outcome | Validated in Phase 4 |
 | Treat persisted non-quarantine failures as audit-worthy when they change the persisted `(status, status_reason)` combination | Operators need meaningful failure context, but repeated same-cause retries should not create noisy duplicate events | Validated in Phase 4 |
 | Do not audit routine lease churn in v1 | Lease handoffs are high-noise scheduler mechanics, not admin-facing history | Validated in Phase 4 |
+| Enforce audit retention with a DB-owned bounded procedure and separate AlloyDB pg_cron scheduler migration | Keeps retention operationally owned by the database while preserving local static/schema helper compatibility | Validated in Phase 5; prepared AlloyDB execution pending UAT |
+| Keep sequence labels immutable through retention and prune sequence rows only after both current feed and retained audit history are gone | Preserves timeline ordering semantics and delete-survival audit history without synthetic renumbering | Source-validated in Phase 5; prepared Testcontainers execution pending UAT |
+| Use a low-resource static verification gate for v1 audit behavior registration | Protects broad behavior coverage without requiring Docker or external services for every local run | Validated in Phase 5 |
 | Do not create synthetic baseline events for existing feeds | Avoids misleading history that did not actually happen | — Pending |
 | Defer WD webhook delivery and admin timeline reads | Establish durable data first; downstream propagation and UI can build on it later | — Pending |
 
@@ -172,4 +186,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-20 after Phase 4 completion*
+*Last updated: 2026-06-20 after Phase 5 completion*
