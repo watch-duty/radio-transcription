@@ -7,59 +7,10 @@ fencing.
 """
 # ruff: noqa: S608
 
-_AUDIT_SNAPSHOT_FIELDS = (
-    ("id", "id"),
-    ("name", "name"),
-    ("source_type", "source_type"),
-    ("status", "status"),
-    ("failure_count", "failure_count"),
-    ("retry_after", "retry_after"),
-    ("status_reason", "status_reason"),
-    ("status_reason_updated_at", "status_reason_updated_at"),
-    ("status_reason_detail", "status_reason_detail"),
-    ("quarantine_reason", "quarantine_reason"),
-    ("last_bookmark_time", "last_bookmark_time"),
-    ("created_at", "created_at"),
-    ("feed_properties.source_feed_id", "source_feed_id"),
-    ("feed_properties.tags", "tags"),
-)
+from backend.pipeline.storage import feed_audit_sql
 
-
-def _audit_snapshot_sql(alias: str) -> str:
-    """Return a JSONB object expression for the maintained audit allowlist."""
-    parts: list[str] = []
-    for key, column in _AUDIT_SNAPSHOT_FIELDS:
-        value = f"{alias}.{column}"
-        if column in {"source_type", "status"}:
-            value = f"{value}::text"
-        if column == "tags":
-            value = f"COALESCE({value}, '[]'::jsonb)"
-        parts.append(f"        {key!r}, {value}")
-    return "jsonb_build_object(\n" + ",\n".join(parts) + "\n    )"
-
-
-def _audit_source_projection(alias: str = "f") -> str:
-    """Return the feed fields needed to build an audit snapshot."""
-    return (
-        f"    {alias}.id,\n"
-        f"    {alias}.name,\n"
-        f"    {alias}.source_type,\n"
-        f"    {alias}.status,\n"
-        f"    {alias}.failure_count,\n"
-        f"    {alias}.retry_after,\n"
-        f"    {alias}.status_reason,\n"
-        f"    {alias}.status_reason_updated_at,\n"
-        f"    {alias}.status_reason_detail,\n"
-        f"    {alias}.quarantine_reason,\n"
-        f"    {alias}.last_bookmark_time,\n"
-        f"    {alias}.created_at,\n"
-        "    fp.source_feed_id,\n"
-        "    fp.tags"
-    )
-
-
-_AUDIT_BEFORE_SNAPSHOT_SQL = _audit_snapshot_sql("before_row")
-_AUDIT_AFTER_SNAPSHOT_SQL = _audit_snapshot_sql("after_row")
+_AUDIT_BEFORE_SNAPSHOT_SQL = feed_audit_sql.audit_snapshot_sql("before_row")
+_AUDIT_AFTER_SNAPSHOT_SQL = feed_audit_sql.audit_snapshot_sql("after_row")
 
 RESOLVE_ECHO_FEED_SQL = """\
 SELECT f.id, f.name, f.status, f.failure_count, f.status_reason, f.created_at
@@ -73,7 +24,7 @@ AND f.source_type = 'echo'
 HEARTBEAT_SQL = f"""\
 WITH before_row AS (
     SELECT
-{_audit_source_projection("f")},
+{feed_audit_sql.audit_source_projection("f")},
         f.audit_revision
     FROM feeds f
     JOIN feed_properties fp ON fp.feed_id = f.id
@@ -111,44 +62,23 @@ after_row AS (
     FROM updated u
     JOIN feed_properties fp ON fp.feed_id = u.id
 ),
-audit_action AS (
-    SELECT CASE
-        WHEN (
-            CASE
-                WHEN before_row.status = 'active'::feed_status
-                 AND (before_row.failure_count > 0 OR before_row.status_reason IS NOT NULL)
-                THEN 'failing'::feed_status
-                ELSE before_row.status
-            END
-        ) IN ('failing'::feed_status, 'quarantined'::feed_status)
-        AND after_row.status NOT IN ('failing', 'quarantined')
-        AND after_row.status_reason IS NULL
-        AND after_row.failure_count = 0
-        THEN 'feed.recovered'
-        ELSE NULL
-    END AS action
-    FROM before_row
-    JOIN after_row ON after_row.id = before_row.id
-),
-write_audit AS (
-    INSERT INTO feed_audit_events (
-        feed_id, action, actor_id, feed_revision,
-        before_values, after_values
+{feed_audit_sql.recovery_audit_action_cte(before_alias="before_row")},
+{
+    feed_audit_sql.insert_feed_audit_event_cte(
+        feed_id_sql="after_row.id",
+        action_sql="audit_action.action",
+        actor_id_sql="%s::text",
+        feed_revision_sql="after_row.feed_revision",
+        before_values_sql=_AUDIT_BEFORE_SNAPSHOT_SQL,
+        after_values_sql=_AUDIT_AFTER_SNAPSHOT_SQL,
+        from_sql=(
+            "FROM before_row\n"
+            "    JOIN after_row ON after_row.id = before_row.id\n"
+            "    CROSS JOIN audit_action"
+        ),
+        where_sql="%s::text IS NOT NULL\n      AND audit_action.action IS NOT NULL",
     )
-    SELECT
-        after_row.id,
-        audit_action.action,
-        %s::text,
-        after_row.feed_revision,
-{_AUDIT_BEFORE_SNAPSHOT_SQL},
-{_AUDIT_AFTER_SNAPSHOT_SQL}
-    FROM before_row
-    JOIN after_row ON after_row.id = before_row.id
-    CROSS JOIN audit_action
-    WHERE %s::text IS NOT NULL
-      AND audit_action.action IS NOT NULL
-    RETURNING id
-)
+}
 SELECT after_row.*
 FROM after_row
 """
@@ -158,7 +88,7 @@ FROM after_row
 RECORD_FAILURE_SQL = f"""\
 WITH before_row AS (
     SELECT
-{_audit_source_projection("f")},
+{feed_audit_sql.audit_source_projection("f")},
         f.audit_revision
     FROM feeds f
     JOIN feed_properties fp ON fp.feed_id = f.id
@@ -201,56 +131,23 @@ after_row AS (
     FROM updated u
     JOIN feed_properties fp ON fp.feed_id = u.id
 ),
-audit_action AS (
-    SELECT CASE
-        WHEN after_row.status = 'quarantined'
-         AND (
-            CASE
-                WHEN before_row.status = 'active'::feed_status
-                 AND (before_row.failure_count > 0 OR before_row.status_reason IS NOT NULL)
-                THEN 'failing'::feed_status
-                ELSE before_row.status
-            END
-         ) <> 'quarantined'::feed_status
-         AND after_row.failure_count > before_row.failure_count
-        THEN 'feed.quarantined'
-        WHEN after_row.status = 'failing'
-         AND (
-            (
-                CASE
-                    WHEN before_row.status = 'active'::feed_status
-                     AND (before_row.failure_count > 0 OR before_row.status_reason IS NOT NULL)
-                    THEN 'failing'::feed_status
-                    ELSE before_row.status
-                END
-            ) <> 'failing'::feed_status
-            OR before_row.status_reason IS DISTINCT FROM after_row.status_reason
-         )
-        THEN 'feed.failure_reported'
-        ELSE NULL
-    END AS action
-    FROM before_row
-    JOIN after_row ON after_row.id = before_row.id
-),
-write_audit AS (
-    INSERT INTO feed_audit_events (
-        feed_id, action, actor_id, feed_revision,
-        before_values, after_values
+{feed_audit_sql.failure_audit_action_cte()},
+{
+    feed_audit_sql.insert_feed_audit_event_cte(
+        feed_id_sql="after_row.id",
+        action_sql="audit_action.action",
+        actor_id_sql="%s::text",
+        feed_revision_sql="after_row.feed_revision",
+        before_values_sql=_AUDIT_BEFORE_SNAPSHOT_SQL,
+        after_values_sql=_AUDIT_AFTER_SNAPSHOT_SQL,
+        from_sql=(
+            "FROM before_row\n"
+            "    JOIN after_row ON after_row.id = before_row.id\n"
+            "    CROSS JOIN audit_action"
+        ),
+        where_sql="%s::text IS NOT NULL\n      AND audit_action.action IS NOT NULL",
     )
-    SELECT
-        after_row.id,
-        audit_action.action,
-        %s::text,
-        after_row.feed_revision,
-{_AUDIT_BEFORE_SNAPSHOT_SQL},
-{_AUDIT_AFTER_SNAPSHOT_SQL}
-    FROM before_row
-    JOIN after_row ON after_row.id = before_row.id
-    CROSS JOIN audit_action
-    WHERE %s::text IS NOT NULL
-      AND audit_action.action IS NOT NULL
-    RETURNING id
-)
+}
 SELECT after_row.*
 FROM after_row
 """
@@ -258,7 +155,7 @@ FROM after_row
 RECORD_NON_BUDGETED_FAILURE_SQL = f"""\
 WITH before_row AS (
     SELECT
-{_audit_source_projection("f")},
+{feed_audit_sql.audit_source_projection("f")},
         f.audit_revision
     FROM feeds f
     JOIN feed_properties fp ON fp.feed_id = f.id
@@ -293,56 +190,23 @@ after_row AS (
     FROM updated u
     JOIN feed_properties fp ON fp.feed_id = u.id
 ),
-audit_action AS (
-    SELECT CASE
-        WHEN after_row.status = 'quarantined'
-         AND (
-            CASE
-                WHEN before_row.status = 'active'::feed_status
-                 AND (before_row.failure_count > 0 OR before_row.status_reason IS NOT NULL)
-                THEN 'failing'::feed_status
-                ELSE before_row.status
-            END
-         ) <> 'quarantined'::feed_status
-         AND after_row.failure_count > before_row.failure_count
-        THEN 'feed.quarantined'
-        WHEN after_row.status = 'failing'
-         AND (
-            (
-                CASE
-                    WHEN before_row.status = 'active'::feed_status
-                     AND (before_row.failure_count > 0 OR before_row.status_reason IS NOT NULL)
-                    THEN 'failing'::feed_status
-                    ELSE before_row.status
-                END
-            ) <> 'failing'::feed_status
-            OR before_row.status_reason IS DISTINCT FROM after_row.status_reason
-         )
-        THEN 'feed.failure_reported'
-        ELSE NULL
-    END AS action
-    FROM before_row
-    JOIN after_row ON after_row.id = before_row.id
-),
-write_audit AS (
-    INSERT INTO feed_audit_events (
-        feed_id, action, actor_id, feed_revision,
-        before_values, after_values
+{feed_audit_sql.failure_audit_action_cte()},
+{
+    feed_audit_sql.insert_feed_audit_event_cte(
+        feed_id_sql="after_row.id",
+        action_sql="audit_action.action",
+        actor_id_sql="%s::text",
+        feed_revision_sql="after_row.feed_revision",
+        before_values_sql=_AUDIT_BEFORE_SNAPSHOT_SQL,
+        after_values_sql=_AUDIT_AFTER_SNAPSHOT_SQL,
+        from_sql=(
+            "FROM before_row\n"
+            "    JOIN after_row ON after_row.id = before_row.id\n"
+            "    CROSS JOIN audit_action"
+        ),
+        where_sql="%s::text IS NOT NULL\n      AND audit_action.action IS NOT NULL",
     )
-    SELECT
-        after_row.id,
-        audit_action.action,
-        %s::text,
-        after_row.feed_revision,
-{_AUDIT_BEFORE_SNAPSHOT_SQL},
-{_AUDIT_AFTER_SNAPSHOT_SQL}
-    FROM before_row
-    JOIN after_row ON after_row.id = before_row.id
-    CROSS JOIN audit_action
-    WHERE %s::text IS NOT NULL
-      AND audit_action.action IS NOT NULL
-    RETURNING id
-)
+}
 SELECT after_row.*
 FROM after_row
 """

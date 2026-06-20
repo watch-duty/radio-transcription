@@ -5,7 +5,11 @@ from __future__ import annotations
 import pathlib
 import unittest
 
-from backend.pipeline.storage import feed_queries, sync_feed_queries
+from backend.pipeline.storage import (
+    feed_audit_sql,
+    feed_queries,
+    sync_feed_queries,
+)
 from backend.pipeline.storage.feed_store import SourceType
 
 
@@ -49,6 +53,47 @@ class TestLastSpeechSegmentTimestampSqlProjection(unittest.TestCase):
 
 class TestFeedAuditEventSqlContract(unittest.TestCase):
     """Tests for the feed-local audit event insert contract."""
+
+    def test_shared_failure_action_builder_renders_runtime_actions(
+        self,
+    ) -> None:
+        sql = feed_audit_sql.failure_audit_action_cte()
+
+        self.assertIn("audit_action AS", sql)
+        self.assertIn("THEN 'feed.failure_reported'", sql)
+        self.assertIn("THEN 'feed.quarantined'", sql)
+        self.assertIn("before_row.status", sql)
+        self.assertIn("after_row.status", sql)
+
+    def test_shared_recovery_action_builder_renders_recovered_action(
+        self,
+    ) -> None:
+        sql = feed_audit_sql.recovery_audit_action_cte(
+            before_alias="current_state",
+        )
+
+        self.assertIn("audit_action AS", sql)
+        self.assertIn("THEN 'feed.recovered'", sql)
+        self.assertIn("current_state.status", sql)
+        self.assertIn("after_row.status", sql)
+
+    def test_shared_insert_builder_renders_canonical_columns(self) -> None:
+        sql = feed_audit_sql.insert_feed_audit_event_cte(
+            feed_id_sql="after_row.id",
+            action_sql="audit_action.action",
+            actor_id_sql="$1::text",
+            feed_revision_sql="after_row.feed_revision",
+            before_values_sql=feed_audit_sql.audit_snapshot_sql("before_row"),
+            after_values_sql=feed_audit_sql.audit_snapshot_sql("after_row"),
+            from_sql="FROM before_row JOIN after_row ON after_row.id = before_row.id",
+            where_sql="audit_action.action IS NOT NULL",
+        )
+
+        self.assertIn("write_audit AS", sql)
+        self.assertIn("INSERT INTO feed_audit_events", sql)
+        self.assertIn("feed_id, action, actor_id, feed_revision", sql)
+        self.assertIn("before_values, after_values", sql)
+        self.assertIn("RETURNING id", sql)
 
     def test_standalone_audit_insert_helpers_are_removed(self) -> None:
         for module in (feed_queries, sync_feed_queries):
