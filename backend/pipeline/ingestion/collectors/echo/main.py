@@ -255,9 +255,6 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
             feed_store.record_heartbeat(
                 feed["id"],
                 actor_id=ECHO_INGESTION_ACTOR_ID,
-                previous_status=feed["status"],
-                previous_failure_count=feed["failure_count"],
-                previous_status_reason=feed["status_reason"],
             )
         except Exception:
             failure = _pipeline_failure(_HEARTBEAT_WRITE_FAILED)
@@ -330,9 +327,6 @@ def _record_failure_by_policy(
             feed_store.record_failure(
                 feed["id"],
                 actor_id=ECHO_INGESTION_ACTOR_ID,
-                previous_status=feed["status"],
-                previous_failure_count=feed["failure_count"],
-                previous_status_reason=feed["status_reason"],
                 reason=classification.reason,
                 status_reason=classification.status_reason,
             )
@@ -340,9 +334,6 @@ def _record_failure_by_policy(
             feed_store.record_non_budgeted_failure(
                 feed["id"],
                 actor_id=ECHO_INGESTION_ACTOR_ID,
-                previous_status=feed["status"],
-                previous_failure_count=feed["failure_count"],
-                previous_status_reason=feed["status_reason"],
                 status_reason=classification.status_reason,
                 reason=classification.reason,
             )

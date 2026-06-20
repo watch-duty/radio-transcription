@@ -139,16 +139,10 @@ class TestHandle:
         *,
         reason: str,
         status_reason: FeedStatusReason,
-        previous_status: FeedStatus = FeedStatus.ACTIVE,
-        previous_failure_count: int = 0,
-        previous_status_reason: FeedStatusReason | None = None,
     ) -> None:
         mock_store.record_failure.assert_called_once_with(
             feed_id,
             actor_id=ECHO_INGESTION_ACTOR_ID,
-            previous_status=previous_status,
-            previous_failure_count=previous_failure_count,
-            previous_status_reason=previous_status_reason,
             reason=reason,
             status_reason=status_reason,
         )
@@ -160,16 +154,10 @@ class TestHandle:
         *,
         status_reason: FeedStatusReason,
         reason: str,
-        previous_status: FeedStatus = FeedStatus.ACTIVE,
-        previous_failure_count: int = 0,
-        previous_status_reason: FeedStatusReason | None = None,
     ) -> None:
         mock_store.record_non_budgeted_failure.assert_called_once_with(
             feed_id,
             actor_id=ECHO_INGESTION_ACTOR_ID,
-            previous_status=previous_status,
-            previous_failure_count=previous_failure_count,
-            previous_status_reason=previous_status_reason,
             status_reason=status_reason,
             reason=reason,
         )
@@ -179,17 +167,10 @@ class TestHandle:
         self,
         mock_store: MagicMock,
         feed_id: uuid.UUID,
-        *,
-        previous_status: FeedStatus = FeedStatus.ACTIVE,
-        previous_failure_count: int = 0,
-        previous_status_reason: FeedStatusReason | None = None,
     ) -> None:
         mock_store.record_heartbeat.assert_called_once_with(
             feed_id,
             actor_id=ECHO_INGESTION_ACTOR_ID,
-            previous_status=previous_status,
-            previous_failure_count=previous_failure_count,
-            previous_status_reason=previous_status_reason,
         )
 
     def test_failure_policy_budgeted_call_uses_actor_and_prior_state(
@@ -222,9 +203,6 @@ class TestHandle:
             feed_id,
             reason="bad config",
             status_reason=FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-            previous_status=FeedStatus.FAILING,
-            previous_failure_count=2,
-            previous_status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
         )
         mock_store.record_non_budgeted_failure.assert_not_called()
 

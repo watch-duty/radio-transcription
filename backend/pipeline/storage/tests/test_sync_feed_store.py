@@ -77,6 +77,7 @@ def _audit_snapshot_row(**overrides: object) -> dict[str, object]:
         "quarantine_reason": None,
         "last_bookmark_time": None,
         "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+        "feed_revision": 1,
         "feed_properties.source_feed_id": "fire-ca",
         "feed_properties.tags": "[]",
     }
@@ -86,23 +87,10 @@ def _audit_snapshot_row(**overrides: object) -> dict[str, object]:
 
 class _SyncPriorKwargs(TypedDict):
     actor_id: str
-    previous_status: FeedStatus
-    previous_failure_count: int
-    previous_status_reason: FeedStatusReason | None
 
 
-def _sync_prior_kwargs(
-    *,
-    previous_status: FeedStatus = FeedStatus.ACTIVE,
-    previous_failure_count: int = 0,
-    previous_status_reason: FeedStatusReason | None = None,
-) -> _SyncPriorKwargs:
-    return {
-        "actor_id": _ECHO_ACTOR_ID,
-        "previous_status": previous_status,
-        "previous_failure_count": previous_failure_count,
-        "previous_status_reason": previous_status_reason,
-    }
+def _sync_prior_kwargs() -> _SyncPriorKwargs:
+    return {"actor_id": _ECHO_ACTOR_ID}
 
 
 def _load_json_object(value: object) -> dict[str, object]:
@@ -324,7 +312,7 @@ class TestRecordNonBudgetedFailure:
             "status NOT IN ('quarantined'::feed_status, "
             "'deactivated'::feed_status)"
         ) in sql
-        assert "quarantine_reason" not in sql
+        assert "quarantine_reason =" not in sql
         assert params == (
             "system_pipeline_error",
             None,
@@ -365,7 +353,6 @@ class TestSyncRuntimeAuditEvents:
                     status_reason="system_collector_error",
                 )
             ),
-            _make_cursor(rowcount=1),
             _make_cursor(
                 row=_audit_snapshot_row(
                     id=feed_id,
@@ -380,13 +367,7 @@ class TestSyncRuntimeAuditEvents:
 
         store.record_failure(
             feed_id,
-            **_sync_prior_kwargs(
-                previous_status=FeedStatus.FAILING,
-                previous_failure_count=1,
-                previous_status_reason=(
-                    FeedStatusReason.SYSTEM_COLLECTOR_ERROR
-                ),
-            ),
+            **_sync_prior_kwargs(),
             reason="new detail",
             status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
         )
@@ -404,29 +385,22 @@ class TestSyncRuntimeAuditEvents:
                     status_reason="system_authentication_failed",
                 )
             ),
-            _make_cursor(rowcount=1),
             _make_cursor(
                 row=_audit_snapshot_row(
                     id=feed_id,
                     status="failing",
                     failure_count=2,
                     status_reason="system_configuration_invalid",
+                    feed_revision=8,
                 )
             ),
-            _make_cursor(row={"feed_sequence": 8}),
-            _make_cursor(rowcount=1),
+            _make_cursor(),
         )
         store = _make_store(conn)
 
         store.record_failure(
             feed_id,
-            **_sync_prior_kwargs(
-                previous_status=FeedStatus.FAILING,
-                previous_failure_count=1,
-                previous_status_reason=(
-                    FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED
-                ),
-            ),
+            **_sync_prior_kwargs(),
             status_reason=FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
         )
 
@@ -434,9 +408,7 @@ class TestSyncRuntimeAuditEvents:
         assert audit_params[1] == "feed.failure_reported"
         assert audit_params[2] == _ECHO_ACTOR_ID
         metadata = _load_json_object(audit_params[6])
-        assert metadata["previous_status_reason"] == (
-            "system_authentication_failed"
-        )
+        assert metadata == {}
 
     def test_threshold_crossing_emits_only_quarantined(self) -> None:
         feed_id = uuid.uuid4()
@@ -449,27 +421,22 @@ class TestSyncRuntimeAuditEvents:
                     status_reason="source_unreachable",
                 )
             ),
-            _make_cursor(rowcount=1),
             _make_cursor(
                 row=_audit_snapshot_row(
                     id=feed_id,
                     status="quarantined",
                     failure_count=5,
                     status_reason="source_unreachable",
+                    feed_revision=9,
                 )
             ),
-            _make_cursor(row={"feed_sequence": 9}),
-            _make_cursor(rowcount=1),
+            _make_cursor(),
         )
         store = _make_store(conn)
 
         store.record_failure(
             feed_id,
-            **_sync_prior_kwargs(
-                previous_status=FeedStatus.FAILING,
-                previous_failure_count=4,
-                previous_status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
-            ),
+            **_sync_prior_kwargs(),
             status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
         )
 
@@ -487,27 +454,22 @@ class TestSyncRuntimeAuditEvents:
                     status_reason="source_unreachable",
                 )
             ),
-            _make_cursor(rowcount=1),
             _make_cursor(
                 row=_audit_snapshot_row(
                     id=feed_id,
                     status="active",
                     failure_count=0,
                     status_reason=None,
+                    feed_revision=10,
                 )
             ),
-            _make_cursor(row={"feed_sequence": 10}),
-            _make_cursor(rowcount=1),
+            _make_cursor(),
         )
         store = _make_store(conn)
 
         store.record_heartbeat(
             feed_id,
-            **_sync_prior_kwargs(
-                previous_status=FeedStatus.FAILING,
-                previous_failure_count=2,
-                previous_status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
-            ),
+            **_sync_prior_kwargs(),
         )
 
         audit_params = _audit_insert_calls(conn)[0][1]
@@ -529,7 +491,6 @@ class TestSyncRuntimeAuditEvents:
                     status_reason=None,
                 )
             ),
-            _make_cursor(rowcount=1),
             _make_cursor(
                 row=_audit_snapshot_row(
                     id=feed_id,
@@ -543,11 +504,7 @@ class TestSyncRuntimeAuditEvents:
 
         store.record_heartbeat(
             feed_id,
-            **_sync_prior_kwargs(
-                previous_status=FeedStatus.FAILING,
-                previous_failure_count=2,
-                previous_status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
-            ),
+            **_sync_prior_kwargs(),
         )
 
         assert _audit_insert_calls(conn) == []
@@ -565,50 +522,39 @@ class TestSyncRuntimeAuditEvents:
                     status_reason=None,
                 )
             ),
-            _make_cursor(rowcount=1),
             _make_cursor(
                 row=_audit_snapshot_row(
                     id=feed_id,
                     status="failing",
                     failure_count=1,
                     status_reason="source_unreachable",
+                    feed_revision=11,
                 )
             ),
-            _make_cursor(row={"feed_sequence": 11}),
-            _make_cursor(rowcount=1),
+            _make_cursor(),
         )
         store = _make_store(conn)
 
         store.record_failure(
             feed_id,
-            **_sync_prior_kwargs(
-                previous_status=FeedStatus.FAILING,
-                previous_failure_count=2,
-                previous_status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
-            ),
+            **_sync_prior_kwargs(),
             status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
         )
 
         audit_params = _audit_insert_calls(conn)[0][1]
         assert audit_params[1] == "feed.failure_reported"
         metadata = _load_json_object(audit_params[6])
-        assert metadata["previous_status"] == "active"
-        assert metadata["previous_failure_count"] == 0
-        assert metadata["previous_status_reason"] is None
+        assert metadata == {}
 
     def test_clean_heartbeat_emits_no_event(self) -> None:
         feed_id = uuid.uuid4()
         conn = _make_transactional_conn(
             _make_cursor(row=_audit_snapshot_row(id=feed_id)),
-            _make_cursor(rowcount=1),
             _make_cursor(row=_audit_snapshot_row(id=feed_id)),
         )
         store = _make_store(conn)
 
-        store.record_heartbeat(
-            feed_id,
-            **_sync_prior_kwargs(previous_status=FeedStatus.ACTIVE),
-        )
+        store.record_heartbeat(feed_id, **_sync_prior_kwargs())
 
         assert _audit_insert_calls(conn) == []
 
@@ -626,7 +572,6 @@ class TestSyncRuntimeAuditEvents:
                     status_reason_detail="stale detail",
                 )
             ),
-            _make_cursor(rowcount=1),
             _make_cursor(
                 row=_audit_snapshot_row(
                     id=feed_id,
@@ -639,10 +584,7 @@ class TestSyncRuntimeAuditEvents:
         )
         store = _make_store(conn)
 
-        store.record_heartbeat(
-            feed_id,
-            **_sync_prior_kwargs(previous_status=FeedStatus.ACTIVE),
-        )
+        store.record_heartbeat(feed_id, **_sync_prior_kwargs())
 
         assert _audit_insert_calls(conn) == []
 
@@ -650,7 +592,7 @@ class TestSyncRuntimeAuditEvents:
         feed_id = uuid.uuid4()
         conn = _make_transactional_conn(
             _make_cursor(row=_audit_snapshot_row(id=feed_id)),
-            _make_cursor(rowcount=0),
+            _make_cursor(row=None),
         )
         store = _make_store(conn)
 

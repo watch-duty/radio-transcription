@@ -30,7 +30,6 @@ from backend.pipeline.ingestion.models import (
     SourceObservation,
 )
 from backend.pipeline.storage.feed_store import (
-    FeedStatus,
     FeedStatusReason,
     LeasedFeed,
     SourceType,
@@ -1294,7 +1293,6 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
             fencing_token=0,
             failure_count=0,
             status_reason=None,
-            previous_status=FeedStatus.UNCLAIMED,
             source_feed_id="RECORDINGS/SAN-JOSE-DISP",
         )
 
@@ -1398,7 +1396,6 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
             fencing_token=0,
             failure_count=0,
             status_reason=None,
-            previous_status=FeedStatus.UNCLAIMED,
             source_feed_id="RECORDINGS/SAN-JOSE-DISP",
         )
 

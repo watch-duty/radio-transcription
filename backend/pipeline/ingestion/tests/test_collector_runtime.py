@@ -31,7 +31,6 @@ from backend.pipeline.ingestion.models import (
     SourceObservation,
 )
 from backend.pipeline.storage.feed_store import (
-    FeedStatus,
     FeedStatusReason,
     HeartbeatResult,
     LeasedFeed,
@@ -73,7 +72,6 @@ _FEED = LeasedFeed(
     fencing_token=1,
     failure_count=0,
     status_reason=None,
-    previous_status=FeedStatus.UNCLAIMED,
     source_feed_id="123",
 )
 
@@ -637,9 +635,6 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
             1,
             resume_position,
             actor_id="service:collector-runtime",
-            previous_status=FeedStatus.UNCLAIMED,
-            previous_failure_count=0,
-            previous_status_reason=None,
         )
         self.assertEqual(feed["failure_count"], 0)
         self.assertIsNone(feed["status_reason"])
@@ -668,7 +663,6 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
                 _FEED,
                 failure_count=2,
                 status_reason=(FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED),
-                previous_status=FeedStatus.FAILING,
             ),
         )
         rt = CollectorRuntime(
@@ -697,11 +691,6 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
             1,
             resume_position,
             actor_id="service:collector-runtime",
-            previous_status=FeedStatus.FAILING,
-            previous_failure_count=2,
-            previous_status_reason=(
-                FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED
-            ),
         )
         self.assertEqual(feed["failure_count"], 0)
         self.assertIsNone(feed["status_reason"])
@@ -975,7 +964,6 @@ class TestProcessFeedTopicRouting(unittest.IsolatedAsyncioTestCase):
             fencing_token=1,
             failure_count=0,
             status_reason=None,
-            previous_status=FeedStatus.UNCLAIMED,
             source_feed_id="123",
         )
 
@@ -1009,7 +997,6 @@ class TestProcessFeedTopicRouting(unittest.IsolatedAsyncioTestCase):
             fencing_token=1,
             failure_count=0,
             status_reason=None,
-            previous_status=FeedStatus.UNCLAIMED,
             source_feed_id="123",
         )
 
@@ -2062,7 +2049,6 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
                 _FEED,
                 failure_count=2,
                 status_reason=(FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED),
-                previous_status=FeedStatus.FAILING,
             ),
         )
 
@@ -2086,12 +2072,9 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             failure_kwargs["actor_id"],
             "service:collector-runtime",
         )
-        self.assertIs(failure_kwargs["previous_status"], FeedStatus.FAILING)
-        self.assertEqual(failure_kwargs["previous_failure_count"], 2)
-        self.assertIs(
-            failure_kwargs["previous_status_reason"],
-            FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-        )
+        self.assertNotIn("previous_status", failure_kwargs)
+        self.assertNotIn("previous_failure_count", failure_kwargs)
+        self.assertNotIn("previous_status_reason", failure_kwargs)
         self.assertEqual(failure_kwargs["reason"], "missing_source_feed_id")
         rt._store.release_non_budgeted_failure.assert_not_awaited()
         mock_telemetry.emit_quarantine_event.assert_awaited_once_with(
@@ -2150,7 +2133,6 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
                 _FEED,
                 failure_count=1,
                 status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
-                previous_status=FeedStatus.FAILING,
             ),
         )
 
@@ -2172,12 +2154,9 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             release_kwargs["actor_id"],
             "service:collector-runtime",
         )
-        self.assertIs(release_kwargs["previous_status"], FeedStatus.FAILING)
-        self.assertEqual(release_kwargs["previous_failure_count"], 1)
-        self.assertIs(
-            release_kwargs["previous_status_reason"],
-            FeedStatusReason.SOURCE_UNREACHABLE,
-        )
+        self.assertNotIn("previous_status", release_kwargs)
+        self.assertNotIn("previous_failure_count", release_kwargs)
+        self.assertNotIn("previous_status_reason", release_kwargs)
         self.assertEqual(
             release_kwargs["reason"], "RuntimeError: capture_failed"
         )
@@ -3242,7 +3221,6 @@ class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
                 _FEED,
                 failure_count=2,
                 status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
-                previous_status=FeedStatus.FAILING,
             ),
         )
 
@@ -3256,12 +3234,9 @@ class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bookmark, resume)
         kwargs = rt._store.update_feed_progress.await_args.kwargs
         self.assertEqual(kwargs["actor_id"], "service:collector-runtime")
-        self.assertIs(kwargs["previous_status"], FeedStatus.FAILING)
-        self.assertEqual(kwargs["previous_failure_count"], 2)
-        self.assertIs(
-            kwargs["previous_status_reason"],
-            FeedStatusReason.SOURCE_UNREACHABLE,
-        )
+        self.assertNotIn("previous_status", kwargs)
+        self.assertNotIn("previous_failure_count", kwargs)
+        self.assertNotIn("previous_status_reason", kwargs)
 
     async def test_falls_back_to_chunk_end_time_when_resume_position_none(
         self,
@@ -3295,9 +3270,9 @@ class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bookmark, end_time)
         kwargs = rt._store.update_feed_progress.await_args.kwargs
         self.assertEqual(kwargs["actor_id"], "service:collector-runtime")
-        self.assertIs(kwargs["previous_status"], FeedStatus.UNCLAIMED)
-        self.assertEqual(kwargs["previous_failure_count"], 0)
-        self.assertIsNone(kwargs["previous_status_reason"])
+        self.assertNotIn("previous_status", kwargs)
+        self.assertNotIn("previous_failure_count", kwargs)
+        self.assertNotIn("previous_status_reason", kwargs)
 
 
 if __name__ == "__main__":

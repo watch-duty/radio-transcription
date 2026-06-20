@@ -141,7 +141,6 @@ class LeasedFeed(TypedDict):
     fencing_token: int
     failure_count: int
     status_reason: FeedStatusReason | None
-    previous_status: FeedStatus
     source_feed_id: str | None
 
 
@@ -531,14 +530,6 @@ class FeedStore:
         except ValueError as e:
             msg = f"Unknown source type {row['source_type']!r} for feed {row['id']}"
             raise ValueError(msg) from e
-        try:
-            previous_status = FeedStatus(row["previous_status"])
-        except ValueError as e:
-            msg = (
-                f"Unknown previous status {row['previous_status']!r} "
-                f"for feed {row['id']}"
-            )
-            raise ValueError(msg) from e
         return LeasedFeed(
             id=row["id"],
             name=row["name"],
@@ -551,7 +542,6 @@ class FeedStore:
                 row["status_reason"],
                 feed_id=row["id"],
             ),
-            previous_status=previous_status,
             source_feed_id=row["source_feed_id"],
         )
 

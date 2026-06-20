@@ -276,9 +276,6 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 feed["fencing_token"],
                 capture_chunk.chunk_end_time,
                 actor_id="service:collector-runtime",
-                previous_status=feed["previous_status"],
-                previous_failure_count=feed["failure_count"],
-                previous_status_reason=feed["status_reason"],
             )
             self.assertTrue(ok)
             last_chunk_ts = capture_chunk.chunk_end_time
@@ -343,9 +340,6 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 feed["fencing_token"],
                 capture_chunk.chunk_end_time,
                 actor_id="service:collector-runtime",
-                previous_status=feed["previous_status"],
-                previous_failure_count=feed["failure_count"],
-                previous_status_reason=feed["status_reason"],
             )
             gcs_paths.append(gcs_path)
             chunk_timestamps.append(capture_chunk.chunk_end_time)
@@ -409,9 +403,6 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 feed["fencing_token"],
                 capture_chunk.chunk_end_time,
                 actor_id="service:collector-runtime",
-                previous_status=feed["previous_status"],
-                previous_failure_count=feed["failure_count"],
-                previous_status_reason=feed["status_reason"],
             )
             gcs_paths.append(gcs_path)
             last_chunk_ts = capture_chunk.chunk_end_time
@@ -470,9 +461,6 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             self.worker_id,
             feed["fencing_token"],
             actor_id="service:collector-runtime",
-            previous_status=feed["previous_status"],
-            previous_failure_count=feed["failure_count"],
-            previous_status_reason=feed["status_reason"],
             reason=str(ctx.exception),
             status_reason=ctx.exception.status_reason,
         )

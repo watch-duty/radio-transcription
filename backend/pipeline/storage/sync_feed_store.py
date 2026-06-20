@@ -171,28 +171,14 @@ class SyncFeedStore:
             "quarantine_reason": row["quarantine_reason"],
             "last_bookmark_time": row["last_bookmark_time"],
             "created_at": row["created_at"],
-            "feed_properties.source_feed_id": row[
-                "feed_properties.source_feed_id"
-            ],
+            "feed_properties.source_feed_id": row.get(
+                "feed_properties.source_feed_id",
+                row.get("source_feed_id"),
+            ),
             "feed_properties.tags": self._decode_json_array(
-                row["feed_properties.tags"]
+                row.get("feed_properties.tags", row.get("tags"))
             ),
         }
-
-    def _allocate_feed_sequence(
-        self,
-        conn: psycopg.Connection[dict[str, Any]],
-        feed_id: uuid.UUID,
-    ) -> int:
-        """Allocate the next per-feed audit sequence in the transaction."""
-        row = conn.execute(
-            sync_feed_queries.ALLOCATE_FEED_AUDIT_SEQUENCE_SQL,
-            (feed_id,),
-        ).fetchone()
-        if row is None:
-            msg = f"Failed to allocate audit sequence for feed {feed_id}"
-            raise ValueError(msg)
-        return int(row["feed_sequence"])
 
     def _insert_feed_audit_event(
         self,
@@ -210,14 +196,24 @@ class SyncFeedStore:
         if not isinstance(feed_id, uuid.UUID):
             msg = f"Invalid feed ID for audit event: {feed_id!r}"
             raise TypeError(msg)
-        feed_sequence = self._allocate_feed_sequence(conn, feed_id)
+        try:
+            feed_revision = int(identity_row["feed_revision"])
+        except (KeyError, TypeError, ValueError) as exc:
+            msg = f"Missing feed revision for audit event on feed {feed_id}"
+            raise ValueError(msg) from exc
+        if feed_revision < 1:
+            msg = (
+                f"Invalid feed revision {feed_revision} for audit event "
+                f"on feed {feed_id}"
+            )
+            raise ValueError(msg)
         conn.execute(
             sync_feed_queries.INSERT_FEED_AUDIT_EVENT_SQL,
             (
                 feed_id,
                 action,
                 actor_id,
-                feed_sequence,
+                feed_revision,
                 json.dumps(
                     before_values,
                     default=self._json_default,
@@ -232,35 +228,9 @@ class SyncFeedStore:
             ),
         )
 
-    @staticmethod
-    def _mutation_rowcount(cursor: object) -> int:
-        """Return psycopg rowcount for a lifecycle mutation cursor."""
-        value = getattr(cursor, "rowcount", 0)
-        return int(value) if isinstance(value, int) else 0
-
-    def _runtime_prior_metadata(
-        self,
-        *,
-        previous_status: feed_store.FeedStatus,
-        previous_failure_count: int,
-        previous_status_reason: feed_store.FeedStatusReason | None,
-    ) -> dict[str, object]:
-        """Return non-secret runtime prior-state metadata for audit rows."""
-        return {
-            "previous_status": previous_status.value,
-            "previous_failure_count": previous_failure_count,
-            "previous_status_reason": (
-                previous_status_reason.value
-                if previous_status_reason is not None
-                else None
-            ),
-        }
-
     def _runtime_effective_prior_state(
         self,
         before_row: dict[str, Any],
-        *,
-        claimed_previous_status: feed_store.FeedStatus,
     ) -> tuple[
         feed_store.FeedStatus,
         int,
@@ -276,14 +246,12 @@ class SyncFeedStore:
             before_row["status_reason"],
             feed_id=before_row["id"],
         )
-        claim_carried_failure_state = (
+        if (
             before_status == feed_store.FeedStatus.ACTIVE
-            and claimed_previous_status in _RUNTIME_ABNORMAL_STATUSES
             and (before_failure_count > 0 or before_status_reason is not None)
-        )
-        if claim_carried_failure_state:
+        ):
             return (
-                claimed_previous_status,
+                feed_store.FeedStatus.FAILING,
                 before_failure_count,
                 before_status_reason,
             )
@@ -292,12 +260,15 @@ class SyncFeedStore:
     def _runtime_failure_audit_action(
         self,
         *,
-        previous_status: feed_store.FeedStatus,
-        previous_failure_count: int,
-        previous_status_reason: feed_store.FeedStatusReason | None,
+        before_row: dict[str, Any],
         after_row: dict[str, Any],
     ) -> str | None:
         """Return the runtime failure/quarantine event action, if any."""
+        (
+            prior_status,
+            prior_failure_count,
+            prior_status_reason,
+        ) = self._runtime_effective_prior_state(before_row)
         after_status = self._parse_feed_status(
             after_row["status"],
             feed_id=after_row["id"],
@@ -308,27 +279,28 @@ class SyncFeedStore:
         )
         if after_status == feed_store.FeedStatus.QUARANTINED:
             if (
-                previous_status != feed_store.FeedStatus.QUARANTINED
-                and after_row["failure_count"] > previous_failure_count
+                prior_status != feed_store.FeedStatus.QUARANTINED
+                and after_row["failure_count"] > prior_failure_count
             ):
                 return "feed.quarantined"
             return None
         if after_status != feed_store.FeedStatus.FAILING:
             return None
-        if previous_status != feed_store.FeedStatus.FAILING:
+        if prior_status != feed_store.FeedStatus.FAILING:
             return "feed.failure_reported"
-        if previous_status_reason != after_reason:
+        if prior_status_reason != after_reason:
             return "feed.failure_reported"
         return None
 
     def _runtime_recovery_audit_action(
         self,
         *,
-        previous_status: feed_store.FeedStatus,
+        before_row: dict[str, Any],
         after_row: dict[str, Any],
     ) -> str | None:
         """Return the runtime recovery event action, if any."""
-        if previous_status not in _RUNTIME_ABNORMAL_STATUSES:
+        prior_status, _, _ = self._runtime_effective_prior_state(before_row)
+        if prior_status not in _RUNTIME_ABNORMAL_STATUSES:
             return None
         after_status = self._parse_feed_status(
             after_row["status"],
@@ -350,9 +322,6 @@ class SyncFeedStore:
         *,
         action: str | None,
         actor_id: str,
-        previous_status: feed_store.FeedStatus,
-        previous_failure_count: int,
-        previous_status_reason: feed_store.FeedStatusReason | None,
         before_row: dict[str, Any],
         after_row: dict[str, Any],
     ) -> None:
@@ -366,11 +335,6 @@ class SyncFeedStore:
             before_values=self._audit_snapshot(before_row),
             after_values=self._audit_snapshot(after_row),
             identity_row=after_row,
-            metadata=self._runtime_prior_metadata(
-                previous_status=previous_status,
-                previous_failure_count=previous_failure_count,
-                previous_status_reason=previous_status_reason,
-            ),
         )
 
     def record_heartbeat(
@@ -378,16 +342,13 @@ class SyncFeedStore:
         feed_id: uuid.UUID,
         *,
         actor_id: str | None = None,
-        previous_status: feed_store.FeedStatus | None = None,
-        previous_failure_count: int = 0,
-        previous_status_reason: feed_store.FeedStatusReason | None = None,
     ) -> None:
         """Record a successful processing heartbeat.
 
         Marks status as ``active``, and resets ``failure_count`` if the
         feed was previously in a failing state.
         """
-        if actor_id is None or previous_status is None:
+        if actor_id is None:
             with self._connect_db() as conn:
                 conn.execute(sync_feed_queries.HEARTBEAT_SQL, (feed_id,))
             return
@@ -400,41 +361,20 @@ class SyncFeedStore:
                 ).fetchone()
                 if before_row is None:
                     return
-                cursor = conn.execute(
-                    sync_feed_queries.HEARTBEAT_SQL,
-                    (feed_id,),
-                )
-                if self._mutation_rowcount(cursor) != 1:
-                    return
                 after_row = conn.execute(
-                    sync_feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
+                    sync_feed_queries.HEARTBEAT_SQL,
                     (feed_id,),
                 ).fetchone()
                 if after_row is None:
-                    msg = (
-                        "Failed to read sync recovery audit snapshot for "
-                        f"feed {feed_id}"
-                    )
-                    raise ValueError(msg)
-                (
-                    effective_previous_status,
-                    effective_previous_failure_count,
-                    effective_previous_status_reason,
-                ) = self._runtime_effective_prior_state(
-                    before_row,
-                    claimed_previous_status=previous_status,
-                )
+                    return
                 action = self._runtime_recovery_audit_action(
-                    previous_status=effective_previous_status,
+                    before_row=before_row,
                     after_row=after_row,
                 )
                 self._maybe_insert_runtime_audit_event(
                     conn,
                     action=action,
                     actor_id=actor_id,
-                    previous_status=effective_previous_status,
-                    previous_failure_count=effective_previous_failure_count,
-                    previous_status_reason=effective_previous_status_reason,
                     before_row=before_row,
                     after_row=after_row,
                 )
@@ -444,9 +384,6 @@ class SyncFeedStore:
         feed_id: uuid.UUID,
         *,
         actor_id: str | None = None,
-        previous_status: feed_store.FeedStatus | None = None,
-        previous_failure_count: int = 0,
-        previous_status_reason: feed_store.FeedStatusReason | None = None,
         reason: str | None = None,
         status_reason: feed_store.FeedStatusReason | None = None,
     ) -> None:
@@ -473,7 +410,7 @@ class SyncFeedStore:
             status_reason_value,
             feed_id,
         )
-        if actor_id is None or previous_status is None:
+        if actor_id is None:
             with self._connect_db() as conn:
                 conn.execute(sync_feed_queries.RECORD_FAILURE_SQL, params)
                 logger.warning(
@@ -490,43 +427,20 @@ class SyncFeedStore:
                 ).fetchone()
                 if before_row is None:
                     return
-                cursor = conn.execute(
+                after_row = conn.execute(
                     sync_feed_queries.RECORD_FAILURE_SQL,
                     params,
-                )
-                if self._mutation_rowcount(cursor) != 1:
-                    return
-                after_row = conn.execute(
-                    sync_feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
-                    (feed_id,),
                 ).fetchone()
                 if after_row is None:
-                    msg = (
-                        "Failed to read sync failure audit snapshot for "
-                        f"feed {feed_id}"
-                    )
-                    raise ValueError(msg)
-                (
-                    effective_previous_status,
-                    effective_previous_failure_count,
-                    effective_previous_status_reason,
-                ) = self._runtime_effective_prior_state(
-                    before_row,
-                    claimed_previous_status=previous_status,
-                )
+                    return
                 action = self._runtime_failure_audit_action(
-                    previous_status=effective_previous_status,
-                    previous_failure_count=effective_previous_failure_count,
-                    previous_status_reason=effective_previous_status_reason,
+                    before_row=before_row,
                     after_row=after_row,
                 )
                 self._maybe_insert_runtime_audit_event(
                     conn,
                     action=action,
                     actor_id=actor_id,
-                    previous_status=effective_previous_status,
-                    previous_failure_count=effective_previous_failure_count,
-                    previous_status_reason=effective_previous_status_reason,
                     before_row=before_row,
                     after_row=after_row,
                 )
@@ -540,9 +454,6 @@ class SyncFeedStore:
         feed_id: uuid.UUID,
         *,
         actor_id: str | None = None,
-        previous_status: feed_store.FeedStatus | None = None,
-        previous_failure_count: int = 0,
-        previous_status_reason: feed_store.FeedStatusReason | None = None,
         status_reason: feed_store.FeedStatusReason,
         reason: str | None = None,
     ) -> None:
@@ -558,7 +469,7 @@ class SyncFeedStore:
             status_reason.value,
             feed_id,
         )
-        if actor_id is None or previous_status is None:
+        if actor_id is None:
             with self._connect_db() as conn:
                 conn.execute(
                     sync_feed_queries.RECORD_NON_BUDGETED_FAILURE_SQL,
@@ -581,43 +492,20 @@ class SyncFeedStore:
                 ).fetchone()
                 if before_row is None:
                     return
-                cursor = conn.execute(
+                after_row = conn.execute(
                     sync_feed_queries.RECORD_NON_BUDGETED_FAILURE_SQL,
                     params,
-                )
-                if self._mutation_rowcount(cursor) != 1:
-                    return
-                after_row = conn.execute(
-                    sync_feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
-                    (feed_id,),
                 ).fetchone()
                 if after_row is None:
-                    msg = (
-                        "Failed to read sync non-budgeted failure audit "
-                        f"snapshot for feed {feed_id}"
-                    )
-                    raise ValueError(msg)
-                (
-                    effective_previous_status,
-                    effective_previous_failure_count,
-                    effective_previous_status_reason,
-                ) = self._runtime_effective_prior_state(
-                    before_row,
-                    claimed_previous_status=previous_status,
-                )
+                    return
                 action = self._runtime_failure_audit_action(
-                    previous_status=effective_previous_status,
-                    previous_failure_count=effective_previous_failure_count,
-                    previous_status_reason=effective_previous_status_reason,
+                    before_row=before_row,
                     after_row=after_row,
                 )
                 self._maybe_insert_runtime_audit_event(
                     conn,
                     action=action,
                     actor_id=actor_id,
-                    previous_status=effective_previous_status,
-                    previous_failure_count=effective_previous_failure_count,
-                    previous_status_reason=effective_previous_status_reason,
                     before_row=before_row,
                     after_row=after_row,
                 )

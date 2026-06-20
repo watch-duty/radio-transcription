@@ -139,8 +139,7 @@ class TestEchoCollectorIntegration(unittest.TestCase):
             ),
         )
         self.conn.execute(
-            "TRUNCATE feed_audit_events, feed_audit_event_sequences, "
-            "feeds CASCADE"
+            "TRUNCATE feed_audit_events, feeds CASCADE"
         )
 
         # Point GCS client at fake server
@@ -186,10 +185,9 @@ class TestEchoCollectorIntegration(unittest.TestCase):
 
     def _get_audit_rows(self, feed_id: uuid.UUID) -> list[dict[str, Any]]:
         cursor = self.conn.execute(
-            "SELECT action, actor_id, feed_sequence, status::text,"
-            " status_reason, status_reason_detail, before_values,"
+            "SELECT action, actor_id, feed_revision, before_values,"
             " after_values, metadata FROM feed_audit_events"
-            " WHERE feed_id = %s ORDER BY feed_sequence",
+            " WHERE feed_id = %s ORDER BY feed_revision",
             (feed_id,),
         )
         return list(cursor.fetchall())
@@ -355,10 +353,11 @@ class TestEchoCollectorIntegration(unittest.TestCase):
             events[0]["actor_id"],
             echo_main.ECHO_INGESTION_ACTOR_ID,
         )
-        self.assertEqual(events[0]["metadata"]["previous_status"], "failing")
-        self.assertEqual(events[0]["metadata"]["previous_failure_count"], 4)
+        self.assertEqual(events[0]["metadata"], {})
+        self.assertEqual(events[0]["before_values"]["status"], "failing")
+        self.assertEqual(events[0]["before_values"]["failure_count"], 4)
         self.assertEqual(
-            events[0]["metadata"]["previous_status_reason"],
+            events[0]["before_values"]["status_reason"],
             "source_unreachable",
         )
         self.assertEqual(events[0]["after_values"]["status"], "failing")
@@ -411,17 +410,19 @@ class TestEchoCollectorIntegration(unittest.TestCase):
                 "feed.recovered",
             ],
         )
+        self.assertEqual(events[0]["metadata"], {})
         self.assertEqual(
-            events[0]["metadata"]["previous_status_reason"],
+            events[0]["before_values"]["status_reason"],
             "source_unreachable",
         )
         self.assertEqual(
             events[-1]["actor_id"],
             echo_main.ECHO_INGESTION_ACTOR_ID,
         )
-        self.assertEqual(events[-1]["metadata"]["previous_status"], "failing")
+        self.assertEqual(events[-1]["metadata"], {})
+        self.assertEqual(events[-1]["before_values"]["status"], "failing")
         self.assertEqual(
-            events[-1]["metadata"]["previous_status_reason"],
+            events[-1]["before_values"]["status_reason"],
             "system_collector_error",
         )
         self.assertEqual(events[-1]["before_values"]["status"], "failing")
@@ -456,10 +457,11 @@ class TestEchoCollectorIntegration(unittest.TestCase):
             events[0]["actor_id"],
             echo_main.ECHO_INGESTION_ACTOR_ID,
         )
-        self.assertEqual(events[0]["metadata"]["previous_status"], "failing")
-        self.assertEqual(events[0]["metadata"]["previous_failure_count"], 2)
+        self.assertEqual(events[0]["metadata"], {})
+        self.assertEqual(events[0]["before_values"]["status"], "failing")
+        self.assertEqual(events[0]["before_values"]["failure_count"], 2)
         self.assertEqual(
-            events[0]["metadata"]["previous_status_reason"],
+            events[0]["before_values"]["status_reason"],
             "source_unreachable",
         )
         self.assertEqual(events[0]["before_values"]["status"], "failing")

@@ -780,9 +780,6 @@ class CollectorRuntime:
                 # stream collectors leave it None -> end_ts fallback.
                 captured_chunk.resume_position or captured_chunk.chunk_end_time,
                 actor_id=COLLECTOR_RUNTIME_ACTOR_ID,
-                previous_status=feed["previous_status"],
-                previous_failure_count=feed["failure_count"],
-                previous_status_reason=feed["status_reason"],
             )
 
         duration_ms = int(
@@ -956,9 +953,6 @@ class CollectorRuntime:
                 fencing_token,
                 self._collector_settings.feed_failure_threshold,
                 actor_id=COLLECTOR_RUNTIME_ACTOR_ID,
-                previous_status=feed["previous_status"],
-                previous_failure_count=feed["failure_count"],
-                previous_status_reason=feed["status_reason"],
                 reason=reason,
                 status_reason=status_reason,
             )
@@ -1046,9 +1040,6 @@ class CollectorRuntime:
                 retry_after=retry_after,
                 status_reason=status_reason,
                 actor_id=COLLECTOR_RUNTIME_ACTOR_ID,
-                previous_status=feed["previous_status"],
-                previous_failure_count=feed["failure_count"],
-                previous_status_reason=feed["status_reason"],
                 reason=reason,
             )
         except Exception:
@@ -1103,9 +1094,6 @@ class CollectorRuntime:
                 fencing_token,
                 observation.resume_position,
                 actor_id=COLLECTOR_RUNTIME_ACTOR_ID,
-                previous_status=feed["previous_status"],
-                previous_failure_count=feed["failure_count"],
-                previous_status_reason=feed["status_reason"],
             )
 
         try:

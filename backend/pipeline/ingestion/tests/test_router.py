@@ -15,7 +15,6 @@ from backend.pipeline.ingestion.router import (
     supported_source_types,
 )
 from backend.pipeline.storage.feed_store import (
-    FeedStatus,
     LeasedFeed,
     SourceType,
 )
@@ -39,7 +38,6 @@ def _make_feed(source_type: SourceType) -> LeasedFeed:
         fencing_token=0,
         failure_count=0,
         status_reason=None,
-        previous_status=FeedStatus.UNCLAIMED,
         source_feed_id="123",
     )
 

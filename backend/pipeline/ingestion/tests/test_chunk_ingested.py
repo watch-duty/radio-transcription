@@ -31,7 +31,6 @@ from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
 from backend.pipeline.ingestion.collector_runtime import CollectorRuntime
 from backend.pipeline.ingestion.models import CapturedChunk, CaptureResources
 from backend.pipeline.storage.feed_store import (
-    FeedStatus,
     FeedStatusReason,
     LeasedFeed,
     SourceType,
@@ -50,7 +49,6 @@ _FEED = LeasedFeed(
     fencing_token=1,
     failure_count=0,
     status_reason=None,
-    previous_status=FeedStatus.UNCLAIMED,
     source_feed_id="123",
 )
 

@@ -275,9 +275,6 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 feed["fencing_token"],
                 chunk.chunk_start_time,
                 actor_id="service:collector-runtime",
-                previous_status=feed["previous_status"],
-                previous_failure_count=feed["failure_count"],
-                previous_status_reason=feed["status_reason"],
             )
             self.assertTrue(ok)
             chunks_uploaded.append((chunk.audio_bytes, gcs_path))
@@ -335,9 +332,6 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 feed["fencing_token"],
                 chunk.chunk_start_time,
                 actor_id="service:collector-runtime",
-                previous_status=feed["previous_status"],
-                previous_failure_count=feed["failure_count"],
-                previous_status_reason=feed["status_reason"],
             )
             gcs_paths.append(gcs_path)
             seq += 1
@@ -403,9 +397,6 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 feed["fencing_token"],
                 chunk.chunk_start_time,
                 actor_id="service:collector-runtime",
-                previous_status=feed["previous_status"],
-                previous_failure_count=feed["failure_count"],
-                previous_status_reason=feed["status_reason"],
             )
             gcs_paths.append(gcs_path)
             seq += 1

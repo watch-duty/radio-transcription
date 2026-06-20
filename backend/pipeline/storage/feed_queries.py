@@ -239,7 +239,7 @@ def _build_claim_query(
     """
     branches_sql = ",\n".join(branches) + ","
     union_sql = "\n        UNION ALL\n".join(
-        f"        SELECT id, previous_status FROM {n}"  # noqa: S608
+        f"        SELECT id FROM {n}"  # noqa: S608
         for n in branch_names
     )
     return (
@@ -260,13 +260,12 @@ def _build_claim_query(
         "    RETURNING feeds.id, feeds.name, feeds.source_type,\n"
         "              feeds.last_processed_filename, feeds.last_bookmark_time,\n"
         "              feeds.fencing_token, feeds.failure_count,\n"
-        "              feeds.status_reason,\n"
-        f"              {combined_cte_name}.previous_status\n"
+        "              feeds.status_reason\n"
         ")\n"
         "SELECT leased.id, leased.name, leased.source_type,\n"
         "       leased.last_processed_filename, leased.last_bookmark_time,\n"
         "       leased.fencing_token, leased.failure_count,\n"
-        "       leased.status_reason, leased.previous_status,\n"
+        "       leased.status_reason,\n"
         "       fpi.source_feed_id\n"
         "FROM leased\n"
         "JOIN feed_properties fpi ON fpi.feed_id = leased.id\n"
@@ -294,7 +293,7 @@ def build_acquire_feeds_batch_sql(claim_types: Sequence[SourceType]) -> str:
         branch_names.append(cte_name)
         branches.append(
             f"    {cte_name} AS MATERIALIZED (\n"  # noqa: S608
-            f"        SELECT id, status::text AS previous_status FROM feeds\n"
+            f"        SELECT id FROM feeds\n"
             f"        WHERE source_type = '{t.value}' AND status = 'unclaimed'::feed_status\n"
             f"        ORDER BY id\n"
             f"        LIMIT ${limit_param}\n"
@@ -378,7 +377,7 @@ def build_acquire_feeds_recovery_sql(claim_types: Sequence[SourceType]) -> str:
         branch_names.append(cte_name)
         branches.append(
             f"    {cte_name} AS MATERIALIZED (\n"  # noqa: S608
-            f"        SELECT id, status::text AS previous_status FROM feeds\n"
+            f"        SELECT id FROM feeds\n"
             f"        WHERE source_type = '{t.value}'\n"
             f"          AND (\n"
             f"              (status = 'failing'::feed_status AND (retry_after IS NULL OR retry_after <= NOW()))\n"

@@ -16,61 +16,94 @@ AND f.source_type = 'echo'
 """
 
 HEARTBEAT_SQL = """\
-UPDATE feeds
-SET last_heartbeat = NOW(),
-    failure_count = CASE WHEN failure_count > 0 THEN 0 ELSE failure_count END,
-    status = 'active'::feed_status,
-    status_reason_updated_at = CASE
-        WHEN status_reason IS NOT NULL OR status_reason_detail IS NOT NULL
-            THEN NOW()
-        ELSE status_reason_updated_at
-    END,
-    status_reason_detail = NULL,
-    status_reason = NULL
-WHERE id = %s
-  AND status NOT IN ('quarantined'::feed_status, 'deactivated'::feed_status)
+WITH updated AS (
+    UPDATE feeds
+    SET last_heartbeat = NOW(),
+        audit_revision = CASE
+            WHEN failure_count <> 0 OR status_reason IS NOT NULL THEN audit_revision + 1
+            ELSE audit_revision
+        END,
+        failure_count = CASE WHEN failure_count > 0 THEN 0 ELSE failure_count END,
+        status = 'active'::feed_status,
+        status_reason_updated_at = CASE
+            WHEN status_reason IS NOT NULL OR status_reason_detail IS NOT NULL
+                THEN NOW()
+            ELSE status_reason_updated_at
+        END,
+        status_reason_detail = NULL,
+        status_reason = NULL
+    WHERE id = %s
+      AND status NOT IN ('quarantined'::feed_status, 'deactivated'::feed_status)
+    RETURNING id, name, source_type, status::text AS status, failure_count, retry_after,
+              status_reason, status_reason_updated_at, status_reason_detail,
+              quarantine_reason, last_bookmark_time, created_at,
+              audit_revision AS feed_revision
+)
+SELECT u.*, fp.source_feed_id, fp.tags
+FROM updated u
+JOIN feed_properties fp ON fp.feed_id = u.id
 """
 
 # Backoff formula: base * 2^(failure_count), capped at max, plus 0-10s jitter.
 # Matches REPORT_FAILURE_SQL in feed_queries.py minus worker_id/fencing_token.
 RECORD_FAILURE_SQL = """\
-UPDATE feeds
-SET status = CASE WHEN failure_count + 1 >= %s
-                  THEN 'quarantined'::feed_status
-                  ELSE 'failing'::feed_status END,
-    failure_count = failure_count + 1,
-    last_heartbeat = NOW(),
-    retry_after = CASE WHEN failure_count + 1 < %s
-                       THEN NOW() + LEAST(
-                            %s * INTERVAL '1 second',
-                            %s * INTERVAL '1 second' * POWER(2, failure_count)
-                       ) + (RANDOM() * INTERVAL '10 seconds')
-                       ELSE NULL END,
-    status_reason = COALESCE(%s, 'system_unexpected_error'),
-    status_reason_detail = %s,
-    status_reason_updated_at = CASE
-        WHEN status_reason IS DISTINCT FROM COALESCE(%s, 'system_unexpected_error')
-            THEN NOW()
-        ELSE status_reason_updated_at
-    END
-WHERE id = %s
-  AND status NOT IN ('quarantined'::feed_status, 'deactivated'::feed_status)
+WITH updated AS (
+    UPDATE feeds
+    SET status = CASE WHEN failure_count + 1 >= %s
+                      THEN 'quarantined'::feed_status
+                      ELSE 'failing'::feed_status END,
+        audit_revision = audit_revision + 1,
+        failure_count = failure_count + 1,
+        last_heartbeat = NOW(),
+        retry_after = CASE WHEN failure_count + 1 < %s
+                           THEN NOW() + LEAST(
+                                %s * INTERVAL '1 second',
+                                %s * INTERVAL '1 second' * POWER(2, failure_count)
+                           ) + (RANDOM() * INTERVAL '10 seconds')
+                           ELSE NULL END,
+        status_reason = COALESCE(%s, 'system_unexpected_error'),
+        status_reason_detail = %s,
+        status_reason_updated_at = CASE
+            WHEN status_reason IS DISTINCT FROM COALESCE(%s, 'system_unexpected_error')
+                THEN NOW()
+            ELSE status_reason_updated_at
+        END
+    WHERE id = %s
+      AND status NOT IN ('quarantined'::feed_status, 'deactivated'::feed_status)
+    RETURNING id, name, source_type, status::text AS status, failure_count,
+              retry_after, status_reason, status_reason_updated_at,
+              status_reason_detail, quarantine_reason, last_bookmark_time,
+              created_at, audit_revision AS feed_revision
+)
+SELECT u.*, fp.source_feed_id, fp.tags
+FROM updated u
+JOIN feed_properties fp ON fp.feed_id = u.id
 """
 
 RECORD_NON_BUDGETED_FAILURE_SQL = """\
-UPDATE feeds
-SET status = 'failing'::feed_status,
-    failure_count = 0,
-    last_heartbeat = NOW(),
-    retry_after = NULL,
-    status_reason = %s,
-    status_reason_detail = %s,
-    status_reason_updated_at = CASE
-        WHEN status_reason IS DISTINCT FROM %s THEN NOW()
-        ELSE status_reason_updated_at
-    END
-WHERE id = %s
-  AND status NOT IN ('quarantined'::feed_status, 'deactivated'::feed_status)
+WITH updated AS (
+    UPDATE feeds
+    SET status = 'failing'::feed_status,
+        audit_revision = audit_revision + 1,
+        failure_count = 0,
+        last_heartbeat = NOW(),
+        retry_after = NULL,
+        status_reason = %s,
+        status_reason_detail = %s,
+        status_reason_updated_at = CASE
+            WHEN status_reason IS DISTINCT FROM %s THEN NOW()
+            ELSE status_reason_updated_at
+        END
+    WHERE id = %s
+      AND status NOT IN ('quarantined'::feed_status, 'deactivated'::feed_status)
+    RETURNING id, name, source_type, status::text AS status, failure_count,
+              retry_after, status_reason, status_reason_updated_at,
+              status_reason_detail, quarantine_reason, last_bookmark_time,
+              created_at, audit_revision AS feed_revision
+)
+SELECT u.*, fp.source_feed_id, fp.tags
+FROM updated u
+JOIN feed_properties fp ON fp.feed_id = u.id
 """
 
 GET_AUDIT_FEED_SNAPSHOT_SQL = """\

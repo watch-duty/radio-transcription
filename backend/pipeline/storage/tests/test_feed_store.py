@@ -62,7 +62,6 @@ _LEASE_ROW = {
     "fencing_token": 1,
     "failure_count": 0,
     "status_reason": None,
-    "previous_status": "unclaimed",
     "source_feed_id": "123",
 }
 
@@ -104,12 +103,7 @@ class _RuntimePriorKwargs(TypedDict):
     actor_id: str
 
 
-def _runtime_prior_kwargs(
-    *,
-    previous_status: FeedStatus = FeedStatus.ACTIVE,
-    previous_failure_count: int = 0,
-    previous_status_reason: FeedStatusReason | None = None,
-) -> _RuntimePriorKwargs:
+def _runtime_prior_kwargs() -> _RuntimePriorKwargs:
     return {"actor_id": _COLLECTOR_RUNTIME_ACTOR_ID}
 
 
@@ -677,10 +671,9 @@ class TestStatusReasonLifecycleIsolation(unittest.TestCase):
             stripped = _sql_without_comments(sql)
             self.assertIn("feeds.failure_count", stripped)
             self.assertIn("feeds.status_reason", stripped)
-            self.assertIn("status::text AS previous_status", stripped)
             self.assertIn("leased.failure_count", stripped)
             self.assertIn("leased.status_reason", stripped)
-            self.assertIn("leased.previous_status", stripped)
+            self.assertNotIn("previous_status", stripped)
             self.assertNotIn("status_reason =", stripped)
 
 
@@ -1203,13 +1196,7 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
             _FEED_ID,
             _WORKER_ID,
             1,
-            **_runtime_prior_kwargs(
-                previous_status=FeedStatus.FAILING,
-                previous_failure_count=4,
-                previous_status_reason=(
-                    FeedStatusReason.SYSTEM_UNEXPECTED_ERROR
-                ),
-            ),
+            **_runtime_prior_kwargs(),
         )
 
         self.assertEqual(result, "quarantined")
@@ -1537,13 +1524,7 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
             _FEED_ID,
             _WORKER_ID,
             1,
-            **_runtime_prior_kwargs(
-                previous_status=FeedStatus.FAILING,
-                previous_failure_count=1,
-                previous_status_reason=(
-                    FeedStatusReason.SYSTEM_COLLECTOR_ERROR
-                ),
-            ),
+            **_runtime_prior_kwargs(),
             reason="new detail only",
             status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
         )
@@ -1572,13 +1553,7 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
             _FEED_ID,
             _WORKER_ID,
             1,
-            **_runtime_prior_kwargs(
-                previous_status=FeedStatus.FAILING,
-                previous_failure_count=1,
-                previous_status_reason=(
-                    FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED
-                ),
-            ),
+            **_runtime_prior_kwargs(),
             status_reason=FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
         )
 
@@ -1608,11 +1583,7 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
             _FEED_ID,
             _WORKER_ID,
             1,
-            **_runtime_prior_kwargs(
-                previous_status=FeedStatus.FAILING,
-                previous_failure_count=4,
-                previous_status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
-            ),
+            **_runtime_prior_kwargs(),
             status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
         )
 
@@ -1641,11 +1612,7 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
             "gs://bucket/path/file.ogg",
             1,
             None,
-            **_runtime_prior_kwargs(
-                previous_status=FeedStatus.FAILING,
-                previous_failure_count=2,
-                previous_status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
-            ),
+            **_runtime_prior_kwargs(),
         )
 
         self.assertTrue(result)
@@ -1676,11 +1643,7 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
             "gs://bucket/path/file.ogg",
             1,
             None,
-            **_runtime_prior_kwargs(
-                previous_status=FeedStatus.FAILING,
-                previous_failure_count=2,
-                previous_status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
-            ),
+            **_runtime_prior_kwargs(),
         )
 
         self.assertTrue(result)
@@ -1709,11 +1672,7 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
             _FEED_ID,
             _WORKER_ID,
             1,
-            **_runtime_prior_kwargs(
-                previous_status=FeedStatus.FAILING,
-                previous_failure_count=2,
-                previous_status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
-            ),
+            **_runtime_prior_kwargs(),
             status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
         )
 
@@ -1745,11 +1704,7 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
             "gs://bucket/path/file.ogg",
             1,
             None,
-            **_runtime_prior_kwargs(
-                previous_status=FeedStatus.QUARANTINED,
-                previous_failure_count=5,
-                previous_status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
-            ),
+            **_runtime_prior_kwargs(),
         )
 
         self.assertTrue(result)
@@ -1773,7 +1728,7 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
             "gs://bucket/path/file.ogg",
             1,
             None,
-            **_runtime_prior_kwargs(previous_status=FeedStatus.ACTIVE),
+            **_runtime_prior_kwargs(),
         )
 
         self.assertTrue(result)
@@ -1807,7 +1762,7 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
             "gs://bucket/path/file.ogg",
             1,
             None,
-            **_runtime_prior_kwargs(previous_status=FeedStatus.ACTIVE),
+            **_runtime_prior_kwargs(),
         )
 
         self.assertTrue(result)
@@ -1836,7 +1791,7 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             1,
             resume_position,
-            **_runtime_prior_kwargs(previous_status=FeedStatus.ACTIVE),
+            **_runtime_prior_kwargs(),
         )
 
         self.assertTrue(result["recorded"])
@@ -1863,11 +1818,7 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             1,
             None,
-            **_runtime_prior_kwargs(
-                previous_status=FeedStatus.FAILING,
-                previous_failure_count=1,
-                previous_status_reason=FeedStatusReason.SOURCE_OFFLINE,
-            ),
+            **_runtime_prior_kwargs(),
         )
 
         self.assertFalse(result["recorded"])
@@ -1889,11 +1840,7 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
             "gs://bucket/path/file.ogg",
             1,
             None,
-            **_runtime_prior_kwargs(
-                previous_status=FeedStatus.FAILING,
-                previous_failure_count=1,
-                previous_status_reason=FeedStatusReason.SOURCE_OFFLINE,
-            ),
+            **_runtime_prior_kwargs(),
         )
 
         self.assertFalse(result)
@@ -1955,7 +1902,6 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
                 "fencing_token": 1,
                 "failure_count": 0,
                 "status_reason": None,
-                "previous_status": "unclaimed",
                 "source_feed_id": "123",
             },
             {
@@ -1967,7 +1913,6 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
                 "fencing_token": 1,
                 "failure_count": 2,
                 "status_reason": "source_unreachable",
-                "previous_status": "failing",
                 "source_feed_id": None,
             },
         ]
@@ -2200,7 +2145,7 @@ class TestRowToLeasedFeed(unittest.TestCase):
         self.assertEqual(result["fencing_token"], 1)
         self.assertEqual(result["failure_count"], 0)
         self.assertIsNone(result["status_reason"])
-        self.assertEqual(result["previous_status"], FeedStatus.UNCLAIMED)
+        self.assertNotIn("previous_status", result)
 
     def test_invalid_source_type_raises(self) -> None:
         bad_row = {**_LEASE_ROW, "source_type": "not_a_real_type"}
@@ -2213,24 +2158,13 @@ class TestRowToLeasedFeed(unittest.TestCase):
             "Unknown source type 'not_a_real_type'", str(context.exception)
         )
 
-    def test_invalid_previous_status_raises(self) -> None:
-        bad_row = {**_LEASE_ROW, "previous_status": "paused"}
-        store = FeedStore(make_mock_pool())
-
-        with self.assertRaises(ValueError) as context:
-            store._row_to_leased_feed(cast("asyncpg.Record", bad_row))
-
-        self.assertIn(
-            "Unknown previous status 'paused'", str(context.exception)
-        )
-
-    def test_recovery_previous_status_maps_to_enum(self) -> None:
+    def test_recovery_row_omits_previous_status(self) -> None:
         row = {**_LEASE_ROW, "previous_status": "failing"}
         store = FeedStore(make_mock_pool())
 
         result = store._row_to_leased_feed(cast("asyncpg.Record", row))
 
-        self.assertEqual(result["previous_status"], FeedStatus.FAILING)
+        self.assertNotIn("previous_status", result)
 
 
 class TestAcquireFeedsRecovery(unittest.IsolatedAsyncioTestCase):
