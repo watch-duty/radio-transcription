@@ -51,7 +51,6 @@ def test_documentation_defines_feed_audit_event_contract() -> None:
         "feed_sequence",
         "status_reason_detail",
         "quarantine_reason",
-        "18 months",
         "Watch Duty",
         "admin timeline",
     ):
@@ -258,76 +257,3 @@ def test_migration_defines_status_reason_detail_and_hot_guard() -> None:
         )
         is None
     )
-
-
-def test_retention_migrations_define_bounded_db_owned_cleanup() -> None:
-    helper_path = pathlib.Path(
-        "terraform/modules/alloydb/sql/ingestion/"
-        "031_feed_audit_event_retention.sql"
-    )
-    scheduler_path = pathlib.Path(
-        "terraform/modules/alloydb/sql/ingestion/"
-        "032_feed_audit_events_pg_cron_retention.sql"
-    )
-    helper_sql = _read(str(helper_path))
-    scheduler_sql = _read(str(scheduler_path))
-    normalized_helper = _normalized_sql(helper_sql)
-    normalized_scheduler = _normalized_sql(scheduler_sql)
-    combined_sql = _sql_without_comments(
-        f"{helper_sql}\n{scheduler_sql}"
-    ).lower()
-
-    assert "pg_cron" not in helper_path.name
-    assert "pg_cron" in scheduler_path.name
-
-    for token in (
-        "CREATE OR REPLACE PROCEDURE "
-        "public.prune_feed_audit_events_retention()",
-        "occurred_at < NOW() - INTERVAL '18 months'",
-        "LIMIT 10000",
-        "FOR UPDATE SKIP LOCKED",
-        "DELETE FROM public.feed_audit_events",
-        "DELETE FROM public.feed_audit_event_sequences",
-        "public.feeds",
-        "public.feed_audit_events",
-    ):
-        assert token in normalized_helper
-    assert normalized_helper.count("NOT EXISTS") == 2
-
-    for token in (
-        "CREATE EXTENSION IF NOT EXISTS pg_cron",
-        "cron.schedule",
-        "feed-audit-events-retention",
-        "15 3 * * *",
-        "CALL public.prune_feed_audit_events_retention()",
-    ):
-        assert token in normalized_scheduler
-
-    for token in (
-        "insert into feed_audit_events",
-        "update public.feed_audit_events set feed_sequence",
-        "created_at <",
-        "archive",
-        "tombstone",
-        "baseline",
-    ):
-        assert token not in combined_sql
-
-
-def test_retention_documentation_describes_enforced_policy() -> None:
-    text = _read("documentation/feed-audit-events.md")
-
-    for token in (
-        "18 months",
-        "feed-audit-events-retention",
-        "public.prune_feed_audit_events_retention()",
-        "occurred_at < NOW() - INTERVAL '18 months'",
-        "LIMIT 10000",
-        "feed_sequence gaps",
-        "feed_audit_event_sequences",
-        "no retained feed_audit_events rows",
-        "Retained timelines",
-        "oldest non-expired event",
-        "gaps are expected",
-    ):
-        assert token in text

@@ -181,29 +181,6 @@ should not add public alias behavior around it.
 
 Decision coverage: D-14, D-15, D-16, and D-17.
 
-## Retention
-
-Feed Audit Events are retained for 18 months and expired by the DB-owned
-AlloyDB pg_cron job named `feed-audit-events-retention`. The scheduler calls
-`public.prune_feed_audit_events_retention()` daily, and the procedure deletes
-only rows where `occurred_at < NOW() - INTERVAL '18 months'`.
-
-Each run deletes one bounded batch with `LIMIT 10000` and
-`FOR UPDATE SKIP LOCKED`. Backlog cleanup advances one daily batch at a time
-rather than looping through all expired history in one invocation. Retention
-deletes expired `feed_audit_events` rows only. It does not archive, redact,
-rewrite, create tombstone or baseline events, or renumber retained events.
-
-Retained timelines start at the oldest non-expired event.
-feed_sequence gaps are expected after older audit rows expire.
-`feed_sequence` values are immutable labels and are not recalculated.
-
-`feed_audit_event_sequences` remains part of the ordering contract. Sequence
-rows are pruned only when there are no retained feed_audit_events rows for
-that feed and the current `feeds` row is gone. Live feeds keep their sequence
-rows even if all old audit rows have expired, so future events continue from
-the existing sequence allocator.
-
 ## Phase Boundaries
 
 The implemented v1 runtime boundary includes storage-owned audit events for
@@ -265,4 +242,4 @@ contract without changing Feed Audit Event meaning.
 Watch Duty delivery can map domain events into outbound payloads later without
 turning `feed_audit_events` into delivery dispatcher state. Admin timelines can
 query the audit history later without changing action names, actor semantics,
-snapshot semantics, diagnostic-detail semantics, or retention meaning.
+snapshot semantics, or diagnostic-detail semantics.

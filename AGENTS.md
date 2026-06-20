@@ -50,8 +50,6 @@ from durable backend data instead of relying on short-lived logs.
   the old field immediately.
 - **Signal quality**: Do not audit routine heartbeat or lease churn by default
   — the audit table must stay understandable and affordable.
-- **Retention**: Keep feed audit events for 18 months — this is the v1 product
-  target and should be enforced, not just documented.
 - **Security**: Do not persist secrets, tokens, raw credential-bearing
   exception strings, or unbounded provider responses in diagnostic detail —
   persisted reason text must be bounded and scrubbed where needed.
