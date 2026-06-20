@@ -14,7 +14,7 @@ import enum
 import json
 import logging
 import uuid
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from backend.pipeline.storage import (
     feed_lifecycle,
@@ -125,8 +125,8 @@ class SyncFeedStore:
         if value is None:
             return []
         if isinstance(value, str):
-            return json.loads(value)
-        return list(value)
+            return cast("list[dict[str, str]]", json.loads(value))
+        return cast("list[dict[str, str]]", value)
 
     @staticmethod
     def _parse_status_reason(
@@ -303,10 +303,7 @@ class SyncFeedStore:
         claim_carried_failure_state = (
             before_status == feed_store.FeedStatus.ACTIVE
             and claimed_previous_status in _RUNTIME_ABNORMAL_STATUSES
-            and (
-                before_failure_count > 0
-                or before_status_reason is not None
-            )
+            and (before_failure_count > 0 or before_status_reason is not None)
         )
         if claim_carried_failure_state:
             return (
@@ -487,8 +484,8 @@ class SyncFeedStore:
         status_reason_value = feed_lifecycle.status_reason_storage_value(
             status_reason
         )
-        status_reason_detail = feed_lifecycle.status_reason_detail_storage_value(
-            reason
+        status_reason_detail = (
+            feed_lifecycle.status_reason_detail_storage_value(reason)
         )
         params = (
             self._failure_threshold,

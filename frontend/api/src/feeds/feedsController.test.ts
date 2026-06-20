@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+
 import type * as express from 'express';
 
 import { SourceType } from '@transcription/common';

@@ -14,7 +14,11 @@ from backend.pipeline.ingestion.router import (
     route_capturer,
     supported_source_types,
 )
-from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
+from backend.pipeline.storage.feed_store import (
+    FeedStatus,
+    LeasedFeed,
+    SourceType,
+)
 
 
 def _default_resources() -> CaptureResources:
@@ -35,6 +39,7 @@ def _make_feed(source_type: SourceType) -> LeasedFeed:
         fencing_token=0,
         failure_count=0,
         status_reason=None,
+        previous_status=FeedStatus.UNCLAIMED,
         source_feed_id="123",
     )
 

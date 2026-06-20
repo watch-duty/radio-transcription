@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime
+from typing import TypedDict, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -83,12 +84,19 @@ def _audit_snapshot_row(**overrides: object) -> dict[str, object]:
     return row
 
 
+class _SyncPriorKwargs(TypedDict):
+    actor_id: str
+    previous_status: FeedStatus
+    previous_failure_count: int
+    previous_status_reason: FeedStatusReason | None
+
+
 def _sync_prior_kwargs(
     *,
     previous_status: FeedStatus = FeedStatus.ACTIVE,
     previous_failure_count: int = 0,
     previous_status_reason: FeedStatusReason | None = None,
-) -> dict[str, object]:
+) -> _SyncPriorKwargs:
     return {
         "actor_id": _ECHO_ACTOR_ID,
         "previous_status": previous_status,
@@ -97,9 +105,15 @@ def _sync_prior_kwargs(
     }
 
 
-def _audit_insert_calls(conn: MagicMock) -> list[tuple[object, ...]]:
+def _load_json_object(value: object) -> dict[str, object]:
+    return cast("dict[str, object]", json.loads(cast("str", value)))
+
+
+def _audit_insert_calls(
+    conn: MagicMock,
+) -> list[tuple[str, tuple[object, ...]]]:
     return [
-        call.args
+        cast("tuple[str, tuple[object, ...]]", call.args)
         for call in conn.execute.call_args_list
         if call.args[0] == sync_feed_queries.INSERT_FEED_AUDIT_EVENT_SQL
     ]
@@ -425,7 +439,7 @@ class TestSyncRuntimeAuditEvents:
         audit_params = _audit_insert_calls(conn)[0][1]
         assert audit_params[3] == "feed.failure_reported"
         assert audit_params[4] == _ECHO_ACTOR_ID
-        metadata = json.loads(audit_params[11])
+        metadata = _load_json_object(audit_params[11])
         assert metadata["previous_status_reason"] == (
             "system_authentication_failed"
         )
@@ -504,7 +518,7 @@ class TestSyncRuntimeAuditEvents:
 
         audit_params = _audit_insert_calls(conn)[0][1]
         assert audit_params[3] == "feed.recovered"
-        after_values = json.loads(audit_params[10])
+        after_values = _load_json_object(audit_params[10])
         assert after_values["status"] == "active"
         assert after_values["status_reason"] is None
 
@@ -583,7 +597,7 @@ class TestSyncRuntimeAuditEvents:
 
         audit_params = _audit_insert_calls(conn)[0][1]
         assert audit_params[3] == "feed.failure_reported"
-        metadata = json.loads(audit_params[11])
+        metadata = _load_json_object(audit_params[11])
         assert metadata["previous_status"] == "active"
         assert metadata["previous_failure_count"] == 0
         assert metadata["previous_status_reason"] is None

@@ -4,6 +4,7 @@ import asyncio
 import datetime
 import json
 import uuid
+from typing import cast
 
 import asyncpg
 import pytest
@@ -172,7 +173,7 @@ def _decode_json_object(value: object) -> dict[str, object]:
     if not isinstance(decoded, dict):
         msg = f"Expected JSON object, got {type(decoded).__name__}"
         raise TypeError(msg)
-    return decoded
+    return cast("dict[str, object]", decoded)
 
 
 # -- Tests: acquire_feeds_batch (per-type CTE) -----------------------
@@ -2300,9 +2301,10 @@ async def test_deactivate_feed_succeeds(
     assert audit_row["feed_sequence"] == 1
     assert before_values["status"] == "active"
     assert after_values["status"] == "deactivated"
-    assert before_values["feed_properties.source_feed_id"].startswith(
-        "deactivate-"
+    source_feed_id = cast(
+        "str", before_values["feed_properties.source_feed_id"]
     )
+    assert source_feed_id.startswith("deactivate-")
     assert after_values["feed_properties.tags"] == []
     assert "worker_id" not in before_values
     assert "last_heartbeat" not in after_values
@@ -2394,7 +2396,10 @@ async def test_delete_feed_succeeds(
     assert audit_row["feed_sequence"] == 1
     assert before_values["id"] == str(feed_id)
     assert before_values["name"] == "Hard Delete Test Feed"
-    assert before_values["feed_properties.source_feed_id"].startswith("src_")
+    source_feed_id = cast(
+        "str", before_values["feed_properties.source_feed_id"]
+    )
+    assert source_feed_id.startswith("src_")
     assert before_values["feed_properties.tags"] == []
     assert after_values == {}
     assert "worker_id" not in before_values

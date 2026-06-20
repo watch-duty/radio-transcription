@@ -32,6 +32,7 @@ from backend.pipeline.ingestion.collectors.tests.conftest import (
 )
 from backend.pipeline.ingestion.models import FeedFailure, SourceObservation
 from backend.pipeline.storage.feed_store import (
+    FeedStatus,
     FeedStatusReason,
     LeasedFeed,
     SourceType,
@@ -46,6 +47,7 @@ _TEST_FEED = LeasedFeed(
     fencing_token=1,
     failure_count=0,
     status_reason=None,
+    previous_status=FeedStatus.UNCLAIMED,
     source_feed_id="wmata",
 )
 
@@ -637,6 +639,7 @@ class TestOpenmhzCollector(unittest.IsolatedAsyncioTestCase):
             fencing_token=1,
             failure_count=0,
             status_reason=None,
+            previous_status=FeedStatus.UNCLAIMED,
             source_feed_id=None,
         )
         shutdown = asyncio.Event()

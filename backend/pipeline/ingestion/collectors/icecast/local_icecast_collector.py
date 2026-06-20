@@ -17,7 +17,7 @@ from backend.pipeline.ingestion.collectors.icecast.icecast_collector import (
     capture_icecast_stream,
 )
 from backend.pipeline.ingestion.models import CaptureResources
-from backend.pipeline.storage.feed_store import SourceType
+from backend.pipeline.storage.feed_store import FeedStatus, SourceType
 
 if TYPE_CHECKING:
     from backend.pipeline.storage.feed_store import LeasedFeed
@@ -53,6 +53,7 @@ async def run_local_capture() -> None:
         "fencing_token": 0,
         "failure_count": 0,
         "status_reason": None,
+        "previous_status": FeedStatus.UNCLAIMED,
         "source_feed_id": source_feed_id,
     }
     shutdown_event = asyncio.Event()

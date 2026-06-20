@@ -29,6 +29,7 @@ from backend.pipeline.ingestion.models import (
     SourceObservation,
 )
 from backend.pipeline.storage.feed_store import (
+    FeedStatus,
     FeedStatusReason,
     LeasedFeed,
     SourceType,
@@ -2128,6 +2129,7 @@ class TestCaptureBcfyCallsReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
             fencing_token=1,
             failure_count=0,
             status_reason=None,
+            previous_status=FeedStatus.UNCLAIMED,
             source_feed_id="sid",
         )
         shutdown = asyncio.Event()

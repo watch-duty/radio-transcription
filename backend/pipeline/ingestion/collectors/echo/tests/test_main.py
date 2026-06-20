@@ -23,7 +23,10 @@ from backend.pipeline.ingestion.collectors.echo.main import (
 )
 from backend.pipeline.schema_types.segmented_audio_pb2 import SegmentedAudio
 from backend.pipeline.storage.feed_store import FeedStatus, FeedStatusReason
-from backend.pipeline.storage.sync_feed_store import SyncFeedStore
+from backend.pipeline.storage.sync_feed_store import (
+    ResolvedEchoFeed,
+    SyncFeedStore,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -193,14 +196,14 @@ class TestHandle:
         self, mock_store
     ) -> None:
         feed_id = uuid.uuid4()
-        feed = {
-            "id": feed_id,
-            "name": "Central Fire",
-            "status": FeedStatus.FAILING,
-            "failure_count": 2,
-            "status_reason": FeedStatusReason.SOURCE_UNREACHABLE,
-            "created_at": datetime(2026, 1, 1, tzinfo=UTC),
-        }
+        feed = ResolvedEchoFeed(
+            id=feed_id,
+            name="Central Fire",
+            status=FeedStatus.FAILING,
+            failure_count=2,
+            status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
 
         with patch(
             "backend.pipeline.ingestion.collectors.echo.main.feed_store",

@@ -7,7 +7,7 @@ import pathlib
 import re
 import unittest
 import uuid
-from typing import cast
+from typing import Any, TypedDict, cast
 from unittest import mock
 
 import asyncpg
@@ -99,12 +99,19 @@ def _audit_snapshot_row(**overrides: object) -> dict[str, object]:
     return row
 
 
+class _RuntimePriorKwargs(TypedDict):
+    actor_id: str
+    previous_status: FeedStatus
+    previous_failure_count: int
+    previous_status_reason: FeedStatusReason | None
+
+
 def _runtime_prior_kwargs(
     *,
     previous_status: FeedStatus = FeedStatus.ACTIVE,
     previous_failure_count: int = 0,
     previous_status_reason: FeedStatusReason | None = None,
-) -> dict[str, object]:
+) -> _RuntimePriorKwargs:
     return {
         "actor_id": _COLLECTOR_RUNTIME_ACTOR_ID,
         "previous_status": previous_status,
@@ -126,6 +133,10 @@ def _failure_update_row(
     }
 
 
+def _load_json_object(value: object) -> dict[str, object]:
+    return cast("dict[str, object]", json.loads(cast("str", value)))
+
+
 def _audit_insert_calls(conn: mock.AsyncMock) -> list[tuple[object, ...]]:
     return [
         call.args
@@ -138,7 +149,7 @@ def _unique_violation(
     constraint_name: str,
 ) -> asyncpg.exceptions.UniqueViolationError:
     error = asyncpg.exceptions.UniqueViolationError("duplicate key")
-    error.constraint_name = constraint_name
+    cast("Any", error).constraint_name = constraint_name
     return error
 
 
@@ -1494,9 +1505,9 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
         audit_args = _audit_insert_calls(conn)[0]
         self.assertEqual(audit_args[4], "feed.failure_reported")
         self.assertEqual(audit_args[5], _COLLECTOR_RUNTIME_ACTOR_ID)
-        before_values = json.loads(audit_args[10])
-        after_values = json.loads(audit_args[11])
-        metadata = json.loads(audit_args[12])
+        before_values = _load_json_object(audit_args[10])
+        after_values = _load_json_object(audit_args[11])
+        metadata = _load_json_object(audit_args[12])
         self.assertEqual(before_values["status"], "active")
         self.assertEqual(after_values["status"], "failing")
         self.assertEqual(metadata["previous_status"], "active")
@@ -1574,7 +1585,7 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
 
         audit_args = _audit_insert_calls(conn)[0]
         self.assertEqual(audit_args[4], "feed.failure_reported")
-        metadata = json.loads(audit_args[12])
+        metadata = _load_json_object(audit_args[12])
         self.assertEqual(
             metadata["previous_status_reason"],
             "system_authentication_failed",
@@ -1647,7 +1658,7 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result)
         audit_args = _audit_insert_calls(conn)[0]
         self.assertEqual(audit_args[4], "feed.recovered")
-        after_values = json.loads(audit_args[11])
+        after_values = _load_json_object(audit_args[11])
         self.assertEqual(after_values["status"], "active")
         self.assertIsNone(after_values["status_reason"])
 
@@ -1719,7 +1730,7 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
 
         audit_args = _audit_insert_calls(conn)[0]
         self.assertEqual(audit_args[4], "feed.failure_reported")
-        metadata = json.loads(audit_args[12])
+        metadata = _load_json_object(audit_args[12])
         self.assertEqual(metadata["previous_status"], "active")
         self.assertEqual(metadata["previous_failure_count"], 0)
         self.assertIsNone(metadata["previous_status_reason"])
@@ -1758,7 +1769,7 @@ class TestFeedRuntimeAuditEvents(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result)
         audit_args = _audit_insert_calls(conn)[0]
         self.assertEqual(audit_args[4], "feed.recovered")
-        metadata = json.loads(audit_args[12])
+        metadata = _load_json_object(audit_args[12])
         self.assertEqual(metadata["previous_status"], "quarantined")
 
     async def test_clean_progress_emits_no_event(self) -> None:
@@ -3258,7 +3269,7 @@ class TestResetFeed(unittest.IsolatedAsyncioTestCase):
             actor_id=_FEEDS_SERVICE_ACTOR_ID,
         )
 
-        self.assertIsNotNone(result)
+        assert result is not None
         self.assertEqual(result["status"], FeedStatus.UNCLAIMED)
         self.assertEqual(
             [call.args[0] for call in conn.fetchrow.await_args_list],
