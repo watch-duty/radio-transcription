@@ -35,7 +35,10 @@ message ChunkMetadataProto {
 }
 
 message FlushRequestProto {
-  bytes buffer = 1; // Raw 16-bit PCM audio bytes
+  // Deprecated: Raw 16-bit PCM audio bytes. Under the decoupled hybrid architecture,
+  // raw audio bytes are retrieved from GCS via contributing_chunks. This field is
+  // passed as b"" for backward-compatibility and will be retired in Phase 2.
+  bytes buffer = 1 [deprecated = true];
   string feed_id = 2;
   string session_id = 3;
   repeated string contributing_audio_uris = 4;

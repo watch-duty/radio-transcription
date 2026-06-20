@@ -2,7 +2,7 @@
 # sources: streaming_state.proto
 # plugin: python-betterproto
 # This file has been @generated
-
+import warnings
 from dataclasses import dataclass
 from typing import (
     List,
@@ -71,6 +71,13 @@ class ChunkMetadataProto(betterproto.Message):
 @dataclass(eq=False, repr=False)
 class FlushRequestProto(betterproto.Message):
     buffer: bytes = betterproto.bytes_field(1)
+    """
+    Deprecated: Raw 16-bit PCM audio bytes. Under the decoupled hybrid
+    architecture, raw audio bytes are retrieved from GCS via
+    contributing_chunks. This field is passed as b"" for backward-compatibility
+    and will be retired in Phase 2.
+    """
+
     feed_id: str = betterproto.string_field(2)
     session_id: str = betterproto.string_field(3)
     contributing_audio_uris: List[str] = betterproto.string_field(4)
@@ -97,6 +104,11 @@ class FlushRequestProto(betterproto.Message):
         17, optional=True, group="_baggage"
     )
     contributing_chunks: List["BufferedChunkProto"] = betterproto.message_field(18)
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.is_set("buffer"):
+            warnings.warn("FlushRequestProto.buffer is deprecated", DeprecationWarning)
 
 
 @dataclass(eq=False, repr=False)
