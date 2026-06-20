@@ -62,7 +62,7 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
             feed_id="test-feed-xyz",
             current_gcs_uri="gs://fake/init.flac",
             session_id="fake-session",
-            contributing_audio_uris=[],
+            contributing_chunks=[],
             file_start_ms=0,
             last_segment_end_time_ms=None,
             transmission_start_time_ms=None,

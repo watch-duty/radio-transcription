@@ -496,11 +496,23 @@ class StitcherEngine:
                 )
 
                 # 3. Initialize State Machine context
+                # Load contributing chunks, with backward-compatibility fallback
+                contributing_chunks = list(curr_context.contributing_chunks)
+                if (
+                    not contributing_chunks
+                    and curr_context.contributing_audio_uris
+                ):
+                    # Fallback: recreate BufferedChunk objects for old checkpoints
+                    contributing_chunks = [
+                        datatypes.BufferedChunk(gcs_uri=uri, timestamp_ms=0)
+                        for uri in curr_context.contributing_audio_uris
+                    ]
+
                 ctx = datatypes.StitcherContext(
                     feed_id=feed_id,
                     current_gcs_uri=chunk.gcs_uri,
                     session_id=curr_context.session_id,
-                    contributing_audio_uris=curr_context.contributing_audio_uris.copy(),
+                    contributing_chunks=contributing_chunks,
                     file_start_ms=chunk.timestamp_ms,
                     last_segment_end_time_ms=curr_context.last_end_time_ms,
                     transmission_start_time_ms=curr_context.stale_start_time_ms,
