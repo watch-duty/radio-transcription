@@ -119,7 +119,15 @@ Plans:
   3. Automated tests verify transaction rollback behavior and concurrent per-feed event ordering.
   4. Automated tests verify diagnostic-detail lifecycle, public API migration away from `quarantine_reason`, secret/detail bounding, delete-survival, and retention behavior.
   5. Automated tests verify that lease churn and clean heartbeat or progress paths do not emit default audit events.
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+**Wave 1**
+- [ ] 05-01-PLAN.md - Retention SQL scheduler and static contract coverage.
+- [ ] 05-02-PLAN.md - Low-resource v1 behavioral verification gate.
+
+**Wave 2** *(blocked on 05-01 completion)*
+- [ ] 05-03-PLAN.md - DB-backed retention semantics and prepared-machine verification.
 
 ## Progress
 
