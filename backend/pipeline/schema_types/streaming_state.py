@@ -96,6 +96,7 @@ class FlushRequestProto(betterproto.Message):
     baggage: Optional[str] = betterproto.string_field(
         17, optional=True, group="_baggage"
     )
+    contributing_chunks: List["BufferedChunkProto"] = betterproto.message_field(18)
 
 
 @dataclass(eq=False, repr=False)
@@ -150,6 +151,7 @@ class ActiveStitchingStateProto(betterproto.Message):
     baggage: Optional[str] = betterproto.string_field(
         20, optional=True, group="_baggage"
     )
+    contributing_chunks: List["BufferedChunkProto"] = betterproto.message_field(21)
 
 
 @dataclass(eq=False, repr=False)

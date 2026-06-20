@@ -58,6 +58,7 @@ message FlushRequestProto {
   AudioClassification audio_classification = 15;
   string segment_id = 16;
   optional string baggage = 17;
+  repeated BufferedChunkProto contributing_chunks = 18;
 }
 
 // Persistent State Checkpoints
@@ -87,6 +88,7 @@ message ActiveStitchingStateProto {
   optional string traceparent = 18;
   optional int32 sample_rate = 19;
   optional string baggage = 20;
+  repeated BufferedChunkProto contributing_chunks = 21;
 }
 
 message TransmissionContextProto {

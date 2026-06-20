@@ -93,6 +93,22 @@ class StitcherContext:
     traceparent: str | None = None
     baggage: str | None = None
     prior_audio_tail: bytes | None = None
+    # Ordered list of chunks that have been accumulated into the current transmission buffer.
+    contributing_chunks: list[BufferedChunk] = field(default_factory=list)
+
+    def add_contributing_chunk(self, gcs_uri: str, timestamp_ms: int) -> None:
+        """Adds a chunk to the contributing lists if not already present."""
+        if gcs_uri not in self.contributing_audio_uris:
+            self.contributing_audio_uris.append(gcs_uri)
+        if not any(c.gcs_uri == gcs_uri for c in self.contributing_chunks):
+            self.contributing_chunks.append(
+                BufferedChunk(
+                    timestamp_ms=timestamp_ms,
+                    gcs_uri=gcs_uri,
+                    traceparent=self.traceparent,
+                    baggage=self.baggage,
+                )
+            )
 
 
 @dataclass(frozen=True)

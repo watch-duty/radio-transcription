@@ -240,20 +240,97 @@ class UploadRawSegmentFn(beam.DoFn):
     def _upload_raw_audio(
         self, request: FlushRequest, start_datetime: datetime.datetime
     ) -> str:
-        """Converts PCM to FLAC, uploads to GCS, and returns the GCS URI."""
-        flac_bytes = self._pcm_to_flac(request.buffer, request.sample_rate)
-        flac_path = f"raw_segments/{request.feed_id}/{start_datetime:%Y/%m/%d}/{request.segment_id}.flac"
+        """Downloads contributing GCS chunks, extracts speech segments, stitches them, and uploads to GCS as FLAC."""
+        import urllib.parse  # noqa: PLC0415
 
-        if not self.staging_audio_bucket:
-            err_msg = "staging_audio_bucket is not configured"
-            raise ValueError(err_msg)
         if not self.gcs_client:
             err_msg = "GCS client not initialized"
             raise RuntimeError(err_msg)
+        if not self.staging_audio_bucket:
+            err_msg = "staging_audio_bucket is not configured"
+            raise ValueError(err_msg)
 
+        task_logger = get_task_logger(
+            "transcription-stitcher",
+            {"feed_id": request.feed_id, "segment_id": request.segment_id},
+        )
+
+        # 1. Download and decode all contributing chunks
+        decoded_chunks = {}
+        for chunk in request.contributing_chunks:
+            task_logger.debug(
+                f"[Stateless Stitch] Downloading GCS chunk: {chunk.gcs_uri}"
+            )
+            parsed_uri = urllib.parse.urlparse(chunk.gcs_uri)
+            bucket_name = parsed_uri.netloc
+            blob_name = parsed_uri.path.lstrip("/")
+
+            bucket = self.gcs_client.bucket(bucket_name)
+            blob = bucket.blob(blob_name)
+
+            in_mem_file = io.BytesIO()
+            blob.download_to_file(in_mem_file)
+            in_mem_file.seek(0)
+
+            # Decode FLAC using soundfile
+            samples, sr = sf.read(in_mem_file, dtype="int16")
+            decoded_chunks[chunk.gcs_uri] = (samples, sr, chunk.timestamp_ms)
+
+        # 2. Extract and concatenate the speech segments
+        stitched_segments = []
+        for segment in request.speech_segments:
+            segment_start = segment.start_ms
+            segment_end = segment.end_ms
+
+            for (
+                samples,
+                sr,
+                chunk_start_ms,
+            ) in decoded_chunks.values():
+                chunk_duration_ms = int(len(samples) / sr * 1000)
+                chunk_end_ms = chunk_start_ms + chunk_duration_ms
+
+                # Calculate overlap between this chunk and the speech segment
+                overlap_start = max(segment_start, chunk_start_ms)
+                overlap_end = min(segment_end, chunk_end_ms)
+
+                if overlap_start < overlap_end:
+                    # Convert absolute timestamps to relative sample offsets
+                    rel_start_samples = int(
+                        (overlap_start - chunk_start_ms) * (sr / 1000)
+                    )
+                    rel_end_samples = int(
+                        (overlap_end - chunk_start_ms) * (sr / 1000)
+                    )
+                    stitched_segments.append(
+                        samples[rel_start_samples:rel_end_samples]
+                    )
+
+        # 3. Concatenate and convert to FLAC bytes
+        if stitched_segments:
+            final_pcm_arr = np.concatenate(stitched_segments)
+        else:
+            # Fallback: if no speech segments were found (e.g. pure noise/silence classification flush),
+            # emit a small silent PCM array to avoid empty files
+            task_logger.warning(
+                "[Stateless Stitch] No speech segments found for transmission. Creating silent placeholder."
+            )
+            final_pcm_arr = np.zeros(
+                int(request.sample_rate * 0.1), dtype=np.int16
+            )
+
+        final_pcm_bytes = final_pcm_arr.tobytes()
+        flac_bytes = self._pcm_to_flac(final_pcm_bytes, request.sample_rate)
+
+        # 4. Upload to GCS
+        flac_path = f"raw_segments/{request.feed_id}/{start_datetime:%Y/%m/%d}/{request.segment_id}.flac"
         bucket = self.gcs_client.bucket(self.staging_audio_bucket)
         blob = bucket.blob(flac_path)
         blob.upload_from_string(flac_bytes, content_type="audio/flac")
+
+        task_logger.info(
+            f"[Stateless Stitch] Successfully uploaded stitched FLAC: gs://{self.staging_audio_bucket}/{flac_path}"
+        )
         return f"gs://{self.staging_audio_bucket}/{flac_path}"
 
     def _build_segmented_audio_proto(
