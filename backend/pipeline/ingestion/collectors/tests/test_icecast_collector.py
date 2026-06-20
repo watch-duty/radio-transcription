@@ -255,7 +255,10 @@ class TestCreateFfmpegProcess(unittest.IsolatedAsyncioTestCase):
         args = mock_exec.call_args.args
         self.assertIn("-timeout", args)
         value_index = args.index("-timeout") + 1
-        self.assertEqual(args[value_index], "15000000")
+        self.assertEqual(
+            args[value_index],
+            str(icecast_collector.FFMPEG_TIMEOUT_SEC * 1_000_000),
+        )
 
 
 class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):

@@ -59,6 +59,7 @@ STDERR_TAIL_LINES = 30  # Ring buffer size for ffmpeg stderr diagnostics
 
 _STREAM_PROBE_TIMEOUT_SEC = 10
 _MAX_ALLOWED_LAG_SECONDS = 60.0
+FFMPEG_TIMEOUT_SEC = 15  # Network socket timeout for ffmpeg (in seconds)
 
 
 # Stream endpoint semantics differ from item/API endpoints: a stream 404 means
@@ -534,7 +535,7 @@ async def _create_ffmpeg_process(
     #    since our micro probesize doesn't deeply validate stream integrity.
     # 4. -reconnect 1 / -reconnect_at_eof 1 / -reconnect_streamed 1: Enables native
     #    HTTP/TCP reconnects for short internet drops.
-    # 5. -timeout 15000000: Sets a 15-second socket I/O timeout to prevent ffmpeg from
+    # 5. -timeout: Sets a socket I/O timeout to prevent ffmpeg from
     #    hanging indefinitely on a stalled TCP connection, allowing it to exit
     #    gracefully instead of requiring a hard force-kill.
     return await asyncio.create_subprocess_exec(
@@ -547,7 +548,7 @@ async def _create_ffmpeg_process(
         "-analyzeduration", "0",
         "-probesize", "32768",
         "-fflags", "nobuffer+flush_packets+discardcorrupt",
-        "-timeout", "15000000",
+        "-timeout", str(FFMPEG_TIMEOUT_SEC * 1_000_000),
         "-headers", auth_header,
         "-i", url,
         "-vn", "-sn", "-dn",
