@@ -76,7 +76,7 @@ describe('TranscriptDisplay', () => {
             hasNewerAudioSegments={false}
             isFetchingNewerAudioSegments={false}
             fetchNewerAudioSegments={vi.fn()}
-            isAudioSegmentsFetching={false}
+
             hasOlderAudioSegments={false}
             isFetchingOlderAudioSegments={false}
             fetchOlderAudioSegments={vi.fn()}
@@ -101,7 +101,7 @@ describe('TranscriptDisplay', () => {
     expect(screen.getByText('Hello from component first')).toBeTruthy();
   });
 
-  it('renders newer data loader indicator when parameter conditions require it', () => {
+  it('renders a spinner while fetching newer audio segments', () => {
     render(
       <VirtuosoMockContext.Provider
         value={{ viewportHeight: 1000, itemHeight: 100 }}
@@ -113,9 +113,8 @@ describe('TranscriptDisplay', () => {
             groupTitles={['Friday, April 10, 2026']}
             setIsViewAtTopOfAudioSegments={vi.fn()}
             hasNewerAudioSegments={true}
-            isFetchingNewerAudioSegments={false}
+            isFetchingNewerAudioSegments={true}
             fetchNewerAudioSegments={vi.fn()}
-            isAudioSegmentsFetching={false}
             hasOlderAudioSegments={false}
             isFetchingOlderAudioSegments={false}
             fetchOlderAudioSegments={vi.fn()}
@@ -135,12 +134,10 @@ describe('TranscriptDisplay', () => {
       </VirtuosoMockContext.Provider>
     );
 
-    expect(
-      screen.getByRole('button', { name: /Load newer transcripts/i })
-    ).toBeTruthy();
+    expect(screen.getByRole('progressbar')).toBeTruthy();
   });
 
-  it('renders older data loader indicator when hasOlderTranscripts is true', () => {
+  it('renders a spinner while fetching older audio segments', () => {
     render(
       <VirtuosoMockContext.Provider
         value={{ viewportHeight: 1000, itemHeight: 100 }}
@@ -154,9 +151,8 @@ describe('TranscriptDisplay', () => {
             hasNewerAudioSegments={false}
             isFetchingNewerAudioSegments={false}
             fetchNewerAudioSegments={vi.fn()}
-            isAudioSegmentsFetching={false}
             hasOlderAudioSegments={true}
-            isFetchingOlderAudioSegments={false}
+            isFetchingOlderAudioSegments={true}
             fetchOlderAudioSegments={vi.fn()}
             triggerSnackbar={vi.fn()}
             ruleIdToNameMap={new Map()}
@@ -174,9 +170,7 @@ describe('TranscriptDisplay', () => {
       </VirtuosoMockContext.Provider>
     );
 
-    expect(
-      screen.getByRole('button', { name: /Load older transcripts/i })
-    ).toBeTruthy();
+    expect(screen.getByRole('progressbar')).toBeTruthy();
   });
 
   it('shows no more transcripts found message when reached historical endpoint', () => {
@@ -193,7 +187,7 @@ describe('TranscriptDisplay', () => {
             hasNewerAudioSegments={false}
             isFetchingNewerAudioSegments={false}
             fetchNewerAudioSegments={vi.fn()}
-            isAudioSegmentsFetching={false}
+
             hasOlderAudioSegments={false}
             isFetchingOlderAudioSegments={false}
             fetchOlderAudioSegments={vi.fn()}
@@ -235,7 +229,7 @@ describe('TranscriptDisplay', () => {
             hasNewerAudioSegments={false}
             isFetchingNewerAudioSegments={false}
             fetchNewerAudioSegments={vi.fn()}
-            isAudioSegmentsFetching={false}
+
             hasOlderAudioSegments={false}
             isFetchingOlderAudioSegments={false}
             fetchOlderAudioSegments={vi.fn()}
@@ -276,7 +270,7 @@ describe('TranscriptDisplay', () => {
             hasNewerAudioSegments={false}
             isFetchingNewerAudioSegments={false}
             fetchNewerAudioSegments={vi.fn()}
-            isAudioSegmentsFetching={false}
+
             hasOlderAudioSegments={false}
             isFetchingOlderAudioSegments={false}
             fetchOlderAudioSegments={vi.fn()}
@@ -314,7 +308,7 @@ describe('TranscriptDisplay', () => {
             hasNewerAudioSegments={false}
             isFetchingNewerAudioSegments={false}
             fetchNewerAudioSegments={vi.fn()}
-            isAudioSegmentsFetching={false}
+
             hasOlderAudioSegments={false}
             isFetchingOlderAudioSegments={false}
             fetchOlderAudioSegments={vi.fn()}
@@ -351,7 +345,7 @@ describe('TranscriptDisplay', () => {
             hasNewerAudioSegments={true}
             isFetchingNewerAudioSegments={false}
             fetchNewerAudioSegments={vi.fn()}
-            isAudioSegmentsFetching={false}
+
             hasOlderAudioSegments={false}
             isFetchingOlderAudioSegments={false}
             fetchOlderAudioSegments={vi.fn()}

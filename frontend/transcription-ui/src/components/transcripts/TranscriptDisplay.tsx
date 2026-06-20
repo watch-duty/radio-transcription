@@ -2,7 +2,6 @@ import React from 'react';
 import { GroupedVirtuoso, type VirtuosoHandle } from 'react-virtuoso';
 
 import Box from '@mui/material/Box';
-import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
 import ListItem from '@mui/material/ListItem';
 import Paper from '@mui/material/Paper';
@@ -11,7 +10,6 @@ import type {
   InfiniteData,
   InfiniteQueryObserverResult,
 } from '@tanstack/react-query';
-import type { AudioSegment } from '@transcription/common';
 
 import type { ListAudioSegmentsData } from '../../hooks/useAudioSegments';
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
@@ -29,7 +27,6 @@ export interface TranscriptDisplayProps {
   fetchNewerAudioSegments: () => Promise<
     InfiniteQueryObserverResult<InfiniteData<ListAudioSegmentsData>, Error>
   >;
-  isAudioSegmentsFetching: boolean;
   isAudioSegmentsPolling: boolean;
   hasOlderAudioSegments: boolean;
   isFetchingOlderAudioSegments: boolean;
@@ -58,7 +55,6 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
   hasNewerAudioSegments,
   isFetchingNewerAudioSegments,
   fetchNewerAudioSegments,
-  isAudioSegmentsFetching,
   hasOlderAudioSegments,
   isFetchingOlderAudioSegments,
   fetchOlderAudioSegments,
@@ -89,6 +85,16 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
         ref={ref}
         groupCounts={groupCounts}
         atTopStateChange={(atTop) => setIsViewAtTopOfAudioSegments(atTop)}
+        startReached={() => {
+          if (hasNewerAudioSegments && !isFetchingNewerAudioSegments) {
+            fetchNewerAudioSegments();
+          }
+        }}
+        endReached={() => {
+          if (hasOlderAudioSegments && !isFetchingOlderAudioSegments) {
+            fetchOlderAudioSegments();
+          }
+        }}
         groupContent={(index) => {
           const title = groupTitles[index];
           return (
@@ -196,80 +202,23 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
         }}
         components={{
           Header: () =>
-            hasNewerAudioSegments ? (
-              <Box
-                sx={{
-                  display: 'flex',
-                  justifyContent: 'center',
-                  py: 1,
-                  gap: 1,
-                }}
-              >
-                {isFetchingNewerAudioSegments ? (
-                  <CircularProgress size={40} />
-                ) : (
-                  <Button
-                    variant="outlined"
-                    onClick={async () => {
-                      const result = await fetchNewerAudioSegments();
-                      if (
-                        result.data &&
-                        (
-                          result.data.pages[0] as {
-                            segments: AudioSegment[];
-                          }
-                        )?.segments.length === 0
-                      ) {
-                        triggerSnackbar('No newer transcripts found');
-                      }
-                    }}
-                    disabled={isAudioSegmentsFetching}
-                    sx={{ minWidth: '160px', textTransform: 'none' }}
-                  >
-                    Load newer transcripts
-                  </Button>
-                )}
+            isFetchingNewerAudioSegments ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 1 }}>
+                <CircularProgress size={28} />
               </Box>
             ) : null,
-          Footer: () => {
-            if (hasOlderAudioSegments) {
-              return (
-                <Box
-                  sx={{
-                    display: 'flex',
-                    justifyContent: 'center',
-                    py: 1,
-                  }}
-                >
-                  {isFetchingOlderAudioSegments ? (
-                    <CircularProgress size={40} />
-                  ) : (
-                    <Button
-                      variant="outlined"
-                      onClick={() => fetchOlderAudioSegments()}
-                      disabled={isAudioSegmentsFetching}
-                      sx={{ minWidth: '160px', textTransform: 'none' }}
-                    >
-                      Load older transcripts
-                    </Button>
-                  )}
-                </Box>
-              );
-            }
-            return (
-              <Box
-                sx={{
-                  display: 'flex',
-                  justifyContent: 'center',
-                  py: 2,
-                }}
-              >
+          Footer: () =>
+            isFetchingOlderAudioSegments ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 1 }}>
+                <CircularProgress size={28} />
+              </Box>
+            ) : !hasOlderAudioSegments ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
                 <Typography variant="caption" color="text.secondary">
                   No more transcripts found
                 </Typography>
               </Box>
-            );
-          },
+            ) : null,
         }}
       />
     </Paper>

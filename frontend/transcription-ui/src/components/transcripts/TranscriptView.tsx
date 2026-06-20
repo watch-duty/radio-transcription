@@ -247,7 +247,6 @@ export function TranscriptView({
     pollNewerAudioSegments,
     updateCacheWithNewAudioSegments,
     isLoading: isAudioSegmentsInitialLoading,
-    isFetching: isAudioSegmentsFetching,
   } = useAudioSegments({
     token,
     searchedFeedId,
@@ -699,7 +698,6 @@ export function TranscriptView({
             hasNewerAudioSegments={hasNewerAudioSegments}
             isFetchingNewerAudioSegments={isFetchingNewerAudioSegments}
             fetchNewerAudioSegments={fetchNewerAudioSegments}
-            isAudioSegmentsFetching={isAudioSegmentsFetching}
             isAudioSegmentsPolling={isAudioSegmentsPolling}
             hasOlderAudioSegments={hasOlderAudioSegments}
             isFetchingOlderAudioSegments={isFetchingOlderAudioSegments}

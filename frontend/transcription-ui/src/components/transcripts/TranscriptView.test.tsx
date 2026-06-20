@@ -454,11 +454,7 @@ describe('TranscriptView', () => {
       expect(screen.getByText('Transcript 1')).toBeTruthy();
     });
 
-    const loadMoreButton = screen.getByRole('button', {
-      name: /Load older transcripts/i,
-    });
-    fireEvent.click(loadMoreButton);
-
+    // Infinite scroll: endReached fires automatically when the last item is visible
     await waitFor(() => {
       expect(listAudioSegments).toHaveBeenCalledTimes(2);
       expect(listAudioSegments).toHaveBeenLastCalledWith(
@@ -507,11 +503,7 @@ describe('TranscriptView', () => {
       expect(screen.getByText('Transcript 1')).toBeTruthy();
     });
 
-    const loadNewerButton = screen.getByRole('button', {
-      name: /Load newer transcripts/i,
-    });
-    fireEvent.click(loadNewerButton);
-
+    // Infinite scroll: startReached fires automatically when the first item is visible
     await waitFor(() => {
       expect(listAudioSegments).toHaveBeenCalledTimes(2);
       expect(listAudioSegments).toHaveBeenLastCalledWith(
@@ -598,11 +590,7 @@ describe('TranscriptView', () => {
       expect(screen.getByText('Transcript 2 (Alert only)')).toBeTruthy();
     });
 
-    const loadNewerButton = screen.getByRole('button', {
-      name: /Load newer transcripts/i,
-    });
-    fireEvent.click(loadNewerButton);
-
+    // Infinite scroll: startReached fires automatically when the first item is visible
     await waitFor(() => {
       expect(listAudioSegments).toHaveBeenCalledTimes(3);
       expect(listAudioSegments).toHaveBeenLastCalledWith(
