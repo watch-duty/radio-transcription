@@ -11,6 +11,9 @@ from backend.pipeline.storage import feed_audit_sql
 
 _AUDIT_BEFORE_SNAPSHOT_SQL = feed_audit_sql.audit_snapshot_sql("before_row")
 _AUDIT_AFTER_SNAPSHOT_SQL = feed_audit_sql.audit_snapshot_sql("after_row")
+_AUDIT_ACTOR_CTE_SQL = """audit_actor AS (
+    SELECT %s::text AS actor_id
+)"""
 
 RESOLVE_ECHO_FEED_SQL = """\
 SELECT f.id, f.name, f.status, f.failure_count, f.status_reason, f.created_at
@@ -63,20 +66,25 @@ after_row AS (
     JOIN feed_properties fp ON fp.feed_id = u.id
 ),
 {feed_audit_sql.recovery_audit_action_cte(before_alias="before_row")},
+{_AUDIT_ACTOR_CTE_SQL},
 {
     feed_audit_sql.insert_feed_audit_event_cte(
         feed_id_sql="after_row.id",
         action_sql="audit_action.action",
-        actor_id_sql="%s::text",
+        actor_id_sql="audit_actor.actor_id",
         feed_revision_sql="after_row.feed_revision",
         before_values_sql=_AUDIT_BEFORE_SNAPSHOT_SQL,
         after_values_sql=_AUDIT_AFTER_SNAPSHOT_SQL,
         from_sql=(
             "FROM before_row\n"
             "    JOIN after_row ON after_row.id = before_row.id\n"
-            "    CROSS JOIN audit_action"
+            "    CROSS JOIN audit_action\n"
+            "    CROSS JOIN audit_actor"
         ),
-        where_sql="%s::text IS NOT NULL\n      AND audit_action.action IS NOT NULL",
+        where_sql=(
+            "audit_actor.actor_id IS NOT NULL\n"
+            "      AND audit_action.action IS NOT NULL"
+        ),
     )
 }
 SELECT after_row.*
@@ -132,20 +140,25 @@ after_row AS (
     JOIN feed_properties fp ON fp.feed_id = u.id
 ),
 {feed_audit_sql.failure_audit_action_cte()},
+{_AUDIT_ACTOR_CTE_SQL},
 {
     feed_audit_sql.insert_feed_audit_event_cte(
         feed_id_sql="after_row.id",
         action_sql="audit_action.action",
-        actor_id_sql="%s::text",
+        actor_id_sql="audit_actor.actor_id",
         feed_revision_sql="after_row.feed_revision",
         before_values_sql=_AUDIT_BEFORE_SNAPSHOT_SQL,
         after_values_sql=_AUDIT_AFTER_SNAPSHOT_SQL,
         from_sql=(
             "FROM before_row\n"
             "    JOIN after_row ON after_row.id = before_row.id\n"
-            "    CROSS JOIN audit_action"
+            "    CROSS JOIN audit_action\n"
+            "    CROSS JOIN audit_actor"
         ),
-        where_sql="%s::text IS NOT NULL\n      AND audit_action.action IS NOT NULL",
+        where_sql=(
+            "audit_actor.actor_id IS NOT NULL\n"
+            "      AND audit_action.action IS NOT NULL"
+        ),
     )
 }
 SELECT after_row.*
@@ -191,20 +204,25 @@ after_row AS (
     JOIN feed_properties fp ON fp.feed_id = u.id
 ),
 {feed_audit_sql.failure_audit_action_cte()},
+{_AUDIT_ACTOR_CTE_SQL},
 {
     feed_audit_sql.insert_feed_audit_event_cte(
         feed_id_sql="after_row.id",
         action_sql="audit_action.action",
-        actor_id_sql="%s::text",
+        actor_id_sql="audit_actor.actor_id",
         feed_revision_sql="after_row.feed_revision",
         before_values_sql=_AUDIT_BEFORE_SNAPSHOT_SQL,
         after_values_sql=_AUDIT_AFTER_SNAPSHOT_SQL,
         from_sql=(
             "FROM before_row\n"
             "    JOIN after_row ON after_row.id = before_row.id\n"
-            "    CROSS JOIN audit_action"
+            "    CROSS JOIN audit_action\n"
+            "    CROSS JOIN audit_actor"
         ),
-        where_sql="%s::text IS NOT NULL\n      AND audit_action.action IS NOT NULL",
+        where_sql=(
+            "audit_actor.actor_id IS NOT NULL\n"
+            "      AND audit_action.action IS NOT NULL"
+        ),
     )
 }
 SELECT after_row.*

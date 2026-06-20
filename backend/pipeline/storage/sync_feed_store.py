@@ -116,7 +116,7 @@ class SyncFeedStore:
         with self._connect_db() as conn:
             conn.execute(
                 cast("LiteralString", sync_feed_queries.HEARTBEAT_SQL),
-                (feed_id, actor_id, actor_id),
+                (feed_id, actor_id),
             )
 
     def record_failure(
@@ -150,7 +150,6 @@ class SyncFeedStore:
             status_reason_detail,
             status_reason_value,
             actor_id,
-            actor_id,
         )
         with self._connect_db() as conn:
             conn.execute(
@@ -181,7 +180,6 @@ class SyncFeedStore:
             status_reason.value,
             feed_lifecycle.status_reason_detail_storage_value(reason),
             status_reason.value,
-            actor_id,
             actor_id,
         )
         with self._connect_db() as conn:

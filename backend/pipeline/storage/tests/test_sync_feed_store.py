@@ -110,7 +110,7 @@ class TestRecordHeartbeat:
             "status NOT IN ('quarantined'::feed_status, "
             "'deactivated'::feed_status)"
         ) in sql
-        assert params == (feed_id, None, None)
+        assert params == (feed_id, None)
 
 
 class TestRecordFailure:
@@ -146,7 +146,6 @@ class TestRecordFailure:
             "echo_pubsub_publish_failed",
             "system_pipeline_error",
             None,
-            None,
         )
 
     def test_uses_custom_thresholds(self) -> None:
@@ -176,7 +175,6 @@ class TestRecordFailure:
             "echo_heartbeat_write_failed",
             "system_pipeline_error",
             None,
-            None,
         )
 
     def test_record_failure_allows_omitted_status_reason_for_compatibility(
@@ -196,7 +194,6 @@ class TestRecordFailure:
             15,
             None,
             "raw",
-            None,
             None,
             None,
         )
@@ -255,7 +252,6 @@ class TestRecordNonBudgetedFailure:
             "system_pipeline_error",
             None,
             "system_pipeline_error",
-            None,
             None,
         )
 
