@@ -1,6 +1,7 @@
 """Shared feed lifecycle storage-boundary helpers."""
 
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 from backend.pipeline.storage import quarantine_reason
