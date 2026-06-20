@@ -492,13 +492,20 @@ class StitcherEngine:
                 )
 
                 # 3. Initialize State Machine context
-                # Load contributing chunks, with backward-compatibility fallback
+                # Load contributing chunks. We implement a strict backward-compatibility
+                # fallback for rolling upgrades in production:
+                # - Old checkpoints (ActiveStitchingStateProto) serialized by un-upgraded workers
+                #   only contain the legacy `contributing_audio_uris` string list.
+                # - When an upgraded worker restores this state, it detects the empty `contributing_chunks`
+                #   and automatically reconstructs `BufferedChunk` objects using a fallback timestamp_ms of 0.
+                # - This prevents any deserialization or runtime failures during deployment and allows
+                #   active sessions to be drained seamlessly.
+                # NOTE: This fallback block can be safely retired in Phase 2 once this release is 100% stable.
                 contributing_chunks = list(curr_context.contributing_chunks)
                 if (
                     not contributing_chunks
                     and curr_context.contributing_audio_uris
                 ):
-                    # Fallback: recreate BufferedChunk objects for old checkpoints
                     contributing_chunks = [
                         datatypes.BufferedChunk(gcs_uri=uri, timestamp_ms=0)
                         for uri in curr_context.contributing_audio_uris

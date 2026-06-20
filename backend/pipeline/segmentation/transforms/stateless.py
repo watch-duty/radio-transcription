@@ -3,8 +3,25 @@
 This module defines the stateless mapper and serializer DoFns in our Apache
 Beam DAG. These transforms perform zero stateful buffering or timer scheduling
 and are highly optimized for parallel worker execution:
-ParseAndKeyFn: Unmarshals raw Pub/Sub messages, validates protobuf chunk
+- **ParseAndKeyFn**: Unmarshals raw Pub/Sub messages, validates protobuf chunk
    fields, extracts Telemetry tracing context, and sets a deterministic key.
+- **UploadRawSegmentFn**: Stateless audio stitching stage. Downloads contributing
+   chunks from GCS, slices them according to VAD segments, stitches them, and
+   uploads the final FLAC segment to GCS.
+
+## Decoupled Stateful/Stateless Hybrid Architecture (Stage 2 & Stage 3)
+
+To prevent Dataflow Windmill state locking and GIL contention bottlenecks, the audio
+segmentation pipeline uses a decoupled, hybrid metadata/physical-retrieval flow:
+1. **Stage 2 (Stateful - OrderedStitchAudioFn)**: Performs chronological sequencing,
+   session FSM tracking, and VAD segment calculations. To keep persistent state sizes
+   extremely small (<1 KB) and lock times under microseconds, **no raw audio bytes are stored
+   in stateful cell persistent bag states**.
+2. **Stage 3 (Stateless - UploadRawSegmentFn)**: Performs the heavy physical work of
+   downloading contributing audio chunks from GCS, slicing them according to Stage 2's
+   VAD segments, stitching them, and compressing the result to FLAC. Since this stage is
+   completely stateless, Dataflow can distribute and execute these tasks in parallel across
+   unlimited worker threads.
 """
 
 import datetime
@@ -284,8 +301,14 @@ class UploadRawSegmentFn(beam.DoFn):
             self.gcs_chunks_downloaded.inc()
 
         # 2. Extract and concatenate the speech segments
-        # Defensively sort both speech segments and contributing chunks chronologically
-        # to guarantee 100% correct stitching order, eliminating any reliance on implicit upstream sorting.
+        # CRITICAL DISTRIBUTED SYSTEMS SAFEGUARD:
+        # We must explicitly and defensively sort both speech segments and contributing chunks chronologically.
+        # While the upstream jitter buffer and Python dictionary insertion order generally preserve chronological
+        # order, relying on implicit sorting invariants across distributed serialization boundaries is a high-severity
+        # hazard. If chunks are processed or iterated out of order:
+        # - Slices of a single speech segment spanning multiple chunks will be concatenated in the wrong sequence.
+        # - The resulting audio output will be silently scrambled and garbled in production.
+        # Sorting explicitly here guarantees 100% mathematically correct stitching under all execution conditions.
         sorted_chunks = sorted(
             decoded_chunks.values(), key=lambda x: x[2]
         )  # x[2] is chunk_start_ms

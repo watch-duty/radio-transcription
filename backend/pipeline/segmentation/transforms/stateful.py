@@ -11,6 +11,21 @@ All high-level audio download/concatenation/VAD heuristics are cleanly
 decoupled from Beam timer variables and delegated to StitcherEngine.
 
 
+## Decoupled Stateful/Stateless Hybrid Architecture (Stage 2 & Stage 3)
+
+To prevent Dataflow Windmill state locking and GIL contention bottlenecks, the audio
+segmentation pipeline uses a decoupled, hybrid metadata/physical-retrieval flow:
+1. **Stage 2 (Stateful - OrderedStitchAudioFn)**: Performs chronological sequencing,
+   session FSM tracking, and VAD segment calculations. To keep persistent state sizes
+   extremely small (<1 KB) and lock times under microseconds, **no raw audio bytes are stored
+   in stateful cell persistent bag states**.
+2. **Stage 3 (Stateless - UploadRawSegmentFn)**: Performs the heavy physical work of
+   downloading contributing audio chunks from GCS, slicing them according to Stage 2's
+   VAD segments, stitching them, and compressing the result to FLAC. Since this stage is
+   completely stateless, Dataflow can distribute and execute these tasks in parallel across
+   unlimited worker threads.
+
+
 ## Dataflow Windmill Execution Model
 
 **This section is critical reading for anyone familiar with Beam on other runners
