@@ -50,17 +50,37 @@ class TestLastSpeechSegmentTimestampSqlProjection(unittest.TestCase):
 class TestFeedAuditEventSqlContract(unittest.TestCase):
     """Tests for the feed-local audit event insert contract."""
 
-    def test_async_and_sync_insert_use_feed_revision(self) -> None:
+    def test_standalone_audit_insert_helpers_are_removed(self) -> None:
         for module in (feed_queries, sync_feed_queries):
             with self.subTest(module=module.__name__):
-                sql = _sql_without_comments(module.INSERT_FEED_AUDIT_EVENT_SQL)
-
-                self.assertIn("feed_revision", sql)
-                self.assertNotIn("feed_sequence", sql)
-                self.assertNotIn("feed_audit_event_sequences", sql)
+                self.assertFalse(hasattr(module, "INSERT_FEED_AUDIT_EVENT_SQL"))
+                self.assertFalse(hasattr(module, "GET_AUDIT_FEED_SNAPSHOT_SQL"))
                 self.assertFalse(
                     hasattr(module, "ALLOCATE_FEED_AUDIT_SEQUENCE_SQL")
                 )
+
+    def test_audited_mutation_sql_embeds_audit_insert(self) -> None:
+        audited_sql = (
+            feed_queries.CREATE_FEED_SQL,
+            feed_queries.UPDATE_FEED_SQL,
+            feed_queries.DEACTIVATE_FEED_SQL,
+            feed_queries.DELETE_FEED_SQL,
+            feed_queries.RESET_FEED_SQL,
+            feed_queries.UPDATE_PROGRESS_SQL,
+            feed_queries.RECORD_SOURCE_OBSERVATION_SQL,
+            feed_queries.REPORT_FAILURE_SQL,
+            feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL,
+            sync_feed_queries.HEARTBEAT_SQL,
+            sync_feed_queries.RECORD_FAILURE_SQL,
+            sync_feed_queries.RECORD_NON_BUDGETED_FAILURE_SQL,
+        )
+
+        for sql in audited_sql:
+            stripped = _sql_without_comments(sql)
+            self.assertIn("INSERT INTO feed_audit_events", stripped)
+            self.assertIn("feed_revision", stripped)
+            self.assertNotIn("feed_sequence", stripped)
+            self.assertNotIn("feed_audit_event_sequences", stripped)
 
 
 class TestStatusReasonLifecycleIsolation(unittest.TestCase):
@@ -109,10 +129,8 @@ class TestWorkerOwnedLifecycleGuards(unittest.TestCase):
         ]
 
         for sql in fenced_sql:
-            self.assertIn(
-                "AND status = 'active'::feed_status",
-                _sql_without_comments(sql),
-            )
+            stripped = _sql_without_comments(sql)
+            self.assertIn("status = 'active'::feed_status", stripped)
 
     def test_progress_remains_allowed_after_deactivation(self) -> None:
         """Main allows one in-flight bookmark write after admin stop."""
@@ -143,15 +161,14 @@ class TestReportFailureSqlStatusReason(unittest.TestCase):
         self.assertRegex(
             sql,
             r"status_reason_updated_at = CASE\s+"
-            r"WHEN status_reason IS DISTINCT FROM COALESCE"
+            r"WHEN feeds.status_reason IS DISTINCT FROM COALESCE"
             r"\(\$7, 'system_unexpected_error'\)\s+"
             r"THEN NOW\(\)\s+"
-            r"ELSE status_reason_updated_at\s+END",
+            r"ELSE feeds.status_reason_updated_at\s+END",
         )
-        self.assertIn(
-            "WHERE id = $1 AND worker_id = $2 AND fencing_token = $4",
-            sql,
-        )
+        self.assertIn("WHERE f.id = $1", sql)
+        self.assertIn("AND f.worker_id = $2", sql)
+        self.assertIn("AND f.fencing_token = $4", sql)
 
     def test_report_failure_sql_does_not_write_quarantine_reason(
         self,
@@ -178,9 +195,10 @@ class TestNonBudgetedFailureSql(unittest.TestCase):
         self.assertIn("status_reason = $5", sql)
         self.assertIn("status_reason_detail = $6", sql)
         self.assertIn("worker_id = NULL", sql)
-        self.assertIn("WHERE id = $1 AND worker_id = $2", sql)
-        self.assertIn("AND fencing_token = $3", sql)
-        self.assertIn("AND status = 'active'::feed_status", sql)
+        self.assertIn("WHERE f.id = $1", sql)
+        self.assertIn("AND f.worker_id = $2", sql)
+        self.assertIn("AND f.fencing_token = $3", sql)
+        self.assertIn("AND f.status = 'active'::feed_status", sql)
         self.assertNotIn("quarantine_reason =", sql)
         self.assertNotIn("failure_count + 1", sql)
 
@@ -192,7 +210,7 @@ class TestNonBudgetedFailureSql(unittest.TestCase):
         )
 
         self.assertNotIn("quarantine_reason =", sql)
-        self.assertNotIn("COALESCE", sql)
+        self.assertNotIn("COALESCE($5, quarantine_reason)", sql)
 
     def test_non_budgeted_failure_sql_returns_status_diagnostics(self) -> None:
         sql = _sql_without_comments(
@@ -214,8 +232,8 @@ class TestNonBudgetedFailureSql(unittest.TestCase):
         self.assertRegex(
             sql,
             r"status_reason_updated_at = CASE\s+"
-            r"WHEN status_reason IS DISTINCT FROM \$5 THEN NOW\(\)\s+"
-            r"ELSE status_reason_updated_at\s+END",
+            r"WHEN feeds.status_reason IS DISTINCT FROM \$5 THEN NOW\(\)\s+"
+            r"ELSE feeds.status_reason_updated_at\s+END",
         )
 
     def test_failure_count_increment_isolated_to_report_failure_sql(
@@ -244,13 +262,13 @@ class TestStatusReasonClearSql(unittest.TestCase):
         self.assertRegex(
             sql,
             r"status_reason_updated_at = CASE\s+"
-            r"WHEN status_reason IS NOT NULL OR status_reason_detail IS NOT NULL "
+            r"WHEN feeds.status_reason IS NOT NULL OR feeds.status_reason_detail IS NOT NULL "
             r"THEN NOW\(\)\s+"
-            r"ELSE status_reason_updated_at\s+END",
+            r"ELSE feeds.status_reason_updated_at\s+END",
         )
         self.assertIn("failure_count = 0", sql)
         self.assertIn(
-            "WHERE id = $2 AND worker_id = $3 AND fencing_token = $4",
+            "WHERE f.id = $2 AND f.worker_id = $3 AND f.fencing_token = $4",
             sql,
         )
         self.assertNotIn("SET status", sql)
@@ -266,9 +284,9 @@ class TestStatusReasonClearSql(unittest.TestCase):
         self.assertRegex(
             sql,
             r"status_reason_updated_at = CASE\s+"
-            r"WHEN status_reason IS NOT NULL OR status_reason_detail IS NOT NULL "
+            r"WHEN feeds.status_reason IS NOT NULL OR feeds.status_reason_detail IS NOT NULL "
             r"THEN NOW\(\)\s+"
-            r"ELSE status_reason_updated_at\s+END",
+            r"ELSE feeds.status_reason_updated_at\s+END",
         )
         self.assertIn("status = 'unclaimed'::feed_status", sql)
 
@@ -279,7 +297,7 @@ class TestStatusReasonClearSql(unittest.TestCase):
 
         self.assertIn("failure_count = 0", sql)
         self.assertIn(
-            "last_bookmark_time = GREATEST(last_bookmark_time, $4)",
+            "last_bookmark_time = GREATEST(feeds.last_bookmark_time, $4)",
             sql,
         )
         self.assertIn("status_reason = NULL", sql)
@@ -287,9 +305,9 @@ class TestStatusReasonClearSql(unittest.TestCase):
         self.assertRegex(
             sql,
             r"status_reason_updated_at = CASE\s+"
-            r"WHEN status_reason IS NOT NULL OR status_reason_detail IS NOT NULL "
+            r"WHEN feeds.status_reason IS NOT NULL OR feeds.status_reason_detail IS NOT NULL "
             r"THEN NOW\(\)\s+"
-            r"ELSE status_reason_updated_at\s+END",
+            r"ELSE feeds.status_reason_updated_at\s+END",
         )
         self.assertIn("current_state.worker_id = $2", sql)
         self.assertIn("current_state.fencing_token = $3", sql)
@@ -572,7 +590,7 @@ class TestAsyncSyncFailureSqlContracts(unittest.TestCase):
 
         self.assertIn("status_reason_detail = NULL", sql)
         self.assertIn(
-            "status_reason IS NOT NULL OR status_reason_detail IS NOT NULL",
+            "feeds.status_reason IS NOT NULL OR feeds.status_reason_detail IS NOT NULL",
             sql,
         )
 
@@ -585,7 +603,7 @@ class TestAsyncSyncFailureSqlContracts(unittest.TestCase):
         ):
             stripped = _sql_without_comments(sql)
             self.assertIn("status_reason_updated_at = CASE", stripped)
-            self.assertIn("ELSE status_reason_updated_at", stripped)
+            self.assertIn("ELSE feeds.status_reason_updated_at", stripped)
 
     def test_async_sql_uses_fencing_and_sync_sql_uses_terminal_guards(
         self,

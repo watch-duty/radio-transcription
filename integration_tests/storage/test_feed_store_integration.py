@@ -2007,6 +2007,163 @@ async def test_concurrent_same_feed_updates_allocate_unique_revisions(
     } == {name for name, _tags in update_inputs}
 
 
+# -- Tests: audited runtime lifecycle events -------------------------
+
+
+async def test_first_abnormal_failure_writes_failure_reported_audit_event(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """A new failing status/reason combination emits feed.failure_reported."""
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool,
+        "Runtime Failure Audit",
+        status="active",
+        worker_id=worker,
+    )
+
+    result = await _report_feed_failure_for_test(
+        store,
+        db_pool,
+        feed_id,
+        worker,
+        status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+        reason="provider timeout",
+    )
+
+    audit_rows = await _fetch_audit_events(db_pool, feed_id)
+    assert result == "failing"
+    assert len(audit_rows) == 1
+    audit_row = audit_rows[0]
+    before_values = _decode_json_object(audit_row["before_values"])
+    after_values = _decode_json_object(audit_row["after_values"])
+    assert audit_row["action"] == "feed.failure_reported"
+    assert audit_row["actor_id"] == _TEST_ACTOR_ID
+    assert audit_row["feed_revision"] == 1
+    assert before_values["status"] == "active"
+    assert before_values["failure_count"] == 0
+    assert after_values["status"] == "failing"
+    assert after_values["failure_count"] == 1
+    assert after_values["status_reason"] == "source_unreachable"
+    assert after_values["status_reason_detail"] == "provider timeout"
+
+
+async def test_same_status_reason_failure_retry_writes_no_audit_event(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """Repeating the same failing status/reason combination stays quiet."""
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool,
+        "Runtime Same Failure Audit",
+        status="active",
+        worker_id=worker,
+        failure_count=1,
+    )
+    await db_pool.execute(
+        "UPDATE feeds SET status_reason = $1 WHERE id = $2",
+        FeedStatusReason.SOURCE_UNREACHABLE.value,
+        feed_id,
+    )
+
+    result = await _report_feed_failure_for_test(
+        store,
+        db_pool,
+        feed_id,
+        worker,
+        status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+        reason="new detail",
+    )
+
+    assert result == "failing"
+    assert await _fetch_audit_events(db_pool, feed_id) == []
+
+
+async def test_threshold_crossing_writes_quarantined_audit_event(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """Crossing the failure threshold emits feed.quarantined."""
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool,
+        "Runtime Quarantine Audit",
+        status="active",
+        worker_id=worker,
+        failure_count=4,
+    )
+    await db_pool.execute(
+        "UPDATE feeds SET status_reason = $1 WHERE id = $2",
+        FeedStatusReason.SOURCE_UNREACHABLE.value,
+        feed_id,
+    )
+
+    result = await _report_feed_failure_for_test(
+        store,
+        db_pool,
+        feed_id,
+        worker,
+        status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+        reason="fifth failure",
+    )
+
+    audit_rows = await _fetch_audit_events(db_pool, feed_id)
+    assert result == "quarantined"
+    assert len(audit_rows) == 1
+    audit_row = audit_rows[0]
+    after_values = _decode_json_object(audit_row["after_values"])
+    assert audit_row["action"] == "feed.quarantined"
+    assert audit_row["feed_revision"] == 1
+    assert after_values["status"] == "quarantined"
+    assert after_values["failure_count"] == 5
+    assert after_values["status_reason"] == "source_unreachable"
+
+
+async def test_successful_progress_writes_recovered_audit_event(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """Successful progress from an abnormal status/reason emits feed.recovered."""
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool,
+        "Runtime Recovery Audit",
+        status="active",
+        worker_id=worker,
+        failure_count=2,
+    )
+    await db_pool.execute(
+        "UPDATE feeds SET status_reason = $1 WHERE id = $2",
+        FeedStatusReason.SOURCE_UNREACHABLE.value,
+        feed_id,
+    )
+
+    result = await store.update_feed_progress(
+        feed_id,
+        worker,
+        "gs://bucket/recovered.flac",
+        0,
+        None,
+        actor_id=_TEST_ACTOR_ID,
+    )
+
+    audit_rows = await _fetch_audit_events(db_pool, feed_id)
+    assert result is True
+    assert len(audit_rows) == 1
+    audit_row = audit_rows[0]
+    before_values = _decode_json_object(audit_row["before_values"])
+    after_values = _decode_json_object(audit_row["after_values"])
+    assert audit_row["action"] == "feed.recovered"
+    assert audit_row["feed_revision"] == 1
+    assert before_values["failure_count"] == 2
+    assert before_values["status_reason"] == "source_unreachable"
+    assert after_values["status"] == "active"
+    assert after_values["failure_count"] == 0
+    assert after_values["status_reason"] is None
+
+
 # -- Tests: get_feed --------------------------------------------------
 
 

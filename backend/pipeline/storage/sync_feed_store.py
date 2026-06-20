@@ -9,12 +9,8 @@ with ``concurrency=1`` behind pgBouncer).
 
 from __future__ import annotations
 
-import datetime
-import enum
-import json
 import logging
-import uuid
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import TYPE_CHECKING, Any, LiteralString, TypedDict, cast
 
 from backend.pipeline.storage import (
     feed_lifecycle,
@@ -23,11 +19,9 @@ from backend.pipeline.storage import (
 )
 
 logger = logging.getLogger(__name__)
-_RUNTIME_ABNORMAL_STATUSES = frozenset(
-    {feed_store.FeedStatus.FAILING, feed_store.FeedStatus.QUARANTINED}
-)
-
 if TYPE_CHECKING:
+    import datetime
+    import uuid
     from collections.abc import Callable
 
     import psycopg
@@ -108,27 +102,6 @@ class SyncFeedStore:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _json_default(value: object) -> str:
-        """Serialize database scalar values for audit JSON payloads."""
-        if isinstance(value, uuid.UUID):
-            return str(value)
-        if isinstance(value, datetime.datetime):
-            return value.isoformat()
-        if isinstance(value, enum.StrEnum):
-            return value.value
-        msg = f"Object of type {type(value).__name__} is not JSON serializable"
-        raise TypeError(msg)
-
-    @staticmethod
-    def _decode_json_array(value: object) -> list[dict[str, str]]:
-        """Decode nullable JSON array values returned by psycopg."""
-        if value is None:
-            return []
-        if isinstance(value, str):
-            return cast("list[dict[str, str]]", json.loads(value))
-        return cast("list[dict[str, str]]", value)
-
-    @staticmethod
     def _parse_status_reason(
         raw: str | None,
         *,
@@ -143,199 +116,6 @@ class SyncFeedStore:
             msg = f"Unknown status reason {raw!r} for feed {feed_id}"
             raise ValueError(msg) from exc
 
-    @staticmethod
-    def _parse_feed_status(
-        raw: str,
-        *,
-        feed_id: object,
-    ) -> feed_store.FeedStatus:
-        """Parse feed lifecycle status text from database rows."""
-        try:
-            return feed_store.FeedStatus(raw)
-        except ValueError as exc:
-            msg = f"Unknown status {raw!r} for feed {feed_id}"
-            raise ValueError(msg) from exc
-
-    def _audit_snapshot(self, row: dict[str, Any]) -> dict[str, object]:
-        """Serialize the maintained feed audit snapshot allowlist."""
-        return {
-            "id": self._json_default(row["id"]),
-            "name": row["name"],
-            "source_type": row["source_type"],
-            "status": row["status"],
-            "failure_count": row["failure_count"],
-            "retry_after": row["retry_after"],
-            "status_reason": row["status_reason"],
-            "status_reason_updated_at": row["status_reason_updated_at"],
-            "status_reason_detail": row["status_reason_detail"],
-            "quarantine_reason": row["quarantine_reason"],
-            "last_bookmark_time": row["last_bookmark_time"],
-            "created_at": row["created_at"],
-            "feed_properties.source_feed_id": row.get(
-                "feed_properties.source_feed_id",
-                row.get("source_feed_id"),
-            ),
-            "feed_properties.tags": self._decode_json_array(
-                row.get("feed_properties.tags", row.get("tags"))
-            ),
-        }
-
-    def _insert_feed_audit_event(
-        self,
-        conn: psycopg.Connection[dict[str, Any]],
-        *,
-        action: str,
-        actor_id: str,
-        before_values: dict[str, object],
-        after_values: dict[str, object],
-        identity_row: dict[str, Any],
-        metadata: dict[str, object] | None = None,
-    ) -> None:
-        """Insert one storage-owned feed audit event."""
-        feed_id = identity_row["id"]
-        if not isinstance(feed_id, uuid.UUID):
-            msg = f"Invalid feed ID for audit event: {feed_id!r}"
-            raise TypeError(msg)
-        try:
-            feed_revision = int(identity_row["feed_revision"])
-        except (KeyError, TypeError, ValueError) as exc:
-            msg = f"Missing feed revision for audit event on feed {feed_id}"
-            raise ValueError(msg) from exc
-        if feed_revision < 1:
-            msg = (
-                f"Invalid feed revision {feed_revision} for audit event "
-                f"on feed {feed_id}"
-            )
-            raise ValueError(msg)
-        conn.execute(
-            sync_feed_queries.INSERT_FEED_AUDIT_EVENT_SQL,
-            (
-                feed_id,
-                action,
-                actor_id,
-                feed_revision,
-                json.dumps(
-                    before_values,
-                    default=self._json_default,
-                    sort_keys=True,
-                ),
-                json.dumps(
-                    after_values,
-                    default=self._json_default,
-                    sort_keys=True,
-                ),
-                json.dumps(metadata or {}, sort_keys=True),
-            ),
-        )
-
-    def _runtime_effective_prior_state(
-        self,
-        before_row: dict[str, Any],
-    ) -> tuple[
-        feed_store.FeedStatus,
-        int,
-        feed_store.FeedStatusReason | None,
-    ]:
-        """Derive runtime prior state from the locked pre-mutation snapshot."""
-        before_status = self._parse_feed_status(
-            before_row["status"],
-            feed_id=before_row["id"],
-        )
-        before_failure_count = before_row["failure_count"]
-        before_status_reason = self._parse_status_reason(
-            before_row["status_reason"],
-            feed_id=before_row["id"],
-        )
-        if before_status == feed_store.FeedStatus.ACTIVE and (
-            before_failure_count > 0 or before_status_reason is not None
-        ):
-            return (
-                feed_store.FeedStatus.FAILING,
-                before_failure_count,
-                before_status_reason,
-            )
-        return before_status, before_failure_count, before_status_reason
-
-    def _runtime_failure_audit_action(
-        self,
-        *,
-        before_row: dict[str, Any],
-        after_row: dict[str, Any],
-    ) -> str | None:
-        """Return the runtime failure/quarantine event action, if any."""
-        (
-            prior_status,
-            prior_failure_count,
-            prior_status_reason,
-        ) = self._runtime_effective_prior_state(before_row)
-        after_status = self._parse_feed_status(
-            after_row["status"],
-            feed_id=after_row["id"],
-        )
-        after_reason = self._parse_status_reason(
-            after_row["status_reason"],
-            feed_id=after_row["id"],
-        )
-        if after_status == feed_store.FeedStatus.QUARANTINED:
-            if (
-                prior_status != feed_store.FeedStatus.QUARANTINED
-                and after_row["failure_count"] > prior_failure_count
-            ):
-                return "feed.quarantined"
-            return None
-        if after_status != feed_store.FeedStatus.FAILING:
-            return None
-        if prior_status != feed_store.FeedStatus.FAILING:
-            return "feed.failure_reported"
-        if prior_status_reason != after_reason:
-            return "feed.failure_reported"
-        return None
-
-    def _runtime_recovery_audit_action(
-        self,
-        *,
-        before_row: dict[str, Any],
-        after_row: dict[str, Any],
-    ) -> str | None:
-        """Return the runtime recovery event action, if any."""
-        prior_status, _, _ = self._runtime_effective_prior_state(before_row)
-        if prior_status not in _RUNTIME_ABNORMAL_STATUSES:
-            return None
-        after_status = self._parse_feed_status(
-            after_row["status"],
-            feed_id=after_row["id"],
-        )
-        if after_status in _RUNTIME_ABNORMAL_STATUSES:
-            return None
-        after_reason = self._parse_status_reason(
-            after_row["status_reason"],
-            feed_id=after_row["id"],
-        )
-        if after_reason is not None or after_row["failure_count"] != 0:
-            return None
-        return "feed.recovered"
-
-    def _maybe_insert_runtime_audit_event(
-        self,
-        conn: psycopg.Connection[dict[str, Any]],
-        *,
-        action: str | None,
-        actor_id: str,
-        before_row: dict[str, Any],
-        after_row: dict[str, Any],
-    ) -> None:
-        """Insert a runtime audit event when action selection produced one."""
-        if action is None:
-            return
-        self._insert_feed_audit_event(
-            conn,
-            action=action,
-            actor_id=actor_id,
-            before_values=self._audit_snapshot(before_row),
-            after_values=self._audit_snapshot(after_row),
-            identity_row=after_row,
-        )
-
     def record_heartbeat(
         self,
         feed_id: uuid.UUID,
@@ -347,36 +127,11 @@ class SyncFeedStore:
         Marks status as ``active``, and resets ``failure_count`` if the
         feed was previously in a failing state.
         """
-        if actor_id is None:
-            with self._connect_db() as conn:
-                conn.execute(sync_feed_queries.HEARTBEAT_SQL, (feed_id,))
-            return
-
         with self._connect_db() as conn:
-            with conn.transaction():
-                before_row = conn.execute(
-                    sync_feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
-                    (feed_id,),
-                ).fetchone()
-                if before_row is None:
-                    return
-                after_row = conn.execute(
-                    sync_feed_queries.HEARTBEAT_SQL,
-                    (feed_id,),
-                ).fetchone()
-                if after_row is None:
-                    return
-                action = self._runtime_recovery_audit_action(
-                    before_row=before_row,
-                    after_row=after_row,
-                )
-                self._maybe_insert_runtime_audit_event(
-                    conn,
-                    action=action,
-                    actor_id=actor_id,
-                    before_row=before_row,
-                    after_row=after_row,
-                )
+            conn.execute(
+                cast("LiteralString", sync_feed_queries.HEARTBEAT_SQL),
+                (feed_id, actor_id, actor_id),
+            )
 
     def record_failure(
         self,
@@ -400,6 +155,7 @@ class SyncFeedStore:
             feed_lifecycle.status_reason_detail_storage_value(reason)
         )
         params = (
+            feed_id,
             self._failure_threshold,
             self._failure_threshold,
             self._max_backoff_sec,
@@ -407,46 +163,18 @@ class SyncFeedStore:
             status_reason_value,
             status_reason_detail,
             status_reason_value,
-            feed_id,
+            actor_id,
+            actor_id,
         )
-        if actor_id is None:
-            with self._connect_db() as conn:
-                conn.execute(sync_feed_queries.RECORD_FAILURE_SQL, params)
-                logger.warning(
-                    "Feed failure recorded",
-                    extra={"feed_id": str(feed_id)},
-                )
-            return
-
         with self._connect_db() as conn:
-            with conn.transaction():
-                before_row = conn.execute(
-                    sync_feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
-                    (feed_id,),
-                ).fetchone()
-                if before_row is None:
-                    return
-                after_row = conn.execute(
-                    sync_feed_queries.RECORD_FAILURE_SQL,
-                    params,
-                ).fetchone()
-                if after_row is None:
-                    return
-                action = self._runtime_failure_audit_action(
-                    before_row=before_row,
-                    after_row=after_row,
-                )
-                self._maybe_insert_runtime_audit_event(
-                    conn,
-                    action=action,
-                    actor_id=actor_id,
-                    before_row=before_row,
-                    after_row=after_row,
-                )
-            logger.warning(
-                "Feed failure recorded",
-                extra={"feed_id": str(feed_id)},
+            conn.execute(
+                cast("LiteralString", sync_feed_queries.RECORD_FAILURE_SQL),
+                params,
             )
+        logger.warning(
+            "Feed failure recorded",
+            extra={"feed_id": str(feed_id)},
+        )
 
     def record_non_budgeted_failure(
         self,
@@ -463,55 +191,25 @@ class SyncFeedStore:
         ``quarantine_reason`` untouched because no quarantine threshold crossed.
         """
         params = (
+            feed_id,
             status_reason.value,
             feed_lifecycle.status_reason_detail_storage_value(reason),
             status_reason.value,
-            feed_id,
+            actor_id,
+            actor_id,
         )
-        if actor_id is None:
-            with self._connect_db() as conn:
-                conn.execute(
-                    sync_feed_queries.RECORD_NON_BUDGETED_FAILURE_SQL,
-                    params,
-                )
-                logger.info(
-                    "Non-budgeted feed failure recorded",
-                    extra={
-                        "feed_id": str(feed_id),
-                        "status_reason": status_reason.value,
-                    },
-                )
-            return
-
         with self._connect_db() as conn:
-            with conn.transaction():
-                before_row = conn.execute(
-                    sync_feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
-                    (feed_id,),
-                ).fetchone()
-                if before_row is None:
-                    return
-                after_row = conn.execute(
+            conn.execute(
+                cast(
+                    "LiteralString",
                     sync_feed_queries.RECORD_NON_BUDGETED_FAILURE_SQL,
-                    params,
-                ).fetchone()
-                if after_row is None:
-                    return
-                action = self._runtime_failure_audit_action(
-                    before_row=before_row,
-                    after_row=after_row,
-                )
-                self._maybe_insert_runtime_audit_event(
-                    conn,
-                    action=action,
-                    actor_id=actor_id,
-                    before_row=before_row,
-                    after_row=after_row,
-                )
-            logger.info(
-                "Non-budgeted feed failure recorded",
-                extra={
-                    "feed_id": str(feed_id),
-                    "status_reason": status_reason.value,
-                },
+                ),
+                params,
             )
+        logger.info(
+            "Non-budgeted feed failure recorded",
+            extra={
+                "feed_id": str(feed_id),
+                "status_reason": status_reason.value,
+            },
+        )

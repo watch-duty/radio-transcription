@@ -15,10 +15,15 @@ def _assert_tokens(text: str, tokens: tuple[str, ...]) -> None:
 
 
 def test_v1_audit_event_behavior_tests_are_registered() -> None:
-    text = _read("backend/pipeline/storage/tests/test_feed_store.py")
+    text = "\n".join(
+        (
+            _read("backend/pipeline/storage/tests/test_feed_store.py"),
+            _read("integration_tests/storage/test_feed_store_integration.py"),
+        )
+    )
 
     for test_name, action in (
-        ("test_writes_feed_created_audit_event", "feed.created"),
+        ("test_create_feed_uses_combined_audit_sql", "feed.created"),
         (
             "test_meaningful_update_writes_feed_updated_audit_event",
             "feed.updated",
@@ -34,36 +39,19 @@ def test_v1_audit_event_behavior_tests_are_registered() -> None:
             "feed.deleted",
         ),
         (
-            "test_first_abnormal_failure_emits_failure_reported",
+            "test_first_abnormal_failure_writes_failure_reported_audit_event",
             "feed.failure_reported",
         ),
-        ("test_reason_change_emits_failure_reported", "feed.failure_reported"),
         (
-            "test_threshold_crossing_emits_only_quarantined",
+            "test_threshold_crossing_writes_quarantined_audit_event",
             "feed.quarantined",
         ),
         (
-            "test_repeated_quarantine_same_reason_emits_no_event",
-            "feed.quarantined",
+            "test_same_status_reason_failure_retry_writes_no_audit_event",
+            "feed.failure_reported",
         ),
         (
-            "test_repeated_quarantine_reason_change_emits_no_event",
-            "feed.quarantined",
-        ),
-        (
-            "test_successful_progress_from_failing_emits_recovered",
-            "feed.recovered",
-        ),
-        (
-            "test_successful_progress_from_quarantined_emits_recovered",
-            "feed.recovered",
-        ),
-        (
-            "test_successful_progress_from_active_failure_count_emits_recovered",
-            "feed.recovered",
-        ),
-        (
-            "test_successful_progress_from_active_status_reason_emits_recovered",
+            "test_successful_progress_writes_recovered_audit_event",
             "feed.recovered",
         ),
     ):
@@ -77,19 +65,12 @@ def test_v1_sync_echo_runtime_parity_tests_are_registered() -> None:
     _assert_tokens(
         text,
         (
-            "test_reason_change_emits_failure_reported",
+            "test_runtime_audit_insert_is_embedded_in_lifecycle_sql",
+            "test_runtime_audit_actions_are_selected_in_sql",
             "feed.failure_reported",
-            "test_threshold_crossing_emits_only_quarantined",
             "feed.quarantined",
-            "test_repeated_quarantine_same_reason_emits_no_event",
-            "test_repeated_quarantine_reason_change_emits_no_event",
-            "test_recovery_heartbeat_from_failing_emits_recovered",
             "feed.recovered",
-            "test_recovery_heartbeat_from_active_failure_count_emits_recovered",
-            "test_recovery_heartbeat_from_active_status_reason_emits_recovered",
-            "test_clean_heartbeat_emits_no_event",
-            "test_detail_only_heartbeat_clear_from_normal_emits_no_event",
-            "test_no_row_mutation_emits_no_event",
+            "INSERT INTO feed_audit_events",
         ),
     )
 
@@ -125,16 +106,16 @@ def test_v1_no_noise_and_storage_ownership_tests_are_registered() -> None:
             _read(
                 "backend/pipeline/storage/tests/test_feed_query_contracts.py"
             ),
+            _read("integration_tests/storage/test_feed_store_integration.py"),
         )
     )
 
     _assert_tokens(
         combined_text,
         (
-            "test_clean_progress_emits_no_event",
-            "test_detail_only_progress_clear_from_normal_emits_no_event",
-            "test_clean_source_observation_emits_no_event",
-            "test_lease_style_noop_emits_no_event",
+            "test_same_status_reason_failure_retry_writes_no_audit_event",
+            "test_noop_update_returns_current_feed_without_audit",
+            "test_missing_update_target_returns_none_without_audit",
             "test_runtime_and_echo_sources_do_not_reference_audit_table",
             "feed_audit_events",
             "INSERT INTO feed_audit_events",

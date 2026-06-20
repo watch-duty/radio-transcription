@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import asyncio
-import datetime
 import enum
 import json
 import logging
-import uuid
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypedDict, cast
+from typing import TYPE_CHECKING, TypedDict
 
 import asyncpg
 import asyncpg.exceptions
@@ -24,6 +22,8 @@ from backend.pipeline.storage.pagination_utils import (
 )
 
 if TYPE_CHECKING:
+    import datetime
+    import uuid
     from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
@@ -88,9 +88,6 @@ class FeedStatus(enum.StrEnum):
     DEACTIVATED = "deactivated"
 
 
-_RUNTIME_ABNORMAL_STATUSES = frozenset(
-    {FeedStatus.FAILING, FeedStatus.QUARANTINED}
-)
 _FEED_STATUS_REASON_OWNERS = frozenset({"source", "system", "pipeline"})
 
 
@@ -299,109 +296,6 @@ class FeedStore:
         return constraint_name in expected_constraints
 
     @staticmethod
-    def _json_default(value: object) -> str:
-        """Serialize database scalar values for audit JSON payloads."""
-        if isinstance(value, uuid.UUID):
-            return str(value)
-        if isinstance(value, datetime.datetime):
-            return value.isoformat()
-        if isinstance(value, enum.StrEnum):
-            return value.value
-        msg = f"Object of type {type(value).__name__} is not JSON serializable"
-        raise TypeError(msg)
-
-    @staticmethod
-    def _decode_json_array(value: object) -> list[dict[str, str]]:
-        """Decode nullable JSON array values returned by asyncpg."""
-        if value is None:
-            return []
-        if isinstance(value, str):
-            return cast("list[dict[str, str]]", json.loads(value))
-        return cast("list[dict[str, str]]", value)
-
-    @staticmethod
-    def _row_value(row: asyncpg.Record, *keys: str) -> object:
-        """Return the first present value from an asyncpg row-like object."""
-        for key in keys:
-            try:
-                return row[key]
-            except (KeyError, IndexError):
-                continue
-        msg = f"Row is missing expected keys: {', '.join(keys)}"
-        raise KeyError(msg)
-
-    def _audit_snapshot(self, row: asyncpg.Record) -> dict[str, object]:
-        """Serialize the maintained feed audit snapshot allowlist."""
-        return {
-            "id": self._json_default(row["id"]),
-            "name": row["name"],
-            "source_type": row["source_type"],
-            "status": row["status"],
-            "failure_count": row["failure_count"],
-            "retry_after": row["retry_after"],
-            "status_reason": row["status_reason"],
-            "status_reason_updated_at": row["status_reason_updated_at"],
-            "status_reason_detail": row["status_reason_detail"],
-            "quarantine_reason": row["quarantine_reason"],
-            "last_bookmark_time": row["last_bookmark_time"],
-            "created_at": row["created_at"],
-            "feed_properties.source_feed_id": self._row_value(
-                row,
-                "feed_properties.source_feed_id",
-                "source_feed_id",
-            ),
-            "feed_properties.tags": self._decode_json_array(
-                self._row_value(row, "feed_properties.tags", "tags")
-            ),
-        }
-
-    async def _insert_feed_audit_event(
-        self,
-        conn: asyncpg.Connection,
-        *,
-        action: str,
-        actor_id: str,
-        before_values: dict[str, object],
-        after_values: dict[str, object],
-        identity_row: asyncpg.Record,
-        metadata: dict[str, object] | None = None,
-    ) -> None:
-        """Insert one storage-owned feed audit event."""
-        feed_id = identity_row["id"]
-        if not isinstance(feed_id, uuid.UUID):
-            msg = f"Invalid feed ID for audit event: {feed_id!r}"
-            raise TypeError(msg)
-        try:
-            feed_revision = int(identity_row["feed_revision"])
-        except (KeyError, TypeError, ValueError) as e:
-            msg = f"Missing feed revision for audit event on feed {feed_id}"
-            raise ValueError(msg) from e
-        if feed_revision < 1:
-            msg = (
-                f"Invalid feed revision {feed_revision} for audit event "
-                f"on feed {feed_id}"
-            )
-            raise ValueError(msg)
-        await conn.execute(
-            feed_queries.INSERT_FEED_AUDIT_EVENT_SQL,
-            feed_id,
-            action,
-            actor_id,
-            feed_revision,
-            json.dumps(
-                before_values,
-                default=self._json_default,
-                sort_keys=True,
-            ),
-            json.dumps(
-                after_values,
-                default=self._json_default,
-                sort_keys=True,
-            ),
-            json.dumps(metadata or {}, sort_keys=True),
-        )
-
-    @staticmethod
     def _parse_status_reason(
         raw: str | None,
         *,
@@ -415,105 +309,6 @@ class FeedStore:
         except ValueError as e:
             msg = f"Unknown status reason {raw!r} for feed {feed_id}"
             raise ValueError(msg) from e
-
-    @staticmethod
-    def _parse_feed_status(raw: str, *, feed_id: object) -> FeedStatus:
-        """Parse feed lifecycle status text from database rows."""
-        try:
-            return FeedStatus(raw)
-        except ValueError as e:
-            msg = f"Unknown status {raw!r} for feed {feed_id}"
-            raise ValueError(msg) from e
-
-    def _runtime_effective_prior_state(
-        self,
-        before_row: asyncpg.Record,
-    ) -> tuple[FeedStatus, int, FeedStatusReason | None]:
-        """Derive runtime prior state from the locked pre-mutation snapshot.
-
-        Lease claiming can move a retryable failing feed to active before
-        runtime proves recovery. After Phase 2 the storage layer no longer
-        accepts caller-provided claim-time status, so a locked active row with
-        retained failure evidence is treated as logically failing for audit
-        transition decisions.
-        """
-        before_status = self._parse_feed_status(
-            before_row["status"],
-            feed_id=before_row["id"],
-        )
-        before_failure_count = before_row["failure_count"]
-        before_status_reason = self._parse_status_reason(
-            before_row["status_reason"],
-            feed_id=before_row["id"],
-        )
-        if before_status == FeedStatus.ACTIVE and (
-            before_failure_count > 0 or before_status_reason is not None
-        ):
-            return (
-                FeedStatus.FAILING,
-                before_failure_count,
-                before_status_reason,
-            )
-        return before_status, before_failure_count, before_status_reason
-
-    def _runtime_failure_audit_action(
-        self,
-        *,
-        before_row: asyncpg.Record,
-        after_row: asyncpg.Record,
-    ) -> str | None:
-        """Return the runtime failure/quarantine event action, if any."""
-        (
-            prior_status,
-            prior_failure_count,
-            prior_status_reason,
-        ) = self._runtime_effective_prior_state(before_row)
-        after_status = self._parse_feed_status(
-            after_row["status"],
-            feed_id=after_row["id"],
-        )
-        after_reason = self._parse_status_reason(
-            after_row["status_reason"],
-            feed_id=after_row["id"],
-        )
-        if after_status == FeedStatus.QUARANTINED:
-            if (
-                prior_status != FeedStatus.QUARANTINED
-                and after_row["failure_count"] > prior_failure_count
-            ):
-                return "feed.quarantined"
-            return None
-        if after_status != FeedStatus.FAILING:
-            return None
-        if prior_status != FeedStatus.FAILING:
-            return "feed.failure_reported"
-        if prior_status_reason != after_reason:
-            return "feed.failure_reported"
-        return None
-
-    def _runtime_recovery_audit_action(
-        self,
-        *,
-        before_row: asyncpg.Record,
-        after_row: asyncpg.Record,
-    ) -> str | None:
-        """Return the runtime recovery event action, if any."""
-        prior_status, _, _ = self._runtime_effective_prior_state(before_row)
-        if prior_status not in _RUNTIME_ABNORMAL_STATUSES:
-            return None
-        after_status = self._parse_feed_status(
-            after_row["status"],
-            feed_id=after_row["id"],
-        )
-        if after_status in _RUNTIME_ABNORMAL_STATUSES:
-            return None
-        after_reason = self._parse_status_reason(
-            after_row["status_reason"],
-            feed_id=after_row["id"],
-        )
-        if after_reason is not None or after_row["failure_count"] != 0:
-            return None
-        return "feed.recovered"
 
     def _row_to_leased_feed(self, row: asyncpg.Record) -> LeasedFeed:
         """Convert a claim/lease-path row to a LeasedFeed dict.
@@ -583,41 +378,20 @@ class FeedStore:
                 worker_id,
                 fencing_token,
                 last_bookmark_time,
+                actor_id,
             )
-            return row is not None
-
-        async with self._pool.acquire() as conn:
-            async with conn.transaction():
-                before_row = await conn.fetchrow(
-                    feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
-                    feed_id,
-                )
-                if before_row is None:
-                    return False
-                after_row = await conn.fetchrow(
+        else:
+            async with self._pool.acquire() as conn:
+                row = await conn.fetchrow(
                     feed_queries.UPDATE_PROGRESS_SQL,
                     new_gcs_path,
                     feed_id,
                     worker_id,
                     fencing_token,
                     last_bookmark_time,
+                    actor_id,
                 )
-                if after_row is None:
-                    return False
-                action = self._runtime_recovery_audit_action(
-                    before_row=before_row,
-                    after_row=after_row,
-                )
-                if action is not None:
-                    await self._insert_feed_audit_event(
-                        conn,
-                        action=action,
-                        actor_id=actor_id,
-                        before_values=self._audit_snapshot(before_row),
-                        after_values=self._audit_snapshot(after_row),
-                        identity_row=after_row,
-                    )
-        return True
+        return row is not None
 
     async def record_source_observation(
         self,
@@ -641,66 +415,18 @@ class FeedStore:
                 worker_id,
                 fencing_token,
                 resume_position,
+                actor_id,
             )
-            if row is None:
-                return SourceObservationResult(
-                    id=feed_id,
-                    current_worker=None,
-                    current_status=None,
-                    current_fencing_token=None,
-                    recorded=False,
-                )
-            return SourceObservationResult(
-                id=row["id"],
-                current_worker=row["current_worker"],
-                current_status=row["current_status"],
-                current_fencing_token=row["current_fencing_token"],
-                recorded=row["recorded"],
-            )
-
-        async with self._pool.acquire() as conn:
-            async with conn.transaction():
-                before_row = await conn.fetchrow(
-                    feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
-                    feed_id,
-                )
-                if before_row is None:
-                    return SourceObservationResult(
-                        id=feed_id,
-                        current_worker=None,
-                        current_status=None,
-                        current_fencing_token=None,
-                        recorded=False,
-                    )
+        else:
+            async with self._pool.acquire() as conn:
                 row = await conn.fetchrow(
                     feed_queries.RECORD_SOURCE_OBSERVATION_SQL,
                     feed_id,
                     worker_id,
                     fencing_token,
                     resume_position,
+                    actor_id,
                 )
-                if row is None:
-                    return SourceObservationResult(
-                        id=feed_id,
-                        current_worker=None,
-                        current_status=None,
-                        current_fencing_token=None,
-                        recorded=False,
-                    )
-                if row["recorded"]:
-                    action = self._runtime_recovery_audit_action(
-                        before_row=before_row,
-                        after_row=row,
-                    )
-                    if action is not None:
-                        await self._insert_feed_audit_event(
-                            conn,
-                            action=action,
-                            actor_id=actor_id,
-                            before_values=self._audit_snapshot(before_row),
-                            after_values=self._audit_snapshot(row),
-                            identity_row=row,
-                        )
         if row is None:
             return SourceObservationResult(
                 id=feed_id,
@@ -813,39 +539,18 @@ class FeedStore:
             feed_lifecycle.status_reason_detail_storage_value(reason)
         )
         async with self._pool.acquire() as conn:
-            async with conn.transaction():
-                before_row = await conn.fetchrow(
-                    feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
-                    feed_id,
-                )
-                if before_row is None:
-                    return None
-                row = await conn.fetchrow(
-                    feed_queries.REPORT_FAILURE_SQL,
-                    feed_id,
-                    worker_id,
-                    failure_threshold,
-                    fencing_token,
-                    backoff_max_sec,
-                    backoff_base_sec,
-                    status_reason_value,
-                    status_reason_detail,
-                )
-                if row is None:
-                    return None
-                action = self._runtime_failure_audit_action(
-                    before_row=before_row,
-                    after_row=row,
-                )
-                if action is not None:
-                    await self._insert_feed_audit_event(
-                        conn,
-                        action=action,
-                        actor_id=actor_id,
-                        before_values=self._audit_snapshot(before_row),
-                        after_values=self._audit_snapshot(row),
-                        identity_row=row,
-                    )
+            row = await conn.fetchrow(
+                feed_queries.REPORT_FAILURE_SQL,
+                feed_id,
+                worker_id,
+                failure_threshold,
+                fencing_token,
+                backoff_max_sec,
+                backoff_base_sec,
+                status_reason_value,
+                status_reason_detail,
+                actor_id,
+            )
         if row is None:
             return None
 
@@ -891,37 +596,16 @@ class FeedStore:
         consecutive feed budget, and releases the lease for later retry.
         """
         async with self._pool.acquire() as conn:
-            async with conn.transaction():
-                before_row = await conn.fetchrow(
-                    feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
-                    feed_id,
-                )
-                if before_row is None:
-                    return None
-                row = await conn.fetchrow(
-                    feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL,
-                    feed_id,
-                    worker_id,
-                    fencing_token,
-                    retry_after,
-                    status_reason.value,
-                    feed_lifecycle.status_reason_detail_storage_value(reason),
-                )
-                if row is None:
-                    return None
-                action = self._runtime_failure_audit_action(
-                    before_row=before_row,
-                    after_row=row,
-                )
-                if action is not None:
-                    await self._insert_feed_audit_event(
-                        conn,
-                        action=action,
-                        actor_id=actor_id,
-                        before_values=self._audit_snapshot(before_row),
-                        after_values=self._audit_snapshot(row),
-                        identity_row=row,
-                    )
+            row = await conn.fetchrow(
+                feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL,
+                feed_id,
+                worker_id,
+                fencing_token,
+                retry_after,
+                status_reason.value,
+                feed_lifecycle.status_reason_detail_storage_value(reason),
+                actor_id,
+            )
         if row is None:
             return None
         return row["status"]
@@ -1162,26 +846,17 @@ class FeedStore:
 
         try:
             async with self._pool.acquire() as conn:
-                async with conn.transaction():
-                    row = await conn.fetchrow(
-                        feed_queries.CREATE_FEED_SQL,
-                        name,
-                        source_type_str,
-                        source_feed_id,
-                        json.dumps(tags or []),
-                    )
-                    if row is None:
-                        msg = f"Failed to create feed {name}"
-                        raise ValueError(msg)
-
-                    await self._insert_feed_audit_event(
-                        conn,
-                        action="feed.created",
-                        actor_id=actor_id,
-                        before_values={},
-                        after_values=self._audit_snapshot(row),
-                        identity_row=row,
-                    )
+                row = await conn.fetchrow(
+                    feed_queries.CREATE_FEED_SQL,
+                    name,
+                    source_type_str,
+                    source_feed_id,
+                    json.dumps(tags or []),
+                    actor_id,
+                )
+            if row is None:
+                msg = f"Failed to create feed {name}"
+                raise ValueError(msg)
         except asyncpg.exceptions.UniqueViolationError as e:
             if not self._is_expected_unique_violation(
                 e,
@@ -1223,46 +898,15 @@ class FeedStore:
         """
         try:
             async with self._pool.acquire() as conn:
-                async with conn.transaction():
-                    before_row = await conn.fetchrow(
-                        feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
-                        feed_id,
-                    )
-                    if before_row is None:
-                        return None
-
-                    requested_tags = tags or []
-                    before_values = self._audit_snapshot(before_row)
-                    if (
-                        before_values["name"] == name
-                        and before_values["feed_properties.tags"]
-                        == requested_tags
-                    ):
-                        current_row = await conn.fetchrow(
-                            feed_queries.GET_FEED_SQL,
-                            feed_id,
-                        )
-                        if current_row is None:
-                            return None
-                        return self._row_to_feed(current_row)
-
-                    row = await conn.fetchrow(
-                        feed_queries.UPDATE_FEED_SQL,
-                        feed_id,
-                        name,
-                        json.dumps(requested_tags),
-                    )
-                    if row is None:
-                        return None
-
-                    await self._insert_feed_audit_event(
-                        conn,
-                        action="feed.updated",
-                        actor_id=actor_id,
-                        before_values=before_values,
-                        after_values=self._audit_snapshot(row),
-                        identity_row=row,
-                    )
+                row = await conn.fetchrow(
+                    feed_queries.UPDATE_FEED_SQL,
+                    feed_id,
+                    name,
+                    json.dumps(tags or []),
+                    actor_id,
+                )
+            if row is None:
+                return None
         except asyncpg.exceptions.UniqueViolationError as e:
             if not self._is_expected_unique_violation(
                 e,
@@ -1375,32 +1019,12 @@ class FeedStore:
         Returns True if the feed status was set to deactivated, False otherwise.
         """
         async with self._pool.acquire() as conn:
-            async with conn.transaction():
-                before_row = await conn.fetchrow(
-                    feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
-                    feed_id,
-                )
-                if before_row is None:
-                    return False
-
-                before_values = self._audit_snapshot(before_row)
-                after_row = await conn.fetchrow(
-                    feed_queries.DEACTIVATE_FEED_SQL,
-                    feed_id,
-                )
-                if after_row is None:
-                    msg = f"Failed to deactivate feed {feed_id}"
-                    raise ValueError(msg)
-
-                await self._insert_feed_audit_event(
-                    conn,
-                    action="feed.deactivated",
-                    actor_id=actor_id,
-                    before_values=before_values,
-                    after_values=self._audit_snapshot(after_row),
-                    identity_row=after_row,
-                )
-        return True
+            row = await conn.fetchrow(
+                feed_queries.DEACTIVATE_FEED_SQL,
+                feed_id,
+                actor_id,
+            )
+        return row is not None
 
     async def delete_feed(
         self,
@@ -1416,38 +1040,12 @@ class FeedStore:
         Returns True if the feed was successfully deleted, False otherwise.
         """
         async with self._pool.acquire() as conn:
-            async with conn.transaction():
-                before_row = await conn.fetchrow(
-                    feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
-                    feed_id,
-                )
-                if before_row is None:
-                    return False
-
-                identity_row = await conn.fetchrow(
-                    feed_queries.BUMP_FEED_AUDIT_REVISION_SQL,
-                    feed_id,
-                )
-                if identity_row is None:
-                    msg = f"Failed to bump audit revision for feed {feed_id}"
-                    raise ValueError(msg)
-
-                await self._insert_feed_audit_event(
-                    conn,
-                    action="feed.deleted",
-                    actor_id=actor_id,
-                    before_values=self._audit_snapshot(before_row),
-                    after_values={},
-                    identity_row=identity_row,
-                )
-                result = await conn.execute(
-                    feed_queries.DELETE_FEED_SQL,
-                    feed_id,
-                )
-                if result != "DELETE 1":
-                    msg = f"Failed to delete feed {feed_id}"
-                    raise ValueError(msg)
-        return True
+            row = await conn.fetchrow(
+                feed_queries.DELETE_FEED_SQL,
+                feed_id,
+                actor_id,
+            )
+        return row is not None
 
     async def reset_feed(
         self,
@@ -1471,28 +1069,11 @@ class FeedStore:
 
         """
         async with self._pool.acquire() as conn:
-            async with conn.transaction():
-                before_row = await conn.fetchrow(
-                    feed_queries.GET_AUDIT_FEED_SNAPSHOT_SQL,
-                    feed_id,
-                )
-                if before_row is None:
-                    return None
-
-                before_values = self._audit_snapshot(before_row)
-                row = await conn.fetchrow(feed_queries.RESET_FEED_SQL, feed_id)
-                if row is None:
-                    msg = f"Failed to reset feed {feed_id}"
-                    raise ValueError(msg)
-
-                await self._insert_feed_audit_event(
-                    conn,
-                    action="feed.reset",
-                    actor_id=actor_id,
-                    before_values=before_values,
-                    after_values=self._audit_snapshot(row),
-                    identity_row=row,
-                )
+            row = await conn.fetchrow(
+                feed_queries.RESET_FEED_SQL,
+                feed_id,
+                actor_id,
+            )
         if row is None:
             return None
         return self._row_to_feed(row)
