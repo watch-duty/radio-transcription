@@ -99,15 +99,15 @@ short-lived logs.
 
 ### Verification
 
-- [ ] **VER-01**: Automated tests verify audit events for feed create, update,
+- [x] **VER-01**: Automated tests verify audit events for feed create, update,
   deactivate, reset, delete, failure, quarantine, and recovery paths.
 - [ ] **VER-02**: Automated tests verify transaction rollback behavior and
   concurrent per-feed event ordering.
-- [ ] **VER-03**: Automated tests verify diagnostic-detail lifecycle,
+- [x] **VER-03**: Automated tests verify diagnostic-detail lifecycle,
   public API migration away from `quarantine_reason`, and secret/detail
   bounding behavior.
 - [ ] **VER-04**: Automated tests verify delete-survival and retention behavior.
-- [ ] **VER-05**: Automated tests verify that lease churn and clean heartbeat or
+- [x] **VER-05**: Automated tests verify that lease churn and clean heartbeat or
   progress paths do not emit default audit events.
 
 ## v2 Requirements
@@ -156,7 +156,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AUD-02 | Phase 1 | Complete |
 | AUD-03 | Phase 1 | Complete |
 | AUD-04 | Phase 2 | Complete |
-| AUD-05 | Phase 5 | Pending |
+| AUD-05 | Phase 5 | Pending UAT |
 | EVT-01 | Phase 2 | Complete |
 | EVT-02 | Phase 2 | Complete |
 | EVT-03 | Phase 2 | Complete |
@@ -184,11 +184,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DOC-01 | Phase 1 | Complete |
 | DOC-02 | Phase 1 | Complete |
 | DOC-03 | Phase 1 | Complete |
-| VER-01 | Phase 5 | Pending |
-| VER-02 | Phase 5 | Pending |
-| VER-03 | Phase 5 | Pending |
-| VER-04 | Phase 5 | Pending |
-| VER-05 | Phase 5 | Pending |
+| VER-01 | Phase 5 | Complete |
+| VER-02 | Phase 5 | Pending UAT |
+| VER-03 | Phase 5 | Complete |
+| VER-04 | Phase 5 | Pending UAT |
+| VER-05 | Phase 5 | Complete |
 
 **Coverage:**
 - v1 requirements: 37 total
@@ -197,4 +197,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-06-19*
-*Last updated: 2026-06-19 after roadmap creation*
+*Last updated: 2026-06-20 after Phase 05 verification*

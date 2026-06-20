@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
+status: milestone_complete
 stopped_at: Phase 5 context gathered
-last_updated: "2026-06-20T03:42:07.570Z"
-last_activity: 2026-06-20 -- Phase 05 execution started
+last_updated: "2026-06-20T04:19:24Z"
+last_activity: 2026-06-20 -- Phase 05 complete with prepared-machine UAT pending
 progress:
   total_phases: 5
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 17
-  completed_plans: 14
-  percent: 82
+  completed_plans: 17
+  percent: 100
 ---
 
 # Project State
@@ -21,22 +21,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-20)
 
 **Core value:** Operators can reconstruct meaningful feed lifecycle and configuration changes from durable backend data instead of relying on short-lived logs.
-**Current focus:** Phase 05 — retention-and-verification-hardening
+**Current focus:** Milestone complete — prepared-machine UAT pending
 
 ## Current Position
 
-Phase: 05 (retention-and-verification-hardening) — EXECUTING
-Plan: 1 of 3
-Status: Executing Phase 05
-Last activity: 2026-06-20 -- Phase 05 execution started
+Phase: 05
+Plan: Not started
+Status: Milestone complete
+Last activity: 2026-06-20 -- Phase 05 complete with prepared-machine UAT pending
 
-Progress: [████████__] 82%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 14
+- Total plans completed: 17
 - Average duration: N/A
 - Total execution time: 0.0 hours
 
@@ -48,6 +48,7 @@ Progress: [████████__] 82%
 | 02 | 4 | - | - |
 | 03 | 3 | - | - |
 | 04 | 4 | - | - |
+| 05 | 3 | - | - |
 
 **Recent Trend:**
 
@@ -114,7 +115,8 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-None yet.
+- Phase 05 UAT: prepared-machine Testcontainers retention/rollback/concurrency/delete-survival lane remains pending CI or approved prepared-machine execution.
+- Phase 05 UAT: prepared AlloyDB pg_cron scheduler lane remains pending a database with `alloydb.enable_pg_cron=on` and `ALLOYDB_PG_CRON_VERIFICATION_DSN`.
 
 ### Blockers/Concerns
 
