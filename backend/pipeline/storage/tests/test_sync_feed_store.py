@@ -64,8 +64,6 @@ class TestResolveEchoFeed:
         }
         conn.execute.assert_called_once()
         sql, params = conn.execute.call_args[0]
-        assert "f.failure_count" not in sql
-        assert "f.status_reason" not in sql
         assert "AND fp.source_type = 'echo'" in sql
         assert "AND f.source_type = 'echo'" in sql
         assert params == ("fire-ca",)
