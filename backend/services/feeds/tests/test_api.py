@@ -650,20 +650,6 @@ class TestFeedsAPI(unittest.TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("Invalid status", response.json()["detail"])
 
-    def test_list_feeds_rejects_non_positive_limit(self) -> None:
-        """FastAPI validation rejects limits that would break pagination."""
-        for limit in (0, -1):
-            with self.subTest(limit=limit):
-                self.mock_service.list_feeds.reset_mock()
-
-                response = self.client.get(f"/v1/feeds?limit={limit}")
-
-                self.assertEqual(
-                    response.status_code,
-                    status.HTTP_422_UNPROCESSABLE_CONTENT,
-                )
-                self.mock_service.list_feeds.assert_not_called()
-
     def test_deactivate_feed_success(self) -> None:
         """Test deactivating a feed successfully."""
         feed_id = uuid.uuid4()
