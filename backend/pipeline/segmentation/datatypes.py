@@ -78,8 +78,7 @@ class StitcherContext:
     # The fully qualified GCS URI of the raw audio file currently being parsed.
     current_gcs_uri: str
     session_id: str | None
-    # Ordered list of URIs that have been accumulated into the current transmission buffer thus far.
-    contributing_audio_uris: list[str]
+
     file_start_ms: int
     last_segment_end_time_ms: int | None
     transmission_start_time_ms: int | None
@@ -96,10 +95,22 @@ class StitcherContext:
     # Ordered list of chunks that have been accumulated into the current transmission buffer.
     contributing_chunks: list[BufferedChunk] = field(default_factory=list)
 
+    @property
+    def contributing_audio_uris(self) -> list[str]:
+        """Ordered list of URIs that have been accumulated into the current transmission buffer."""
+        return [c.gcs_uri for c in self.contributing_chunks]
+
     def add_contributing_chunk(self, gcs_uri: str, timestamp_ms: int) -> None:
-        """Adds a chunk to the contributing lists if not already present."""
-        if gcs_uri not in self.contributing_audio_uris:
-            self.contributing_audio_uris.append(gcs_uri)
+        """Adds a chunk to the contributing lists if not already present.
+
+        Args:
+            gcs_uri: The fully qualified GCS URI of the contributing audio chunk.
+            timestamp_ms: The absolute epoch start time of the audio chunk in milliseconds.
+                This timestamp serves as the absolute temporal baseline for the chunk. The
+                downstream stateless stage uses it to align relative segment offsets to
+                absolute timeline boundaries, ensuring sample-accurate slicing and stitching
+                across chunk boundaries.
+        """
         if not any(c.gcs_uri == gcs_uri for c in self.contributing_chunks):
             self.contributing_chunks.append(
                 BufferedChunk(
