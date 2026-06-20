@@ -71,8 +71,8 @@ export class ListFeedsQueryParams {
   order?: 'asc' | 'desc';
   sourceTypes?: string;
   statuses?: string;
-  // Tag string must be a JSON list: [{"key": "<val>", "value": "<val>"}]
-  tags?: string;
+  // Each tag string must be a JSON object or a JSON list.
+  tags?: string[];
   name?: string;
 }
 

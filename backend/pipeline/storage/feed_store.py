@@ -281,7 +281,9 @@ class FeedStore:
             status=status,
             status_reason=status_reason,
             status_reason_updated_at=row["status_reason_updated_at"],
-            status_reason_detail=row["status_reason_detail"],
+            status_reason_detail=(
+                row["status_reason_detail"] or row["quarantine_reason"]
+            ),
             quarantine_reason=row["quarantine_reason"],
             failure_count=row["failure_count"],
             worker_id=row["worker_id"],

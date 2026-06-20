@@ -392,6 +392,17 @@ class TestStatusReasonRowMapping(unittest.TestCase):
 
         self.assertEqual(result["status_reason_detail"], "provider timeout")
 
+    def test_legacy_quarantine_reason_falls_back_to_status_detail(self) -> None:
+        store = FeedStore(make_mock_pool())
+        row = _full_feed_row(
+            status_reason_detail=None,
+            quarantine_reason="legacy provider timeout",
+        )
+
+        result = store._row_to_feed(cast("asyncpg.Record", row))
+
+        self.assertEqual(result["status_reason_detail"], "legacy provider timeout")
+
     def test_valid_reason_maps_to_enum(self) -> None:
         store = FeedStore(make_mock_pool())
 

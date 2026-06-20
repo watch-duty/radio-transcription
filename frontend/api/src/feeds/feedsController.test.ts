@@ -161,7 +161,7 @@ describe('FeedsController', () => {
           '{"key":"region","value":"West"}',
           '{"key":"county","value":"Fulton"}',
         ],
-      } as unknown as ListFeedsQueryParams;
+      } satisfies ListFeedsQueryParams;
       await controller.listFeeds(query);
 
       expect(mockRequest).toHaveBeenCalledWith({
@@ -175,7 +175,7 @@ describe('FeedsController', () => {
 
       const controller = new FeedsController();
       await controller.listFeeds({
-        tags: '[{"key":"region","value":"West"}]',
+        tags: ['[{"key":"region","value":"West"}]'],
       });
 
       expect(mockRequest).toHaveBeenCalledWith({
@@ -188,7 +188,7 @@ describe('FeedsController', () => {
       const controller = new FeedsController();
 
       await expectHttpErrorStatus(
-        () => controller.listFeeds({ tags: 'not-json' }),
+        () => controller.listFeeds({ tags: ['not-json'] }),
         400,
         /tags must be valid JSON/
       );
@@ -256,7 +256,7 @@ describe('FeedsController', () => {
 
       expect(openApiYaml).toContain('statusReasonDetail:');
       expect(openApiYaml).toMatch(
-        /ListFeedsQueryParams:[\s\S]*tags:\s*\n\s*type: string/
+        /ListFeedsQueryParams:[\s\S]*tags:\s*\n\s*items:\s*\n\s*type: string\s*\n\s*type: array/
       );
     });
   });
@@ -484,7 +484,7 @@ describe('FeedsController', () => {
       });
     });
 
-    it('should throw 401 unauthorized if the user is not an admin', async () => {
+    it('should throw 403 forbidden if the user is not an admin', async () => {
       const mockNonAdminReq = requestWithUser({ isAdmin: false });
       const controller = new FeedsController();
 
@@ -545,7 +545,7 @@ describe('FeedsController', () => {
       });
     });
 
-    it('should throw 401 unauthorized if the user is not an admin', async () => {
+    it('should throw 403 forbidden if the user is not an admin', async () => {
       const mockNonAdminReq = requestWithUser({ isAdmin: false });
       const controller = new FeedsController();
 
@@ -584,7 +584,7 @@ describe('FeedsController', () => {
       });
     });
 
-    it('should throw 401 unauthorized if the user is not an admin', async () => {
+    it('should throw 403 forbidden if the user is not an admin', async () => {
       const mockNonAdminReq = requestWithUser({ isAdmin: false });
       const controller = new FeedsController();
 

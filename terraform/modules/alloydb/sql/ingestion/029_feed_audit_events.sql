@@ -33,8 +33,7 @@ CREATE TABLE IF NOT EXISTS feed_audit_events (
     occurred_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     feed_revision        BIGINT NOT NULL,
     before_values        JSONB NOT NULL DEFAULT '{}'::jsonb,
-    after_values         JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at           TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    after_values         JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
 DO $$

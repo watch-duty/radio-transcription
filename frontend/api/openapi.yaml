@@ -371,7 +371,9 @@ components:
         statuses:
           type: string
         tags:
-          type: string
+          items:
+            type: string
+          type: array
         name:
           type: string
       type: object
@@ -1072,7 +1074,9 @@ paths:
           name: tags
           required: false
           schema:
-            type: string
+            type: array
+            items:
+              type: string
         - in: query
           name: name
           required: false
