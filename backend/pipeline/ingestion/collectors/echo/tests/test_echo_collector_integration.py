@@ -184,7 +184,7 @@ class TestEchoCollectorIntegration(unittest.TestCase):
     def _get_audit_rows(self, feed_id: uuid.UUID) -> list[dict[str, Any]]:
         cursor = self.conn.execute(
             "SELECT action, actor_id, feed_revision, before_values,"
-            " after_values, metadata FROM feed_audit_events"
+            " after_values FROM feed_audit_events"
             " WHERE feed_id = %s ORDER BY feed_revision",
             (feed_id,),
         )
@@ -351,7 +351,6 @@ class TestEchoCollectorIntegration(unittest.TestCase):
             events[0]["actor_id"],
             echo_main.ECHO_INGESTION_ACTOR_ID,
         )
-        self.assertEqual(events[0]["metadata"], {})
         self.assertEqual(events[0]["before_values"]["status"], "failing")
         self.assertEqual(events[0]["before_values"]["failure_count"], 4)
         self.assertEqual(
@@ -408,7 +407,6 @@ class TestEchoCollectorIntegration(unittest.TestCase):
                 "feed.recovered",
             ],
         )
-        self.assertEqual(events[0]["metadata"], {})
         self.assertEqual(
             events[0]["before_values"]["status_reason"],
             "source_unreachable",
@@ -417,7 +415,6 @@ class TestEchoCollectorIntegration(unittest.TestCase):
             events[-1]["actor_id"],
             echo_main.ECHO_INGESTION_ACTOR_ID,
         )
-        self.assertEqual(events[-1]["metadata"], {})
         self.assertEqual(events[-1]["before_values"]["status"], "failing")
         self.assertEqual(
             events[-1]["before_values"]["status_reason"],
@@ -455,7 +452,6 @@ class TestEchoCollectorIntegration(unittest.TestCase):
             events[0]["actor_id"],
             echo_main.ECHO_INGESTION_ACTOR_ID,
         )
-        self.assertEqual(events[0]["metadata"], {})
         self.assertEqual(events[0]["before_values"]["status"], "failing")
         self.assertEqual(events[0]["before_values"]["failure_count"], 2)
         self.assertEqual(

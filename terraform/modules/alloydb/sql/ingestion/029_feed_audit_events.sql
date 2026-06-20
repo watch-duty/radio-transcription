@@ -34,7 +34,6 @@ CREATE TABLE IF NOT EXISTS feed_audit_events (
     feed_revision        BIGINT NOT NULL,
     before_values        JSONB NOT NULL DEFAULT '{}'::jsonb,
     after_values         JSONB NOT NULL DEFAULT '{}'::jsonb,
-    metadata             JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at           TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
@@ -140,7 +139,6 @@ BEGIN
             CHECK (
                 jsonb_typeof(before_values) = 'object'
                 AND jsonb_typeof(after_values) = 'object'
-                AND jsonb_typeof(metadata) = 'object'
             );
     END IF;
 END $$;

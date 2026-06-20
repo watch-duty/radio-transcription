@@ -131,7 +131,7 @@ audit_action AS (
 write_audit AS (
     INSERT INTO feed_audit_events (
         feed_id, action, actor_id, feed_revision,
-        before_values, after_values, metadata
+        before_values, after_values
     )
     SELECT
         after_row.id,
@@ -139,8 +139,7 @@ write_audit AS (
         $6::text,
         after_row.feed_revision,
 {_AUDIT_BEFORE_SNAPSHOT_SQL},
-{_AUDIT_AFTER_SNAPSHOT_SQL},
-        '{{}}'::jsonb
+{_AUDIT_AFTER_SNAPSHOT_SQL}
     FROM before_row
     JOIN after_row ON after_row.id = before_row.id
     CROSS JOIN audit_action
@@ -216,7 +215,7 @@ audit_action AS (
 write_audit AS (
     INSERT INTO feed_audit_events (
         feed_id, action, actor_id, feed_revision,
-        before_values, after_values, metadata
+        before_values, after_values
     )
     SELECT
         after_row.id,
@@ -224,8 +223,7 @@ write_audit AS (
         $5::text,
         after_row.feed_revision,
 {_audit_snapshot_sql("current_state")},
-{_AUDIT_AFTER_SNAPSHOT_SQL},
-        '{{}}'::jsonb
+{_AUDIT_AFTER_SNAPSHOT_SQL}
     FROM current_state
     JOIN after_row ON after_row.id = current_state.id
     CROSS JOIN audit_action
@@ -633,7 +631,7 @@ audit_action AS (
 write_audit AS (
     INSERT INTO feed_audit_events (
         feed_id, action, actor_id, feed_revision,
-        before_values, after_values, metadata
+        before_values, after_values
     )
     SELECT
         after_row.id,
@@ -641,8 +639,7 @@ write_audit AS (
         $9::text,
         after_row.feed_revision,
 {_AUDIT_BEFORE_SNAPSHOT_SQL},
-{_AUDIT_AFTER_SNAPSHOT_SQL},
-        '{{}}'::jsonb
+{_AUDIT_AFTER_SNAPSHOT_SQL}
     FROM before_row
     JOIN after_row ON after_row.id = before_row.id
     CROSS JOIN audit_action
@@ -730,7 +727,7 @@ audit_action AS (
 write_audit AS (
     INSERT INTO feed_audit_events (
         feed_id, action, actor_id, feed_revision,
-        before_values, after_values, metadata
+        before_values, after_values
     )
     SELECT
         after_row.id,
@@ -738,8 +735,7 @@ write_audit AS (
         $7::text,
         after_row.feed_revision,
 {_AUDIT_BEFORE_SNAPSHOT_SQL},
-{_AUDIT_AFTER_SNAPSHOT_SQL},
-        '{{}}'::jsonb
+{_AUDIT_AFTER_SNAPSHOT_SQL}
     FROM before_row
     JOIN after_row ON after_row.id = before_row.id
     CROSS JOIN audit_action
@@ -775,7 +771,7 @@ after_row AS (
 write_audit AS (
     INSERT INTO feed_audit_events (
         feed_id, action, actor_id, feed_revision,
-        before_values, after_values, metadata
+        before_values, after_values
     )
     SELECT
         after_row.id,
@@ -783,8 +779,7 @@ write_audit AS (
         $5::text,
         after_row.feed_revision,
         '{{}}'::jsonb,
-{_AUDIT_AFTER_SNAPSHOT_SQL},
-        '{{}}'::jsonb
+{_AUDIT_AFTER_SNAPSHOT_SQL}
     FROM after_row
     RETURNING id
 )
@@ -895,7 +890,7 @@ after_row AS (
 write_audit AS (
     INSERT INTO feed_audit_events (
         feed_id, action, actor_id, feed_revision,
-        before_values, after_values, metadata
+        before_values, after_values
     )
     SELECT
         after_row.id,
@@ -903,8 +898,7 @@ write_audit AS (
         $2::text,
         after_row.feed_revision,
 {_AUDIT_BEFORE_SNAPSHOT_SQL},
-{_AUDIT_AFTER_SNAPSHOT_SQL},
-        '{{}}'::jsonb
+{_AUDIT_AFTER_SNAPSHOT_SQL}
     FROM before_row
     JOIN after_row ON after_row.id = before_row.id
     RETURNING id
@@ -926,7 +920,7 @@ WITH before_row AS (
 write_audit AS (
     INSERT INTO feed_audit_events (
         feed_id, action, actor_id, feed_revision,
-        before_values, after_values, metadata
+        before_values, after_values
     )
     SELECT
         before_row.id,
@@ -934,7 +928,6 @@ write_audit AS (
         $2::text,
         before_row.audit_revision + 1,
 {_AUDIT_BEFORE_SNAPSHOT_SQL},
-        '{{}}'::jsonb,
         '{{}}'::jsonb
     FROM before_row
     RETURNING feed_id
@@ -1012,7 +1005,7 @@ after_row AS (
 write_audit AS (
     INSERT INTO feed_audit_events (
         feed_id, action, actor_id, feed_revision,
-        before_values, after_values, metadata
+        before_values, after_values
     )
     SELECT
         after_row.id,
@@ -1020,8 +1013,7 @@ write_audit AS (
         $2::text,
         after_row.feed_revision,
 {_AUDIT_BEFORE_SNAPSHOT_SQL},
-{_AUDIT_AFTER_SNAPSHOT_SQL},
-        '{{}}'::jsonb
+{_AUDIT_AFTER_SNAPSHOT_SQL}
     FROM before_row
     JOIN after_row ON after_row.id = before_row.id
     RETURNING id
@@ -1110,7 +1102,7 @@ result_row AS (
 write_audit AS (
     INSERT INTO feed_audit_events (
         feed_id, action, actor_id, feed_revision,
-        before_values, after_values, metadata
+        before_values, after_values
     )
     SELECT
         updated_row.id,
@@ -1118,8 +1110,7 @@ write_audit AS (
         $4::text,
         updated_row.feed_revision,
 {_AUDIT_BEFORE_SNAPSHOT_SQL},
-{_audit_snapshot_sql("updated_row")},
-        '{{}}'::jsonb
+{_audit_snapshot_sql("updated_row")}
     FROM before_row
     JOIN updated_row ON updated_row.id = before_row.id
     RETURNING id

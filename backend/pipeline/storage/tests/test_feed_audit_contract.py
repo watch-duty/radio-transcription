@@ -113,7 +113,6 @@ def test_migration_defines_delete_safe_audit_schema() -> None:
         "actor_id TEXT NOT NULL",
         "before_values JSONB NOT NULL DEFAULT '{}'::jsonb",
         "after_values JSONB NOT NULL DEFAULT '{}'::jsonb",
-        "metadata JSONB NOT NULL DEFAULT '{}'::jsonb",
         "feed_revision BIGINT NOT NULL",
         "occurred_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()",
         "feed_audit_events_revision_positive",
@@ -122,7 +121,6 @@ def test_migration_defines_delete_safe_audit_schema() -> None:
         "idx_feed_audit_events_feed_revision",
         "jsonb_typeof(before_values) = 'object'",
         "jsonb_typeof(after_values) = 'object'",
-        "jsonb_typeof(metadata) = 'object'",
     ):
         assert token in normalized
 
@@ -140,6 +138,7 @@ def test_migration_defines_delete_safe_audit_schema() -> None:
         "status feed_status",
         "status_reason TEXT",
         "status_reason_detail",
+        "metadata",
     ):
         assert token not in table_normalized
 
@@ -175,7 +174,6 @@ def test_audit_schema_defers_delivery_and_retention_work() -> None:
         "feed_revision BIGINT NOT NULL",
         "before_values JSONB NOT NULL DEFAULT '{}'::jsonb",
         "after_values JSONB NOT NULL DEFAULT '{}'::jsonb",
-        "metadata JSONB NOT NULL DEFAULT '{}'::jsonb",
         "created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()",
     ):
         assert token in table_normalized
