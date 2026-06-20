@@ -814,6 +814,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
             "gs://bucket/path/file.ogg",
             1,
             None,
+            actor_id=_COLLECTOR_RUNTIME_ACTOR_ID,
         )
 
         self.assertTrue(result)
@@ -829,6 +830,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
             "gs://bucket/path/file.ogg",
             1,
             None,
+            actor_id=_COLLECTOR_RUNTIME_ACTOR_ID,
         )
 
         self.assertFalse(result)
@@ -840,14 +842,26 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
         gcs_path = "gs://bucket/path/file.ogg"
 
         await store.update_feed_progress(
-            _FEED_ID, _WORKER_ID, gcs_path, 1, None
+            _FEED_ID,
+            _WORKER_ID,
+            gcs_path,
+            1,
+            None,
+            actor_id=_COLLECTOR_RUNTIME_ACTOR_ID,
         )
 
         args = pool.fetchrow.call_args[0]
         self.assertIs(args[0], feed_queries.UPDATE_PROGRESS_SQL)
         self.assertEqual(
             args[1:],
-            (gcs_path, _FEED_ID, _WORKER_ID, 1, None, None),
+            (
+                gcs_path,
+                _FEED_ID,
+                _WORKER_ID,
+                1,
+                None,
+                _COLLECTOR_RUNTIME_ACTOR_ID,
+            ),
         )
 
     async def test_passes_non_none_last_bookmark_time(self) -> None:
@@ -867,13 +881,38 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
             gcs_path,
             1,
             last_bookmark_time,
+            actor_id=_COLLECTOR_RUNTIME_ACTOR_ID,
         )
         args = pool.fetchrow.call_args[0]
         self.assertIs(args[0], feed_queries.UPDATE_PROGRESS_SQL)
         self.assertEqual(
             args[1:],
-            (gcs_path, _FEED_ID, _WORKER_ID, 1, last_bookmark_time, None),
+            (
+                gcs_path,
+                _FEED_ID,
+                _WORKER_ID,
+                1,
+                last_bookmark_time,
+                _COLLECTOR_RUNTIME_ACTOR_ID,
+            ),
         )
+
+    async def test_rejects_missing_actor_id(self) -> None:
+        """Recovery-capable progress writes require a causal actor."""
+        pool = make_mock_pool(fetchrow_result=_audit_snapshot_row())
+        store = FeedStore(pool)
+
+        with self.assertRaisesRegex(ValueError, "actor_id is required"):
+            await store.update_feed_progress(
+                _FEED_ID,
+                _WORKER_ID,
+                "gs://bucket/path/file.ogg",
+                1,
+                None,
+                actor_id=None,
+            )
+
+        pool.fetchrow.assert_not_awaited()
 
 
 class TestRecordSourceObservation(unittest.IsolatedAsyncioTestCase):
@@ -898,6 +937,7 @@ class TestRecordSourceObservation(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             1,
             resume_position,
+            actor_id=_COLLECTOR_RUNTIME_ACTOR_ID,
         )
 
         self.assertEqual(
@@ -913,7 +953,13 @@ class TestRecordSourceObservation(unittest.IsolatedAsyncioTestCase):
         args = pool.fetchrow.call_args[0]
         self.assertEqual(
             args[1:],
-            (_FEED_ID, _WORKER_ID, 1, resume_position, None),
+            (
+                _FEED_ID,
+                _WORKER_ID,
+                1,
+                resume_position,
+                _COLLECTOR_RUNTIME_ACTOR_ID,
+            ),
         )
 
     async def test_returns_missing_diagnostic_when_row_absent(self) -> None:
@@ -926,6 +972,7 @@ class TestRecordSourceObservation(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             1,
             None,
+            actor_id=_COLLECTOR_RUNTIME_ACTOR_ID,
         )
 
         self.assertEqual(
@@ -938,6 +985,24 @@ class TestRecordSourceObservation(unittest.IsolatedAsyncioTestCase):
                 "recorded": False,
             },
         )
+
+    async def test_record_source_observation_rejects_missing_actor_id(
+        self,
+    ) -> None:
+        """Source-observation recovery writes require a causal actor."""
+        pool = make_mock_pool(fetchrow_result=None)
+        store = FeedStore(pool)
+
+        with self.assertRaisesRegex(ValueError, "actor_id is required"):
+            await store.record_source_observation(
+                _FEED_ID,
+                _WORKER_ID,
+                1,
+                None,
+                actor_id=None,
+            )
+
+        pool.fetchrow.assert_not_awaited()
 
 
 class TestRenewHeartbeatsBatchDiagnostic(unittest.IsolatedAsyncioTestCase):

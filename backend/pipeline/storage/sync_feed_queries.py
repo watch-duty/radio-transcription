@@ -84,10 +84,7 @@ after_row AS (
             "    CROSS JOIN audit_action\n"
             "    CROSS JOIN audit_actor"
         ),
-        where_sql=(
-            "audit_actor.actor_id IS NOT NULL\n"
-            "      AND audit_action.action IS NOT NULL"
-        ),
+        where_sql="audit_action.action IS NOT NULL",
     )
 }
 SELECT after_row.*
@@ -160,10 +157,7 @@ after_row AS (
             "    CROSS JOIN audit_action\n"
             "    CROSS JOIN audit_actor"
         ),
-        where_sql=(
-            "audit_actor.actor_id IS NOT NULL\n"
-            "      AND audit_action.action IS NOT NULL"
-        ),
+        where_sql="audit_action.action IS NOT NULL",
     )
 }
 SELECT after_row.*
@@ -226,10 +220,7 @@ after_row AS (
             "    CROSS JOIN audit_action\n"
             "    CROSS JOIN audit_actor"
         ),
-        where_sql=(
-            "audit_actor.actor_id IS NOT NULL\n"
-            "      AND audit_action.action IS NOT NULL"
-        ),
+        where_sql="audit_action.action IS NOT NULL",
     )
 }
 SELECT after_row.*

@@ -27,6 +27,13 @@ if TYPE_CHECKING:
     import psycopg
 
 
+def _require_actor_id(actor_id: str | None) -> str:
+    if actor_id is None:
+        msg = "actor_id is required for audited feed lifecycle writes"
+        raise ValueError(msg)
+    return actor_id
+
+
 class ResolvedEchoFeed(TypedDict):
     """Feed fields consumed by the Echo ingestion handler."""
 
@@ -106,7 +113,7 @@ class SyncFeedStore:
         self,
         feed_id: uuid.UUID,
         *,
-        actor_id: str | None = None,
+        actor_id: str,
     ) -> None:
         """Record a successful processing heartbeat.
 
@@ -116,14 +123,14 @@ class SyncFeedStore:
         with self._connect_db() as conn:
             conn.execute(
                 cast("LiteralString", sync_feed_queries.HEARTBEAT_SQL),
-                (feed_id, actor_id),
+                (feed_id, _require_actor_id(actor_id)),
             )
 
     def record_failure(
         self,
         feed_id: uuid.UUID,
         *,
-        actor_id: str | None = None,
+        actor_id: str,
         reason: str | None = None,
         status_reason: feed_store.FeedStatusReason | None = None,
     ) -> None:
@@ -148,7 +155,7 @@ class SyncFeedStore:
             self._max_backoff_sec,
             self._base_backoff_sec,
             status_reason_detail,
-            actor_id,
+            _require_actor_id(actor_id),
         )
         with self._connect_db() as conn:
             conn.execute(
@@ -164,7 +171,7 @@ class SyncFeedStore:
         self,
         feed_id: uuid.UUID,
         *,
-        actor_id: str | None = None,
+        actor_id: str,
         status_reason: feed_store.FeedStatusReason,
         reason: str | None = None,
     ) -> None:
@@ -178,7 +185,7 @@ class SyncFeedStore:
             feed_id,
             status_reason.value,
             feed_lifecycle.status_reason_detail_storage_value(reason),
-            actor_id,
+            _require_actor_id(actor_id),
         )
         with self._connect_db() as conn:
             conn.execute(

@@ -12,6 +12,8 @@ from backend.pipeline.storage import quarantine_reason, sync_feed_queries
 from backend.pipeline.storage.feed_store import FeedStatus, FeedStatusReason
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
 
+_ECHO_ACTOR_ID = "service:echo-ingestion"
+
 
 def _make_store(
     mock_conn: MagicMock,
@@ -102,7 +104,7 @@ class TestRecordHeartbeat:
         store = _make_store(conn)
         feed_id = uuid.uuid4()
 
-        store.record_heartbeat(feed_id)
+        store.record_heartbeat(feed_id, actor_id=_ECHO_ACTOR_ID)
 
         conn.execute.assert_called_once()
         sql, params = conn.execute.call_args[0]
@@ -110,7 +112,16 @@ class TestRecordHeartbeat:
             "status NOT IN ('quarantined'::feed_status, "
             "'deactivated'::feed_status)"
         ) in sql
-        assert params == (feed_id, None)
+        assert params == (feed_id, _ECHO_ACTOR_ID)
+
+    def test_rejects_missing_actor_id(self) -> None:
+        conn = _make_mock_conn()
+        store = _make_store(conn)
+
+        with pytest.raises(ValueError, match="actor_id is required"):
+            store.record_heartbeat(uuid.uuid4(), actor_id=None)
+
+        conn.execute.assert_not_called()
 
 
 class TestRecordFailure:
@@ -126,6 +137,7 @@ class TestRecordFailure:
 
         store.record_failure(
             feed_id,
+            actor_id=_ECHO_ACTOR_ID,
             reason="echo_pubsub_publish_failed",
             status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
         )
@@ -144,7 +156,7 @@ class TestRecordFailure:
             600,
             15,
             "echo_pubsub_publish_failed",
-            None,
+            _ECHO_ACTOR_ID,
         )
 
     def test_uses_custom_thresholds(self) -> None:
@@ -159,6 +171,7 @@ class TestRecordFailure:
 
         store.record_failure(
             feed_id,
+            actor_id=_ECHO_ACTOR_ID,
             reason="echo_heartbeat_write_failed",
             status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
         )
@@ -172,7 +185,7 @@ class TestRecordFailure:
             1200,
             30,
             "echo_heartbeat_write_failed",
-            None,
+            _ECHO_ACTOR_ID,
         )
 
     def test_record_failure_allows_omitted_status_reason_for_compatibility(
@@ -182,7 +195,11 @@ class TestRecordFailure:
         store = _make_store(conn)
         feed_id = uuid.uuid4()
 
-        store.record_failure(feed_id, reason="raw")
+        store.record_failure(
+            feed_id,
+            actor_id=_ECHO_ACTOR_ID,
+            reason="raw",
+        )
 
         assert conn.execute.call_args[0][1] == (
             feed_id,
@@ -192,7 +209,7 @@ class TestRecordFailure:
             600,
             15,
             "raw",
-            None,
+            _ECHO_ACTOR_ID,
         )
 
     def test_caps_status_reason_detail_at_persistence_boundary(self) -> None:
@@ -201,7 +218,11 @@ class TestRecordFailure:
         feed_id = uuid.uuid4()
         long_reason = "x" * (quarantine_reason.MAX_QUARANTINE_REASON_LENGTH + 1)
 
-        store.record_failure(feed_id, reason=long_reason)
+        store.record_failure(
+            feed_id,
+            actor_id=_ECHO_ACTOR_ID,
+            reason=long_reason,
+        )
 
         reason_arg = conn.execute.call_args[0][1][6]
         assert len(reason_arg) == quarantine_reason.MAX_QUARANTINE_REASON_LENGTH
@@ -215,11 +236,20 @@ class TestRecordFailure:
         with patch(
             "backend.pipeline.storage.sync_feed_store.logger"
         ) as mock_logger:
-            store.record_failure(feed_id)
+            store.record_failure(feed_id, actor_id=_ECHO_ACTOR_ID)
 
         mock_logger.warning.assert_called_once()
         extra = mock_logger.warning.call_args[1]["extra"]
         assert extra["feed_id"] == str(feed_id)
+
+    def test_rejects_missing_actor_id(self) -> None:
+        conn = _make_mock_conn()
+        store = _make_store(conn)
+
+        with pytest.raises(ValueError, match="actor_id is required"):
+            store.record_failure(uuid.uuid4(), actor_id=None)
+
+        conn.execute.assert_not_called()
 
 
 class TestRecordNonBudgetedFailure:
@@ -230,6 +260,7 @@ class TestRecordNonBudgetedFailure:
 
         store.record_non_budgeted_failure(
             feed_id,
+            actor_id=_ECHO_ACTOR_ID,
             status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
         )
 
@@ -251,7 +282,7 @@ class TestRecordNonBudgetedFailure:
             feed_id,
             "system_pipeline_error",
             None,
-            None,
+            _ECHO_ACTOR_ID,
         )
 
     def test_logs_non_budgeted_failure(self) -> None:
@@ -264,6 +295,7 @@ class TestRecordNonBudgetedFailure:
         ) as mock_logger:
             store.record_non_budgeted_failure(
                 feed_id,
+                actor_id=_ECHO_ACTOR_ID,
                 status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
             )
 
@@ -273,6 +305,19 @@ class TestRecordNonBudgetedFailure:
             "feed_id": str(feed_id),
             "status_reason": "system_collector_error",
         }
+
+    def test_rejects_missing_actor_id(self) -> None:
+        conn = _make_mock_conn()
+        store = _make_store(conn)
+
+        with pytest.raises(ValueError, match="actor_id is required"):
+            store.record_non_budgeted_failure(
+                uuid.uuid4(),
+                actor_id=None,
+                status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            )
+
+        conn.execute.assert_not_called()
 
 
 class TestSyncAuditSql:

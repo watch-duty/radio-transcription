@@ -189,6 +189,13 @@ class PaginatedFeeds:
     total: int
 
 
+def _require_actor_id(actor_id: str | None) -> str:
+    if actor_id is None:
+        msg = "actor_id is required for audited feed lifecycle writes"
+        raise ValueError(msg)
+    return actor_id
+
+
 class FeedStore:
     """
     Storage layer for feed lifecycle operations against AlloyDB.
@@ -334,7 +341,7 @@ class FeedStore:
         fencing_token: int,
         last_bookmark_time: datetime.datetime | None,
         *,
-        actor_id: str | None = None,
+        actor_id: str,
     ) -> bool:
         """
         Update the feed's bookmark and heartbeat after a successful write.
@@ -350,7 +357,7 @@ class FeedStore:
             new_gcs_path: The GCS object path of the last successfully written file.
             fencing_token: The fencing token received at lease acquisition.
             last_bookmark_time: Timestamp bookmark for the last processed audio.
-            actor_id: Optional causal actor for audited runtime recovery.
+            actor_id: Causal actor for audited runtime recovery.
 
         Returns:
             ``True`` if the update succeeded (lease still held), ``False`` if the
@@ -364,7 +371,7 @@ class FeedStore:
             worker_id,
             fencing_token,
             last_bookmark_time,
-            actor_id,
+            _require_actor_id(actor_id),
         )
         return row is not None
 
@@ -375,7 +382,7 @@ class FeedStore:
         fencing_token: int,
         resume_position: datetime.datetime | None,
         *,
-        actor_id: str | None = None,
+        actor_id: str,
     ) -> SourceObservationResult:
         """Record a non-audio source success through a fenced diagnostic path.
 
@@ -389,7 +396,7 @@ class FeedStore:
             worker_id,
             fencing_token,
             resume_position,
-            actor_id,
+            _require_actor_id(actor_id),
         )
         if row is None:
             return SourceObservationResult(

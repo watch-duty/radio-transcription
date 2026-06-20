@@ -75,7 +75,7 @@ after_row AS (
             "    JOIN after_row ON after_row.id = before_row.id\n"
             "    CROSS JOIN audit_action"
         ),
-        where_sql="$6::text IS NOT NULL\n      AND audit_action.action IS NOT NULL",
+        where_sql="audit_action.action IS NOT NULL",
     )
 }
 SELECT after_row.*
@@ -138,7 +138,7 @@ after_row AS (
             "    JOIN after_row ON after_row.id = current_state.id\n"
             "    CROSS JOIN audit_action"
         ),
-        where_sql="$5::text IS NOT NULL\n      AND audit_action.action IS NOT NULL",
+        where_sql="audit_action.action IS NOT NULL",
     )
 }
 SELECT

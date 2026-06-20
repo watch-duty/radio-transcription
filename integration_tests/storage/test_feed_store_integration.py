@@ -556,6 +556,7 @@ async def test_update_progress_does_not_touch_last_heartbeat(
         "gs://bucket/file.flac",
         fencing_token=0,
         last_bookmark_time=None,
+        actor_id=_TEST_ACTOR_ID,
     )
 
     assert ok is True
@@ -683,6 +684,7 @@ async def test_progress_update_succeeds_with_correct_worker(
         "gs://bucket/path/file.ogg",
         0,
         None,
+        actor_id=_TEST_ACTOR_ID,
     )
 
     assert result is True
@@ -719,6 +721,7 @@ async def test_progress_clears_stale_status_reason_and_stamps_clear_time(
         "gs://bucket/path/file.ogg",
         0,
         None,
+        actor_id=_TEST_ACTOR_ID,
     )
 
     assert result is True
@@ -758,6 +761,7 @@ async def test_progress_with_null_status_reason_leaves_reason_timestamp_unchange
         "gs://bucket/path/file.ogg",
         0,
         None,
+        actor_id=_TEST_ACTOR_ID,
     )
 
     assert result is True
@@ -786,6 +790,7 @@ async def test_progress_update_fails_with_wrong_worker(
         "gs://bucket/path/file.ogg",
         0,
         None,
+        actor_id=_TEST_ACTOR_ID,
     )
 
     assert result is False
@@ -819,6 +824,7 @@ async def test_progress_update_succeeds_for_deactivated_owned_feed(
         "gs://bucket/path/deactivated.ogg",
         0,
         None,
+        actor_id=_TEST_ACTOR_ID,
     )
 
     assert result is True
@@ -928,6 +934,7 @@ async def test_source_observation_updates_bookmark_monotonically(
         worker,
         0,
         resume_position,
+        actor_id=_TEST_ACTOR_ID,
     )
 
     assert result["recorded"] is True
@@ -1264,6 +1271,7 @@ async def test_successful_processing_resets_failure_count(
         "chunk_001.flac",
         result["fencing_token"],
         None,
+        actor_id=_TEST_ACTOR_ID,
     )
     row = await db_pool.fetchrow(
         "SELECT failure_count FROM feeds WHERE id = $1",
@@ -1516,6 +1524,7 @@ async def test_progress_update_fails_with_wrong_fencing_token(
         "gs://bucket/path/file.ogg",
         999,  # wrong fencing_token
         None,
+        actor_id=_TEST_ACTOR_ID,
     )
 
     assert result is False
@@ -1549,6 +1558,7 @@ async def test_progress_update_fails_with_wrong_fencing_token_leaves_reason_fiel
         "gs://bucket/path/file.ogg",
         999,
         None,
+        actor_id=_TEST_ACTOR_ID,
     )
 
     assert result is False
@@ -1672,6 +1682,7 @@ async def test_last_bookmark_time_round_trips_through_lease(
         "chunk_001.flac",
         result1["fencing_token"],
         bookmark,
+        actor_id=_TEST_ACTOR_ID,
     )
     assert ok is True
 
