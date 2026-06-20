@@ -33,15 +33,10 @@ CREATE TABLE IF NOT EXISTS feed_audit_event_sequences (
 CREATE TABLE IF NOT EXISTS feed_audit_events (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     feed_id              UUID NOT NULL,
-    feed_name            VARCHAR(255) NOT NULL,
-    source_type          TEXT NOT NULL REFERENCES source_types(slug),
     action               TEXT NOT NULL,
     actor_id             TEXT NOT NULL,
     occurred_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     feed_sequence        BIGINT NOT NULL,
-    status               feed_status,
-    status_reason        TEXT,
-    status_reason_detail TEXT,
     before_values        JSONB NOT NULL DEFAULT '{}'::jsonb,
     after_values         JSONB NOT NULL DEFAULT '{}'::jsonb,
     metadata             JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -86,8 +81,7 @@ BEGIN
             CHECK (
                 char_length(actor_id) <= 512
                 AND (
-                    actor_id = 'unknown:unknown'
-                    OR (
+                    (
                         actor_id LIKE 'user:google:%'
                         AND substring(
                             actor_id FROM char_length('user:google:') + 1
@@ -97,42 +91,12 @@ BEGIN
                         ) !~ '[[:space:]]'
                     )
                     OR (
-                        actor_id LIKE 'user-email:%'
-                        AND substring(
-                            actor_id FROM char_length('user-email:') + 1
-                        ) <> ''
-                        AND substring(
-                            actor_id FROM char_length('user-email:') + 1
-                        ) !~ '[[:space:]]'
-                        AND substring(
-                            actor_id FROM char_length('user-email:') + 1
-                        ) LIKE '%@%'
-                    )
-                    OR (
                         actor_id LIKE 'service:%'
                         AND substring(
                             actor_id FROM char_length('service:') + 1
                         ) <> ''
                         AND substring(
                             actor_id FROM char_length('service:') + 1
-                        ) !~ '[[:space:]]'
-                    )
-                    OR (
-                        actor_id LIKE 'job:%'
-                        AND substring(
-                            actor_id FROM char_length('job:') + 1
-                        ) <> ''
-                        AND substring(
-                            actor_id FROM char_length('job:') + 1
-                        ) !~ '[[:space:]]'
-                    )
-                    OR (
-                        actor_id LIKE 'gcp-sa:%'
-                        AND substring(
-                            actor_id FROM char_length('gcp-sa:') + 1
-                        ) <> ''
-                        AND substring(
-                            actor_id FROM char_length('gcp-sa:') + 1
                         ) !~ '[[:space:]]'
                     )
                 )
@@ -151,23 +115,6 @@ BEGIN
         ALTER TABLE feed_audit_events
             ADD CONSTRAINT feed_audit_events_sequence_positive
             CHECK (feed_sequence > 0);
-    END IF;
-END $$;
-
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM information_schema.table_constraints
-        WHERE table_schema = current_schema()
-          AND table_name = 'feed_audit_events'
-          AND constraint_name = 'feed_audit_events_detail_length'
-    ) THEN
-        ALTER TABLE feed_audit_events
-            ADD CONSTRAINT feed_audit_events_detail_length
-            CHECK (
-                status_reason_detail IS NULL
-                OR char_length(status_reason_detail) <= 2048
-            );
     END IF;
 END $$;
 

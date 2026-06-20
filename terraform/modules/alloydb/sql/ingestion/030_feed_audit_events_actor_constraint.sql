@@ -20,8 +20,7 @@ BEGIN
         CHECK (
             char_length(actor_id) <= 512
             AND (
-                actor_id = 'unknown:unknown'
-                OR (
+                (
                     actor_id LIKE 'user:google:%'
                     AND substring(
                         actor_id FROM char_length('user:google:') + 1
@@ -31,42 +30,12 @@ BEGIN
                     ) !~ '[[:space:]]'
                 )
                 OR (
-                    actor_id LIKE 'user-email:%'
-                    AND substring(
-                        actor_id FROM char_length('user-email:') + 1
-                    ) <> ''
-                    AND substring(
-                        actor_id FROM char_length('user-email:') + 1
-                    ) !~ '[[:space:]]'
-                    AND substring(
-                        actor_id FROM char_length('user-email:') + 1
-                    ) LIKE '%@%'
-                )
-                OR (
                     actor_id LIKE 'service:%'
                     AND substring(
                         actor_id FROM char_length('service:') + 1
                     ) <> ''
                     AND substring(
                         actor_id FROM char_length('service:') + 1
-                    ) !~ '[[:space:]]'
-                )
-                OR (
-                    actor_id LIKE 'job:%'
-                    AND substring(
-                        actor_id FROM char_length('job:') + 1
-                    ) <> ''
-                    AND substring(
-                        actor_id FROM char_length('job:') + 1
-                    ) !~ '[[:space:]]'
-                )
-                OR (
-                    actor_id LIKE 'gcp-sa:%'
-                    AND substring(
-                        actor_id FROM char_length('gcp-sa:') + 1
-                    ) <> ''
-                    AND substring(
-                        actor_id FROM char_length('gcp-sa:') + 1
                     ) !~ '[[:space:]]'
                 )
             )

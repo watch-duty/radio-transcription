@@ -18,11 +18,14 @@ _ACTIONS = (
 
 _ACTOR_STRINGS = (
     "user:google:",
-    "user-email:",
     "service:",
+)
+
+_DEFERRED_ACTOR_STRINGS = (
+    "unknown:unknown",
+    "user-email:",
     "job:",
     "gcp-sa:",
-    "unknown:unknown",
 )
 
 
@@ -36,6 +39,18 @@ def _sql_without_comments(text: str) -> str:
 
 def _normalized_sql(text: str) -> str:
     return " ".join(_sql_without_comments(text).split())
+
+
+def _feed_audit_events_table_sql(text: str) -> str:
+    sql = _sql_without_comments(text)
+    match = re.search(
+        r"CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+feed_audit_events\s*"
+        r"\((.*?)\);",
+        sql,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    assert match is not None
+    return match.group(1)
 
 
 def test_repository_glossary_defines_audit_terms() -> None:
@@ -57,12 +72,14 @@ def test_migration_defines_delete_safe_audit_schema() -> None:
     )
     sql = _sql_without_comments(text)
     normalized = _normalized_sql(text)
+    table_sql = _feed_audit_events_table_sql(text)
+    table_normalized = " ".join(table_sql.split())
 
     for token in (
         "CREATE TABLE IF NOT EXISTS feed_audit_events",
         "feed_id UUID NOT NULL",
-        "feed_name VARCHAR(255) NOT NULL",
-        "source_type TEXT NOT NULL REFERENCES source_types(slug)",
+        "action TEXT NOT NULL",
+        "actor_id TEXT NOT NULL",
         "before_values JSONB NOT NULL DEFAULT '{}'::jsonb",
         "after_values JSONB NOT NULL DEFAULT '{}'::jsonb",
         "metadata JSONB NOT NULL DEFAULT '{}'::jsonb",
@@ -75,6 +92,15 @@ def test_migration_defines_delete_safe_audit_schema() -> None:
         "jsonb_typeof(metadata) = 'object'",
     ):
         assert token in normalized
+
+    for token in (
+        "feed_name",
+        "source_type",
+        "status feed_status",
+        "status_reason TEXT",
+        "status_reason_detail",
+    ):
+        assert token not in table_normalized
 
     feed_fk_pattern = (
         r"REFERENCES\s+(?:ONLY\s+)?"
@@ -107,6 +133,8 @@ def test_migration_defines_actor_and_action_constraints() -> None:
         assert token in sql
 
     assert "system:%" not in sql
+    for token in _DEFERRED_ACTOR_STRINGS:
+        assert token not in sql
 
 
 def test_migration_rejects_malformed_actor_id_suffixes() -> None:
@@ -118,12 +146,8 @@ def test_migration_rejects_malformed_actor_id_suffixes() -> None:
     rejected_actor_ids = (
         "user:google:",
         "service:",
-        "job:",
-        "gcp-sa:",
-        "user-email:",
     )
 
-    assert "actor_id = 'unknown:unknown'" in sql
     assert "char_length(actor_id) <= 512" in normalized
 
     for prefix in rejected_actor_ids:
@@ -144,12 +168,8 @@ def test_migration_rejects_malformed_actor_id_suffixes() -> None:
             flags=re.IGNORECASE,
         ), prefix
 
-    assert re.search(
-        r"substring\s*\(\s*actor_id\s+FROM\s+"
-        r"char_length\('user-email:'\)\s*\+\s*1\s*\)\s+LIKE\s+'%@%'",
-        sql,
-        flags=re.IGNORECASE,
-    )
+    for token in _DEFERRED_ACTOR_STRINGS:
+        assert token not in sql
 
 
 def test_replacement_migration_removes_system_actor_constraint() -> None:
@@ -185,6 +205,8 @@ def test_replacement_migration_removes_system_actor_constraint() -> None:
         maxsplit=1,
     )[1]
     assert "system:%" not in recreated_constraint
+    for token in _DEFERRED_ACTOR_STRINGS:
+        assert token not in recreated_constraint
 
 
 def test_migration_uses_schema_qualified_constraint_guards() -> None:
@@ -193,7 +215,7 @@ def test_migration_uses_schema_qualified_constraint_guards() -> None:
     )
     normalized = _normalized_sql(text)
 
-    assert normalized.count("table_schema = current_schema()") >= 7
+    assert normalized.count("table_schema = current_schema()") >= 6
 
 
 def test_migration_defines_status_reason_detail_and_hot_guard() -> None:
@@ -211,10 +233,12 @@ def test_migration_defines_status_reason_detail_and_hot_guard() -> None:
     for token in (
         "ADD COLUMN IF NOT EXISTS status_reason_detail TEXT",
         "feeds_status_reason_detail_length",
-        "feed_audit_events_detail_length",
         "2048",
     ):
         assert token in normalized
+
+    table_sql = _feed_audit_events_table_sql(migration)
+    assert "status_reason_detail" not in table_sql
 
     assert "WITH guarded_columns(attname) AS" in guard_sql
     assert "('status_reason_detail')" in guard_sql
