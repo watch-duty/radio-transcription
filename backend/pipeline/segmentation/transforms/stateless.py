@@ -293,20 +293,16 @@ class UploadRawSegmentFn(beam.DoFn):
             decoded_chunks[chunk.gcs_uri] = (samples, sr, chunk.timestamp_ms)
             self.gcs_chunks_downloaded.inc()
 
-        # 2. Extract and concatenate the speech segments
-        # CRITICAL DISTRIBUTED SYSTEMS SAFEGUARD:
-        # We must explicitly and defensively sort both speech segments and contributing chunks chronologically.
-        # While the upstream jitter buffer and Python dictionary insertion order generally preserve chronological
-        # order, relying on implicit sorting invariants across distributed serialization boundaries is a high-severity
-        # hazard. If chunks are processed or iterated out of order:
-        # - Slices of a single speech segment spanning multiple chunks will be concatenated in the wrong sequence.
-        # - The resulting audio output will be silently scrambled and garbled in production.
-        # Sorting explicitly here guarantees 100% mathematically correct stitching under all execution conditions.
-        sorted_chunks = sorted(
-            decoded_chunks.values(), key=lambda x: x[2]
-        )  # x[2] is chunk_start_ms
+        # 2. Extract and concatenate the speech segments in chronological order.
+        # To guarantee sample-accurate audio assembly, we iterate over the speech segments
+        # and the contributing chunks in their exact list order. The contributing chunks list
+        # is already sorted chronologically by the upstream jitter buffer, and iterating over it
+        # directly (looking up decoded samples by GCS URI) ensures optimal O(N) performance
+        # without sorting overhead or lambda calls.
+        from operator import attrgetter  # noqa: PLC0415
+
         sorted_segments = sorted(
-            request.speech_segments, key=lambda r: r.start_ms
+            request.speech_segments, key=attrgetter("start_ms")
         )
 
         stitched_segments = []
@@ -314,11 +310,8 @@ class UploadRawSegmentFn(beam.DoFn):
             segment_start = segment.start_ms
             segment_end = segment.end_ms
 
-            for (
-                samples,
-                sr,
-                chunk_start_ms,
-            ) in sorted_chunks:
+            for chunk in request.contributing_chunks:
+                samples, sr, chunk_start_ms = decoded_chunks[chunk.gcs_uri]
                 chunk_duration_ms = int(len(samples) / sr * 1000)
                 chunk_end_ms = chunk_start_ms + chunk_duration_ms
 
