@@ -13,10 +13,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 from google.api_core.exceptions import NotFound
 
+from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.collectors.echo.main import (
+    ECHO_INGESTION_ACTOR_ID,
     SEGMENTED_PUBSUB_TOPIC_PATH,
     _handle,
     _parse_timestamp,
+    _record_failure_by_policy,
 )
 from backend.pipeline.schema_types.segmented_audio_pb2 import SegmentedAudio
 from backend.pipeline.storage.feed_store import FeedStatus, FeedStatusReason
@@ -117,8 +120,13 @@ class TestHandle:
 
     def _set_feed(self, mock_store: MagicMock, feed: dict | None) -> None:
         """Configure mock_store to return a feed row from resolve."""
-        if feed is not None and "created_at" not in feed:
-            feed = {**feed, "created_at": datetime(2026, 1, 1, tzinfo=UTC)}
+        if feed is not None:
+            defaults = {
+                "failure_count": 0,
+                "status_reason": None,
+                "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+            }
+            feed = {**defaults, **feed}
         mock_store.resolve_echo_feed.return_value = feed
 
     def _assert_failure_recorded(
@@ -128,9 +136,16 @@ class TestHandle:
         *,
         reason: str,
         status_reason: FeedStatusReason,
+        previous_status: FeedStatus = FeedStatus.ACTIVE,
+        previous_failure_count: int = 0,
+        previous_status_reason: FeedStatusReason | None = None,
     ) -> None:
         mock_store.record_failure.assert_called_once_with(
             feed_id,
+            actor_id=ECHO_INGESTION_ACTOR_ID,
+            previous_status=previous_status,
+            previous_failure_count=previous_failure_count,
+            previous_status_reason=previous_status_reason,
             reason=reason,
             status_reason=status_reason,
         )
@@ -141,12 +156,74 @@ class TestHandle:
         feed_id: uuid.UUID,
         *,
         status_reason: FeedStatusReason,
+        reason: str,
+        previous_status: FeedStatus = FeedStatus.ACTIVE,
+        previous_failure_count: int = 0,
+        previous_status_reason: FeedStatusReason | None = None,
     ) -> None:
         mock_store.record_non_budgeted_failure.assert_called_once_with(
             feed_id,
+            actor_id=ECHO_INGESTION_ACTOR_ID,
+            previous_status=previous_status,
+            previous_failure_count=previous_failure_count,
+            previous_status_reason=previous_status_reason,
             status_reason=status_reason,
+            reason=reason,
         )
         mock_store.record_failure.assert_not_called()
+
+    def _assert_heartbeat_recorded(
+        self,
+        mock_store: MagicMock,
+        feed_id: uuid.UUID,
+        *,
+        previous_status: FeedStatus = FeedStatus.ACTIVE,
+        previous_failure_count: int = 0,
+        previous_status_reason: FeedStatusReason | None = None,
+    ) -> None:
+        mock_store.record_heartbeat.assert_called_once_with(
+            feed_id,
+            actor_id=ECHO_INGESTION_ACTOR_ID,
+            previous_status=previous_status,
+            previous_failure_count=previous_failure_count,
+            previous_status_reason=previous_status_reason,
+        )
+
+    def test_failure_policy_budgeted_call_uses_actor_and_prior_state(
+        self, mock_store
+    ) -> None:
+        feed_id = uuid.uuid4()
+        feed = {
+            "id": feed_id,
+            "name": "Central Fire",
+            "status": FeedStatus.FAILING,
+            "failure_count": 2,
+            "status_reason": FeedStatusReason.SOURCE_UNREACHABLE,
+            "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+        }
+
+        with patch(
+            "backend.pipeline.ingestion.collectors.echo.main.feed_store",
+            mock_store,
+        ):
+            _record_failure_by_policy(
+                feed,
+                failure_classification.FailureInfo(
+                    FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+                    "bad config",
+                ),
+            )
+
+        self._assert_failure_recorded(
+            mock_store,
+            feed_id,
+            reason="bad config",
+            status_reason=FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            previous_status=FeedStatus.FAILING,
+            previous_failure_count=2,
+            previous_status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+        mock_store.record_non_budgeted_failure.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_skips_non_mp3(self, mock_store) -> None:
@@ -241,7 +318,7 @@ class TestHandle:
         assert chunk.feed_id == str(feed_id)
 
         # Verify heartbeat recorded
-        mock_store.record_heartbeat.assert_called_once_with(feed_id)
+        self._assert_heartbeat_recorded(mock_store, feed_id)
         _patch_globals["get_duration"].assert_called_once_with(
             b"mp3-placeholder",
             input_format="mp3",
@@ -411,6 +488,7 @@ class TestHandle:
             mock_store,
             feed_id,
             status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            reason="echo_recording_download_failed",
         )
         mock_store.record_heartbeat.assert_not_called()
         _patch_globals["publisher"].publish.assert_not_called()
@@ -455,6 +533,7 @@ class TestHandle:
             mock_store,
             feed_id,
             status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            reason=expected_reason,
         )
         mock_store.record_heartbeat.assert_not_called()
         _patch_globals["publisher"].publish.assert_not_called()
@@ -489,6 +568,7 @@ class TestHandle:
             mock_store,
             feed_id,
             status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            reason=expected_reason,
         )
         mock_store.record_heartbeat.assert_not_called()
         _patch_globals["publisher"].publish.assert_not_called()
@@ -521,6 +601,7 @@ class TestHandle:
             mock_store,
             feed_id,
             status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            reason="echo_staging_upload_failed",
         )
         mock_store.record_heartbeat.assert_not_called()
         _patch_globals["publisher"].publish.assert_not_called()
@@ -557,6 +638,7 @@ class TestHandle:
             mock_store,
             feed_id,
             status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            reason="echo_recording_download_failed",
         )
         assert mock_logger.exception.call_count == 2
         first_call, second_call = mock_logger.exception.call_args_list
@@ -638,6 +720,7 @@ class TestHandle:
             mock_store,
             feed_id,
             status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            reason="echo_pubsub_publish_failed",
         )
         mock_store.record_heartbeat.assert_not_called()
 
@@ -665,6 +748,7 @@ class TestHandle:
             mock_store,
             feed_id,
             status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            reason="echo_pubsub_publish_failed",
         )
         mock_store.record_heartbeat.assert_not_called()
 
@@ -690,6 +774,7 @@ class TestHandle:
             mock_store,
             feed_id,
             status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            reason="echo_heartbeat_write_failed",
         )
 
     @pytest.mark.usefixtures("_patch_globals")
@@ -716,6 +801,7 @@ class TestHandle:
             mock_store,
             feed_id,
             status_reason=FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
+            reason="unexpected bug",
         )
 
     @pytest.mark.usefixtures("_patch_globals")
@@ -745,6 +831,7 @@ class TestHandle:
             mock_store,
             feed_id,
             status_reason=FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
+            reason=message,
         )
 
     # -----------------------------------------------------------------
@@ -803,7 +890,7 @@ class TestHandle:
         # invariant is verified explicitly — guards against a future refactor
         # that swaps the two lines and silently suppresses the heartbeat.
         call_order: list[str] = []
-        mock_store.record_heartbeat.side_effect = lambda _fid: (
+        mock_store.record_heartbeat.side_effect = lambda *_args, **_kwargs: (
             call_order.append("heartbeat")
         )
 
@@ -827,7 +914,7 @@ class TestHandle:
         assert call_order == ["heartbeat", "copy_blob"], call_order
         # Prod path completed (heartbeat recorded) and the feed was NOT
         # punished for the dev-side failure.
-        mock_store.record_heartbeat.assert_called_once_with(feed["id"])
+        self._assert_heartbeat_recorded(mock_store, feed["id"])
         mock_store.record_failure.assert_not_called()
         mock_store.record_non_budgeted_failure.assert_not_called()
 
