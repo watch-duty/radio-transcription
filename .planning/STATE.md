@@ -1,11 +1,11 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-milestone_name: milestone
-status: milestone_complete
-stopped_at: Phase 5 context gathered
-last_updated: "2026-06-20T04:19:24Z"
-last_activity: 2026-06-20 -- Phase 05 complete with prepared-machine UAT pending
+milestone_name: Feed Audit Events V1
+status: completed
+stopped_at: v1.0 milestone archived
+last_updated: "2026-06-20T04:57:52Z"
+last_activity: 2026-06-20
 progress:
   total_phases: 5
   completed_phases: 5
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-06-20)
 Phase: 05
 Plan: Not started
 Status: Milestone complete
-Last activity: 2026-06-20 -- Phase 05 complete with prepared-machine UAT pending
+Last activity: 2026-06-20
 
 Progress: [██████████] 100%
 
@@ -115,6 +115,7 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
+- Phase 04 UAT: Echo Docker/Testcontainers integration suite remains pending CI or approved prepared-machine execution.
 - Phase 05 UAT: prepared-machine Testcontainers retention/rollback/concurrency/delete-survival lane remains pending CI or approved prepared-machine execution.
 - Phase 05 UAT: prepared AlloyDB pg_cron scheduler lane remains pending a database with `alloydb.enable_pg_cron=on` and `ALLOYDB_PG_CRON_VERIFICATION_DSN`.
 
@@ -124,14 +125,19 @@ None yet.
 
 ## Deferred Items
 
-Items acknowledged and carried forward from previous milestone close:
+Items acknowledged and deferred at milestone close on 2026-06-20:
 
 | Category | Item | Status | Deferred At |
 |----------|------|--------|-------------|
-| *(none)* | | | |
+| uat_gap | Phase 04: Echo Docker/Testcontainers integration suite | partial | v1.0 close |
+| uat_gap | Phase 05: prepared-machine retention/rollback/concurrency/delete-survival lane | partial | v1.0 close |
+| uat_gap | Phase 05: prepared AlloyDB pg_cron scheduler lane | partial | v1.0 close |
+| verification_gap | Phase 03 verification report remained human_needed after UAT passed | acknowledged | v1.0 close |
+| verification_gap | Phase 04 verification report requires Echo Docker/Testcontainers UAT | human_needed | v1.0 close |
+| verification_gap | Phase 05 verification report requires prepared Testcontainers and AlloyDB UAT | human_needed | v1.0 close |
 
 ## Session Continuity
 
-Last session: 2026-06-20T02:07:44.886Z
-Stopped at: Phase 5 context gathered
+Last session: 2026-06-20T04:57:52Z
+Stopped at: v1.0 milestone archived
 Resume file: .planning/phases/05-retention-and-verification-hardening/05-CONTEXT.md

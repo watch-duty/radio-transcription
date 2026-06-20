@@ -17,6 +17,14 @@ history and a cleaner current diagnostic detail field.
 Operators can reconstruct meaningful feed lifecycle and configuration changes
 from durable backend data instead of relying on short-lived logs.
 
+## Current State
+
+v1.0 shipped on 2026-06-20. The backend audit ledger, diagnostic detail
+compatibility, trusted actor propagation, runtime and Echo audit producers,
+retention SQL, and verification gates are implemented. Remaining active work
+is prepared-machine or CI verification for resource-heavy lanes, not source
+implementation.
+
 ## Requirements
 
 ### Validated
@@ -82,6 +90,8 @@ from durable backend data instead of relying on short-lived logs.
   concurrency, and delete-survival lane recorded in Phase 5 UAT.
 - [ ] Run the prepared AlloyDB pg_cron scheduler verification lane recorded in
   Phase 5 UAT.
+- [ ] Run the Echo Docker/Testcontainers integration suite recorded in Phase 4
+  UAT.
 
 ### Out of Scope
 
@@ -186,4 +196,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-20 after Phase 5 completion*
+*Last updated: 2026-06-20 after v1.0 milestone archive*
