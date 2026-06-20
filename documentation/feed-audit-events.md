@@ -18,8 +18,8 @@ that domain meaning; they do not define it by themselves.
 
 Runtime event emission is implemented for the async collector runtime and the
 Echo/sync ingestion path. Admin read APIs/UI, Watch Duty delivery dispatch,
-Watch Duty receivers, retention enforcement jobs, and event sourcing remain
-outside the Phase 4 runtime audit scope.
+Watch Duty receivers, and event sourcing remain outside the v1 runtime audit
+scope.
 
 Decision coverage: D-18, D-19, and D-20.
 
@@ -183,11 +183,26 @@ Decision coverage: D-14, D-15, D-16, and D-17.
 
 ## Retention
 
-Feed Audit Events are retained for 18 months. Phase 5 owns retention
-enforcement, including any scheduled deletion job or retention verification.
+Feed Audit Events are retained for 18 months and expired by the DB-owned
+AlloyDB pg_cron job named `feed-audit-events-retention`. The scheduler calls
+`public.prune_feed_audit_events_retention()` daily, and the procedure deletes
+only rows where `occurred_at < NOW() - INTERVAL '18 months'`.
 
-Phase 1 only defines the retention target and the fields future enforcement can
-use. It does not add retention enforcement jobs.
+Each run deletes one bounded batch with `LIMIT 10000` and
+`FOR UPDATE SKIP LOCKED`. Backlog cleanup advances one daily batch at a time
+rather than looping through all expired history in one invocation. Retention
+deletes expired `feed_audit_events` rows only. It does not archive, redact,
+rewrite, create tombstone or baseline events, or renumber retained events.
+
+Retained timelines start at the oldest non-expired event.
+feed_sequence gaps are expected after older audit rows expire.
+`feed_sequence` values are immutable labels and are not recalculated.
+
+`feed_audit_event_sequences` remains part of the ordering contract. Sequence
+rows are pruned only when there are no retained feed_audit_events rows for
+that feed and the current `feeds` row is gone. Live feeds keep their sequence
+rows even if all old audit rows have expired, so future events continue from
+the existing sequence allocator.
 
 ## Phase Boundaries
 
@@ -202,7 +217,6 @@ The implemented runtime boundary does not add:
 - admin read APIs or UI
 - Watch Duty delivery dispatcher state
 - Watch Duty webhook attempts, signatures, or receiver behavior
-- retention enforcement jobs
 - event sourcing
 - routine worker lease, heartbeat, or clean-progress history
 
