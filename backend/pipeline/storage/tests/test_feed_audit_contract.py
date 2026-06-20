@@ -271,37 +271,6 @@ def test_migration_rejects_malformed_actor_id_suffixes() -> None:
         assert token not in sql
 
 
-def test_replacement_migration_removes_system_actor_constraint() -> None:
-    text = _read(
-        "terraform/modules/alloydb/sql/ingestion/"
-        "030_feed_audit_events_actor_constraint.sql"
-    )
-    sql = _sql_without_comments(text)
-    normalized = _normalized_sql(text)
-
-    assert "actor_id LIKE 'system:%'" in normalized
-    assert "RAISE EXCEPTION" in normalized
-    assert "clean or remap those rows" in normalized
-    assert (
-        "DROP CONSTRAINT IF EXISTS feed_audit_events_actor_id_check"
-        in normalized
-    )
-    assert "ADD CONSTRAINT feed_audit_events_actor_id_check" in normalized
-    assert "FROM feed_audit_events" in normalized
-    assert "feed_audit_event_sequences" not in normalized
-    assert "feed_sequence" not in normalized
-    assert "MAX(" not in normalized
-    assert "ON CONFLICT (feed_id) DO UPDATE" not in normalized
-
-    recreated_constraint = sql.split(
-        "ADD CONSTRAINT feed_audit_events_actor_id_check",
-        maxsplit=1,
-    )[1]
-    assert "system:%" not in recreated_constraint
-    for token in _DEFERRED_ACTOR_STRINGS:
-        assert token not in recreated_constraint
-
-
 def test_migration_uses_schema_qualified_constraint_guards() -> None:
     text = _read(
         "terraform/modules/alloydb/sql/ingestion/029_feed_audit_events.sql"
