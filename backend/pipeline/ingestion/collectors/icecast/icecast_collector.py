@@ -58,6 +58,8 @@ POLL_INTERVAL_SEC = 0.25  # Polling interval for segment file checks
 STDERR_TAIL_LINES = 30  # Ring buffer size for ffmpeg stderr diagnostics
 
 _STREAM_PROBE_TIMEOUT_SEC = 10
+_MAX_ALLOWED_LAG_SECONDS = 60.0
+
 
 # Stream endpoint semantics differ from item/API endpoints: a stream 404 means
 # the configured mount/feed is currently unavailable, while other 4xx statuses
@@ -267,7 +269,7 @@ def _segment_path(directory: Path, index: int) -> Path:
     return directory / f"chunk_{index:06d}.{AUDIO_FORMAT}"
 
 
-async def capture_icecast_stream(  # noqa: PLR0915
+async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
     url_base: str,
@@ -391,6 +393,24 @@ async def capture_icecast_stream(  # noqa: PLR0915
                         )
                         if process_done:
                             chunk_end_time = min(chunk_end_time, _now_utc())
+
+                        # Guard against cumulative network or system lag by measuring the drift
+                        # between wall-clock receipt time and expected stream time.
+                        lag = (receipt_time - chunk_end_time).total_seconds()
+                        if lag > _MAX_ALLOWED_LAG_SECONDS:
+                            logger.error(
+                                "Feed %s (%s): Stream lag has exceeded threshold "
+                                "(%.1fs > %.1fs). Forcing reconnect to clear backlog.",
+                                feed_id,
+                                feed_name,
+                                lag,
+                                _MAX_ALLOWED_LAG_SECONDS,
+                            )
+                            raise collector_failure(
+                                FeedStatusReason.SOURCE_UNREACHABLE,
+                                "stream_lag_exceeded",
+                            )
+
                         yield CapturedChunk(
                             audio_bytes=segment_bytes,
                             chunk_start_time=chunk_start_time,
@@ -513,8 +533,10 @@ async def _create_ffmpeg_process(
     # 3. discardcorrupt: Mitigates parsing crashes over TCP jitter, which is necessary
     #    since our micro probesize doesn't deeply validate stream integrity.
     # 4. -reconnect 1 / -reconnect_at_eof 1 / -reconnect_streamed 1: Enables native
-    #    HTTP/TCP reconnects for short internet drops. The external Python timeout
-    #    (30s) acts as a secondary dead-man's switch if ffmpeg stalls.
+    #    HTTP/TCP reconnects for short internet drops.
+    # 5. -timeout 15000000: Sets a 15-second socket I/O timeout to prevent ffmpeg from
+    #    hanging indefinitely on a stalled TCP connection, allowing it to exit
+    #    gracefully instead of requiring a hard force-kill.
     return await asyncio.create_subprocess_exec(
         "ffmpeg", "-nostdin",
         "-reconnect", "1",
@@ -525,6 +547,7 @@ async def _create_ffmpeg_process(
         "-analyzeduration", "0",
         "-probesize", "32768",
         "-fflags", "nobuffer+flush_packets+discardcorrupt",
+        "-timeout", "15000000",
         "-headers", auth_header,
         "-i", url,
         "-vn", "-sn", "-dn",
