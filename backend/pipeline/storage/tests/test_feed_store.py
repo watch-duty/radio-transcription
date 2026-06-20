@@ -1273,6 +1273,21 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(detail_arg.endswith("[truncated]"))
 
+    async def test_rejects_missing_actor_id(self) -> None:
+        """Failure writes require a causal actor before any DB mutation."""
+        pool = make_mock_pool(transaction=True)
+        store = FeedStore(pool)
+
+        with self.assertRaisesRegex(ValueError, "actor_id is required"):
+            await store.report_feed_failure(
+                _FEED_ID,
+                _WORKER_ID,
+                1,
+                actor_id=None,
+            )
+
+        pool.acquire.assert_not_called()
+
 
 class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.release_non_budgeted_failure."""
@@ -1383,6 +1398,26 @@ class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
 
         detail_arg = pool.acquired_connection.fetchrow.await_args.args[-2]
         self.assertEqual(detail_arg, "provider timeout")
+
+    async def test_rejects_missing_actor_id(self) -> None:
+        """Non-budgeted failure writes require a causal actor."""
+        retry_after = datetime.datetime(
+            2026, 6, 14, 12, 15, tzinfo=datetime.UTC
+        )
+        pool = make_mock_pool(transaction=True)
+        store = FeedStore(pool)
+
+        with self.assertRaisesRegex(ValueError, "actor_id is required"):
+            await store.release_non_budgeted_failure(
+                _FEED_ID,
+                _WORKER_ID,
+                1,
+                retry_after=retry_after,
+                status_reason=FeedStatusReason.SOURCE_OFFLINE,
+                actor_id=None,
+            )
+
+        pool.acquire.assert_not_called()
 
 
 class TestReleaseFeed(unittest.IsolatedAsyncioTestCase):
@@ -2036,6 +2071,21 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
             )
         self.assertIn("Invalid source type", str(cm.exception))
 
+    async def test_rejects_missing_actor_id(self) -> None:
+        """Create requires a causal actor before validation or DB access."""
+        pool = make_mock_pool(transaction=True)
+        store = FeedStore(pool)
+
+        with self.assertRaisesRegex(ValueError, "actor_id is required"):
+            await store.create_feed(
+                "New Feed",
+                "bcfy_feeds",
+                "123",
+                actor_id=None,
+            )
+
+        pool.acquire.assert_not_called()
+
     async def test_create_feed_uses_combined_audit_sql(self) -> None:
         """Successful create uses one SQL statement that embeds feed.created."""
         tags = [{"key": "env", "value": "prod"}]
@@ -2186,6 +2236,20 @@ class TestUpdateFeedAuditing(unittest.IsolatedAsyncioTestCase):
                 "Updated Feed",
                 actor_id=_FEEDS_SERVICE_ACTOR_ID,
             )
+
+    async def test_rejects_missing_actor_id(self) -> None:
+        """Update requires a causal actor even for potential no-op updates."""
+        pool = make_mock_pool(transaction=True)
+        store = FeedStore(pool)
+
+        with self.assertRaisesRegex(ValueError, "actor_id is required"):
+            await store.update_feed(
+                _FEED_ID,
+                "Updated Feed",
+                actor_id=None,
+            )
+
+        pool.acquire.assert_not_called()
 
 
 class TestGetFeed(unittest.IsolatedAsyncioTestCase):
@@ -2441,6 +2505,16 @@ class TestDeactivateFeed(unittest.IsolatedAsyncioTestCase):
         conn.fetchval.assert_not_awaited()
         conn.execute.assert_not_awaited()
 
+    async def test_rejects_missing_actor_id(self) -> None:
+        """Deactivate requires a causal actor before DB access."""
+        pool = make_mock_pool(transaction=True)
+        store = FeedStore(pool)
+
+        with self.assertRaisesRegex(ValueError, "actor_id is required"):
+            await store.deactivate_feed(_FEED_ID, actor_id=None)
+
+        pool.acquire.assert_not_called()
+
 
 class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.delete_feed."""
@@ -2512,6 +2586,16 @@ class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
         conn.fetchval.assert_not_awaited()
         conn.execute.assert_not_awaited()
 
+    async def test_rejects_missing_actor_id(self) -> None:
+        """Delete requires a causal actor before DB access."""
+        pool = make_mock_pool(transaction=True)
+        store = FeedStore(pool)
+
+        with self.assertRaisesRegex(ValueError, "actor_id is required"):
+            await store.delete_feed(_FEED_ID, actor_id=None)
+
+        pool.acquire.assert_not_called()
+
 
 class TestResetFeed(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.reset_feed."""
@@ -2571,6 +2655,16 @@ class TestResetFeed(unittest.IsolatedAsyncioTestCase):
         )
         conn.fetchval.assert_not_awaited()
         conn.execute.assert_not_awaited()
+
+    async def test_rejects_missing_actor_id(self) -> None:
+        """Reset requires a causal actor before DB access."""
+        pool = make_mock_pool(transaction=True)
+        store = FeedStore(pool)
+
+        with self.assertRaisesRegex(ValueError, "actor_id is required"):
+            await store.reset_feed(_FEED_ID, actor_id=None)
+
+        pool.acquire.assert_not_called()
 
 
 if __name__ == "__main__":

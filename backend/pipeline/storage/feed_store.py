@@ -509,6 +509,7 @@ class FeedStore:
         status_reason_detail = (
             feed_lifecycle.status_reason_detail_storage_value(reason)
         )
+        required_actor_id = _require_actor_id(actor_id)
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 feed_queries.REPORT_FAILURE_SQL,
@@ -520,7 +521,7 @@ class FeedStore:
                 backoff_base_sec,
                 status_reason_value,
                 status_reason_detail,
-                actor_id,
+                required_actor_id,
             )
         if row is None:
             return None
@@ -566,6 +567,7 @@ class FeedStore:
         leaves ``quarantine_reason`` untouched, resets any previous
         consecutive feed budget, and releases the lease for later retry.
         """
+        required_actor_id = _require_actor_id(actor_id)
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL,
@@ -575,7 +577,7 @@ class FeedStore:
                 retry_after,
                 status_reason.value,
                 feed_lifecycle.status_reason_detail_storage_value(reason),
-                actor_id,
+                required_actor_id,
             )
         if row is None:
             return None
@@ -800,6 +802,7 @@ class FeedStore:
         Atomically creates a new feed in the `feeds` table and its corresponding
         properties in the `feed_properties` table.
         """
+        required_actor_id = _require_actor_id(actor_id)
         if not source_feed_id:
             msg = "source_feed_id cannot be empty"
             raise ValueError(msg)
@@ -823,7 +826,7 @@ class FeedStore:
                     source_type_str,
                     source_feed_id,
                     json.dumps(tags or []),
-                    actor_id,
+                    required_actor_id,
                 )
             if row is None:
                 msg = f"Failed to create feed {name}"
@@ -867,6 +870,7 @@ class FeedStore:
         Updates the feed in the `feeds` table and its corresponding
         properties in the `feed_properties` table.
         """
+        required_actor_id = _require_actor_id(actor_id)
         try:
             async with self._pool.acquire() as conn:
                 row = await conn.fetchrow(
@@ -874,7 +878,7 @@ class FeedStore:
                     feed_id,
                     name,
                     json.dumps(tags or []),
-                    actor_id,
+                    required_actor_id,
                 )
             if row is None:
                 return None
@@ -989,11 +993,12 @@ class FeedStore:
 
         Returns True if the feed status was set to deactivated, False otherwise.
         """
+        required_actor_id = _require_actor_id(actor_id)
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 feed_queries.DEACTIVATE_FEED_SQL,
                 feed_id,
-                actor_id,
+                required_actor_id,
             )
         return row is not None
 
@@ -1010,11 +1015,12 @@ class FeedStore:
 
         Returns True if the feed was successfully deleted, False otherwise.
         """
+        required_actor_id = _require_actor_id(actor_id)
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 feed_queries.DELETE_FEED_SQL,
                 feed_id,
-                actor_id,
+                required_actor_id,
             )
         return row is not None
 
@@ -1039,11 +1045,12 @@ class FeedStore:
             The updated ``Feed`` dict, or ``None`` if the feed was not found.
 
         """
+        required_actor_id = _require_actor_id(actor_id)
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
                 feed_queries.RESET_FEED_SQL,
                 feed_id,
-                actor_id,
+                required_actor_id,
             )
         if row is None:
             return None
