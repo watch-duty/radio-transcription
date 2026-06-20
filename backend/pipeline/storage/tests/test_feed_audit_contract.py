@@ -76,6 +76,7 @@ def test_migration_defines_delete_safe_audit_schema() -> None:
     table_normalized = " ".join(table_sql.split())
 
     for token in (
+        "ADD COLUMN IF NOT EXISTS audit_revision BIGINT NOT NULL DEFAULT 0",
         "CREATE TABLE IF NOT EXISTS feed_audit_events",
         "feed_id UUID NOT NULL",
         "action TEXT NOT NULL",
@@ -83,15 +84,25 @@ def test_migration_defines_delete_safe_audit_schema() -> None:
         "before_values JSONB NOT NULL DEFAULT '{}'::jsonb",
         "after_values JSONB NOT NULL DEFAULT '{}'::jsonb",
         "metadata JSONB NOT NULL DEFAULT '{}'::jsonb",
-        "feed_sequence BIGINT NOT NULL",
+        "feed_revision BIGINT NOT NULL",
         "occurred_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()",
-        "feed_audit_events_feed_sequence_unique",
+        "feed_audit_events_revision_positive",
+        "feed_audit_events_feed_revision_unique",
         "feed_audit_events_json_object_shape",
+        "idx_feed_audit_events_feed_revision",
         "jsonb_typeof(before_values) = 'object'",
         "jsonb_typeof(after_values) = 'object'",
         "jsonb_typeof(metadata) = 'object'",
     ):
         assert token in normalized
+
+    for token in (
+        "feed_audit_event_sequences",
+        "feed_sequence",
+        "feed_audit_events_feed_sequence_unique",
+        "idx_feed_audit_events_feed_sequence",
+    ):
+        assert token not in normalized
 
     for token in (
         "feed_name",
@@ -188,17 +199,11 @@ def test_replacement_migration_removes_system_actor_constraint() -> None:
         in normalized
     )
     assert "ADD CONSTRAINT feed_audit_events_actor_id_check" in normalized
-    assert (
-        "INSERT INTO feed_audit_event_sequences (feed_id, next_sequence)"
-        in normalized
-    )
-    assert "SELECT feed_id, MAX(feed_sequence) + 1" in normalized
     assert "FROM feed_audit_events" in normalized
-    assert "ON CONFLICT (feed_id) DO UPDATE" in normalized
-    assert (
-        "GREATEST( feed_audit_event_sequences.next_sequence, "
-        "EXCLUDED.next_sequence )" in normalized
-    )
+    assert "feed_audit_event_sequences" not in normalized
+    assert "feed_sequence" not in normalized
+    assert "MAX(" not in normalized
+    assert "ON CONFLICT (feed_id) DO UPDATE" not in normalized
 
     recreated_constraint = sql.split(
         "ADD CONSTRAINT feed_audit_events_actor_id_check",

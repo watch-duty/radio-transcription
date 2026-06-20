@@ -41,14 +41,4 @@ BEGIN
             )
         );
 
-    INSERT INTO feed_audit_event_sequences (feed_id, next_sequence)
-    SELECT feed_id, MAX(feed_sequence) + 1
-    FROM feed_audit_events
-    GROUP BY feed_id
-    ON CONFLICT (feed_id) DO UPDATE
-    SET next_sequence = GREATEST(
-            feed_audit_event_sequences.next_sequence,
-            EXCLUDED.next_sequence
-        ),
-        updated_at = NOW();
 END $$;

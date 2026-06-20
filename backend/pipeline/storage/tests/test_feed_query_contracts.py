@@ -47,6 +47,24 @@ class TestLastSpeechSegmentTimestampSqlProjection(unittest.TestCase):
             self.assertRegex(sql, r"\blast_speech_segment_timestamp\b")
 
 
+class TestFeedAuditEventSqlContract(unittest.TestCase):
+    """Tests for the feed-local audit event insert contract."""
+
+    def test_async_and_sync_insert_use_feed_revision(self) -> None:
+        for module in (feed_queries, sync_feed_queries):
+            with self.subTest(module=module.__name__):
+                sql = _sql_without_comments(
+                    module.INSERT_FEED_AUDIT_EVENT_SQL
+                )
+
+                self.assertIn("feed_revision", sql)
+                self.assertNotIn("feed_sequence", sql)
+                self.assertNotIn("feed_audit_event_sequences", sql)
+                self.assertFalse(
+                    hasattr(module, "ALLOCATE_FEED_AUDIT_SEQUENCE_SQL")
+                )
+
+
 class TestStatusReasonLifecycleIsolation(unittest.TestCase):
     """Tests that lifecycle SQL remains independent of status_reason."""
 

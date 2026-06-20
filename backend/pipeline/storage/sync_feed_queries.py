@@ -87,6 +87,7 @@ SELECT
     f.quarantine_reason,
     f.last_bookmark_time,
     f.created_at,
+    f.audit_revision AS feed_revision,
     fp.source_feed_id AS "feed_properties.source_feed_id",
     fp.tags AS "feed_properties.tags"
 FROM feeds f
@@ -95,21 +96,12 @@ WHERE f.id = %s
 FOR UPDATE
 """
 
-ALLOCATE_FEED_AUDIT_SEQUENCE_SQL = """\
-INSERT INTO feed_audit_event_sequences (feed_id, next_sequence)
-VALUES (%s, 2)
-ON CONFLICT (feed_id) DO UPDATE
-SET next_sequence = feed_audit_event_sequences.next_sequence + 1,
-    updated_at = NOW()
-RETURNING next_sequence - 1 AS feed_sequence
-"""
-
 INSERT_FEED_AUDIT_EVENT_SQL = """\
 INSERT INTO feed_audit_events (
     feed_id,
     action,
     actor_id,
-    feed_sequence,
+    feed_revision,
     before_values,
     after_values,
     metadata

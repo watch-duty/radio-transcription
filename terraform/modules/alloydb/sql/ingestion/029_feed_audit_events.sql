@@ -4,6 +4,9 @@
 ALTER TABLE feeds
     ADD COLUMN IF NOT EXISTS status_reason_detail TEXT;
 
+ALTER TABLE feeds
+    ADD COLUMN IF NOT EXISTS audit_revision BIGINT NOT NULL DEFAULT 0;
+
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -21,14 +24,6 @@ BEGIN
     END IF;
 END $$;
 
--- Per-feed sequence counter foundation for later transactional writers.
--- No feed foreign key is used because audit history must survive hard deletes.
-CREATE TABLE IF NOT EXISTS feed_audit_event_sequences (
-    feed_id       UUID PRIMARY KEY,
-    next_sequence BIGINT NOT NULL DEFAULT 1,
-    updated_at    TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
-);
-
 -- Durable audit rows for meaningful feed mutations.
 CREATE TABLE IF NOT EXISTS feed_audit_events (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -36,7 +31,7 @@ CREATE TABLE IF NOT EXISTS feed_audit_events (
     action               TEXT NOT NULL,
     actor_id             TEXT NOT NULL,
     occurred_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    feed_sequence        BIGINT NOT NULL,
+    feed_revision        BIGINT NOT NULL,
     before_values        JSONB NOT NULL DEFAULT '{}'::jsonb,
     after_values         JSONB NOT NULL DEFAULT '{}'::jsonb,
     metadata             JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -110,11 +105,11 @@ BEGIN
         SELECT 1 FROM information_schema.table_constraints
         WHERE table_schema = current_schema()
           AND table_name = 'feed_audit_events'
-          AND constraint_name = 'feed_audit_events_sequence_positive'
+          AND constraint_name = 'feed_audit_events_revision_positive'
     ) THEN
         ALTER TABLE feed_audit_events
-            ADD CONSTRAINT feed_audit_events_sequence_positive
-            CHECK (feed_sequence > 0);
+            ADD CONSTRAINT feed_audit_events_revision_positive
+            CHECK (feed_revision > 0);
     END IF;
 END $$;
 
@@ -124,11 +119,11 @@ BEGIN
         SELECT 1 FROM information_schema.table_constraints
         WHERE table_schema = current_schema()
           AND table_name = 'feed_audit_events'
-          AND constraint_name = 'feed_audit_events_feed_sequence_unique'
+          AND constraint_name = 'feed_audit_events_feed_revision_unique'
     ) THEN
         ALTER TABLE feed_audit_events
-            ADD CONSTRAINT feed_audit_events_feed_sequence_unique
-            UNIQUE (feed_id, feed_sequence);
+            ADD CONSTRAINT feed_audit_events_feed_revision_unique
+            UNIQUE (feed_id, feed_revision);
     END IF;
 END $$;
 
@@ -150,8 +145,8 @@ BEGIN
     END IF;
 END $$;
 
-CREATE INDEX IF NOT EXISTS idx_feed_audit_events_feed_sequence
-    ON feed_audit_events (feed_id, feed_sequence DESC);
+CREATE INDEX IF NOT EXISTS idx_feed_audit_events_feed_revision
+    ON feed_audit_events (feed_id, feed_revision DESC);
 
 CREATE INDEX IF NOT EXISTS idx_feed_audit_events_feed_occurred_at
     ON feed_audit_events (feed_id, occurred_at DESC, id DESC);
