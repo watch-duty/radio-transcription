@@ -1896,6 +1896,176 @@ async def test_invalid_actor_values_are_not_rewritten_by_storage(
     assert all(event["action"] != "feed.deactivated" for event in audit_rows)
 
 
+# -- Tests: audit retention procedure --------------------------------
+
+
+async def test_retention_prunes_expired_events_and_preserves_retained_sequence_gap(
+    db_pool: asyncpg.Pool,
+) -> None:
+    """Expired audit rows are pruned without renumbering retained history."""
+    feed_name = f"Retention Gap {uuid.uuid4()}"
+    feed_id = await _insert_feed(
+        db_pool,
+        feed_name,
+        source_feed_id=f"retention-gap-{uuid.uuid4()}",
+    )
+    next_sequence = 4
+
+    await db_pool.execute(
+        "INSERT INTO feed_audit_event_sequences (feed_id, next_sequence)"
+        " VALUES ($1, $2)",
+        feed_id,
+        next_sequence,
+    )
+    await db_pool.execute(
+        "INSERT INTO feed_audit_events (feed_id, feed_name, source_type,"
+        " action, actor_id, occurred_at, feed_sequence, status,"
+        " before_values, after_values, metadata)"
+        " VALUES ($1, $2, 'bcfy_feeds', 'feed.created', $3,"
+        " NOW() - INTERVAL '19 months', 1, 'unclaimed'::feed_status,"
+        " '{}'::jsonb, $4::jsonb, '{}'::jsonb)",
+        feed_id,
+        feed_name,
+        _TEST_ACTOR_ID,
+        json.dumps({"retention": "expired"}),
+    )
+    await db_pool.execute(
+        "INSERT INTO feed_audit_events (feed_id, feed_name, source_type,"
+        " action, actor_id, occurred_at, feed_sequence, status,"
+        " before_values, after_values, metadata)"
+        " VALUES ($1, $2, 'bcfy_feeds', 'feed.updated', $3,"
+        " NOW() - INTERVAL '17 months', 2, 'unclaimed'::feed_status,"
+        " '{}'::jsonb, $4::jsonb, '{}'::jsonb)",
+        feed_id,
+        feed_name,
+        _TEST_ACTOR_ID,
+        json.dumps({"retention": "retained"}),
+    )
+
+    await db_pool.execute("CALL public.prune_feed_audit_events_retention()")
+
+    audit_rows = await _fetch_audit_events(db_pool, feed_id)
+    retained_values = _decode_json_object(audit_rows[0]["after_values"])
+
+    assert [row["feed_sequence"] for row in audit_rows] == [2]
+    assert audit_rows[0]["action"] == "feed.updated"
+    assert retained_values == {"retention": "retained"}
+    assert await _get_audit_sequence_next(db_pool, feed_id) == next_sequence
+
+
+async def test_retention_keeps_sequence_for_live_feed_after_all_events_expire(
+    db_pool: asyncpg.Pool,
+) -> None:
+    """Live feeds keep their next sequence even after all audit rows expire."""
+    feed_name = f"Retention Live {uuid.uuid4()}"
+    feed_id = await _insert_feed(
+        db_pool,
+        feed_name,
+        source_feed_id=f"retention-live-{uuid.uuid4()}",
+    )
+    next_sequence = 3
+
+    await db_pool.execute(
+        "INSERT INTO feed_audit_event_sequences (feed_id, next_sequence)"
+        " VALUES ($1, $2)",
+        feed_id,
+        next_sequence,
+    )
+    await db_pool.execute(
+        "INSERT INTO feed_audit_events (feed_id, feed_name, source_type,"
+        " action, actor_id, occurred_at, feed_sequence, status,"
+        " before_values, after_values, metadata)"
+        " VALUES ($1, $2, 'bcfy_feeds', 'feed.created', $3,"
+        " NOW() - INTERVAL '19 months', 1, 'unclaimed'::feed_status,"
+        " '{}'::jsonb, '{}'::jsonb, '{}'::jsonb),"
+        " ($1, $2, 'bcfy_feeds', 'feed.updated', $3,"
+        " NOW() - INTERVAL '19 months', 2, 'unclaimed'::feed_status,"
+        " '{}'::jsonb, '{}'::jsonb, '{}'::jsonb)",
+        feed_id,
+        feed_name,
+        _TEST_ACTOR_ID,
+    )
+
+    await db_pool.execute("CALL public.prune_feed_audit_events_retention()")
+
+    assert await _fetch_audit_events(db_pool, feed_id) == []
+    assert await _get_audit_sequence_next(db_pool, feed_id) == next_sequence
+
+
+async def test_retention_keeps_deleted_feed_sequence_while_retained_audit_events_exist(
+    db_pool: asyncpg.Pool,
+) -> None:
+    """Deleted-feed sequence rows remain while retained audit history exists."""
+    feed_name = f"Retention Deleted {uuid.uuid4()}"
+    feed_id = await _insert_feed(
+        db_pool,
+        feed_name,
+        source_feed_id=f"retention-deleted-{uuid.uuid4()}",
+    )
+    next_sequence = 5
+
+    await db_pool.execute(
+        "INSERT INTO feed_audit_event_sequences (feed_id, next_sequence)"
+        " VALUES ($1, $2)",
+        feed_id,
+        next_sequence,
+    )
+    await db_pool.execute(
+        "INSERT INTO feed_audit_events (feed_id, feed_name, source_type,"
+        " action, actor_id, occurred_at, feed_sequence, status,"
+        " before_values, after_values, metadata)"
+        " VALUES ($1, $2, 'bcfy_feeds', 'feed.updated', $3,"
+        " NOW() - INTERVAL '17 months', 4, 'unclaimed'::feed_status,"
+        " '{}'::jsonb, $4::jsonb, '{}'::jsonb)",
+        feed_id,
+        feed_name,
+        _TEST_ACTOR_ID,
+        json.dumps({"retention": "deleted-feed-retained"}),
+    )
+    await db_pool.execute("DELETE FROM feeds WHERE id = $1", feed_id)
+
+    await db_pool.execute("CALL public.prune_feed_audit_events_retention()")
+
+    audit_rows = await _fetch_audit_events(db_pool, feed_id)
+    retained_values = _decode_json_object(audit_rows[0]["after_values"])
+
+    assert [row["feed_sequence"] for row in audit_rows] == [4]
+    assert retained_values == {"retention": "deleted-feed-retained"}
+    assert await _get_audit_sequence_next(db_pool, feed_id) == next_sequence
+
+
+async def test_retention_prunes_orphan_sequence_after_last_audit_event_expires(
+    db_pool: asyncpg.Pool,
+) -> None:
+    """Orphan sequence rows are pruned after the last audit row expires."""
+    feed_id = uuid.uuid4()
+    feed_name = f"Retention Orphan {uuid.uuid4()}"
+    next_sequence = 5
+
+    await db_pool.execute(
+        "INSERT INTO feed_audit_event_sequences (feed_id, next_sequence)"
+        " VALUES ($1, $2)",
+        feed_id,
+        next_sequence,
+    )
+    await db_pool.execute(
+        "INSERT INTO feed_audit_events (feed_id, feed_name, source_type,"
+        " action, actor_id, occurred_at, feed_sequence, status,"
+        " before_values, after_values, metadata)"
+        " VALUES ($1, $2, 'bcfy_feeds', 'feed.created', $3,"
+        " NOW() - INTERVAL '19 months', 4, 'unclaimed'::feed_status,"
+        " '{}'::jsonb, '{}'::jsonb, '{}'::jsonb)",
+        feed_id,
+        feed_name,
+        _TEST_ACTOR_ID,
+    )
+
+    await db_pool.execute("CALL public.prune_feed_audit_events_retention()")
+
+    assert await _fetch_audit_events(db_pool, feed_id) == []
+    assert await _get_audit_sequence_next(db_pool, feed_id) is None
+
+
 # -- Tests: audited concurrent ordering -------------------------------
 
 
