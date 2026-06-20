@@ -113,11 +113,11 @@ async def _fetch_audit_events(
 ) -> list[asyncpg.Record]:
     """Return audit rows for one feed in deterministic timeline order."""
     return await pool.fetch(
-        "SELECT id, action, actor_id, feed_sequence, occurred_at,"
-        " status::text AS status, before_values, after_values"
+        "SELECT id, action, actor_id, feed_revision, occurred_at,"
+        " before_values, after_values"
         " FROM feed_audit_events"
         " WHERE feed_id = $1"
-        " ORDER BY feed_sequence, occurred_at, id",
+        " ORDER BY feed_revision, occurred_at, id",
         feed_id,
     )
 
@@ -143,14 +143,13 @@ async def _report_feed_failure_for_test(
     )
 
 
-async def _get_audit_sequence_next(
+async def _get_feed_audit_revision(
     pool: asyncpg.Pool,
     feed_id: uuid.UUID,
 ) -> int | None:
-    """Return the stored next feed audit sequence for one feed."""
+    """Return the feed-local audit revision stored on the current feed row."""
     return await pool.fetchval(
-        "SELECT next_sequence FROM feed_audit_event_sequences"
-        " WHERE feed_id = $1",
+        "SELECT audit_revision FROM feeds WHERE id = $1",
         feed_id,
     )
 
@@ -1727,7 +1726,7 @@ async def test_create_feed_succeeds(
     after_values = _decode_json_object(audit_row["after_values"])
     assert audit_row["action"] == "feed.created"
     assert audit_row["actor_id"] == _TEST_ACTOR_ID
-    assert audit_row["feed_sequence"] == 1
+    assert audit_row["feed_revision"] == 1
     assert before_values == {}
     assert after_values["name"] == "New Integration Feed"
     assert after_values["source_type"] == "bcfy_feeds"
@@ -1801,7 +1800,7 @@ async def test_update_feed_succeeds(
         "feed.created",
         "feed.updated",
     ]
-    assert [row["feed_sequence"] for row in audit_rows] == [1, 2]
+    assert [row["feed_revision"] for row in audit_rows] == [1, 2]
     audit_row = audit_rows[1]
     before_values = _decode_json_object(audit_row["before_values"])
     after_values = _decode_json_object(audit_row["after_values"])
@@ -1843,17 +1842,13 @@ async def test_update_feed_already_exists(
 # -- Tests: audited transaction rollback ------------------------------
 
 
-async def test_create_feed_audit_failure_rolls_back_feed_and_sequence(
+async def test_create_feed_audit_failure_rolls_back_feed_and_revision(
     db_pool: asyncpg.Pool,
     store: FeedStore,
 ) -> None:
     """A rejected audit actor rolls back the attempted feed creation."""
     name = f"Rollback Create {uuid.uuid4()}"
     source_feed_id = f"rollback-{uuid.uuid4()}"
-    sequence_count_before = await db_pool.fetchval(
-        "SELECT COUNT(*) FROM feed_audit_event_sequences"
-    )
-
     with pytest.raises(asyncpg.CheckViolationError):
         await store.create_feed(
             name=name,
@@ -1870,19 +1865,17 @@ async def test_create_feed_audit_failure_rolls_back_feed_and_sequence(
         source_feed_id,
     )
     audit_rows = await db_pool.fetch(
-        "SELECT 1 FROM feed_audit_events WHERE feed_name = $1",
+        "SELECT 1 FROM feed_audit_events"
+        " WHERE before_values->>'name' = $1"
+        " OR after_values->>'name' = $1",
         name,
-    )
-    sequence_count_after = await db_pool.fetchval(
-        "SELECT COUNT(*) FROM feed_audit_event_sequences"
     )
 
     assert feed_row is None
     assert audit_rows == []
-    assert sequence_count_after == sequence_count_before
 
 
-async def test_update_feed_audit_failure_rolls_back_state_and_sequence(
+async def test_update_feed_audit_failure_rolls_back_state_and_revision(
     db_pool: asyncpg.Pool,
     store: FeedStore,
 ) -> None:
@@ -1894,7 +1887,7 @@ async def test_update_feed_audit_failure_rolls_back_state_and_sequence(
         tags=[{"key": "phase", "value": "before"}],
         actor_id=_TEST_ACTOR_ID,
     )
-    sequence_before = await _get_audit_sequence_next(db_pool, feed["id"])
+    revision_before = await _get_feed_audit_revision(db_pool, feed["id"])
 
     with pytest.raises(asyncpg.CheckViolationError):
         await store.update_feed(
@@ -1911,13 +1904,13 @@ async def test_update_feed_audit_failure_rolls_back_state_and_sequence(
         feed["id"],
     )
     audit_rows = await _fetch_audit_events(db_pool, feed["id"])
-    sequence_after = await _get_audit_sequence_next(db_pool, feed["id"])
+    revision_after = await _get_feed_audit_revision(db_pool, feed["id"])
 
     assert row is not None
     assert row["name"] == feed["name"]
     assert json.loads(row["tags"]) == [{"key": "phase", "value": "before"}]
     assert [event["action"] for event in audit_rows] == ["feed.created"]
-    assert sequence_after == sequence_before
+    assert revision_after == revision_before
 
 
 @pytest.mark.parametrize("actor_id", ["user:", "service: "])
@@ -1949,11 +1942,11 @@ async def test_invalid_actor_values_are_not_rewritten_by_storage(
 # -- Tests: audited concurrent ordering -------------------------------
 
 
-async def test_concurrent_same_feed_updates_allocate_contiguous_sequences(
+async def test_concurrent_same_feed_updates_allocate_unique_revisions(
     db_pool: asyncpg.Pool,
     store: FeedStore,
 ) -> None:
-    """Concurrent same-feed updates remain uniquely sequence-orderable."""
+    """Concurrent same-feed updates remain uniquely revision-orderable."""
     feed = await store.create_feed(
         name=f"Concurrent Original {uuid.uuid4()}",
         source_type="bcfy_feeds",
@@ -1989,25 +1982,25 @@ async def test_concurrent_same_feed_updates_allocate_contiguous_sequences(
     assert all(result is not None for result in results)
 
     audit_rows = await _fetch_audit_events(db_pool, feed["id"])
-    feed_sequences = [row["feed_sequence"] for row in audit_rows]
+    feed_revisions = [row["feed_revision"] for row in audit_rows]
     update_events = [
         row for row in audit_rows if row["action"] == "feed.updated"
     ]
-    duplicate_sequence_count = await db_pool.fetchval(
+    duplicate_revision_count = await db_pool.fetchval(
         "SELECT COUNT(*) FROM ("
-        " SELECT feed_sequence FROM feed_audit_events"
+        " SELECT feed_revision FROM feed_audit_events"
         " WHERE feed_id = $1"
-        " GROUP BY feed_sequence HAVING COUNT(*) > 1"
+        " GROUP BY feed_revision HAVING COUNT(*) > 1"
         ") duplicates",
         feed["id"],
     )
 
     assert [row["action"] for row in audit_rows].count("feed.created") == 1
     assert len(update_events) == 2
-    assert len(feed_sequences) == len(set(feed_sequences))
-    assert feed_sequences == list(range(1, len(feed_sequences) + 1))
-    assert duplicate_sequence_count == 0
-    assert await _get_audit_sequence_next(db_pool, feed["id"]) == 4
+    assert len(feed_revisions) == len(set(feed_revisions))
+    assert feed_revisions == list(range(1, len(feed_revisions) + 1))
+    assert duplicate_revision_count == 0
+    assert await _get_feed_audit_revision(db_pool, feed["id"]) == 3
     assert {
         _decode_json_object(row["after_values"])["name"]
         for row in update_events
@@ -2289,7 +2282,7 @@ async def test_deactivate_feed_succeeds(
     after_values = _decode_json_object(audit_row["after_values"])
     assert audit_row["action"] == "feed.deactivated"
     assert audit_row["actor_id"] == _TEST_ACTOR_ID
-    assert audit_row["feed_sequence"] == 1
+    assert audit_row["feed_revision"] == 1
     assert before_values["status"] == "active"
     assert after_values["status"] == "deactivated"
     source_feed_id = cast(
@@ -2384,7 +2377,7 @@ async def test_delete_feed_succeeds(
     after_values = _decode_json_object(audit_row["after_values"])
     assert audit_row["action"] == "feed.deleted"
     assert audit_row["actor_id"] == _TEST_ACTOR_ID
-    assert audit_row["feed_sequence"] == 1
+    assert audit_row["feed_revision"] == 1
     assert before_values["id"] == str(feed_id)
     assert before_values["name"] == "Hard Delete Test Feed"
     source_feed_id = cast(
@@ -2441,7 +2434,7 @@ async def test_reset_feed_succeeds(
     after_values = _decode_json_object(audit_row["after_values"])
     assert audit_row["action"] == "feed.reset"
     assert audit_row["actor_id"] == _TEST_ACTOR_ID
-    assert audit_row["feed_sequence"] == 1
+    assert audit_row["feed_revision"] == 1
     assert before_values["status"] == "quarantined"
     assert before_values["failure_count"] == 5
     assert after_values["status"] == "unclaimed"
