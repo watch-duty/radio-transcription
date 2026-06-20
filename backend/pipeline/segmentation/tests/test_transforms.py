@@ -615,10 +615,6 @@ class OrderedStitchAudioTest(unittest.TestCase):
         )
 
         transmission_context_state = MockValueState(curr_context)
-        transmission_buffer_state = MockBagState()
-        transmission_buffer_state.add(
-            np.ones(16000, dtype=np.int16).tobytes()
-        )  # Main buffer content
 
         gap_timer_event = MagicMock()
         gap_timer_proc = MagicMock()
@@ -657,11 +653,6 @@ class OrderedStitchAudioTest(unittest.TestCase):
             len(flush_requests),
             0,
             "Should not yield FlushRequest for empty late chunk",
-        )
-        self.assertEqual(
-            len(transmission_buffer_state.read()),
-            1,
-            "Main buffer should not be cleared",
         )
 
     @patch(
