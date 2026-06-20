@@ -133,8 +133,9 @@ current `feeds` row is later hard-deleted.
 
 A durable domain event for a meaningful feed mutation, including action,
 `actor_id`, event time, per-feed sequence, and allowlisted before/after values.
-See `documentation/feed-audit-events.md` for the contract, vocabulary, and
-phase boundaries.
+The feed audit event schema and storage writers define the v1 contract in this
+PR; delivery, timeline APIs, and broader operational lifecycle work remain
+separate follow-up concerns.
 
 ### Actor ID
 

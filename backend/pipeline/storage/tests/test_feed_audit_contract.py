@@ -38,27 +38,6 @@ def _normalized_sql(text: str) -> str:
     return " ".join(_sql_without_comments(text).split())
 
 
-def test_documentation_defines_feed_audit_event_contract() -> None:
-    text = _read("documentation/feed-audit-events.md")
-
-    for token in (
-        *_ACTIONS,
-        *_ACTOR_STRINGS,
-        "feed_audit_events",
-        "before_values",
-        "after_values",
-        "occurred_at",
-        "feed_sequence",
-        "status_reason_detail",
-        "quarantine_reason",
-        "Watch Duty",
-        "admin timeline",
-    ):
-        assert token in text
-
-    assert "system:" not in text
-
-
 def test_repository_glossary_defines_audit_terms() -> None:
     text = _read("CONTEXT.md")
 
