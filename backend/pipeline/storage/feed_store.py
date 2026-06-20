@@ -357,27 +357,15 @@ class FeedStore:
             lease was lost.
 
         """
-        if actor_id is None:
-            row = await self._pool.fetchrow(
-                feed_queries.UPDATE_PROGRESS_SQL,
-                new_gcs_path,
-                feed_id,
-                worker_id,
-                fencing_token,
-                last_bookmark_time,
-                actor_id,
-            )
-        else:
-            async with self._pool.acquire() as conn:
-                row = await conn.fetchrow(
-                    feed_queries.UPDATE_PROGRESS_SQL,
-                    new_gcs_path,
-                    feed_id,
-                    worker_id,
-                    fencing_token,
-                    last_bookmark_time,
-                    actor_id,
-                )
+        row = await self._pool.fetchrow(
+            feed_queries.UPDATE_PROGRESS_SQL,
+            new_gcs_path,
+            feed_id,
+            worker_id,
+            fencing_token,
+            last_bookmark_time,
+            actor_id,
+        )
         return row is not None
 
     async def record_source_observation(
@@ -395,25 +383,14 @@ class FeedStore:
         claiming audio progress. If *resume_position* is provided, it advances
         the source cursor in ``last_bookmark_time``.
         """
-        if actor_id is None:
-            row = await self._pool.fetchrow(
-                feed_queries.RECORD_SOURCE_OBSERVATION_SQL,
-                feed_id,
-                worker_id,
-                fencing_token,
-                resume_position,
-                actor_id,
-            )
-        else:
-            async with self._pool.acquire() as conn:
-                row = await conn.fetchrow(
-                    feed_queries.RECORD_SOURCE_OBSERVATION_SQL,
-                    feed_id,
-                    worker_id,
-                    fencing_token,
-                    resume_position,
-                    actor_id,
-                )
+        row = await self._pool.fetchrow(
+            feed_queries.RECORD_SOURCE_OBSERVATION_SQL,
+            feed_id,
+            worker_id,
+            fencing_token,
+            resume_position,
+            actor_id,
+        )
         if row is None:
             return SourceObservationResult(
                 id=feed_id,
