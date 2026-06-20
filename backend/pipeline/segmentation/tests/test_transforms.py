@@ -2351,7 +2351,6 @@ class UploadRawSegmentFnTest(unittest.TestCase):
         fn.segmentation_error = MagicMock()
 
         request = FlushRequest(
-            buffer=b"audio-data",
             feed_id="test-feed",
             session_id="test-session",
             contributing_audio_uris=["gs://bucket/1.flac"],
@@ -2410,7 +2409,6 @@ class UploadRawSegmentFnTest(unittest.TestCase):
         fn.segmentation_error = MagicMock()
 
         request = FlushRequest(
-            buffer=b"audio-data",
             feed_id="test-feed",
             session_id="test-session",
             contributing_audio_uris=["gs://bucket/1.flac"],
