@@ -19,7 +19,7 @@ _STATUS_REASON_INPUT_CTE_SQL = """status_reason_input AS (
 )"""
 
 RESOLVE_ECHO_FEED_SQL = """\
-SELECT f.id, f.name, f.status, f.failure_count, f.status_reason, f.created_at
+SELECT f.id, f.name, f.status, f.created_at
 FROM feeds f
 JOIN feed_properties fp ON fp.feed_id = f.id
 WHERE fp.source_feed_id = %s

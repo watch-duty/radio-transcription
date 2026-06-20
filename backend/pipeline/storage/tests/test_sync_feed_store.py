@@ -49,8 +49,6 @@ class TestResolveEchoFeed:
             "id": feed_id,
             "name": "Fire CA",
             "status": "active",
-            "failure_count": 2,
-            "status_reason": "source_unreachable",
             "created_at": created_at,
         }
         conn.execute.return_value.fetchone.return_value = feed_row
@@ -62,14 +60,12 @@ class TestResolveEchoFeed:
             "id": feed_id,
             "name": "Fire CA",
             "status": FeedStatus.ACTIVE,
-            "failure_count": 2,
-            "status_reason": FeedStatusReason.SOURCE_UNREACHABLE,
             "created_at": created_at,
         }
         conn.execute.assert_called_once()
         sql, params = conn.execute.call_args[0]
-        assert "f.failure_count" in sql
-        assert "f.status_reason" in sql
+        assert "f.failure_count" not in sql
+        assert "f.status_reason" not in sql
         assert "AND fp.source_type = 'echo'" in sql
         assert "AND f.source_type = 'echo'" in sql
         assert params == ("fire-ca",)
@@ -88,8 +84,6 @@ class TestResolveEchoFeed:
             "id": uuid.uuid4(),
             "name": "Fire CA",
             "status": "not-a-status",
-            "failure_count": 0,
-            "status_reason": None,
             "created_at": datetime(2026, 1, 1, tzinfo=UTC),
         }
         store = _make_store(conn)

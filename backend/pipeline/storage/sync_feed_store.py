@@ -40,8 +40,6 @@ class ResolvedEchoFeed(TypedDict):
     id: uuid.UUID
     name: str
     status: feed_store.FeedStatus
-    failure_count: int
-    status_reason: feed_store.FeedStatusReason | None
     created_at: datetime.datetime
 
 
@@ -96,12 +94,6 @@ class SyncFeedStore:
             "id": row["id"],
             "name": row["name"],
             "status": status,
-            "failure_count": row["failure_count"],
-            "status_reason": (
-                feed_store.FeedStatusReason(row["status_reason"])
-                if row["status_reason"] is not None
-                else None
-            ),
             "created_at": row["created_at"],
         }
 

@@ -125,8 +125,6 @@ class TestHandle:
         """Configure mock_store to return a feed row from resolve."""
         if feed is not None:
             defaults = {
-                "failure_count": 0,
-                "status_reason": None,
                 "created_at": datetime(2026, 1, 1, tzinfo=UTC),
             }
             feed = {**defaults, **feed}
@@ -173,7 +171,7 @@ class TestHandle:
             actor_id=ECHO_INGESTION_ACTOR_ID,
         )
 
-    def test_failure_policy_budgeted_call_uses_actor_and_prior_state(
+    def test_failure_policy_budgeted_call_uses_actor(
         self, mock_store
     ) -> None:
         feed_id = uuid.uuid4()
@@ -181,8 +179,6 @@ class TestHandle:
             id=feed_id,
             name="Central Fire",
             status=FeedStatus.FAILING,
-            failure_count=2,
-            status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
 
