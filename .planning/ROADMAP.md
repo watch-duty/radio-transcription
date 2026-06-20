@@ -104,7 +104,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [x] 04-02-PLAN.md - Async collector runtime actor and prior-state wiring.
-- [ ] 04-03-PLAN.md - Echo and sync-store audit parity.
+- [x] 04-03-PLAN.md - Echo and sync-store audit parity.
 
 **Wave 3** *(blocked on Wave 2 completion)*
 - [ ] 04-04-PLAN.md - Runtime audit contract documentation and verification hardening.

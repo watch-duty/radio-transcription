@@ -82,7 +82,7 @@ short-lived logs.
   without breaking existing clients.
 - [x] **COMP-03**: Existing frontend/BFF feed status and status-reason behavior
   remains compatible with the v1 backend change.
-- [ ] **COMP-04**: Echo and other sync ingestion paths receive equivalent audit
+- [x] **COMP-04**: Echo and other sync ingestion paths receive equivalent audit
   coverage for the v1 event types they can produce.
 
 ### Contract And Documentation
@@ -180,7 +180,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | COMP-01 | Phase 3 | Complete |
 | COMP-02 | Phase 3 | Complete |
 | COMP-03 | Phase 3 | Complete |
-| COMP-04 | Phase 4 | Pending |
+| COMP-04 | Phase 4 | Complete |
 | DOC-01 | Phase 1 | Complete |
 | DOC-02 | Phase 1 | Complete |
 | DOC-03 | Phase 1 | Complete |
