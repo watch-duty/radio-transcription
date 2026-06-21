@@ -373,44 +373,43 @@ class UploadRawSegmentFn(beam.DoFn):
         decoded_chunks: dict[str, tuple[np.ndarray, int, int]],
         task_logger: Any,
     ) -> bytes:
-        """Slices, concatenates, and converts raw speech segments to FLAC bytes."""
+        """Slices, concatenates, and converts the entire continuous segment time range to FLAC bytes."""
         stitch_start = time.perf_counter_ns()
 
-        sorted_segments = sorted(
-            request.speech_segments, key=attrgetter("start_ms")
+        segment_start = request.time_range.start_ms
+        segment_end = request.time_range.end_ms
+
+        sorted_chunks = sorted(
+            request.contributing_chunks, key=attrgetter("timestamp_ms")
         )
 
         stitched_segments = []
-        for segment in sorted_segments:
-            segment_start = segment.start_ms
-            segment_end = segment.end_ms
+        for chunk in sorted_chunks:
+            samples, sr, chunk_start_ms = decoded_chunks[chunk.gcs_uri]
+            chunk_duration_ms = int(len(samples) / sr * 1000)
+            chunk_end_ms = chunk_start_ms + chunk_duration_ms
 
-            for chunk in request.contributing_chunks:
-                samples, sr, chunk_start_ms = decoded_chunks[chunk.gcs_uri]
-                chunk_duration_ms = int(len(samples) / sr * 1000)
-                chunk_end_ms = chunk_start_ms + chunk_duration_ms
+            # Calculate overlap between this chunk and the entire segment time range
+            overlap_start = max(segment_start, chunk_start_ms)
+            overlap_end = min(segment_end, chunk_end_ms)
 
-                # Calculate overlap between this chunk and the speech segment
-                overlap_start = max(segment_start, chunk_start_ms)
-                overlap_end = min(segment_end, chunk_end_ms)
-
-                if overlap_start < overlap_end:
-                    rel_start_samples = int(
-                        (overlap_start - chunk_start_ms) * (sr / 1000)
-                    )
-                    rel_end_samples = int(
-                        (overlap_end - chunk_start_ms) * (sr / 1000)
-                    )
-                    stitched_segments.append(
-                        samples[rel_start_samples:rel_end_samples]
-                    )
+            if overlap_start < overlap_end:
+                rel_start_samples = int(
+                    (overlap_start - chunk_start_ms) * (sr / 1000)
+                )
+                rel_end_samples = int(
+                    (overlap_end - chunk_start_ms) * (sr / 1000)
+                )
+                stitched_segments.append(
+                    samples[rel_start_samples:rel_end_samples]
+                )
 
         # Concatenate and convert to FLAC bytes
         if stitched_segments:
             final_pcm_arr = np.concatenate(stitched_segments)
         else:
             task_logger.warning(
-                "[Stateless Stitch] No speech segments found for transmission. Creating silent placeholder."
+                "[Stateless Stitch] No overlapping audio found for time range. Creating silent placeholder."
             )
             final_pcm_arr = np.zeros(
                 int(request.sample_rate * 0.1), dtype=np.int16
