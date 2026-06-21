@@ -99,6 +99,10 @@ export function TranscriptView({
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const hasScrolledToTarget = useRef(false);
+  // Tracks whether the user has scrolled away from the top at least once, so we
+  // only auto-load newer segments when they deliberately scroll back up to the
+  // top (not on the initial render, which starts at the top).
+  const hasLeftTop = useRef(false);
 
   const currentAudio = useRef<Howl>(null);
   const [playbackEndedForId, setPlaybackEndedForId] = useState<string | null>(
@@ -543,6 +547,24 @@ export function TranscriptView({
     setHighlightedSegmentId(segmentId);
   };
 
+  // Reaching the top of the list loads newer segments (the prepend direction).
+  // We drive this off the reliable "at top" state rather than Virtuoso's
+  // startReached, which does not fire dependably after prepends. Only trigger
+  // once the user has scrolled away and come back, so the initial render (which
+  // starts at the top) doesn't auto-load. fetchNewerAudioSegments self-guards
+  // against missing pages / in-flight requests.
+  const handleAtTopStateChange = useCallback(
+    (atTop: boolean) => {
+      setIsViewAtTopOfAudioSegments(atTop);
+      if (!atTop) {
+        hasLeftTop.current = true;
+      } else if (hasLeftTop.current) {
+        fetchNewerAudioSegments();
+      }
+    },
+    [fetchNewerAudioSegments]
+  );
+
   const handleFilterByDateTime = (date: Date | null) => {
     setSearchedTimestamp(date);
     setSearchParams((prev) => {
@@ -567,6 +589,7 @@ export function TranscriptView({
       }, 100);
       hasScrolledToTarget.current = false;
     }
+    hasLeftTop.current = false;
   };
 
   const handleFeedSelect = (feedId: string) => {
@@ -694,10 +717,9 @@ export function TranscriptView({
             audioSegments={audioSegments}
             groupCounts={groupCounts}
             groupTitles={groupTitles}
-            setIsViewAtTopOfAudioSegments={setIsViewAtTopOfAudioSegments}
+            setIsViewAtTopOfAudioSegments={handleAtTopStateChange}
             hasNewerAudioSegments={hasNewerAudioSegments}
             isFetchingNewerAudioSegments={isFetchingNewerAudioSegments}
-            fetchNewerAudioSegments={fetchNewerAudioSegments}
             isAudioSegmentsPolling={isAudioSegmentsPolling}
             hasOlderAudioSegments={hasOlderAudioSegments}
             isFetchingOlderAudioSegments={isFetchingOlderAudioSegments}

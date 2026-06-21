@@ -75,7 +75,6 @@ describe('TranscriptDisplay', () => {
             setIsViewAtTopOfAudioSegments={mockSetTop}
             hasNewerAudioSegments={false}
             isFetchingNewerAudioSegments={false}
-            fetchNewerAudioSegments={vi.fn()}
 
             hasOlderAudioSegments={false}
             isFetchingOlderAudioSegments={false}
@@ -114,7 +113,6 @@ describe('TranscriptDisplay', () => {
             setIsViewAtTopOfAudioSegments={vi.fn()}
             hasNewerAudioSegments={true}
             isFetchingNewerAudioSegments={true}
-            fetchNewerAudioSegments={vi.fn()}
             hasOlderAudioSegments={false}
             isFetchingOlderAudioSegments={false}
             fetchOlderAudioSegments={vi.fn()}
@@ -150,7 +148,6 @@ describe('TranscriptDisplay', () => {
             setIsViewAtTopOfAudioSegments={vi.fn()}
             hasNewerAudioSegments={false}
             isFetchingNewerAudioSegments={false}
-            fetchNewerAudioSegments={vi.fn()}
             hasOlderAudioSegments={true}
             isFetchingOlderAudioSegments={true}
             fetchOlderAudioSegments={vi.fn()}
@@ -186,7 +183,6 @@ describe('TranscriptDisplay', () => {
             setIsViewAtTopOfAudioSegments={vi.fn()}
             hasNewerAudioSegments={false}
             isFetchingNewerAudioSegments={false}
-            fetchNewerAudioSegments={vi.fn()}
 
             hasOlderAudioSegments={false}
             isFetchingOlderAudioSegments={false}
@@ -228,7 +224,6 @@ describe('TranscriptDisplay', () => {
             setIsViewAtTopOfAudioSegments={vi.fn()}
             hasNewerAudioSegments={false}
             isFetchingNewerAudioSegments={false}
-            fetchNewerAudioSegments={vi.fn()}
 
             hasOlderAudioSegments={false}
             isFetchingOlderAudioSegments={false}
@@ -269,7 +264,6 @@ describe('TranscriptDisplay', () => {
             setIsViewAtTopOfAudioSegments={vi.fn()}
             hasNewerAudioSegments={false}
             isFetchingNewerAudioSegments={false}
-            fetchNewerAudioSegments={vi.fn()}
 
             hasOlderAudioSegments={false}
             isFetchingOlderAudioSegments={false}
@@ -307,7 +301,6 @@ describe('TranscriptDisplay', () => {
             setIsViewAtTopOfAudioSegments={vi.fn()}
             hasNewerAudioSegments={false}
             isFetchingNewerAudioSegments={false}
-            fetchNewerAudioSegments={vi.fn()}
 
             hasOlderAudioSegments={false}
             isFetchingOlderAudioSegments={false}
@@ -344,7 +337,6 @@ describe('TranscriptDisplay', () => {
             setIsViewAtTopOfAudioSegments={vi.fn()}
             hasNewerAudioSegments={true}
             isFetchingNewerAudioSegments={false}
-            fetchNewerAudioSegments={vi.fn()}
 
             hasOlderAudioSegments={false}
             isFetchingOlderAudioSegments={false}

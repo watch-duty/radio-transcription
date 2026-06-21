@@ -30,6 +30,35 @@ import { listRules } from '../../service/listRules';
 import { renderWithQueryClient } from '../../test/testUtils';
 import TranscriptView from './TranscriptView';
 
+// The VirtuosoMockContext renders every item, which makes Virtuoso fire
+// endReached on mount and never fire atTopStateChange (its scroll state machine
+// is inert in jsdom). Both make pagination triggers non-deterministic. We wrap
+// the real GroupedVirtuoso to capture these callbacks and withhold them from the
+// real component, so tests drive scroll-to-top / scroll-to-bottom explicitly.
+const virtuosoCallbacks = vi.hoisted(() => ({
+  atTopStateChange: undefined as ((atTop: boolean) => void) | undefined,
+  endReached: undefined as ((index: number) => void) | undefined,
+}));
+
+vi.mock('react-virtuoso', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react-virtuoso')>();
+  return {
+    ...actual,
+    GroupedVirtuoso: ({
+      atTopStateChange,
+      endReached,
+      ...props
+    }: Record<string, unknown> & {
+      atTopStateChange?: (atTop: boolean) => void;
+      endReached?: (index: number) => void;
+    }) => {
+      virtuosoCallbacks.atTopStateChange = atTopStateChange;
+      virtuosoCallbacks.endReached = endReached;
+      return <actual.GroupedVirtuoso {...props} />;
+    },
+  };
+});
+
 const renderTranscriptView = (
   ui: ReactElement,
   options: { initialEntries?: string[] } = {}
@@ -45,6 +74,25 @@ const renderTranscriptView = (
     </MemoryRouter>
   );
 };
+
+// Simulates the user scrolling away from the top of the virtualized list and
+// back, which is what triggers loading newer segments via atTopStateChange.
+function scrollAwayAndBackToTop() {
+  if (!virtuosoCallbacks.atTopStateChange) {
+    throw new Error('atTopStateChange callback not captured');
+  }
+  act(() => virtuosoCallbacks.atTopStateChange!(false));
+  act(() => virtuosoCallbacks.atTopStateChange!(true));
+}
+
+// Simulates the user scrolling to the bottom of the list, which triggers
+// loading older segments via endReached.
+function scrollToBottom() {
+  if (!virtuosoCallbacks.endReached) {
+    throw new Error('endReached callback not captured');
+  }
+  act(() => virtuosoCallbacks.endReached!(0));
+}
 
 function makeMockAudioSegment(
   id: string,
@@ -454,7 +502,9 @@ describe('TranscriptView', () => {
       expect(screen.getByText('Transcript 1')).toBeTruthy();
     });
 
-    // Infinite scroll: endReached fires automatically when the last item is visible
+    // Infinite scroll: scrolling to the bottom triggers loading older
+    scrollToBottom();
+
     await waitFor(() => {
       expect(listAudioSegments).toHaveBeenCalledTimes(2);
       expect(listAudioSegments).toHaveBeenLastCalledWith(
@@ -503,7 +553,9 @@ describe('TranscriptView', () => {
       expect(screen.getByText('Transcript 1')).toBeTruthy();
     });
 
-    // Infinite scroll: startReached fires automatically when the first item is visible
+    // Infinite scroll: scrolling away from the top and back triggers loading newer
+    scrollAwayAndBackToTop();
+
     await waitFor(() => {
       expect(listAudioSegments).toHaveBeenCalledTimes(2);
       expect(listAudioSegments).toHaveBeenLastCalledWith(
@@ -590,7 +642,9 @@ describe('TranscriptView', () => {
       expect(screen.getByText('Transcript 2 (Alert only)')).toBeTruthy();
     });
 
-    // Infinite scroll: startReached fires automatically when the first item is visible
+    // Infinite scroll: scrolling away from the top and back triggers loading newer
+    scrollAwayAndBackToTop();
+
     await waitFor(() => {
       expect(listAudioSegments).toHaveBeenCalledTimes(3);
       expect(listAudioSegments).toHaveBeenLastCalledWith(

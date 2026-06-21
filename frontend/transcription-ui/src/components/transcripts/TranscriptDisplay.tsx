@@ -19,7 +19,6 @@ export interface TranscriptDisplayProps {
   setIsViewAtTopOfAudioSegments: (atTop: boolean) => void;
   hasNewerAudioSegments: boolean;
   isFetchingNewerAudioSegments: boolean;
-  fetchNewerAudioSegments: () => void;
   isAudioSegmentsPolling: boolean;
   hasOlderAudioSegments: boolean;
   isFetchingOlderAudioSegments: boolean;
@@ -45,7 +44,6 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
   setIsViewAtTopOfAudioSegments,
   hasNewerAudioSegments,
   isFetchingNewerAudioSegments,
-  fetchNewerAudioSegments,
   hasOlderAudioSegments,
   isFetchingOlderAudioSegments,
   fetchOlderAudioSegments,
@@ -76,7 +74,6 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
         ref={ref}
         groupCounts={groupCounts}
         atTopStateChange={(atTop) => setIsViewAtTopOfAudioSegments(atTop)}
-        startReached={fetchNewerAudioSegments}
         endReached={fetchOlderAudioSegments}
         groupContent={(index) => {
           const title = groupTitles[index];
