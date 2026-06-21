@@ -48,16 +48,16 @@ const FEED_STATUS_UI_CONFIG: Record<
 };
 
 /**
- * Formats substatus, statusReason, and quarantineReason into a human-readable tooltip text.
+ * Formats substatus, statusReason, and statusReasonDetail into a human-readable tooltip text.
  */
 function formatSubstatusTooltipText({
   substatus,
   statusReason,
-  quarantineReason,
+  statusReasonDetail,
 }: {
   substatus?: BackendFeedStatus;
   statusReason?: BackendFeedStatusReason;
-  quarantineReason?: string;
+  statusReasonDetail?: string;
 }): string {
   const parts: string[] = [];
 
@@ -74,8 +74,8 @@ function formatSubstatusTooltipText({
     );
   }
 
-  if (quarantineReason) {
-    parts.push(quarantineReason);
+  if (statusReasonDetail) {
+    parts.push(statusReasonDetail);
   }
 
   return parts.join(': ');
@@ -85,13 +85,13 @@ export function FeedStatusIndicator({
   status,
   substatus,
   statusReason,
-  quarantineReason,
+  statusReasonDetail,
   lastHeartbeat,
 }: {
   status?: FeedStatus;
   substatus?: BackendFeedStatus;
   statusReason?: BackendFeedStatusReason;
-  quarantineReason?: string;
+  statusReasonDetail?: string;
   lastHeartbeat?: string;
 }) {
   if (!status) {
@@ -106,7 +106,7 @@ export function FeedStatusIndicator({
   const substatusText = formatSubstatusTooltipText({
     substatus,
     statusReason,
-    quarantineReason,
+    statusReasonDetail,
   });
 
   return (
