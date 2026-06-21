@@ -15,6 +15,7 @@ import FeedSearchView from '../feeds/FeedSearchView';
 
 interface FeedHeaderProps {
   searchedFeed: Feed | null;
+  liveFeed?: Feed | null;
   onSelectFeed: (feedId: string) => void;
   sourceUrl?: string;
   archiveUrl?: string;
@@ -26,6 +27,7 @@ interface FeedHeaderProps {
 
 const FeedHeader: React.FC<FeedHeaderProps> = ({
   searchedFeed,
+  liveFeed,
   onSelectFeed,
   sourceUrl,
   archiveUrl,
@@ -34,6 +36,8 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
   triggerSnackbar,
   onError,
 }) => {
+  const statusFeed = liveFeed ?? searchedFeed;
+
   return (
     <>
       <FeedSearchView
@@ -83,11 +87,18 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
               size="small"
             />
             <FeedStatusIndicator
-              status={status}
-              substatus={searchedFeed.substatus}
-              statusReason={searchedFeed.statusReason}
-              quarantineReason={searchedFeed.quarantineReason}
-              lastSpeechSegmentTimestamp={lastSpeechSegmentTimestamp}
+              status={liveFeed?.status ?? status ?? searchedFeed.status}
+              substatus={statusFeed?.substatus}
+              statusReason={statusFeed?.statusReason}
+              statusReasonDetail={statusFeed?.statusReasonDetail}
+              lastHeartbeat={
+                liveFeed?.lastHeartbeat ?? searchedFeed.lastHeartbeat
+              }
+              lastSpeechSegmentTimestamp={
+                liveFeed?.lastSpeechSegmentTimestamp ??
+                lastSpeechSegmentTimestamp ??
+                searchedFeed.lastSpeechSegmentTimestamp
+              }
             />
           </Box>
           <Box
