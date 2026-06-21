@@ -28,6 +28,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_CREATE_FEED_UNIQUE_CONSTRAINTS = frozenset(
+    {
+        "feeds_name_key",
+        "idx_feed_properties_source_lookup",
+    }
+)
+_UPDATE_FEED_UNIQUE_CONSTRAINTS = frozenset({"feeds_name_key"})
+
 
 class SourceType(enum.StrEnum):
     """Supported audio source types.
@@ -161,6 +169,7 @@ class Feed(TypedDict):
     status: FeedStatus
     status_reason: FeedStatusReason | None
     status_reason_updated_at: datetime.datetime | None
+    status_reason_detail: str | None
     quarantine_reason: str | None
     failure_count: int
     worker_id: uuid.UUID | None
@@ -178,6 +187,13 @@ class PaginatedFeeds:
     feeds: list[Feed]
     next_token: str | None
     total: int
+
+
+def _require_actor_id(actor_id: str | None) -> str:
+    if actor_id is None:
+        msg = "actor_id is required for audited feed lifecycle writes"
+        raise ValueError(msg)
+    return actor_id
 
 
 class FeedStore:
@@ -265,6 +281,7 @@ class FeedStore:
             status=status,
             status_reason=status_reason,
             status_reason_updated_at=row["status_reason_updated_at"],
+            status_reason_detail=row["status_reason_detail"],
             quarantine_reason=row["quarantine_reason"],
             failure_count=row["failure_count"],
             worker_id=row["worker_id"],
@@ -278,19 +295,12 @@ class FeedStore:
         )
 
     @staticmethod
-    def _parse_status_reason(
-        raw: str | None,
-        *,
-        feed_id: object,
-    ) -> FeedStatusReason | None:
-        """Parse nullable status-reason text from database rows."""
-        if raw is None:
-            return None
-        try:
-            return FeedStatusReason(raw)
-        except ValueError as e:
-            msg = f"Unknown status reason {raw!r} for feed {feed_id}"
-            raise ValueError(msg) from e
+    def _is_expected_unique_violation(
+        error: asyncpg.exceptions.UniqueViolationError,
+        expected_constraints: frozenset[str],
+    ) -> bool:
+        constraint_name = getattr(error, "constraint_name", None)
+        return constraint_name in expected_constraints
 
     def _row_to_leased_feed(self, row: asyncpg.Record) -> LeasedFeed:
         """Convert a claim/lease-path row to a LeasedFeed dict.
@@ -306,6 +316,7 @@ class FeedStore:
         except ValueError as e:
             msg = f"Unknown source type {row['source_type']!r} for feed {row['id']}"
             raise ValueError(msg) from e
+        status_reason_raw = row["status_reason"]
         return LeasedFeed(
             id=row["id"],
             name=row["name"],
@@ -314,9 +325,10 @@ class FeedStore:
             last_bookmark_time=row["last_bookmark_time"],
             fencing_token=row["fencing_token"],
             failure_count=row["failure_count"],
-            status_reason=self._parse_status_reason(
-                row["status_reason"],
-                feed_id=row["id"],
+            status_reason=(
+                FeedStatusReason(status_reason_raw)
+                if status_reason_raw is not None
+                else None
             ),
             source_feed_id=row["source_feed_id"],
         )
@@ -328,6 +340,8 @@ class FeedStore:
         new_gcs_path: str,
         fencing_token: int,
         last_bookmark_time: datetime.datetime | None,
+        *,
+        actor_id: str,
     ) -> bool:
         """
         Update the feed's bookmark and heartbeat after a successful write.
@@ -343,21 +357,23 @@ class FeedStore:
             new_gcs_path: The GCS object path of the last successfully written file.
             fencing_token: The fencing token received at lease acquisition.
             last_bookmark_time: Timestamp bookmark for the last processed audio.
+            actor_id: Causal actor for audited runtime recovery.
 
         Returns:
             ``True`` if the update succeeded (lease still held), ``False`` if the
             lease was lost.
 
         """
-        result = await self._pool.execute(
+        row = await self._pool.fetchrow(
             feed_queries.UPDATE_PROGRESS_SQL,
             new_gcs_path,
             feed_id,
             worker_id,
             fencing_token,
             last_bookmark_time,
+            _require_actor_id(actor_id),
         )
-        return result == "UPDATE 1"
+        return row is not None
 
     async def record_source_observation(
         self,
@@ -365,6 +381,8 @@ class FeedStore:
         worker_id: uuid.UUID,
         fencing_token: int,
         resume_position: datetime.datetime | None,
+        *,
+        actor_id: str,
     ) -> SourceObservationResult:
         """Record a non-audio source success through a fenced diagnostic path.
 
@@ -378,6 +396,7 @@ class FeedStore:
             worker_id,
             fencing_token,
             resume_position,
+            _require_actor_id(actor_id),
         )
         if row is None:
             return SourceObservationResult(
@@ -442,6 +461,7 @@ class FeedStore:
         backoff_base_sec: int = feed_lifecycle.DEFAULT_BACKOFF_BASE_SEC,
         backoff_max_sec: int = feed_lifecycle.DEFAULT_BACKOFF_MAX_SEC,
         *,
+        actor_id: str,
         reason: str | None = None,
         status_reason: FeedStatusReason | None = None,
     ) -> str | None:
@@ -449,9 +469,9 @@ class FeedStore:
 
         Atomically increments ``failure_count``, computes ``retry_after``
         with exponential backoff + jitter, and transitions to
-        ``'quarantined'`` if *failure_threshold* is reached.  On quarantine
-        transition, ``quarantine_reason`` is populated from raw *reason*.
-        The canonical *status_reason* is stored in ``feeds.status_reason``.
+        ``'quarantined'`` if *failure_threshold* is reached. The canonical
+        *status_reason* is stored in ``feeds.status_reason``, and diagnostic
+        *reason* text is stored in ``feeds.status_reason_detail``.
 
         Backoff formula: ``min(backoff_base_sec * 2^failure_count,
         backoff_max_sec) + random(0-10s) jitter``.
@@ -469,12 +489,10 @@ class FeedStore:
                 quarantine.
             backoff_base_sec: Base delay in seconds for the first retry.
             backoff_max_sec: Maximum backoff cap in seconds.
+            actor_id: Causal actor for audited runtime failure events.
             reason: Diagnostic failure text. Persisted to
-                ``feeds.quarantine_reason`` on transition to quarantined,
-                after applying the storage boundary length cap.
-                ``None`` (default) writes SQL NULL — preferred over an empty
-                string so triage queries can use ``WHERE quarantine_reason
-                IS NOT NULL``.
+                ``feeds.status_reason_detail`` after applying the storage
+                boundary length cap.
             status_reason: Canonical reason code for the current abnormal
                 feed condition. ``None`` lets SQL store the compatibility
                 fallback ``system_unexpected_error``.
@@ -488,18 +506,23 @@ class FeedStore:
         status_reason_value = feed_lifecycle.status_reason_storage_value(
             status_reason
         )
-        stored_reason = feed_lifecycle.quarantine_reason_storage_value(reason)
-        row = await self._pool.fetchrow(
-            feed_queries.REPORT_FAILURE_SQL,
-            feed_id,
-            worker_id,
-            failure_threshold,
-            fencing_token,
-            backoff_max_sec,
-            backoff_base_sec,
-            stored_reason,  # $7 — populates quarantine_reason on transition
-            status_reason_value,
+        status_reason_detail = (
+            feed_lifecycle.status_reason_detail_storage_value(reason)
         )
+        required_actor_id = _require_actor_id(actor_id)
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                feed_queries.REPORT_FAILURE_SQL,
+                feed_id,
+                worker_id,
+                failure_threshold,
+                fencing_token,
+                backoff_max_sec,
+                backoff_base_sec,
+                status_reason_value,
+                status_reason_detail,
+                required_actor_id,
+            )
         if row is None:
             return None
 
@@ -533,6 +556,8 @@ class FeedStore:
         *,
         retry_after: datetime.datetime,
         status_reason: FeedStatusReason,
+        actor_id: str,
+        reason: str | None = None,
     ) -> str | None:
         """Release a non-feed-budgeted failure into retryable failing state.
 
@@ -542,14 +567,18 @@ class FeedStore:
         leaves ``quarantine_reason`` untouched, resets any previous
         consecutive feed budget, and releases the lease for later retry.
         """
-        row = await self._pool.fetchrow(
-            feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL,
-            feed_id,
-            worker_id,
-            fencing_token,
-            retry_after,
-            status_reason.value,
-        )
+        required_actor_id = _require_actor_id(actor_id)
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL,
+                feed_id,
+                worker_id,
+                fencing_token,
+                retry_after,
+                status_reason.value,
+                feed_lifecycle.status_reason_detail_storage_value(reason),
+                required_actor_id,
+            )
         if row is None:
             return None
         return row["status"]
@@ -765,12 +794,15 @@ class FeedStore:
         source_type: str | SourceType,
         source_feed_id: str,
         tags: list[dict[str, str]] | None = None,
+        *,
+        actor_id: str,
     ) -> Feed:
         """Create a new feed record.
 
         Atomically creates a new feed in the `feeds` table and its corresponding
         properties in the `feed_properties` table.
         """
+        required_actor_id = _require_actor_id(actor_id)
         if not source_feed_id:
             msg = "source_feed_id cannot be empty"
             raise ValueError(msg)
@@ -787,14 +819,24 @@ class FeedStore:
             source_type_str = source_type.value
 
         try:
-            row = await self._pool.fetchrow(
-                feed_queries.CREATE_FEED_SQL,
-                name,
-                source_type_str,
-                source_feed_id,
-                json.dumps(tags or []),
-            )
+            async with self._pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    feed_queries.CREATE_FEED_SQL,
+                    name,
+                    source_type_str,
+                    source_feed_id,
+                    json.dumps(tags or []),
+                    required_actor_id,
+                )
+            if row is None:
+                msg = f"Failed to create feed {name}"
+                raise ValueError(msg)
         except asyncpg.exceptions.UniqueViolationError as e:
+            if not self._is_expected_unique_violation(
+                e,
+                _CREATE_FEED_UNIQUE_CONSTRAINTS,
+            ):
+                raise
             logger.warning(
                 "Feed already exists",
                 extra={
@@ -813,10 +855,6 @@ class FeedStore:
             msg = f"Invalid source type '{source_type_str}'"
             raise ValueError(msg) from e
 
-        if row is None:
-            msg = f"Failed to create feed {name}"
-            raise ValueError(msg)
-
         return self._row_to_feed(row)
 
     async def update_feed(
@@ -824,20 +862,32 @@ class FeedStore:
         feed_id: uuid.UUID,
         name: str,
         tags: list[dict[str, str]] | None = None,
+        *,
+        actor_id: str,
     ) -> Feed | None:
         """Update an existing feed record.
 
         Updates the feed in the `feeds` table and its corresponding
         properties in the `feed_properties` table.
         """
+        required_actor_id = _require_actor_id(actor_id)
         try:
-            row = await self._pool.fetchrow(
-                feed_queries.UPDATE_FEED_SQL,
-                feed_id,
-                name,
-                json.dumps(tags or []),
-            )
+            async with self._pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    feed_queries.UPDATE_FEED_SQL,
+                    feed_id,
+                    name,
+                    json.dumps(tags or []),
+                    required_actor_id,
+                )
+            if row is None:
+                return None
         except asyncpg.exceptions.UniqueViolationError as e:
+            if not self._is_expected_unique_violation(
+                e,
+                _UPDATE_FEED_UNIQUE_CONSTRAINTS,
+            ):
+                raise
             logger.warning(
                 "Feed update conflicts with existing feed name",
                 extra={
@@ -845,9 +895,6 @@ class FeedStore:
                 },
             )
             raise FeedNameAlreadyExistsError(name) from e
-
-        if row is None:
-            return None
 
         logger.info(
             "Feed updated successfully",
@@ -885,6 +932,10 @@ class FeedStore:
         Retrieves feeds ordered by creation time, using timestamp+ID-based
         keyset pagination.
         """
+        if limit < 1:
+            msg = "limit must be >= 1"
+            raise ValueError(msg)
+
         cursor_ts = None
         cursor_uid = None
         if next_token:
@@ -928,7 +979,12 @@ class FeedStore:
         feeds = [self._row_to_feed(row) for row in rows]
         return PaginatedFeeds(feeds, new_next_token, total)
 
-    async def deactivate_feed(self, feed_id: uuid.UUID) -> bool:
+    async def deactivate_feed(
+        self,
+        feed_id: uuid.UUID,
+        *,
+        actor_id: str,
+    ) -> bool:
         """Deactivate a feed by ID.
 
         Deactivation is an administrative terminal state until reset. The
@@ -937,12 +993,21 @@ class FeedStore:
 
         Returns True if the feed status was set to deactivated, False otherwise.
         """
-        result = await self._pool.execute(
-            feed_queries.DEACTIVATE_FEED_SQL, feed_id
-        )
-        return result == "UPDATE 1"
+        required_actor_id = _require_actor_id(actor_id)
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                feed_queries.DEACTIVATE_FEED_SQL,
+                feed_id,
+                required_actor_id,
+            )
+        return row is not None
 
-    async def delete_feed(self, feed_id: uuid.UUID) -> bool:
+    async def delete_feed(
+        self,
+        feed_id: uuid.UUID,
+        *,
+        actor_id: str,
+    ) -> bool:
         """Hard delete a feed by ID.
 
         Deletes the feed itself, along with all referencing database entities
@@ -950,10 +1015,21 @@ class FeedStore:
 
         Returns True if the feed was successfully deleted, False otherwise.
         """
-        result = await self._pool.execute(feed_queries.DELETE_FEED_SQL, feed_id)
-        return result == "DELETE 1"
+        required_actor_id = _require_actor_id(actor_id)
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                feed_queries.DELETE_FEED_SQL,
+                feed_id,
+                required_actor_id,
+            )
+        return row is not None
 
-    async def reset_feed(self, feed_id: uuid.UUID) -> Feed | None:
+    async def reset_feed(
+        self,
+        feed_id: uuid.UUID,
+        *,
+        actor_id: str,
+    ) -> Feed | None:
         """Reset a feed to an unclaimed, unassigned state.
 
         This is the explicit reactivation path for deactivated or quarantined
@@ -963,12 +1039,19 @@ class FeedStore:
 
         Args:
             feed_id: UUID of the feed to reset.
+            actor_id: Required audit actor ID for the reset event.
 
         Returns:
             The updated ``Feed`` dict, or ``None`` if the feed was not found.
 
         """
-        row = await self._pool.fetchrow(feed_queries.RESET_FEED_SQL, feed_id)
+        required_actor_id = _require_actor_id(actor_id)
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                feed_queries.RESET_FEED_SQL,
+                feed_id,
+                required_actor_id,
+            )
         if row is None:
             return None
         return self._row_to_feed(row)

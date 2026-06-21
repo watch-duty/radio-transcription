@@ -14,7 +14,10 @@ from backend.pipeline.ingestion.router import (
     route_capturer,
     supported_source_types,
 )
-from backend.pipeline.storage.feed_store import LeasedFeed, SourceType
+from backend.pipeline.storage.feed_store import (
+    LeasedFeed,
+    SourceType,
+)
 
 
 def _default_resources() -> CaptureResources:

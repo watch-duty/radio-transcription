@@ -33,7 +33,10 @@ from backend.pipeline.ingestion.failure_classifiers import (
 from backend.pipeline.ingestion.settings import _require_env
 from backend.pipeline.storage.feed_store import FeedStatus, FeedStatusReason
 from backend.pipeline.storage.sync_connection import connect_db
-from backend.pipeline.storage.sync_feed_store import SyncFeedStore
+from backend.pipeline.storage.sync_feed_store import (
+    ResolvedEchoFeed,
+    SyncFeedStore,
+)
 
 if TYPE_CHECKING:
     from cloudevents.http import event as cloudevent
@@ -62,6 +65,7 @@ _RECORDING_DOWNLOAD_FAILED = "echo_recording_download_failed"
 _STAGING_UPLOAD_FAILED = "echo_staging_upload_failed"
 _PUBSUB_PUBLISH_FAILED = "echo_pubsub_publish_failed"
 _HEARTBEAT_WRITE_FAILED = "echo_heartbeat_write_failed"
+ECHO_INGESTION_ACTOR_ID = "service:echo-ingestion"
 # Returning success prevents the same object notification from being retried.
 # This is separate from feed-budget routing, which is handled by failure_policy.
 _RETURN_SUCCESS_AFTER_FAILURE_RECORD_ATTEMPT_STATUS_REASONS = {
@@ -255,7 +259,10 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
 
         # Unconditional heartbeat — also resets failure_count if recovering.
         try:
-            feed_store.record_heartbeat(feed["id"])
+            feed_store.record_heartbeat(
+                feed["id"],
+                actor_id=ECHO_INGESTION_ACTOR_ID,
+            )
         except Exception:
             failure = _pipeline_failure(_HEARTBEAT_WRITE_FAILED)
             raise
@@ -281,7 +288,7 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
                 classification.status_reason.value,
                 classification.reason,
             )
-        _record_failure_by_policy(feed["id"], classification)
+        _record_failure_by_policy(feed, classification)
         if should_return_success:
             return
         raise
@@ -309,7 +316,7 @@ def _pipeline_failure(
 
 
 def _record_failure_by_policy(
-    feed_id: uuid.UUID,
+    feed: ResolvedEchoFeed,
     classification: failure_classification.FailureInfo,
 ) -> None:
     if feed_store is None:
@@ -325,17 +332,20 @@ def _record_failure_by_policy(
             is failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
         ):
             feed_store.record_failure(
-                feed_id,
+                feed["id"],
+                actor_id=ECHO_INGESTION_ACTOR_ID,
                 reason=classification.reason,
                 status_reason=classification.status_reason,
             )
         else:
             feed_store.record_non_budgeted_failure(
-                feed_id,
+                feed["id"],
+                actor_id=ECHO_INGESTION_ACTOR_ID,
                 status_reason=classification.status_reason,
+                reason=classification.reason,
             )
     except Exception:
-        logger.exception("Failed to record failure for feed %s", feed_id)
+        logger.exception("Failed to record failure for feed %s", feed["id"])
 
 
 def _should_return_success_after_failure_record_attempt(

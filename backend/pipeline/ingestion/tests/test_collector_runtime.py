@@ -634,6 +634,7 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             1,
             resume_position,
+            actor_id="service:collector-runtime",
         )
         self.assertEqual(feed["failure_count"], 0)
         self.assertIsNone(feed["status_reason"])
@@ -689,6 +690,7 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             1,
             resume_position,
+            actor_id="service:collector-runtime",
         )
         self.assertEqual(feed["failure_count"], 0)
         self.assertIsNone(feed["status_reason"])
@@ -2041,6 +2043,14 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         rt._store.update_feed_progress.return_value = True
         rt._store.report_feed_failure.return_value = "quarantined"
         rt._releasing_feeds = set()
+        feed = cast(
+            "LeasedFeed",
+            dict(
+                _FEED,
+                failure_count=2,
+                status_reason=(FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED),
+            ),
+        )
 
         with (
             _mock_upload_audio(),
@@ -2054,9 +2064,18 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             ) as cm,
         ):
             mock_telemetry.emit_quarantine_event = mock.AsyncMock()
-            await rt._process_feed(_FEED)
+            await rt._process_feed(feed)
 
         rt._store.report_feed_failure.assert_awaited_once()
+        failure_kwargs = rt._store.report_feed_failure.await_args.kwargs
+        self.assertEqual(
+            failure_kwargs["actor_id"],
+            "service:collector-runtime",
+        )
+        self.assertNotIn("previous_status", failure_kwargs)
+        self.assertNotIn("previous_failure_count", failure_kwargs)
+        self.assertNotIn("previous_status_reason", failure_kwargs)
+        self.assertEqual(failure_kwargs["reason"], "missing_source_feed_id")
         rt._store.release_non_budgeted_failure.assert_not_awaited()
         mock_telemetry.emit_quarantine_event.assert_awaited_once_with(
             feed_id=str(_FEED_ID),
@@ -2108,6 +2127,14 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         rt._store = mock.AsyncMock()
         rt._store.release_non_budgeted_failure.return_value = "failing"
         rt._releasing_feeds = set()
+        feed = cast(
+            "LeasedFeed",
+            dict(
+                _FEED,
+                failure_count=1,
+                status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+            ),
+        )
 
         with (
             mock.patch(
@@ -2115,11 +2142,24 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             ) as mock_telemetry,
         ):
             mock_telemetry.emit_quarantine_event = mock.AsyncMock()
-            await rt._process_feed(_FEED)
+            await rt._process_feed(feed)
 
         mock_telemetry.emit_quarantine_event.assert_not_awaited()
         rt._store.report_feed_failure.assert_not_awaited()
         rt._store.release_non_budgeted_failure.assert_awaited_once()
+        release_kwargs = (
+            rt._store.release_non_budgeted_failure.await_args.kwargs
+        )
+        self.assertEqual(
+            release_kwargs["actor_id"],
+            "service:collector-runtime",
+        )
+        self.assertNotIn("previous_status", release_kwargs)
+        self.assertNotIn("previous_failure_count", release_kwargs)
+        self.assertNotIn("previous_status_reason", release_kwargs)
+        self.assertEqual(
+            release_kwargs["reason"], "RuntimeError: capture_failed"
+        )
 
     async def test_untyped_runtime_exception_preserves_full_reason(
         self,
@@ -3148,10 +3188,9 @@ class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
 
     Contract: the feed's persisted last_bookmark_time is the chunk's
     resume_position when the collector sets it (bcfy_calls), and falls back
-    to chunk_end_time when it is None (stream/push collectors). The runtime
-    invokes update_feed_progress positionally via retry_with_lease_check as
-    (feed_id, worker_id, gcs_uri, fencing_token, last_bookmark_time) — so the
-    bookmark is the 5th positional argument.
+    to chunk_end_time when it is None (stream/push collectors). The bookmark
+    remains the 5th positional argument while audit causal inputs are forwarded
+    as storage-owned keyword-only arguments.
     """
 
     _BOOKMARK_ARG_INDEX = 4
@@ -3176,15 +3215,28 @@ class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress.return_value = True
         rt._releasing_feeds = set()
+        feed = cast(
+            "LeasedFeed",
+            dict(
+                _FEED,
+                failure_count=2,
+                status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+            ),
+        )
 
         with _mock_upload_audio(), _mock_pubsub_publish():
-            await rt._process_feed(_FEED)
+            await rt._process_feed(feed)
 
         rt._store.update_feed_progress.assert_awaited_once()
         bookmark = rt._store.update_feed_progress.await_args.args[
             self._BOOKMARK_ARG_INDEX
         ]
         self.assertEqual(bookmark, resume)
+        kwargs = rt._store.update_feed_progress.await_args.kwargs
+        self.assertEqual(kwargs["actor_id"], "service:collector-runtime")
+        self.assertNotIn("previous_status", kwargs)
+        self.assertNotIn("previous_failure_count", kwargs)
+        self.assertNotIn("previous_status_reason", kwargs)
 
     async def test_falls_back_to_chunk_end_time_when_resume_position_none(
         self,
@@ -3216,6 +3268,11 @@ class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
             self._BOOKMARK_ARG_INDEX
         ]
         self.assertEqual(bookmark, end_time)
+        kwargs = rt._store.update_feed_progress.await_args.kwargs
+        self.assertEqual(kwargs["actor_id"], "service:collector-runtime")
+        self.assertNotIn("previous_status", kwargs)
+        self.assertNotIn("previous_failure_count", kwargs)
+        self.assertNotIn("previous_status_reason", kwargs)
 
 
 if __name__ == "__main__":

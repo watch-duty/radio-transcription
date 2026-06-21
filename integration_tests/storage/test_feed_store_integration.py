@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import json
 import uuid
-from typing import TYPE_CHECKING
+from typing import cast
 
-if TYPE_CHECKING:
-    import asyncpg
-
+import asyncpg
 import pytest
 
 from backend.pipeline.common.exceptions import (
@@ -20,6 +19,9 @@ from backend.pipeline.storage.feed_store import (
     FeedStore,
     SourceType,
 )
+
+_TEST_ACTOR_ID = "service:feeds-service"
+_INVALID_ACTOR_ID = "system:legacy"
 
 
 @pytest.fixture
@@ -94,8 +96,8 @@ async def _get_feed_diagnostics(
     row = await pool.fetchrow(
         "SELECT status, failure_count, worker_id, fencing_token,"
         " retry_after, quarantine_reason, status_reason,"
-        " status_reason_updated_at, last_processed_filename,"
-        " last_bookmark_time"
+        " status_reason_updated_at, status_reason_detail,"
+        " last_processed_filename, last_bookmark_time"
         " FROM feeds WHERE id = $1::uuid",
         str(feed_id),
     )
@@ -103,6 +105,65 @@ async def _get_feed_diagnostics(
         msg = "Expected a row from query"
         raise AssertionError(msg)
     return dict(row)
+
+
+async def _fetch_audit_events(
+    pool: asyncpg.Pool,
+    feed_id: uuid.UUID,
+) -> list[asyncpg.Record]:
+    """Return audit rows for one feed in deterministic timeline order."""
+    return await pool.fetch(
+        "SELECT id, action, actor_id, feed_revision, occurred_at,"
+        " before_values, after_values"
+        " FROM feed_audit_events"
+        " WHERE feed_id = $1"
+        " ORDER BY feed_revision, occurred_at, id",
+        feed_id,
+    )
+
+
+async def _report_feed_failure_for_test(
+    store: FeedStore,
+    pool: asyncpg.Pool,
+    feed_id: uuid.UUID,
+    worker_id: uuid.UUID,
+    fencing_token: int = 0,
+    *,
+    reason: str | None = None,
+    status_reason: FeedStatusReason | None = None,
+) -> str | None:
+    """Call report_feed_failure with DB-derived audit state."""
+    return await store.report_feed_failure(
+        feed_id,
+        worker_id,
+        fencing_token,
+        actor_id=_TEST_ACTOR_ID,
+        reason=reason,
+        status_reason=status_reason,
+    )
+
+
+async def _get_feed_audit_revision(
+    pool: asyncpg.Pool,
+    feed_id: uuid.UUID,
+) -> int | None:
+    """Return the feed-local audit revision stored on the current feed row."""
+    return await pool.fetchval(
+        "SELECT audit_revision FROM feeds WHERE id = $1",
+        feed_id,
+    )
+
+
+def _decode_json_object(value: object) -> dict[str, object]:
+    """Decode asyncpg JSONB results across default codec variants."""
+    if isinstance(value, str):
+        decoded = json.loads(value)
+    else:
+        decoded = value
+    if not isinstance(decoded, dict):
+        msg = f"Expected JSON object, got {type(decoded).__name__}"
+        raise TypeError(msg)
+    return cast("dict[str, object]", decoded)
 
 
 # -- Tests: acquire_feeds_batch (per-type CTE) -----------------------
@@ -495,6 +556,7 @@ async def test_update_progress_does_not_touch_last_heartbeat(
         "gs://bucket/file.flac",
         fencing_token=0,
         last_bookmark_time=None,
+        actor_id=_TEST_ACTOR_ID,
     )
 
     assert ok is True
@@ -518,7 +580,13 @@ async def test_report_failure_does_not_touch_last_heartbeat(
     )
     before = await _read_last_heartbeat(db_pool, feed_id)
 
-    result = await store.report_feed_failure(feed_id, worker, fencing_token=0)
+    result = await _report_feed_failure_for_test(
+        store,
+        db_pool,
+        feed_id,
+        worker,
+        fencing_token=0,
+    )
 
     assert result is not None
     after = await _read_last_heartbeat(db_pool, feed_id)
@@ -616,6 +684,7 @@ async def test_progress_update_succeeds_with_correct_worker(
         "gs://bucket/path/file.ogg",
         0,
         None,
+        actor_id=_TEST_ACTOR_ID,
     )
 
     assert result is True
@@ -652,6 +721,7 @@ async def test_progress_clears_stale_status_reason_and_stamps_clear_time(
         "gs://bucket/path/file.ogg",
         0,
         None,
+        actor_id=_TEST_ACTOR_ID,
     )
 
     assert result is True
@@ -691,6 +761,7 @@ async def test_progress_with_null_status_reason_leaves_reason_timestamp_unchange
         "gs://bucket/path/file.ogg",
         0,
         None,
+        actor_id=_TEST_ACTOR_ID,
     )
 
     assert result is True
@@ -719,6 +790,7 @@ async def test_progress_update_fails_with_wrong_worker(
         "gs://bucket/path/file.ogg",
         0,
         None,
+        actor_id=_TEST_ACTOR_ID,
     )
 
     assert result is False
@@ -752,6 +824,7 @@ async def test_progress_update_succeeds_for_deactivated_owned_feed(
         "gs://bucket/path/deactivated.ogg",
         0,
         None,
+        actor_id=_TEST_ACTOR_ID,
     )
 
     assert result is True
@@ -861,6 +934,7 @@ async def test_source_observation_updates_bookmark_monotonically(
         worker,
         0,
         resume_position,
+        actor_id=_TEST_ACTOR_ID,
     )
 
     assert result["recorded"] is True
@@ -888,7 +962,7 @@ async def test_failure_sets_status_to_failing(
         last_heartbeat_age_seconds=10,
     )
 
-    await store.report_feed_failure(feed_id, worker, 0)
+    await _report_feed_failure_for_test(store, db_pool, feed_id, worker, 0)
 
     row = await _get_feed_status(db_pool, feed_id)
     assert row["status"] == "failing"
@@ -910,7 +984,9 @@ async def test_failure_records_canonical_reason_and_timestamp(
         last_heartbeat_age_seconds=10,
     )
 
-    await store.report_feed_failure(
+    await _report_feed_failure_for_test(
+        store,
+        db_pool,
         feed_id,
         worker,
         0,
@@ -941,7 +1017,9 @@ async def test_failure_without_status_reason_records_unexpected_fallback(
         last_heartbeat_age_seconds=10,
     )
 
-    await store.report_feed_failure(
+    await _report_feed_failure_for_test(
+        store,
+        db_pool,
         feed_id,
         worker,
         0,
@@ -975,9 +1053,11 @@ async def test_failure_update_fails_after_deactivation_without_rewriting_reason(
         old_reason_ts,
         feed_id,
     )
-    assert await store.deactivate_feed(feed_id) is True
+    assert await store.deactivate_feed(feed_id, actor_id=_TEST_ACTOR_ID) is True
 
-    result = await store.report_feed_failure(
+    result = await _report_feed_failure_for_test(
+        store,
+        db_pool,
         feed_id,
         worker,
         0,
@@ -1008,7 +1088,7 @@ async def test_failure_escalation_to_quarantine(
         failure_count=4,
     )
 
-    await store.report_feed_failure(feed_id, worker, 0)
+    await _report_feed_failure_for_test(store, db_pool, feed_id, worker, 0)
 
     row = await _get_feed_status(db_pool, feed_id)
     assert row["status"] == "quarantined"
@@ -1029,7 +1109,13 @@ async def test_failure_preserves_deactivated_feed(
         failure_count=2,
     )
 
-    result = await store.report_feed_failure(feed_id, worker, 0)
+    result = await _report_feed_failure_for_test(
+        store,
+        db_pool,
+        feed_id,
+        worker,
+        0,
+    )
 
     assert result is None
     row = await _get_feed_status(db_pool, feed_id)
@@ -1038,11 +1124,11 @@ async def test_failure_preserves_deactivated_feed(
     assert row["worker_id"] == worker
 
 
-async def test_quarantine_preserves_raw_reason_separately_from_canonical_reason(
+async def test_quarantine_preserves_diagnostic_detail_separately_from_canonical_reason(
     db_pool: asyncpg.Pool,
     store: FeedStore,
 ) -> None:
-    """Quarantine keeps raw forensic detail separate from canonical reason."""
+    """Quarantine keeps diagnostic detail separate from canonical reason."""
     worker = uuid.uuid4()
     feed_id = await _insert_feed(
         db_pool,
@@ -1053,7 +1139,9 @@ async def test_quarantine_preserves_raw_reason_separately_from_canonical_reason(
         failure_count=4,
     )
 
-    await store.report_feed_failure(
+    await _report_feed_failure_for_test(
+        store,
+        db_pool,
         feed_id,
         worker,
         0,
@@ -1064,8 +1152,8 @@ async def test_quarantine_preserves_raw_reason_separately_from_canonical_reason(
     row = await _get_feed_diagnostics(db_pool, feed_id)
     assert row["status"] == "quarantined"
     assert row["failure_count"] == 5
-    quarantine_reason = row["quarantine_reason"]
-    assert quarantine_reason == "ffmpeg_exit_1"
+    assert row["status_reason_detail"] == "ffmpeg_exit_1"
+    assert row["quarantine_reason"] is None
     assert row["status_reason"] == "system_collector_error"
     assert row["status_reason_updated_at"] is not None
 
@@ -1082,7 +1170,7 @@ async def test_failing_feed_not_leased_before_retry_after(
         worker_id=worker,
         last_heartbeat_age_seconds=10,
     )
-    await store.report_feed_failure(feed_id, worker, 0)
+    await _report_feed_failure_for_test(store, db_pool, feed_id, worker, 0)
     leased = await store.acquire_feeds_recovery(
         uuid.uuid4(),
         abandonment_window_sec=60.0,
@@ -1103,7 +1191,7 @@ async def test_failing_feed_leased_after_retry_after_expires(
         worker_id=worker,
         last_heartbeat_age_seconds=10,
     )
-    await store.report_feed_failure(feed_id, worker, 0)
+    await _report_feed_failure_for_test(store, db_pool, feed_id, worker, 0)
     await db_pool.execute(
         "UPDATE feeds SET retry_after = NOW() - INTERVAL '1 second'"
         " WHERE id = $1",
@@ -1130,7 +1218,7 @@ async def test_lease_preserves_failure_count(
         worker_id=worker,
         last_heartbeat_age_seconds=10,
     )
-    await store.report_feed_failure(feed_id, worker, 0)
+    await _report_feed_failure_for_test(store, db_pool, feed_id, worker, 0)
     await db_pool.execute(
         "UPDATE feeds SET retry_after = NOW() - INTERVAL '1 second'"
         " WHERE id = $1",
@@ -1163,7 +1251,7 @@ async def test_successful_processing_resets_failure_count(
         worker_id=worker,
         last_heartbeat_age_seconds=10,
     )
-    await store.report_feed_failure(feed_id, worker, 0)
+    await _report_feed_failure_for_test(store, db_pool, feed_id, worker, 0)
     await db_pool.execute(
         "UPDATE feeds SET retry_after = NOW() - INTERVAL '1 second'"
         " WHERE id = $1",
@@ -1183,6 +1271,7 @@ async def test_successful_processing_resets_failure_count(
         "chunk_001.flac",
         result["fencing_token"],
         None,
+        actor_id=_TEST_ACTOR_ID,
     )
     row = await db_pool.fetchrow(
         "SELECT failure_count FROM feeds WHERE id = $1",
@@ -1435,6 +1524,7 @@ async def test_progress_update_fails_with_wrong_fencing_token(
         "gs://bucket/path/file.ogg",
         999,  # wrong fencing_token
         None,
+        actor_id=_TEST_ACTOR_ID,
     )
 
     assert result is False
@@ -1468,6 +1558,7 @@ async def test_progress_update_fails_with_wrong_fencing_token_leaves_reason_fiel
         "gs://bucket/path/file.ogg",
         999,
         None,
+        actor_id=_TEST_ACTOR_ID,
     )
 
     assert result is False
@@ -1508,7 +1599,13 @@ async def test_report_feed_failure_fails_with_wrong_fencing_token(
         last_heartbeat_age_seconds=10,
     )
 
-    result = await store.report_feed_failure(feed_id, worker, 999)
+    result = await _report_feed_failure_for_test(
+        store,
+        db_pool,
+        feed_id,
+        worker,
+        999,
+    )
 
     assert result is None
     # Verify feed state unchanged (failure was rejected)
@@ -1539,7 +1636,9 @@ async def test_report_feed_failure_fails_with_wrong_fencing_token_leaves_reason_
         feed_id,
     )
 
-    result = await store.report_feed_failure(
+    result = await _report_feed_failure_for_test(
+        store,
+        db_pool,
         feed_id,
         worker,
         999,
@@ -1583,6 +1682,7 @@ async def test_last_bookmark_time_round_trips_through_lease(
         "chunk_001.flac",
         result1["fencing_token"],
         bookmark,
+        actor_id=_TEST_ACTOR_ID,
     )
     assert ok is True
 
@@ -1610,6 +1710,7 @@ async def test_create_feed_succeeds(
         name="New Integration Feed",
         source_type="bcfy_feeds",
         source_feed_id="src_123",
+        actor_id=_TEST_ACTOR_ID,
     )
 
     assert feed is not None
@@ -1629,6 +1730,23 @@ async def test_create_feed_succeeds(
     assert row["name"] == "New Integration Feed"
     assert row["source_feed_id"] == "src_123"
 
+    audit_rows = await _fetch_audit_events(db_pool, feed["id"])
+    assert len(audit_rows) == 1
+    audit_row = audit_rows[0]
+    before_values = _decode_json_object(audit_row["before_values"])
+    after_values = _decode_json_object(audit_row["after_values"])
+    assert audit_row["action"] == "feed.created"
+    assert audit_row["actor_id"] == _TEST_ACTOR_ID
+    assert audit_row["feed_revision"] == 1
+    assert before_values == {}
+    assert after_values["name"] == "New Integration Feed"
+    assert after_values["source_type"] == "bcfy_feeds"
+    assert after_values["status"] == "unclaimed"
+    assert after_values["feed_properties.source_feed_id"] == "src_123"
+    assert after_values["feed_properties.tags"] == []
+    assert "worker_id" not in after_values
+    assert "last_heartbeat" not in after_values
+
 
 async def test_create_feed_already_exists(
     db_pool: asyncpg.Pool, store: FeedStore
@@ -1638,6 +1756,7 @@ async def test_create_feed_already_exists(
         name="New Integration Feed",
         source_type="bcfy_feeds",
         source_feed_id="src_123",
+        actor_id=_TEST_ACTOR_ID,
     )
 
     with pytest.raises(FeedAlreadyExistsError) as cm:
@@ -1645,6 +1764,7 @@ async def test_create_feed_already_exists(
             name="Another Feed Name",
             source_type="bcfy_feeds",
             source_feed_id="src_123",
+            actor_id=_TEST_ACTOR_ID,
         )
 
     assert (
@@ -1661,11 +1781,13 @@ async def test_update_feed_succeeds(
         name="Original Name",
         source_type="bcfy_feeds",
         source_feed_id="src_123",
+        actor_id=_TEST_ACTOR_ID,
     )
 
     updated_feed = await store.update_feed(
         feed_id=feed["id"],
         name="Updated Name",
+        actor_id=_TEST_ACTOR_ID,
     )
 
     assert updated_feed is not None
@@ -1684,6 +1806,23 @@ async def test_update_feed_succeeds(
     assert row["name"] == "Updated Name"
     assert row["source_feed_id"] == "src_123"
 
+    audit_rows = await _fetch_audit_events(db_pool, feed["id"])
+    assert [row["action"] for row in audit_rows] == [
+        "feed.created",
+        "feed.updated",
+    ]
+    assert [row["feed_revision"] for row in audit_rows] == [1, 2]
+    audit_row = audit_rows[1]
+    before_values = _decode_json_object(audit_row["before_values"])
+    after_values = _decode_json_object(audit_row["after_values"])
+    assert audit_row["actor_id"] == _TEST_ACTOR_ID
+    assert before_values["name"] == "Original Name"
+    assert before_values["feed_properties.tags"] == []
+    assert after_values["name"] == "Updated Name"
+    assert after_values["feed_properties.source_feed_id"] == "src_123"
+    assert "worker_id" not in before_values
+    assert "last_heartbeat" not in after_values
+
 
 async def test_update_feed_already_exists(
     db_pool: asyncpg.Pool, store: FeedStore
@@ -1693,19 +1832,347 @@ async def test_update_feed_already_exists(
         name="Existing Feed",
         source_type="bcfy_feeds",
         source_feed_id="src_456",
+        actor_id=_TEST_ACTOR_ID,
     )
 
     feed = await store.create_feed(
         name="Original Name",
         source_type="bcfy_feeds",
         source_feed_id="src_123",
+        actor_id=_TEST_ACTOR_ID,
     )
 
     with pytest.raises(FeedNameAlreadyExistsError):
         await store.update_feed(
             feed_id=feed["id"],
             name="Existing Feed",
+            actor_id=_TEST_ACTOR_ID,
         )
+
+
+# -- Tests: audited transaction rollback ------------------------------
+
+
+async def test_create_feed_audit_failure_rolls_back_feed_and_revision(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """A rejected audit actor rolls back the attempted feed creation."""
+    name = f"Rollback Create {uuid.uuid4()}"
+    source_feed_id = f"rollback-{uuid.uuid4()}"
+    with pytest.raises(asyncpg.CheckViolationError):
+        await store.create_feed(
+            name=name,
+            source_type="bcfy_feeds",
+            source_feed_id=source_feed_id,
+            actor_id=_INVALID_ACTOR_ID,
+        )
+
+    feed_row = await db_pool.fetchrow(
+        "SELECT f.id FROM feeds f"
+        " JOIN feed_properties fp ON fp.feed_id = f.id"
+        " WHERE f.name = $1 AND fp.source_feed_id = $2",
+        name,
+        source_feed_id,
+    )
+    audit_rows = await db_pool.fetch(
+        "SELECT 1 FROM feed_audit_events"
+        " WHERE before_values->>'name' = $1"
+        " OR after_values->>'name' = $1",
+        name,
+    )
+
+    assert feed_row is None
+    assert audit_rows == []
+
+
+async def test_update_feed_audit_failure_rolls_back_state_and_revision(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """A rejected audit actor leaves an existing feed unchanged."""
+    feed = await store.create_feed(
+        name=f"Rollback Update Original {uuid.uuid4()}",
+        source_type="bcfy_feeds",
+        source_feed_id=f"rollback-update-{uuid.uuid4()}",
+        tags=[{"key": "phase", "value": "before"}],
+        actor_id=_TEST_ACTOR_ID,
+    )
+    revision_before = await _get_feed_audit_revision(db_pool, feed["id"])
+
+    with pytest.raises(asyncpg.CheckViolationError):
+        await store.update_feed(
+            feed_id=feed["id"],
+            name=f"Rollback Update Failed {uuid.uuid4()}",
+            tags=[{"key": "phase", "value": "after"}],
+            actor_id=_INVALID_ACTOR_ID,
+        )
+
+    row = await db_pool.fetchrow(
+        "SELECT f.name, fp.tags FROM feeds f"
+        " JOIN feed_properties fp ON fp.feed_id = f.id"
+        " WHERE f.id = $1",
+        feed["id"],
+    )
+    audit_rows = await _fetch_audit_events(db_pool, feed["id"])
+    revision_after = await _get_feed_audit_revision(db_pool, feed["id"])
+
+    assert row is not None
+    assert row["name"] == feed["name"]
+    assert json.loads(row["tags"]) == [{"key": "phase", "value": "before"}]
+    assert [event["action"] for event in audit_rows] == ["feed.created"]
+    assert revision_after == revision_before
+
+
+@pytest.mark.parametrize("actor_id", ["user:", "service: "])
+async def test_invalid_actor_values_are_not_rewritten_by_storage(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+    actor_id: str,
+) -> None:
+    """Storage passes invalid actor values through to DB rejection."""
+    feed = await store.create_feed(
+        name=f"Invalid Actor {uuid.uuid4()}",
+        source_type="bcfy_feeds",
+        source_feed_id=f"invalid-actor-{uuid.uuid4()}",
+        actor_id=_TEST_ACTOR_ID,
+    )
+
+    with pytest.raises(asyncpg.CheckViolationError):
+        await store.deactivate_feed(feed["id"], actor_id=actor_id)
+
+    row = await _get_feed_status(db_pool, feed["id"])
+    audit_rows = await _fetch_audit_events(db_pool, feed["id"])
+
+    assert row["status"] == "unclaimed"
+    assert [event["action"] for event in audit_rows] == ["feed.created"]
+    assert all(event["actor_id"] != actor_id for event in audit_rows)
+    assert all(event["action"] != "feed.deactivated" for event in audit_rows)
+
+
+# -- Tests: audited concurrent ordering -------------------------------
+
+
+async def test_concurrent_same_feed_updates_allocate_unique_revisions(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """Concurrent same-feed updates remain uniquely revision-orderable."""
+    feed = await store.create_feed(
+        name=f"Concurrent Original {uuid.uuid4()}",
+        source_type="bcfy_feeds",
+        source_feed_id=f"concurrent-{uuid.uuid4()}",
+        tags=[{"key": "phase", "value": "original"}],
+        actor_id=_TEST_ACTOR_ID,
+    )
+    update_inputs: tuple[tuple[str, list[dict[str, str]]], ...] = (
+        (
+            f"Concurrent First {uuid.uuid4()}",
+            [{"key": "phase", "value": "first"}],
+        ),
+        (
+            f"Concurrent Second {uuid.uuid4()}",
+            [{"key": "phase", "value": "second"}],
+        ),
+    )
+
+    results = await asyncio.gather(
+        *[
+            store.update_feed(
+                feed_id=feed["id"],
+                name=name,
+                tags=tags,
+                actor_id=_TEST_ACTOR_ID,
+            )
+            for name, tags in update_inputs
+        ],
+        return_exceptions=True,
+    )
+
+    assert all(not isinstance(result, BaseException) for result in results)
+    assert all(result is not None for result in results)
+
+    audit_rows = await _fetch_audit_events(db_pool, feed["id"])
+    feed_revisions = [row["feed_revision"] for row in audit_rows]
+    update_events = [
+        row for row in audit_rows if row["action"] == "feed.updated"
+    ]
+    duplicate_revision_count = await db_pool.fetchval(
+        "SELECT COUNT(*) FROM ("
+        " SELECT feed_revision FROM feed_audit_events"
+        " WHERE feed_id = $1"
+        " GROUP BY feed_revision HAVING COUNT(*) > 1"
+        ") duplicates",
+        feed["id"],
+    )
+
+    assert [row["action"] for row in audit_rows].count("feed.created") == 1
+    assert len(update_events) == 2
+    assert len(feed_revisions) == len(set(feed_revisions))
+    assert feed_revisions == list(range(1, len(feed_revisions) + 1))
+    assert duplicate_revision_count == 0
+    assert await _get_feed_audit_revision(db_pool, feed["id"]) == 3
+    assert {
+        _decode_json_object(row["after_values"])["name"]
+        for row in update_events
+    } == {name for name, _tags in update_inputs}
+
+
+# -- Tests: audited runtime lifecycle events -------------------------
+
+
+async def test_first_abnormal_failure_writes_failure_reported_audit_event(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """A new failing status/reason combination emits feed.failure_reported."""
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool,
+        "Runtime Failure Audit",
+        status="active",
+        worker_id=worker,
+    )
+
+    result = await _report_feed_failure_for_test(
+        store,
+        db_pool,
+        feed_id,
+        worker,
+        status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+        reason="provider timeout",
+    )
+
+    audit_rows = await _fetch_audit_events(db_pool, feed_id)
+    assert result == "failing"
+    assert len(audit_rows) == 1
+    audit_row = audit_rows[0]
+    before_values = _decode_json_object(audit_row["before_values"])
+    after_values = _decode_json_object(audit_row["after_values"])
+    assert audit_row["action"] == "feed.failure_reported"
+    assert audit_row["actor_id"] == _TEST_ACTOR_ID
+    assert audit_row["feed_revision"] == 1
+    assert before_values["status"] == "active"
+    assert before_values["failure_count"] == 0
+    assert after_values["status"] == "failing"
+    assert after_values["failure_count"] == 1
+    assert after_values["status_reason"] == "source_unreachable"
+    assert after_values["status_reason_detail"] == "provider timeout"
+
+
+async def test_same_status_reason_failure_retry_writes_no_audit_event(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """Repeating the same failing status/reason combination stays quiet."""
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool,
+        "Runtime Same Failure Audit",
+        status="active",
+        worker_id=worker,
+        failure_count=1,
+    )
+    await db_pool.execute(
+        "UPDATE feeds SET status_reason = $1 WHERE id = $2",
+        FeedStatusReason.SOURCE_UNREACHABLE.value,
+        feed_id,
+    )
+
+    result = await _report_feed_failure_for_test(
+        store,
+        db_pool,
+        feed_id,
+        worker,
+        status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+        reason="new detail",
+    )
+
+    assert result == "failing"
+    assert await _fetch_audit_events(db_pool, feed_id) == []
+
+
+async def test_threshold_crossing_writes_quarantined_audit_event(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """Crossing the failure threshold emits feed.quarantined."""
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool,
+        "Runtime Quarantine Audit",
+        status="active",
+        worker_id=worker,
+        failure_count=4,
+    )
+    await db_pool.execute(
+        "UPDATE feeds SET status_reason = $1 WHERE id = $2",
+        FeedStatusReason.SOURCE_UNREACHABLE.value,
+        feed_id,
+    )
+
+    result = await _report_feed_failure_for_test(
+        store,
+        db_pool,
+        feed_id,
+        worker,
+        status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+        reason="fifth failure",
+    )
+
+    audit_rows = await _fetch_audit_events(db_pool, feed_id)
+    assert result == "quarantined"
+    assert len(audit_rows) == 1
+    audit_row = audit_rows[0]
+    after_values = _decode_json_object(audit_row["after_values"])
+    assert audit_row["action"] == "feed.quarantined"
+    assert audit_row["feed_revision"] == 1
+    assert after_values["status"] == "quarantined"
+    assert after_values["failure_count"] == 5
+    assert after_values["status_reason"] == "source_unreachable"
+
+
+async def test_successful_progress_writes_recovered_audit_event(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """Successful progress from an abnormal status/reason emits feed.recovered."""
+    worker = uuid.uuid4()
+    feed_id = await _insert_feed(
+        db_pool,
+        "Runtime Recovery Audit",
+        status="active",
+        worker_id=worker,
+        failure_count=2,
+    )
+    await db_pool.execute(
+        "UPDATE feeds SET status_reason = $1 WHERE id = $2",
+        FeedStatusReason.SOURCE_UNREACHABLE.value,
+        feed_id,
+    )
+
+    result = await store.update_feed_progress(
+        feed_id,
+        worker,
+        "gs://bucket/recovered.flac",
+        0,
+        None,
+        actor_id=_TEST_ACTOR_ID,
+    )
+
+    audit_rows = await _fetch_audit_events(db_pool, feed_id)
+    assert result is True
+    assert len(audit_rows) == 1
+    audit_row = audit_rows[0]
+    before_values = _decode_json_object(audit_row["before_values"])
+    after_values = _decode_json_object(audit_row["after_values"])
+    assert audit_row["action"] == "feed.recovered"
+    assert audit_row["feed_revision"] == 1
+    assert before_values["failure_count"] == 2
+    assert before_values["status_reason"] == "source_unreachable"
+    assert after_values["status"] == "active"
+    assert after_values["failure_count"] == 0
+    assert after_values["status_reason"] is None
 
 
 # -- Tests: get_feed --------------------------------------------------
@@ -1925,12 +2392,14 @@ async def test_list_feeds_filter_by_tags(store: FeedStore) -> None:
         source_type="bcfy_feeds",
         source_feed_id="src_a",
         tags=[{"key": "region", "value": "West"}],
+        actor_id=_TEST_ACTOR_ID,
     )
     feed_b = await store.create_feed(
         name="Feed B",
         source_type="bcfy_feeds",
         source_feed_id="src_b",
         tags=[{"key": "region", "value": "East"}],
+        actor_id=_TEST_ACTOR_ID,
     )
 
     # Filter matching tag
@@ -1952,6 +2421,45 @@ async def test_list_feeds_filter_by_tags(store: FeedStore) -> None:
         tags=[{"key": "region", "value": "South"}]
     )
     assert len(result_none.feeds) == 0
+
+
+# -- Tests: deactivate_feed -------------------------------------------
+
+
+async def test_deactivate_feed_succeeds(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """deactivate_feed persists state and one feed.deactivated audit row."""
+    feed_id = await _insert_feed(
+        db_pool,
+        "Deactivate Audit Feed",
+        status="active",
+        source_feed_id=f"deactivate-{uuid.uuid4()}",
+    )
+
+    result = await store.deactivate_feed(feed_id, actor_id=_TEST_ACTOR_ID)
+
+    assert result is True
+    row = await _get_feed_status(db_pool, feed_id)
+    audit_rows = await _fetch_audit_events(db_pool, feed_id)
+    assert row["status"] == "deactivated"
+    assert len(audit_rows) == 1
+    audit_row = audit_rows[0]
+    before_values = _decode_json_object(audit_row["before_values"])
+    after_values = _decode_json_object(audit_row["after_values"])
+    assert audit_row["action"] == "feed.deactivated"
+    assert audit_row["actor_id"] == _TEST_ACTOR_ID
+    assert audit_row["feed_revision"] == 1
+    assert before_values["status"] == "active"
+    assert after_values["status"] == "deactivated"
+    source_feed_id = cast(
+        "str", before_values["feed_properties.source_feed_id"]
+    )
+    assert source_feed_id.startswith("deactivate-")
+    assert after_values["feed_properties.tags"] == []
+    assert "worker_id" not in before_values
+    assert "last_heartbeat" not in after_values
 
 
 # -- Tests: delete_feed ------------------------------------------------
@@ -1997,7 +2505,7 @@ async def test_delete_feed_succeeds(
     )
 
     # 5. Perform the delete_feed call
-    result = await store.delete_feed(feed_id)
+    result = await store.delete_feed(feed_id, actor_id=_TEST_ACTOR_ID)
 
     assert result is True
 
@@ -2029,10 +2537,30 @@ async def test_delete_feed_succeeds(
     )
     assert row_annots is None
 
+    # 11. Verify delete audit history survives hard delete.
+    audit_rows = await _fetch_audit_events(db_pool, feed_id)
+    assert len(audit_rows) == 1
+    audit_row = audit_rows[0]
+    before_values = _decode_json_object(audit_row["before_values"])
+    after_values = _decode_json_object(audit_row["after_values"])
+    assert audit_row["action"] == "feed.deleted"
+    assert audit_row["actor_id"] == _TEST_ACTOR_ID
+    assert audit_row["feed_revision"] == 1
+    assert before_values["id"] == str(feed_id)
+    assert before_values["name"] == "Hard Delete Test Feed"
+    source_feed_id = cast(
+        "str", before_values["feed_properties.source_feed_id"]
+    )
+    assert source_feed_id.startswith("src_")
+    assert before_values["feed_properties.tags"] == []
+    assert after_values == {}
+    assert "worker_id" not in before_values
+    assert "last_heartbeat" not in before_values
+
 
 async def test_delete_feed_returns_false_if_not_found(store: FeedStore) -> None:
     """delete_feed returns False for a non-existent feed ID."""
-    result = await store.delete_feed(uuid.uuid4())
+    result = await store.delete_feed(uuid.uuid4(), actor_id=_TEST_ACTOR_ID)
     assert result is False
 
 
@@ -2053,7 +2581,7 @@ async def test_reset_feed_succeeds(
         last_heartbeat_age_seconds=1000,
     )
 
-    feed = await store.reset_feed(feed_id)
+    feed = await store.reset_feed(feed_id, actor_id=_TEST_ACTOR_ID)
 
     assert feed is not None
     assert feed["id"] == feed_id
@@ -2066,6 +2594,22 @@ async def test_reset_feed_succeeds(
     assert row["status"] == "unclaimed"
     assert row["failure_count"] == 0
     assert row["worker_id"] is None
+
+    audit_rows = await _fetch_audit_events(db_pool, feed_id)
+    assert len(audit_rows) == 1
+    audit_row = audit_rows[0]
+    before_values = _decode_json_object(audit_row["before_values"])
+    after_values = _decode_json_object(audit_row["after_values"])
+    assert audit_row["action"] == "feed.reset"
+    assert audit_row["actor_id"] == _TEST_ACTOR_ID
+    assert audit_row["feed_revision"] == 1
+    assert before_values["status"] == "quarantined"
+    assert before_values["failure_count"] == 5
+    assert after_values["status"] == "unclaimed"
+    assert after_values["failure_count"] == 0
+    assert after_values["feed_properties.tags"] == []
+    assert "worker_id" not in before_values
+    assert "last_heartbeat" not in after_values
 
 
 async def test_reset_clears_stale_status_reason_with_clear_timestamp_and_raw_quarantine_reason(
@@ -2092,7 +2636,7 @@ async def test_reset_clears_stale_status_reason_with_clear_timestamp_and_raw_qua
         feed_id,
     )
 
-    feed = await store.reset_feed(feed_id)
+    feed = await store.reset_feed(feed_id, actor_id=_TEST_ACTOR_ID)
 
     assert feed is not None
     assert feed["status"] == "unclaimed"
@@ -2104,6 +2648,50 @@ async def test_reset_clears_stale_status_reason_with_clear_timestamp_and_raw_qua
     assert status_reason_updated_at > old_reason_ts
     row = await _get_feed_diagnostics(db_pool, feed_id)
     assert row["quarantine_reason"] is None
+
+
+async def test_reset_clears_status_reason_detail_in_row_and_audit(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """Reset clears stale diagnostic detail from state and audit snapshot."""
+    feed_id = await _insert_feed(
+        db_pool,
+        "Detail Reset Feed",
+        status="quarantined",
+        failure_count=5,
+    )
+    await db_pool.execute(
+        "UPDATE feeds SET status_reason = $1,"
+        " status_reason_detail = $2 WHERE id = $3",
+        FeedStatusReason.SOURCE_UNREACHABLE.value,
+        "provider timeout from previous quarantine",
+        feed_id,
+    )
+
+    feed = await store.reset_feed(feed_id, actor_id=_TEST_ACTOR_ID)
+
+    assert feed is not None
+    assert feed["status_reason"] is None
+    row = await db_pool.fetchrow(
+        "SELECT status_reason, status_reason_detail FROM feeds WHERE id = $1",
+        feed_id,
+    )
+    assert row is not None
+    assert row["status_reason"] is None
+    assert row["status_reason_detail"] is None
+
+    audit_rows = await _fetch_audit_events(db_pool, feed_id)
+    assert len(audit_rows) == 1
+    audit_row = audit_rows[0]
+    before_values = _decode_json_object(audit_row["before_values"])
+    after_values = _decode_json_object(audit_row["after_values"])
+    assert audit_row["action"] == "feed.reset"
+    assert (
+        before_values["status_reason_detail"]
+        == "provider timeout from previous quarantine"
+    )
+    assert after_values["status_reason_detail"] is None
 
 
 async def test_reset_with_null_status_reason_leaves_reason_timestamp_unchanged(
@@ -2126,7 +2714,7 @@ async def test_reset_with_null_status_reason_leaves_reason_timestamp_unchanged(
         feed_id,
     )
 
-    feed = await store.reset_feed(feed_id)
+    feed = await store.reset_feed(feed_id, actor_id=_TEST_ACTOR_ID)
 
     assert feed is not None
     assert feed["status_reason"] is None
@@ -2136,5 +2724,5 @@ async def test_reset_with_null_status_reason_leaves_reason_timestamp_unchanged(
 
 async def test_reset_feed_returns_none_if_not_found(store: FeedStore) -> None:
     """reset_feed returns None for non-existent ID."""
-    result = await store.reset_feed(uuid.uuid4())
+    result = await store.reset_feed(uuid.uuid4(), actor_id=_TEST_ACTOR_ID)
     assert result is None

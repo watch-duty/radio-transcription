@@ -117,6 +117,34 @@ record existed and contained empty text.
 A configured upstream audio source that the ingestion system may claim, poll,
 stream, and process. A feed has one lifecycle status at a time.
 
+### Current Feed State
+
+The authoritative current row for a feed in `feeds`. Current feed state answers
+what the system should do with the feed now, including lifecycle status,
+failure counters, retry timing, and current diagnostic fields.
+
+### Audit History
+
+The append-only history of meaningful feed mutations in `feed_audit_events`.
+Audit history answers what changed over time and must remain useful even when a
+current `feeds` row is later hard-deleted.
+
+### Feed Audit Event
+
+A durable domain event for a meaningful feed mutation, including action,
+`actor_id`, event time, feed-local `feed_revision`, and allowlisted
+before/after values. The feed audit event schema and storage writers define the
+v1 contract in this PR; delivery, timeline APIs, and broader operational
+lifecycle work remain separate follow-up concerns.
+
+### Actor ID
+
+The required namespaced causal actor string on each Feed Audit Event. An
+`actor_id` identifies the human admin or service/runtime component that caused
+the event. The current v1 accepted forms are `user:google:<sub>` for trusted
+admin-originated writes and `service:<name>` for service/runtime-originated
+writes.
+
 ### Leased Feed
 
 A feed currently owned by one worker through a fencing token. A leased feed can
@@ -248,6 +276,13 @@ promotes it to a more precise operator-actionable failure.
 
 The current canonical abnormal-condition label for a feed. It is visible to
 operators and is the v1 routing key for failure policy decisions.
+
+### Status Reason Detail
+
+The bounded explanatory text stored as `status_reason_detail` for current feed
+state and Feed Audit Events. It gives diagnostic context, does not drive
+control flow, and is distinct from the legacy `quarantine_reason`
+compatibility alias.
 
 ### Status Reason Owner
 
