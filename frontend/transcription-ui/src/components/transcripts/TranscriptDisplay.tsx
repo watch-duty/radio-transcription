@@ -11,6 +11,15 @@ import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSeg
 import { getRelativeTimeString } from '../../utils/timeUtils';
 import TranscriptRow from './TranscriptRow';
 
+// Start loading the next page a few rows before the user reaches the very edge
+// so it's ready by the time they get there. Rows are variable height, so this
+// converts a row count to an approximate pixel threshold. `atTopThreshold`
+// brings the "load newer" trigger forward; `increaseViewportBy` renders rows
+// past the viewport, which makes `endReached` (load older) fire that bit early.
+const PREFETCH_ROW_COUNT = 5;
+const ESTIMATED_ROW_HEIGHT_PX = 96;
+const PREFETCH_THRESHOLD_PX = PREFETCH_ROW_COUNT * ESTIMATED_ROW_HEIGHT_PX;
+
 export interface TranscriptDisplayProps {
   ref?: React.Ref<VirtuosoHandle>;
   audioSegments: RenderableAudioSegment[];
@@ -77,6 +86,8 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
         ref={ref}
         firstItemIndex={firstItemIndex}
         groupCounts={groupCounts}
+        atTopThreshold={PREFETCH_THRESHOLD_PX}
+        increaseViewportBy={PREFETCH_THRESHOLD_PX}
         atTopStateChange={(atTop) => setIsViewAtTopOfAudioSegments(atTop)}
         endReached={fetchOlderAudioSegments}
         groupContent={(index) => {
