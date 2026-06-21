@@ -129,7 +129,7 @@ export function TranscriptView({
   // Tracks whether the user has scrolled away from the top at least once, so we
   // only auto-load newer segments when they deliberately scroll back up to the
   // top (not on the initial render, which starts at the top).
-  const hasLeftTop = useRef(false);
+  const hasScrolledAwayFromTop = useRef(false);
 
   // Virtuoso scroll-anchoring for prepended (newer) segments. When a newer load
   // is triggered we remember the id of the current top item; once the prepend
@@ -589,8 +589,8 @@ export function TranscriptView({
     (atTop: boolean) => {
       setIsViewAtTopOfAudioSegments(atTop);
       if (!atTop) {
-        hasLeftTop.current = true;
-      } else if (hasLeftTop.current) {
+        hasScrolledAwayFromTop.current = true;
+      } else if (hasScrolledAwayFromTop.current) {
         // Remember the current top item so we can preserve the scroll position
         // once the newer segments are prepended above it. Read from the ref so
         // this callback stays stable across data updates.
@@ -629,7 +629,7 @@ export function TranscriptView({
   useEffect(() => {
     setFirstItemIndex(VIRTUOSO_START_INDEX);
     newerLoadAnchorId.current = null;
-    hasLeftTop.current = false;
+    hasScrolledAwayFromTop.current = false;
   }, [searchedFeedId, searchedTimestamp, alertFilter]);
 
   const handleFilterByDateTime = (date: Date | null) => {
@@ -656,7 +656,7 @@ export function TranscriptView({
       }, 100);
       hasScrolledToTarget.current = false;
     }
-    hasLeftTop.current = false;
+    hasScrolledAwayFromTop.current = false;
   };
 
   const handleFeedSelect = (feedId: string) => {
