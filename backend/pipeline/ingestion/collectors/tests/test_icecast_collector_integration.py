@@ -275,6 +275,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 gcs_path,
                 feed["fencing_token"],
                 capture_chunk.chunk_end_time,
+                actor_id="service:collector-runtime",
             )
             self.assertTrue(ok)
             last_chunk_ts = capture_chunk.chunk_end_time
@@ -338,6 +339,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 gcs_path,
                 feed["fencing_token"],
                 capture_chunk.chunk_end_time,
+                actor_id="service:collector-runtime",
             )
             gcs_paths.append(gcs_path)
             chunk_timestamps.append(capture_chunk.chunk_end_time)
@@ -400,6 +402,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 gcs_path,
                 feed["fencing_token"],
                 capture_chunk.chunk_end_time,
+                actor_id="service:collector-runtime",
             )
             gcs_paths.append(gcs_path)
             last_chunk_ts = capture_chunk.chunk_end_time
@@ -457,6 +460,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             feed["id"],
             self.worker_id,
             feed["fencing_token"],
+            actor_id="service:collector-runtime",
             reason=str(ctx.exception),
             status_reason=ctx.exception.status_reason,
         )

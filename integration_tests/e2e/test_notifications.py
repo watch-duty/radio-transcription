@@ -18,6 +18,7 @@ from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
 from integration_tests.utils import assert_eventually
 
 FEEDS_API_HOST = os.environ.get("FEEDS_API_HOST", "localhost:8089")
+_TEST_ACTOR_HEADERS = {"X-WD-Actor-Id": "user:google:e2e-admin-sub"}
 
 
 @pytest.fixture
@@ -44,7 +45,12 @@ def test_feed_with_tags() -> Generator[str]:
     }
 
     url = f"http://{FEEDS_API_HOST}/v1/feeds"
-    response = requests.post(url, json=payload, timeout=10)
+    response = requests.post(
+        url,
+        json=payload,
+        headers=_TEST_ACTOR_HEADERS,
+        timeout=10,
+    )
     response.raise_for_status()
 
     feed_id = response.json().get("id", "")
@@ -55,7 +61,11 @@ def test_feed_with_tags() -> Generator[str]:
     finally:
         # Deactivate feed via API
         del_url = f"http://{FEEDS_API_HOST}/v1/feeds/{feed_id}/deactivate"
-        del_response = requests.post(del_url, timeout=10)
+        del_response = requests.post(
+            del_url,
+            headers=_TEST_ACTOR_HEADERS,
+            timeout=10,
+        )
         del_response.raise_for_status()
 
 

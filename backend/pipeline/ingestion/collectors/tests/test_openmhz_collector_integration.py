@@ -274,6 +274,7 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 gcs_path,
                 feed["fencing_token"],
                 chunk.chunk_start_time,
+                actor_id="service:collector-runtime",
             )
             self.assertTrue(ok)
             chunks_uploaded.append((chunk.audio_bytes, gcs_path))
@@ -330,6 +331,7 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 gcs_path,
                 feed["fencing_token"],
                 chunk.chunk_start_time,
+                actor_id="service:collector-runtime",
             )
             gcs_paths.append(gcs_path)
             seq += 1
@@ -394,6 +396,7 @@ class TestOpenmhzCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 gcs_path,
                 feed["fencing_token"],
                 chunk.chunk_start_time,
+                actor_id="service:collector-runtime",
             )
             gcs_paths.append(gcs_path)
             seq += 1
