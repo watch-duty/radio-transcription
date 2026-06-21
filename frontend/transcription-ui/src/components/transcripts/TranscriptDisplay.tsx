@@ -14,6 +14,8 @@ import TranscriptRow from './TranscriptRow';
 export interface TranscriptDisplayProps {
   ref?: React.Ref<VirtuosoHandle>;
   audioSegments: RenderableAudioSegment[];
+  // Virtuoso scroll-anchoring offset for prepended (newer) segments.
+  firstItemIndex: number;
   groupCounts: number[];
   groupTitles: string[];
   setIsViewAtTopOfAudioSegments: (atTop: boolean) => void;
@@ -39,6 +41,7 @@ export interface TranscriptDisplayProps {
 export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
   ref,
   audioSegments,
+  firstItemIndex,
   groupCounts,
   groupTitles,
   setIsViewAtTopOfAudioSegments,
@@ -72,6 +75,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
     >
       <GroupedVirtuoso
         ref={ref}
+        firstItemIndex={firstItemIndex}
         groupCounts={groupCounts}
         atTopStateChange={(atTop) => setIsViewAtTopOfAudioSegments(atTop)}
         endReached={fetchOlderAudioSegments}
@@ -153,12 +157,16 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
           );
         }}
         itemContent={(index) => {
-          const audioSegment = audioSegments[index];
+          // Virtuoso reports the absolute index (firstItemIndex + position);
+          // convert it back to the position within audioSegments.
+          const position = index - firstItemIndex;
+          const audioSegment = audioSegments[position];
+          if (!audioSegment) return null;
           return (
             <TranscriptRow
               key={audioSegment.id}
               audioSegment={audioSegment}
-              index={index}
+              index={position}
               totalAudioSegments={audioSegments.length}
               ruleIdToNameMap={ruleIdToNameMap}
               rulesLoading={rulesLoading}
@@ -176,7 +184,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
               }
               redactTranscripts={redactTranscripts}
               onRowClick={onRowClick}
-              isTopAudioSegmentRow={index === 0 && !hasNewerAudioSegments}
+              isTopAudioSegmentRow={position === 0 && !hasNewerAudioSegments}
             />
           );
         }}

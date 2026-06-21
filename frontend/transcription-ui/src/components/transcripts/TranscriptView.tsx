@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useSearchParams } from 'react-router';
 import type { VirtuosoHandle } from 'react-virtuoso';
 
@@ -36,6 +43,12 @@ interface TranscriptViewProps {
 
 const DEFAULT_REFRESH_INTERVAL = 10000;
 const FEED_POLLING_INTERVAL_MS = 15000; // 15 seconds
+
+// Base index for Virtuoso's `firstItemIndex`. When newer segments are prepended
+// to the top of the list we decrease this value by the number of prepended
+// items, which lets Virtuoso preserve the user's scroll position instead of
+// jumping to the top. Starts high so it stays positive across many prepends.
+const VIRTUOSO_START_INDEX = 1_000_000;
 
 export function TranscriptView({
   triggerSnackbar,
@@ -103,6 +116,15 @@ export function TranscriptView({
   // only auto-load newer segments when they deliberately scroll back up to the
   // top (not on the initial render, which starts at the top).
   const hasLeftTop = useRef(false);
+
+  // Virtuoso scroll-anchoring for prepended (newer) segments. When a newer load
+  // is triggered we remember the id of the current top item; once the prepend
+  // lands we lower firstItemIndex by however many items appeared above it, so
+  // the scroll position stays put. Only newer loads anchor this way — live
+  // polling intentionally leaves firstItemIndex alone so new items show at top.
+  const [firstItemIndex, setFirstItemIndex] = useState(VIRTUOSO_START_INDEX);
+  const newerLoadAnchorId = useRef<string | null>(null);
+  const wasFetchingNewer = useRef(false);
 
   const currentAudio = useRef<Howl>(null);
   const [playbackEndedForId, setPlaybackEndedForId] = useState<string | null>(
@@ -559,11 +581,45 @@ export function TranscriptView({
       if (!atTop) {
         hasLeftTop.current = true;
       } else if (hasLeftTop.current) {
+        // Remember the current top item so we can preserve the scroll position
+        // once the newer segments are prepended above it.
+        newerLoadAnchorId.current = audioSegments[0]?.id ?? null;
         fetchNewerAudioSegments();
       }
     },
-    [fetchNewerAudioSegments]
+    [fetchNewerAudioSegments, audioSegments]
   );
+
+  // Once a newer load settles, lower firstItemIndex by the number of items that
+  // were prepended above the anchored top item, keeping the scroll position
+  // stable. react-query updates the data and clears isFetching in the same
+  // commit, so by the time fetching flips to false audioSegments is current.
+  // Runs before paint so the corrected offset is applied without a visible jump.
+  useLayoutEffect(() => {
+    const justSettled =
+      wasFetchingNewer.current && !isFetchingNewerAudioSegments;
+    wasFetchingNewer.current = isFetchingNewerAudioSegments;
+    if (!justSettled) return;
+
+    const anchorId = newerLoadAnchorId.current;
+    newerLoadAnchorId.current = null;
+    if (!anchorId) return;
+
+    const prependedCount = audioSegments.findIndex(
+      (s) => s.id === anchorId || s.bundledSegmentIds?.includes(anchorId)
+    );
+    if (prependedCount > 0) {
+      setFirstItemIndex((prev) => prev - prependedCount);
+    }
+  }, [isFetchingNewerAudioSegments, audioSegments]);
+
+  // A different feed / timestamp / alert filter replaces the list wholesale
+  // rather than prepending, so reset the anchoring baseline.
+  useEffect(() => {
+    setFirstItemIndex(VIRTUOSO_START_INDEX);
+    newerLoadAnchorId.current = null;
+    hasLeftTop.current = false;
+  }, [searchedFeedId, searchedTimestamp, alertFilter]);
 
   const handleFilterByDateTime = (date: Date | null) => {
     setSearchedTimestamp(date);
@@ -715,6 +771,7 @@ export function TranscriptView({
           <TranscriptDisplay
             ref={virtuosoRef}
             audioSegments={audioSegments}
+            firstItemIndex={firstItemIndex}
             groupCounts={groupCounts}
             groupTitles={groupTitles}
             setIsViewAtTopOfAudioSegments={handleAtTopStateChange}

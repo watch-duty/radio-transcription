@@ -70,6 +70,7 @@ describe('TranscriptDisplay', () => {
         <MemoryRouter>
           <TranscriptDisplay
             audioSegments={mockAudioSegments}
+            firstItemIndex={0}
             groupCounts={[1]}
             groupTitles={['Friday, April 10, 2026']}
             setIsViewAtTopOfAudioSegments={mockSetTop}
@@ -108,6 +109,7 @@ describe('TranscriptDisplay', () => {
         <MemoryRouter>
           <TranscriptDisplay
             audioSegments={mockAudioSegments}
+            firstItemIndex={0}
             groupCounts={[1]}
             groupTitles={['Friday, April 10, 2026']}
             setIsViewAtTopOfAudioSegments={vi.fn()}
@@ -143,6 +145,7 @@ describe('TranscriptDisplay', () => {
         <MemoryRouter>
           <TranscriptDisplay
             audioSegments={mockAudioSegments}
+            firstItemIndex={0}
             groupCounts={[1]}
             groupTitles={['Friday, April 10, 2026']}
             setIsViewAtTopOfAudioSegments={vi.fn()}
@@ -178,6 +181,7 @@ describe('TranscriptDisplay', () => {
         <MemoryRouter>
           <TranscriptDisplay
             audioSegments={mockAudioSegments}
+            firstItemIndex={0}
             groupCounts={[1]}
             groupTitles={['Friday, April 10, 2026']}
             setIsViewAtTopOfAudioSegments={vi.fn()}
@@ -219,6 +223,7 @@ describe('TranscriptDisplay', () => {
         <MemoryRouter>
           <TranscriptDisplay
             audioSegments={mockAudioSegments}
+            firstItemIndex={0}
             groupCounts={[1]}
             groupTitles={['Friday, April 10, 2026']}
             setIsViewAtTopOfAudioSegments={vi.fn()}
@@ -259,6 +264,7 @@ describe('TranscriptDisplay', () => {
         <MemoryRouter>
           <TranscriptDisplay
             audioSegments={mockAudioSegments}
+            firstItemIndex={0}
             groupCounts={[1]}
             groupTitles={['Friday, April 10, 2026']}
             setIsViewAtTopOfAudioSegments={vi.fn()}
@@ -296,6 +302,7 @@ describe('TranscriptDisplay', () => {
         <MemoryRouter>
           <TranscriptDisplay
             audioSegments={mockAudioSegments}
+            firstItemIndex={0}
             groupCounts={[1]}
             groupTitles={['Friday, April 10, 2026']}
             setIsViewAtTopOfAudioSegments={vi.fn()}
@@ -332,6 +339,7 @@ describe('TranscriptDisplay', () => {
         <MemoryRouter>
           <TranscriptDisplay
             audioSegments={mockAudioSegments}
+            firstItemIndex={0}
             groupCounts={[1]}
             groupTitles={['Friday, April 10, 2026']}
             setIsViewAtTopOfAudioSegments={vi.fn()}
