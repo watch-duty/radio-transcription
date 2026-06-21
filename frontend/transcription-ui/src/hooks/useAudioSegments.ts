@@ -125,7 +125,8 @@ export function useAudioSegments({
   }, [fetchNextPage, hasOlderAudioSegments, isFetchingOlderAudioSegments]);
 
   const loadNewerAudioSegments = useCallback(() => {
-    if (hasNewerAudioSegments && !isFetchingNewerAudioSegments) fetchPreviousPage();
+    if (hasNewerAudioSegments && !isFetchingNewerAudioSegments)
+      fetchPreviousPage();
   }, [fetchPreviousPage, hasNewerAudioSegments, isFetchingNewerAudioSegments]);
 
   const rawAudioSegments = useMemo(() => {

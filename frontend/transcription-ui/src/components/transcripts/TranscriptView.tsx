@@ -59,7 +59,9 @@ function matchesSegmentId(
   segment: RenderableAudioSegment,
   id: string
 ): boolean {
-  return segment.id === id || (segment.bundledSegmentIds?.includes(id) ?? false);
+  return (
+    segment.id === id || (segment.bundledSegmentIds?.includes(id) ?? false)
+  );
 }
 
 export function TranscriptView({

@@ -76,7 +76,6 @@ describe('TranscriptDisplay', () => {
             setIsViewAtTopOfAudioSegments={mockSetTop}
             hasNewerAudioSegments={false}
             isFetchingNewerAudioSegments={false}
-
             hasOlderAudioSegments={false}
             isFetchingOlderAudioSegments={false}
             fetchOlderAudioSegments={vi.fn()}
@@ -187,7 +186,6 @@ describe('TranscriptDisplay', () => {
             setIsViewAtTopOfAudioSegments={vi.fn()}
             hasNewerAudioSegments={false}
             isFetchingNewerAudioSegments={false}
-
             hasOlderAudioSegments={false}
             isFetchingOlderAudioSegments={false}
             fetchOlderAudioSegments={vi.fn()}
@@ -229,7 +227,6 @@ describe('TranscriptDisplay', () => {
             setIsViewAtTopOfAudioSegments={vi.fn()}
             hasNewerAudioSegments={false}
             isFetchingNewerAudioSegments={false}
-
             hasOlderAudioSegments={false}
             isFetchingOlderAudioSegments={false}
             fetchOlderAudioSegments={vi.fn()}
@@ -270,7 +267,6 @@ describe('TranscriptDisplay', () => {
             setIsViewAtTopOfAudioSegments={vi.fn()}
             hasNewerAudioSegments={false}
             isFetchingNewerAudioSegments={false}
-
             hasOlderAudioSegments={false}
             isFetchingOlderAudioSegments={false}
             fetchOlderAudioSegments={vi.fn()}
@@ -308,7 +304,6 @@ describe('TranscriptDisplay', () => {
             setIsViewAtTopOfAudioSegments={vi.fn()}
             hasNewerAudioSegments={false}
             isFetchingNewerAudioSegments={false}
-
             hasOlderAudioSegments={false}
             isFetchingOlderAudioSegments={false}
             fetchOlderAudioSegments={vi.fn()}
@@ -345,7 +340,6 @@ describe('TranscriptDisplay', () => {
             setIsViewAtTopOfAudioSegments={vi.fn()}
             hasNewerAudioSegments={true}
             isFetchingNewerAudioSegments={false}
-
             hasOlderAudioSegments={false}
             isFetchingOlderAudioSegments={false}
             fetchOlderAudioSegments={vi.fn()}
