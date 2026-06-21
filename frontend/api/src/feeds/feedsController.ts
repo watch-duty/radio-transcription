@@ -34,6 +34,9 @@ import { AuthenticatedRequest } from '../authentication.js';
 import { FEEDS_STORE_API_URL } from '../config.js';
 import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
 
+const INTERNAL_ACTOR_ID_HEADER = 'X-WD-Actor-Id';
+const ADMIN_GOOGLE_ACTOR_PREFIX = 'user:google:';
+
 interface BaseFeedBackend {
   name: string;
   source_type: SourceType;
@@ -45,8 +48,8 @@ interface FeedBackend extends BaseFeedBackend {
   status: BackendFeedStatus;
   last_heartbeat: string | null;
   tags?: Tag[];
-  quarantine_reason: string | null;
   status_reason: BackendFeedStatusReason | null;
+  status_reason_detail: string | null;
 }
 
 interface FeedCreateBackend extends BaseFeedBackend {
@@ -68,7 +71,7 @@ export class ListFeedsQueryParams {
   order?: 'asc' | 'desc';
   sourceTypes?: string;
   statuses?: string;
-  // Tag strings must be in the format of {"key": "<val>", "value": "<val>"}
+  // Each tag string must be a JSON object or a JSON list.
   tags?: string[];
   name?: string;
 }
@@ -143,8 +146,8 @@ function convertFeedBackend(response: FeedBackend): Feed {
     substatus: response.status,
     lastHeartbeat: response.last_heartbeat ?? undefined,
     tags: response.tags,
-    quarantineReason: response.quarantine_reason ?? undefined,
     statusReason: convertFeedStatusReason(response.status_reason),
+    statusReasonDetail: response.status_reason_detail ?? undefined,
   };
 }
 
@@ -162,6 +165,52 @@ function convertFeedUpdate(update: FeedUpdate): FeedUpdateBackend {
     name: update.name,
     tags: update.tags,
   };
+}
+
+function getAdminActorId(request: AuthenticatedRequest): string {
+  if (!request.user?.isAdmin) {
+    throw new HttpError(403, 'Forbidden');
+  }
+
+  const rawSub = request.user.sub;
+  if (typeof rawSub !== 'string') {
+    throw new HttpError(403, 'Forbidden');
+  }
+
+  const sub = rawSub.trim();
+  if (!sub || /\s/.test(rawSub)) {
+    throw new HttpError(403, 'Forbidden');
+  }
+
+  return `${ADMIN_GOOGLE_ACTOR_PREFIX}${sub}`;
+}
+
+function getAdminActorHeaders(
+  request: AuthenticatedRequest
+): Record<string, string> {
+  return {
+    [INTERNAL_ACTOR_ID_HEADER]: getAdminActorId(request),
+  };
+}
+
+function appendNormalizedTags(
+  queryParams: URLSearchParams,
+  tags: string | string[] | undefined
+): void {
+  if (!tags) return;
+
+  const rawTags = Array.isArray(tags) ? tags : [tags];
+  if (rawTags.length === 0) return;
+
+  try {
+    const parsedTags = rawTags.flatMap((rawTag) => {
+      const parsed = JSON.parse(rawTag) as unknown;
+      return Array.isArray(parsed) ? parsed : [parsed];
+    });
+    queryParams.append('tags', JSON.stringify(parsedTags));
+  } catch {
+    throw new HttpError(400, 'tags must be valid JSON');
+  }
 }
 
 @Route('api/v1/feeds')
@@ -188,11 +237,7 @@ export class FeedsController extends Controller {
       if (query?.statuses) {
         queryParams.append('statuses', query.statuses);
       }
-      if (query?.tags) {
-        for (const tag of query.tags) {
-          queryParams.append('tags', tag);
-        }
-      }
+      appendNormalizedTags(queryParams, query?.tags);
       if (query?.name) {
         queryParams.append('name', query.name);
       }
@@ -216,6 +261,9 @@ export class FeedsController extends Controller {
             total: data.total,
           };
     } catch (error: unknown) {
+      if (error instanceof HttpError) {
+        throw error;
+      }
       const { status, message } = handleBackendError(error, 'fetching feeds');
       throw new HttpError(status, message);
     }
@@ -256,15 +304,14 @@ export class FeedsController extends Controller {
     @Request() request: AuthenticatedRequest,
     @Body() requestBody: FeedCreate
   ): Promise<Feed> {
-    if (!request.user?.isAdmin) {
-      throw new HttpError(403, 'Forbidden');
-    }
+    const actorHeaders = getAdminActorHeaders(request);
 
     try {
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       const response = await client.request<FeedBackend>({
         url: FEEDS_STORE_API_URL,
         method: 'POST',
+        headers: actorHeaders,
         data: convertFeedCreate(requestBody),
       });
       return convertFeedBackend(response.data);
@@ -290,15 +337,14 @@ export class FeedsController extends Controller {
     @Path() feedId: string,
     @Body() requestBody: FeedUpdate
   ): Promise<Feed> {
-    if (!request.user?.isAdmin) {
-      throw new HttpError(403, 'Forbidden');
-    }
+    const actorHeaders = getAdminActorHeaders(request);
 
     try {
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       const response = await client.request<FeedBackend>({
         url: `${FEEDS_STORE_API_URL}/${feedId}`,
         method: 'PUT',
+        headers: actorHeaders,
         data: convertFeedUpdate(requestBody),
       });
       return convertFeedBackend(response.data);
@@ -322,15 +368,14 @@ export class FeedsController extends Controller {
     @Path() feedId: string,
     @Request() request: AuthenticatedRequest
   ): Promise<Feed> {
-    if (!request.user?.isAdmin) {
-      throw new HttpError(403, 'Forbidden');
-    }
+    const actorHeaders = getAdminActorHeaders(request);
 
     const client = await getServiceClient(FEEDS_STORE_API_URL);
     try {
       const response = await client.request<FeedBackend>({
         url: `${FEEDS_STORE_API_URL}/${feedId}/reset`,
         method: 'POST',
+        headers: actorHeaders,
       });
       return convertFeedBackend(response.data);
     } catch (error: unknown) {
@@ -358,15 +403,14 @@ export class FeedsController extends Controller {
     @Path() feedId: string,
     @Request() request: AuthenticatedRequest
   ): Promise<void> {
-    if (!request.user?.isAdmin) {
-      throw new HttpError(403, 'Forbidden');
-    }
+    const actorHeaders = getAdminActorHeaders(request);
 
     const client = await getServiceClient(FEEDS_STORE_API_URL);
     try {
       await client.request({
         url: `${FEEDS_STORE_API_URL}/${feedId}/deactivate`,
         method: 'POST',
+        headers: actorHeaders,
       });
     } catch (error: unknown) {
       const { status, message } = handleBackendError(
@@ -393,15 +437,14 @@ export class FeedsController extends Controller {
     @Path() feedId: string,
     @Request() request: AuthenticatedRequest
   ): Promise<void> {
-    if (!request.user?.isAdmin) {
-      throw new HttpError(403, 'Forbidden');
-    }
+    const actorHeaders = getAdminActorHeaders(request);
 
     const client = await getServiceClient(FEEDS_STORE_API_URL);
     try {
       await client.request({
         url: `${FEEDS_STORE_API_URL}/${feedId}`,
         method: 'DELETE',
+        headers: actorHeaders,
       });
     } catch (error: unknown) {
       const { status, message } = handleBackendError(

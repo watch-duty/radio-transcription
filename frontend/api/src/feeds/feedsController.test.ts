@@ -1,9 +1,14 @@
+import { readFileSync } from 'node:fs';
+
 import type * as express from 'express';
 
 import { SourceType } from '@transcription/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { FeedsController } from './feedsController.js';
+import {
+  FeedsController,
+  type ListFeedsQueryParams,
+} from './feedsController.js';
 
 // Mock the config module
 vi.mock('../config.js', () => ({
@@ -25,10 +30,32 @@ vi.mock('google-auth-library', () => {
   };
 });
 
+async function expectHttpErrorStatus(
+  action: () => Promise<unknown>,
+  status: number,
+  message: RegExp
+) {
+  try {
+    await action();
+    throw new Error('Expected action to reject');
+  } catch (error) {
+    expect(error).toMatchObject({ status });
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(message);
+  }
+}
+
 describe('FeedsController', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
+
+  const adminSub = 'admin-sub-123';
+  const adminActorHeaders = {
+    'X-WD-Actor-Id': `user:google:${adminSub}`,
+  };
+  const requestWithUser = (principal: Record<string, unknown>) =>
+    ({ ['user']: principal }) as unknown as express.Request;
 
   const mockBackendFeed = {
     id: 'feed_123',
@@ -38,6 +65,7 @@ describe('FeedsController', () => {
     status: 'active',
     substatus: 'active',
     last_heartbeat: '2024-01-01T00:00:00Z',
+    status_reason_detail: 'provider timeout',
   };
 
   const expectedFrontendFeed = {
@@ -50,15 +78,12 @@ describe('FeedsController', () => {
     status: 'active',
     substatus: 'active',
     lastHeartbeat: '2024-01-01T00:00:00Z',
+    statusReasonDetail: 'provider timeout',
   };
 
-  const mockAdminRequest = {
-    user: { isAdmin: true },
-  } as unknown as express.Request;
+  const mockAdminRequest = requestWithUser({ isAdmin: true, sub: adminSub });
 
-  const mockNonAdminRequest = {
-    user: { isAdmin: false },
-  } as unknown as express.Request;
+  const mockNonAdminRequest = requestWithUser({ isAdmin: false });
 
   describe('listFeeds', () => {
     it('should return converted feeds on success', async () => {
@@ -133,16 +158,41 @@ describe('FeedsController', () => {
         sourceTypes: `${SourceType.OPENMHZ},${SourceType.ECHO}`,
         statuses: 'active',
         tags: [
-          '{ "key": "region", "value": "West" }',
-          '{ "key": "county", "value": "Fulton" }',
+          '{"key":"region","value":"West"}',
+          '{"key":"county","value":"Fulton"}',
         ],
-      };
+      } satisfies ListFeedsQueryParams;
       await controller.listFeeds(query);
 
       expect(mockRequest).toHaveBeenCalledWith({
-        url: 'http://feeds-api.example.com?limit=10&next_token=token_abc&order=asc&source_types=openmhz%2Cecho&statuses=active&tags=%7B+%22key%22%3A+%22region%22%2C+%22value%22%3A+%22West%22+%7D&tags=%7B+%22key%22%3A+%22county%22%2C+%22value%22%3A+%22Fulton%22+%7D',
+        url: 'http://feeds-api.example.com?limit=10&next_token=token_abc&order=asc&source_types=openmhz%2Cecho&statuses=active&tags=%5B%7B%22key%22%3A%22region%22%2C%22value%22%3A%22West%22%7D%2C%7B%22key%22%3A%22county%22%2C%22value%22%3A%22Fulton%22%7D%5D',
         method: 'GET',
       });
+    });
+
+    it('should forward a single JSON-list tags query parameter', async () => {
+      mockRequest.mockResolvedValueOnce({ data: [mockBackendFeed] });
+
+      const controller = new FeedsController();
+      await controller.listFeeds({
+        tags: ['[{"key":"region","value":"West"}]'],
+      });
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        url: 'http://feeds-api.example.com?tags=%5B%7B%22key%22%3A%22region%22%2C%22value%22%3A%22West%22%7D%5D',
+        method: 'GET',
+      });
+    });
+
+    it('should reject invalid tags JSON before backend request', async () => {
+      const controller = new FeedsController();
+
+      await expectHttpErrorStatus(
+        () => controller.listFeeds({ tags: ['not-json'] }),
+        400,
+        /tags must be valid JSON/
+      );
+      expect(mockRequest).not.toHaveBeenCalled();
     });
   });
 
@@ -186,6 +236,29 @@ describe('FeedsController', () => {
       const controller = new FeedsController();
       await expect(controller.getFeed('feed_123')).rejects.toThrow(/Not Found/);
     });
+
+    it('maps canonical status detail', async () => {
+      mockRequest.mockResolvedValueOnce({ data: mockBackendFeed });
+
+      const controller = new FeedsController();
+      const result = await controller.getFeed('feed_123');
+
+      expect(result.statusReasonDetail).toBe('provider timeout');
+    });
+  });
+
+  describe('OpenAPI feed contract', () => {
+    it('publishes canonical status detail and tag query shape', () => {
+      const openApiYaml = readFileSync(
+        new URL('../../openapi.yaml', import.meta.url),
+        'utf8'
+      );
+
+      expect(openApiYaml).toContain('statusReasonDetail:');
+      expect(openApiYaml).toMatch(
+        /ListFeedsQueryParams:[\s\S]*tags:\s*\n\s*items:\s*\n\s*type: string\s*\n\s*type: array/
+      );
+    });
   });
 
   describe('createFeed', () => {
@@ -204,6 +277,7 @@ describe('FeedsController', () => {
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://feeds-api.example.com',
         method: 'POST',
+        headers: adminActorHeaders,
         data: {
           name: 'Test Feed',
           source_type: 'openmhz',
@@ -235,6 +309,7 @@ describe('FeedsController', () => {
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://feeds-api.example.com',
         method: 'POST',
+        headers: adminActorHeaders,
         data: {
           name: 'Test Feed',
           source_type: 'openmhz',
@@ -256,6 +331,35 @@ describe('FeedsController', () => {
         controller.createFeed(mockNonAdminRequest, payload)
       ).rejects.toThrow(/Forbidden/);
     });
+
+    it.each([
+      ['missing', requestWithUser({ isAdmin: true })],
+      ['empty', requestWithUser({ isAdmin: true, sub: '' })],
+      ['whitespace-only', requestWithUser({ isAdmin: true, sub: '   ' })],
+      [
+        'containing whitespace',
+        requestWithUser({ isAdmin: true, sub: 'admin sub' }),
+      ],
+      [
+        'leading whitespace',
+        requestWithUser({ isAdmin: true, sub: ' admin-sub' }),
+      ],
+    ])(
+      'should throw 403 and skip downstream call when admin sub is %s',
+      async (_caseName, requestLike) => {
+        const controller = new FeedsController();
+        const payload = {
+          name: 'Test Feed',
+          sourceType: SourceType.OPENMHZ,
+          sourceFeedId: 'src_123',
+        };
+
+        await expect(
+          controller.createFeed(requestLike, payload)
+        ).rejects.toThrow(/Forbidden/);
+        expect(mockRequest).not.toHaveBeenCalled();
+      }
+    );
   });
 
   describe('updateFeed', () => {
@@ -276,6 +380,7 @@ describe('FeedsController', () => {
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://feeds-api.example.com/feed_123',
         method: 'PUT',
+        headers: adminActorHeaders,
         data: {
           name: 'Updated Feed',
           tags: undefined,
@@ -310,6 +415,7 @@ describe('FeedsController', () => {
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://feeds-api.example.com/feed_123',
         method: 'PUT',
+        headers: adminActorHeaders,
         data: {
           name: 'Updated Feed',
           tags: [{ key: 'county', value: 'Fulton' }],
@@ -362,9 +468,7 @@ describe('FeedsController', () => {
   });
 
   describe('resetFeed', () => {
-    const mockAdminRequest = {
-      user: { isAdmin: true },
-    } as unknown as express.Request;
+    const mockAdminRequest = requestWithUser({ isAdmin: true, sub: adminSub });
 
     it('should return converted feed on success', async () => {
       mockRequest.mockResolvedValueOnce({ data: mockBackendFeed });
@@ -376,13 +480,12 @@ describe('FeedsController', () => {
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://feeds-api.example.com/feed_123/reset',
         method: 'POST',
+        headers: adminActorHeaders,
       });
     });
 
-    it('should throw 401 unauthorized if the user is not an admin', async () => {
-      const mockNonAdminReq = {
-        user: { isAdmin: false },
-      } as unknown as express.Request;
+    it('should throw 403 forbidden if the user is not an admin', async () => {
+      const mockNonAdminReq = requestWithUser({ isAdmin: false });
       const controller = new FeedsController();
 
       await expect(
@@ -427,9 +530,7 @@ describe('FeedsController', () => {
   });
 
   describe('deactivateFeed', () => {
-    const mockAdminRequest = {
-      user: { isAdmin: true },
-    } as unknown as express.Request;
+    const mockAdminRequest = requestWithUser({ isAdmin: true, sub: adminSub });
 
     it('should return 204 on success', async () => {
       mockRequest.mockResolvedValueOnce({ status: 204 });
@@ -440,13 +541,12 @@ describe('FeedsController', () => {
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://feeds-api.example.com/feed_123/deactivate',
         method: 'POST',
+        headers: adminActorHeaders,
       });
     });
 
-    it('should throw 401 unauthorized if the user is not an admin', async () => {
-      const mockNonAdminReq = {
-        user: { isAdmin: false },
-      } as unknown as express.Request;
+    it('should throw 403 forbidden if the user is not an admin', async () => {
+      const mockNonAdminReq = requestWithUser({ isAdmin: false });
       const controller = new FeedsController();
 
       await expect(
@@ -469,9 +569,7 @@ describe('FeedsController', () => {
   });
 
   describe('deleteFeed', () => {
-    const mockAdminRequest = {
-      user: { isAdmin: true },
-    } as unknown as express.Request;
+    const mockAdminRequest = requestWithUser({ isAdmin: true, sub: adminSub });
 
     it('should return 204 on success', async () => {
       mockRequest.mockResolvedValueOnce({ status: 204 });
@@ -482,13 +580,12 @@ describe('FeedsController', () => {
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://feeds-api.example.com/feed_123',
         method: 'DELETE',
+        headers: adminActorHeaders,
       });
     });
 
-    it('should throw 401 unauthorized if the user is not an admin', async () => {
-      const mockNonAdminReq = {
-        user: { isAdmin: false },
-      } as unknown as express.Request;
+    it('should throw 403 forbidden if the user is not an admin', async () => {
+      const mockNonAdminReq = requestWithUser({ isAdmin: false });
       const controller = new FeedsController();
 
       await expect(
