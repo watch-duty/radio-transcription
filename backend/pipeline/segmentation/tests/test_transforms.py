@@ -2543,23 +2543,17 @@ class UploadRawSegmentFnTest(unittest.TestCase):
         expected_path = "gs://test-staging-bucket/raw_segments/test-feed/2026/06/20/segment-uuid-123.flac"
         self.assertEqual(uploaded_uri, expected_path)
 
-        # 6. Decode the uploaded FLAC bytes and verify the sliced, stitched samples!
+        # 6. Decode the uploaded FLAC bytes and verify the full, unmasked stitched samples!
         uploaded_bytes_captured.seek(0)
         stitched_samples, stitched_sr = sf.read(
             uploaded_bytes_captured, dtype="int16"
         )
 
         self.assertEqual(stitched_sr, sr)
-        # Expected duration is 8 seconds (8 * 16000 = 128,000 samples)
-        self.assertEqual(len(stitched_samples), 8000 * (sr // 1000))
+        # Expected duration is the full continuous range of 20 seconds (20 * 16000 = 320,000 samples)
+        self.assertEqual(len(stitched_samples), 20000 * (sr // 1000))
 
-        # Speech Segment 1: chunk_1 samples[2000ms:6000ms] -> samples_1[32000:96000]
-        # Speech Segment 2: chunk_2 samples[4000ms:8000ms] -> samples_2[64000:128000]
-        expected_stitched = np.concatenate(
-            [
-                samples_1[2000 * (sr // 1000) : 6000 * (sr // 1000)],
-                samples_2[4000 * (sr // 1000) : 8000 * (sr // 1000)],
-            ]
-        )
+        # We expect the full, unmasked audio: all of chunk_1 followed by all of chunk_2
+        expected_stitched = np.concatenate([samples_1, samples_2])
 
         np.testing.assert_array_equal(stitched_samples, expected_stitched)

@@ -494,7 +494,7 @@ class OrderedStitchAudioFn(beam.DoFn):
     """Stateful Apache Beam DoFn orchestrating out-of-order and stale windowing for continuous audio feeds.
 
     Enterprise Architectural Rationale: Why implement an explicit Jitter Buffer in Beam User State (`BagState`)
-    rather than simply enabling native GCP Pub/Sub Subscription Ordering Keys?!
+    rather than simply enabling native GCP Pub/Sub Subscription Ordering Keys?
     1. Total Autoscaler Head-of-Line Starvation: Pub/Sub subscription ordering strictly blocks delivering message #2
        until message #1 is fully computed and its official distributed network Acknowledgement (`Ack()`) is returned.
        In Beam, workers pull tens of thousands of messages in highly parallel, un-ordered work-stealing bundles.
