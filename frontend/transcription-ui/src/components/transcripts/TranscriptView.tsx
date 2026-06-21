@@ -25,7 +25,10 @@ import {
   type AlertFilter,
   useAudioSegments,
 } from '../../hooks/useAudioSegments';
-import { useConsolidatedAudioSegments } from '../../hooks/useConsolidatedAudioSegments';
+import {
+  type RenderableAudioSegment,
+  useConsolidatedAudioSegments,
+} from '../../hooks/useConsolidatedAudioSegments';
 import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
@@ -49,6 +52,15 @@ const FEED_POLLING_INTERVAL_MS = 15000; // 15 seconds
 // items, which lets Virtuoso preserve the user's scroll position instead of
 // jumping to the top. Starts high so it stays positive across many prepends.
 const VIRTUOSO_START_INDEX = 1_000_000;
+
+// Matches a consolidated segment by its own id or, for silence bundles, by any
+// of the raw segment ids it contains.
+function matchesSegmentId(
+  segment: RenderableAudioSegment,
+  id: string
+): boolean {
+  return segment.id === id || (segment.bundledSegmentIds?.includes(id) ?? false);
+}
 
 export function TranscriptView({
   triggerSnackbar,
@@ -324,10 +336,8 @@ export function TranscriptView({
     }
 
     // 2. If it was a Speech segment, or the last segment in a silence bundle, advance to the next newer audio segment row
-    const currentIndex = audioSegments.findIndex(
-      (t) =>
-        t.id === playbackEndedForId ||
-        t.bundledSegmentIds?.includes(playbackEndedForId)
+    const currentIndex = audioSegments.findIndex((t) =>
+      matchesSegmentId(t, playbackEndedForId)
     );
 
     if (currentIndex > 0) {
@@ -510,10 +520,8 @@ export function TranscriptView({
       audioSegments.length > 0 &&
       !hasScrolledToTarget.current
     ) {
-      const index = audioSegments.findIndex(
-        (t) =>
-          t.id === targetSegmentId ||
-          t.bundledSegmentIds?.includes(targetSegmentId)
+      const index = audioSegments.findIndex((t) =>
+        matchesSegmentId(t, targetSegmentId)
       );
       if (index !== -1) {
         const timer = setTimeout(() => {
@@ -530,8 +538,8 @@ export function TranscriptView({
   }, [isAudioSegmentsSuccess, targetSegmentId, audioSegments]);
 
   const handleClipClick = (segmentId: string) => {
-    const index = audioSegments.findIndex(
-      (t) => t.id === segmentId || t.bundledSegmentIds?.includes(segmentId)
+    const index = audioSegments.findIndex((t) =>
+      matchesSegmentId(t, segmentId)
     );
     if (index !== -1) {
       virtuosoRef.current?.scrollToIndex({
@@ -557,8 +565,8 @@ export function TranscriptView({
       return;
     }
 
-    const audioSegment = audioSegments.find(
-      (t) => t.id === targetId || t.bundledSegmentIds?.includes(targetId)
+    const audioSegment = audioSegments.find((t) =>
+      matchesSegmentId(t, targetId)
     );
     if (audioSegment && audioSegment.playbackAudioUri) {
       toggleAudio(audioSegment.id, audioSegment.playbackAudioUri);
@@ -582,12 +590,13 @@ export function TranscriptView({
         hasLeftTop.current = true;
       } else if (hasLeftTop.current) {
         // Remember the current top item so we can preserve the scroll position
-        // once the newer segments are prepended above it.
-        newerLoadAnchorId.current = audioSegments[0]?.id ?? null;
+        // once the newer segments are prepended above it. Read from the ref so
+        // this callback stays stable across data updates.
+        newerLoadAnchorId.current = audioSegmentsRef.current[0]?.id ?? null;
         fetchNewerAudioSegments();
       }
     },
-    [fetchNewerAudioSegments, audioSegments]
+    [fetchNewerAudioSegments]
   );
 
   // Once a newer load settles, lower firstItemIndex by the number of items that
@@ -605,8 +614,8 @@ export function TranscriptView({
     newerLoadAnchorId.current = null;
     if (!anchorId) return;
 
-    const prependedCount = audioSegments.findIndex(
-      (s) => s.id === anchorId || s.bundledSegmentIds?.includes(anchorId)
+    const prependedCount = audioSegments.findIndex((s) =>
+      matchesSegmentId(s, anchorId)
     );
     if (prependedCount > 0) {
       setFirstItemIndex((prev) => prev - prependedCount);
