@@ -24,9 +24,13 @@ segmentation pipeline uses a decoupled, hybrid metadata/physical-retrieval flow:
    unlimited worker threads.
 """
 
+import concurrent.futures
 import datetime
 import io
+import time
+import urllib.parse
 from collections.abc import Iterator
+from operator import attrgetter
 from typing import Any, override
 
 import apache_beam as beam
@@ -37,6 +41,7 @@ from apache_beam.metrics import Metrics
 from apache_beam.utils.shared import Shared
 from google.protobuf.duration_pb2 import Duration
 from google.protobuf.timestamp_pb2 import Timestamp
+from opentelemetry import context as otel_context
 from opentelemetry import trace
 
 from backend.pipeline.common.constants import (
@@ -60,6 +65,8 @@ from backend.pipeline.schema_types.segmented_audio_pb2 import (
 from backend.pipeline.segmentation import log_helper
 from backend.pipeline.segmentation.constants import (
     DEAD_LETTER_QUEUE_TAG,
+    GCS_DOWNLOAD_TIMEOUT_SEC,
+    SHARED_DOWNLOAD_POOL_SIZE,
 )
 from backend.pipeline.segmentation.datatypes import (
     AudioClassification,
@@ -223,6 +230,7 @@ class UploadRawSegmentFn(beam.DoFn):
     """
 
     SHARED_GCS_HANDLE = Shared()
+    SHARED_THREADPOOL_HANDLE = Shared()
     segmentation_success: Any
     segmentation_error: Any
 
@@ -232,6 +240,7 @@ class UploadRawSegmentFn(beam.DoFn):
         self.staging_audio_bucket = staging_audio_bucket
         self.project_id = project_id
         self.gcs_client = None
+        self._executor = None
 
     @override
     def setup(self) -> None:
@@ -251,6 +260,24 @@ class UploadRawSegmentFn(beam.DoFn):
         self.stitched_segments_uploaded = Metrics.counter(
             self.__class__, "stitched_segments_uploaded"
         )
+        self.download_latency_ms = Metrics.distribution(
+            self.__class__, "download_latency_ms"
+        )
+        self.stitch_latency_ms = Metrics.distribution(
+            self.__class__, "stitch_latency_ms"
+        )
+        self.upload_latency_ms = Metrics.distribution(
+            self.__class__, "upload_latency_ms"
+        )
+
+        def _create_executor() -> concurrent.futures.ThreadPoolExecutor:
+            return concurrent.futures.ThreadPoolExecutor(
+                max_workers=SHARED_DOWNLOAD_POOL_SIZE
+            )
+
+        self._executor = self.SHARED_THREADPOOL_HANDLE.acquire(
+            _create_executor, tag="shared_download_thread_pool"
+        )
 
     def _pcm_to_flac(self, pcm_bytes: bytes, sample_rate: int) -> bytes:
         audio_arr = np.frombuffer(pcm_bytes, dtype=np.int16)
@@ -260,53 +287,101 @@ class UploadRawSegmentFn(beam.DoFn):
         )
         return flac_io.getvalue()
 
-    def _upload_raw_audio(
-        self, request: FlushRequest, start_datetime: datetime.datetime
-    ) -> str:
-        """Downloads contributing GCS chunks, extracts speech segments, stitches them, and uploads to GCS as FLAC."""
-        import urllib.parse  # noqa: PLC0415
-
-        if not self.gcs_client:
-            err_msg = "GCS client not initialized"
+    def _download_contributing_chunks(
+        self,
+        request: FlushRequest,
+        task_logger: Any,
+        parent_context: otel_context.Context,
+    ) -> dict[str, tuple[np.ndarray, int, int]]:
+        """Downloads and decodes all contributing chunks in parallel."""
+        gcs_client = self.gcs_client
+        executor = self._executor
+        if not gcs_client or not executor:
+            err_msg = "GCS client or thread pool not initialized"
             raise RuntimeError(err_msg)
-        if not self.staging_audio_bucket:
-            err_msg = "staging_audio_bucket is not configured"
-            raise ValueError(err_msg)
 
-        task_logger = get_task_logger(
-            "transcription-stitcher",
-            {"feed_id": request.feed_id, "segment_id": request.segment_id},
-        )
-
-        # 1. Download and decode all contributing chunks
         decoded_chunks = {}
-        for chunk in request.contributing_chunks:
-            task_logger.debug(
-                f"[Stateless Stitch] Downloading GCS chunk: {chunk.gcs_uri}"
-            )
-            parsed_uri = urllib.parse.urlparse(chunk.gcs_uri)
-            bucket_name = parsed_uri.netloc
-            blob_name = parsed_uri.path.lstrip("/")
 
-            bucket = self.gcs_client.bucket(bucket_name)
-            blob = bucket.blob(blob_name)
+        def _download_and_decode(
+            chunk: Any,
+        ) -> tuple[str, tuple[np.ndarray, int, int]]:
+            # Propagate and activate the parent thread's context in this thread
+            token = otel_context.attach(parent_context)
+            try:
+                task_logger.debug(
+                    "[Stateless Stitch] Downloading GCS chunk: %s",
+                    chunk.gcs_uri,
+                )
+                parsed_uri = urllib.parse.urlparse(chunk.gcs_uri)
+                bucket_name = parsed_uri.netloc
+                blob_name = parsed_uri.path.lstrip("/")
 
-            in_mem_file = io.BytesIO()
-            blob.download_to_file(in_mem_file)
-            in_mem_file.seek(0)
+                bucket = gcs_client.bucket(bucket_name)
+                blob = bucket.blob(blob_name)
 
-            # Decode FLAC using soundfile
-            samples, sr = sf.read(in_mem_file, dtype="int16")
-            decoded_chunks[chunk.gcs_uri] = (samples, sr, chunk.timestamp_ms)
-            self.gcs_chunks_downloaded.inc()
+                in_mem_file = io.BytesIO()
+                blob.download_to_file(
+                    in_mem_file,
+                    timeout=GCS_DOWNLOAD_TIMEOUT_SEC,
+                )
+                in_mem_file.seek(0)
 
-        # 2. Extract and concatenate the speech segments in chronological order.
-        # To guarantee sample-accurate audio assembly, we iterate over the speech segments
-        # and the contributing chunks in their exact list order. The contributing chunks list
-        # is already sorted chronologically by the upstream jitter buffer, and iterating over it
-        # directly (looking up decoded samples by GCS URI) ensures optimal O(N) performance
-        # without sorting overhead or lambda calls.
-        from operator import attrgetter  # noqa: PLC0415
+                # Decode FLAC using soundfile (releases the GIL for
+                # CPU-intensive loading)
+                samples, sr = sf.read(in_mem_file, dtype="int16")
+            except Exception as e:
+                err_msg = f"Failed downloading chunk {chunk.gcs_uri}: {e}"
+                task_logger.exception(err_msg)
+                raise RuntimeError(err_msg) from e
+            else:
+                self.gcs_chunks_downloaded.inc()
+                return chunk.gcs_uri, (samples, sr, chunk.timestamp_ms)
+            finally:
+                # Clean up the context on this thread
+                otel_context.detach(token)
+
+        # Measure GCS download and decoding phase latency
+        download_start = time.perf_counter_ns()
+
+        if len(request.contributing_chunks) > 1:
+            # Concurrently download via the process-wide shared pool
+            futures = {
+                executor.submit(_download_and_decode, chunk): chunk
+                for chunk in request.contributing_chunks
+            }
+            try:
+                for future in concurrent.futures.as_completed(futures):
+                    gcs_uri, val = future.result()
+                    decoded_chunks[gcs_uri] = val
+            except Exception:
+                # Staff-Level defensive purge: immediately cancel all
+                # remaining pending download tasks to save network bandwidth
+                # and worker resources.
+                for f in futures:
+                    if not f.done():
+                        f.cancel()
+                raise
+        else:
+            # Fallback to sequential to avoid thread context-switching
+            # for a single chunk
+            for chunk in request.contributing_chunks:
+                gcs_uri, val = _download_and_decode(chunk)
+                decoded_chunks[gcs_uri] = val
+
+        download_duration_ms = (
+            time.perf_counter_ns() - download_start
+        ) // 1_000_000
+        self.download_latency_ms.update(int(download_duration_ms))
+        return decoded_chunks
+
+    def _stitch_audio_segments(
+        self,
+        request: FlushRequest,
+        decoded_chunks: dict[str, tuple[np.ndarray, int, int]],
+        task_logger: Any,
+    ) -> bytes:
+        """Slices, concatenates, and converts raw speech segments to FLAC bytes."""
+        stitch_start = time.perf_counter_ns()
 
         sorted_segments = sorted(
             request.speech_segments, key=attrgetter("start_ms")
@@ -327,7 +402,6 @@ class UploadRawSegmentFn(beam.DoFn):
                 overlap_end = min(segment_end, chunk_end_ms)
 
                 if overlap_start < overlap_end:
-                    # Convert absolute timestamps to relative sample offsets
                     rel_start_samples = int(
                         (overlap_start - chunk_start_ms) * (sr / 1000)
                     )
@@ -338,12 +412,10 @@ class UploadRawSegmentFn(beam.DoFn):
                         samples[rel_start_samples:rel_end_samples]
                     )
 
-        # 3. Concatenate and convert to FLAC bytes
+        # Concatenate and convert to FLAC bytes
         if stitched_segments:
             final_pcm_arr = np.concatenate(stitched_segments)
         else:
-            # Fallback: if no speech segments were found (e.g. pure noise/silence classification flush),
-            # emit a small silent PCM array to avoid empty files
             task_logger.warning(
                 "[Stateless Stitch] No speech segments found for transmission. Creating silent placeholder."
             )
@@ -354,17 +426,85 @@ class UploadRawSegmentFn(beam.DoFn):
         final_pcm_bytes = final_pcm_arr.tobytes()
         flac_bytes = self._pcm_to_flac(final_pcm_bytes, request.sample_rate)
 
-        # 4. Upload to GCS
+        stitch_duration_ms = (
+            time.perf_counter_ns() - stitch_start
+        ) // 1_000_000
+        self.stitch_latency_ms.update(int(stitch_duration_ms))
+        return flac_bytes
+
+    def _upload_stitched_audio(
+        self,
+        request: FlushRequest,
+        flac_bytes: bytes,
+        start_datetime: datetime.datetime,
+        task_logger: Any,
+    ) -> str:
+        """Uploads the finalized FLAC audio bytes to GCS staging bucket."""
+        gcs_client = self.gcs_client
+        if not gcs_client or not self.staging_audio_bucket:
+            err_msg = "GCS client or staging bucket not configured"
+            raise RuntimeError(err_msg)
+
+        upload_start = time.perf_counter_ns()
+
         flac_path = f"raw_segments/{request.feed_id}/{start_datetime:%Y/%m/%d}/{request.segment_id}.flac"
-        bucket = self.gcs_client.bucket(self.staging_audio_bucket)
+        bucket = gcs_client.bucket(self.staging_audio_bucket)
         blob = bucket.blob(flac_path)
         blob.upload_from_string(flac_bytes, content_type="audio/flac")
         self.stitched_segments_uploaded.inc()
+
+        upload_duration_ms = (
+            time.perf_counter_ns() - upload_start
+        ) // 1_000_000
+        self.upload_latency_ms.update(int(upload_duration_ms))
 
         task_logger.info(
             f"[Stateless Stitch] Successfully uploaded stitched FLAC: gs://{self.staging_audio_bucket}/{flac_path}"
         )
         return f"gs://{self.staging_audio_bucket}/{flac_path}"
+
+    def _upload_raw_audio(
+        self, request: FlushRequest, start_datetime: datetime.datetime
+    ) -> str:
+        """Downloads contributing GCS chunks, extracts speech segments, stitches them, and uploads to GCS as FLAC."""
+        if not self.gcs_client:
+            err_msg = "GCS client not initialized"
+            raise RuntimeError(err_msg)
+        if not self.staging_audio_bucket:
+            err_msg = "staging_audio_bucket is not configured"
+            raise ValueError(err_msg)
+        if not request.contributing_chunks:
+            err_msg = "FlushRequest contains empty contributing_chunks"
+            raise ValueError(err_msg)
+
+        task_logger = get_task_logger(
+            "transcription-stitcher",
+            {"feed_id": request.feed_id, "segment_id": request.segment_id},
+        )
+
+        parent_context = otel_context.get_current()
+
+        # 1. Download and decode chunks in parallel
+        decoded_chunks = self._download_contributing_chunks(
+            request=request,
+            task_logger=task_logger,
+            parent_context=parent_context,
+        )
+
+        # 2. Extract, stitch, and compress segments to FLAC
+        flac_bytes = self._stitch_audio_segments(
+            request=request,
+            decoded_chunks=decoded_chunks,
+            task_logger=task_logger,
+        )
+
+        # 3. Upload the stitched FLAC to GCS
+        return self._upload_stitched_audio(
+            request=request,
+            flac_bytes=flac_bytes,
+            start_datetime=start_datetime,
+            task_logger=task_logger,
+        )
 
     def _build_segmented_audio_proto(
         self, request: FlushRequest, gcs_uri: str
