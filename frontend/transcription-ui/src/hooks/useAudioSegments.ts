@@ -1,8 +1,9 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import {
   type InfiniteData,
   useInfiniteQuery,
+  useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
 import type { AudioSegment } from '@transcription/common';
@@ -22,12 +23,22 @@ export type AlertFilter = 'all' | 'alerts';
 
 const MAX_AUDIO_SEGMENTS_POLLING_ITERATIONS = 10;
 
+// How often the live "newer segments" poll runs while at the head of the stream.
+const POLL_INTERVAL_MS = 10000;
+
 interface UseAudioSegmentsOptions {
   token: string | null;
   searchedFeedId: string | null;
   searchedTimestamp: Date | null;
   alertFilter: AlertFilter;
   isFeedsSuccess: boolean;
+  // Whether the view wants live polling (it gates this on the list being
+  // scrolled to the top). Polling is additionally suppressed unless the head of
+  // the stream is loaded.
+  pollingEnabled: boolean;
+  // Called once per poll with the brand-new segments that were merged into the
+  // cache, so the view can run UI side effects (snackbar, autoplay, unread).
+  onNewSegments?: (segments: AudioSegment[]) => void;
 }
 
 export function useAudioSegments({
@@ -36,6 +47,8 @@ export function useAudioSegments({
   searchedTimestamp,
   alertFilter,
   isFeedsSuccess,
+  pollingEnabled,
+  onNewSegments,
 }: UseAudioSegmentsOptions) {
   const queryClient = useQueryClient();
 
@@ -267,9 +280,62 @@ export function useAudioSegments({
     [token, queryKey, queryClient]
   );
 
+  // Live polling for newer segments at the head of the stream. React Query owns
+  // the timer to take advantage of its refetch-on-focus/reconnect/background behavior.
+  const pollingQuery = useQuery({
+    queryKey: ['liveAudioSegmentsPoll', searchedFeedId, alertFilter],
+    queryFn: pollNewerAudioSegments,
+    enabled:
+      isAudioSegmentsSuccess &&
+      pollingEnabled &&
+      !hasNewerAudioSegments &&
+      !!searchedFeedId,
+    initialData: () => [],
+    refetchInterval: POLL_INTERVAL_MS,
+    staleTime: POLL_INTERVAL_MS,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    refetchIntervalInBackground: true,
+  });
+
+  const lastProcessedPollRef = useRef(0);
+
+  // Merge each completed poll's segments into the cache exactly once, then hand
+  // the brand-new ones to the view for side effects. Guarded by dataUpdatedAt so
+  // unrelated re-renders don't re-run it.
+  useEffect(() => {
+    if (!pollingQuery.isSuccess) return;
+    if (pollingQuery.dataUpdatedAt === lastProcessedPollRef.current) return;
+    lastProcessedPollRef.current = pollingQuery.dataUpdatedAt;
+
+    const polledSegments = pollingQuery.data;
+    if (polledSegments.length === 0) return;
+
+    const brandNewAudioSegments =
+      updateCacheWithNewAudioSegments(polledSegments);
+    if (brandNewAudioSegments.length > 0) {
+      onNewSegments?.(brandNewAudioSegments);
+    }
+  }, [
+    pollingQuery.isSuccess,
+    pollingQuery.dataUpdatedAt,
+    pollingQuery.data,
+    updateCacheWithNewAudioSegments,
+    onNewSegments,
+  ]);
+
+  // "Last refresh" reflects the most recent of the paged load and the latest
+  // successful poll, so it advances on every poll even when nothing new arrives.
+  const audioSegmentsLastUpdated = useMemo(() => {
+    const lastRefreshedAt = Math.max(
+      audioSegmentsDataUpdatedAt,
+      pollingQuery.dataUpdatedAt
+    );
+    return lastRefreshedAt > 0 ? lastRefreshedAt : null;
+  }, [audioSegmentsDataUpdatedAt, pollingQuery.dataUpdatedAt]);
+
   return {
     rawAudioSegments,
-    newestTimestamp,
     loadOlderAudioSegments,
     loadNewerAudioSegments,
     hasOlderAudioSegments,
@@ -277,11 +343,10 @@ export function useAudioSegments({
     isAudioSegmentsSuccess,
     isAudioSegmentsError,
     audioSegmentsError,
-    audioSegmentsDataUpdatedAt,
     isFetchingNewerAudioSegments,
     isFetchingOlderAudioSegments,
-    pollNewerAudioSegments,
-    updateCacheWithNewAudioSegments,
+    isAudioSegmentsPolling: pollingQuery.isFetching,
+    audioSegmentsLastUpdated,
     isLoading,
     isFetching,
   };
