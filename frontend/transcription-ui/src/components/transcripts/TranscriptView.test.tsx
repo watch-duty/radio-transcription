@@ -162,7 +162,7 @@ describe('TranscriptView', () => {
       sourceType: SourceType.BCFY_FEEDS,
       status: 'active' as FeedStatus,
       substatus: 'active' as BackendFeedStatus,
-      lastSpeechSegmentTimestamp: '2026-04-10T12:00:00Z',
+      lastSpeechSegmentTimestamp: Date.parse('2026-04-10T12:00:00Z'),
     });
     // Default mock for listRules
     vi.mocked(listRules).mockResolvedValue([]);
@@ -777,12 +777,8 @@ describe('TranscriptView', () => {
       sourceType: SourceType.BCFY_FEEDS,
       status: 'active' as FeedStatus,
       substatus: 'active' as BackendFeedStatus,
-      lastHeartbeat: new Date(
-        fixedNow.getTime() - 10 * 60 * 1000
-      ).toISOString(),
-      lastSpeechSegmentTimestamp: new Date(
-        fixedNow.getTime() - 5 * 60 * 1000
-      ).toISOString(),
+      lastHeartbeat: fixedNow.getTime() - 10 * 60 * 1000,
+      lastSpeechSegmentTimestamp: fixedNow.getTime() - 5 * 60 * 1000,
     };
     vi.mocked(getFeed).mockResolvedValue(mockFeed);
     vi.mocked(listAudioSegments).mockResolvedValue({

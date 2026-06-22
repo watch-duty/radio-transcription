@@ -93,8 +93,8 @@ export function FeedStatusIndicator({
   substatus?: BackendFeedStatus;
   statusReason?: BackendFeedStatusReason;
   quarantineReason?: string;
-  lastHeartbeat?: string;
-  lastSpeechSegmentTimestamp?: string;
+  lastHeartbeat?: number;
+  lastSpeechSegmentTimestamp?: number;
 }) {
   if (!status) {
     return null;

@@ -321,7 +321,8 @@ components:
         substatus:
           $ref: "#/components/schemas/BackendFeedStatus"
         lastHeartbeat:
-          type: string
+          type: number
+          format: double
         tags:
           items:
             $ref: "#/components/schemas/Tag"
@@ -331,7 +332,8 @@ components:
         statusReason:
           $ref: "#/components/schemas/BackendFeedStatusReason"
         lastSpeechSegmentTimestamp:
-          type: string
+          type: number
+          format: double
       required:
         - name
         - sourceType

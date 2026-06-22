@@ -124,9 +124,7 @@ describe('FeedStatusIndicator', () => {
       render(
         <FeedStatusIndicator
           status="active"
-          lastHeartbeat={new Date(
-            fixedNow.getTime() - 10 * 60 * 1000
-          ).toISOString()}
+          lastHeartbeat={fixedNow.getTime() - 10 * 60 * 1000}
         />
       );
       expect(screen.getByText('Last heartbeat: 10 minutes ago')).toBeTruthy();
@@ -143,9 +141,7 @@ describe('FeedStatusIndicator', () => {
       render(
         <FeedStatusIndicator
           status="active"
-          lastSpeechSegmentTimestamp={new Date(
-            fixedNow.getTime() - 10 * 60 * 1000
-          ).toISOString()}
+          lastSpeechSegmentTimestamp={fixedNow.getTime() - 10 * 60 * 1000}
         />
       );
       expect(screen.getByText('Latest: 10 minutes ago')).toBeTruthy();

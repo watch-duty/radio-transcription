@@ -32,8 +32,8 @@ describe('FeedSearchView Condensed Mode', () => {
       substatus: 'quarantined',
       statusReason: 'system_unexpected_error',
       quarantineReason: 'unsupported audio format',
-      lastHeartbeat: new Date().toISOString(),
-      lastSpeechSegmentTimestamp: new Date().toISOString(),
+      lastHeartbeat: new Date().getTime(),
+      lastSpeechSegmentTimestamp: new Date().getTime(),
       tags: [{ key: 'county', value: 'Marin' }],
     },
   ];

@@ -31,7 +31,7 @@ describe('FeedHeader', () => {
     name: 'Test Scanner Feed',
     status: 'active',
     substatus: 'active',
-    lastSpeechSegmentTimestamp: new Date().toISOString(),
+    lastSpeechSegmentTimestamp: new Date().getTime(),
     sourceUrl: 'https://test.example/source',
     archiveUrl: 'https://test.example/archives',
     sourceType: SourceType.BCFY_CALLS,
@@ -174,9 +174,7 @@ describe('FeedHeader', () => {
           searchedFeed={mockFeed}
           onSelectFeed={vi.fn()}
           status="active"
-          lastSpeechSegmentTimestamp={new Date(
-            fixedNow.getTime() - 5 * 60 * 1000
-          ).toISOString()}
+          lastSpeechSegmentTimestamp={fixedNow.getTime() - 5 * 60 * 1000}
           triggerSnackbar={mockTriggerSnackbar}
           onError={mockOnError}
         />

@@ -19,7 +19,7 @@ interface FeedHeaderProps {
   sourceUrl?: string;
   archiveUrl?: string;
   status?: FeedStatus;
-  lastSpeechSegmentTimestamp?: string;
+  lastSpeechSegmentTimestamp?: number;
   triggerSnackbar: (message: string) => void;
   onError: (error: Error, titleMessage?: string) => void;
 }

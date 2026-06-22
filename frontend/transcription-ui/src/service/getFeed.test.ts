@@ -15,7 +15,7 @@ describe('getFeed', () => {
       id: '1',
       name: 'Feed 1',
       status: 'active',
-      lastSpeechSegmentTimestamp: '2026-04-10T12:00:00Z',
+      lastSpeechSegmentTimestamp: Date.parse('2026-04-10T12:00:00Z'),
     };
 
     mockFetch.mockResolvedValueOnce({
