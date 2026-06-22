@@ -16,7 +16,7 @@ export const palette: ThemeOptions['palette'] = {
   text: {
     primary: 'rgba(0, 0, 0, 0.87)',
     secondary: 'rgba(0, 0, 0, 0.6)',
-  }
+  },
 };
 
 export const darkPalette: ThemeOptions['palette'] = {
@@ -35,5 +35,5 @@ export const darkPalette: ThemeOptions['palette'] = {
   text: {
     primary: '#fff',
     secondary: 'rgba(255, 255, 255, 0.7)',
-  }
+  },
 };
