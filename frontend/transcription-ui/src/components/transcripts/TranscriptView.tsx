@@ -612,7 +612,6 @@ export function TranscriptView({
     setHighlightedSegmentId(null);
     setIsViewAtTopOfAudioSegments(true);
     setPlaybackEndedForId(null);
-    setIsAudioPlaying(false);
     // Update URL params
     setSearchParams((prev) => {
       prev.set('feedId', feedId);

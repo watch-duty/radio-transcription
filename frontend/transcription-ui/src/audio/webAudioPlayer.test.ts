@@ -231,12 +231,37 @@ describe('WebAudioPlayer', () => {
     expect(lastAudio.currentTime).toBe(7.5);
   });
 
-  it('clears the source on stop but leaves the context open', () => {
+  it('ignores a non-finite seek target', () => {
     const player = new WebAudioPlayer(new AudioContext());
-    player.load('https://example.com/clip.m4a', {});
+    const handle = player.load('https://example.com/clip.m4a', {});
+
+    lastAudio.currentTime = 4;
+    handle.setCurrentTime(Infinity);
+    handle.setCurrentTime(NaN);
+    expect(lastAudio.currentTime).toBe(4);
+  });
+
+  it('does not detach the current clip when a stale handle is unloaded', () => {
+    const player = new WebAudioPlayer(new AudioContext());
+    const stale = player.load('https://example.com/first.m4a', {});
+
+    const onpause = vi.fn();
+    player.load('https://example.com/second.m4a', { onpause });
+
+    stale.unload();
+
+    lastAudio.emit('pause');
+    expect(onpause).toHaveBeenCalled();
+  });
+
+  it('clears the source on stop, firing pause, but leaves the context open', () => {
+    const player = new WebAudioPlayer(new AudioContext());
+    const onpause = vi.fn();
+    player.load('https://example.com/clip.m4a', { onpause });
     player.stop();
 
     expect(lastAudio.pause).toHaveBeenCalled();
+    expect(onpause).toHaveBeenCalled();
     expect(lastAudio.removeAttribute).toHaveBeenCalledWith('src');
     expect(lastContext.close).not.toHaveBeenCalled();
   });

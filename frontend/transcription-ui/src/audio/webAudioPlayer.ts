@@ -152,8 +152,9 @@ export class WebAudioPlayer {
   }
 
   stop(): void {
-    this.detachListeners();
+    // Pause before detaching so the `pause` event still drives playback state.
     this.audio.pause();
+    this.detachListeners();
     this.audio.removeAttribute('src');
     this.audio.load();
   }
