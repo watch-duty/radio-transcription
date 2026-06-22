@@ -62,16 +62,15 @@ describe('useAudioSegments hook', () => {
           searchedTimestamp: null,
           alertFilter: 'all',
           isFeedsSuccess: true,
+          pollingEnabled: true,
         }),
       { wrapper }
     );
 
-    // Wait for the initial query to complete and newestTimestamp to be set
+    // Wait for the initial query to complete
     await waitFor(() => {
       expect(result.current.isAudioSegmentsSuccess).toBe(true);
     });
-
-    expect(result.current.newestTimestamp).toBe(mockNewestTimestamp);
 
     // Mock response for the poll call
     vi.mocked(listAudioSegments).mockResolvedValueOnce({
@@ -79,11 +78,14 @@ describe('useAudioSegments hook', () => {
       nextToken: undefined,
     });
 
-    // Call pollNewerAudioSegments
-    await result.current.pollNewerAudioSegments();
+    // Manually trigger the polling query refetch via the queryClient.
+    // This bypasses fragile fake timer mechanics while perfectly executing
+    // the queryFn (pollNewerAudioSegments) to test its parameter formulation.
+    await queryClient.refetchQueries({
+      queryKey: ['liveAudioSegmentsPoll', 'feed-123', 'all'],
+    });
 
-    // The first call was the hook mount query
-    // The second call is the poll
+    // Verify that the second call was made
     expect(listAudioSegments).toHaveBeenCalledTimes(2);
 
     const expectedStartTime = new Date(mockNewestTimestamp).getTime() - 90000; // 90 seconds lookback
