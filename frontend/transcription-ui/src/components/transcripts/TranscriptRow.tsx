@@ -99,13 +99,7 @@ export function TranscriptRow({
   const isOngoingSilence = isSilence && isTopAudioSegmentRow;
 
   const getBorderColor = () => {
-    if (isSilence) {
-      return theme.palette.grey[200];
-    }
-    if (isCurrentlyPlaying) {
-      return theme.palette.primary.contrastText;
-    }
-    return theme.palette.primary.main;
+    return isSilence ? theme.palette.secondary.main : theme.palette.primary.main;
   };
 
   return (

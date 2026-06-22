@@ -11,4 +11,11 @@ export const components: ThemeOptions['components'] = {
       }),
     },
   },
+  MuiLink: {
+    styleOverrides: {
+      root: ({ theme }) => ({
+        color: theme.palette.primary.contrastText,
+      }),
+    },
+  },
 };
