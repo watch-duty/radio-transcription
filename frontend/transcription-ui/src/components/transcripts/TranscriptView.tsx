@@ -34,7 +34,6 @@ interface TranscriptViewProps {
   onError: (error: Error, titleMessage?: string) => void;
 }
 
-const DEFAULT_REFRESH_INTERVAL = 10000;
 const FEED_POLLING_INTERVAL_MS = 15000; // 15 seconds
 
 export function TranscriptView({
@@ -95,7 +94,6 @@ export function TranscriptView({
   >(targetSegmentId);
   const [isViewAtTopOfAudioSegments, setIsViewAtTopOfAudioSegments] =
     useState(true);
-  const [isAudioSegmentsPolling, setIsAudioSegmentsPolling] = useState(false);
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const hasScrolledToTarget = useRef(false);
@@ -171,6 +169,36 @@ export function TranscriptView({
     [currentlyPlayingSegmentId, isAudioPlaying]
   );
 
+  // Side effects for segments that arrive from a live poll: notify, bump the
+  // unread badge when backgrounded, and optionally autoplay the latest.
+  const handleNewAudioSegments = useCallback(
+    (newAudioSegments: AudioSegment[]) => {
+      const speechSegments = newAudioSegments.filter(
+        (t) => t.classification === AudioClassification.SPEECH
+      );
+
+      if (speechSegments.length > 0) {
+        triggerSnackbar(
+          speechSegments.length === 1
+            ? 'New transcript received'
+            : `${speechSegments.length} new transcripts received`
+        );
+
+        if (!document.hasFocus()) {
+          setNewMessageCount((prevCount) => prevCount + speechSegments.length);
+        }
+      }
+
+      if (!isAudioPlaying && playLatestAudio) {
+        const audioToPlay = newAudioSegments[newAudioSegments.length - 1];
+        if (audioToPlay.playbackAudioUri) {
+          toggleAudio(audioToPlay.id, audioToPlay.playbackAudioUri);
+        }
+      }
+    },
+    [triggerSnackbar, isAudioPlaying, playLatestAudio, toggleAudio]
+  );
+
   const {
     data: feedsData,
     error: feedsError,
@@ -241,11 +269,10 @@ export function TranscriptView({
     hasNewerAudioSegments,
     isAudioSegmentsSuccess,
     audioSegmentsError,
-    audioSegmentsDataUpdatedAt,
     isFetchingNewerAudioSegments,
     isFetchingOlderAudioSegments,
-    pollNewerAudioSegments,
-    updateCacheWithNewAudioSegments,
+    isAudioSegmentsPolling,
+    audioSegmentsLastUpdated,
     isLoading: isAudioSegmentsInitialLoading,
     isFetching: isAudioSegmentsFetching,
   } = useAudioSegments({
@@ -254,12 +281,9 @@ export function TranscriptView({
     searchedTimestamp,
     alertFilter,
     isFeedsSuccess,
+    pollingEnabled: isViewAtTopOfAudioSegments,
+    onNewSegments: handleNewAudioSegments,
   });
-
-  const audioSegmentsLastUpdated =
-    audioSegmentsDataUpdatedAt && audioSegmentsDataUpdatedAt > 0
-      ? audioSegmentsDataUpdatedAt
-      : null;
 
   const audioSegments = useConsolidatedAudioSegments(rawAudioSegments);
 
@@ -364,90 +388,6 @@ export function TranscriptView({
 
     return { groupCounts: counts, groupTitles: titles };
   }, [audioSegments]);
-
-  /**
-   * Background polling effect.
-   * Automatically fetches new audio segments every 15 seconds, provided the user is:
-   * 1. Scrolled to the top of the view.
-   * 2. Looking at the "live" head of the stream (no more un-fetched newer pages available).
-   */
-  useEffect(() => {
-    if (
-      // Skip polling if the initial audio segments load hasn't completed yet
-      !isAudioSegmentsSuccess ||
-      // Skip polling if not viewing at the top of the audio segments to prevent fetching data when the user would not see it.
-      // User can always click refresh button if they want to.
-      !isViewAtTopOfAudioSegments ||
-      // Skip polling if there are older historical pages ahead of us to load.
-      hasNewerAudioSegments ||
-      !searchedFeedId
-    ) {
-      return;
-    }
-
-    const interval = setInterval(async () => {
-      try {
-        setIsAudioSegmentsPolling(true);
-        const newAudioSegments = await pollNewerAudioSegments();
-        if (newAudioSegments.length === 0) {
-          return;
-        }
-
-        // Add the audio segments to cache
-        const cachedAudioSegments =
-          updateCacheWithNewAudioSegments(newAudioSegments);
-        if (cachedAudioSegments.length === 0) {
-          return;
-        }
-
-        const cachedSpeechAudioSegments = cachedAudioSegments.filter(
-          (t) => t.classification === AudioClassification.SPEECH
-        );
-
-        if (cachedSpeechAudioSegments.length > 0) {
-          // Display snackbar indicator that new audio segments were received
-          const message =
-            cachedSpeechAudioSegments.length === 1
-              ? 'New transcript received'
-              : `${cachedSpeechAudioSegments.length} new transcripts received`;
-          triggerSnackbar(message);
-
-          // Update the new message count if the user is not viewing the screen
-          if (!document.hasFocus()) {
-            setNewMessageCount(
-              (prevCount) => prevCount + cachedSpeechAudioSegments.length
-            );
-          }
-        }
-
-        // Trigger the new audio to play if no audio is currently playing
-        if (!isAudioPlaying && playLatestAudio) {
-          const audioToPlay =
-            cachedAudioSegments[cachedAudioSegments.length - 1];
-          if (audioToPlay.playbackAudioUri) {
-            toggleAudio(audioToPlay.id, audioToPlay.playbackAudioUri);
-          }
-        }
-      } catch (error) {
-        console.error('Polling error:', error);
-      } finally {
-        setIsAudioSegmentsPolling(false);
-      }
-    }, DEFAULT_REFRESH_INTERVAL);
-
-    return () => clearInterval(interval);
-  }, [
-    isAudioSegmentsSuccess,
-    isViewAtTopOfAudioSegments,
-    hasNewerAudioSegments,
-    searchedFeedId,
-    pollNewerAudioSegments,
-    updateCacheWithNewAudioSegments,
-    triggerSnackbar,
-    toggleAudio,
-    isAudioPlaying,
-    playLatestAudio,
-  ]);
 
   const {
     data: rules,

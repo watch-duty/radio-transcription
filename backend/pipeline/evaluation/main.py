@@ -15,7 +15,6 @@ from backend.pipeline.common.clients import pubsub_client
 from backend.pipeline.common.clients.audio_segments_client import (
     AudioSegmentsClient,
 )
-from backend.pipeline.common.clients.transcripts_client import TranscriptsClient
 from backend.pipeline.common.container_helper import ForkDetector, fork_checked
 from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
@@ -68,7 +67,6 @@ class EvaluationServiceContainer:
         self._fork_detector = ForkDetector(self.reset_clients)
         self._processor: EvaluationEventProcessor | None = None
         self._evaluation_service: service.EvaluationService | None = None
-        self._transcripts_client: TranscriptsClient | None = None
         self._audio_segments_client: AudioSegmentsClient | None = None
         self._publisher: pubsub_client.PubSubClient | None = None
 
@@ -84,30 +82,16 @@ class EvaluationServiceContainer:
                 )
         self._processor = None
         self._evaluation_service = None
-        self._transcripts_client = None
         self._audio_segments_client = None
         self._publisher = None
 
     @fork_checked
-    def get_transcripts_client(self) -> TranscriptsClient:
-        if self._transcripts_client is None:
-            url = os.environ.get("TRANSCRIPTS_API_URL")
-            if not url:
-                msg = "TRANSCRIPTS_API_URL environment variable is not set."
-                raise ValueError(msg)
-            self._transcripts_client = TranscriptsClient(api_url=url)
-        return self._transcripts_client
-
-    @fork_checked
-    def get_audio_segments_client(self) -> AudioSegmentsClient | None:
+    def get_audio_segments_client(self) -> AudioSegmentsClient:
         if self._audio_segments_client is None:
-            # TODO (https://linear.app/watchduty/issue/GOO-449/ui-uibff-cutover-and-legacy-cleanup): Make this client required once the migration is complete.
             url = os.environ.get("AUDIO_SEGMENTS_API_URL")
             if not url:
-                logger.warning(
-                    "AUDIO_SEGMENTS_API_URL environment variable is not set. Audio segments client will be disabled."
-                )
-                return None
+                msg = "AUDIO_SEGMENTS_API_URL environment variable is not set."
+                raise ValueError(msg)
             self._audio_segments_client = AudioSegmentsClient(api_url=url)
         return self._audio_segments_client
 
@@ -147,7 +131,6 @@ class EvaluationServiceContainer:
 
             self._processor = EvaluationEventProcessor(
                 evaluation_service=self.get_evaluation_service(),
-                transcripts_client=self.get_transcripts_client(),
                 publisher=self.get_publisher(),
                 output_topic_path=output_topic,
                 audio_segments_client=self.get_audio_segments_client(),
