@@ -269,28 +269,6 @@ services:
     networks:
       - pipeline-network
 
-  transcripts-api:
-    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/transcripts-api:${TAG:-latest}
-    build:
-      context: .
-      dockerfile: backend/services/transcripts/Dockerfile
-    ports:
-      - "127.0.0.1:8087:8087"
-    env_file:
-      - path: ./local_dev/LOCAL.env
-      - path: .env
-        required: false
-    command: ["uvicorn", "backend.services.transcripts.main:app", "--host", "0.0.0.0", "--port", "8087"]
-    healthcheck:
-      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8087))"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - pipeline-network
 
   feeds-api:
     image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/feeds-api:${TAG:-latest}
@@ -380,14 +358,12 @@ services:
       - path: .env
         required: false
     environment:
-      - TRANSCRIPTS_API_URL=http://transcripts-api:8087/v1/transcripts
       - AUDIO_SEGMENTS_API_URL=http://audio-segments-api:8091/v1/audio_segments
       - FEEDS_STORE_API_URL=http://feeds-api:8089/v1/feeds
       - RULES_API_URL=http://rules-management:8086/v1/rules
     networks:
       - pipeline-network
     depends_on:
-      - transcripts-api
       - rules-management
       - audio-segments-api
 
@@ -398,8 +374,6 @@ services:
       - integration-tests
     depends_on:
       postgres:
-        condition: service_healthy
-      transcripts-api:
         condition: service_healthy
       rules-management:
         condition: service_healthy
