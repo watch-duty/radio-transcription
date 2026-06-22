@@ -17,6 +17,7 @@ import { useQuery } from '@tanstack/react-query';
 import { AudioClassification, type AudioSegment } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
+import { useAudioControls } from '../../hooks/useAudioControls';
 import { useAudioPlayback } from '../../hooks/useAudioPlayback';
 import {
   type AlertFilter,
@@ -98,6 +99,9 @@ export function TranscriptView({
   const newerLoadAnchorId = useRef<string | null>(null);
   const wasFetchingNewer = useRef(false);
 
+  const { volumeDb, setVolumeDb, pan, setPan, speed, setSpeed } =
+    useAudioControls();
+
   // Passed to useAudioPlayback so its `onEnd` callback reads the current list
   // rather than a stale closure when deciding whether to auto-advance.
   const audioSegmentsRef = useRef<AudioSegment[]>([]);
@@ -113,6 +117,9 @@ export function TranscriptView({
   } = useAudioPlayback({
     audioSegmentsRef,
     onPlaySegment: setHighlightedSegmentId,
+    volumeDb,
+    pan,
+    speed,
   });
 
   // Side effects for segments that arrive from a live poll: notify, bump the
@@ -641,6 +648,12 @@ export function TranscriptView({
           alertFilter={alertFilter}
           setAlertFilter={setAlertFilter}
           onClickViewLatest={() => handleFilterByDateTime(null)}
+          volumeDb={volumeDb}
+          setVolumeDb={setVolumeDb}
+          pan={pan}
+          setPan={setPan}
+          speed={speed}
+          setSpeed={setSpeed}
         />
         {audioSegments.length > 0 ? (
           <TranscriptDisplay

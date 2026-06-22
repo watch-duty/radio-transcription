@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 
 import FilterIcon from '@mui/icons-material/Tune';
+import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import { FormControl, InputLabel } from '@mui/material';
 import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
@@ -10,12 +11,26 @@ import FormControlLabel from '@mui/material/FormControlLabel';
 import MenuItem from '@mui/material/MenuItem';
 import Popover from '@mui/material/Popover';
 import Select from '@mui/material/Select';
+import Slider from '@mui/material/Slider';
 import Switch from '@mui/material/Switch';
+import ToggleButton from '@mui/material/ToggleButton';
+import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Tooltip from '@mui/material/Tooltip';
+import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 
+import {
+  PAN_OPTIONS,
+  SPEED_OPTIONS,
+  VOLUME_MAX_DB,
+  VOLUME_MIN_DB,
+  formatVolumeDb,
+} from '../../audio/WebAudioPlayer';
 import type { AlertFilter } from '../../hooks/useAudioSegments';
+import { isSafari } from '../../utils/browser';
 import { DateTimePicker } from '../common/DateTimePicker';
+
+const PAN_LABELS: Record<number, string> = { '-1': 'L', '0': 'C', '1': 'R' };
 
 export interface TranscriptActionsBarProps {
   hasNewerAudioSegments: boolean;
@@ -27,6 +42,12 @@ export interface TranscriptActionsBarProps {
   alertFilter: AlertFilter;
   setAlertFilter: (alertFilter: AlertFilter) => void;
   onClickViewLatest: () => void;
+  volumeDb: number;
+  setVolumeDb: (db: number) => void;
+  pan: number;
+  setPan: (pan: number) => void;
+  speed: number;
+  setSpeed: (speed: number) => void;
 }
 
 const APPLIED_FILTER_BG_COLOR = '#bbdefb';
@@ -41,6 +62,12 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   alertFilter,
   setAlertFilter,
   onClickViewLatest,
+  volumeDb,
+  setVolumeDb,
+  pan,
+  setPan,
+  speed,
+  setSpeed,
 }) => {
   const theme = useTheme();
   const isDarkTheme = theme.palette.mode === 'dark';
@@ -48,6 +75,8 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   const [filterAnchorEl, setFilterAnchorEl] = useState<HTMLElement | null>(
     null
   );
+  const [audioAnchorEl, setAudioAnchorEl] = useState<HTMLElement | null>(null);
+  const speedDisabled = isSafari();
   const [localDateTime, setLocalDateTime] = useState<Date | null>(dateTime);
   const [localAlertFilter, setLocalAlertFilter] =
     useState<AlertFilter>(alertFilter);
@@ -113,6 +142,115 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
       }}
     >
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <Tooltip title="Audio controls">
+          <Button
+            color="primary"
+            variant="outlined"
+            sx={{ minWidth: 0, p: 0.75 }}
+            aria-label="audio controls"
+            onClick={(e) => setAudioAnchorEl(e.currentTarget)}
+          >
+            <VolumeUpIcon />
+          </Button>
+        </Tooltip>
+        <Popover
+          open={Boolean(audioAnchorEl)}
+          anchorEl={audioAnchorEl}
+          onClose={() => setAudioAnchorEl(null)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+          transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+          sx={{ zIndex: 1300 }}
+        >
+          <Box
+            sx={{
+              p: 1.5,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 1.25,
+              width: 210,
+            }}
+          >
+            <Box>
+              <Box
+                sx={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'baseline',
+                }}
+              >
+                <Typography variant="subtitle2">Volume</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {formatVolumeDb(volumeDb)}
+                </Typography>
+              </Box>
+              <Slider
+                aria-label="Volume"
+                size="small"
+                value={volumeDb}
+                min={VOLUME_MIN_DB}
+                max={VOLUME_MAX_DB}
+                step={1}
+                onChange={(_, value) => setVolumeDb(value as number)}
+                sx={{ display: 'block', mt: 0.5, mb: 0, py: 0.5 }}
+              />
+            </Box>
+
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+              <Typography variant="subtitle2">Pan</Typography>
+              <ToggleButtonGroup
+                exclusive
+                fullWidth
+                size="small"
+                value={pan}
+                onChange={(_, value) => {
+                  if (value !== null) setPan(value as number);
+                }}
+              >
+                {PAN_OPTIONS.map((option) => (
+                  <ToggleButton
+                    key={option}
+                    value={option}
+                    aria-label={`Pan ${PAN_LABELS[option]}`}
+                  >
+                    {PAN_LABELS[option]}
+                  </ToggleButton>
+                ))}
+              </ToggleButtonGroup>
+            </Box>
+
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+              <Typography variant="subtitle2">Speed</Typography>
+              <Tooltip
+                title={
+                  speedDisabled ? 'Speed control is unavailable in Safari' : ''
+                }
+              >
+                <ToggleButtonGroup
+                  exclusive
+                  fullWidth
+                  size="small"
+                  value={speed}
+                  disabled={speedDisabled}
+                  onChange={(_, value) => {
+                    if (value !== null) setSpeed(value as number);
+                  }}
+                  sx={{ '& .MuiToggleButton-root': { px: 0.5, fontSize: 12 } }}
+                >
+                  {SPEED_OPTIONS.map((option) => (
+                    <ToggleButton
+                      key={option}
+                      value={option}
+                      aria-label={`Speed ${option}x`}
+                    >
+                      {option}×
+                    </ToggleButton>
+                  ))}
+                </ToggleButtonGroup>
+              </Tooltip>
+            </Box>
+          </Box>
+        </Popover>
+
         <Button
           variant="contained"
           sx={{ textTransform: 'none', gap: 1 }}
