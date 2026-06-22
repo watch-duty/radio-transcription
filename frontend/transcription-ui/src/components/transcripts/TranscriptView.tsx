@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useSearchParams } from 'react-router';
 import type { VirtuosoHandle } from 'react-virtuoso';
 
@@ -18,7 +25,10 @@ import {
   type AlertFilter,
   useAudioSegments,
 } from '../../hooks/useAudioSegments';
-import { useConsolidatedAudioSegments } from '../../hooks/useConsolidatedAudioSegments';
+import {
+  type RenderableAudioSegment,
+  useConsolidatedAudioSegments,
+} from '../../hooks/useConsolidatedAudioSegments';
 import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
@@ -35,6 +45,23 @@ interface TranscriptViewProps {
 }
 
 const FEED_POLLING_INTERVAL_MS = 15000; // 15 seconds
+
+// Base index for Virtuoso's `firstItemIndex`. When newer segments are prepended
+// to the top of the list we decrease this value by the number of prepended
+// items, which lets Virtuoso preserve the user's scroll position instead of
+// jumping to the top. Starts high so it stays positive across many prepends.
+const VIRTUOSO_START_INDEX = 1_000_000;
+
+// Matches a consolidated segment by its own id or, for silence bundles, by any
+// of the raw segment ids it contains.
+function matchesSegmentId(
+  segment: RenderableAudioSegment,
+  id: string
+): boolean {
+  return (
+    segment.id === id || (segment.bundledSegmentIds?.includes(id) ?? false)
+  );
+}
 
 export function TranscriptView({
   triggerSnackbar,
@@ -97,6 +124,19 @@ export function TranscriptView({
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const hasScrolledToTarget = useRef(false);
+  // Tracks whether the user has scrolled away from the top at least once, so we
+  // only auto-load newer segments when they deliberately scroll back up to the
+  // top (not on the initial render, which starts at the top).
+  const hasScrolledAwayFromTop = useRef(false);
+
+  // Virtuoso scroll-anchoring for prepended (newer) segments. When a newer load
+  // is triggered we remember the id of the current top item; once the prepend
+  // lands we lower firstItemIndex by however many items appeared above it, so
+  // the scroll position stays put. Only newer loads anchor this way — live
+  // polling intentionally leaves firstItemIndex alone so new items show at top.
+  const [firstItemIndex, setFirstItemIndex] = useState(VIRTUOSO_START_INDEX);
+  const newerLoadAnchorId = useRef<string | null>(null);
+  const wasFetchingNewer = useRef(false);
 
   const currentAudio = useRef<Howl>(null);
   const [playbackEndedForId, setPlaybackEndedForId] = useState<string | null>(
@@ -274,7 +314,6 @@ export function TranscriptView({
     isAudioSegmentsPolling,
     audioSegmentsLastUpdated,
     isLoading: isAudioSegmentsInitialLoading,
-    isFetching: isAudioSegmentsFetching,
   } = useAudioSegments({
     token,
     searchedFeedId,
@@ -323,10 +362,8 @@ export function TranscriptView({
     }
 
     // 2. If it was a Speech segment, or the last segment in a silence bundle, advance to the next newer audio segment row
-    const currentIndex = audioSegments.findIndex(
-      (t) =>
-        t.id === playbackEndedForId ||
-        t.bundledSegmentIds?.includes(playbackEndedForId)
+    const currentIndex = audioSegments.findIndex((t) =>
+      matchesSegmentId(t, playbackEndedForId)
     );
 
     if (currentIndex > 0) {
@@ -425,10 +462,8 @@ export function TranscriptView({
       audioSegments.length > 0 &&
       !hasScrolledToTarget.current
     ) {
-      const index = audioSegments.findIndex(
-        (t) =>
-          t.id === targetSegmentId ||
-          t.bundledSegmentIds?.includes(targetSegmentId)
+      const index = audioSegments.findIndex((t) =>
+        matchesSegmentId(t, targetSegmentId)
       );
       if (index !== -1) {
         const timer = setTimeout(() => {
@@ -445,8 +480,8 @@ export function TranscriptView({
   }, [isAudioSegmentsSuccess, targetSegmentId, audioSegments]);
 
   const handleClipClick = (segmentId: string) => {
-    const index = audioSegments.findIndex(
-      (t) => t.id === segmentId || t.bundledSegmentIds?.includes(segmentId)
+    const index = audioSegments.findIndex((t) =>
+      matchesSegmentId(t, segmentId)
     );
     if (index !== -1) {
       virtuosoRef.current?.scrollToIndex({
@@ -472,8 +507,8 @@ export function TranscriptView({
       return;
     }
 
-    const audioSegment = audioSegments.find(
-      (t) => t.id === targetId || t.bundledSegmentIds?.includes(targetId)
+    const audioSegment = audioSegments.find((t) =>
+      matchesSegmentId(t, targetId)
     );
     if (audioSegment && audioSegment.playbackAudioUri) {
       toggleAudio(audioSegment.id, audioSegment.playbackAudioUri);
@@ -483,6 +518,59 @@ export function TranscriptView({
   const handleRowClick = (segmentId: string) => {
     setHighlightedSegmentId(segmentId);
   };
+
+  // Reaching the top of the list loads newer segments (the prepend direction).
+  // We drive this off the reliable "at top" state rather than Virtuoso's
+  // startReached, which does not fire dependably after prepends. Only trigger
+  // once the user has scrolled away and come back, so the initial render (which
+  // starts at the top) doesn't auto-load. fetchNewerAudioSegments self-guards
+  // against missing pages / in-flight requests.
+  const handleAtTopStateChange = useCallback(
+    (atTop: boolean) => {
+      setIsViewAtTopOfAudioSegments(atTop);
+      if (!atTop) {
+        hasScrolledAwayFromTop.current = true;
+      } else if (hasScrolledAwayFromTop.current) {
+        // Remember the current top item so we can preserve the scroll position
+        // once the newer segments are prepended above it. Read from the ref so
+        // this callback stays stable across data updates.
+        newerLoadAnchorId.current = audioSegmentsRef.current[0]?.id ?? null;
+        fetchNewerAudioSegments();
+      }
+    },
+    [fetchNewerAudioSegments]
+  );
+
+  // Once a newer load settles, lower firstItemIndex by the number of items that
+  // were prepended above the anchored top item, keeping the scroll position
+  // stable. react-query updates the data and clears isFetching in the same
+  // commit, so by the time fetching flips to false audioSegments is current.
+  // Runs before paint so the corrected offset is applied without a visible jump.
+  useLayoutEffect(() => {
+    const justSettled =
+      wasFetchingNewer.current && !isFetchingNewerAudioSegments;
+    wasFetchingNewer.current = isFetchingNewerAudioSegments;
+    if (!justSettled) return;
+
+    const anchorId = newerLoadAnchorId.current;
+    newerLoadAnchorId.current = null;
+    if (!anchorId) return;
+
+    const prependedCount = audioSegments.findIndex((s) =>
+      matchesSegmentId(s, anchorId)
+    );
+    if (prependedCount > 0) {
+      setFirstItemIndex((prev) => prev - prependedCount);
+    }
+  }, [isFetchingNewerAudioSegments, audioSegments]);
+
+  // A different feed / timestamp / alert filter replaces the list wholesale
+  // rather than prepending, so reset the anchoring baseline.
+  useEffect(() => {
+    setFirstItemIndex(VIRTUOSO_START_INDEX);
+    newerLoadAnchorId.current = null;
+    hasScrolledAwayFromTop.current = false;
+  }, [searchedFeedId, searchedTimestamp, alertFilter]);
 
   const handleFilterByDateTime = (date: Date | null) => {
     setSearchedTimestamp(date);
@@ -508,6 +596,7 @@ export function TranscriptView({
       }, 100);
       hasScrolledToTarget.current = false;
     }
+    hasScrolledAwayFromTop.current = false;
   };
 
   const handleFeedSelect = (feedId: string) => {
@@ -633,13 +722,12 @@ export function TranscriptView({
           <TranscriptDisplay
             ref={virtuosoRef}
             audioSegments={audioSegments}
+            firstItemIndex={firstItemIndex}
             groupCounts={groupCounts}
             groupTitles={groupTitles}
-            setIsViewAtTopOfAudioSegments={setIsViewAtTopOfAudioSegments}
+            setIsViewAtTopOfAudioSegments={handleAtTopStateChange}
             hasNewerAudioSegments={hasNewerAudioSegments}
             isFetchingNewerAudioSegments={isFetchingNewerAudioSegments}
-            fetchNewerAudioSegments={fetchNewerAudioSegments}
-            isAudioSegmentsFetching={isAudioSegmentsFetching}
             isAudioSegmentsPolling={isAudioSegmentsPolling}
             hasOlderAudioSegments={hasOlderAudioSegments}
             isFetchingOlderAudioSegments={isFetchingOlderAudioSegments}
