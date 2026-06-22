@@ -17,7 +17,7 @@ class TestMainConfiguration(unittest.TestCase):
                 "RULES_EVALUATION_RESULTS_TOPIC": (
                     "projects/test/topics/results"
                 ),
-                "TRANSCRIPTS_API_URL": "http://transcripts-api:8087",
+                "AUDIO_SEGMENTS_API_URL": "http://audio-segments-api:8091",
                 "RULES_API_URL": "http://rules-api:8086",
             },
         )
