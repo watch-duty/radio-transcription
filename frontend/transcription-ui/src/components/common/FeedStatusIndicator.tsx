@@ -170,7 +170,9 @@ export function FeedStatusIndicator({
           timestamp={lastSpeechSegmentTimestamp}
         />
       </Box>
-      <RelativeTimeDisplay label="Last heartbeat" timestamp={lastHeartbeat} />
+      {lastHeartbeat && (
+        <RelativeTimeDisplay label="Last heartbeat" timestamp={lastHeartbeat} />
+      )}
     </Box>
   );
 }
