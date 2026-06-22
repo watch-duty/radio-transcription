@@ -290,7 +290,6 @@ export function useAudioSegments({
       pollingEnabled &&
       !hasNewerAudioSegments &&
       !!searchedFeedId,
-    initialData: () => [],
     refetchInterval: POLL_INTERVAL_MS,
     staleTime: POLL_INTERVAL_MS,
     refetchOnWindowFocus: true,
