@@ -58,20 +58,31 @@ export default defineConfig(({ mode }) => {
 
         const candidates = candidatesMap[file] || [`${file}.ts`, `${file}.tsx`];
 
+        console.log(`[theme-resolver] Resolving source: "${source}"`);
+        console.log(`[theme-resolver] env.VITE_THEME_DIR: "${env.VITE_THEME_DIR}"`);
+
         if (env.VITE_THEME_DIR) {
           for (const candidate of candidates) {
             const envFile = path.resolve(env.VITE_THEME_DIR, candidate);
-            if (fs.existsSync(envFile)) return envFile;
+            if (fs.existsSync(envFile)) {
+              console.log(`[theme-resolver] Resolved to envFile: "${envFile}"`);
+              return envFile;
+            }
           }
         }
 
         for (const candidate of candidates) {
           const customFile = path.resolve(customThemePath, candidate);
-          if (fs.existsSync(customFile)) return customFile;
+          if (fs.existsSync(customFile)) {
+            console.log(`[theme-resolver] Resolved to customFile: "${customFile}"`);
+            return customFile;
+          }
         }
 
         const defaultExt = file === 'favicon' ? 'svg' : 'ts';
-        return path.resolve(defaultThemePath, `${file}.${defaultExt}`);
+        const defaultFile = path.resolve(defaultThemePath, `${file}.${defaultExt}`);
+        console.log(`[theme-resolver] Default file: "${defaultFile}" (exists: ${fs.existsSync(defaultFile)})`);
+        return defaultFile;
       }
       return null;
     },
