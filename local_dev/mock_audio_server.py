@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -238,6 +238,13 @@ class RequestHandler(BaseHTTPRequestHandler):
                         # Sleep to match real-time byte rate
                         sleep_time = len(chunk) / byte_rate
                         time.sleep(sleep_time)
+
+                # Keep the connection open indefinitely to simulate an infinite live stream and prevent reconnection loops
+                logger.info(
+                    f"Finished streaming mock audio {file_path.name}, holding connection open to prevent reconnect loop..."
+                )
+                while True:
+                    time.sleep(3600)
             else:
                 with open(file_path, "rb") as f:
                     self.wfile.write(f.read())
@@ -249,7 +256,7 @@ class RequestHandler(BaseHTTPRequestHandler):
 
 def run(port: int = 8090) -> None:
     server_address = ("0.0.0.0", port)  # noqa: S104
-    httpd = HTTPServer(server_address, RequestHandler)
+    httpd = ThreadingHTTPServer(server_address, RequestHandler)
     logger.info(f"Starting Mock Audio Server on port {port}...")
     httpd.serve_forever()
 
