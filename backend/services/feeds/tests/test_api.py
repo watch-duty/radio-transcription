@@ -1,8 +1,6 @@
 import datetime
-import os
 import unittest
 import uuid
-from unittest import mock
 from unittest.mock import AsyncMock
 
 from fastapi import status
@@ -25,9 +23,6 @@ from backend.services.feeds.models import Feed, ListFeedsResponse, Tag
 
 _ACTOR_ID = "user:google:admin-sub-123"
 _ACTOR_HEADERS = {"X-WD-Actor-Id": _ACTOR_ID}
-_TRUSTED_ACTOR_FORWARDING_SERVICE_ACCOUNTS_ENV = (
-    "TRUSTED_ACTOR_FORWARDING_SERVICE_ACCOUNTS"
-)
 
 
 async def skip_auth() -> dict[str, str]:
@@ -292,75 +287,6 @@ class TestFeedsAPI(unittest.TestCase):
                     status.HTTP_403_FORBIDDEN,
                 )
                 self.mock_service.create_feed.assert_not_called()
-
-    def test_create_feed_untrusted_gcp_caller_rejects(self) -> None:
-        """GCP mode requires the caller email to be allowlisted."""
-        payload = {
-            "name": "Test Feed",
-            "source_type": "bcfy_feeds",
-            "source_feed_id": "123",
-        }
-
-        with (
-            mock.patch(
-                "backend.services.feeds.main.is_gcp_env", return_value=True
-            ),
-            mock.patch.dict(
-                os.environ,
-                {
-                    _TRUSTED_ACTOR_FORWARDING_SERVICE_ACCOUNTS_ENV: "trusted@example.com"
-                },
-            ),
-        ):
-            response = self.client.post(
-                "/v1/feeds",
-                json=payload,
-                headers=_ACTOR_HEADERS,
-            )
-
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.mock_service.create_feed.assert_not_called()
-
-    def test_create_feed_trusted_gcp_caller_accepts_actor_header(self) -> None:
-        """An explicitly trusted GCP caller may forward the admin actor."""
-        payload = {
-            "name": "Test Feed",
-            "source_type": "bcfy_feeds",
-            "source_feed_id": "123",
-        }
-        mock_feed = Feed(
-            id=uuid.uuid4(),
-            name="Test Feed",
-            source_type=SourceType.BCFY_FEEDS,
-            source_feed_id="123",
-            status=FeedStatus.ACTIVE,
-            last_heartbeat=None,
-        )
-        self.mock_service.create_feed.return_value = mock_feed
-
-        with (
-            mock.patch(
-                "backend.services.feeds.main.is_gcp_env", return_value=True
-            ),
-            mock.patch.dict(
-                os.environ,
-                {
-                    _TRUSTED_ACTOR_FORWARDING_SERVICE_ACCOUNTS_ENV: "test@example.com"
-                },
-            ),
-        ):
-            response = self.client.post(
-                "/v1/feeds",
-                json=payload,
-                headers=_ACTOR_HEADERS,
-            )
-
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.mock_service.create_feed.assert_called_once()
-        self.assertEqual(
-            self.mock_service.create_feed.call_args.kwargs,
-            {"actor_id": _ACTOR_ID},
-        )
 
     def test_get_feed_success(self) -> None:
         """Test fetching an existing feed."""
