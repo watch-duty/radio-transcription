@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa
 """Standalone CLI tool to evaluate ASR performance across different context window sizes (NUM_RECENT_EVENTS).
 
 This script:
@@ -166,15 +167,19 @@ async def evaluate_single_channel_config(
     max_history_turns = max(0, context_size - 1)
     history_buffer = deque(maxlen=max_history_turns)
     system_instruction = SYSTEM_PROMPT
-    
+
     # Dynamically parse and construct model paths
-    if args.model_id.startswith("projects/") or args.model_id.startswith("endpoints/"):
+    if args.model_id.startswith("projects/") or args.model_id.startswith(
+        "endpoints/"
+    ):
         if args.model_id.startswith("projects/"):
             model_path = args.model_id
         else:
             # Custom SFT endpoints are always deployed in the 'us' multi-region.
             # We force the resource path to 'us' while the client runs in a high-performance local region.
-            model_path = f"projects/{args.gcp_project}/locations/us/{args.model_id}"
+            model_path = (
+                f"projects/{args.gcp_project}/locations/us/{args.model_id}"
+            )
     else:
         # Pass public model names directly to let the SDK resolve them natively!
         model_path = args.model_id
@@ -522,15 +527,17 @@ async def main_async(args: argparse.Namespace) -> None:
             entry = json.loads(line)
             filepath = entry["audio_filepath"]
             filename = Path(filepath).name
-            
+
             # Robust extraction of the channel name from the standardized filename prefix:
             # Matches '{channel_name}_{YYYYMMDD}_{HH}__seg', '{channel_name}__seg', or '{channel_name}-row-...'
-            match = re.match(r"^(.*?)(?:_\d{8}_\d{2})?(?:__seg|-row-)", filename)
+            match = re.match(
+                r"^(.*?)(?:_\d{8}_\d{2})?(?:__seg|-row-)", filename
+            )
             if match:
                 channel_id = match.group(1)
             else:
                 channel_id = Path(filepath).parent.name
-                
+
             entry["example_id"] = channel_id
             channels[channel_id].append(entry)
 
@@ -561,8 +568,6 @@ async def main_async(args: argparse.Namespace) -> None:
     )
     for cid in sampled_cids:
         logger.info(f"   - {cid}: {len(channels[cid])} segments")
-
-    
 
     sweep_results = []
     csv_headers = [

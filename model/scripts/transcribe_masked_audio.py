@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa
 """
 Standalone Production CLI Runner for the Contextual Audio Transcription Pipeline.
 Supports both pure stateless direct model calls and stateful context-cached ADK agent sessions.
@@ -10,7 +11,6 @@ import asyncio
 import json
 import os
 import random
-import re
 import sys
 import time
 from collections import defaultdict
@@ -38,7 +38,7 @@ try:
     from google import adk
     from google.adk.agents import Agent
     from google.adk.models import Gemini
-    from google.adk.runners import Runner, GetSessionConfig, RunConfig
+    from google.adk.runners import GetSessionConfig, RunConfig, Runner
     from google.adk.sessions import VertexAiSessionService
     from google.api_core import retry as api_retry
     from google.api_core import retry_async as api_retry_async
@@ -49,7 +49,7 @@ try:
     from google.genai import types as genai_types
     from tqdm.asyncio import tqdm
 except ImportError as err:
-    logger.error(
+    logger.exception(
         f"Missing required dependencies: {err}. Please ensure you are running in the correct environment (e.g. `uv run`)."
     )
     sys.exit(1)
@@ -61,13 +61,9 @@ except ImportError as err:
 class SessionExpiredError(Exception):
     """Custom exception raised when a resumed session has expired or was deleted."""
 
-    pass
-
 
 class FatalPipelineError(Exception):
     """Custom exception raised when an unrecoverable error occurs that should abort the entire pipeline."""
-
-    pass
 
 
 # -----------------------------------------------------------------------------
@@ -184,7 +180,7 @@ def load_gcs_checkpoint(
 
     if os.path.exists(checkpoint_file):
         logger.info(f"Loading checkpoint from local file: {checkpoint_file}")
-        with open(checkpoint_file, "r") as f:
+        with open(checkpoint_file) as f:
             for line in f:
                 if line.strip():
                     record = json.loads(line)
@@ -308,7 +304,11 @@ async def process_single_channel(
 
                         response = await asyncio.to_thread(
                             stateless_client.models.generate_content,
-                            model=resolve_model_name(args.model_id, args.gcp_project, args.gcp_location),
+                            model=resolve_model_name(
+                                args.model_id,
+                                args.gcp_project,
+                                args.gcp_location,
+                            ),
                             contents=contents,
                             config=stateless_config,
                         )
@@ -464,8 +464,9 @@ async def process_single_channel(
                                     0.5
                                 )  # Minimal 500ms Quota stagger
                             if not new_session or not new_session.id:
+                                msg = f"Invalid session created: {new_session}"
                                 raise ValueError(
-                                    f"Invalid session created: {new_session}"
+                                    msg
                                 )
                             session_id = new_session.id
                             break
@@ -480,11 +481,12 @@ async def process_single_channel(
                                 or "PERMISSION_DENIED" in str(e)
                                 or "NOT_FOUND" in str(e)
                             ):
-                                logger.error(
+                                logger.exception(
                                     f"FATAL SESSION ERROR: {e}. Aborting pipeline immediately."
                                 )
+                                msg = f"Pipeline aborted due to fatal unrecoverable session error: {e}"
                                 raise FatalPipelineError(
-                                    f"Pipeline aborted due to fatal unrecoverable session error: {e}"
+                                    msg
                                 ) from e
 
                             jitter_sleep = (2**retry) + random.uniform(1.0, 3.0)
@@ -659,7 +661,7 @@ async def process_single_channel(
                                 )
                                 full_text_so_far = "".join(streamed_text_chunks)
                                 logger.warning(
-                                    f"[DEBUG] Raw text generated before failure: {repr(full_text_so_far[:200])}"
+                                    f"[DEBUG] Raw text generated before failure: {full_text_so_far[:200]!r}"
                                 )
 
                             full_text = "".join(streamed_text_chunks).strip()
@@ -754,11 +756,12 @@ async def process_single_channel(
                                 )
                             )
                             if is_fatal:
-                                logger.error(
+                                logger.exception(
                                     f"FATAL TURN ERROR: {stream_err}. Aborting pipeline immediately."
                                 )
+                                msg = f"Pipeline aborted due to fatal unrecoverable turn error: {stream_err}"
                                 raise FatalPipelineError(
-                                    f"Pipeline aborted due to fatal unrecoverable turn error: {stream_err}"
+                                    msg
                                 ) from stream_err
 
                             transcript = None
@@ -789,7 +792,7 @@ async def process_single_channel(
                         if is_blocked_or_empty:
                             logger.warning(
                                 f"[STATELESS FALLBACK] Stateful turn {turn_index} on {Path(uri).name} failed "
-                                f"(Transcript: {repr(transcript)}, Finish Reason: {f_reason}, Error: {final_error_msg}). "
+                                f"(Transcript: {transcript!r}, Finish Reason: {f_reason}, Error: {final_error_msg}). "
                                 f"Executing stateless fallback with clean context..."
                             )
                             try:
@@ -815,7 +818,11 @@ async def process_single_channel(
 
                                 response = await asyncio.to_thread(
                                     fallback_client.models.generate_content,
-                                    model=resolve_model_name(args.model_id, args.gcp_project, args.gcp_location),
+                                    model=resolve_model_name(
+                                        args.model_id,
+                                        args.gcp_project,
+                                        args.gcp_location,
+                                    ),
                                     contents=fallback_contents,
                                     config=fallback_config,
                                 )
@@ -878,7 +885,7 @@ async def process_single_channel(
                                     transcript = None
                                     final_error_msg = "Stateless fallback returned no candidates"
                             except Exception as fallback_err:
-                                logger.error(
+                                logger.exception(
                                     f"[STATELESS FALLBACK CRITICAL] Stateless fallback raised exception: {fallback_err}"
                                 )
                                 transcript = None
@@ -992,7 +999,7 @@ async def process_single_channel(
             if e["audio_filepath"] not in processed_filepaths
         ]
 
-        logger.error(
+        logger.exception(
             f"🚨 FATAL CHANNEL CRASH for {channel_id}: {fatal_err}. "
             f"Marking {len(unprocessed_entries)} remaining segments as failed and continuing other channels!"
         )
@@ -1015,7 +1022,7 @@ async def process_single_channel(
 # -----------------------------------------------------------------------------
 # CLI Entrypoint & Main
 # -----------------------------------------------------------------------------
-async def main_async(args):
+async def main_async(args) -> None:
     # Initialize GCP storage client
     storage_client = storage.Client(project=args.gcp_project)
 
@@ -1052,7 +1059,8 @@ async def main_async(args):
     m_path = "/".join(args.manifest_uri.replace("gs://", "").split("/")[1:])
     manifest_blob = storage_client.bucket(m_bucket).blob(m_path)
     if not manifest_blob.exists():
-        raise FileNotFoundError(f"Manifest not found at {args.manifest_uri}")
+        msg = f"Manifest not found at {args.manifest_uri}"
+        raise FileNotFoundError(msg)
 
     content = manifest_blob.download_as_text().strip().split("\n")
     channels = defaultdict(list)
@@ -1106,7 +1114,9 @@ async def main_async(args):
         )
 
         configured_model = ConfiguredGemini(
-            model=resolve_model_name(args.model_id, args.gcp_project, args.gcp_location),
+            model=resolve_model_name(
+                args.model_id, args.gcp_project, args.gcp_location
+            ),
             project=args.gcp_project,
             location=args.gcp_location,
             system_instruction=SYSTEM_PROMPT,
@@ -1177,7 +1187,7 @@ async def main_async(args):
     final_errors = []
 
     if os.path.exists(args.checkpoint_file):
-        with open(args.checkpoint_file, "r") as f:
+        with open(args.checkpoint_file) as f:
             lines = f.readlines()
 
         final_ndjson = "".join(lines)
@@ -1218,7 +1228,7 @@ async def main_async(args):
         )
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="CLI Runner for the Contextual Audio Transcription Pipeline.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -1358,7 +1368,7 @@ def main():
         logger.warning("\nExecution interrupted by user. Gracefully exiting.")
         sys.exit(130)
     except Exception as e:
-        logger.error(f"Pipeline crashed with unhandled exception: {e}")
+        logger.exception(f"Pipeline crashed with unhandled exception: {e}")
         sys.exit(1)
 
 

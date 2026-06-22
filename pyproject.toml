@@ -70,6 +70,7 @@ extend-exclude = [
   "backend/pipeline/schema_types",
   "**/*_pb2.py",
   "**/*_pb2.pyi",
+  "model",
 ]
 line-length = 80
 

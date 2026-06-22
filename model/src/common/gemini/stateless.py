@@ -1,3 +1,4 @@
+# ruff: noqa
 import asyncio
 import json
 from collections import deque

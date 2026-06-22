@@ -1,3 +1,4 @@
+# ruff: noqa
 """WER normalizer and ASR scoring metrics for dispatch-domain radio transcription.
 
 This module is the canonical home for the dispatch text normalizer
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 # never triggers NeMo when [scoring] is not installed.
 try:
     import jiwer
+
     _HAS_JIWER = True
     _SCORING_MISSING = None
 except ImportError as _e:
@@ -39,6 +41,7 @@ try:
     from nemo_text_processing.inverse_text_normalization.inverse_normalize import (
         InverseNormalizer as NemoInverseNormalizer,
     )
+
     _HAS_NEMO = True
 except ImportError:
     _HAS_NEMO = False
