@@ -175,6 +175,7 @@ class AudioStitchingStateMachine:
             reason=reason,
             feed_id=ctx.feed_id,
             contributing_audio_uris=ctx.contributing_audio_uris.copy(),
+            contributing_chunks=list(ctx.contributing_chunks),
             time_range=TimeRange(
                 start_ms=ctx.buffer_start_time_ms,
                 end_ms=padded_end_time_ms,
@@ -270,6 +271,7 @@ class AudioStitchingStateMachine:
                             time_range=action.time_range,
                             speech_time_range=action.speech_time_range,
                             contributing_audio_uris=action.contributing_audio_uris,
+                            contributing_chunks=action.contributing_chunks,
                             missing_prior_context=action.missing_prior_context,
                             missing_post_context=action.missing_post_context,
                             start_audio_offset_ms=action.start_audio_offset_ms,
