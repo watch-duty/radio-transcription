@@ -6,10 +6,8 @@ ENV PYTHONUNBUFFERED=1
 
 # Install runtime OS dependencies (ffmpeg is required by AudioProcessor)
 USER root
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+COPY --from=mwader/static-ffmpeg:6.1.1 /ffmpeg /usr/local/bin/
+COPY --from=mwader/static-ffmpeg:6.1.1 /ffprobe /usr/local/bin/
 
 WORKDIR /app
 

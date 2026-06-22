@@ -1,0 +1,70 @@
+name: 'Post Frontend Coverage'
+description: 'Emits frontend test coverage as a Check Run'
+inputs:
+  name:
+    description: 'Name of the tests that the coverage is for'
+    required: true
+  coverage-report-location:
+    description: 'Path to the text coverage report file'
+    required: true
+  json-summary-location:
+    description: 'Path to the JSON coverage summary file'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Create Coverage Check Run
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          // Use HEAD for pull requests, and all other types of runs (e.g. manual trigger)
+          // will use the commit SHA.
+          const ref = context.payload.pull_request
+            ? context.payload.pull_request.head.sha
+            : context.sha;
+          
+          const testName = `${{ inputs.name }}`;
+          const reportFile = `${{ inputs.coverage-report-location }}`;
+          const jsonSummary = `${{ inputs.json-summary-location }}`;
+          
+          if (fs.existsSync(jsonSummary)) {
+            try {
+              const data = JSON.parse(fs.readFileSync(jsonSummary, 'utf8'));
+              const coveragePct = parseFloat(data.total.statements.pct);
+              let coverageHealth = '🟢';
+              let healthText = 'Healthy';
+              if (coveragePct < 50) {
+                coverageHealth = '🔴';
+                healthText = 'Critical (<50%)';
+              } else if (coveragePct < 80) {
+                coverageHealth = '🟡';
+                healthText = 'Warning (<80%)';
+              }
+
+              const codeBlock = '```';
+              let summary = 'No coverage report found';
+              if (fs.existsSync(reportFile)) {
+                summary = `### Coverage Report (${healthText})\n\n${codeBlock}\n${fs.readFileSync(reportFile, 'utf8')}\n${codeBlock}`;
+              }
+              
+              await github.rest.checks.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                head_sha: ref,
+                name: `${coverageHealth} ${testName}: ${coveragePct}%`,
+                status: 'completed',
+                conclusion: 'success',
+                output: {
+                  title: `${testName}: ${coveragePct}%`,
+                  summary: summary,
+                }
+              });
+            } catch (e) {
+              core.warning(`Failed to parse json summary for ${testName}: ${e}`);
+            }
+          } else {
+            // Silently failing this so that the focus can be on the test themselves.
+            core.warning(`JSON summary file not found at ${jsonSummary}`);
+          }

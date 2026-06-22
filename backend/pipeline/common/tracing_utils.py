@@ -4,8 +4,9 @@ import logging
 import os
 import threading
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from typing import Any, cast
 
 from cloudevents.http.event import CloudEvent
 from opentelemetry import baggage, metrics
@@ -369,8 +370,52 @@ def with_baggage_and_span(
         yield span
 
 
+def _safe_str(val: Any) -> str:
+    """Safely converts string or bytes to a standard string."""
+    if isinstance(val, bytes):
+        return val.decode("utf-8", errors="ignore")
+    return str(val)
+
+
+def _extract_nested_pubsub_attributes(data: Any) -> dict[str, str]:
+    """Helper to extract attributes from nested Pub/Sub messages."""
+    attrs_dict: dict[str, str] = {}
+    if isinstance(data, dict):
+        data_dict: dict[Any, Any] = data
+        message = data_dict.get("message") or data_dict.get(b"message")
+
+        # Fallback: if there is no nested "message" field, but "attributes" is present at the top level,
+        # then the data dictionary itself is the message!
+        if message is None and (
+            "attributes" in data_dict or b"attributes" in data_dict
+        ):
+            message = data_dict
+
+        if isinstance(message, dict):
+            msg_dict: dict[Any, Any] = message
+            attrs = msg_dict.get("attributes") or msg_dict.get(b"attributes")
+            if isinstance(attrs, dict):
+                attrs_dict.update(
+                    {_safe_str(k): _safe_str(v) for k, v in attrs.items()}
+                )
+    return attrs_dict
+
+
+def _normalize_prefixed_attributes(attributes: dict[str, str]) -> None:
+    """Helper to normalize prefixed CloudEvent/PubSub attributes in-place."""
+    for k, v in list(attributes.items()):
+        clean_key = None
+        if k.startswith("x-goog-pubsub-attr-"):
+            clean_key = k[19:]
+        elif k.startswith("ce-"):
+            clean_key = k[3:]
+
+        if clean_key and clean_key not in attributes:
+            attributes[clean_key] = v
+
+
 def extract_cloud_event_attributes(
-    cloud_event: CloudEvent | dict[str, object],
+    cloud_event: CloudEvent | Mapping[Any, Any],
 ) -> dict[str, str]:
     """Extracts combined attributes from a CloudEvent payload and metadata.
 
@@ -382,50 +427,24 @@ def extract_cloud_event_attributes(
     """
     combined_attributes: dict[str, str] = {}
 
-    if isinstance(cloud_event, dict):
-        data = cloud_event.get("data")
-        ce_attrs = cloud_event.get("attributes")
-    else:
+    if hasattr(cloud_event, "data"):
         data = cloud_event.data
-        ce_attrs = None
+        ce_attrs = getattr(cloud_event, "attributes", None)
+    else:
+        data_dict: Mapping[Any, Any] = cloud_event
+        data = data_dict.get("data") or data_dict.get(b"data")
+        ce_attrs = data_dict.get("attributes") or data_dict.get(b"attributes")
 
-    # 1. Try to extract from nested Pub/Sub message attributes
-    try:
-        if isinstance(data, dict):
-            data_dict = {str(k): v for k, v in data.items()}
-            pubsub_message = data_dict.get("message")
-            if isinstance(pubsub_message, dict):
-                msg_dict = {str(k): v for k, v in pubsub_message.items()}
-                pubsub_attrs = msg_dict.get("attributes")
-                if isinstance(pubsub_attrs, dict):
-                    combined_attributes.update(
-                        {
-                            str(k): str(v)
-                            for k, v in pubsub_attrs.items()
-                            if isinstance(k, str) and isinstance(v, str)
-                        }
-                    )
-    except Exception as e:
-        telemetry_logger.debug(
-            "Failed to extract attributes from Pub/Sub message: %s", e
+    # 1. Extract from nested Pub/Sub message attributes
+    combined_attributes.update(_extract_nested_pubsub_attributes(data))
+
+    # 2. Extract from top-level CloudEvent attributes
+    if isinstance(ce_attrs, dict):
+        combined_attributes.update(
+            {_safe_str(k): _safe_str(v) for k, v in ce_attrs.items()}
         )
 
-    # 2. Try to extract from top-level CloudEvent attributes
-    try:
-        if isinstance(ce_attrs, dict):
-            combined_attributes.update(
-                {
-                    str(k): str(v)
-                    for k, v in ce_attrs.items()
-                    if isinstance(k, str) and isinstance(v, str)
-                }
-            )
-    except Exception as e:
-        telemetry_logger.debug(
-            "Failed to extract attributes from CloudEvent attributes: %s", e
-        )
-
-    # 3. Try to extract from top-level CloudEvent fields if dict-like or via get method
+    # 3. Extract from top-level CloudEvent fields if dict-like or via get method
     for k in [
         "traceparent",
         "baggage",
@@ -433,21 +452,27 @@ def extract_cloud_event_attributes(
         "ce-traceparent",
         "ce-baggage",
         "ce-tracestate",
+        "x-goog-pubsub-attr-traceparent",
+        "x-goog-pubsub-attr-baggage",
     ]:
         try:
             val = cloud_event.get(k)
-            if isinstance(val, str):
-                combined_attributes[k] = val
+            if isinstance(val, (str, bytes, int, float, bool)):
+                # We intentionally coerce scalar values to str to handle robust type conversion
+                # for keys like traceparent/baggage which are expected to be scalar strings,
+                # while ignoring complex objects or mock returns in unit tests.
+                combined_attributes[k] = _safe_str(val)
         except Exception as e:
-            telemetry_logger.debug(
-                "Field %s not found or extraction failed: %s", k, e
-            )
+            telemetry_logger.debug("Field %s extraction failed: %s", k, e)
+
+    # 4. Normalize prefixed attributes
+    _normalize_prefixed_attributes(combined_attributes)
 
     return combined_attributes
 
 
 def parse_pubsub_cloudevent(
-    cloud_event: CloudEvent | dict[str, object],
+    cloud_event: CloudEvent | Mapping[Any, Any],
 ) -> tuple[dict[str, str], str]:
     """Parses a CloudEvent containing a Pub/Sub message, validating its structure.
 
@@ -461,10 +486,10 @@ def parse_pubsub_cloudevent(
         ValueError: If the CloudEvent envelope or Pub/Sub message structure is invalid.
         TypeError: If the Pub/Sub message is not a dictionary.
     """
-    if isinstance(cloud_event, dict):
-        envelope = cloud_event
-    else:
+    if hasattr(cloud_event, "data"):
         envelope = cloud_event.data
+    else:
+        envelope = cloud_event
 
     if (
         not envelope
@@ -474,7 +499,7 @@ def parse_pubsub_cloudevent(
         err_msg = "Invalid CloudEvent envelope structure."
         raise ValueError(err_msg)
 
-    pubsub_message = envelope.get("message")
+    pubsub_message = cast("Any", envelope).get("message")
     if not isinstance(pubsub_message, dict):
         type_err = "Invalid Pub/Sub message structure inside CloudEvent."
         raise TypeError(type_err)

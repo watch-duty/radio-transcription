@@ -16,7 +16,6 @@ dependencies = [
     "audio-segments-service",
     "feeds-service",
     "rules-service",
-    "transcripts-service",
     "normalization-pipeline",
     "segmentation-pipeline",
     "transcription-function",
@@ -32,7 +31,7 @@ dependencies = [
     "asyncpg>=0.29.0",
     "psycopg[binary]>=3.2.0",
     "redis>=7.3.0",
-    "pydantic-settings>=2.0.0",
+    "pydantic-settings>=2.14.2",
 ]
 
 [tool.uv]
@@ -227,6 +226,9 @@ known-first-party = ["backend", "local_dev"]
   "S113",   # requests.* require timeout=
   "T201",   # `print()` found
 ]
+".github/scripts/**.py" = [
+  "INP001", # Implicit namespaces (no __init__.py needed for standalone scripts)
+]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -250,7 +252,6 @@ members = [
     "backend/services/audio_segments",
     "backend/services/feeds",
     "backend/services/rules",
-    "backend/services/transcripts",
 ]
 
 [tool.uv.sources]
@@ -258,7 +259,6 @@ radio-transcription-common = { workspace = true }
 audio-segments-service = { workspace = true }
 feeds-service = { workspace = true }
 rules-service = { workspace = true }
-transcripts-service = { workspace = true }
 normalization-pipeline = { workspace = true }
 segmentation-pipeline = { workspace = true }
 transcription-function = { workspace = true }

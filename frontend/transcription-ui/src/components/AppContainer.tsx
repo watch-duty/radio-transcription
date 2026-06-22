@@ -46,7 +46,7 @@ export default function AppContainer({
 }) {
   const navigate = useNavigate();
   const theme = useTheme();
-  const { token, setToken } = useAuth();
+  const { token, setToken, isAdmin } = useAuth();
   const [open, setOpen] = useState(false);
 
   const handleDrawerOpen = () => {
@@ -144,30 +144,36 @@ export default function AppContainer({
               <ListItemText primary={'Feeds'} />
             </ListItemButton>
           </ListItem>
-          <ListItem disablePadding>
-            <ListItemButton onClick={() => handleItemClick('/rules')}>
-              <ListItemIcon>
-                <RuleIcon />
-              </ListItemIcon>
-              <ListItemText primary={'Rule Configuration'} />
-            </ListItemButton>
-          </ListItem>
-          <ListItem disablePadding>
-            <ListItemButton onClick={() => handleItemClick('/feeds')}>
-              <ListItemIcon>
-                <AppRegistrationIcon />
-              </ListItemIcon>
-              <ListItemText primary={'Feed Configuration'} />
-            </ListItemButton>
-          </ListItem>
-          <ListItem disablePadding>
-            <ListItemButton onClick={() => handleItemClick('/docs')}>
-              <ListItemIcon>
-                <DescriptionIcon />
-              </ListItemIcon>
-              <ListItemText primary={'API Docs'} />
-            </ListItemButton>
-          </ListItem>
+          {isAdmin && (
+            <ListItem disablePadding>
+              <ListItemButton onClick={() => handleItemClick('/rules')}>
+                <ListItemIcon>
+                  <RuleIcon />
+                </ListItemIcon>
+                <ListItemText primary={'Rule Configuration'} />
+              </ListItemButton>
+            </ListItem>
+          )}
+          {isAdmin && (
+            <ListItem disablePadding>
+              <ListItemButton onClick={() => handleItemClick('/feeds')}>
+                <ListItemIcon>
+                  <AppRegistrationIcon />
+                </ListItemIcon>
+                <ListItemText primary={'Feed Configuration'} />
+              </ListItemButton>
+            </ListItem>
+          )}
+          {isAdmin && (
+            <ListItem disablePadding>
+              <ListItemButton onClick={() => handleItemClick('/docs')}>
+                <ListItemIcon>
+                  <DescriptionIcon />
+                </ListItemIcon>
+                <ListItemText primary={'API Docs'} />
+              </ListItemButton>
+            </ListItem>
+          )}
         </List>
         <Divider />
         <List>

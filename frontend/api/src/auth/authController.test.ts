@@ -2,7 +2,9 @@ import type * as express from 'express';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { AuthController } from './authController.js';
+import { AuthController, UsersController } from './authController.js';
+
+import { HttpError } from '../utils.js';
 
 const { mockGetToken, mockRefreshAccessToken, mockSetCredentials, mockState } =
   vi.hoisted(() => ({
@@ -243,5 +245,39 @@ describe('AuthController', () => {
       expect(mockClearCookie).toHaveBeenCalledWith('refresh_token');
       expect(controller.getStatus()).toBe(204);
     });
+  });
+});
+
+describe('UsersController', () => {
+  it('should return user info when authenticated user is present', async () => {
+    const controller = new UsersController();
+    const mockReq = {
+      user: {
+        email: 'test@email.org',
+        isAdmin: true,
+      },
+    } as unknown as express.Request;
+
+    const result = await controller.getUserInfo(mockReq);
+
+    expect(result).toEqual({
+      email: 'test@email.org',
+      isAdmin: true,
+    });
+  });
+
+  it('should throw HttpError with 401 when request.user is missing', async () => {
+    const controller = new UsersController();
+    const mockReq = {} as unknown as express.Request;
+
+    try {
+      await controller.getUserInfo(mockReq);
+      expect.fail('Expected getUserInfo to throw');
+    } catch (error: unknown) {
+      expect(error).toBeInstanceOf(HttpError);
+      const httpError = error as HttpError;
+      expect(httpError.status).toBe(401);
+      expect(httpError.message).toBe('Unauthorized');
+    }
   });
 });

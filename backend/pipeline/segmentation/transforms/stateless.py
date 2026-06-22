@@ -44,6 +44,7 @@ from backend.pipeline.segmentation.constants import (
     DEAD_LETTER_QUEUE_TAG,
 )
 from backend.pipeline.segmentation.datatypes import (
+    AudioClassification,
     ChunkMetadata,
     FeedMetadata,
     FlushRequest,
@@ -291,7 +292,9 @@ class UploadRawSegmentFn(beam.DoFn):
             start_audio_offset=start_offset,
             end_audio_offset=end_offset,
             feed_name=request.feed_metadata.feed_name,
-            audio_classification=request.audio_classification.name,
+            audio_classification=AudioClassification(
+                request.audio_classification
+            ).name,
             raw_audio_uri=gcs_uri,
         )
 
