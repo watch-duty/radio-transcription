@@ -5,6 +5,8 @@ interface AuthContextType {
   setToken: (token: string | null) => void;
   isAdmin: boolean;
   setIsAdmin: (isAdmin: boolean) => void;
+  isLoading: boolean;
+  isError: boolean;
 }
 
 export const AuthContext = createContext<AuthContextType>({
@@ -12,6 +14,8 @@ export const AuthContext = createContext<AuthContextType>({
   setToken: () => {},
   isAdmin: false,
   setIsAdmin: () => {},
+  isLoading: false,
+  isError: false,
 });
 
 export const useAuth = () => useContext(AuthContext);
