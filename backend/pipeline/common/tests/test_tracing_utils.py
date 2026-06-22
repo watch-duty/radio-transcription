@@ -150,7 +150,7 @@ class TestTracingUtils(unittest.TestCase):
         """Verifies that record_pipeline_stage emits a log with correct json_fields."""
         record_pipeline_stage("segmentation", "start")
         mock_logger.info.assert_called_once_with(
-            "Pipeline stage recorded",
+            "Pipeline stage recorded: segmentation -> start",
             extra={
                 "json_fields": {
                     "event_type": "pipeline_stage",
@@ -163,7 +163,7 @@ class TestTracingUtils(unittest.TestCase):
         mock_logger.reset_mock()
         record_pipeline_stage("transcription", "success")
         mock_logger.info.assert_called_once_with(
-            "Pipeline stage recorded",
+            "Pipeline stage recorded: transcription -> success",
             extra={
                 "json_fields": {
                     "event_type": "pipeline_stage",

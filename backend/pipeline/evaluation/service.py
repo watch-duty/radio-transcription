@@ -34,7 +34,7 @@ def _record_e2e_latency(feed_id: str) -> None:
         latency_ms = current_time_ms - ingest_time_ms
 
         pipeline_metrics_logger.info(
-            "Recorded E2E latency",
+            f"Recorded E2E latency: {latency_ms}ms (feed_id: {feed_id})",
             extra={
                 "json_fields": {
                     "event_type": "e2e_latency",

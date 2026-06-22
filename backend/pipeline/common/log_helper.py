@@ -24,7 +24,7 @@ def record_pipeline_stage(stage: str, status: str = "start") -> None:
     from scale-to-zero container destruction in Cloud Run / GCF.
     """
     pipeline_metrics_logger.info(
-        "Pipeline stage recorded",
+        f"Pipeline stage recorded: {stage} -> {status}",
         extra={
             "json_fields": {
                 "event_type": "pipeline_stage",
