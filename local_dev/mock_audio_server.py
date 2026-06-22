@@ -214,8 +214,33 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.send_header("Content-type", content_type)
             self.end_headers()
 
-            with open(file_path, "rb") as f:
-                self.wfile.write(f.read())
+            # Throttle audio file downloads to real-time playback speed to simulate live streaming
+            is_audio = file_path.suffix.lower() in {
+                ".flac",
+                ".mp3",
+                ".wav",
+                ".m4a",
+                ".ogg",
+            }
+            if is_audio:
+                # Assume a standard mock duration of 15 seconds to calculate the byte rate
+                duration = 15.0
+                file_size = file_path.stat().st_size
+                byte_rate = file_size / duration  # bytes per second
+
+                chunk_size = 4096
+                with open(file_path, "rb") as f:
+                    while True:
+                        chunk = f.read(chunk_size)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        # Sleep to match real-time byte rate
+                        sleep_time = len(chunk) / byte_rate
+                        time.sleep(sleep_time)
+            else:
+                with open(file_path, "rb") as f:
+                    self.wfile.write(f.read())
         else:
             self.send_response(404)
             self.end_headers()
