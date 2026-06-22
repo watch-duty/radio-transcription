@@ -101,21 +101,24 @@ const TimelineClip = React.memo(
             left: `${clip.left}%`,
             width: `${clip.width}%`,
             height: '100%',
-            borderLeft: isDarkTheme
-              ? '1px dashed rgba(255, 255, 255, 0.15)'
-              : '1px dashed rgba(0, 0, 0, 0.15)',
-            borderRight: isDarkTheme
-              ? '1px dashed rgba(255, 255, 255, 0.15)'
-              : '1px dashed rgba(0, 0, 0, 0.15)',
             background: isDarkTheme
-              ? 'repeating-linear-gradient(45deg, ' +
-                'rgba(255, 255, 255, 0.02), ' +
-                'rgba(255, 255, 255, 0.02) 10px, ' +
-                'transparent 10px, transparent 20px)'
-              : 'repeating-linear-gradient(45deg, ' +
-                'rgba(0, 0, 0, 0.02), ' +
-                'rgba(0, 0, 0, 0.02) 10px, ' +
-                'transparent 10px, transparent 20px)',
+              ? 'rgba(0, 0, 0, 0.25)'
+              : 'rgba(0, 0, 0, 0.06)',
+            borderLeft: isDarkTheme
+              ? '1px solid rgba(255, 255, 255, 0.05)'
+              : '1px solid rgba(0, 0, 0, 0.05)',
+            borderRight: isDarkTheme
+              ? '1px solid rgba(255, 255, 255, 0.05)'
+              : '1px solid rgba(0, 0, 0, 0.05)',
+            animation: 'outagePulse 2.5s ease-in-out infinite',
+            '@keyframes outagePulse': {
+              '0%, 100%': {
+                opacity: 0.4,
+              },
+              '50%': {
+                opacity: 0.85,
+              },
+            },
           }}
         />
       );

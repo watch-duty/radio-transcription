@@ -298,15 +298,15 @@ export function TranscriptView({
       }
     }
 
-    // 2. If it was a Speech segment, or the last segment in a silence bundle, advance to the next newer audio segment row
     const currentIndex = audioSegments.findIndex(
       (t) =>
         t.id === playbackEndedForId ||
         t.bundledSegmentIds?.includes(playbackEndedForId)
     );
 
-    if (currentIndex > 0) {
-      const nextAudioSegment = audioSegments[currentIndex - 1];
+    let nextIndex = currentIndex - 1;
+    while (nextIndex >= 0) {
+      const nextAudioSegment = audioSegments[nextIndex];
       if (nextAudioSegment.playbackAudioUri) {
         // If the next audio segment is a silence bundle, play its first segment
         if (
@@ -321,9 +321,14 @@ export function TranscriptView({
             setPlaybackEndedForId(null);
             return;
           }
+        } else {
+          toggleAudio(nextAudioSegment.id, nextAudioSegment.playbackAudioUri);
+          setPlaybackEndedForId(null);
+          return;
         }
-        toggleAudio(nextAudioSegment.id, nextAudioSegment.playbackAudioUri);
       }
+      // Skip outage bundles or segments without audio and check the next one
+      nextIndex--;
     }
 
     setPlaybackEndedForId(null);
@@ -661,7 +666,7 @@ export function TranscriptView({
       </Box>
 
       <AudioDisplay
-        audioSegments={rawAudioSegments}
+        audioSegments={audioSegments}
         currentlyPlayingSegmentId={currentlyPlayingSegmentId}
         highlightedSegmentId={highlightedSegmentId}
         onClipClick={handleClipClick}
