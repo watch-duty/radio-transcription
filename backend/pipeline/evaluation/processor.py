@@ -4,7 +4,6 @@ import base64
 import logging
 from typing import TYPE_CHECKING
 
-from backend.pipeline.common.exceptions import AlreadyExistsError
 from backend.pipeline.common.tracing_utils import (
     inject_otel_context,
     parse_pubsub_cloudevent,
@@ -22,9 +21,6 @@ if TYPE_CHECKING:
         AudioSegmentsClient,
     )
     from backend.pipeline.common.clients.pubsub_client import PubSubClient
-    from backend.pipeline.common.clients.transcripts_client import (
-        TranscriptsClient,
-    )
     from backend.pipeline.evaluation.service import EvaluationService
 
 logger = logging.getLogger(__name__)
@@ -39,23 +35,20 @@ class EvaluationEventProcessor:
     def __init__(
         self,
         evaluation_service: EvaluationService,
-        transcripts_client: TranscriptsClient,
         publisher: PubSubClient,
         output_topic_path: str,
-        audio_segments_client: AudioSegmentsClient | None,
+        audio_segments_client: AudioSegmentsClient,
     ) -> None:
         """
         Initializes the EvaluationEventProcessor.
 
         Args:
             evaluation_service: The service to perform evaluations.
-            transcripts_client: Client to write to Transcripts API.
             publisher: Pub/Sub publisher client.
             output_topic_path: Topic path to publish alerts to.
-            audio_segments_client: Client for the Audio Segments API (optional).
+            audio_segments_client: Client for the Audio Segments API.
         """
         self.evaluation_service = evaluation_service
-        self.transcripts_client = transcripts_client
         self.publisher = publisher
         self.output_topic_path = output_topic_path
         self.audio_segments_client = audio_segments_client
@@ -112,42 +105,27 @@ class EvaluationEventProcessor:
                 )
                 return
 
-            # 3. Always write to Transcripts API
-            # TODO (https://linear.app/watchduty/issue/GOO-245/): Handle write failure.
-            # TODO (https://linear.app/watchduty/issue/GOO-458/remaining-legacy-cleanup): cleanup after migration
+            # 3. Write to Annotation Segments table
             try:
-                self.transcripts_client.create_transcript(evaluated_payload)
-            except AlreadyExistsError:
-                logger.warning(
-                    "Transcript already exists for transmission %s which indicates we already processed this transmission. Continuing.",
-                    evaluated_payload.segment_id,
+                annotation_data = {
+                    "decisions": list(evaluated_payload.evaluation_decisions),
+                    "errors": list(evaluated_payload.errors),
+                }
+                self.audio_segments_client.add_audio_segment_annotation(
+                    audio_segment_id=new_audio.segment_id,
+                    annotation_type=AnnotationType.EVALUATION,
+                    data=annotation_data,
                 )
-
-            # 3.5 Write to Annotation Segments table
-            if self.audio_segments_client is not None:
-                # TODO (https://linear.app/watchduty/issue/GOO-449/ui-uibff-cutover-and-legacy-cleanup): Make this client required and call unconditional once the migration is complete.
-                try:
-                    annotation_data = {
-                        "decisions": list(
-                            evaluated_payload.evaluation_decisions
-                        ),
-                        "errors": list(evaluated_payload.errors),
-                    }
-                    self.audio_segments_client.add_audio_segment_annotation(
-                        audio_segment_id=new_audio.segment_id,
-                        annotation_type=AnnotationType.EVALUATION,
-                        data=annotation_data,
-                    )
-                    logger.info(
-                        "Successfully added evaluation annotation for segment %s",
-                        new_audio.segment_id,
-                    )
-                except Exception as e:
-                    logger.exception(
-                        "Failed to add evaluation annotation for segment %s: %s",
-                        new_audio.segment_id,
-                        e,
-                    )
+                logger.info(
+                    "Successfully added evaluation annotation for segment %s",
+                    new_audio.segment_id,
+                )
+            except Exception as e:
+                logger.exception(
+                    "Failed to add evaluation annotation for segment %s: %s",
+                    new_audio.segment_id,
+                    e,
+                )
 
             # 4. Publish to Downstream Topic if flagged or has errors
             if (

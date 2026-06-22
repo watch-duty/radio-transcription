@@ -1,0 +1,62 @@
+name: 'Post Backend Coverage'
+description: 'Emits backend test coverage as a Check Run'
+inputs:
+  name:
+    description: 'Name of the tests that the coverage is for'
+    required: true
+  coverage-report-location:
+    description: 'Path to the text coverage report file'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Create Coverage Check Run
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const ref = context.payload.pull_request
+            ? context.payload.pull_request.head.sha
+            : context.sha;
+          
+          const nameInput = `${{ inputs.name }}`;
+          const reportFile = `${{ inputs.coverage-report-location }}`;
+          
+          if (fs.existsSync(reportFile)) {
+            const content = fs.readFileSync(reportFile, 'utf8');
+            const totalLine = content.split('\n').find(line => line.trim().toUpperCase().startsWith('TOTAL'));
+            if (totalLine) {
+              const parts = totalLine.trim().split(/\s+/);
+              const pct = parts[parts.length - 1];
+              const coveragePct = parseFloat(pct.replace('%', ''));
+              let coverageHealth = '🟢';
+              let healthText = 'Healthy';
+              if (coveragePct < 50) {
+                coverageHealth = '🔴';
+                healthText = 'Critical (<50%)';
+              } else if (coveragePct < 80) {
+                coverageHealth = '🟡';
+                healthText = 'Warning (<80%)';
+              }
+
+              const codeBlock = '```';
+              await github.rest.checks.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                head_sha: ref,
+                name: `${coverageHealth} ${nameInput}: ${pct}`,
+                status: 'completed',
+                conclusion: 'success',
+                output: {
+                  title: `${nameInput}: ${pct}`,
+                  summary: `### Coverage Report (${healthText})\n\n${codeBlock}\n${content}\n${codeBlock}`,
+                }
+              });
+            } else {
+              core.warning(`Could not find TOTAL coverage percent in pytest report for ${nameInput}`);
+            }
+          } else {
+            // Silently failing this so that the focus can be on the test themselves.
+            core.warning(`Coverage report file not found at ${reportFile}`);
+          }
