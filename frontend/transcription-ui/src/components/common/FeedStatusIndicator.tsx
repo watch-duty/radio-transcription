@@ -8,7 +8,7 @@ import type {
   FeedStatus,
 } from '@transcription/common';
 
-import { getRelativeTimeString } from '../../utils/timeUtils';
+import RelativeTimeDisplay from './RelativeTimeDisplay';
 
 const FEED_SUBSTATUS_UI_TEXT_DISPLAY: Record<BackendFeedStatus, string> = {
   unclaimed: 'Unclaimed',
@@ -165,36 +165,12 @@ export function FeedStatusIndicator({
             </Typography>
           </Box>
         </Tooltip>
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            minWidth: 0,
-          }}
-        >
-          Latest:{' '}
-          {lastSpeechSegmentTimestamp
-            ? getRelativeTimeString(lastSpeechSegmentTimestamp)
-            : 'N/A'}
-        </Typography>
+        <RelativeTimeDisplay
+          label="Latest"
+          timestamp={lastSpeechSegmentTimestamp}
+        />
       </Box>
-      {lastHeartbeat && (
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            minWidth: 0,
-          }}
-        >
-          Last heartbeat: {getRelativeTimeString(lastHeartbeat)}
-        </Typography>
-      )}
+      <RelativeTimeDisplay label="Last heartbeat" timestamp={lastHeartbeat} />
     </Box>
   );
 }

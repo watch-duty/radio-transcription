@@ -104,16 +104,9 @@ describe('FeedStatusIndicator', () => {
     });
   });
 
-  it('does not display lastHeartbeat relative time string if not provided', () => {
-    const fixedNow = new Date('2026-06-09T13:00:00Z');
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(fixedNow);
-    try {
-      render(<FeedStatusIndicator status="active" />);
-      expect(screen.queryByText(/heartbeat|updated/i)).toBeNull();
-    } finally {
-      vi.useRealTimers();
-    }
+  it('displays Last heartbeat: N/A if lastHeartbeat is not provided', () => {
+    render(<FeedStatusIndicator status="active" />);
+    expect(screen.getByText('Last heartbeat: N/A')).toBeTruthy();
   });
 
   it('displays lastHeartbeat relative time string if provided', () => {
