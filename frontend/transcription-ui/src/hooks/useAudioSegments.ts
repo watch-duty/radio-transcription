@@ -333,6 +333,7 @@ export function useAudioSegments({
     return lastRefreshedAt > 0 ? lastRefreshedAt : null;
   }, [audioSegmentsDataUpdatedAt, pollingQuery.dataUpdatedAt]);
 
+  const { isFetching: isAudioSegmentsPolling } = pollingQuery;
   return {
     rawAudioSegments,
     loadOlderAudioSegments,
@@ -344,7 +345,7 @@ export function useAudioSegments({
     audioSegmentsError,
     isFetchingNewerAudioSegments,
     isFetchingOlderAudioSegments,
-    isAudioSegmentsPolling: pollingQuery.isFetching,
+    isAudioSegmentsPolling,
     audioSegmentsLastUpdated,
     isLoading,
     isFetching,
