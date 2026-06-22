@@ -130,6 +130,35 @@ class TestStructuredPropagationLogging(unittest.TestCase):
             self.assertTrue(isinstance(handler, logging.StreamHandler))
             self.assertTrue(isinstance(handler.formatter, TaskJsonFormatter))
 
+    def test_retroactive_structured_propagation(self) -> None:
+        # 1. Initialize a logger BEFORE structured propagation is enabled
+        logger_name = "test_retroactive_logger"
+        logger = get_logger(logger_name)
+
+        # Verify it initially has the normal/local configuration
+        self.assertFalse(logger.propagate)
+        self.assertEqual(len(logger.handlers), 1)
+        self.assertTrue(isinstance(logger.handlers[0], logging.StreamHandler))
+        self.assertFalse(
+            any(isinstance(f, StructuredMessageFilter) for f in logger.filters)
+        )
+
+        # 2. Enable structured propagation (simulating setup_logging running later)
+        with mock.patch.object(
+            log_helper._LoggingState, "structured_propagation", new=False
+        ):
+            log_helper.enable_structured_propagation()
+
+            # Verify the logger was updated retroactively
+            self.assertTrue(logger.propagate)
+            self.assertEqual(len(logger.handlers), 0)
+            self.assertTrue(
+                any(
+                    isinstance(f, StructuredMessageFilter)
+                    for f in logger.filters
+                )
+            )
+
 
 class TestSegmentationLogging(unittest.TestCase):
     def test_setup_logging_under_dataflow(self) -> None:

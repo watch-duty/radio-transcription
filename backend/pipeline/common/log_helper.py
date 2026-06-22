@@ -190,6 +190,22 @@ def enable_structured_propagation() -> None:
     """
     _LoggingState.structured_propagation = True
 
+    # Retroactively update any loggers that have already been initialized.
+    # This prevents import-order issues where modules initialize their loggers
+    # at import-time before setup_logging() is called.
+    for name, logger in logging.Logger.manager.loggerDict.items():
+        if isinstance(logger, logging.Logger):
+            logger.propagate = True
+            logger.handlers = [
+                h
+                for h in logger.handlers
+                if not isinstance(h, logging.StreamHandler)
+            ]
+            if not any(
+                isinstance(f, StructuredMessageFilter) for f in logger.filters
+            ):
+                logger.addFilter(StructuredMessageFilter())
+
 
 def get_logger(name: str) -> logging.Logger:
     """Returns a logger configured for the running environment.
