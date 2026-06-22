@@ -1,30 +1,25 @@
 -- HOT-protection guard. Runs against the schema produced by applying all
 -- files under sql/ingestion/*.sql to a fresh PostgreSQL 16 instance.
--- Returns one row per (index, column) pair that violates the HOT invariant
--- — CI fails the build if any row is returned.
+-- Returns one row per (index, column, reference kind) that violates the HOT
+-- invariant — CI fails the build if any row is returned.
 --
 -- Invariant: no index on the feeds table may reference a column that the
 -- hot write path mutates, because PostgreSQL's Heap-Only Tuple optimization
 -- is disabled for an UPDATE whenever any indexed column is modified. The
--- nine guarded columns below are all mutated at high frequency by claim,
--- heartbeat, progress, release, or failure paths.
+-- guarded columns below are mutated at high frequency by claim, heartbeat,
+-- progress, release, or failure paths.
 --
--- The one allow-list exception is idx_feeds_failing_retryable on retry_after.
--- retry_after is HOT-protected in principle but mutated only on the (rare)
--- failure-to-retry transition. Partial-index bloat there is operationally
--- acceptable given the volume. The exception is column-scoped: the same index
--- may not include any other guarded column.
+-- retry_after is intentionally not in the guarded set. It is mutable, but it
+-- is written only on failure-to-retry transitions and is intentionally indexed
+-- by idx_feeds_failing_retryable. Keeping it out of the guarded set avoids an
+-- allow-list for the initial guard while still protecting the high-churn feed
+-- columns.
 --
--- Known blindspot: this query matches indexed columns via pg_index.indkey and
--- partial-index predicates via pg_index.indpred. It still does not parse
--- expression-index entries from pg_index.indexprs, which store 0 in indkey.
--- An expression index such as
--- CREATE INDEX ... ON feeds ((COALESCE(worker_id, ''))) would therefore
--- slip past this check. Parsing indexprs to catch that case is deliberately
--- not done — expression indexes on these columns are unlikely in practice
--- and the added complexity is not worth it. Reviewers of future migrations
--- should scan CREATE INDEX diffs for expression-form references to the
--- guarded column list below.
+-- This query uses pg_depend to find catalog-level index dependencies on those
+-- columns. Direct key references are classified as direct; predicate and
+-- expression-index dependencies are classified as derived. This avoids parsing
+-- PostgreSQL's decompiled expression text while still blocking risky
+-- references for review.
 --
 -- Schema safety: the joins walk pg_class OIDs rather than index names. A
 -- name-based join (JOIN pg_class c ON c.relname = i.indexname) matches any
@@ -40,28 +35,57 @@ WITH guarded_columns(attname) AS (
         ('last_processed_filename'),
         ('last_bookmark_time'),
         ('failure_count'),
-        ('retry_after'),
         ('status_reason_detail')
+),
+feed_indexes AS (
+    SELECT
+        t.oid AS table_oid,
+        x.indexrelid,
+        c.relname AS indexname,
+        x.indkey
+      FROM pg_class t
+      JOIN pg_index x ON x.indrelid = t.oid
+      JOIN pg_class c ON c.oid = x.indexrelid
+     WHERE t.relname = 'feeds'
+       AND t.relnamespace = 'public'::regnamespace
+),
+index_column_dependencies AS (
+    SELECT
+        i.indexname,
+        g.attname,
+        CASE
+            WHEN a.attnum = ANY(i.indkey) THEN 'direct'
+            ELSE 'derived'
+        END AS reference_kind
+      FROM feed_indexes i
+      JOIN pg_depend d
+        ON d.classid = 'pg_class'::regclass
+       AND d.objid = i.indexrelid
+       AND d.refclassid = 'pg_class'::regclass
+       AND d.refobjid = i.table_oid
+       AND d.refobjsubid > 0
+      JOIN pg_attribute a
+        ON a.attrelid = i.table_oid
+       AND a.attnum = d.refobjsubid
+      JOIN guarded_columns g ON g.attname = a.attname
+),
+allowed_references AS (
+    SELECT
+        NULL::text AS indexname,
+        NULL::text AS attname,
+        NULL::text AS reference_kind
+     WHERE FALSE
+),
+violations AS (
+    SELECT DISTINCT * FROM index_column_dependencies
 )
-SELECT c.relname AS indexname, g.attname
-  FROM pg_class t
-  JOIN pg_index x ON x.indrelid = t.oid
-  JOIN pg_class c ON c.oid = x.indexrelid
-  JOIN guarded_columns g ON (
-       g.attname IN (
-           SELECT a.attname
-             FROM pg_attribute a
-            WHERE a.attrelid = t.oid
-              AND a.attnum = ANY(x.indkey)
-       )
-       OR (
-           x.indpred IS NOT NULL
-           AND pg_get_expr(x.indpred, x.indrelid) ~ ('\m' || g.attname || '\M')
-       )
+SELECT v.indexname, v.attname, v.reference_kind
+  FROM violations v
+ WHERE NOT EXISTS (
+       SELECT 1
+         FROM allowed_references a
+        WHERE a.indexname = v.indexname
+          AND a.attname = v.attname
+          AND a.reference_kind = v.reference_kind
   )
- WHERE t.relname = 'feeds'
-   AND t.relnamespace = 'public'::regnamespace
-   AND NOT (
-       c.relname = 'idx_feeds_failing_retryable'
-       AND g.attname = 'retry_after'
-   );
+ ORDER BY v.indexname, v.attname, v.reference_kind;

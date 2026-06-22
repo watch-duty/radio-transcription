@@ -173,15 +173,31 @@ def test_migration_defines_status_reason_detail_and_hot_guard() -> None:
 
     assert "WITH guarded_columns(attname) AS" in guard_sql
     assert "('status_reason_detail')" in guard_sql
-    assert "x.indpred IS NOT NULL" in normalized_guard
-    assert "pg_get_expr(x.indpred, x.indrelid)" in normalized_guard
+    assert "('retry_after')" not in guard_sql
+    for token in (
+        "feed_indexes AS",
+        "index_column_dependencies AS",
+        "allowed_references AS",
+        "violations AS",
+        "pg_depend",
+        "d.objid = i.indexrelid",
+        "d.refobjid = i.table_oid",
+        "d.refobjsubid > 0",
+        "x.indkey",
+        "WHEN a.attnum = ANY(i.indkey) THEN 'direct'",
+        "ELSE 'derived'",
+    ):
+        assert token in normalized_guard
     assert re.search(
-        r"NOT\s*\(\s*c\.relname\s*=\s*'idx_feeds_failing_retryable'"
-        r"\s+AND\s+g\.attname\s*=\s*'retry_after'\s*\)",
-        guard_sql,
-        flags=re.IGNORECASE | re.DOTALL,
+        r"allowed_references\s+AS\s*\([^)]*WHERE\s+FALSE",
+        normalized_guard,
+        flags=re.IGNORECASE,
     )
-    assert "c.relname <> 'idx_feeds_failing_retryable'" not in guard_sql
+    assert "idx_feeds_failing_retryable" not in guard_sql
+    assert "c.relname <> " not in guard_sql
+    assert "pg_get_expr" not in guard_sql
+    assert r"\m" not in guard_sql
+    assert r"\M" not in guard_sql
     assert (
         re.search(
             r"CREATE\s+INDEX(?:\s+IF\s+NOT\s+EXISTS)?\s+\S+\s+"
