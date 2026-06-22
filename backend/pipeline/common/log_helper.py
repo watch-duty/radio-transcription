@@ -193,7 +193,7 @@ def enable_structured_propagation() -> None:
     # Retroactively update any loggers that have already been initialized.
     # This prevents import-order issues where modules initialize their loggers
     # at import-time before setup_logging() is called.
-    for name, logger in logging.Logger.manager.loggerDict.items():
+    for logger in logging.Logger.manager.loggerDict.values():
         if isinstance(logger, logging.Logger):
             logger.propagate = True
             logger.handlers = [
