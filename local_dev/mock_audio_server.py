@@ -214,7 +214,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.send_header("Content-type", content_type)
             self.end_headers()
 
-            # Throttle audio file downloads to real-time playback speed to simulate live streaming
+            # Only simulate live stream (throttling and holding connection open)
+            # if this is a root-level request (simulating an Icecast mountpoint).
+            # One-shot calls downloads (which contain slashes in the path) should be
+            # served at maximum speed and closed immediately.
             is_audio = file_path.suffix.lower() in {
                 ".flac",
                 ".mp3",
@@ -222,7 +225,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                 ".m4a",
                 ".ogg",
             }
-            if is_audio:
+            is_live_stream = is_audio and "/" not in path
+
+            if is_live_stream:
                 # Assume a standard mock duration of 15 seconds to calculate the byte rate
                 duration = 15.0
                 file_size = file_path.stat().st_size
