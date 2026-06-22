@@ -852,6 +852,12 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 assert len(msgs) in (1, 2)
                 for feed_id, request in msgs:
                     assert feed_id == "test-feed-ooo"
+                    assert len(request.contributing_chunks) > 0
+                    for chunk in request.contributing_chunks:
+                        assert chunk.gcs_uri.startswith(
+                            "gs://test-bucket/path/to/chunk"
+                        )
+                        assert chunk.timestamp_ms in (100000, 101000, 102000)
 
                 lengths = [
                     sum(

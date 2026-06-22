@@ -200,6 +200,7 @@ class FlushAction(StateMachineAction):
     time_range: TimeRange
     speech_time_range: TimeRange
     contributing_audio_uris: list[str]
+    contributing_chunks: list[BufferedChunk]
     missing_prior_context: bool
     missing_post_context: bool
     start_audio_offset_ms: int

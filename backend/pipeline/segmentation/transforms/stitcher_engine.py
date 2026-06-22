@@ -321,7 +321,9 @@ class StitcherEngine:
             curr_context.contributing_audio_uris
         )
 
-        contributing_chunks = list(curr_context.contributing_chunks)
+        contributing_chunks = action.contributing_chunks or list(
+            curr_context.contributing_chunks
+        )
 
         if processed_uris or contributing_chunks:
             segment_id = trans_utils.generate_segment_id(
