@@ -5,8 +5,13 @@ export const components: ThemeOptions['components'] = {
     styleOverrides: {
       badge: ({ ownerState, theme }) => ({
         ...(ownerState.color === 'default' && {
-          backgroundColor: theme.palette.text.secondary,
-          color: theme.palette.background.paper,
+          backgroundColor: theme.vars.palette.text.secondary,
+          color: theme.vars.palette.background.paper,
+        }),
+        ...(ownerState.color === 'primary' && {
+          backgroundColor: theme.vars.palette.secondary.main,
+          color: theme.vars.palette.primary.contrastText,
+          fontWeight: 'bold',
         }),
       }),
     },
@@ -14,7 +19,20 @@ export const components: ThemeOptions['components'] = {
   MuiLink: {
     styleOverrides: {
       root: ({ theme }) => ({
-        color: theme.palette.primary.contrastText,
+        color: theme.vars.palette.secondary.contrastText,
+      }),
+    },
+  },
+  MuiAppBar: {
+    defaultProps: {
+      enableColorOnDark: true,
+    },
+    styleOverrides: {
+      root: ({ theme }) => ({
+        backgroundColor: theme.vars.palette.secondary.main,
+      }),
+      colorPrimary: ({ theme }) => ({
+        backgroundColor: theme.vars.palette.secondary.main,
       }),
     },
   },

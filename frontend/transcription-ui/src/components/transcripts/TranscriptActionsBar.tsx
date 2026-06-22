@@ -101,6 +101,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
         <Button
           variant="contained"
+          color="secondary"
           sx={{ textTransform: 'none', gap: 1 }}
           onClick={onClickViewLatest}
           disabled={!hasNewerAudioSegments}
@@ -115,7 +116,6 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
             invisible={badgeContent === 0}
           >
             <Button
-              color="primary"
               variant="outlined"
               sx={{
                 minWidth: 0,
@@ -185,7 +185,8 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
                 <Button
                   size="small"
                   variant="contained"
-                  color="primary"
+                  color="secondary"
+                  sx={{ textTransform: 'none' }}
                   onClick={handleFilterApply}
                 >
                   Apply
@@ -196,18 +197,16 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
         </Popover>
 
         <Chip
-          sx={
-              {
-              backgroundColor: dateTime
-                ? theme.palette.warning.light
-                : theme.palette.warning.dark,
+          sx={{
+            backgroundColor: dateTime
+              ? theme.palette.warning.light
+              : theme.palette.warning.dark,
+            color: theme.palette.warning.contrastText,
+            '& .MuiChip-deleteIcon': {
               color: theme.palette.warning.contrastText,
-              '& .MuiChip-deleteIcon': {
-                color: theme.palette.warning.contrastText,
-              },
-            }
-        }
-        label={
+            },
+          }}
+          label={
             dateTime ? (
               <Box>
                 <b>Date/time:</b>{' '}

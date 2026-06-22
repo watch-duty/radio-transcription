@@ -89,7 +89,9 @@ export default function AppContainer({
                 textDecoration: 'none',
               }}
             >
-              Radio Transcription
+              <Typography variant="h5">
+                <b>RADIO TRANSCRIPTION</b>
+              </Typography>
             </Link>
           </Typography>
           {token && (

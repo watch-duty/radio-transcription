@@ -9,7 +9,9 @@ import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
+import useMediaQuery from '@mui/material/useMediaQuery';
 import { type Theme, useTheme } from '@mui/material/styles';
+import { darkPalette, palette as lightPalette } from '@theme/palette';
 import { type AudioSegment } from '@transcription/common';
 import WavesurferPlayer from '@wavesurfer/react';
 
@@ -67,6 +69,10 @@ const TimelineClip = React.memo(
   }: TimelineClipProps) => {
     const wsRef = useRef<WaveSurfer | null>(null);
 
+    const activePalette = isDarkTheme ? darkPalette : lightPalette;
+    const waveColor = activePalette?.text?.secondary;
+    const progressColor = activePalette?.text?.primary;
+
     // Sync options dynamically (like cursor color/width) without destroying wavesurfer
     useEffect(() => {
       if (wsRef.current) {
@@ -114,7 +120,7 @@ const TimelineClip = React.memo(
                   ? 'rgba(255, 255, 255, 0.2)'
                   : 'rgba(0, 0, 0, 0.1)'
                 : isDarkTheme
-                  ? 'rgba(255, 255, 255, 0.03)'
+                  ? 'rgba(255, 255, 255, 0.08)'
                   : 'rgba(0, 0, 0, 0.03)',
           },
           /* Wavesurfer cursor subpixel anti-aliasing / shimmering optimizations */
@@ -143,8 +149,8 @@ const TimelineClip = React.memo(
         )}
         <WavesurferPlayer
           url={clip.url}
-          waveColor={theme.palette.text.secondary}
-          progressColor={theme.palette.text.primary}
+          waveColor={waveColor}
+          progressColor={progressColor}
           cursorColor="transparent"
           cursorWidth={0}
           barWidth={0.5}
@@ -221,7 +227,7 @@ export function AudioDisplay({
   currentAudioRef,
 }: AudioDisplayProps) {
   const theme = useTheme();
-  const isDarkTheme = theme.palette.mode === 'dark';
+  const isDarkTheme = useMediaQuery('(prefers-color-scheme: dark)');
 
   const [localCurrentTimeSeconds, setLocalCurrentTimeSeconds] =
     useState<number>(0);

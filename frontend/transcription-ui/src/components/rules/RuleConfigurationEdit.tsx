@@ -241,7 +241,7 @@ export function RuleConfigurationEdit({
         sx={{
           p: 3,
           color: isEditing ? 'warning.contrastText' : 'primary.contrastText',
-          bgcolor: isEditing ? 'warning.main' : 'primary.main',
+          bgcolor: isEditing ? 'warning.main' : 'secondary.main',
           flexShrink: 0,
         }}
       >
@@ -324,7 +324,7 @@ export function RuleConfigurationEdit({
                   type="submit"
                   variant="contained"
                   disabled={isSubmitting}
-                  sx={{ textTransform: 'none' }}
+                  sx={{ textTransform: 'none', bgcolor: 'secondary.main' }}
                 >
                   {isSubmitting ? (
                     <CircularProgress size={20} color="inherit" />
