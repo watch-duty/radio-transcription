@@ -29,21 +29,30 @@ logger = logging.getLogger(__name__)
 # never triggers NeMo when [scoring] is not installed.
 try:
     import jiwer
+    _HAS_JIWER = True
+    _SCORING_MISSING = None
+except ImportError as _e:
+    _HAS_JIWER = False
+    _SCORING_MISSING = _e
+
+try:
     from nemo_text_processing.inverse_text_normalization.inverse_normalize import (
         InverseNormalizer as NemoInverseNormalizer,
     )
-except ImportError as _e:
-    _SCORING_MISSING = _e
-else:
-    _SCORING_MISSING = None
+    _HAS_NEMO = True
+except ImportError:
+    _HAS_NEMO = False
+    NemoInverseNormalizer = None
+
+_NEMO_WARNED = False
 
 
 def _require_scoring() -> None:
-    """Raise a clear error if the [scoring] extra is not installed."""
-    if _SCORING_MISSING:
+    """Raise a clear error if the core scoring library (jiwer) is not installed."""
+    if not _HAS_JIWER:
         msg = (
-            "scoring requires the [scoring] extra: "
-            "pip install 'radio-transcription-model[scoring]'"
+            "scoring requires the 'jiwer' package: "
+            "pip install 'radio-transcription-model[scoring]' or 'jiwer'"
         )
         raise ImportError(msg) from _SCORING_MISSING
 
@@ -129,10 +138,18 @@ def build_normalizer() -> "jiwer.Compose":
         }
 
         def process_string(self, s: str) -> str:
-            # 1. NeMo ITN on natural text first
-            s = _get_nemo_inverse_normalizer().inverse_normalize(
-                s, verbose=False
-            )
+            global _NEMO_WARNED
+            # 1. NeMo ITN on natural text first (if available)
+            if _HAS_NEMO:
+                s = _get_nemo_inverse_normalizer().inverse_normalize(
+                    s, verbose=False
+                )
+            elif not _NEMO_WARNED:
+                logger.warning(
+                    "⚠️ NeMo text normalizer is not available (missing [scoring] extra or pynini compilation). "
+                    "ASR scoring will run using a lightweight, pure-Python numeric fallback normalizer."
+                )
+                _NEMO_WARNED = True
             # 2. Manual fallback for small number words missed by NeMo
             for word, digit in self._SMALL_NUMBER_MAP.items():
                 s = re.sub(rf"\b{word}\b", digit, s, flags=re.IGNORECASE)

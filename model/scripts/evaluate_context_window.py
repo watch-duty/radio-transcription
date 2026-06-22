@@ -166,7 +166,18 @@ async def evaluate_single_channel_config(
     max_history_turns = max(0, context_size - 1)
     history_buffer = deque(maxlen=max_history_turns)
     system_instruction = SYSTEM_PROMPT
-    model_path = f"projects/{args.gcp_project}/locations/{args.gcp_location}/publishers/google/models/{args.model_id}"
+    
+    # Dynamically parse and construct model paths
+    if args.model_id.startswith("projects/") or args.model_id.startswith("endpoints/"):
+        if args.model_id.startswith("projects/"):
+            model_path = args.model_id
+        else:
+            # Custom SFT endpoints are always deployed in the 'us' multi-region.
+            # We force the resource path to 'us' while the client runs in a high-performance local region.
+            model_path = f"projects/{args.gcp_project}/locations/us/{args.model_id}"
+    else:
+        # Pass public model names directly to let the SDK resolve them natively!
+        model_path = args.model_id
 
     async with semaphore:
         for turn_index, entry in enumerate(segments, start=1):
@@ -476,20 +487,10 @@ async def main_async(args: argparse.Namespace) -> None:
     logger.info("Initializing Google Cloud and GenAI clients...")
     storage_client = storage.Client(project=args.gcp_project)
 
-    if args.gcp_location == "us":
-        base_url = "https://aiplatform.us.rep.googleapis.com"
-    else:
-        base_url = (
-            f"https://{args.gcp_location}-aiplatform.googleapis.com"
-            if args.gcp_location and args.gcp_location != "global"
-            else "https://aiplatform.googleapis.com"
-        )
-
     genai_client = GenAiClient(
         project=args.gcp_project,
         location=args.gcp_location,
         vertexai=True,
-        http_options=types.HttpOptions(base_url=base_url),
     )
 
     # 1. Download Manifest
@@ -519,9 +520,19 @@ async def main_async(args: argparse.Namespace) -> None:
     for line in manifest_lines:
         if line.strip():
             entry = json.loads(line)
-            parent_dir = Path(entry["audio_filepath"]).parent.name
-            entry["example_id"] = parent_dir
-            channels[parent_dir].append(entry)
+            filepath = entry["audio_filepath"]
+            filename = Path(filepath).name
+            
+            # Robust extraction of the channel name from the standardized filename prefix:
+            # Matches '{channel_name}_{YYYYMMDD}_{HH}__seg', '{channel_name}__seg', or '{channel_name}-row-...'
+            match = re.match(r"^(.*?)(?:_\d{8}_\d{2})?(?:__seg|-row-)", filename)
+            if match:
+                channel_id = match.group(1)
+            else:
+                channel_id = Path(filepath).parent.name
+                
+            entry["example_id"] = channel_id
+            channels[channel_id].append(entry)
 
     # Sort chronologically
     for cid in channels:
@@ -550,6 +561,8 @@ async def main_async(args: argparse.Namespace) -> None:
     )
     for cid in sampled_cids:
         logger.info(f"   - {cid}: {len(channels[cid])} segments")
+
+    
 
     sweep_results = []
     csv_headers = [

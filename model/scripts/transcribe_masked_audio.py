@@ -36,9 +36,9 @@ except ImportError:
 try:
     import pandas as pd
     from google import adk
-    from google.adk.client import Runner
+    from google.adk.agents import Agent
     from google.adk.models import Gemini
-    from google.adk.runners import GetSessionConfig, RunConfig
+    from google.adk.runners import Runner, GetSessionConfig, RunConfig
     from google.adk.sessions import VertexAiSessionService
     from google.api_core import retry as api_retry
     from google.api_core import retry_async as api_retry_async
@@ -121,6 +121,15 @@ SAFETY_SETTINGS = [
 
 
 # -----------------------------------------------------------------------------
+# Helper to resolve model name consistently for base models and custom endpoints
+# -----------------------------------------------------------------------------
+def resolve_model_name(model_id: str, project: str, location: str) -> str:
+    if model_id.startswith("projects/"):
+        return model_id
+    return f"projects/{project}/locations/{location}/publishers/google/models/{model_id}"
+
+
+# -----------------------------------------------------------------------------
 # ConfiguredGemini Subclass (Prevents Local Default Credentials Resolution Errors)
 # -----------------------------------------------------------------------------
 class ConfiguredGemini(Gemini):
@@ -129,18 +138,16 @@ class ConfiguredGemini(Gemini):
     to the underlying GenAI client, bypassing ADK's location resolution bugs.
     """
 
-    def __init__(self, *args, project: str, location: str, **kwargs):
-        self._explicit_project = project
-        self._explicit_location = location
-        super().__init__(*args, **kwargs)
+    project: str
+    location: str
 
     @property
     def api_client(self):
         # Override the non-data descriptor client property to force location binding
         if getattr(self, "_api_client_override", None) is None:
             self._api_client_override = GenAiClient(
-                project=self._explicit_project,
-                location=self._explicit_location,
+                project=self.project,
+                location=self.location,
                 vertexai=True,
             )
         return self._api_client_override
@@ -301,7 +308,7 @@ async def process_single_channel(
 
                         response = await asyncio.to_thread(
                             stateless_client.models.generate_content,
-                            model=f"projects/{args.gcp_project}/locations/{args.gcp_location}/publishers/google/models/{args.model_id}",
+                            model=resolve_model_name(args.model_id, args.gcp_project, args.gcp_location),
                             contents=contents,
                             config=stateless_config,
                         )
@@ -808,7 +815,7 @@ async def process_single_channel(
 
                                 response = await asyncio.to_thread(
                                     fallback_client.models.generate_content,
-                                    model=f"projects/{args.gcp_project}/locations/{args.gcp_location}/publishers/google/models/{args.model_id}",
+                                    model=resolve_model_name(args.model_id, args.gcp_project, args.gcp_location),
                                     contents=fallback_contents,
                                     config=fallback_config,
                                 )
@@ -1098,8 +1105,8 @@ async def main_async(args):
             location=args.control_plane_location,
         )
 
-        audio_agent = ConfiguredGemini(
-            model=f"publishers/google/models/{args.model_id}",
+        configured_model = ConfiguredGemini(
+            model=resolve_model_name(args.model_id, args.gcp_project, args.gcp_location),
             project=args.gcp_project,
             location=args.gcp_location,
             system_instruction=SYSTEM_PROMPT,
@@ -1115,6 +1122,11 @@ async def main_async(args):
                 )
                 for s in SAFETY_SETTINGS
             ],
+        )
+
+        audio_agent = Agent(
+            name="radio_transcript_session_agent",
+            model=configured_model,
         )
 
         semaphore = asyncio.Semaphore(args.concurrency_limit)
