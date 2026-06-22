@@ -91,3 +91,8 @@ backend/pipeline/schema_types/streaming_state.py
 # Per-run records (config.json, wer_summary.*, ledger.md) remain trackable.
 model/scripts/sft/results/**/*.jsonl
 model/scripts/sft/results/**/*.jsonl.gz
+
+# ASR Evaluation Sweep results and scratch files (D-16 governance: JSONL transcripts
+# and raw CSV sweep datasets are local-only and not committed to git).
+model/results/
+scratch/
