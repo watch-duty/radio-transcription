@@ -14,7 +14,6 @@ members = [
     "rules-service",
     "segmentation-pipeline",
     "transcription-function",
-    "transcripts-service",
 ]
 
 [[package]]
@@ -2837,7 +2836,6 @@ dependencies = [
     { name = "segmentation-pipeline" },
     { name = "tenacity" },
     { name = "transcription-function" },
-    { name = "transcripts-service" },
     { name = "urllib3" },
     { name = "uvloop" },
 ]
@@ -2885,7 +2883,6 @@ requires-dist = [
     { name = "segmentation-pipeline", editable = "backend/pipeline/segmentation" },
     { name = "tenacity", specifier = ">=9.1.4" },
     { name = "transcription-function", editable = "backend/pipeline/transcription" },
-    { name = "transcripts-service", editable = "backend/services/transcripts" },
     { name = "urllib3", specifier = ">=2.7.0" },
     { name = "uvloop", specifier = ">=0.21.0" },
 ]
@@ -3310,31 +3307,6 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "radio-transcription-common", editable = "backend/pipeline/common" },
     { name = "requests", specifier = ">=2.31.0" },
-]
-
-[[package]]
-name = "transcripts-service"
-version = "0.1.0"
-source = { editable = "backend/services/transcripts" }
-dependencies = [
-    { name = "asyncpg" },
-    { name = "fastapi" },
-    { name = "psycopg", extra = ["binary"] },
-    { name = "pydantic" },
-    { name = "radio-transcription-common" },
-    { name = "tenacity" },
-    { name = "uvicorn" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "asyncpg", specifier = ">=0.29.0" },
-    { name = "fastapi", specifier = ">=0.110.0" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.2.0" },
-    { name = "pydantic", specifier = ">=2.10.6" },
-    { name = "radio-transcription-common", editable = "backend/pipeline/common" },
-    { name = "tenacity", specifier = ">=9.1.4" },
-    { name = "uvicorn", specifier = ">=0.27.0" },
 ]
 
 [[package]]
