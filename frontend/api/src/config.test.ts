@@ -6,7 +6,6 @@ import { checkIsAdmin } from './config.js';
 
 vi.hoisted(() => {
   process.env.ALLOWED_ORIGIN = 'http://localhost:3000';
-  process.env.TRANSCRIPTS_API_URL = 'http://localhost:3001';
   process.env.RULES_API_URL = 'http://localhost:3002';
   process.env.FEEDS_STORE_API_URL = 'http://localhost:3003';
   process.env.AUDIO_SEGMENTS_API_URL = 'http://localhost:3004';
