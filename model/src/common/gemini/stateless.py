@@ -4,7 +4,6 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
-from google.api_core import retry as api_retry
 from google.api_core import retry_async as api_retry_async
 from google.api_core.exceptions import ClientError, GoogleAPICallError
 from google.genai import Client as GenAiClient
@@ -12,11 +11,41 @@ from google.genai import types
 from loguru import logger
 from tqdm.asyncio import tqdm
 
+
+def is_fatal_error(exc: Exception) -> bool:
+    """Helper to identify unrecoverable errors (e.g., region mismatch, bad credentials, missing model)."""
+    exc_str = str(exc).upper()
+    for fatal_keyword in (
+        "400",
+        "403",
+        "404",
+        "PERMISSION_DENIED",
+        "NOT_FOUND",
+        "INVALID_ARGUMENT",
+    ):
+        if fatal_keyword in exc_str:
+            return True
+    return False
+
+
+def should_retry_exception(exc: Exception) -> bool:
+    """Predicate to determine if an exception should be retried."""
+    if is_fatal_error(exc):
+        return False
+    return isinstance(
+        exc,
+        (
+            ClientError,
+            GoogleAPICallError,
+            asyncio.TimeoutError,
+            ConnectionError,
+        ),
+    )
+
+
 # Async Retry Policy protecting GCS streaming network channels
 custom_async_retry = api_retry_async.AsyncRetry(
-    predicate=api_retry.if_exception_type(
-        (ClientError, GoogleAPICallError, asyncio.TimeoutError, ConnectionError)
-    ),
+    predicate=should_retry_exception,
     initial=1.0,
     maximum=30.0,
     multiplier=2.0,
@@ -141,6 +170,11 @@ async def process_single_channel_stateless(
                     )
                     error_msg = f"Empty response. Reason: {finish_reason}"
             except Exception as e:
+                if is_fatal_error(e):
+                    logger.error(
+                        f"FATAL API ERROR for segment: {Path(uri).name} | Error: {e!s}. Aborting pipeline."
+                    )
+                    raise
                 error_msg = f"{type(e).__name__}: {e!s}"
 
             if transcript is not None:

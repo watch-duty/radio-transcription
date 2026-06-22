@@ -137,6 +137,22 @@ def sample_deepest_channels(
     return sampled
 
 
+def is_fatal_error(exc: Exception) -> bool:
+    """Helper to identify unrecoverable errors (e.g., region mismatch, bad credentials, missing model)."""
+    exc_str = str(exc).upper()
+    for fatal_keyword in (
+        "400",
+        "403",
+        "404",
+        "PERMISSION_DENIED",
+        "NOT_FOUND",
+        "INVALID_ARGUMENT",
+    ):
+        if fatal_keyword in exc_str:
+            return True
+    return False
+
+
 async def evaluate_single_channel_config(
     channel_id: str,
     segments: list[dict],
@@ -235,6 +251,11 @@ async def evaluate_single_channel_config(
                         getattr(usage, "candidates_token_count", 0) or 0
                     )
             except Exception as e:
+                if is_fatal_error(e):
+                    logger.error(
+                        f"FATAL API ERROR for segment: {Path(uri).name} | Error: {e!s}. Aborting sweep."
+                    )
+                    raise
                 err_msg = f"{type(e).__name__}: {e!s}"
                 transcript = ""
                 is_fallback = True
@@ -336,18 +357,30 @@ async def _run_single_sweep_size(
     logger.info("=" * 80)
 
     tasks = [
-        evaluate_single_channel_config(
-            channel_id=cid,
-            segments=channels[cid],
-            context_size=size,
-            args=args,
-            genai_client=genai_client,
-            semaphore=semaphore,
+        loop.create_task(
+            evaluate_single_channel_config(
+                channel_id=cid,
+                segments=channels[cid],
+                context_size=size,
+                args=args,
+                genai_client=genai_client,
+                semaphore=semaphore,
+            )
         )
         for cid in sampled_cids
     ]
 
-    channel_results = await asyncio.gather(*tasks)
+    try:
+        channel_results = await asyncio.gather(*tasks)
+    except Exception as e:
+        logger.error(
+            f"FATAL Sweep Failure detected: {e!s}. Cancelling all other active channels..."
+        )
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
     all_segments = [item for sublist in channel_results for item in sublist]
 
     # Calculate metrics
@@ -442,14 +475,21 @@ async def main_async(args: argparse.Namespace) -> None:
 
     logger.info("Initializing Google Cloud and GenAI clients...")
     storage_client = storage.Client(project=args.gcp_project)
-    genai_client = GenAiClient(
-        project=args.gcp_project,
-        location=args.gcp_location,
-        vertexai=True,
-        http_options=types.HttpOptions(
-            base_url="https://aiplatform.googleapis.com"
-        ),
-    )
+
+    client_kwargs = {
+        "project": args.gcp_project,
+        "location": args.gcp_location,
+        "vertexai": True,
+    }
+    if args.gcp_location != "us":
+        base_url = (
+            f"https://{args.gcp_location}-aiplatform.googleapis.com"
+            if args.gcp_location and args.gcp_location != "global"
+            else "https://aiplatform.googleapis.com"
+        )
+        client_kwargs["http_options"] = types.HttpOptions(base_url=base_url)
+
+    genai_client = GenAiClient(**client_kwargs)
 
     # 1. Download Manifest
     logger.info(f"Downloading manifest from GCS: {args.manifest_uri}...")
