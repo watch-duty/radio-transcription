@@ -290,6 +290,12 @@ export function useAudioSegments({
       pollingEnabled &&
       !hasNewerAudioSegments &&
       !!searchedFeedId,
+    // Seed with empty data so the query counts as "fresh" on enable (together
+    // with staleTime) and does not fetch immediately. Only the interval (and
+    // focus/reconnect) should drive polls. Without this, React Query fires a
+    // redundant poll the moment polling becomes enabled — right after the
+    // initial load, and again each time the user scrolls back to the top.
+    initialData: () => [],
     refetchInterval: POLL_INTERVAL_MS,
     staleTime: POLL_INTERVAL_MS,
     refetchOnWindowFocus: true,
