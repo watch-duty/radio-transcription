@@ -1,7 +1,14 @@
-import { defineConfig } from 'vitest/config';
+import { defineConfig, mergeConfig } from 'vitest/config';
+import viteConfig from './vite.config';
 
-export default defineConfig({
-  test: {
-    setupFiles: ['./src/test/setup.ts'],
-  },
+export default defineConfig((configEnv) => {
+  const baseViteConfig = typeof viteConfig === 'function' ? viteConfig(configEnv) : viteConfig;
+  return mergeConfig(
+    baseViteConfig,
+    {
+      test: {
+        setupFiles: ['./src/test/setup.ts'],
+      },
+    }
+  );
 });
