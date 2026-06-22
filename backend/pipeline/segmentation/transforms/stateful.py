@@ -726,7 +726,8 @@ class OrderedStitchAudioFn(beam.DoFn):
             task_logger.debug(f"[Process] Processing chunk {metadata.gcs_uri}")
 
             if session_changed:
-                transmission_buffer_state.clear()
+                if not elements_to_emit:
+                    transmission_buffer_state.clear()
                 stale_timer_event.clear()
                 stale_timer_proc.clear()
                 curr_context = replace(
@@ -749,7 +750,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                     self.stitch_config.backfill_lateness_threshold_ms,
                 )
 
-                for chunk in elements_to_emit:
+                for i, chunk in enumerate(elements_to_emit):
                     # Fetch current state context
                     curr_context = (
                         transmission_context_state.read()
@@ -775,6 +776,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                             timer_manager=timer_manager,
                             previous_expected_ts=previous_expected_ts,
                             is_backfill=is_backfill,
+                            clear_buffer=(session_changed and i == 0),
                         )
                     )
                     results.extend(outputs)

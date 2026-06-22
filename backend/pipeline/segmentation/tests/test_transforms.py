@@ -1556,6 +1556,97 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
         self.assertEqual(saved_context.speech_segments[0].start_ms, 35000)
         self.assertEqual(saved_context.speech_segments[0].end_ms, 65000)
 
+    @patch(
+        "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
+    )
+    def test_session_change_no_clear_before_write(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that on a session transition (idle-to-active), the transmission buffer state
+        is not cleared at the start of the bundle if elements are to be emitted. Instead, the clear
+        and subsequent write are consolidated to avoid Windmill clear/write interleaving.
+        """
+        mock_processor_inst = mock_audio_processor.return_value
+        chunk_data = AudioChunkData(
+            start_ms=100000,
+            audio=np.zeros(16000, dtype=np.int16),
+            speech_segments=[TimeRange(0, 1000)],
+            gcs_uri="gs://bucket/chunk1.flac",
+            duration_ms=1000,
+            sample_rate=16000,
+        )
+        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        stitch_config = get_test_stitch_config(
+            significant_gap_ms=800, stale_timeout_ms=75000
+        )
+        fn = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn.setup()
+
+        class MockValueState:
+            def __init__(self, initial=None) -> None:
+                self.val = initial
+
+            def read(self):
+                return self.val
+
+            def write(self, val):
+                self.val = val
+
+            def clear(self):
+                self.val = None
+
+        class TrackingState:
+            def __init__(self, initial=None) -> None:
+                self.val = initial or []
+                self.calls = []
+
+            def read(self):
+                self.calls.append("read")
+                return self.val
+
+            def write(self, val):
+                self.calls.append("write")
+                self.val = val
+
+            def clear(self):
+                self.calls.append("clear")
+                self.val = None
+
+        mock_state_context = MockValueState(IdleFeedState())
+        mock_state_buffer = TrackingState([b"some-old-data"])
+        mock_last_start_ms = MockValueState(None)
+
+        metadata = ChunkMetadata(
+            gcs_uri="gs://bucket/chunk1.flac",
+            session_id="new-session",
+            duration_ms=1000,
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
+        )
+
+        # Process the chunk. Since we start from IdleFeedState, this triggers a session change.
+        list(
+            fn.process(
+                element=("test-feed", metadata),
+                timestamp=Timestamp(100),
+                transmission_buffer_state=mock_state_buffer,  # type: ignore
+                transmission_context_state=mock_state_context,  # type: ignore
+                last_start_ms_state=mock_last_start_ms,  # type: ignore
+                gap_timer_event=MagicMock(),
+                gap_timer_proc=MagicMock(),
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        # The state buffer calls should NOT contain both 'clear' and 'write' in that order.
+        # In fact, since clear_buffer is True and it writes the new buffer, the calls should only be ['write'].
+        self.assertNotIn("clear", mock_state_buffer.calls)
+        self.assertIn("write", mock_state_buffer.calls)
+
 
 class DlqTaggingTest(unittest.TestCase):
     """Regression tests for the two bugs fixed in PR #458:
