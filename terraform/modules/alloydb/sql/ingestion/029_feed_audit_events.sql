@@ -61,6 +61,9 @@ BEGIN
     END IF;
 END $$;
 
+-- Actor identity schemes are validated at the request/service boundary where
+-- caller context is available. The database only enforces durable storage
+-- hygiene so future identity providers do not require schema changes.
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -72,27 +75,9 @@ BEGIN
         ALTER TABLE feed_audit_events
             ADD CONSTRAINT feed_audit_events_actor_id_check
             CHECK (
-                char_length(actor_id) <= 512
-                AND (
-                    (
-                        actor_id LIKE 'user:google:%'
-                        AND substring(
-                            actor_id FROM char_length('user:google:') + 1
-                        ) <> ''
-                        AND substring(
-                            actor_id FROM char_length('user:google:') + 1
-                        ) !~ '[[:space:]]'
-                    )
-                    OR (
-                        actor_id LIKE 'service:%'
-                        AND substring(
-                            actor_id FROM char_length('service:') + 1
-                        ) <> ''
-                        AND substring(
-                            actor_id FROM char_length('service:') + 1
-                        ) !~ '[[:space:]]'
-                    )
-                )
+                char_length(actor_id) > 0
+                AND char_length(actor_id) <= 512
+                AND actor_id !~ '[[:space:]]'
             );
     END IF;
 END $$;

@@ -21,7 +21,7 @@ from backend.pipeline.storage.feed_store import (
 )
 
 _TEST_ACTOR_ID = "service:feeds-service"
-_INVALID_ACTOR_ID = "system:legacy"
+_INVALID_ACTOR_ID = "system actor"
 
 
 @pytest.fixture
@@ -1924,7 +1924,7 @@ async def test_update_feed_audit_failure_rolls_back_state_and_revision(
     assert revision_after == revision_before
 
 
-@pytest.mark.parametrize("actor_id", ["user:", "service: "])
+@pytest.mark.parametrize("actor_id", ["", "service: "])
 async def test_invalid_actor_values_are_not_rewritten_by_storage(
     db_pool: asyncpg.Pool,
     store: FeedStore,

@@ -16,11 +16,6 @@ _ACTIONS = (
     "feed.recovered",
 )
 
-_ACTOR_STRINGS = (
-    "user:google:",
-    "service:",
-)
-
 
 def _read(path: str) -> str:
     return (_REPO_ROOT / path).read_text(encoding="utf-8")
@@ -130,43 +125,19 @@ def test_migration_defines_actor_and_action_constraints() -> None:
         "feed_audit_events_action_check",
         "feed_audit_events_actor_id_check",
         *_ACTIONS,
-        *_ACTOR_STRINGS,
     ):
         assert token in sql
 
-    assert "system:%" not in sql
 
-
-def test_migration_rejects_malformed_actor_id_suffixes() -> None:
+def test_migration_bounds_actor_id_storage_shape() -> None:
     text = _read(
         "terraform/modules/alloydb/sql/ingestion/029_feed_audit_events.sql"
     )
-    sql = _sql_without_comments(text)
     normalized = _normalized_sql(text)
-    rejected_actor_ids = (
-        "user:google:",
-        "service:",
-    )
 
+    assert "char_length(actor_id) > 0" in normalized
     assert "char_length(actor_id) <= 512" in normalized
-
-    for prefix in rejected_actor_ids:
-        suffix_pattern = (
-            r"substring\s*\(\s*actor_id\s+FROM\s+char_length\('"
-            + re.escape(prefix)
-            + r"'\)\s*\+\s*1\s*\)"
-        )
-        assert f"actor_id LIKE '{prefix}%'" in normalized
-        assert re.search(
-            suffix_pattern + r"\s*<>\s*''",
-            sql,
-            flags=re.IGNORECASE,
-        ), prefix
-        assert re.search(
-            suffix_pattern + r"\s*!~\s*'\[\[:space:\]\]'",
-            sql,
-            flags=re.IGNORECASE,
-        ), prefix
+    assert "actor_id !~ '[[:space:]]'" in normalized
 
 
 def test_migration_uses_schema_qualified_constraint_guards() -> None:
