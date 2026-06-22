@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useReducer } from 'react';
 import { GroupedVirtuoso, type VirtuosoHandle } from 'react-virtuoso';
 
 import Box from '@mui/material/Box';
@@ -17,6 +17,48 @@ import type { ListAudioSegmentsData } from '../../hooks/useAudioSegments';
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
 import { getRelativeTimeString } from '../../utils/timeUtils';
 import TranscriptRow from './TranscriptRow';
+
+// How often the "Last refresh" label re-computes its relative time.
+const LAST_REFRESH_TICK_MS = 10000;
+
+/**
+ * Shows "Last refresh: <relative time>" (or a spinner while polling). Re-renders
+ * itself on a timer so the relative time keeps advancing even when the rest of
+ * the view is idle (e.g. polling is paused because the user scrolled away).
+ */
+const LastRefreshIndicator: React.FC<{
+  lastUpdated: number;
+  isPolling: boolean;
+}> = ({ lastUpdated, isPolling }) => {
+  const [, tick] = useReducer((n) => n + 1, 0);
+  useEffect(() => {
+    const id = setInterval(tick, LAST_REFRESH_TICK_MS);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{ whiteSpace: 'nowrap' }}
+      >
+        Last refresh:
+      </Typography>
+      {isPolling ? (
+        <CircularProgress size={12} />
+      ) : (
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ whiteSpace: 'nowrap' }}
+        >
+          {getRelativeTimeString(lastUpdated, false)}
+        </Typography>
+      )}
+    </Box>
+  );
+};
 
 export interface TranscriptDisplayProps {
   ref?: React.Ref<VirtuosoHandle>;
@@ -120,39 +162,12 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
                   {title}
                 </Typography>
                 {!hasNewerAudioSegments ? (
-                  <>
-                    {audioSegmentsLastUpdated && (
-                      <Box
-                        sx={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 0.5,
-                        }}
-                      >
-                        <Typography
-                          variant="caption"
-                          color="text.secondary"
-                          sx={{ whiteSpace: 'nowrap' }}
-                        >
-                          Last refresh:
-                        </Typography>
-                        {isAudioSegmentsPolling ? (
-                          <CircularProgress size={12} />
-                        ) : (
-                          <Typography
-                            variant="caption"
-                            color="text.secondary"
-                            sx={{ whiteSpace: 'nowrap' }}
-                          >
-                            {getRelativeTimeString(
-                              audioSegmentsLastUpdated,
-                              false
-                            )}
-                          </Typography>
-                        )}
-                      </Box>
-                    )}
-                  </>
+                  audioSegmentsLastUpdated && (
+                    <LastRefreshIndicator
+                      lastUpdated={audioSegmentsLastUpdated}
+                      isPolling={isAudioSegmentsPolling}
+                    />
+                  )
                 ) : (
                   <Typography
                     variant="caption"
