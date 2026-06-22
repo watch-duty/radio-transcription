@@ -267,6 +267,46 @@ def _segment_path(directory: Path, index: int) -> Path:
     return directory / f"chunk_{index:06d}.{AUDIO_FORMAT}"
 
 
+async def _fix_flac_header(file_path: Path) -> None:
+    """Re-encodes a FLAC segment in-place to write a valid STREAMINFO header.
+
+    This is a critical performance and correctness fix: ffmpeg's segment muxer
+    writes sequential FLAC files without seek tables and with an unknown number of frames
+    in the header. When downstream services try to read these files, soundfile/libsndfile
+    attempts to allocate an infinite array (2^63 - 1 frames) and crashes or thrashes.
+    Re-encoding the segment in-place takes ~10ms but writes a perfect, standard FLAC header.
+    """
+    temp_path = file_path.with_name(f"{file_path.name}.fixed.flac")
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "ffmpeg",
+            "-y",
+            "-nostdin",
+            "-i",
+            str(file_path),
+            "-acodec",
+            "flac",
+            str(temp_path),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await process.wait()
+        if process.returncode == 0:
+            temp_path.replace(file_path)
+        else:
+            logger.error(
+                "ffmpeg header fix failed for %s with exit code %s",
+                file_path,
+                process.returncode,
+            )
+    except Exception as e:
+        logger.exception(
+            "Exception fixing FLAC header for %s: %s", file_path, e
+        )
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
 async def capture_icecast_stream(  # noqa: PLR0915
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
@@ -375,6 +415,10 @@ async def capture_icecast_stream(  # noqa: PLR0915
                 ):
                     # SLO: receipt_time stamp — Icecast segment finalized, bytes available
                     receipt_time = _now_utc()
+
+                    # Fix the FLAC header in-place so downstream decoders don't crash
+                    await _fix_flac_header(current_segment)
+
                     segment_bytes = await asyncio.to_thread(
                         current_segment.read_bytes
                     )
