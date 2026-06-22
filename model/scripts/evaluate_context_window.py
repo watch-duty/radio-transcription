@@ -476,20 +476,21 @@ async def main_async(args: argparse.Namespace) -> None:
     logger.info("Initializing Google Cloud and GenAI clients...")
     storage_client = storage.Client(project=args.gcp_project)
 
-    client_kwargs = {
-        "project": args.gcp_project,
-        "location": args.gcp_location,
-        "vertexai": True,
-    }
-    if args.gcp_location != "us":
+    if args.gcp_location == "us":
+        base_url = "https://aiplatform.us.rep.googleapis.com"
+    else:
         base_url = (
             f"https://{args.gcp_location}-aiplatform.googleapis.com"
             if args.gcp_location and args.gcp_location != "global"
             else "https://aiplatform.googleapis.com"
         )
-        client_kwargs["http_options"] = types.HttpOptions(base_url=base_url)
 
-    genai_client = GenAiClient(**client_kwargs)
+    genai_client = GenAiClient(
+        project=args.gcp_project,
+        location=args.gcp_location,
+        vertexai=True,
+        http_options=types.HttpOptions(base_url=base_url),
+    )
 
     # 1. Download Manifest
     logger.info(f"Downloading manifest from GCS: {args.manifest_uri}...")
