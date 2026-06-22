@@ -509,6 +509,43 @@ describe('TranscriptActionsBar', () => {
     expect(setSpeed).toHaveBeenCalledWith(2);
   });
 
+  it('shows pan and speed badges on the speaker button when off-default', () => {
+    renderBar({ pan: -1, speed: 1.5 });
+
+    expect(screen.getByText('L')).toBeTruthy();
+    expect(screen.getByText('1.5×')).toBeTruthy();
+  });
+
+  it('shows no badges when controls are at their defaults', () => {
+    renderBar();
+
+    expect(screen.queryByText('L')).toBeNull();
+    expect(screen.queryByText('R')).toBeNull();
+    expect(screen.getByTestId('VolumeUpIcon')).toBeTruthy();
+  });
+
+  it('reflects volume direction in the speaker icon', () => {
+    const { rerender } = renderBar({ volumeDb: -6 });
+    expect(screen.getByTestId('VolumeDownIcon')).toBeTruthy();
+
+    rerender(
+      <TranscriptActionsBar
+        {...audioControlProps}
+        volumeDb={-30}
+        searchedTimestamp={null}
+        hasNewerAudioSegments={false}
+        redactTranscripts={false}
+        setRedactTranscripts={mockSetRedactTranscripts}
+        dateTime={null}
+        setDateTime={vi.fn()}
+        alertFilter="all"
+        setAlertFilter={vi.fn()}
+        onClickViewLatest={vi.fn()}
+      />
+    );
+    expect(screen.getByTestId('VolumeOffIcon')).toBeTruthy();
+  });
+
   it('disables the speed control for Safari users', () => {
     vi.stubGlobal('navigator', {
       userAgent:

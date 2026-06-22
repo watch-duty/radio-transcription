@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 
 import FilterIcon from '@mui/icons-material/Tune';
+import VolumeDownIcon from '@mui/icons-material/VolumeDown';
+import VolumeOffIcon from '@mui/icons-material/VolumeOff';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import { FormControl, InputLabel } from '@mui/material';
 import Badge from '@mui/material/Badge';
@@ -77,6 +79,46 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   );
   const [audioAnchorEl, setAudioAnchorEl] = useState<HTMLElement | null>(null);
   const speedDisabled = isSafari();
+
+  const volumeLabel = formatVolumeDb(volumeDb);
+  const isMuted = volumeLabel === 'Muted';
+  const volumeActive = volumeDb !== 0;
+  const panLabel = pan !== 0 ? PAN_LABELS[pan] : null;
+  const speedActive = speed !== 1;
+  const VolumeIcon = isMuted
+    ? VolumeOffIcon
+    : volumeDb < 0
+      ? VolumeDownIcon
+      : VolumeUpIcon;
+
+  const activeSummary = [
+    volumeActive ? volumeLabel : null,
+    panLabel ? `Pan ${panLabel}` : null,
+    speedActive ? `${speed}×` : null,
+  ].filter(Boolean);
+  const audioTooltip = activeSummary.length
+    ? `Audio controls — ${activeSummary.join(', ')}`
+    : 'Audio controls';
+  const audioBadgeSx = {
+    '& .MuiBadge-badge': {
+      fontSize: '0.625rem',
+      height: 16,
+      minWidth: 16,
+      px: 0.5,
+      boxShadow: `0 0 0 2px ${theme.palette.background.paper}`,
+    },
+  };
+  const audioButtonSx = {
+    minWidth: 0,
+    p: 0.75,
+    ...(volumeActive
+      ? {}
+      : {
+          bgcolor: 'background.paper',
+          color: 'primary.main',
+          '&:hover': { bgcolor: 'action.hover' },
+        }),
+  };
   const [localDateTime, setLocalDateTime] = useState<Date | null>(dateTime);
   const [localAlertFilter, setLocalAlertFilter] =
     useState<AlertFilter>(alertFilter);
@@ -142,16 +184,31 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
       }}
     >
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-        <Tooltip title="Audio controls">
-          <Button
+        <Tooltip title={audioTooltip}>
+          <Badge
             color="primary"
-            variant="outlined"
-            sx={{ minWidth: 0, p: 0.75 }}
-            aria-label="audio controls"
-            onClick={(e) => setAudioAnchorEl(e.currentTarget)}
+            badgeContent={speedActive ? `${speed}×` : undefined}
+            invisible={!speedActive}
+            anchorOrigin={{ vertical: 'top', horizontal: 'left' }}
+            sx={audioBadgeSx}
           >
-            <VolumeUpIcon />
-          </Button>
+            <Badge
+              color="primary"
+              badgeContent={panLabel}
+              invisible={!panLabel}
+              sx={audioBadgeSx}
+            >
+              <Button
+                color="primary"
+                variant="contained"
+                sx={audioButtonSx}
+                aria-label="audio controls"
+                onClick={(e) => setAudioAnchorEl(e.currentTarget)}
+              >
+                <VolumeIcon />
+              </Button>
+            </Badge>
+          </Badge>
         </Tooltip>
         <Popover
           open={Boolean(audioAnchorEl)}
