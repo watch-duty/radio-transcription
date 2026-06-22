@@ -67,11 +67,11 @@ def _sanitize_duration(duration: Duration, context: str = "") -> None:
 
 def _rule_annotation_to_proto(
     annotation: RuleAnnotation,
-) -> evaluated_pb2.RuleAnnotation:
-    proto = evaluated_pb2.RuleAnnotation()
+) -> evaluated_pb2.EvaluatedTranscribedAudio.RuleAnnotation:
+    proto = evaluated_pb2.EvaluatedTranscribedAudio.RuleAnnotation()
     if annotation.text_match is not None:
         proto.text_match.spans.extend(
-            evaluated_pb2.TextMatchSpan(
+            evaluated_pb2.EvaluatedTranscribedAudio.TextMatchSpan(
                 start=span.start,
                 end=span.end,
                 matched_text=span.matched_text,

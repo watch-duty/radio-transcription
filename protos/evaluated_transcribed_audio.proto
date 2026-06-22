@@ -5,6 +5,32 @@ import "google/protobuf/duration.proto";
 // Identifiers, timestamps, transcript, and evaluation decisions for transcribed audio.
 message EvaluatedTranscribedAudio {
 
+  // A span of text within the transcript that matched a rule.
+  message TextMatchSpan {
+    // Codepoint offset (inclusive) of the first character of the match.
+    int32 start = 1;
+
+    // Codepoint offset (exclusive) of the character after the last character of the match.
+    int32 end = 2;
+
+    // The matched substring, preserved with its original casing.
+    string matched_text = 3;
+  }
+
+  // Annotation kind for keyword/regex rules: one or more spans of matched text.
+  message TextMatchAnnotation {
+    repeated TextMatchSpan spans = 1;
+  }
+
+  // A single triggered rule's annotation. The rule_id lives in the
+  // rule_annotations map key, not here. The `annotation` oneof carries a payload
+  // specific to the rule kind (e.g. text spans for keyword/regex rules, future
+  // kinds for burst/audio/metadata rules).
+  message RuleAnnotation {
+    oneof annotation {
+      TextMatchAnnotation text_match = 1;
+    }
+  }
 
   // --- Identifiers ---
   // The unique identifier of the radio feed this transmission originated from (formatted as a RFC 4122 UUID).
@@ -75,31 +101,4 @@ message EvaluatedTranscribedAudio {
   // Field 16 (external_id) removed in GOO-498.
   reserved 14, 16;
   reserved "external_id";
-}
-
-// A span of text within the transcript that matched a rule.
-message TextMatchSpan {
-  // Codepoint offset (inclusive) of the first character of the match.
-  int32 start = 1;
-
-  // Codepoint offset (exclusive) of the character after the last character of the match.
-  int32 end = 2;
-
-  // The matched substring, preserved with its original casing.
-  string matched_text = 3;
-}
-
-// Annotation kind for keyword/regex rules: one or more spans of matched text.
-message TextMatchAnnotation {
-  repeated TextMatchSpan spans = 1;
-}
-
-// A single triggered rule's annotation. The rule_id lives in the
-// rule_annotations map key, not here. The `annotation` oneof carries a payload
-// specific to the rule kind (e.g. text spans for keyword/regex rules, future
-// kinds for burst/audio/metadata rules).
-message RuleAnnotation {
-  oneof annotation {
-    TextMatchAnnotation text_match = 1;
-  }
 }
