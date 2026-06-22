@@ -43,6 +43,10 @@ from backend.pipeline.ingestion.models import (
 )
 from backend.pipeline.storage.feed_store import FeedStatusReason
 
+_CHUNK_DURATION = int(
+    os.environ.get("INGESTION_SEGMENT_TIME_SEC", str(CHUNK_DURATION_SECONDS))
+)
+
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
@@ -430,11 +434,11 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                         chunk_start_time = (
                             stream_anchor_time
                             + datetime.timedelta(
-                                seconds=next_index * CHUNK_DURATION_SECONDS
+                                seconds=next_index * _CHUNK_DURATION
                             )
                         )
                         chunk_end_time = chunk_start_time + datetime.timedelta(
-                            seconds=CHUNK_DURATION_SECONDS
+                            seconds=_CHUNK_DURATION
                         )
                         if process_done:
                             chunk_end_time = min(chunk_end_time, _now_utc())
@@ -598,7 +602,7 @@ async def _create_ffmpeg_process(
         "-ac", str(NUM_AUDIO_CHANNELS),
         "-compression_level", FLAC_COMPRESSION_LEVEL,
         "-f", "segment",
-        "-segment_time", str(CHUNK_DURATION_SECONDS),
+        "-segment_time", str(_CHUNK_DURATION),
         "-segment_format", AUDIO_FORMAT,
         "-reset_timestamps", "1",
         "-segment_start_number", "0",
