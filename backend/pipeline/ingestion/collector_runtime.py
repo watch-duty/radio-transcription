@@ -773,12 +773,15 @@ class CollectorRuntime:
         async def _update_progress() -> bool:
             return await self._store.update_feed_progress(
                 feed["id"],
-                worker_id,
-                gcs_uri,
-                fencing_token,
+                worker_id=worker_id,
+                new_gcs_path=gcs_uri,
+                fencing_token=fencing_token,
                 # bcfy_calls supplies the API `ts` resume cursor;
                 # stream collectors leave it None -> end_ts fallback.
-                captured_chunk.resume_position or captured_chunk.chunk_end_time,
+                last_bookmark_time=(
+                    captured_chunk.resume_position
+                    or captured_chunk.chunk_end_time
+                ),
                 actor_id=COLLECTOR_RUNTIME_ACTOR_ID,
             )
 

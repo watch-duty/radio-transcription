@@ -230,11 +230,18 @@ class TestRecordFailure:
         with patch(
             "backend.pipeline.storage.sync_feed_store.logger"
         ) as mock_logger:
-            store.record_failure(feed_id, actor_id=_ECHO_ACTOR_ID)
+            store.record_failure(
+                feed_id,
+                actor_id=_ECHO_ACTOR_ID,
+                reason="echo_recording_download_failed",
+                status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            )
 
         mock_logger.warning.assert_called_once()
         extra = mock_logger.warning.call_args[1]["extra"]
         assert extra["feed_id"] == str(feed_id)
+        assert extra["status_reason"] == "system_collector_error"
+        assert extra["reason"] == "echo_recording_download_failed"
 
     def test_rejects_missing_actor_id(self) -> None:
         conn = _make_mock_conn()

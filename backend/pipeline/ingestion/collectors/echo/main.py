@@ -323,6 +323,7 @@ def _record_failure_by_policy(
         msg = "Feed store is not initialized"
         raise RuntimeError(msg)
 
+    feed_id = feed["id"]
     action = failure_policy.classify_failure_policy(
         classification.status_reason,
     )
@@ -332,20 +333,20 @@ def _record_failure_by_policy(
             is failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
         ):
             feed_store.record_failure(
-                feed["id"],
+                feed_id,
                 actor_id=ECHO_INGESTION_ACTOR_ID,
                 reason=classification.reason,
                 status_reason=classification.status_reason,
             )
         else:
             feed_store.record_non_budgeted_failure(
-                feed["id"],
+                feed_id,
                 actor_id=ECHO_INGESTION_ACTOR_ID,
                 status_reason=classification.status_reason,
                 reason=classification.reason,
             )
     except Exception:
-        logger.exception("Failed to record failure for feed %s", feed["id"])
+        logger.exception("Failed to record failure for feed %s", feed_id)
 
 
 def _should_return_success_after_failure_record_attempt(

@@ -3188,12 +3188,9 @@ class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
 
     Contract: the feed's persisted last_bookmark_time is the chunk's
     resume_position when the collector sets it (bcfy_calls), and falls back
-    to chunk_end_time when it is None (stream/push collectors). The bookmark
-    remains the 5th positional argument while audit causal inputs are forwarded
-    as storage-owned keyword-only arguments.
+    to chunk_end_time when it is None (stream/push collectors). Runtime passes
+    the bookmark and audit causal inputs as named storage arguments.
     """
-
-    _BOOKMARK_ARG_INDEX = 4
 
     async def test_persists_resume_position_when_chunk_sets_it(self) -> None:
         """A chunk with resume_position set → that value is the bookmark."""
@@ -3228,11 +3225,8 @@ class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
             await rt._process_feed(feed)
 
         rt._store.update_feed_progress.assert_awaited_once()
-        bookmark = rt._store.update_feed_progress.await_args.args[
-            self._BOOKMARK_ARG_INDEX
-        ]
-        self.assertEqual(bookmark, resume)
         kwargs = rt._store.update_feed_progress.await_args.kwargs
+        self.assertEqual(kwargs["last_bookmark_time"], resume)
         self.assertEqual(kwargs["actor_id"], "service:collector-runtime")
         self.assertNotIn("previous_status", kwargs)
         self.assertNotIn("previous_failure_count", kwargs)
@@ -3264,11 +3258,8 @@ class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
             await rt._process_feed(_FEED)
 
         rt._store.update_feed_progress.assert_awaited_once()
-        bookmark = rt._store.update_feed_progress.await_args.args[
-            self._BOOKMARK_ARG_INDEX
-        ]
-        self.assertEqual(bookmark, end_time)
         kwargs = rt._store.update_feed_progress.await_args.kwargs
+        self.assertEqual(kwargs["last_bookmark_time"], end_time)
         self.assertEqual(kwargs["actor_id"], "service:collector-runtime")
         self.assertNotIn("previous_status", kwargs)
         self.assertNotIn("previous_failure_count", kwargs)

@@ -156,7 +156,11 @@ class SyncFeedStore:
             )
         logger.warning(
             "Feed failure recorded",
-            extra={"feed_id": str(feed_id)},
+            extra={
+                "feed_id": str(feed_id),
+                "status_reason": status_reason_value,
+                "reason": status_reason_detail,
+            },
         )
 
     def record_non_budgeted_failure(
