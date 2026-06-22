@@ -16,6 +16,7 @@ tsconfig.tsbuildinfo
 .env*
 !.env.example
 .coverage
+**/coverage/
 __pycache__/
 tmp/
 .tmpwork/
