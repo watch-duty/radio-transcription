@@ -95,7 +95,6 @@ export function TranscriptView({
   >(targetSegmentId);
   const [isViewAtTopOfAudioSegments, setIsViewAtTopOfAudioSegments] =
     useState(true);
-  const [isAudioSegmentsPolling, setIsAudioSegmentsPolling] = useState(false);
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const hasScrolledToTarget = useRef(false);
@@ -256,10 +255,93 @@ export function TranscriptView({
     isFeedsSuccess,
   });
 
-  const audioSegmentsLastUpdated =
-    audioSegmentsDataUpdatedAt && audioSegmentsDataUpdatedAt > 0
-      ? audioSegmentsDataUpdatedAt
-      : null;
+  // Relies on tanstack-query to trigger polling refreshes
+  const pollingQuery = useQuery({
+    queryKey: [
+      'liveAudioSegmentsPoll',
+      searchedFeedId,
+      alertFilter,
+      pollNewerAudioSegments,
+    ],
+    queryFn: () => pollNewerAudioSegments(),
+    enabled:
+      isAudioSegmentsSuccess &&
+      isViewAtTopOfAudioSegments &&
+      !hasNewerAudioSegments &&
+      !!searchedFeedId,
+    initialData: () => [],
+    refetchInterval: DEFAULT_REFRESH_INTERVAL,
+    staleTime: DEFAULT_REFRESH_INTERVAL,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    refetchIntervalInBackground: true,
+  });
+
+  const isAudioSegmentsPolling = pollingQuery.isFetching;
+  const lastProcessedPollRef = useRef(0);
+
+  // Handle each completed poll exactly once: merge newer segments into the
+  // cache and run the new-segment side effects (snackbar, unread badge,
+  // autoplay). Guarded by dataUpdatedAt so unrelated re-renders don't re-run it.
+  useEffect(() => {
+    if (!pollingQuery.isSuccess) return;
+    if (pollingQuery.dataUpdatedAt === lastProcessedPollRef.current) return;
+    lastProcessedPollRef.current = pollingQuery.dataUpdatedAt;
+
+    const newAudioSegments = pollingQuery.data;
+    if (newAudioSegments.length === 0) return;
+
+    const cachedAudioSegments =
+      updateCacheWithNewAudioSegments(newAudioSegments);
+    if (cachedAudioSegments.length === 0) return;
+
+    const cachedSpeechAudioSegments = cachedAudioSegments.filter(
+      (t) => t.classification === AudioClassification.SPEECH
+    );
+
+    if (cachedSpeechAudioSegments.length > 0) {
+      const message =
+        cachedSpeechAudioSegments.length === 1
+          ? 'New transcript received'
+          : `${cachedSpeechAudioSegments.length} new transcripts received`;
+      triggerSnackbar(message);
+
+      // Update the unread count if the user is not viewing the screen.
+      if (!document.hasFocus()) {
+        setNewMessageCount(
+          (prevCount) => prevCount + cachedSpeechAudioSegments.length
+        );
+      }
+    }
+
+    // Trigger the new audio to play if no audio is currently playing.
+    if (!isAudioPlaying && playLatestAudio) {
+      const audioToPlay = cachedAudioSegments[cachedAudioSegments.length - 1];
+      if (audioToPlay.playbackAudioUri) {
+        toggleAudio(audioToPlay.id, audioToPlay.playbackAudioUri);
+      }
+    }
+  }, [
+    pollingQuery.isSuccess,
+    pollingQuery.dataUpdatedAt,
+    pollingQuery.data,
+    updateCacheWithNewAudioSegments,
+    triggerSnackbar,
+    isAudioPlaying,
+    playLatestAudio,
+    toggleAudio,
+  ]);
+
+  // "Last refresh" reflects the most recent of the initial/paged load and the
+  // latest successful poll, so it advances on every poll even when no new
+  // segments arrive.
+  const audioSegmentsLastUpdated = useMemo(() => {
+    const lastRefreshedAt = Math.max(
+      audioSegmentsDataUpdatedAt,
+      pollingQuery.dataUpdatedAt
+    );
+    return lastRefreshedAt > 0 ? lastRefreshedAt : null;
+  }, [audioSegmentsDataUpdatedAt, pollingQuery.dataUpdatedAt]);
 
   const audioSegments = useConsolidatedAudioSegments(rawAudioSegments);
 
@@ -364,90 +446,6 @@ export function TranscriptView({
 
     return { groupCounts: counts, groupTitles: titles };
   }, [audioSegments]);
-
-  /**
-   * Background polling effect.
-   * Automatically fetches new audio segments every 15 seconds, provided the user is:
-   * 1. Scrolled to the top of the view.
-   * 2. Looking at the "live" head of the stream (no more un-fetched newer pages available).
-   */
-  useEffect(() => {
-    if (
-      // Skip polling if the initial audio segments load hasn't completed yet
-      !isAudioSegmentsSuccess ||
-      // Skip polling if not viewing at the top of the audio segments to prevent fetching data when the user would not see it.
-      // User can always click refresh button if they want to.
-      !isViewAtTopOfAudioSegments ||
-      // Skip polling if there are older historical pages ahead of us to load.
-      hasNewerAudioSegments ||
-      !searchedFeedId
-    ) {
-      return;
-    }
-
-    const interval = setInterval(async () => {
-      try {
-        setIsAudioSegmentsPolling(true);
-        const newAudioSegments = await pollNewerAudioSegments();
-        if (newAudioSegments.length === 0) {
-          return;
-        }
-
-        // Add the audio segments to cache
-        const cachedAudioSegments =
-          updateCacheWithNewAudioSegments(newAudioSegments);
-        if (cachedAudioSegments.length === 0) {
-          return;
-        }
-
-        const cachedSpeechAudioSegments = cachedAudioSegments.filter(
-          (t) => t.classification === AudioClassification.SPEECH
-        );
-
-        if (cachedSpeechAudioSegments.length > 0) {
-          // Display snackbar indicator that new audio segments were received
-          const message =
-            cachedSpeechAudioSegments.length === 1
-              ? 'New transcript received'
-              : `${cachedSpeechAudioSegments.length} new transcripts received`;
-          triggerSnackbar(message);
-
-          // Update the new message count if the user is not viewing the screen
-          if (!document.hasFocus()) {
-            setNewMessageCount(
-              (prevCount) => prevCount + cachedSpeechAudioSegments.length
-            );
-          }
-        }
-
-        // Trigger the new audio to play if no audio is currently playing
-        if (!isAudioPlaying && playLatestAudio) {
-          const audioToPlay =
-            cachedAudioSegments[cachedAudioSegments.length - 1];
-          if (audioToPlay.playbackAudioUri) {
-            toggleAudio(audioToPlay.id, audioToPlay.playbackAudioUri);
-          }
-        }
-      } catch (error) {
-        console.error('Polling error:', error);
-      } finally {
-        setIsAudioSegmentsPolling(false);
-      }
-    }, DEFAULT_REFRESH_INTERVAL);
-
-    return () => clearInterval(interval);
-  }, [
-    isAudioSegmentsSuccess,
-    isViewAtTopOfAudioSegments,
-    hasNewerAudioSegments,
-    searchedFeedId,
-    pollNewerAudioSegments,
-    updateCacheWithNewAudioSegments,
-    triggerSnackbar,
-    toggleAudio,
-    isAudioPlaying,
-    playLatestAudio,
-  ]);
 
   const {
     data: rules,
