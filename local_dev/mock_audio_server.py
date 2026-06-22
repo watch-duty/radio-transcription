@@ -175,6 +175,28 @@ class RequestHandler(BaseHTTPRequestHandler):
         }
         self.wfile.write(json.dumps(payload).encode("utf-8"))
 
+    def _stream_live_audio(self, file_path: Path, byte_rate: float) -> None:
+        """Streams mock audio file in an infinite loop at the specified byte rate."""
+        chunk_size = 4096
+        logger.info(
+            f"Streaming mock audio {file_path.name} in an infinite loop to simulate live stream..."
+        )
+        try:
+            while True:
+                with open(file_path, "rb") as f:
+                    while True:
+                        chunk = f.read(chunk_size)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        # Sleep to match real-time byte rate
+                        sleep_time = len(chunk) / byte_rate
+                        time.sleep(sleep_time)
+        except (BrokenPipeError, ConnectionResetError):
+            logger.info(
+                f"Client disconnected from live stream {file_path.name}."
+            )
+
     def _handle_file_download(self, parsed_url) -> None:
         path = parsed_url.path.lstrip("/")
         path = path.removeprefix("mock-s3/")
@@ -232,24 +254,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 duration = 15.0
                 file_size = file_path.stat().st_size
                 byte_rate = file_size / duration  # bytes per second
-
-                chunk_size = 4096
-                with open(file_path, "rb") as f:
-                    while True:
-                        chunk = f.read(chunk_size)
-                        if not chunk:
-                            break
-                        self.wfile.write(chunk)
-                        # Sleep to match real-time byte rate
-                        sleep_time = len(chunk) / byte_rate
-                        time.sleep(sleep_time)
-
-                # Keep the connection open indefinitely to simulate an infinite live stream and prevent reconnection loops
-                logger.info(
-                    f"Finished streaming mock audio {file_path.name}, holding connection open to prevent reconnect loop..."
-                )
-                while True:
-                    time.sleep(3600)
+                self._stream_live_audio(file_path, byte_rate)
             else:
                 with open(file_path, "rb") as f:
                     self.wfile.write(f.read())
