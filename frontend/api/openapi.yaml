@@ -382,6 +382,35 @@ components:
         - errors
       type: object
       additionalProperties: false
+    TextMatchSpan:
+      properties:
+        startIndex:
+          type: number
+          format: double
+        endIndex:
+          type: number
+          format: double
+        matchedText:
+          type: string
+      required:
+        - startIndex
+        - endIndex
+        - matchedText
+      type: object
+      additionalProperties: false
+    RuleAnnotation:
+      properties:
+        textMatch:
+          items:
+            $ref: "#/components/schemas/TextMatchSpan"
+          type: array
+      type: object
+      additionalProperties: false
+    RuleAnnotationMap:
+      properties: {}
+      type: object
+      additionalProperties:
+        $ref: "#/components/schemas/RuleAnnotation"
     EvaluationAnnotationData:
       properties:
         decisions:
@@ -392,6 +421,8 @@ components:
           items:
             type: string
           type: array
+        ruleAnnotations:
+          $ref: "#/components/schemas/RuleAnnotationMap"
       required:
         - decisions
         - errors

@@ -14,9 +14,24 @@ export interface TranscriptAnnotationData {
   errors: string[];
 }
 
+export interface TextMatchSpan {
+  startIndex: number;
+  endIndex: number;
+  matchedText: string;
+}
+
+export interface RuleAnnotation {
+  textMatch?: TextMatchSpan[];
+}
+
+export interface RuleAnnotationMap {
+  [ruleId: string]: RuleAnnotation;
+}
+
 export interface EvaluationAnnotationData {
   decisions: string[];
   errors: string[];
+  ruleAnnotations?: RuleAnnotationMap;
 }
 
 export interface Annotation {
