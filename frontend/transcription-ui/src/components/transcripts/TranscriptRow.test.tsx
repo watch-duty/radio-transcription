@@ -337,4 +337,62 @@ describe('TranscriptRow', () => {
     expect(screen.queryByText('10 sec')).toBeNull();
     expect(screen.queryByText(/16:00/)).toBeNull();
   });
+
+  it('renders and triggers copy external segment ID action successfully when present', () => {
+    const segmentWithExtId = {
+      ...mockAudioSegment,
+      externalAudioSegmentId: 'ext-segment-abc-123',
+    };
+
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          audioSegment={segmentWithExtId}
+          index={0}
+          totalAudioSegments={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onToggleAudio={mockOnToggleAudio}
+          isAudioPlaying={false}
+          onRowClick={mockOnRowClick}
+          currentlyPlayingSegmentId={null}
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+        />
+      </MemoryRouter>
+    );
+
+    const copyButton = screen.getByLabelText('copy external segment id');
+    expect(copyButton).toBeTruthy();
+    fireEvent.click(copyButton);
+
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
+      'ext-segment-abc-123'
+    );
+    expect(mockTriggerSnackbar).toHaveBeenCalledWith(
+      'External segment ID copied'
+    );
+  });
+
+  it('does not render external segment ID if not present', () => {
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          audioSegment={mockAudioSegment}
+          index={0}
+          totalAudioSegments={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onToggleAudio={mockOnToggleAudio}
+          isAudioPlaying={false}
+          onRowClick={mockOnRowClick}
+          currentlyPlayingSegmentId={null}
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+        />
+      </MemoryRouter>
+    );
+
+    expect(screen.queryByLabelText('copy external segment id')).toBeNull();
+  });
 });

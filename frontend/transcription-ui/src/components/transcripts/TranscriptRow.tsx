@@ -1,5 +1,6 @@
 import { Fragment } from 'react';
 
+import AudioFileIcon from '@mui/icons-material/AudioFile';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import LinkIcon from '@mui/icons-material/Link';
 import Box from '@mui/material/Box';
@@ -146,6 +147,7 @@ export function TranscriptRow({
       )}
       <ListItem
         id={`transcript-${audioSegment.id}`}
+        className="transcript-row-item"
         divider={index < totalAudioSegments - 1}
         sx={{
           display: 'flex',
@@ -245,11 +247,21 @@ export function TranscriptRow({
           }}
         >
           {renderTranscriptionText(transcriptAnnotation)}
-        </Typography>
-        <Box sx={{ display: 'flex', gap: 1, flexShrink: 0 }}>
           {!isSilence && (
             <Tooltip title="Copy transcript">
-              <span>
+              <Box
+                component="span"
+                className="copy-transcript-btn"
+                sx={{
+                  display: 'inline-block',
+                  verticalAlign: 'middle',
+                  marginLeft: '8px',
+                  opacity: 0,
+                  '.transcript-row-item:hover &': {
+                    opacity: 1,
+                  },
+                }}
+              >
                 <IconButton
                   size="small"
                   aria-label="copy transcript"
@@ -267,6 +279,35 @@ export function TranscriptRow({
                   }
                 >
                   <ContentCopyIcon fontSize="small" />
+                </IconButton>
+              </Box>
+            </Tooltip>
+          )}
+        </Typography>
+        <Box
+          sx={{
+            display: 'flex',
+            gap: 1,
+            flexShrink: 0,
+            alignItems: 'center',
+          }}
+        >
+          {audioSegment.externalAudioSegmentId && (
+            <Tooltip title="Copy external segment ID">
+              <span>
+                <IconButton
+                  size="small"
+                  aria-label="copy external segment id"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigator.clipboard.writeText(
+                      audioSegment.externalAudioSegmentId!
+                    );
+                    triggerSnackbar('External segment ID copied');
+                  }}
+                  sx={{ cursor: 'copy' }}
+                >
+                  <AudioFileIcon fontSize="small" />
                 </IconButton>
               </span>
             </Tooltip>
