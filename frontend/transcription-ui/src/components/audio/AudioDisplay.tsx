@@ -26,7 +26,6 @@ interface AudioDisplayProps {
   userDuration?: string | null;
   isAudioPlaying: boolean;
   onTogglePlayPause: () => void;
-  currentTimeSeconds?: number;
   currentAudioRef?: React.RefObject<PlaybackController | null>;
 }
 
@@ -217,7 +216,6 @@ export function AudioDisplay({
   userDuration,
   isAudioPlaying,
   onTogglePlayPause,
-  currentTimeSeconds,
   currentAudioRef,
 }: AudioDisplayProps) {
   const theme = useTheme();
@@ -229,7 +227,6 @@ export function AudioDisplay({
   // Poll current playback progress when audio is playing
   useEffect(() => {
     if (
-      currentTimeSeconds !== undefined ||
       !isAudioPlaying ||
       !currentlyPlayingSegmentId ||
       !currentAudioRef?.current
@@ -251,12 +248,7 @@ export function AudioDisplay({
     return () => {
       cancelAnimationFrame(animationFrameId);
     };
-  }, [
-    isAudioPlaying,
-    currentlyPlayingSegmentId,
-    currentAudioRef,
-    currentTimeSeconds,
-  ]);
+  }, [isAudioPlaying, currentlyPlayingSegmentId, currentAudioRef]);
 
   const [windowEndTime, setWindowEndTime] = useState<number | null>(null);
 
@@ -452,12 +444,8 @@ export function AudioDisplay({
               isDarkTheme={isDarkTheme}
               theme={theme}
               currentTimeSeconds={
-                clip.isAudioPlaying
-                  ? currentTimeSeconds !== undefined
-                    ? currentTimeSeconds
-                    : currentAudioRef
-                      ? localCurrentTimeSeconds
-                      : undefined
+                clip.isAudioPlaying && currentAudioRef
+                  ? localCurrentTimeSeconds
                   : undefined
               }
             />

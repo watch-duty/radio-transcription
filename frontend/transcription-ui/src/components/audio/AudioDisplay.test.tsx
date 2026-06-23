@@ -500,33 +500,6 @@ describe('AudioDisplay', () => {
     });
   });
 
-  it('should call setTime on wavesurfer player when progress is provided', () => {
-    const mockAudioSegments: AudioSegment[] = [
-      makeMockAudioSegment(
-        '1',
-        'feed1',
-        new Date('2026-04-20T09:00:00Z').toISOString(),
-        new Date('2026-04-20T09:00:05Z').toISOString(),
-        'Test 1',
-        'audio1.m4a'
-      ),
-    ];
-
-    render(
-      <AudioDisplay
-        audioSegments={mockAudioSegments}
-        currentlyPlayingSegmentId="1"
-        onClipClick={vi.fn()}
-        isAudioPlaying={true}
-        onTogglePlayPause={vi.fn()}
-        highlightedSegmentId={null}
-        currentTimeSeconds={3.5}
-      />
-    );
-
-    expect(mockSetTime).toHaveBeenCalledWith(3.5);
-  });
-
   it('should poll progress from currentAudioRef and seek wavesurfer player', async () => {
     const mockAudioSegments: AudioSegment[] = [
       makeMockAudioSegment(
