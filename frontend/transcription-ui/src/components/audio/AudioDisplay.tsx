@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
-import type { Howl } from 'howler';
 import type WaveSurfer from 'wavesurfer.js';
 
 import PauseIcon from '@mui/icons-material/PauseCircleFilledOutlined';
@@ -13,6 +12,7 @@ import { type Theme, useTheme } from '@mui/material/styles';
 import { type AudioSegment } from '@transcription/common';
 import WavesurferPlayer from '@wavesurfer/react';
 
+import type { PlaybackController } from '../../audio/WebAudioPlayer';
 import { findEvaluationAnnotationData } from '../../utils/annotationUtils';
 import { getAudioUrl } from '../../utils/audioUtils';
 import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
@@ -26,8 +26,7 @@ interface AudioDisplayProps {
   userDuration?: string | null;
   isAudioPlaying: boolean;
   onTogglePlayPause: () => void;
-  currentTimeSeconds?: number;
-  currentAudioRef?: React.RefObject<Howl | null>;
+  currentAudioRef?: React.RefObject<PlaybackController | null>;
 }
 
 const PLAYING_CURSOR_WIDTH_PX = 1;
@@ -217,7 +216,6 @@ export function AudioDisplay({
   userDuration,
   isAudioPlaying,
   onTogglePlayPause,
-  currentTimeSeconds,
   currentAudioRef,
 }: AudioDisplayProps) {
   const theme = useTheme();
@@ -229,7 +227,6 @@ export function AudioDisplay({
   // Poll current playback progress when audio is playing
   useEffect(() => {
     if (
-      currentTimeSeconds !== undefined ||
       !isAudioPlaying ||
       !currentlyPlayingSegmentId ||
       !currentAudioRef?.current
@@ -241,11 +238,7 @@ export function AudioDisplay({
 
     const updateProgress = () => {
       if (currentAudioRef.current) {
-        const seek = currentAudioRef.current.seek();
-        // seek could be the Howl instance if audio isn't yet loaded, so we should guard against that.
-        if (typeof seek === 'number') {
-          setLocalCurrentTimeSeconds(seek);
-        }
+        setLocalCurrentTimeSeconds(currentAudioRef.current.getCurrentTime());
       }
       animationFrameId = requestAnimationFrame(updateProgress);
     };
@@ -255,12 +248,7 @@ export function AudioDisplay({
     return () => {
       cancelAnimationFrame(animationFrameId);
     };
-  }, [
-    isAudioPlaying,
-    currentlyPlayingSegmentId,
-    currentAudioRef,
-    currentTimeSeconds,
-  ]);
+  }, [isAudioPlaying, currentlyPlayingSegmentId, currentAudioRef]);
 
   const [windowEndTime, setWindowEndTime] = useState<number | null>(null);
 
@@ -456,12 +444,8 @@ export function AudioDisplay({
               isDarkTheme={isDarkTheme}
               theme={theme}
               currentTimeSeconds={
-                clip.isAudioPlaying
-                  ? currentTimeSeconds !== undefined
-                    ? currentTimeSeconds
-                    : currentAudioRef
-                      ? localCurrentTimeSeconds
-                      : undefined
+                clip.isAudioPlaying && currentAudioRef
+                  ? localCurrentTimeSeconds
                   : undefined
               }
             />

@@ -1987,11 +1987,6 @@
   dependencies:
     "@types/unist" "*"
 
-"@types/howler@^2.2.12":
-  version "2.2.12"
-  resolved "https://registry.npmjs.org/@types/howler/-/howler-2.2.12.tgz"
-  integrity sha512-hy769UICzOSdK0Kn1FBk4gN+lswcj1EKRkmiDtMkUGvFfYJzgaDXmVXkSShS2m89ERAatGIPnTUlp2HhfkVo5g==
-
 "@types/json-schema@^7.0.15":
   version "7.0.15"
   resolved "https://registry.npmjs.org/@types/json-schema/-/json-schema-7.0.15.tgz"
@@ -3652,11 +3647,6 @@ hoist-non-react-statics@^3.3.1:
   integrity sha512-/gGivxi8JPKWNm/W0jSmzcMPpfpPLc3dY/6GxhX2hQ9iGj3aDfklV4ET7NjKpSinLpJ5vafa9iiGIEZg10SfBw==
   dependencies:
     react-is "^16.7.0"
-
-howler@^2.2.4:
-  version "2.2.4"
-  resolved "https://registry.npmjs.org/howler/-/howler-2.2.4.tgz"
-  integrity sha512-iARIBPgcQrwtEr+tALF+rapJ8qSc+Set2GJQl7xT1MQzWaVkFebdJhR3alVlSiUf5U7nAANKuj3aWpwerocD5w==
 
 html-encoding-sniffer@^6.0.0:
   version "6.0.0"
