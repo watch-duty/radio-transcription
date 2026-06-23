@@ -16,16 +16,16 @@ class TestTracingInitialization(unittest.IsolatedAsyncioTestCase):
 
     @mock.patch("backend.pipeline.transcription.main.setup_tracing")
     @mock.patch("backend.pipeline.transcription.main.container")
-    def test_tracing_initialized_on_cloud_event(
+    async def test_tracing_initialized_on_cloud_event(
         self,
         mock_container: mock.MagicMock,
         mock_setup_tracing: mock.MagicMock,
     ) -> None:
-        """Verifies setup_tracing is called when the cloud event handler runs."""
+        """Verifies setup_tracing is called when the endpoint handler runs."""
         mock_processor = mock.AsyncMock()
         mock_container.get_processor.return_value = mock_processor
-        mock_event = mock.MagicMock()
-        transcription_main.transcribe_claim_check(mock_event)
+        mock_event = {}
+        await transcription_main.transcribe_claim_check(mock_event)
         mock_setup_tracing.assert_called_once_with(
             service_name="transcription-service",
             use_batch=False,

@@ -60,8 +60,8 @@ class TranscriptionEventProcessor:
         self.publisher = publisher
         self.audio_segments_client = audio_segments_client
 
-    async def process_event(self, cloud_event: CloudEvent) -> None:
-        """Decodes, processes, and transcribes the given CloudEvent."""
+    async def process_event(self, cloud_event: CloudEvent | dict) -> None:
+        """Decodes, processes, and transcribes the given CloudEvent or raw dictionary."""
         record_pipeline_stage("transcription", "start")
         try:
             combined_attributes, raw_data = parse_pubsub_cloudevent(cloud_event)
@@ -154,7 +154,7 @@ class TranscriptionEventProcessor:
                     ordering_key=feed_id,
                     **attrs,
                 )
-                message_id = await asyncio.to_thread(future.result)
+                message_id = await asyncio.wrap_future(future)
                 record_pipeline_stage("transcription", "success")
                 logger.info(
                     "Successfully transcribed and published egress message %s for transmission %s (feed %s)",

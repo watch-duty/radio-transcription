@@ -4,12 +4,12 @@ Triggered by Pub/Sub push events containing serialized NormalizedAudio
 claim-check metadata. Delegates processing to TranscriptionEventProcessor.
 """
 
-import asyncio
 import logging
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
-import functions_framework
-from cloudevents.http.event import CloudEvent
+from fastapi import FastAPI, Response, status
 from google.cloud import pubsub_v1
 
 from backend.pipeline.common.clients import audio_segments_client
@@ -147,20 +147,24 @@ class TranscriptionServiceContainer:
 
 # Global container instance managed by the GCF container instance lifecycle
 container = TranscriptionServiceContainer()
-container.eager_warmup()
 
 
-@functions_framework.cloud_event
-def transcribe_claim_check(cloud_event: CloudEvent) -> None:
-    """Entry point for Cloud Function Pub/Sub trigger events.
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Warms up container services on startup and resets/closes them on shutdown."""
+    container.eager_warmup()
+    yield
+    container.reset_clients()
 
-    Args:
-        cloud_event: The triggered Pub/Sub CloudEvent.
-    """
-    setup_tracing(
-        service_name="transcription-service",
-        use_batch=False,
-    )
+
+app = FastAPI(title="Transcription Service ASGI", lifespan=lifespan)
+
+
+@app.post("/", status_code=status.HTTP_204_NO_CONTENT)
+async def transcribe_claim_check(envelope: dict) -> Response:
+    """Entry point for Pub/Sub push HTTP POST requests."""
+    setup_tracing(service_name="transcription-service", use_batch=False)
 
     processor = container.get_processor()
-    asyncio.run(processor.process_event(cloud_event))
+    await processor.process_event(envelope)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

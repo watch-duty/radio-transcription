@@ -2,6 +2,7 @@
 
 import base64
 import unittest
+from concurrent.futures import Future
 from unittest.mock import MagicMock, patch
 
 import grpc
@@ -42,8 +43,8 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
         mock_transcriber.transcribe.return_value = "Hello world"
 
         mock_publisher = MagicMock()
-        mock_future = MagicMock()
-        mock_future.result.return_value = "msg-12345"
+        mock_future = Future()
+        mock_future.set_result("msg-12345")
         mock_publisher.publish.return_value = mock_future
         mock_publisher.topic_path.return_value = (
             "projects/test-proj/topics/egress"
@@ -148,8 +149,8 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
         mock_transcriber.transcribe.return_value = ""
 
         mock_publisher = MagicMock()
-        mock_future = MagicMock()
-        mock_future.result.return_value = "msg-12345"
+        mock_future = Future()
+        mock_future.set_result("msg-12345")
         mock_publisher.publish.return_value = mock_future
         mock_publisher.topic_path.return_value = (
             "projects/test-proj/topics/egress"

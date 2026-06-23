@@ -1,13 +1,12 @@
 """Google Cloud Speech-to-Text Chirp V3 transcriber implementation."""
 
-import asyncio
 import pathlib
 
 import pydantic
 from google.api_core import client_options
 from google.api_core.retry import Retry
 from google.cloud import speech_v2 as cloud_speech
-from google.cloud.speech_v2 import SpeechClient
+from google.cloud.speech_v2 import SpeechAsyncClient
 
 from backend.pipeline.common.log_helper import get_task_logger
 from backend.pipeline.common.utils import ConfigBase
@@ -96,13 +95,13 @@ class GoogleChirpV3Transcriber(Transcriber):
         self.project_id = project_id
         self.config = config
 
-        self.client: SpeechClient | None = None
+        self.client: SpeechAsyncClient | None = None
 
-    def _init_client(self) -> SpeechClient:
+    def _init_client(self) -> SpeechAsyncClient:
         opts = client_options.ClientOptions(
             api_endpoint=f"{self.config.location}-speech.googleapis.com"
         )
-        return SpeechClient(client_options=opts)
+        return SpeechAsyncClient(client_options=opts)
 
     def setup(self) -> None:
         """Instantiates the Speech-to-Text API gRPC client."""
@@ -182,10 +181,7 @@ class GoogleChirpV3Transcriber(Transcriber):
             deadline=float(DEFAULT_RETRY_MAX_SECONDS * DEFAULT_MAX_RETRIES),
         )
 
-        def _call_api() -> cloud_speech.RecognizeResponse:
-            return client.recognize(request=request, retry=retry_policy)
-
-        response = await asyncio.to_thread(_call_api)
+        response = await client.recognize(request=request, retry=retry_policy)
         return self._parse_response(response)
 
     def _parse_response(

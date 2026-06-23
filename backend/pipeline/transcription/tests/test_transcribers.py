@@ -1,7 +1,7 @@
 """Unit tests for the audio transcription plugins."""
 
 import unittest
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import requests
 from google.api_core.retry import Retry
@@ -21,7 +21,7 @@ class TestTranscribers(unittest.IsolatedAsyncioTestCase):
     async def test_google_chirp_transcriber_success(self) -> None:
         """Verifies that the GoogleChirpTranscriber interacts via the SpeechClient accurately rendering raw byte audio variants into basic text transcripts."""
         with patch(
-            "backend.pipeline.transcription.transcribers.chirp.SpeechClient"
+            "backend.pipeline.transcription.transcribers.chirp.SpeechAsyncClient"
         ) as mock_speech_client_cls:
             mock_client_instance = MagicMock()
             mock_speech_client_cls.return_value = mock_client_instance
@@ -33,7 +33,9 @@ class TestTranscribers(unittest.IsolatedAsyncioTestCase):
                 MagicMock(transcript="Hello world from Chirp")
             ]
             mock_response.results = [mock_result]
-            mock_client_instance.recognize.return_value = mock_response
+            mock_client_instance.recognize = AsyncMock(
+                return_value=mock_response
+            )
 
             transcriber = get_transcriber(
                 TranscriberType.GOOGLE_CHIRP_V3,
@@ -55,7 +57,7 @@ class TestTranscribers(unittest.IsolatedAsyncioTestCase):
     async def test_google_chirp_transcriber_background(self) -> None:
         """Verifies that the system safely propagates [UNINTELLIGIBLE] generic filler outputs downstream."""
         with patch(
-            "backend.pipeline.transcription.transcribers.chirp.SpeechClient"
+            "backend.pipeline.transcription.transcribers.chirp.SpeechAsyncClient"
         ) as mock_speech_client_cls:
             mock_client_instance = MagicMock()
             mock_speech_client_cls.return_value = mock_client_instance
@@ -66,7 +68,9 @@ class TestTranscribers(unittest.IsolatedAsyncioTestCase):
                 MagicMock(transcript=CHIRP_UNINTELLIGIBLE_MARKER)
             ]
             mock_response.results = [mock_result]
-            mock_client_instance.recognize.return_value = mock_response
+            mock_client_instance.recognize = AsyncMock(
+                return_value=mock_response
+            )
 
             transcriber = GoogleChirpV3Transcriber(
                 "test-project",
@@ -85,7 +89,7 @@ class TestTranscribers(unittest.IsolatedAsyncioTestCase):
     async def test_google_chirp_transcriber_passes_retry_policy(self) -> None:
         """Verifies that the GoogleChirpV3Transcriber passes a native Retry policy to the SpeechClient."""
         with patch(
-            "backend.pipeline.transcription.transcribers.chirp.SpeechClient"
+            "backend.pipeline.transcription.transcribers.chirp.SpeechAsyncClient"
         ) as mock_speech_client_cls:
             mock_client_instance = MagicMock()
             mock_speech_client_cls.return_value = mock_client_instance
@@ -94,7 +98,9 @@ class TestTranscribers(unittest.IsolatedAsyncioTestCase):
             mock_result = MagicMock()
             mock_result.alternatives = [MagicMock(transcript="Success")]
             mock_response.results = [mock_result]
-            mock_client_instance.recognize.return_value = mock_response
+            mock_client_instance.recognize = AsyncMock(
+                return_value=mock_response
+            )
 
             transcriber = GoogleChirpV3Transcriber(
                 "test-project",
@@ -118,7 +124,7 @@ class TestTranscribers(unittest.IsolatedAsyncioTestCase):
         """Verifies that adaptation=None is passed to RecognitionConfig when no phrase hints file is configured."""
         with (
             patch(
-                "backend.pipeline.transcription.transcribers.chirp.SpeechClient"
+                "backend.pipeline.transcription.transcribers.chirp.SpeechAsyncClient"
             ) as mock_speech_client_cls,
             patch(
                 "backend.pipeline.transcription.transcribers.chirp.cloud_speech"
@@ -133,7 +139,9 @@ class TestTranscribers(unittest.IsolatedAsyncioTestCase):
                 MagicMock(transcript="All units respond")
             ]
             mock_response.results = [mock_result]
-            mock_client_instance.recognize.return_value = mock_response
+            mock_client_instance.recognize = AsyncMock(
+                return_value=mock_response
+            )
 
             transcriber = GoogleChirpV3Transcriber(
                 "test-project",
@@ -160,7 +168,7 @@ class TestTranscribers(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch(
-                "backend.pipeline.transcription.transcribers.chirp.SpeechClient"
+                "backend.pipeline.transcription.transcribers.chirp.SpeechAsyncClient"
             ) as mock_speech_client_cls,
             patch(
                 "backend.pipeline.transcription.transcribers.chirp.cloud_speech"
@@ -173,7 +181,9 @@ class TestTranscribers(unittest.IsolatedAsyncioTestCase):
             mock_result = MagicMock()
             mock_result.alternatives = [MagicMock(transcript="Code 3")]
             mock_response.results = [mock_result]
-            mock_client_instance.recognize.return_value = mock_response
+            mock_client_instance.recognize = AsyncMock(
+                return_value=mock_response
+            )
 
             transcriber = GoogleChirpV3Transcriber("test-project", config)
             transcriber.setup()
@@ -197,7 +207,7 @@ class TestTranscribers(unittest.IsolatedAsyncioTestCase):
         """Verifies that denoiser_config is passed to RecognitionConfig."""
         with (
             patch(
-                "backend.pipeline.transcription.transcribers.chirp.SpeechClient"
+                "backend.pipeline.transcription.transcribers.chirp.SpeechAsyncClient"
             ) as mock_speech_client_cls,
             patch(
                 "backend.pipeline.transcription.transcribers.chirp.cloud_speech"
@@ -210,7 +220,9 @@ class TestTranscribers(unittest.IsolatedAsyncioTestCase):
             mock_result = MagicMock()
             mock_result.alternatives = [MagicMock(transcript="Success")]
             mock_response.results = [mock_result]
-            mock_client_instance.recognize.return_value = mock_response
+            mock_client_instance.recognize = AsyncMock(
+                return_value=mock_response
+            )
 
             config = ChirpConfig(
                 phrase_hints=[],
@@ -233,7 +245,7 @@ class TestTranscribers(unittest.IsolatedAsyncioTestCase):
         """Verifies that custom_prompt is passed to RecognitionFeatures."""
         with (
             patch(
-                "backend.pipeline.transcription.transcribers.chirp.SpeechClient"
+                "backend.pipeline.transcription.transcribers.chirp.SpeechAsyncClient"
             ) as mock_speech_client_cls,
             patch(
                 "backend.pipeline.transcription.transcribers.chirp.cloud_speech"
@@ -246,7 +258,9 @@ class TestTranscribers(unittest.IsolatedAsyncioTestCase):
             mock_result = MagicMock()
             mock_result.alternatives = [MagicMock(transcript="Success")]
             mock_response.results = [mock_result]
-            mock_client_instance.recognize.return_value = mock_response
+            mock_client_instance.recognize = AsyncMock(
+                return_value=mock_response
+            )
 
             config = ChirpConfig(
                 phrase_hints=[],
