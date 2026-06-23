@@ -301,7 +301,11 @@ class TestTracingUtils(unittest.TestCase):
     def test_custom_provider_fallback(
         self, mock_set_global, mock_is_gcp
     ) -> None:
-        """Verifies that setup_tracing initializes _state.custom_provider and get_tracer uses it, even if global set fails."""
+        """Verifies that setup_tracing initializes our custom provider.
+
+        Ensures that get_tracer uses it, even if the global OTel registration
+        fails (e.g. if the singleton provider was already locked by the runner).
+        """
         # Reset state
         tracing_utils._state.custom_provider = None
 

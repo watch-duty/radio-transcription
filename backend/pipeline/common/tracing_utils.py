@@ -53,7 +53,10 @@ def get_tracer(
     instrumenting_library_version: str | None = None,
     schema_url: str | None = None,
 ) -> Tracer:
-    """Returns a tracer from our custom provider if initialized, else falls back to global get_tracer."""
+    """Returns a tracer from our custom provider if initialized.
+
+    Falls back to the global OTel get_tracer if not initialized.
+    """
     if _state.custom_provider is not None:
         return _state.custom_provider.get_tracer(
             instrumenting_module_name,
@@ -168,7 +171,8 @@ def setup_tracing(
             set_tracer_provider(provider)
         except Exception:
             telemetry_logger.debug(
-                "Failed to set global tracer provider; utilizing fallback custom provider."
+                "Failed to set global tracer provider; "
+                "utilizing fallback custom provider."
             )
 
 
