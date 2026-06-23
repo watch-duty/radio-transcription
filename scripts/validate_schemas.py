@@ -82,6 +82,7 @@ def validate_proto(filepath: Path) -> bool:
                         "Please nest helper messages inside the main message.\n"
                     )
                     return False
+                # Pub/Sub schemas must have at least one message defined
                 if num_messages == 0:
                     sys.stderr.write(
                         f"Error: Pub/Sub schema '{target_filename}' has no top-level message type defined.\n"
@@ -96,13 +97,17 @@ def main() -> None:
     protos_dir = Path("protos")
 
     if not protos_dir.is_dir():
-        sys.stdout.write(f"No .proto files found in '{protos_dir}' directory.\n")
+        sys.stdout.write(
+            f"No .proto files found in '{protos_dir}' directory.\n"
+        )
         sys.exit(0)
 
     proto_files = list(protos_dir.glob("*.proto"))
 
     if not proto_files:
-        sys.stdout.write(f"No .proto files found in '{protos_dir}' directory.\n")
+        sys.stdout.write(
+            f"No .proto files found in '{protos_dir}' directory.\n"
+        )
         sys.exit(0)
 
     errors = 0
