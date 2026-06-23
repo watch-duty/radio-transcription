@@ -2,11 +2,8 @@ import os
 
 
 def is_gcp_env() -> bool:
-    """
-    Detects if the application is running inside a Google Cloud environment.
-    This check relies on the explicit 'IS_GCP' environment variable being set
-    to 'true' via Terraform in all production deployments (Cloud Run, MIG, Jobs).
+    """Returns True if the application is running in the GCP environment.
 
-    Returns True if running in GCP, False otherwise (e.g., local development).
+    In local dev, it returns False.
     """
     return os.getenv("IS_GCP") == "true"
