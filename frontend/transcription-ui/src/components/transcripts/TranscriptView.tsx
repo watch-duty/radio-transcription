@@ -143,7 +143,7 @@ export function TranscriptView({
     playbackEndedForId,
     setPlaybackEndedForId,
     currentAudioRef,
-    toggle: toggleAudio,
+    togglePlay: toggleAudio,
     stop: stopPlayback,
   } = useAudioPlayback({
     audioSegmentsRef,

@@ -91,13 +91,13 @@ describe('useAudioPlayback', () => {
     vi.clearAllMocks();
   });
 
-  it('lazily builds the context and player on first toggle, then reuses them', () => {
+  it('lazily builds the context and player on first togglePlay, then reuses them', () => {
     const { result } = renderPlayback([makeSegment('a'), makeSegment('b')]);
 
     expect(engineMock.contextCreated).toBe(0);
     expect(engineMock.playersCreated).toBe(0);
 
-    act(() => result.current.toggle('b', 'b.m4a'));
+    act(() => result.current.togglePlay('b', 'b.m4a'));
 
     expect(engineMock.contextCreated).toBe(1);
     expect(engineMock.playersCreated).toBe(1);
@@ -110,7 +110,7 @@ describe('useAudioPlayback', () => {
   it('highlights and plays a new segment', () => {
     const { result, onPlaySegment } = renderPlayback([makeSegment('a')]);
 
-    act(() => result.current.toggle('a', 'a.m4a'));
+    act(() => result.current.togglePlay('a', 'a.m4a'));
 
     expect(onPlaySegment).toHaveBeenCalledWith('a');
     expect(engineMock.playSpy).toHaveBeenCalledTimes(1);
@@ -119,10 +119,10 @@ describe('useAudioPlayback', () => {
   it('pauses when toggling the same segment that is already playing', () => {
     const { result } = renderPlayback([makeSegment('a')]);
 
-    act(() => result.current.toggle('a', 'a.m4a'));
+    act(() => result.current.togglePlay('a', 'a.m4a'));
     expect(result.current.isAudioPlaying).toBe(true);
 
-    act(() => result.current.toggle('a', 'a.m4a'));
+    act(() => result.current.togglePlay('a', 'a.m4a'));
 
     expect(engineMock.pauseSpy).toHaveBeenCalled();
     expect(result.current.isAudioPlaying).toBe(false);
@@ -131,8 +131,8 @@ describe('useAudioPlayback', () => {
   it('unloads the previous clip when switching segments', () => {
     const { result } = renderPlayback([makeSegment('a'), makeSegment('b')]);
 
-    act(() => result.current.toggle('a', 'a.m4a'));
-    act(() => result.current.toggle('b', 'b.m4a'));
+    act(() => result.current.togglePlay('a', 'a.m4a'));
+    act(() => result.current.togglePlay('b', 'b.m4a'));
 
     expect(engineMock.unloadSpy).toHaveBeenCalled();
     expect(result.current.currentlyPlayingSegmentId).toBe('b');
@@ -144,7 +144,7 @@ describe('useAudioPlayback', () => {
   it('flags the ended segment for autoplay and clears the playing flag when it was last', () => {
     const { result } = renderPlayback([makeSegment('a')]);
 
-    act(() => result.current.toggle('a', 'a.m4a'));
+    act(() => result.current.togglePlay('a', 'a.m4a'));
     act(() => engineMock.lastCallbacks?.onEnd?.());
 
     expect(result.current.playbackEndedForId).toBe('a');
@@ -158,7 +158,7 @@ describe('useAudioPlayback', () => {
     // Newest-first: 'b' at index 0 is newer than 'a' at index 1.
     const { result } = renderPlayback([makeSegment('b'), makeSegment('a')]);
 
-    act(() => result.current.toggle('a', 'a.m4a'));
+    act(() => result.current.togglePlay('a', 'a.m4a'));
     act(() => engineMock.lastCallbacks?.onEnd?.());
 
     expect(result.current.playbackEndedForId).toBe('a');
@@ -168,7 +168,7 @@ describe('useAudioPlayback', () => {
   it('stop() halts the engine and resets playback identity', () => {
     const { result } = renderPlayback([makeSegment('a')]);
 
-    act(() => result.current.toggle('a', 'a.m4a'));
+    act(() => result.current.togglePlay('a', 'a.m4a'));
     act(() => result.current.stop());
 
     expect(engineMock.stopSpy).toHaveBeenCalled();
@@ -179,7 +179,7 @@ describe('useAudioPlayback', () => {
 
   it('closes the AudioContext on unmount', () => {
     const { result, unmount } = renderPlayback([makeSegment('a')]);
-    act(() => result.current.toggle('a', 'a.m4a'));
+    act(() => result.current.togglePlay('a', 'a.m4a'));
 
     unmount();
 

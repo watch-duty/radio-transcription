@@ -31,7 +31,7 @@ interface UseAudioPlayback {
   playbackEndedForId: string | null;
   setPlaybackEndedForId: Dispatch<SetStateAction<string | null>>;
   currentAudioRef: RefObject<PlaybackController | null>;
-  toggle: (segmentId: string, audioUri: string) => void;
+  togglePlay: (segmentId: string, audioUri: string) => void;
   stop: () => void;
 }
 
@@ -63,7 +63,7 @@ export function useAudioPlayback({
     };
   }, []);
 
-  const toggle = useCallback(
+  const togglePlay = useCallback(
     (segmentId: string, audioUri: string) => {
       // Lazy-build on first play so the AudioContext is created inside a user gesture.
       const context = (audioContextRef.current ??= createAudioContext());
@@ -123,7 +123,7 @@ export function useAudioPlayback({
     playbackEndedForId,
     setPlaybackEndedForId,
     currentAudioRef: currentAudio,
-    toggle,
+    togglePlay,
     stop,
   };
 }
