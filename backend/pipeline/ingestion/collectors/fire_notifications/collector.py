@@ -60,7 +60,7 @@ async def _process_file_list(
     processed_uuids: collections.deque[str],
     source_feed_id: str,
     outcome: ItemBatchOutcome,
-) -> AsyncIterator[CapturedChunk]:
+) -> AsyncIterator[CaptureEvent]:
     """Filter, sort and process audio files, yielding CapturedChunks."""
     # A Fire Notifications file-list response is the observation boundary:
     # all eligible attempted MP3s failing is meaningful, but isolated stale or
@@ -105,8 +105,15 @@ async def _process_file_list(
         except Exception as exc:
             reason = ffmpeg_classifier.ffprobe_exception_failure_reason(exc)
             logger.warning(
-                "Failed to compute duration for uuid=%s: %s",
+                "Failed to compute duration for corrupt audio file in feed %s (%s): "
+                "uuid=%s filename=%s size=%d start_time=%s reason=%s. "
+                "Permanently skipping corrupt audio file.",
+                feed["id"],
+                feed.get("name", "Unknown"),
                 f.uuid,
+                f.filename,
+                f.size,
+                f.start_time,
                 reason,
             )
             outcome.record_failure(
@@ -115,6 +122,7 @@ async def _process_file_list(
                     reason,
                 )
             )
+            yield SourceObservation(resume_position=f.start_time)
             continue
 
         end_time = f.start_time + datetime.timedelta(milliseconds=duration_ms)

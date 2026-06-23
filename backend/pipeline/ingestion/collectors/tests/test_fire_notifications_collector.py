@@ -299,6 +299,7 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         self.feed: dict[str, Any] = {
             "id": "feed-id",
             "source_type": SourceType.FIRE_NOTIFICATIONS,
+            "name": "CHAN-feed",
         }
         self.processed_uuids = collections.deque(maxlen=1000)
 
@@ -348,10 +349,12 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
                 call(b"mp3_bytes", input_format="mp3"),
             ]
         )
-        self.assertEqual(chunks[0].session_id, "session-id")
-        self.assertEqual(chunks[0].audio_bytes, b"mp3_bytes")
-        self.assertEqual(chunks[0].mime_type, AudioMimeType.MPEG)
-        self.assertEqual(chunks[0].resume_position, chunks[0].chunk_start_time)
+        chunk0 = chunks[0]
+        assert isinstance(chunk0, CapturedChunk)
+        self.assertEqual(chunk0.session_id, "session-id")
+        self.assertEqual(chunk0.audio_bytes, b"mp3_bytes")
+        self.assertEqual(chunk0.mime_type, AudioMimeType.MPEG)
+        self.assertEqual(chunk0.resume_position, chunk0.chunk_start_time)
         self.assertEqual(len(self.processed_uuids), 2)
         self.assertIn("uuid1", self.processed_uuids)
         self.assertIn("uuid2", self.processed_uuids)
@@ -397,10 +400,12 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         # Because the second file has the same start time, it should be skipped
         self.assertEqual(len(chunks), 1)
         self.assertEqual(mock_duration.call_count, 1)
-        self.assertEqual(chunks[0].session_id, "session-id")
-        self.assertEqual(chunks[0].audio_bytes, b"mp3_bytes")
-        self.assertEqual(chunks[0].mime_type, AudioMimeType.MPEG)
-        self.assertEqual(chunks[0].resume_position, chunks[0].chunk_start_time)
+        chunk0 = chunks[0]
+        assert isinstance(chunk0, CapturedChunk)
+        self.assertEqual(chunk0.session_id, "session-id")
+        self.assertEqual(chunk0.audio_bytes, b"mp3_bytes")
+        self.assertEqual(chunk0.mime_type, AudioMimeType.MPEG)
+        self.assertEqual(chunk0.resume_position, chunk0.chunk_start_time)
         self.assertEqual(len(self.processed_uuids), 1)
         self.assertIn("uuid1", self.processed_uuids)
         self.assertNotIn("uuid2", self.processed_uuids)
@@ -450,11 +455,13 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(chunks), 1)
         self.assertEqual(mock_duration.call_count, 1)
+        chunk0 = chunks[0]
+        assert isinstance(chunk0, CapturedChunk)
         self.assertEqual(
-            chunks[0].chunk_start_time,
+            chunk0.chunk_start_time,
             datetime.datetime(2026, 5, 20, 12, 0, 1, tzinfo=datetime.UTC),
         )
-        self.assertEqual(chunks[0].resume_position, chunks[0].chunk_start_time)
+        self.assertEqual(chunk0.resume_position, chunk0.chunk_start_time)
 
     async def test_failed_download_does_not_mark_uuid_seen(
         self,
@@ -715,8 +722,9 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
                 level="WARNING",
             ) as logs,
         ):
+            events = []
             with self.assertRaises(FeedFailure) as ctx:
-                async for _ in collector._process_file_list(
+                async for event in collector._process_file_list(
                     files,
                     self.client,
                     self.shutdown,
@@ -726,7 +734,7 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
                     "CHAN",
                     ItemBatchOutcome(),
                 ):
-                    pass
+                    events.append(event)
 
         self.assertIs(
             ctx.exception.status_reason,
@@ -735,9 +743,19 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(ctx.exception), expected_reason)
         log_text = "\n".join(logs.output)
         self.assertIn(expected_reason, log_text)
+        self.assertIn("Permanently skipping corrupt audio file.", log_text)
+        self.assertIn("CHAN-feed", log_text)
         self.assertNotIn("Traceback", log_text)
         self.assertNotIn("uuid1", self.processed_uuids)
         mock_emit.assert_not_called()
+
+        # Verify that a SourceObservation with the correct start time was yielded
+        self.assertEqual(len(events), 1)
+        self.assertIsInstance(events[0], SourceObservation)
+        self.assertEqual(
+            events[0].resume_position,
+            datetime.datetime(2026, 5, 20, 12, 0, 0, tzinfo=datetime.UTC),
+        )
 
     @patch(
         "backend.pipeline.ingestion.collectors.fire_notifications.collector.telemetry.emit_call_download_failed",
@@ -769,8 +787,9 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
                 level="WARNING",
             ) as logs,
         ):
+            events = []
             with self.assertRaises(FeedFailure) as ctx:
-                async for _ in collector._process_file_list(
+                async for event in collector._process_file_list(
                     files,
                     self.client,
                     self.shutdown,
@@ -780,7 +799,7 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
                     "CHAN",
                     ItemBatchOutcome(),
                 ):
-                    pass
+                    events.append(event)
 
         self.assertIs(
             ctx.exception.status_reason,
@@ -789,9 +808,19 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(ctx.exception), expected_reason)
         log_text = "\n".join(logs.output)
         self.assertIn(expected_reason, log_text)
+        self.assertIn("Permanently skipping corrupt audio file.", log_text)
+        self.assertIn("CHAN-feed", log_text)
         self.assertNotIn("Traceback", log_text)
         self.assertNotIn("uuid1", self.processed_uuids)
         mock_emit.assert_not_called()
+
+        # Verify that a SourceObservation with the correct start time was yielded
+        self.assertEqual(len(events), 1)
+        self.assertIsInstance(events[0], SourceObservation)
+        self.assertEqual(
+            events[0].resume_position,
+            datetime.datetime(2026, 5, 20, 12, 0, 0, tzinfo=datetime.UTC),
+        )
 
 
 @patch.dict(
