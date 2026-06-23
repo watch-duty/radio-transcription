@@ -1,7 +1,8 @@
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.pipeline.common.clients.audio_segments_client import (
+    AsyncAudioSegmentsClient,
     AudioSegmentsClient,
 )
 from backend.services.audio_segments.models import AnnotationType
@@ -136,6 +137,107 @@ class TestAudioSegmentsClient(unittest.TestCase):
         # Execute & Verify
         with self.assertRaises(Exception):
             self.client.add_audio_segment(self.segment_payload)
+
+
+class TestAsyncAudioSegmentsClient(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self) -> None:
+        self.api_url = "http://test-api.com"
+        self.client = AsyncAudioSegmentsClient(self.api_url)
+        self.post_patcher = patch(
+            "httpx.AsyncClient.post", new_callable=AsyncMock
+        )
+        self.mock_post = self.post_patcher.start()
+
+        self.segment_payload = {
+            "id": "segment-id-123",
+            "feed_id": "feed-id-456",
+            "classification": "SPEECH",
+            "start_timestamp": "2026-01-01T00:00:00Z",
+            "end_timestamp": "2026-01-01T00:01:00Z",
+            "missing_prior_context": False,
+            "missing_post_context": False,
+            "source_audio_uris": ["gs://bucket/audio1.ogg"],
+        }
+
+    async def asyncTearDown(self) -> None:
+        self.post_patcher.stop()
+
+    async def test_add_audio_segment_annotation_success(self) -> None:
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        self.mock_post.return_value = mock_response
+
+        annotation_data = {"decisions": ["ALERT"], "errors": []}
+
+        await self.client.add_audio_segment_annotation(
+            audio_segment_id="segment-id-123",
+            annotation_type=AnnotationType.EVALUATION,
+            data=annotation_data,
+        )
+
+        self.mock_post.assert_called_once()
+        args, kwargs = self.mock_post.call_args
+        self.assertEqual(
+            args[0],
+            "http://test-api.com/v1/audio_segments/segment-id-123/annotations",
+        )
+        self.assertIn("json", kwargs)
+        self.assertEqual(kwargs["json"]["type"], "EVALUATION")
+        self.assertEqual(kwargs["json"]["data"], annotation_data)
+
+    @patch("backend.pipeline.common.clients.audio_segments_client.is_gcp_env")
+    @patch("backend.pipeline.common.clients.audio_segments_client.get_id_token")
+    async def test_add_audio_segment_annotation_adds_auth_in_gcp(
+        self, mock_get_id_token, mock_is_gcp_env
+    ) -> None:
+        mock_is_gcp_env.return_value = True
+        mock_get_id_token.return_value = "fake-token"
+
+        mock_response = MagicMock()
+        self.mock_post.return_value = mock_response
+
+        await self.client.add_audio_segment_annotation(
+            audio_segment_id="segment-id-123",
+            annotation_type=AnnotationType.EVALUATION,
+            data={"key": "val"},
+        )
+
+        self.mock_post.assert_called_once()
+        _, kwargs = self.mock_post.call_args
+        self.assertEqual(
+            kwargs["headers"]["Authorization"], "Bearer fake-token"
+        )
+
+    async def test_add_audio_segment_annotation_propagates_exception(
+        self,
+    ) -> None:
+        self.mock_post.side_effect = Exception("Network error")
+
+        with self.assertRaises(Exception):
+            await self.client.add_audio_segment_annotation(
+                audio_segment_id="segment-id-123",
+                annotation_type=AnnotationType.EVALUATION,
+                data={"key": "val"},
+            )
+
+    async def test_add_audio_segment_success(self) -> None:
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        self.mock_post.return_value = mock_response
+
+        await self.client.add_audio_segment(self.segment_payload)
+
+        self.mock_post.assert_called_once()
+        args, kwargs = self.mock_post.call_args
+        self.assertEqual(args[0], "http://test-api.com/v1/audio_segments")
+        self.assertIn("json", kwargs)
+        self.assertEqual(kwargs["json"], self.segment_payload)
+
+    async def test_add_audio_segment_propagates_exception(self) -> None:
+        self.mock_post.side_effect = Exception("Network error")
+
+        with self.assertRaises(Exception):
+            await self.client.add_audio_segment(self.segment_payload)
 
 
 if __name__ == "__main__":

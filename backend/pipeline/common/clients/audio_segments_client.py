@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+import httpx
+
 from backend.pipeline.common.auth_client import get_id_token
 from backend.pipeline.common.clients.session_helper import (
     create_resilient_session,
@@ -18,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 class AudioSegmentsClient:
     """
-    Resilient client for interacting with the Audio Segments API.
+    Resilient synchronous client for interacting with the Audio Segments API.
     """
 
     def __init__(self, api_url: str, max_retries: int = 3) -> None:
@@ -101,3 +103,90 @@ class AudioSegmentsClient:
             timeout=10,
         )
         response.raise_for_status()
+
+
+class AsyncAudioSegmentsClient:
+    """
+    Resilient asynchronous client for interacting with the Audio Segments API.
+    """
+
+    def __init__(self, api_url: str, max_retries: int = 3) -> None:
+        """
+        Initializes the AsyncAudioSegmentsClient.
+
+        Args:
+            api_url: The base URL of the Audio Segments API.
+            max_retries: The maximum number of retries for transient network errors.
+        """
+        self.api_url = api_url.rstrip("/")
+        self.max_retries = max_retries
+
+    async def add_audio_segment_annotation(
+        self,
+        audio_segment_id: str,
+        annotation_type: AnnotationType,
+        data: dict,
+    ) -> None:
+        """
+        Adds an annotation to a specific audio segment asynchronously.
+
+        Args:
+            audio_segment_id: The ID of the audio segment.
+            annotation_type: The type of annotation (e.g. TRANSCRIPT, EVALUATION).
+            data: The annotation data payload.
+
+        Raises:
+            httpx.HTTPStatusError: If the request fails.
+        """
+        headers = {}
+        traceparent = get_current_traceparent()
+        if traceparent:
+            headers["traceparent"] = traceparent
+
+        if is_gcp_env():
+            token = get_id_token(self.api_url)
+            headers["Authorization"] = f"Bearer {token}"
+
+        payload = {
+            "type": str(annotation_type),
+            "data": data,
+        }
+
+        transport = httpx.AsyncHTTPTransport(retries=self.max_retries)
+        async with httpx.AsyncClient(transport=transport) as client:
+            response = await client.post(
+                f"{self.api_url}/v1/audio_segments/{audio_segment_id}/annotations",
+                json=payload,
+                headers=headers,
+                timeout=10.0,
+            )
+            response.raise_for_status()
+
+    async def add_audio_segment(self, segment: dict) -> None:
+        """
+        Saves a single audio segment asynchronously.
+
+        Args:
+            segment: The audio segment data to add.
+
+        Raises:
+            httpx.HTTPStatusError: If the request fails.
+        """
+        headers = {}
+        traceparent = get_current_traceparent()
+        if traceparent:
+            headers["traceparent"] = traceparent
+
+        if is_gcp_env():
+            token = get_id_token(self.api_url)
+            headers["Authorization"] = f"Bearer {token}"
+
+        transport = httpx.AsyncHTTPTransport(retries=self.max_retries)
+        async with httpx.AsyncClient(transport=transport) as client:
+            response = await client.post(
+                f"{self.api_url}/v1/audio_segments",
+                json=segment,
+                headers=headers,
+                timeout=10.0,
+            )
+            response.raise_for_status()

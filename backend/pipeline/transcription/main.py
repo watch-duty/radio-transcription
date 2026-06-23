@@ -121,9 +121,13 @@ class TranscriptionServiceContainer:
             api_url = os.environ.get("AUDIO_SEGMENTS_API_URL")
             audio_segments_client_instance = None
             if api_url:
-                logger.info("Initializing AudioSegmentsClient at: %s", api_url)
+                logger.info(
+                    "Initializing AsyncAudioSegmentsClient at: %s", api_url
+                )
                 audio_segments_client_instance = (
-                    audio_segments_client.AudioSegmentsClient(api_url=api_url)
+                    audio_segments_client.AsyncAudioSegmentsClient(
+                        api_url=api_url
+                    )
                 )
             else:
                 logger.error(
