@@ -40,6 +40,9 @@ from backend.pipeline.storage.settings import AlloyDBSettings
 
 _WORKER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+_RUNTIME_ACTOR_ID = (
+    "service_account:gcp:collector-runtime@example.iam.gserviceaccount.com"
+)
 
 
 def _make_captured_chunk(audio_bytes: bytes) -> CapturedChunk:
@@ -626,7 +629,14 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
         }
         rt._releasing_feeds = set()
 
-        with _mock_upload_audio(), _mock_pubsub_publish():
+        with (
+            _mock_upload_audio(),
+            _mock_pubsub_publish(),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.runtime_service_actor_id",
+                return_value=_RUNTIME_ACTOR_ID,
+            ),
+        ):
             await rt._process_feed(feed)
 
         rt._store.record_source_observation.assert_awaited_once_with(
@@ -634,7 +644,7 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             1,
             resume_position,
-            actor_id="service:collector-runtime",
+            actor_id=_RUNTIME_ACTOR_ID,
         )
         self.assertEqual(feed["failure_count"], 0)
         self.assertIsNone(feed["status_reason"])
@@ -682,7 +692,14 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
         }
         rt._releasing_feeds = set()
 
-        with _mock_upload_audio(), _mock_pubsub_publish():
+        with (
+            _mock_upload_audio(),
+            _mock_pubsub_publish(),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.runtime_service_actor_id",
+                return_value=_RUNTIME_ACTOR_ID,
+            ),
+        ):
             await rt._process_feed(feed)
 
         rt._store.record_source_observation.assert_awaited_once_with(
@@ -690,7 +707,7 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             1,
             resume_position,
-            actor_id="service:collector-runtime",
+            actor_id=_RUNTIME_ACTOR_ID,
         )
         self.assertEqual(feed["failure_count"], 0)
         self.assertIsNone(feed["status_reason"])
@@ -2058,6 +2075,10 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             mock.patch(
                 "backend.pipeline.ingestion.collector_runtime.quarantine_telemetry"
             ) as mock_telemetry,
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.runtime_service_actor_id",
+                return_value=_RUNTIME_ACTOR_ID,
+            ),
             self.assertLogs(
                 "backend.pipeline.ingestion.collector_runtime",
                 level=logging.INFO,
@@ -2070,7 +2091,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         failure_kwargs = rt._store.report_feed_failure.await_args.kwargs
         self.assertEqual(
             failure_kwargs["actor_id"],
-            "service:collector-runtime",
+            _RUNTIME_ACTOR_ID,
         )
         self.assertNotIn("previous_status", failure_kwargs)
         self.assertNotIn("previous_failure_count", failure_kwargs)
@@ -2140,6 +2161,10 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             mock.patch(
                 "backend.pipeline.ingestion.collector_runtime.quarantine_telemetry"
             ) as mock_telemetry,
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.runtime_service_actor_id",
+                return_value=_RUNTIME_ACTOR_ID,
+            ),
         ):
             mock_telemetry.emit_quarantine_event = mock.AsyncMock()
             await rt._process_feed(feed)
@@ -2152,7 +2177,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             release_kwargs["actor_id"],
-            "service:collector-runtime",
+            _RUNTIME_ACTOR_ID,
         )
         self.assertNotIn("previous_status", release_kwargs)
         self.assertNotIn("previous_failure_count", release_kwargs)
@@ -3221,13 +3246,20 @@ class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
-        with _mock_upload_audio(), _mock_pubsub_publish():
+        with (
+            _mock_upload_audio(),
+            _mock_pubsub_publish(),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.runtime_service_actor_id",
+                return_value=_RUNTIME_ACTOR_ID,
+            ),
+        ):
             await rt._process_feed(feed)
 
         rt._store.update_feed_progress.assert_awaited_once()
         kwargs = rt._store.update_feed_progress.await_args.kwargs
         self.assertEqual(kwargs["last_bookmark_time"], resume)
-        self.assertEqual(kwargs["actor_id"], "service:collector-runtime")
+        self.assertEqual(kwargs["actor_id"], _RUNTIME_ACTOR_ID)
         self.assertNotIn("previous_status", kwargs)
         self.assertNotIn("previous_failure_count", kwargs)
         self.assertNotIn("previous_status_reason", kwargs)
@@ -3254,13 +3286,20 @@ class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
         rt._store.update_feed_progress.return_value = True
         rt._releasing_feeds = set()
 
-        with _mock_upload_audio(), _mock_pubsub_publish():
+        with (
+            _mock_upload_audio(),
+            _mock_pubsub_publish(),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.runtime_service_actor_id",
+                return_value=_RUNTIME_ACTOR_ID,
+            ),
+        ):
             await rt._process_feed(_FEED)
 
         rt._store.update_feed_progress.assert_awaited_once()
         kwargs = rt._store.update_feed_progress.await_args.kwargs
         self.assertEqual(kwargs["last_bookmark_time"], end_time)
-        self.assertEqual(kwargs["actor_id"], "service:collector-runtime")
+        self.assertEqual(kwargs["actor_id"], _RUNTIME_ACTOR_ID)
         self.assertNotIn("previous_status", kwargs)
         self.assertNotIn("previous_failure_count", kwargs)
         self.assertNotIn("previous_status_reason", kwargs)

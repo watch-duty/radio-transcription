@@ -141,9 +141,9 @@ lifecycle work remain separate follow-up concerns.
 
 The required namespaced causal actor string on each Feed Audit Event. An
 `actor_id` identifies the human admin or service/runtime component that caused
-the event. The current v1 accepted forms are `user:google:<sub>` for trusted
-admin-originated writes and `service:<name>` for service/runtime-originated
-writes.
+the event. Current v0.2 forms are `user:google:<sub>` for trusted
+admin-originated writes, `service_account:gcp:<email>` for autonomous GCP
+runtime writers, and `service_account:local:development` for local development.
 
 ### Leased Feed
 

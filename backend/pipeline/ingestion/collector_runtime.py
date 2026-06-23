@@ -18,6 +18,7 @@ from google.api_core import exceptions as google_exceptions
 from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
 
 from backend.pipeline.common import gcp_helper, tracing_utils
+from backend.pipeline.common.actor_identity import runtime_service_actor_id
 from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.common.log_helper import setup_asyncio_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
@@ -69,7 +70,6 @@ CaptureFn = Callable[
 ]
 logger = logging.getLogger(__name__)
 
-COLLECTOR_RUNTIME_ACTOR_ID = "service:collector-runtime"
 _PIPELINE_GCS_UPLOAD_FAILED = "gcs_upload_failed"
 _PIPELINE_BOOKMARK_WRITE_FAILED = "bookmark_write_failed"
 _NON_BUDGETED_RETRY_MIN_SEC = 5 * 60
@@ -782,7 +782,7 @@ class CollectorRuntime:
                     captured_chunk.resume_position
                     or captured_chunk.chunk_end_time
                 ),
-                actor_id=COLLECTOR_RUNTIME_ACTOR_ID,
+                actor_id=runtime_service_actor_id(),
             )
 
         duration_ms = int(
@@ -955,7 +955,7 @@ class CollectorRuntime:
                 worker_id,
                 fencing_token,
                 self._collector_settings.feed_failure_threshold,
-                actor_id=COLLECTOR_RUNTIME_ACTOR_ID,
+                actor_id=runtime_service_actor_id(),
                 reason=reason,
                 status_reason=status_reason,
             )
@@ -1042,7 +1042,7 @@ class CollectorRuntime:
                 fencing_token,
                 retry_after=retry_after,
                 status_reason=status_reason,
-                actor_id=COLLECTOR_RUNTIME_ACTOR_ID,
+                actor_id=runtime_service_actor_id(),
                 reason=reason,
             )
         except Exception:
@@ -1096,7 +1096,7 @@ class CollectorRuntime:
                 worker_id,
                 fencing_token,
                 observation.resume_position,
-                actor_id=COLLECTOR_RUNTIME_ACTOR_ID,
+                actor_id=runtime_service_actor_id(),
             )
 
         try:

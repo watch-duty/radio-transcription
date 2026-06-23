@@ -20,6 +20,7 @@ from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
 from opentelemetry import trace
 
+from backend.pipeline.common.actor_identity import runtime_service_actor_id
 from backend.pipeline.common.audio import get_audio_duration
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.gcp_helper import publish_audio_chunk_sync
@@ -65,7 +66,6 @@ _RECORDING_DOWNLOAD_FAILED = "echo_recording_download_failed"
 _STAGING_UPLOAD_FAILED = "echo_staging_upload_failed"
 _PUBSUB_PUBLISH_FAILED = "echo_pubsub_publish_failed"
 _HEARTBEAT_WRITE_FAILED = "echo_heartbeat_write_failed"
-ECHO_INGESTION_ACTOR_ID = "service:echo-ingestion"
 # Returning success prevents the same object notification from being retried.
 # This is separate from feed-budget routing, which is handled by failure_policy.
 _RETURN_SUCCESS_AFTER_FAILURE_RECORD_ATTEMPT_STATUS_REASONS = {
@@ -261,7 +261,7 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
         try:
             feed_store.record_heartbeat(
                 feed["id"],
-                actor_id=ECHO_INGESTION_ACTOR_ID,
+                actor_id=runtime_service_actor_id(),
             )
         except Exception:
             failure = _pipeline_failure(_HEARTBEAT_WRITE_FAILED)
@@ -334,14 +334,14 @@ def _record_failure_by_policy(
         ):
             feed_store.record_failure(
                 feed_id,
-                actor_id=ECHO_INGESTION_ACTOR_ID,
+                actor_id=runtime_service_actor_id(),
                 reason=classification.reason,
                 status_reason=classification.status_reason,
             )
         else:
             feed_store.record_non_budgeted_failure(
                 feed_id,
-                actor_id=ECHO_INGESTION_ACTOR_ID,
+                actor_id=runtime_service_actor_id(),
                 status_reason=classification.status_reason,
                 reason=classification.reason,
             )

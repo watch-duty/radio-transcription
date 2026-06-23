@@ -71,7 +71,8 @@ def test_repository_glossary_defines_audit_terms() -> None:
     actor_section = _markdown_section(text, "### Actor ID")
     for token in (
         "`user:google:<sub>`",
-        "`service:<name>`",
+        "`service_account:gcp:<email>`",
+        "`service_account:local:development`",
     ):
         assert token in actor_section
 

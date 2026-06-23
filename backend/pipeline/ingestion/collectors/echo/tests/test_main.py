@@ -15,7 +15,6 @@ from google.api_core.exceptions import NotFound
 
 from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.collectors.echo.main import (
-    ECHO_INGESTION_ACTOR_ID,
     SEGMENTED_PUBSUB_TOPIC_PATH,
     _handle,
     _parse_timestamp,
@@ -26,6 +25,10 @@ from backend.pipeline.storage.feed_store import FeedStatus, FeedStatusReason
 from backend.pipeline.storage.sync_feed_store import (
     ResolvedEchoFeed,
     SyncFeedStore,
+)
+
+_ECHO_ACTOR_ID = (
+    "service_account:gcp:echo-ingestion@example.iam.gserviceaccount.com"
 )
 
 
@@ -97,6 +100,10 @@ class TestHandle:
             patch(
                 "backend.pipeline.ingestion.collectors.echo.main.get_audio_duration"
             ) as mock_get_duration,
+            patch(
+                "backend.pipeline.ingestion.collectors.echo.main.runtime_service_actor_id",
+                return_value=_ECHO_ACTOR_ID,
+            ),
         ):
             mock_pubsub.get_publisher.return_value = mock_publisher
             mock_gcs.bucket.return_value.blob.return_value.download_as_bytes.return_value = b"mp3-placeholder"
@@ -140,7 +147,7 @@ class TestHandle:
     ) -> None:
         mock_store.record_failure.assert_called_once_with(
             feed_id,
-            actor_id=ECHO_INGESTION_ACTOR_ID,
+            actor_id=_ECHO_ACTOR_ID,
             reason=reason,
             status_reason=status_reason,
         )
@@ -155,7 +162,7 @@ class TestHandle:
     ) -> None:
         mock_store.record_non_budgeted_failure.assert_called_once_with(
             feed_id,
-            actor_id=ECHO_INGESTION_ACTOR_ID,
+            actor_id=_ECHO_ACTOR_ID,
             status_reason=status_reason,
             reason=reason,
         )
@@ -168,7 +175,7 @@ class TestHandle:
     ) -> None:
         mock_store.record_heartbeat.assert_called_once_with(
             feed_id,
-            actor_id=ECHO_INGESTION_ACTOR_ID,
+            actor_id=_ECHO_ACTOR_ID,
         )
 
     def test_failure_policy_budgeted_call_uses_actor(self, mock_store) -> None:
@@ -180,9 +187,15 @@ class TestHandle:
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
 
-        with patch(
-            "backend.pipeline.ingestion.collectors.echo.main.feed_store",
-            mock_store,
+        with (
+            patch(
+                "backend.pipeline.ingestion.collectors.echo.main.feed_store",
+                mock_store,
+            ),
+            patch(
+                "backend.pipeline.ingestion.collectors.echo.main.runtime_service_actor_id",
+                return_value=_ECHO_ACTOR_ID,
+            ),
         ):
             _record_failure_by_policy(
                 feed,

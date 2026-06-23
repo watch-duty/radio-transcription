@@ -10,6 +10,9 @@ if TYPE_CHECKING:
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 
+from backend.pipeline.common.actor_identity import (
+    is_well_formed_google_user_actor_id,
+)
 from backend.pipeline.common.auth import verify_oidc_token
 from backend.pipeline.common.exceptions import (
     FeedAlreadyExistsError,
@@ -33,7 +36,6 @@ from .service import FeedService
 logger = logging.getLogger(__name__)
 
 _INTERNAL_ACTOR_ID_HEADER = "X-WD-Actor-Id"
-_ADMIN_ACTOR_ID_PREFIX = "user:google:"
 
 
 @asynccontextmanager
@@ -56,17 +58,9 @@ app = FastAPI(
 setup_fastapi_tracing(app, service_name="feeds-service")
 
 
-def _is_well_formed_admin_actor_id(actor_id: str) -> bool:
-    if not actor_id.startswith(_ADMIN_ACTOR_ID_PREFIX):
-        return False
-
-    google_sub = actor_id[len(_ADMIN_ACTOR_ID_PREFIX) :]
-    return bool(google_sub) and not any(char.isspace() for char in google_sub)
-
-
 def _resolve_admin_actor_id(request: Request) -> str:
     actor_id = request.headers.get(_INTERNAL_ACTOR_ID_HEADER)
-    if actor_id is None or not _is_well_formed_admin_actor_id(actor_id):
+    if actor_id is None or not is_well_formed_google_user_actor_id(actor_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Trusted actor context required",

@@ -13,7 +13,9 @@ from backend.pipeline.storage import quarantine_reason, sync_feed_queries
 from backend.pipeline.storage.feed_store import FeedStatus, FeedStatusReason
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
 
-_ECHO_ACTOR_ID = "service:echo-ingestion"
+_ECHO_ACTOR_ID = (
+    "service_account:gcp:echo-ingestion@example.iam.gserviceaccount.com"
+)
 _MISSING_ACTOR_ID = cast("str", None)
 
 

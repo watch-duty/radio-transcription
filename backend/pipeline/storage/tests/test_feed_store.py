@@ -34,8 +34,10 @@ _WORKER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _STATUS_REASON_UPDATED_AT = datetime.datetime(
     2026, 5, 29, 12, 0, tzinfo=datetime.UTC
 )
-_FEEDS_SERVICE_ACTOR_ID = "service:feeds-service"
-_COLLECTOR_RUNTIME_ACTOR_ID = "service:collector-runtime"
+_FEEDS_SERVICE_ACTOR_ID = "user:google:admin-sub-123"
+_COLLECTOR_SERVICE_ACCOUNT_ACTOR_ID = (
+    "service_account:gcp:collector-runtime@example.iam.gserviceaccount.com"
+)
 _MISSING_ACTOR_ID = cast("str", None)
 
 _FEED_STATUS_REASON_VALUES = {
@@ -105,7 +107,7 @@ class _RuntimePriorKwargs(TypedDict):
 
 
 def _runtime_prior_kwargs() -> _RuntimePriorKwargs:
-    return {"actor_id": _COLLECTOR_RUNTIME_ACTOR_ID}
+    return {"actor_id": _COLLECTOR_SERVICE_ACCOUNT_ACTOR_ID}
 
 
 def _failure_update_row(
@@ -815,7 +817,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
             "gs://bucket/path/file.ogg",
             1,
             None,
-            actor_id=_COLLECTOR_RUNTIME_ACTOR_ID,
+            actor_id=_COLLECTOR_SERVICE_ACCOUNT_ACTOR_ID,
         )
 
         self.assertTrue(result)
@@ -831,7 +833,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
             "gs://bucket/path/file.ogg",
             1,
             None,
-            actor_id=_COLLECTOR_RUNTIME_ACTOR_ID,
+            actor_id=_COLLECTOR_SERVICE_ACCOUNT_ACTOR_ID,
         )
 
         self.assertFalse(result)
@@ -848,7 +850,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
             gcs_path,
             1,
             None,
-            actor_id=_COLLECTOR_RUNTIME_ACTOR_ID,
+            actor_id=_COLLECTOR_SERVICE_ACCOUNT_ACTOR_ID,
         )
 
         args = pool.fetchrow.call_args[0]
@@ -861,7 +863,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
                 _WORKER_ID,
                 1,
                 None,
-                _COLLECTOR_RUNTIME_ACTOR_ID,
+                _COLLECTOR_SERVICE_ACCOUNT_ACTOR_ID,
             ),
         )
 
@@ -882,7 +884,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
             gcs_path,
             1,
             last_bookmark_time,
-            actor_id=_COLLECTOR_RUNTIME_ACTOR_ID,
+            actor_id=_COLLECTOR_SERVICE_ACCOUNT_ACTOR_ID,
         )
         args = pool.fetchrow.call_args[0]
         self.assertIs(args[0], feed_queries.UPDATE_PROGRESS_SQL)
@@ -894,7 +896,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
                 _WORKER_ID,
                 1,
                 last_bookmark_time,
-                _COLLECTOR_RUNTIME_ACTOR_ID,
+                _COLLECTOR_SERVICE_ACCOUNT_ACTOR_ID,
             ),
         )
 
@@ -938,7 +940,7 @@ class TestRecordSourceObservation(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             1,
             resume_position,
-            actor_id=_COLLECTOR_RUNTIME_ACTOR_ID,
+            actor_id=_COLLECTOR_SERVICE_ACCOUNT_ACTOR_ID,
         )
 
         self.assertEqual(
@@ -959,7 +961,7 @@ class TestRecordSourceObservation(unittest.IsolatedAsyncioTestCase):
                 _WORKER_ID,
                 1,
                 resume_position,
-                _COLLECTOR_RUNTIME_ACTOR_ID,
+                _COLLECTOR_SERVICE_ACCOUNT_ACTOR_ID,
             ),
         )
 
@@ -973,7 +975,7 @@ class TestRecordSourceObservation(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             1,
             None,
-            actor_id=_COLLECTOR_RUNTIME_ACTOR_ID,
+            actor_id=_COLLECTOR_SERVICE_ACCOUNT_ACTOR_ID,
         )
 
         self.assertEqual(
@@ -1198,7 +1200,7 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
                 15,
                 "system_collector_error",
                 "ffmpeg_exit_1",
-                _COLLECTOR_RUNTIME_ACTOR_ID,
+                _COLLECTOR_SERVICE_ACCOUNT_ACTOR_ID,
             ),
         )
 
@@ -1221,7 +1223,7 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         args = pool.acquired_connection.fetchrow.await_args.args
         self.assertIsNone(args[-3])
         self.assertEqual(args[-2], "raw")
-        self.assertEqual(args[-1], _COLLECTOR_RUNTIME_ACTOR_ID)
+        self.assertEqual(args[-1], _COLLECTOR_SERVICE_ACCOUNT_ACTOR_ID)
 
     async def test_failure_write_has_no_separate_quarantine_reason_parameter(
         self,
@@ -1371,7 +1373,7 @@ class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
                 retry_after,
                 "source_offline",
                 None,
-                _COLLECTOR_RUNTIME_ACTOR_ID,
+                _COLLECTOR_SERVICE_ACCOUNT_ACTOR_ID,
             ),
         )
 

@@ -37,6 +37,9 @@ _FAKE_GCS_PORT = 4443
 _ECHO_BUCKET = "wd-echo-recordings-test"
 _STAGING_BUCKET = "ingestion-staging-test"
 _SEGMENTED_PUBSUB_TOPIC_PATH = "projects/test/topics/segmented-audio-test"
+_ECHO_ACTOR_ID = (
+    "service_account:gcp:echo-ingestion@example.iam.gserviceaccount.com"
+)
 
 
 def _docker_available() -> bool:
@@ -234,6 +237,11 @@ class TestEchoCollectorIntegration(unittest.TestCase):
             ),
             patch.object(echo_main, "STAGING_BUCKET", _STAGING_BUCKET),
             patch.object(echo_main, "get_audio_duration", duration_mock),
+            patch.object(
+                echo_main,
+                "runtime_service_actor_id",
+                return_value=_ECHO_ACTOR_ID,
+            ),
         ):
             echo_main._handle(event)
 
@@ -349,7 +357,7 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         self.assertEqual(events[0]["action"], "feed.failure_reported")
         self.assertEqual(
             events[0]["actor_id"],
-            echo_main.ECHO_INGESTION_ACTOR_ID,
+            _ECHO_ACTOR_ID,
         )
         self.assertEqual(events[0]["before_values"]["status"], "failing")
         self.assertEqual(events[0]["before_values"]["failure_count"], 4)
@@ -413,7 +421,7 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         )
         self.assertEqual(
             events[-1]["actor_id"],
-            echo_main.ECHO_INGESTION_ACTOR_ID,
+            _ECHO_ACTOR_ID,
         )
         self.assertEqual(events[-1]["before_values"]["status"], "failing")
         self.assertEqual(
@@ -450,7 +458,7 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         self.assertEqual(events[0]["action"], "feed.recovered")
         self.assertEqual(
             events[0]["actor_id"],
-            echo_main.ECHO_INGESTION_ACTOR_ID,
+            _ECHO_ACTOR_ID,
         )
         self.assertEqual(events[0]["before_values"]["status"], "failing")
         self.assertEqual(events[0]["before_values"]["failure_count"], 2)
