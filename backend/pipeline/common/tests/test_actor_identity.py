@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Any, cast
 from unittest import mock
 
 import pytest
@@ -58,6 +59,33 @@ def test_google_user_actor_validator(actor_id: str, expected) -> None:
     ("actor_id", "expected"),
     [
         ("service_account:gcp:1234567890", True),
+        ("service_account:gcp:", False),
+        ("service_account:gcp:unresolved", False),
+        (
+            "service_account:gcp:feeds-service@example.iam.gserviceaccount.com",
+            False,
+        ),
+        ("service_account:gcp:bad value", False),
+        ("service_account:gcp:bad\nvalue", False),
+        ("service_account:local:development", False),
+        ("user:google:admin-sub-123", False),
+        ("service_account:gcp:" + ("1" * 493), False),
+    ],
+)
+def test_gcp_service_account_actor_validator(
+    actor_id: str,
+    expected,
+) -> None:
+    assert (
+        actor_identity.is_well_formed_gcp_service_account_actor_id(actor_id)
+        is expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("actor_id", "expected"),
+    [
+        ("service_account:gcp:1234567890", True),
         ("service_account:gcp:unresolved", True),
         ("service_account:local:development", True),
         ("user:google:admin-sub-123", True),
@@ -71,7 +99,7 @@ def test_google_user_actor_validator(actor_id: str, expected) -> None:
 )
 def test_generic_actor_id_validator(
     actor_id: str | None,
-    expected: bool,
+    expected,
 ) -> None:
     assert actor_identity.is_well_formed_actor_id(actor_id) is expected
 
@@ -141,13 +169,11 @@ def test_runtime_service_actor_returns_unresolved_when_gcp_config_missing(
         if record.message == "feed_audit_actor_unresolved"
     ]
     assert len(unresolved_records) == 1
-    assert unresolved_records[0].event == "feed_audit_actor_unresolved"
-    assert unresolved_records[0].gcp_runtime_detected is True
-    assert unresolved_records[0].reason == "missing"
-    assert (
-        unresolved_records[0].fallback_actor
-        == "service_account:gcp:unresolved"
-    )
+    record = cast("Any", unresolved_records[0])
+    assert record.event == "feed_audit_actor_unresolved"
+    assert record.gcp_runtime_detected is True
+    assert record.reason == "missing"
+    assert record.fallback_actor == "service_account:gcp:unresolved"
 
 
 def test_runtime_service_actor_returns_unresolved_when_gcp_config_malformed(
@@ -176,8 +202,36 @@ def test_runtime_service_actor_returns_unresolved_when_gcp_config_malformed(
         if record.message == "feed_audit_actor_unresolved"
     ]
     assert len(unresolved_records) == 1
-    assert unresolved_records[0].reason == "malformed"
-    assert (
-        unresolved_records[0].fallback_actor
-        == "service_account:gcp:unresolved"
+    record = cast("Any", unresolved_records[0])
+    assert record.reason == "malformed"
+    assert record.fallback_actor == "service_account:gcp:unresolved"
+
+
+def test_runtime_service_actor_rejects_email_actor_in_gcp_config(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    email_actor_id = (
+        "service_account:gcp:feeds-service@example.iam.gserviceaccount.com"
     )
+
+    with (
+        caplog.at_level(logging.ERROR),
+        mock.patch.object(actor_identity, "is_gcp_env", return_value=True),
+        mock.patch.dict(
+            os.environ,
+            {actor_identity.CONFIGURED_SERVICE_ACTOR_ENV: email_actor_id},
+            clear=True,
+        ),
+    ):
+        actor_id = actor_identity.runtime_service_actor_id()
+
+    assert actor_id == "service_account:gcp:unresolved"
+    assert email_actor_id not in caplog.text
+    unresolved_records = [
+        record
+        for record in caplog.records
+        if record.message == "feed_audit_actor_unresolved"
+    ]
+    assert len(unresolved_records) == 1
+    record = cast("Any", unresolved_records[0])
+    assert record.reason == "malformed"

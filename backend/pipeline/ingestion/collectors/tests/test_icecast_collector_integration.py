@@ -38,9 +38,7 @@ MOCK_ENV_VARS = {
 
 _FAKE_GCS_PORT = 4443
 _TEST_BUCKET = "test-audio-bucket"
-_RUNTIME_ACTOR_ID = (
-    "service_account:gcp:collector-runtime@example.iam.gserviceaccount.com"
-)
+_RUNTIME_ACTOR_ID = "service_account:gcp:123456789012345678901"
 
 # Audio constants
 _FLAC_MAGIC = b"fLaC"

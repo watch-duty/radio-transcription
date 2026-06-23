@@ -40,9 +40,7 @@ from backend.pipeline.storage.settings import AlloyDBSettings
 
 _WORKER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
-_RUNTIME_ACTOR_ID = (
-    "service_account:gcp:collector-runtime@example.iam.gserviceaccount.com"
-)
+_RUNTIME_ACTOR_ID = "service_account:gcp:123456789012345678901"
 
 
 def _make_captured_chunk(audio_bytes: bytes) -> CapturedChunk:

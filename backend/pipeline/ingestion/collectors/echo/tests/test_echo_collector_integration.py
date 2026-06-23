@@ -37,9 +37,7 @@ _FAKE_GCS_PORT = 4443
 _ECHO_BUCKET = "wd-echo-recordings-test"
 _STAGING_BUCKET = "ingestion-staging-test"
 _SEGMENTED_PUBSUB_TOPIC_PATH = "projects/test/topics/segmented-audio-test"
-_ECHO_ACTOR_ID = (
-    "service_account:gcp:echo-ingestion@example.iam.gserviceaccount.com"
-)
+_ECHO_ACTOR_ID = "service_account:gcp:109876543210987654321"
 
 
 def _docker_available() -> bool:

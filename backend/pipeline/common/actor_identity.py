@@ -53,6 +53,18 @@ def is_well_formed_google_user_actor_id(actor_id: str) -> bool:
     return bool(google_sub) and not _contains_whitespace(google_sub)
 
 
+def is_well_formed_gcp_service_account_actor_id(actor_id: str) -> bool:
+    if len(actor_id) > MAX_ACTOR_ID_LENGTH:
+        return False
+    if not actor_id.startswith(GCP_SERVICE_ACCOUNT_ACTOR_PREFIX):
+        return False
+
+    service_account_unique_id = actor_id[
+        len(GCP_SERVICE_ACCOUNT_ACTOR_PREFIX) :
+    ]
+    return service_account_unique_id.isdigit()
+
+
 def is_well_formed_actor_id(actor_id: str | None) -> bool:
     if actor_id is None:
         return False
@@ -71,7 +83,12 @@ def runtime_service_actor_id() -> str:
         return LOCAL_SERVICE_ACCOUNT_ACTOR_ID
 
     configured_actor_id = os.environ.get(CONFIGURED_SERVICE_ACTOR_ENV)
-    if is_well_formed_actor_id(configured_actor_id):
+    if (
+        configured_actor_id is not None
+        and is_well_formed_gcp_service_account_actor_id(
+            configured_actor_id,
+        )
+    ):
         return configured_actor_id
 
     reason = "missing" if configured_actor_id is None else "malformed"

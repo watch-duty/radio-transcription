@@ -36,7 +36,7 @@ _STATUS_REASON_UPDATED_AT = datetime.datetime(
 )
 _FEEDS_SERVICE_ACTOR_ID = "user:google:admin-sub-123"
 _COLLECTOR_SERVICE_ACCOUNT_ACTOR_ID = (
-    "service_account:gcp:collector-runtime@example.iam.gserviceaccount.com"
+    "service_account:gcp:123456789012345678901"
 )
 _MISSING_ACTOR_ID = cast("str", None)
 

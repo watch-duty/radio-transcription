@@ -70,11 +70,12 @@ describe('FeedsController', () => {
     ['blank sub', { user: { isAdmin: true, sub: '   ' } }],
     ['space in sub', { user: { isAdmin: true, sub: 'admin sub' } }],
     ['leading whitespace', { user: { isAdmin: true, sub: ' admin-sub-123' } }],
-    [
-      'trailing whitespace',
-      { user: { isAdmin: true, sub: 'admin-sub-123 ' } },
-    ],
+    ['trailing whitespace', { user: { isAdmin: true, sub: 'admin-sub-123 ' } }],
   ] as const;
+
+  function asExpressRequest(request: unknown): express.Request {
+    return request as express.Request;
+  }
 
   describe('listFeeds', () => {
     it('should return converted feeds on success', async () => {
@@ -551,7 +552,7 @@ describe('FeedsController', () => {
         const controller = new FeedsController();
 
         await expect(
-          controller.createFeed(request as express.Request, createPayload)
+          controller.createFeed(asExpressRequest(request), createPayload)
         ).rejects.toThrow(/Forbidden/);
         expect(mockRequest).not.toHaveBeenCalled();
       }
@@ -564,7 +565,7 @@ describe('FeedsController', () => {
 
         await expect(
           controller.updateFeed(
-            request as express.Request,
+            asExpressRequest(request),
             'feed_123',
             updatePayload
           )
@@ -579,7 +580,7 @@ describe('FeedsController', () => {
         const controller = new FeedsController();
 
         await expect(
-          controller.resetFeed('feed_123', request as express.Request)
+          controller.resetFeed('feed_123', asExpressRequest(request))
         ).rejects.toThrow(/Forbidden/);
         expect(mockRequest).not.toHaveBeenCalled();
       }
@@ -591,7 +592,7 @@ describe('FeedsController', () => {
         const controller = new FeedsController();
 
         await expect(
-          controller.deactivateFeed('feed_123', request as express.Request)
+          controller.deactivateFeed('feed_123', asExpressRequest(request))
         ).rejects.toThrow(/Forbidden/);
         expect(mockRequest).not.toHaveBeenCalled();
       }
@@ -603,7 +604,7 @@ describe('FeedsController', () => {
         const controller = new FeedsController();
 
         await expect(
-          controller.deleteFeed('feed_123', request as express.Request)
+          controller.deleteFeed('feed_123', asExpressRequest(request))
         ).rejects.toThrow(/Forbidden/);
         expect(mockRequest).not.toHaveBeenCalled();
       }

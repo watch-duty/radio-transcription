@@ -20,9 +20,7 @@ from backend.pipeline.storage.feed_store import (
     SourceType,
 )
 
-_TEST_ACTOR_ID = (
-    "service_account:gcp:feeds-service@example.iam.gserviceaccount.com"
-)
+_TEST_ACTOR_ID = "service_account:gcp:123456789012345678901"
 _INVALID_ACTOR_ID = "system actor"
 
 

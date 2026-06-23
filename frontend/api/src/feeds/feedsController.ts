@@ -30,10 +30,11 @@ import {
   Tags,
 } from 'tsoa';
 
+import { feedMutationActorHeaders } from './actor_headers.js';
+
 import { AuthenticatedRequest } from '../authentication.js';
 import { FEEDS_STORE_API_URL } from '../config.js';
 import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
-import { feedMutationActorHeaders } from './actor_headers.js';
 
 interface BaseFeedBackend {
   name: string;

@@ -42,9 +42,7 @@ _CLAIM: dict[SourceType, int] = {SourceType.BCFY_CALLS: 1}
 _FAKE_GCS_PORT = 4443
 _TEST_BUCKET = "test-audio-bucket"
 _FLAC_MAGIC = b"fLaC"
-_RUNTIME_ACTOR_ID = (
-    "service_account:gcp:collector-runtime@example.iam.gserviceaccount.com"
-)
+_RUNTIME_ACTOR_ID = "service_account:gcp:123456789012345678901"
 
 _COL_MOD = (
     "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector"

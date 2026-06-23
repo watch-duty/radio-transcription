@@ -27,9 +27,7 @@ from backend.pipeline.storage.sync_feed_store import (
     SyncFeedStore,
 )
 
-_ECHO_ACTOR_ID = (
-    "service_account:gcp:echo-ingestion@example.iam.gserviceaccount.com"
-)
+_ECHO_ACTOR_ID = "service_account:gcp:109876543210987654321"
 
 
 # ---------------------------------------------------------------------------
