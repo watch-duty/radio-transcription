@@ -47,6 +47,7 @@ interface FeedBackend extends BaseFeedBackend {
   tags?: Tag[];
   quarantine_reason: string | null;
   status_reason: BackendFeedStatusReason | null;
+  last_speech_segment_timestamp: string | null;
 }
 
 interface FeedCreateBackend extends BaseFeedBackend {
@@ -132,6 +133,13 @@ function getArchiveUrl(
 }
 
 function convertFeedBackend(response: FeedBackend): Feed {
+  const lastHeartbeatParsed = response.last_heartbeat
+    ? Date.parse(response.last_heartbeat)
+    : undefined;
+  const lastSpeechParsed = response.last_speech_segment_timestamp
+    ? Date.parse(response.last_speech_segment_timestamp)
+    : undefined;
+
   return {
     id: response.id,
     name: response.name,
@@ -141,10 +149,11 @@ function convertFeedBackend(response: FeedBackend): Feed {
     archiveUrl: getArchiveUrl(response.source_type, response.source_feed_id),
     status: convertFeedStatusBackend(response.status),
     substatus: response.status,
-    lastHeartbeat: response.last_heartbeat ?? undefined,
+    lastHeartbeat: lastHeartbeatParsed,
     tags: response.tags,
     quarantineReason: response.quarantine_reason ?? undefined,
     statusReason: convertFeedStatusReason(response.status_reason),
+    lastSpeechSegmentTimestamp: lastSpeechParsed,
   };
 }
 
