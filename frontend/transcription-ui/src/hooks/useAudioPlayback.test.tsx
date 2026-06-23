@@ -138,7 +138,7 @@ describe('useAudioPlayback', () => {
       })
     );
 
-    act(() => result.current.toggle('a', 'a.m4a'));
+    act(() => result.current.togglePlay('a', 'a.m4a'));
 
     expect(engineMock.setVolumeDbSpy).toHaveBeenCalledWith(-6);
     expect(engineMock.setPanSpy).toHaveBeenCalledWith(1);
@@ -155,7 +155,7 @@ describe('useAudioPlayback', () => {
     );
 
     // The player is built on first toggle; only then can changes reach it.
-    act(() => result.current.toggle('a', 'a.m4a'));
+    act(() => result.current.togglePlay('a', 'a.m4a'));
     engineMock.setVolumeDbSpy.mockClear();
     engineMock.setPanSpy.mockClear();
     engineMock.setSpeedSpy.mockClear();
