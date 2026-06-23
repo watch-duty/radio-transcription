@@ -730,31 +730,6 @@ after_row AS (
     FROM updated u
     JOIN feed_properties fp ON fp.feed_id = u.id
 ),
-unchanged_row AS (
-    SELECT
-        before_row.id,
-        before_row.name,
-        before_row.source_type,
-        before_row.status,
-        before_row.failure_count,
-        before_row.retry_after,
-        before_row.status_reason,
-        before_row.status_reason_updated_at,
-        before_row.status_reason_detail,
-        before_row.quarantine_reason,
-        before_row.last_bookmark_time,
-        before_row.created_at,
-        before_row.audit_revision AS feed_revision,
-        before_row.source_feed_id,
-        before_row.tags
-    FROM before_row
-    WHERE before_row.status = 'deactivated'::feed_status
-),
-result_row AS (
-    SELECT * FROM after_row
-    UNION ALL
-    SELECT * FROM unchanged_row
-),
 {
     feed_audit_sql.insert_feed_audit_event_cte(
         feed_id_sql="after_row.id",
@@ -766,8 +741,9 @@ result_row AS (
         from_sql="FROM before_row\n    JOIN after_row ON after_row.id = before_row.id",
     )
 }
-SELECT result_row.*
-FROM result_row
+SELECT before_row.id
+FROM before_row
+LEFT JOIN write_audit ON TRUE
 """
 # TODO(hard-delete): remove transcripts PR https://linear.app/watchduty/issue/GOO-458/remaining-legacy-cleanup
 DELETE_FEED_SQL = f"""\
