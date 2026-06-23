@@ -2476,7 +2476,9 @@ async def test_deactivate_feed_is_idempotent_without_duplicate_audit(
 
     first_result = await store.deactivate_feed(feed_id, actor_id=_TEST_ACTOR_ID)
     revision_after_first = await _get_feed_audit_revision(db_pool, feed_id)
-    second_result = await store.deactivate_feed(feed_id, actor_id=_TEST_ACTOR_ID)
+    second_result = await store.deactivate_feed(
+        feed_id, actor_id=_TEST_ACTOR_ID
+    )
 
     row = await _get_feed_status(db_pool, feed_id)
     audit_rows = await _fetch_audit_events(db_pool, feed_id)
