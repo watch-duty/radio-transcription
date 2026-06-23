@@ -133,9 +133,12 @@ current `feeds` row is later hard-deleted.
 
 A durable domain event for a meaningful feed mutation, including action,
 `actor_id`, event time, feed-local `feed_revision`, and allowlisted
-before/after values. The feed audit event schema and storage writers define the
-v1 contract in this PR; delivery, timeline APIs, and broader operational
-lifecycle work remain separate follow-up concerns.
+before/after values. `feed_revision` is monotonically increasing per feed, but
+it is not guaranteed to be contiguous because some high-frequency internal
+state writes advance the current feed revision without emitting a durable audit
+event. The feed audit event schema and storage writers define the v1 contract
+in this PR; delivery, timeline APIs, and broader operational lifecycle work
+remain separate follow-up concerns.
 
 ### Actor ID
 

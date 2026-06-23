@@ -458,6 +458,10 @@ def build_acquire_feeds_recovery_sql(claim_types: Sequence[SourceType]) -> str:
     return _build_claim_query(branches, branch_names, "recovered")
 
 
+# Failure writes always update current failure state and advance
+# feeds.audit_revision. feed_audit_events rows are intentionally suppressed for
+# repeated failures with the same status/status_reason, so event revisions can
+# have gaps.
 REPORT_FAILURE_SQL = f"""\
 WITH before_row AS (
     SELECT

@@ -93,6 +93,10 @@ FROM after_row
 
 # Backoff formula: base * 2^(failure_count), capped at max, plus 0-10s jitter.
 # Matches REPORT_FAILURE_SQL in feed_queries.py minus worker_id/fencing_token.
+# Failure writes always update current failure state and advance
+# feeds.audit_revision. feed_audit_events rows are intentionally suppressed for
+# repeated failures with the same status/status_reason, so event revisions can
+# have gaps.
 RECORD_FAILURE_SQL = f"""\
 WITH before_row AS (
     SELECT
