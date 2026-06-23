@@ -52,6 +52,7 @@ from backend.pipeline.common.constants import (
 from backend.pipeline.common.log_helper import get_task_logger
 from backend.pipeline.common.tracing_utils import (
     extract_trace_context,
+    get_tracer,
     inject_otel_context,
     setup_tracing,
     with_tracer_context,
@@ -141,7 +142,7 @@ class ParseAndKeyFn(beam.DoFn):
             self.segmentation_start.inc()
 
             context = extract_trace_context(element.attributes)
-            tracer = trace.get_tracer(__name__)
+            tracer = get_tracer(__name__)
             with tracer.start_as_current_span(
                 "receive_audio_chunk_for_segmentation", context=context
             ):

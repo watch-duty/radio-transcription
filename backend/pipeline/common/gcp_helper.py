@@ -48,7 +48,6 @@ class UploadKwargs(TypedDict, total=False):
 
 
 logger = logging.getLogger(__name__)
-tracer = trace.get_tracer(__name__)
 
 # -----------------------------------------------------------------------------
 # Google Cloud Storage helpers
@@ -96,7 +95,7 @@ async def upload_staged_audio(
         ValueError: If encoded metadata size exceeds GCS metadata limits.
 
     """
-    with tracer.start_as_current_span("upload_staged_audio"):
+    with tracing_utils.get_tracer(__name__).start_as_current_span("upload_staged_audio"):
         timestamp = datetime.datetime.now(tz=datetime.UTC).strftime(
             "%Y%m%dT%H%M%SZ",
         )
@@ -373,7 +372,7 @@ def publish_audio_chunk_sync(
     This is the synchronous core used by both sync callers (e.g. Echo
     ingestion) and the async wrapper below.
     """
-    with tracer.start_as_current_span("publish_raw_audio_chunk"):
+    with tracing_utils.get_tracer(__name__).start_as_current_span("publish_raw_audio_chunk"):
         serialized_data, attrs = _build_audio_chunk_payload(
             topic_path,
             feed_id,
@@ -432,7 +431,7 @@ async def publish_audio_chunk(
     Leverages asyncio.wrap_future to await the background gRPC thread pool
     non-blockingly, ensuring other asyncio tasks remain responsive.
     """
-    with tracer.start_as_current_span("publish_raw_audio_chunk"):
+    with tracing_utils.get_tracer(__name__).start_as_current_span("publish_raw_audio_chunk"):
         publisher = pubsub_client.get_publisher()
         serialized_data, attrs = _build_audio_chunk_payload(
             topic_path,
