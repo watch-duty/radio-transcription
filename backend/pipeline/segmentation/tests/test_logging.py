@@ -3,7 +3,13 @@ import logging
 import unittest
 from unittest import mock
 
-from backend.pipeline.common.log_helper import TaskJsonFormatter
+from backend.pipeline.common import log_helper
+from backend.pipeline.common.log_helper import (
+    StructuredMessageFilter,
+    TaskJsonFormatter,
+    get_logger,
+)
+from backend.pipeline.segmentation.log_helper import setup_logging
 
 
 class TestTaskJsonFormatter(unittest.TestCase):
@@ -56,6 +62,128 @@ class TestTaskJsonFormatter(unittest.TestCase):
             self.assertNotIn("span_id", log_record)
             self.assertNotIn("trace", log_record)
             self.assertNotIn("spanId", log_record)
+
+
+class TestStructuredPropagationLogging(unittest.TestCase):
+    def test_structured_message_filter(self) -> None:
+        record = logging.LogRecord(
+            name="test_logger",
+            level=logging.ERROR,
+            pathname="test_file.py",
+            lineno=42,
+            msg="Error occurred: %s",
+            args=("some_detail",),
+            exc_info=None,
+        )
+        # Add attributes like LoggerAdapter would
+        record.feed_id = "feed_123"
+        record.session_id = "session_456"
+
+        filt = StructuredMessageFilter()
+        res = filt.filter(record)
+
+        self.assertTrue(res)
+        self.assertTrue(record.__dict__.get("structured_formatted", False))
+        self.assertEqual(record.args, ())
+
+        # Parse the JSON msg
+        log_data = json.loads(record.msg)
+        self.assertEqual(log_data["message"], "Error occurred: some_detail")
+        self.assertEqual(log_data["severity"], "ERROR")
+        self.assertEqual(log_data["logger"], "test_logger")
+        self.assertEqual(log_data["feed_id"], "feed_123")
+        self.assertEqual(log_data["session_id"], "session_456")
+
+    def test_get_logger_with_structured_propagation(self) -> None:
+        # Clean up logger if it exists to avoid side effects
+        logger_name = "test_propagated_logger"
+        logger = logging.getLogger(logger_name)
+        logger.handlers.clear()
+        logger.filters.clear()
+
+        with mock.patch.object(
+            log_helper._LoggingState, "structured_propagation", new=True
+        ):
+            configured_logger = get_logger(logger_name)
+            self.assertTrue(configured_logger.propagate)
+            self.assertEqual(len(configured_logger.handlers), 0)
+            self.assertTrue(
+                any(
+                    isinstance(f, StructuredMessageFilter)
+                    for f in configured_logger.filters
+                )
+            )
+
+    def test_get_logger_without_structured_propagation(self) -> None:
+        logger_name = "test_normal_logger"
+        logger = logging.getLogger(logger_name)
+        logger.handlers.clear()
+        logger.filters.clear()
+
+        with mock.patch.object(
+            log_helper._LoggingState, "structured_propagation", new=False
+        ):
+            configured_logger = get_logger(logger_name)
+            self.assertFalse(configured_logger.propagate)
+            self.assertEqual(len(configured_logger.handlers), 1)
+            handler = configured_logger.handlers[0]
+            self.assertTrue(isinstance(handler, logging.StreamHandler))
+            self.assertTrue(isinstance(handler.formatter, TaskJsonFormatter))
+
+    def test_retroactive_structured_propagation(self) -> None:
+        # 1. Initialize a logger BEFORE structured propagation is enabled
+        logger_name = "test_retroactive_logger"
+        logger = get_logger(logger_name)
+
+        # Verify it initially has the normal/local configuration
+        self.assertFalse(logger.propagate)
+        self.assertEqual(len(logger.handlers), 1)
+        self.assertTrue(isinstance(logger.handlers[0], logging.StreamHandler))
+        self.assertFalse(
+            any(isinstance(f, StructuredMessageFilter) for f in logger.filters)
+        )
+
+        # 2. Enable structured propagation (simulating setup_logging running later)
+        with mock.patch.object(
+            log_helper._LoggingState, "structured_propagation", new=False
+        ):
+            log_helper.enable_structured_propagation()
+
+            # Verify the logger was updated retroactively
+            self.assertTrue(logger.propagate)
+            self.assertEqual(len(logger.handlers), 0)
+            self.assertTrue(
+                any(
+                    isinstance(f, StructuredMessageFilter)
+                    for f in logger.filters
+                )
+            )
+
+
+class TestSegmentationLogging(unittest.TestCase):
+    def test_setup_logging_under_dataflow(self) -> None:
+        # Mock argv to simulate running on Dataflow worker
+        with (
+            mock.patch(
+                "sys.argv", ["main.py", "--logging_endpoint=localhost:12345"]
+            ),
+            mock.patch.object(
+                log_helper._LoggingState, "structured_propagation", new=False
+            ),
+        ):
+            setup_logging()
+            self.assertTrue(log_helper._LoggingState.structured_propagation)
+
+    def test_setup_logging_normal(self) -> None:
+        # Mock argv to simulate normal/local execution
+        with (
+            mock.patch("sys.argv", ["main.py"]),
+            mock.patch.object(
+                log_helper._LoggingState, "structured_propagation", new=False
+            ),
+        ):
+            setup_logging()
+            self.assertFalse(log_helper._LoggingState.structured_propagation)
 
 
 if __name__ == "__main__":
