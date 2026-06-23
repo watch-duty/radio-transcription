@@ -1,3 +1,9 @@
+declare global {
+  interface Window {
+    webkitAudioContext?: typeof AudioContext;
+  }
+}
+
 export const VOLUME_MIN_DB = -30;
 export const VOLUME_MAX_DB = 20;
 
@@ -48,10 +54,7 @@ type GraphListeners = {
 const RAMP_SECONDS = 0.05;
 
 export function createAudioContext(): AudioContext {
-  const Ctor =
-    window.AudioContext ??
-    (window as unknown as { webkitAudioContext?: typeof AudioContext })
-      .webkitAudioContext;
+  const Ctor = window.AudioContext ?? window.webkitAudioContext;
   if (!Ctor) {
     throw new Error('Web Audio API is not supported in this browser');
   }
