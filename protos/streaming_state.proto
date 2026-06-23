@@ -35,10 +35,17 @@ message ChunkMetadataProto {
 }
 
 message FlushRequestProto {
-  bytes buffer = 1; // Raw 16-bit PCM audio bytes
+  // Deprecated: Raw 16-bit PCM audio bytes. Under the decoupled hybrid architecture,
+  // raw audio bytes are retrieved from GCS via contributing_chunks. This field is
+  // passed as b"" for backward-compatibility and will be retired in Phase 2.
+  bytes buffer = 1 [deprecated = true];
   string feed_id = 2;
   string session_id = 3;
-  repeated string contributing_audio_uris = 4;
+  // Deprecated: Legacy list of contributing GCS URIs. Under the decoupled hybrid
+  // architecture, this list has been superseded by contributing_chunks, which carries
+  // both GCS URIs and absolute baseline timestamps. This field is maintained for
+  // backward-compatibility during rolling upgrades and will be retired in Phase 2.
+  repeated string contributing_audio_uris = 4 [deprecated = true];
   TimeRangeProto time_range = 5;
   reserved 6;
   reserved "transmission_id";
@@ -58,6 +65,7 @@ message FlushRequestProto {
   AudioClassification audio_classification = 15;
   string segment_id = 16;
   optional string baggage = 17;
+  repeated BufferedChunkProto contributing_chunks = 18;
 }
 
 // Persistent State Checkpoints
@@ -75,7 +83,11 @@ message ActiveStitchingStateProto {
   optional int64 expected_next_chunk_start_ms = 6;
   optional int64 start_audio_offset_ms = 7;
   optional int64 end_audio_offset_ms = 8;
-  repeated string contributing_audio_uris = 9;
+  // Deprecated: Legacy list of contributing GCS URIs. Under the decoupled hybrid
+  // architecture, this list has been superseded by contributing_chunks, which carries
+  // both GCS URIs and absolute baseline timestamps. This field is maintained for
+  // backward-compatibility during rolling upgrades and will be retired in Phase 2.
+  repeated string contributing_audio_uris = 9 [deprecated = true];
   bool missing_prior_context = 10;
   bool missing_post_context = 11;
   int64 buffer_duration_ms = 12;
@@ -87,6 +99,7 @@ message ActiveStitchingStateProto {
   optional string traceparent = 18;
   optional int32 sample_rate = 19;
   optional string baggage = 20;
+  repeated BufferedChunkProto contributing_chunks = 21;
 }
 
 message TransmissionContextProto {
