@@ -102,6 +102,7 @@ if __name__ == "__main__":
     # Pub/Sub for Segmented Audio
     segmented_topic = os.environ["SEGMENTED_TOPIC"]
     create_topic(publisher, segmented_topic)
+    create_topic(publisher, f"{segmented_topic}-dlq")
     create_push_subscription(
         subscriber,
         "normalization-sub",
