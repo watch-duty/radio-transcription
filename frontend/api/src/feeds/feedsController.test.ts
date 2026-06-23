@@ -110,7 +110,7 @@ describe('FeedsController', () => {
       ]);
     });
 
-    it('should map backend status_reason_detail to frontend quarantineReason', async () => {
+    it('should map backend status_reason_detail to frontend statusReasonDetail', async () => {
       mockRequest.mockResolvedValueOnce({
         data: [
           {
@@ -126,7 +126,7 @@ describe('FeedsController', () => {
       expect(result).toEqual([
         {
           ...expectedFrontendFeed,
-          quarantineReason: 'provider timeout',
+          statusReasonDetail: 'provider timeout',
         },
       ]);
     });

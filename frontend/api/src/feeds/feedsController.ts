@@ -153,7 +153,7 @@ function convertFeedBackend(response: FeedBackend): Feed {
     substatus: response.status,
     lastHeartbeat: lastHeartbeatParsed,
     tags: response.tags,
-    quarantineReason: response.status_reason_detail ?? undefined,
+    statusReasonDetail: response.status_reason_detail ?? undefined,
     statusReason: convertFeedStatusReason(response.status_reason),
     lastSpeechSegmentTimestamp: lastSpeechParsed,
   };

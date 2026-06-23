@@ -246,7 +246,7 @@ components:
           items:
             $ref: "#/components/schemas/Tag"
           type: array
-        quarantineReason:
+        statusReasonDetail:
           type: string
         statusReason:
           $ref: "#/components/schemas/BackendFeedStatusReason"
