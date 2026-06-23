@@ -1155,6 +1155,69 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         log_args = self.mock_logger.warning.call_args.args
         self.assertIn("Stream lag has exceeded threshold", log_args[0])
 
+    @patch.dict(os.environ, MOCK_ENV_VARS)
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_stream_lag_reconnects_internally(
+        self, mock_create_ffmpeg: MagicMock, mock_now_utc: MagicMock
+    ) -> None:
+        """Test: stream lag exceeding threshold triggers internal ffmpeg restart."""
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=8888,
+            segments=[b"FLAC_DATA_0", b"FLAC_DATA_1"],
+            wait_delay=0.5,
+            wait_result=0,
+        )
+
+        feed = _make_feed("lag-feed-reconnect", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        t0 = datetime.datetime(2026, 6, 20, 10, 0, 0, tzinfo=datetime.UTC)
+        t1 = t0 + datetime.timedelta(seconds=100)
+
+        # Side effects for _now_utc:
+        # 1. t0 (first stream_anchor_time)
+        # 2. t0 + 85 (receipt_time for first segment, lag = 65s > 60s)
+        # 3. t1 (second stream_anchor_time after reconnect)
+        # 4. t1 + 10 (receipt_time for first segment of new process, lag = -10s < 60s)
+        mock_now_utc.side_effect = [
+            t0,
+            t0 + datetime.timedelta(seconds=85),
+            t1,
+            t1 + datetime.timedelta(seconds=10),
+        ]
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_default_resources(),
+        )
+
+        # First chunk should be yielded (even though it's late)
+        chunk1 = await gen.__anext__()
+        self.assertEqual(chunk1.audio_bytes, b"FLAC_DATA_0")
+
+        # At this point, lag_exceeded is True.
+        # Calling __anext__() again should trigger the restart.
+        chunk2 = await gen.__anext__()
+
+        # It should have restarted and yielded FLAC_DATA_0 from the NEW process
+        self.assertEqual(chunk2.audio_bytes, b"FLAC_DATA_0")
+
+        # Verify that _create_ffmpeg_process was called twice
+        self.assertEqual(mock_create_ffmpeg.call_count, 2)
+
+        # Verify that warning was logged
+        self.mock_logger.warning.assert_called_once()
+        log_args = self.mock_logger.warning.call_args.args
+        self.assertIn("Stream lag has exceeded threshold", log_args[0])
+
 
 class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
     """RCPT-02: Icecast stamps receipt_time at segment finalization."""

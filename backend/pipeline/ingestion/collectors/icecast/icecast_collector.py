@@ -324,110 +324,172 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
         segment_dir = Path(tmp_dir)
         segment_pattern = str(segment_dir / f"chunk_%06d.{AUDIO_FORMAT}")
 
-        process = await _create_ffmpeg_process(
-            url, segment_pattern, auth_header
-        )
-        if (
-            process.stderr is None
-        ):  # pragma: no cover — guaranteed by stderr=PIPE
-            msg = "stderr is None; _create_ffmpeg_process must use stderr=PIPE"
-            raise RuntimeError(msg)
-        stderr_tail: collections.deque[str] = collections.deque(
-            maxlen=STDERR_TAIL_LINES
-        )
-        stderr_http_status_lines: collections.deque[str] = collections.deque(
-            maxlen=STDERR_TAIL_LINES
-        )
-        drain_task = asyncio.create_task(
-            _drain_stderr(process.stderr, stderr_tail, stderr_http_status_lines)
-        )
-        logger.info(
-            "Feed %s (%s): Started ffmpeg segmenter (PID: %s)",
-            feed_id,
-            feed_name,
-            process.pid,
-        )
+        while True:
+            if shutdown_event.is_set():
+                logger.info(
+                    "Feed %s (%s): Shutdown requested, stopping capture",
+                    feed_id,
+                    feed_name,
+                )
+                return
 
-        next_index = 0
-        last_activity_time = time.monotonic()
-        wait_task = asyncio.create_task(process.wait())
+            process = await _create_ffmpeg_process(
+                url, segment_pattern, auth_header
+            )
+            if (
+                process.stderr is None
+            ):  # pragma: no cover — guaranteed by stderr=PIPE
+                msg = "stderr is None; _create_ffmpeg_process must use stderr=PIPE"
+                raise RuntimeError(msg)
+            stderr_tail: collections.deque[str] = collections.deque(
+                maxlen=STDERR_TAIL_LINES
+            )
+            stderr_http_status_lines: collections.deque[str] = (
+                collections.deque(maxlen=STDERR_TAIL_LINES)
+            )
+            drain_task = asyncio.create_task(
+                _drain_stderr(
+                    process.stderr, stderr_tail, stderr_http_status_lines
+                )
+            )
+            logger.info(
+                "Feed %s (%s): Started ffmpeg segmenter (PID: %s)",
+                feed_id,
+                feed_name,
+                process.pid,
+            )
 
-        # Anchor the stream timeline to the exact moment ffmpeg starts
-        stream_anchor_time = _now_utc()
+            next_index = 0
+            last_activity_time = time.monotonic()
+            wait_task = asyncio.create_task(process.wait())
 
-        try:
-            while True:
-                if shutdown_event.is_set():
-                    logger.info(
-                        "Feed %s (%s): Shutdown requested, stopping capture",
-                        feed_id,
-                        feed_name,
-                    )
-                    return
+            # Anchor the stream timeline to the exact moment ffmpeg starts
+            stream_anchor_time = _now_utc()
+            lag_exceeded = False
 
-                current_segment = _segment_path(segment_dir, next_index)
-                next_segment = _segment_path(segment_dir, next_index + 1)
-                process_done = wait_task.done()
+            try:
+                while True:
+                    if shutdown_event.is_set():
+                        logger.info(
+                            "Feed %s (%s): Shutdown requested, stopping capture",
+                            feed_id,
+                            feed_name,
+                        )
+                        return
 
-                # Read a segment only once we know ffmpeg finished writing it.
-                # A segment is considered finalized when either:
-                # - the next segment exists, or
-                # - ffmpeg has exited.
-                if current_segment.exists() and (
-                    next_segment.exists() or process_done
-                ):
-                    # SLO: receipt_time stamp — Icecast segment finalized, bytes available
-                    receipt_time = _now_utc()
-                    segment_bytes = await asyncio.to_thread(
-                        current_segment.read_bytes
-                    )
-                    if segment_bytes:
-                        # Calculate the start and end times of this specific chunk's window
-                        chunk_start_time = (
-                            stream_anchor_time
-                            + datetime.timedelta(
-                                seconds=next_index * CHUNK_DURATION_SECONDS
+                    if lag_exceeded:
+                        logger.info(
+                            "Feed %s (%s): Lag exceeded threshold, restarting stream capture",
+                            feed_id,
+                            feed_name,
+                        )
+                        break
+
+                    current_segment = _segment_path(segment_dir, next_index)
+                    next_segment = _segment_path(segment_dir, next_index + 1)
+                    process_done = wait_task.done()
+
+                    # Read a segment only once we know ffmpeg finished writing it.
+                    # A segment is considered finalized when either:
+                    # - the next segment exists, or
+                    # - ffmpeg has exited.
+                    if current_segment.exists() and (
+                        next_segment.exists() or process_done
+                    ):
+                        # SLO: receipt_time stamp — Icecast segment finalized, bytes available
+                        receipt_time = _now_utc()
+                        segment_bytes = await asyncio.to_thread(
+                            current_segment.read_bytes
+                        )
+                        if segment_bytes:
+                            # Calculate the start and end times of this specific chunk's window
+                            chunk_start_time = (
+                                stream_anchor_time
+                                + datetime.timedelta(
+                                    seconds=next_index * CHUNK_DURATION_SECONDS
+                                )
                             )
-                        )
-                        chunk_end_time = chunk_start_time + datetime.timedelta(
-                            seconds=CHUNK_DURATION_SECONDS
-                        )
-                        if process_done:
-                            chunk_end_time = min(chunk_end_time, _now_utc())
+                            chunk_end_time = (
+                                chunk_start_time
+                                + datetime.timedelta(
+                                    seconds=CHUNK_DURATION_SECONDS
+                                )
+                            )
+                            if process_done:
+                                chunk_end_time = min(chunk_end_time, _now_utc())
 
-                        # Guard against cumulative network or system lag by measuring the drift
-                        # between wall-clock receipt time and expected stream time.
-                        lag = (receipt_time - chunk_end_time).total_seconds()
-                        if lag > _MAX_ALLOWED_LAG_SECONDS:
-                            logger.warning(
-                                "Feed %s (%s): Stream lag has exceeded threshold "
-                                "(%.1fs > %.1fs).",
+                            # Guard against cumulative network or system lag by measuring the drift
+                            # between wall-clock receipt time and expected stream time.
+                            lag = (
+                                receipt_time - chunk_end_time
+                            ).total_seconds()
+                            if lag > _MAX_ALLOWED_LAG_SECONDS:
+                                logger.warning(
+                                    "Feed %s (%s): Stream lag has exceeded threshold "
+                                    "(%.1fs > %.1fs). Reconnecting...",
+                                    feed_id,
+                                    feed_name,
+                                    lag,
+                                    _MAX_ALLOWED_LAG_SECONDS,
+                                )
+                                lag_exceeded = True
+
+                            yield CapturedChunk(
+                                audio_bytes=segment_bytes,
+                                chunk_start_time=chunk_start_time,
+                                chunk_end_time=chunk_end_time,
+                                session_id=session_id,
+                                receipt_time=receipt_time,
+                            )
+
+                            last_activity_time = time.monotonic()
+                        await asyncio.to_thread(
+                            current_segment.unlink, missing_ok=True
+                        )
+                        next_index += 1
+                        continue
+
+                    # If ffmpeg is done and there is no pending finalized segment,
+                    # we are finished.
+                    if process_done and not current_segment.exists():
+                        exit_code = wait_task.result()
+                        if exit_code != 0:
+                            stderr_snippet = (
+                                "\n".join(stderr_tail) if stderr_tail else None
+                            )
+                            stderr_log_text = (
+                                stderr_snippet or "(no stderr captured)"
+                            )
+                            logger.error(
+                                "Feed %s (%s) ffmpeg exited with code %d; stderr tail:\n%s",
                                 feed_id,
                                 feed_name,
-                                lag,
-                                _MAX_ALLOWED_LAG_SECONDS,
+                                exit_code,
+                                stderr_log_text,
                             )
-
-                        yield CapturedChunk(
-                            audio_bytes=segment_bytes,
-                            chunk_start_time=chunk_start_time,
-                            chunk_end_time=chunk_end_time,
-                            session_id=session_id,
-                            receipt_time=receipt_time,
+                            classification_text = (
+                                "\n".join(stderr_http_status_lines)
+                                if stderr_http_status_lines
+                                else stderr_snippet or ""
+                            )
+                            failure = await _build_stream_capture_failure(
+                                resources,
+                                url,
+                                auth_header,
+                                exit_code=exit_code,
+                                timed_out=False,
+                                classification_text=classification_text,
+                                stderr_snippet=stderr_snippet,
+                            )
+                            raise failure
+                        logger.info(
+                            "Feed %s (%s): ffmpeg exited normally",
+                            feed_id,
+                            feed_name,
                         )
+                        return
 
-                        last_activity_time = time.monotonic()
-                    await asyncio.to_thread(
-                        current_segment.unlink, missing_ok=True
-                    )
-                    next_index += 1
-                    continue
-
-                # If ffmpeg is done and there is no pending finalized segment,
-                # we are finished.
-                if process_done and not current_segment.exists():
-                    exit_code = wait_task.result()
-                    if exit_code != 0:
+                    if time.monotonic() - last_activity_time > READ_TIMEOUT_SEC:
                         stderr_snippet = (
                             "\n".join(stderr_tail) if stderr_tail else None
                         )
@@ -435,10 +497,10 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                             stderr_snippet or "(no stderr captured)"
                         )
                         logger.error(
-                            "Feed %s (%s) ffmpeg exited with code %d; stderr tail:\n%s",
+                            "Feed %s (%s) no finalized segment within %ss; stderr tail:\n%s",
                             feed_id,
                             feed_name,
-                            exit_code,
+                            READ_TIMEOUT_SEC,
                             stderr_log_text,
                         )
                         classification_text = (
@@ -450,58 +512,31 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                             resources,
                             url,
                             auth_header,
-                            exit_code=exit_code,
-                            timed_out=False,
+                            exit_code=process.returncode,
+                            timed_out=True,
                             classification_text=classification_text,
                             stderr_snippet=stderr_snippet,
                         )
                         raise failure
-                    logger.info(
-                        "Feed %s (%s): ffmpeg exited normally",
-                        feed_id,
-                        feed_name,
-                    )
-                    return
 
-                if time.monotonic() - last_activity_time > READ_TIMEOUT_SEC:
-                    stderr_snippet = (
-                        "\n".join(stderr_tail) if stderr_tail else None
-                    )
-                    stderr_log_text = stderr_snippet or "(no stderr captured)"
-                    logger.error(
-                        "Feed %s (%s) no finalized segment within %ss; stderr tail:\n%s",
-                        feed_id,
-                        feed_name,
-                        READ_TIMEOUT_SEC,
-                        stderr_log_text,
-                    )
-                    classification_text = (
-                        "\n".join(stderr_http_status_lines)
-                        if stderr_http_status_lines
-                        else stderr_snippet or ""
-                    )
-                    failure = await _build_stream_capture_failure(
-                        resources,
-                        url,
-                        auth_header,
-                        exit_code=process.returncode,
-                        timed_out=True,
-                        classification_text=classification_text,
-                        stderr_snippet=stderr_snippet,
-                    )
-                    raise failure
+                    await asyncio.sleep(POLL_INTERVAL_SEC)
 
-                await asyncio.sleep(POLL_INTERVAL_SEC)
-
-        finally:
-            drain_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await drain_task
-            if not wait_task.done():
-                wait_task.cancel()
+            finally:
+                drain_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
-                    await wait_task
-            await _cleanup_ffmpeg_process(process, str(feed_id), str(feed_name))
+                    await drain_task
+                if not wait_task.done():
+                    wait_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await wait_task
+                await _cleanup_ffmpeg_process(
+                    process, str(feed_id), str(feed_name)
+                )
+                leftover_files = await asyncio.to_thread(
+                    lambda: list(segment_dir.glob(f"chunk_*.{AUDIO_FORMAT}"))
+                )
+                for f in leftover_files:
+                    await asyncio.to_thread(f.unlink, missing_ok=True)
 
 
 async def _create_ffmpeg_process(
