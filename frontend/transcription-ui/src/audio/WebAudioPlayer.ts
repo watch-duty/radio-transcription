@@ -54,11 +54,11 @@ type GraphListeners = {
 const RAMP_SECONDS = 0.05;
 
 export function createAudioContext(): AudioContext {
-  const Ctor = window.AudioContext ?? window.webkitAudioContext;
-  if (!Ctor) {
+  const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
+  if (!AudioContextClass) {
     throw new Error('Web Audio API is not supported in this browser');
   }
-  return new Ctor();
+  return new AudioContextClass();
 }
 
 /** MediaElementSource → GainNode → StereoPannerNode → destination */
