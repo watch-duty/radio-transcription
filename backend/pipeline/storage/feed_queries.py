@@ -747,14 +747,20 @@ LEFT JOIN write_audit ON TRUE
 """
 # TODO(hard-delete): remove transcripts PR https://linear.app/watchduty/issue/GOO-458/remaining-legacy-cleanup
 DELETE_FEED_SQL = f"""\
-WITH before_row AS (
+WITH target_feed AS (
+    SELECT id, status
+    FROM feeds
+    WHERE id = $1
+    FOR UPDATE
+),
+before_row AS (
     SELECT
 {feed_audit_sql.audit_source_projection("f")},
         f.audit_revision
     FROM feeds f
     JOIN feed_properties fp ON fp.feed_id = f.id
-    WHERE f.id = $1
-    FOR UPDATE
+    JOIN target_feed target ON target.id = f.id
+    WHERE target.status <> 'active'::feed_status
 ),
 {
     feed_audit_sql.insert_feed_audit_event_cte(
@@ -765,7 +771,6 @@ WITH before_row AS (
         before_values_sql=_AUDIT_BEFORE_SNAPSHOT_SQL,
         after_values_sql="        '{}'::jsonb",
         from_sql="FROM before_row",
-        where_sql="before_row.status <> 'active'::feed_status",
         returning_sql="feed_id",
     )
 },
@@ -786,29 +791,30 @@ deleted_feed AS (
       AND (SELECT COUNT(*) FROM deleted_transcripts) >= 0
     RETURNING id
 )
-SELECT
-    before_row.id,
-    before_row.status::text AS current_status,
-    before_row.status = 'active'::feed_status AS blocked_active
-FROM before_row
-LEFT JOIN deleted_feed ON deleted_feed.id = before_row.id
-WHERE before_row.status = 'active'::feed_status
-   OR deleted_feed.id IS NOT NULL
+SELECT target_feed.id,
+       target_feed.status::text AS current_status,
+       target_feed.status = 'active'::feed_status AS blocked_active,
+       deleted_feed.id IS NOT NULL AS deleted
+FROM target_feed
+LEFT JOIN deleted_feed ON deleted_feed.id = target_feed.id
 """
 
 
 RESET_FEED_SQL = f"""\
-WITH before_row AS (
+WITH target_feed AS (
+    SELECT id, status
+    FROM feeds
+    WHERE id = $1
+    FOR UPDATE
+),
+before_row AS (
     SELECT
 {feed_audit_sql.audit_source_projection("f")},
-        f.worker_id,
-        f.last_heartbeat,
-        f.last_processed_filename,
         f.audit_revision
     FROM feeds f
     JOIN feed_properties fp ON fp.feed_id = f.id
-    WHERE f.id = $1
-    FOR UPDATE
+    JOIN target_feed target ON target.id = f.id
+    WHERE target.status <> 'active'::feed_status
 ),
 updated AS (
     UPDATE feeds
@@ -827,7 +833,6 @@ updated AS (
         status_reason = NULL
     FROM before_row
     WHERE feeds.id = before_row.id
-      AND before_row.status <> 'active'::feed_status
     RETURNING feeds.id, feeds.name, feeds.source_type, feeds.status,
               feeds.failure_count, feeds.retry_after, feeds.worker_id,
               feeds.status_reason, feeds.status_reason_updated_at,
@@ -860,34 +865,11 @@ after_row AS (
         from_sql="FROM before_row\n    JOIN after_row ON after_row.id = before_row.id",
     )
 }
-SELECT after_row.*
-     , FALSE AS blocked_active
-     , after_row.status::text AS current_status
-FROM after_row
-UNION ALL
-SELECT before_row.id,
-       before_row.name,
-       before_row.source_type,
-       before_row.status,
-       before_row.failure_count,
-       before_row.retry_after,
-       before_row.worker_id,
-       before_row.status_reason,
-       before_row.status_reason_updated_at,
-       before_row.last_heartbeat,
-       before_row.last_processed_filename,
-       before_row.last_bookmark_time,
-       before_row.created_at,
-       before_row.quarantine_reason,
-       before_row.status_reason_detail,
-       before_row.audit_revision AS feed_revision,
-       before_row.source_feed_id,
-       before_row.tags,
-       NULL::timestamptz AS last_speech_segment_timestamp,
-       TRUE AS blocked_active,
-       before_row.status::text AS current_status
-FROM before_row
-WHERE before_row.status = 'active'::feed_status
+SELECT target_feed.status::text AS current_status,
+       target_feed.status = 'active'::feed_status AS blocked_active,
+       after_row.*
+FROM target_feed
+LEFT JOIN after_row ON after_row.id = target_feed.id
 """
 
 UPDATE_FEED_SQL = f"""\

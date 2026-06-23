@@ -1032,7 +1032,7 @@ class FeedStore:
                 "deleted",
                 row["current_status"],
             )
-        return True
+        return bool(row["deleted"])
 
     async def reset_feed(
         self,
@@ -1070,4 +1070,6 @@ class FeedStore:
                 "reset",
                 row["current_status"],
             )
+        if row["id"] is None:
+            return None
         return self._row_to_feed(row)
