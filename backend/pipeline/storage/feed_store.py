@@ -991,7 +991,8 @@ class FeedStore:
         active worker metadata is intentionally preserved so the heartbeat
         path can cancel any running task gracefully.
 
-        Returns True if the feed status was set to deactivated, False otherwise.
+        Returns True if the feed exists. Already-deactivated feeds are treated
+        as a no-op and do not create another audit event.
         """
         required_actor_id = _require_actor_id(actor_id)
         async with self._pool.acquire() as conn:

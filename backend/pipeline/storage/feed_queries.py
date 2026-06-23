@@ -718,6 +718,7 @@ updated AS (
         audit_revision = feeds.audit_revision + 1
     FROM before_row
     WHERE feeds.id = before_row.id
+      AND before_row.status <> 'deactivated'::feed_status
     RETURNING feeds.id, feeds.name, feeds.source_type, feeds.status,
               feeds.failure_count, feeds.retry_after, feeds.status_reason,
               feeds.status_reason_updated_at, feeds.status_reason_detail,
@@ -728,6 +729,31 @@ after_row AS (
     SELECT u.*, fp.source_feed_id, fp.tags
     FROM updated u
     JOIN feed_properties fp ON fp.feed_id = u.id
+),
+unchanged_row AS (
+    SELECT
+        before_row.id,
+        before_row.name,
+        before_row.source_type,
+        before_row.status,
+        before_row.failure_count,
+        before_row.retry_after,
+        before_row.status_reason,
+        before_row.status_reason_updated_at,
+        before_row.status_reason_detail,
+        before_row.quarantine_reason,
+        before_row.last_bookmark_time,
+        before_row.created_at,
+        before_row.audit_revision AS feed_revision,
+        before_row.source_feed_id,
+        before_row.tags
+    FROM before_row
+    WHERE before_row.status = 'deactivated'::feed_status
+),
+result_row AS (
+    SELECT * FROM after_row
+    UNION ALL
+    SELECT * FROM unchanged_row
 ),
 {
     feed_audit_sql.insert_feed_audit_event_cte(
@@ -740,8 +766,8 @@ after_row AS (
         from_sql="FROM before_row\n    JOIN after_row ON after_row.id = before_row.id",
     )
 }
-SELECT after_row.*
-FROM after_row
+SELECT result_row.*
+FROM result_row
 """
 # TODO(hard-delete): remove transcripts PR https://linear.app/watchduty/issue/GOO-458/remaining-legacy-cleanup
 DELETE_FEED_SQL = f"""\

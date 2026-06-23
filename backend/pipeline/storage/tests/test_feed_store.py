@@ -2489,6 +2489,21 @@ class TestDeactivateFeed(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("'feed.deactivated'", feed_queries.DEACTIVATE_FEED_SQL)
 
+    async def test_sql_treats_already_deactivated_feed_as_noop(self) -> None:
+        """Already-deactivated feeds return success without another audit event."""
+        sql = feed_queries.DEACTIVATE_FEED_SQL
+
+        self.assertIn(
+            "AND before_row.status <> 'deactivated'::feed_status",
+            sql,
+        )
+        self.assertIn("unchanged_row AS", sql)
+        self.assertIn(
+            "WHERE before_row.status = 'deactivated'::feed_status",
+            sql,
+        )
+        self.assertIn("SELECT result_row.*", sql)
+
     async def test_missing_feed_returns_false_without_audit(self) -> None:
         """Missing deactivate target does not allocate sequence or audit."""
         pool = make_mock_pool(transaction=True)
