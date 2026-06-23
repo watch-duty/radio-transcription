@@ -3,7 +3,7 @@ import concurrent.futures
 import datetime
 import logging
 import os
-import pathlib
+import random
 import signal
 import threading
 import time
@@ -16,16 +16,19 @@ import uvloop
 from aiohttp import web
 from google.api_core import exceptions as google_exceptions
 from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
-from opentelemetry import trace
 
-from backend.pipeline.common import gcp_helper
+from backend.pipeline.common import gcp_helper, tracing_utils
 from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.common.log_helper import setup_asyncio_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.ingestion import (
+    failure_policy,
     health_server,
+    memory_watchdog,
+    quarantine_reason,
     quarantine_telemetry,
 )
+from backend.pipeline.ingestion.failure_classifiers import pubsub
 from backend.pipeline.ingestion.health_server import HealthState
 from backend.pipeline.ingestion.models import (
     AudioMimeType,
@@ -66,16 +69,23 @@ CaptureFn = Callable[
 logger = logging.getLogger(__name__)
 
 _PIPELINE_GCS_UPLOAD_FAILED = "gcs_upload_failed"
-_PIPELINE_PUBSUB_PUBLISH_FAILED = "pubsub_publish_failed"
 _PIPELINE_BOOKMARK_WRITE_FAILED = "bookmark_write_failed"
+_NON_BUDGETED_RETRY_MIN_SEC = 5 * 60
+_NON_BUDGETED_RETRY_MAX_SEC = 15 * 60
 
 
 class _PipelineFailure(Exception):
     """Post-capture runtime side-effect failure with a stable stage tag."""
 
-    def __init__(self, reason: str) -> None:
+    def __init__(
+        self,
+        reason: str,
+        *,
+        status_reason: FeedStatusReason,
+    ) -> None:
         super().__init__(reason)
         self.reason = reason
+        self.status_reason = status_reason
 
 
 class CollectorRuntime:
@@ -123,8 +133,13 @@ class CollectorRuntime:
         self._capture_fn = capture_fn
         self._collector_settings = settings
         # threading.Event (not asyncio.Event) — the heartbeat OS thread
-        # can't use asyncio primitives; it needs a thread-safe signal.
+        # and memory watchdog thread can't use asyncio primitives; they need a
+        # shared thread-safe stop signal.
         self._thread_stop = threading.Event()
+        self._memory_watchdog = memory_watchdog.MemoryWatchdog(
+            settings,
+            self._thread_stop,
+        )
         # These fields are initialized in _main() before any method reads them.
         # Typed without None so the type checker doesn't require narrowing at
         # every usage site.  Accessing before _main() is a programming error.
@@ -154,12 +169,6 @@ class CollectorRuntime:
         # _shutdown_sequence after _gcs_client.close() with a 250ms
         # SSL-teardown sleep (Pitfall 12).
         self._http_session: aiohttp.ClientSession = None  # type: ignore # set in _main()
-        # _paused_for_memory: threading.Event (NOT bare bool) — read by the
-        # asyncio leasing loop, set/cleared by the watchdog OS thread. See
-        # PITFALLS.md Pitfall 20 — bool atomicity is a CPython implementation
-        # detail; threading.Event is a contract.
-        self._paused_for_memory = threading.Event()
-        self._rss_watchdog_thread: threading.Thread | None = None
         self._capture_resources: CaptureResources = None  # type: ignore # set in _main()
         # Size the aiohttp connection pool to match the feed concurrency so
         # GCS uploads are never queued waiting for a free connection slot.
@@ -251,36 +260,17 @@ class CollectorRuntime:
         )
         self._heartbeat_thread.start()
 
-        # WATCHDOG-01: cgroup-aware self-RSS daemon thread (Phase 4).
-        # Resolved limit drives whether the thread starts at all (D-22):
-        # if cgroup limit is "max" or v1 sentinel, _resolve_* returns None
-        # and we must NOT start the thread (the leasing loop's
-        # _paused_for_memory.is_set() check trivially returns False forever
-        # — acceptable, since the watchdog cannot do its job without a
-        # limit). Joined in _shutdown_sequence immediately after the
-        # heartbeat thread join and BEFORE feed-task cancellation
-        # (PITFALLS Pitfall 1).
-        watchdog_limit = self._resolve_container_memory_bytes()
-        if watchdog_limit is None:
-            logger.warning(
-                "RSS watchdog disabled — no cgroup memory limit detected",
-            )
-        else:
-            self._rss_watchdog_thread = threading.Thread(
-                target=self._rss_watchdog_loop,
-                args=(watchdog_limit,),
-                daemon=True,
-                name="rss-watchdog",
-            )
-            self._rss_watchdog_thread.start()
+        # WATCHDOG-01: cgroup-aware memory daemon thread. The watchdog owns
+        # cgroup detection and disabled-mode logging; the runtime only wires
+        # lifecycle signals.
+        self._memory_watchdog.start(self._loop, self._shutdown)
 
         quarantine_telemetry.configure(settings.google_cloud_project)
 
         # try/finally wraps session creation, capture_resources, and
         # health_server.start so an exception in any of those triggers
         # _shutdown_sequence — closes the aiohttp session and joins
-        # heartbeat/watchdog threads cleanly (each guarded by None/is_alive
-        # checks so partial init is safe).
+        # heartbeat/watchdog threads cleanly.
         try:
             # HTTP-01: runtime-owned aiohttp.ClientSession. Constructed
             # inside _main() because the connector requires a running event
@@ -336,96 +326,6 @@ class CollectorRuntime:
             return False
         return True
 
-    # cgroup memory paths -- frozen at class level so the path objects
-    # are constructed once at import time, not per call. Cached as
-    # pathlib.Path so each poll is just `.read_text()` + `int()`.
-    _CGROUP_V2_LIMIT_PATH = pathlib.Path("/sys/fs/cgroup/memory.max")
-    _CGROUP_V2_USAGE_PATH = pathlib.Path("/sys/fs/cgroup/memory.current")
-    _CGROUP_V1_LIMIT_PATH = pathlib.Path(
-        "/sys/fs/cgroup/memory/memory.limit_in_bytes",
-    )
-    _CGROUP_V1_USAGE_PATH = pathlib.Path(
-        "/sys/fs/cgroup/memory/memory.usage_in_bytes",
-    )
-    # cgroup v1 "unbounded" sentinel (~ 2**63). PITFALLS.md Pitfall 2.
-    _CGROUP_V1_UNBOUNDED_SENTINEL_THRESHOLD = 2**62
-
-    @staticmethod
-    def _resolve_container_memory_bytes() -> int | None:  # noqa: PLR0911
-        """
-        Return the container memory limit in bytes, or None if unbounded.
-
-        Priority order (D-01 / D-04):
-          1. cgroup v2 unified hierarchy (/sys/fs/cgroup/memory.max).
-             Literal "max" -> None (PITFALLS.md Pitfall 2 -- DO NOT
-             fall back to psutil.virtual_memory(); host-namespaced).
-          2. cgroup v1 fallback (/sys/fs/cgroup/memory/memory.limit_in_bytes).
-             Values >= 2**62 are the v1 "unbounded" sentinel -> None.
-          3. None on OSError, malformed/non-integer content, or a
-             non-positive limit (a 0 limit would cause ZeroDivisionError
-             in the watchdog ratio computation).
-
-        Caller MUST treat None as "watchdog disabled" and emit a
-        WARNING per D-22 -- never fall back to host-namespaced memory.
-        """
-        # cgroup v2 (unified hierarchy; expected on COS / GKE / Cloud Run)
-        try:
-            raw = CollectorRuntime._CGROUP_V2_LIMIT_PATH.read_text().strip()
-        except OSError:
-            pass
-        else:
-            if raw == "max":
-                return None
-            try:
-                val = int(raw)
-            except ValueError:
-                return None
-            return val if val > 0 else None
-        # cgroup v1 fallback (legacy hosts; should not be reachable on COS)
-        try:
-            raw = CollectorRuntime._CGROUP_V1_LIMIT_PATH.read_text().strip()
-        except OSError:
-            return None
-        try:
-            val = int(raw)
-        except ValueError:
-            return None
-        if (
-            val >= CollectorRuntime._CGROUP_V1_UNBOUNDED_SENTINEL_THRESHOLD
-            or val <= 0
-        ):
-            return None
-        return val
-
-    @staticmethod
-    def _resolve_container_memory_usage_bytes() -> int | None:
-        """
-        Return current container memory usage in bytes, or None on read error.
-
-        Tries cgroup v2 (/sys/fs/cgroup/memory.current) first, falls back
-        to cgroup v1 (/sys/fs/cgroup/memory/memory.usage_in_bytes). Per
-        D-04, the "max"/sentinel handling lives in
-        _resolve_container_memory_bytes -- this helper only sees numeric
-        values once the limit phase has decided the watchdog should run.
-
-        Returns None if BOTH paths raise OSError. The caller (the
-        watchdog body in Plan 04-02) defensively pauses on None per
-        CONTEXT.md "Specifics": "if read_text raises OSError mid-run,
-        set _paused_for_memory defensively and emit a single ERROR log".
-        """
-        try:
-            return int(
-                CollectorRuntime._CGROUP_V2_USAGE_PATH.read_text().strip(),
-            )
-        except (OSError, ValueError):
-            pass
-        try:
-            return int(
-                CollectorRuntime._CGROUP_V1_USAGE_PATH.read_text().strip(),
-            )
-        except (OSError, ValueError):
-            return None
-
     # -- Leasing ----------------------------------------------------------
 
     async def _leasing_loop(self) -> None:  # noqa: PLR0912
@@ -444,7 +344,7 @@ class CollectorRuntime:
         running at 249 for ~14s is negligible.
         """
         while True:
-            # Memory back-pressure (WATCHDOG-01 / D-26..D-28): if RSS
+            # Memory back-pressure (WATCHDOG-01 / D-26..D-28): if the cgroup
             # crossed the pause threshold, don't claim more feeds. Existing
             # leases continue running (held leases are renewed by the
             # heartbeat — pause means "stop claiming MORE", not "abandon
@@ -459,7 +359,7 @@ class CollectorRuntime:
             # _feed_tasks until pause clears.
             self._reap_completed_tasks()
 
-            if self._paused_for_memory.is_set():
+            if self._memory_watchdog.is_paused():
                 if await self._sleep_or_shutdown(
                     self._collector_settings.rss_watchdog_poll_interval_sec,
                 ):
@@ -632,8 +532,8 @@ class CollectorRuntime:
         warning at garbage collection time. ``.exception()`` on a cancelled
         task raises ``CancelledError``, hence the guard.
 
-        The catch-and-quarantine handler in ``_process_feed`` (D-01, v1.1)
-        is the primary fault-response path. The reaper exists to drain
+        The policy-routing handler in ``_process_feed`` is the primary
+        fault-response path. The reaper exists to drain
         ``task.exception()`` so asyncio does not emit
         "Task exception was never retrieved" warnings, and to log meta-bugs
         where the catch handler itself raised -- which would indicate the
@@ -761,6 +661,69 @@ class CollectorRuntime:
         """Determines the Pub/Sub topic path based on the feed source type."""
         return resolve_topic_path(feed["source_type"], self._collector_settings)
 
+    @staticmethod
+    def _non_budgeted_retry_after() -> datetime.datetime:
+        """Return the retry time for non-budgeted failure lanes."""
+        jitter_sec = random.uniform(  # noqa: S311 -- scheduling jitter
+            _NON_BUDGETED_RETRY_MIN_SEC,
+            _NON_BUDGETED_RETRY_MAX_SEC,
+        )
+        return datetime.datetime.now(datetime.UTC) + datetime.timedelta(
+            seconds=jitter_sec,
+        )
+
+    def _emit_policy_decision(
+        self,
+        feed: LeasedFeed,
+        *,
+        reason: str,
+        status_reason: FeedStatusReason,
+        retry_after: datetime.datetime | None = None,
+        replay_missing: bool = False,
+        data_gap_known: bool = False,
+    ) -> None:
+        """Emit the canonical policy-decision telemetry event."""
+        action = failure_policy.classify_failure_policy(status_reason)
+        payload: dict[str, object] = {
+            "event_type": "feed_failure_policy_decision",
+            "feed_id": str(feed["id"]),
+            "source_type": str(feed["source_type"]),
+            "reason": reason,
+            "status_reason": status_reason.value,
+            "replay_missing": replay_missing,
+            "data_gap_known": data_gap_known,
+            "executed_action": action.value,
+        }
+        if retry_after is not None:
+            payload["retry_after"] = retry_after.isoformat()
+        logger.info(
+            "Feed failure policy decision", extra={"json_fields": payload}
+        )
+
+    def _emit_post_bookmark_publish_failure(
+        self,
+        feed: LeasedFeed,
+        *,
+        reason: str,
+        status_reason: FeedStatusReason,
+    ) -> None:
+        """Emit explicit evidence that capture/bookmark succeeded but publish did not."""
+        action = failure_policy.classify_failure_policy(status_reason)
+        payload: dict[str, object] = {
+            "event_type": "post_bookmark_publish_failure",
+            "feed_id": str(feed["id"]),
+            "source_type": str(feed["source_type"]),
+            "reason": reason,
+            "status_reason": status_reason.value,
+            "replay_missing": True,
+            "data_gap_known": True,
+            "executed_action": action.value,
+        }
+        logger.error(
+            "Post-bookmark publish failure",
+            extra={"json_fields": payload},
+        )
+
     async def _process_captured_chunk(
         self,
         feed: LeasedFeed,
@@ -800,7 +763,10 @@ class CollectorRuntime:
         except (asyncio.CancelledError, LeaseExpiredError):
             raise
         except Exception as exc:
-            raise _PipelineFailure(_PIPELINE_GCS_UPLOAD_FAILED) from exc
+            raise _PipelineFailure(
+                _PIPELINE_GCS_UPLOAD_FAILED,
+                status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            ) from exc
 
         duration_ms = int(
             (
@@ -833,7 +799,10 @@ class CollectorRuntime:
         except (asyncio.CancelledError, LeaseExpiredError):
             raise
         except Exception as exc:
-            raise _PipelineFailure(_PIPELINE_BOOKMARK_WRITE_FAILED) from exc
+            raise _PipelineFailure(
+                _PIPELINE_BOOKMARK_WRITE_FAILED,
+                status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            ) from exc
 
         if not ok:
             # If the batched heartbeat is healthy (renewing every 15s),
@@ -887,7 +856,12 @@ class CollectorRuntime:
         except (asyncio.CancelledError, LeaseExpiredError):
             raise
         except Exception as exc:
-            raise _PipelineFailure(_PIPELINE_PUBSUB_PUBLISH_FAILED) from exc
+            raise _PipelineFailure(
+                pubsub.publish_failure_reason(exc),
+                status_reason=(
+                    FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
+                ),
+            ) from exc
 
         logger.info(
             "Published message %s for feed %s",
@@ -924,21 +898,44 @@ class CollectorRuntime:
         *,
         reason: str,
         status_reason: FeedStatusReason,
+        replay_missing: bool = False,
+        data_gap_known: bool = False,
     ) -> None:
         """Persist a classified feed failure through the fenced store path."""
-        logger.exception(
-            "Feed processing error: feed=%s reason=%s",
-            feed["name"],
-            reason,
-            extra={
-                "json_fields": {
-                    "feed_id": str(feed["id"]),
-                    "source_type": str(feed["source_type"]),
-                    "reason": reason,
-                    "status_reason": status_reason.value,
-                },
-            },
+        self._emit_policy_decision(
+            feed,
+            reason=reason,
+            status_reason=status_reason,
+            replay_missing=replay_missing,
+            data_gap_known=data_gap_known,
         )
+        extra: dict[str, object] = {
+            "json_fields": {
+                "feed_id": str(feed["id"]),
+                "source_type": str(feed["source_type"]),
+                "reason": reason,
+                "status_reason": status_reason.value,
+            },
+        }
+        if status_reason.owner == "source":
+            # External operational Gotchas (e.g. Icecast 404 stream missing, CDN bans) are environment observations.
+            # Log them as a warning without attaching a noisy stack traceback or spawning permanent Stackdriver Error Groups.
+            logger.warning(
+                "Feed source processing observation: feed=%s reason=%s status_reason=%s",
+                feed["name"],
+                reason,
+                status_reason.value,
+                extra=extra,
+            )
+        else:
+            # Actionable Watch Duty internal system Gotchas (e.g. collector bugs, DB/auth failures) warrant an ERROR traceback.
+            logger.exception(
+                "Feed internal processing error: feed=%s reason=%s status_reason=%s",
+                feed["name"],
+                reason,
+                status_reason.value,
+                extra=extra,
+            )
         # SAFETY: _releasing_feeds invariant -- add BEFORE the first await
         # that drops the lease (report_feed_failure sets worker_id=NULL).
         self._releasing_feeds.add(feed["id"])
@@ -971,6 +968,80 @@ class CollectorRuntime:
             # absent from _releasing_feeds but the task is not yet .done().
             self._releasing_feeds.discard(feed["id"])
 
+    async def _record_non_budgeted_failure(
+        self,
+        feed: LeasedFeed,
+        worker_id: uuid.UUID,
+        fencing_token: int,
+        *,
+        reason: str,
+        status_reason: FeedStatusReason,
+        replay_missing: bool = False,
+        data_gap_known: bool = False,
+    ) -> None:
+        """Release a failure that must not consume the feed quarantine budget."""
+        retry_after = self._non_budgeted_retry_after()
+        self._emit_policy_decision(
+            feed,
+            reason=reason,
+            status_reason=status_reason,
+            retry_after=retry_after,
+            replay_missing=replay_missing,
+            data_gap_known=data_gap_known,
+        )
+        if replay_missing and data_gap_known:
+            self._emit_post_bookmark_publish_failure(
+                feed,
+                reason=reason,
+                status_reason=status_reason,
+            )
+        if (
+            status_reason
+            is FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
+        ):
+            # The policy-decision event and dedicated gap ERROR already cover
+            # this case; avoid a third log line for the same publish failure.
+            pass
+        elif (
+            status_reason.owner == "source"
+            or status_reason
+            is FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID
+        ):
+            logger.info(
+                "Feed source failure suppressed from quarantine budget: "
+                "feed=%s reason=%s",
+                feed["name"],
+                reason,
+            )
+        else:
+            logger.exception(
+                "Feed processing error suppressed from quarantine budget: "
+                "feed=%s reason=%s",
+                feed["name"],
+                reason,
+            )
+        # SAFETY: _releasing_feeds invariant -- add BEFORE the first await
+        # that drops the lease (release_non_budgeted_failure sets
+        # worker_id=NULL).
+        self._releasing_feeds.add(feed["id"])
+        try:
+            await self._store.release_non_budgeted_failure(
+                feed["id"],
+                worker_id,
+                fencing_token,
+                retry_after=retry_after,
+                status_reason=status_reason,
+            )
+        except Exception:
+            # 60s abandonment window is the safety net if this fails.
+            logger.exception(
+                "Failed to record non-budgeted failure for feed %s",
+                feed["name"],
+            )
+        finally:
+            # SAFETY: No await between discard() and return.
+            self._releasing_feeds.discard(feed["id"])
+
     @staticmethod
     def _leased_feed_has_failure_state(feed: LeasedFeed) -> bool:
         """Return whether a leased feed carries persisted failure state."""
@@ -995,12 +1066,15 @@ class CollectorRuntime:
         worker_id: uuid.UUID,
         fencing_token: int,
     ) -> bool:
-        """Record a non-audio source success when persisted state is dirty.
+        """Record a non-audio source success when persisted state needs it.
 
         Returns ``True`` when processing may continue, ``False`` when the task
         should stop because the row is no longer owned by this active lease.
         """
-        if not self._leased_feed_has_failure_state(feed):
+        if (
+            not self._leased_feed_has_failure_state(feed)
+            and observation.resume_position is None
+        ):
             return True
 
         try:
@@ -1144,8 +1218,20 @@ class CollectorRuntime:
                     )
                     raise TypeError(msg)  # noqa: TRY301
                 captured_chunk = capture_event
-                tracer = trace.get_tracer(__name__)
-                with tracer.start_as_current_span("process_captured_chunk"):
+                ingest_time_ms = str(
+                    int(
+                        (
+                            captured_chunk.receipt_time
+                            or datetime.datetime.now(datetime.UTC)
+                        ).timestamp()
+                        * 1000
+                    )
+                )
+                with tracing_utils.with_baggage_and_span(
+                    {"ingest_time_ms": ingest_time_ms},
+                    "process_captured_chunk",
+                    __name__,
+                ):
                     chunk_extension = extension
                     chunk_content_type = content_type
 
@@ -1206,37 +1292,85 @@ class CollectorRuntime:
             return
 
         except FeedFailure as e:
-            await self._record_feed_failure(
-                feed,
-                worker_id,
-                fencing_token,
-                reason=e.reason,
-                status_reason=e.status_reason,
-            )
+            action = failure_policy.classify_failure_policy(e.status_reason)
+            if (
+                action
+                is failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
+            ):
+                await self._record_feed_failure(
+                    feed,
+                    worker_id,
+                    fencing_token,
+                    reason=e.reason,
+                    status_reason=e.status_reason,
+                )
+            else:
+                await self._record_non_budgeted_failure(
+                    feed,
+                    worker_id,
+                    fencing_token,
+                    reason=e.reason,
+                    status_reason=e.status_reason,
+                )
             return
 
         except _PipelineFailure as e:
-            await self._record_feed_failure(
-                feed,
-                worker_id,
-                fencing_token,
-                reason=e.reason,
-                status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            action = failure_policy.classify_failure_policy(e.status_reason)
+            replay_missing = (
+                e.status_reason
+                is FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
             )
+            if (
+                action
+                is failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
+            ):
+                await self._record_feed_failure(
+                    feed,
+                    worker_id,
+                    fencing_token,
+                    reason=e.reason,
+                    status_reason=e.status_reason,
+                    replay_missing=replay_missing,
+                    data_gap_known=replay_missing,
+                )
+            else:
+                await self._record_non_budgeted_failure(
+                    feed,
+                    worker_id,
+                    fencing_token,
+                    reason=e.reason,
+                    status_reason=e.status_reason,
+                    replay_missing=replay_missing,
+                    data_gap_known=replay_missing,
+                )
             return
 
         except Exception as e:
             # Transitional catch-all for bugs or untyped collector failures.
             # Source-specific attribution belongs in collectors that raise
             # FeedFailure; the runtime only records the explicit fallback.
-            reason = str(e)[:200] if str(e) else type(e).__name__
-            await self._record_feed_failure(
-                feed,
-                worker_id,
-                fencing_token,
-                reason=reason,
-                status_reason=FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
-            )
+            reason = quarantine_reason.exception_text(e)
+            status_reason = FeedStatusReason.SYSTEM_UNEXPECTED_ERROR
+            action = failure_policy.classify_failure_policy(status_reason)
+            if (
+                action
+                is failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
+            ):
+                await self._record_feed_failure(
+                    feed,
+                    worker_id,
+                    fencing_token,
+                    reason=reason,
+                    status_reason=status_reason,
+                )
+            else:
+                await self._record_non_budgeted_failure(
+                    feed,
+                    worker_id,
+                    fencing_token,
+                    reason=reason,
+                    status_reason=status_reason,
+                )
             return
 
         # Normal completion (capture generator exhausted)
@@ -1307,136 +1441,6 @@ class CollectorRuntime:
             # sleep_time clamps to 0 — fires immediately to catch up.
             next_tick += interval
 
-    def _rss_watchdog_loop(self, limit_bytes: int) -> None:  # noqa: PLR0912
-        """
-        OS daemon thread: poll cgroup RSS, gate _paused_for_memory, trip _shutdown.
-
-        Mirrors the heartbeat-loop pattern (no asyncio primitives — this is
-        an OS thread). After 3 consecutive samples >= pause_threshold, sets
-        _paused_for_memory so the leasing loop stops claiming new feeds.
-        After 3 consecutive samples >= exit_threshold, triggers graceful
-        shutdown via _loop.call_soon_threadsafe(_shutdown.set) AND sets
-        _thread_stop — the latter causes the next loop iteration to exit
-        via the `while not self._thread_stop.is_set()` check, giving us
-        the single-trip semantics required by PITFALLS Pitfall 1.
-
-        NEVER calls os._exit(1) — that path is reserved for fence violations
-        and the stall watchdog. Kernel OOM is the backstop for fast leaks
-        (REQUIREMENTS WATCHDOG-01 explicit).
-
-        Logging is transition-only (D-25): startup, pause-set, pause-clear,
-        trip. No periodic-poll logging — at 2s polling, 1800 lines/hour
-        would dominate Cloud Logging quota.
-        """
-        s = self._collector_settings
-        poll_interval = s.rss_watchdog_poll_interval_sec
-        pause_threshold = s.rss_watchdog_pause_threshold
-        exit_threshold = s.rss_watchdog_exit_threshold
-        # Hysteresis margin is hard-coded as pause_threshold - 0.10 per D-20
-        # — exposing it as a setting invites the 5pp temptation (D-08).
-        resume_threshold = pause_threshold - 0.10
-        pause_consec_target = s.rss_watchdog_pause_consecutive_samples
-        exit_consec_target = s.rss_watchdog_exit_consecutive_samples
-        warmup_sec = s.rss_watchdog_warmup_sec
-        watchdog_start = time.monotonic()
-
-        pause_consec = 0
-        exit_consec = 0
-        # One-shot flag for "OSError reading cgroup mid-run" — defensive
-        # pause + single ERROR log (CONTEXT.md "Specifics"). We do NOT
-        # trip exit on read failures (heavier action than failure mode
-        # warrants).
-        usage_read_error_logged = False
-
-        # D-21 startup log line (mandatory per ROADMAP SC#1).
-        logger.info(
-            "RSS watchdog limit = %d MB (cgroup detected)",
-            limit_bytes // (1024 * 1024),
-        )
-
-        while not self._thread_stop.is_set():
-            if self._thread_stop.wait(timeout=poll_interval):
-                break
-
-            # Warmup grace — D-11 + D-32: counters do NOT increment during
-            # warmup. Orthogonal to the consecutive-sample debounce; both
-            # protect against different failure modes.
-            if (time.monotonic() - watchdog_start) < warmup_sec:
-                continue
-
-            usage = self._resolve_container_memory_usage_bytes()
-            if usage is None:
-                # Defensive pause + single ERROR log (CONTEXT.md "Specifics":
-                # better to pause than to silently disable; do NOT trip exit).
-                if not self._paused_for_memory.is_set():
-                    self._paused_for_memory.set()
-                if not usage_read_error_logged:
-                    logger.error(
-                        "RSS watchdog: failed to read cgroup memory.current "
-                        "— defensively pausing claims",
-                    )
-                    usage_read_error_logged = True
-                continue
-
-            # A successful read clears the one-shot error-log gate so a
-            # later transient failure logs again.
-            usage_read_error_logged = False
-
-            ratio = usage / limit_bytes
-
-            # Exit-threshold debounce (D-09 / D-31).
-            if ratio >= exit_threshold:
-                exit_consec += 1
-            else:
-                exit_consec = 0
-
-            if exit_consec >= exit_consec_target:
-                logger.error(
-                    "RSS watchdog: %.1f%% >= exit threshold for %d samples "
-                    "— initiating graceful shutdown",
-                    ratio * 100.0,
-                    exit_consec,
-                )
-                # D-18: trip path sets BOTH _thread_stop (so the watchdog
-                # exits its own loop on the next iteration) AND
-                # _shutdown via call_soon_threadsafe (so the asyncio main
-                # loop sees the shutdown event). NEVER os._exit(1) —
-                # PITFALLS Pitfall 1 + REQUIREMENTS WATCHDOG-01.
-                self._loop.call_soon_threadsafe(self._shutdown.set)
-                self._thread_stop.set()
-                # Single-trip: the next iteration's `while not
-                # self._thread_stop.is_set()` will be False, exiting the
-                # loop. No explicit guard needed here.
-                continue
-
-            # Pause-set debounce (D-09 / D-30).
-            if ratio >= pause_threshold:
-                pause_consec += 1
-            else:
-                pause_consec = 0
-
-            if (
-                pause_consec >= pause_consec_target
-                and not self._paused_for_memory.is_set()
-            ):
-                self._paused_for_memory.set()
-                logger.warning(
-                    "RSS watchdog: %.1f%% >= pause threshold for %d samples "
-                    "— pausing claims",
-                    ratio * 100.0,
-                    pause_consec,
-                )
-
-            # Pause-clear (D-10): single sample below the hysteresis floor.
-            # No separate consecutive-sample counter — the 10pp band already
-            # absorbs noise.
-            if self._paused_for_memory.is_set() and ratio < resume_threshold:
-                self._paused_for_memory.clear()
-                logger.info(
-                    "RSS watchdog: %.1f%% — resuming claims",
-                    ratio * 100.0,
-                )
-
     async def _heartbeat_cycle(self) -> None:
         """
         Renew heartbeats and detect fence violations.
@@ -1489,8 +1493,9 @@ class CollectorRuntime:
         # of which can happen while our last_heartbeat stays < 60 s old.
         # Fenced writes on the task side are the authoritative lease-lost
         # detection at write time; they call update_feed_progress /
-        # release_feed / report_feed_failure with WHERE worker_id=$1 AND
-        # fencing_token=$2 and return False if our lease was taken. The
+        # release_feed / report_feed_failure / release_non_budgeted_failure
+        # with WHERE worker_id=$1 AND fencing_token=$2 and return False if
+        # our lease was taken. The
         # existing retry_with_lease_check wrapper + _lease_lost event
         # gracefully handles that outcome without depending on the
         # heartbeat's retained_ids observation.
@@ -1575,7 +1580,7 @@ class CollectorRuntime:
 
     # -- Shutdown sequence ------------------------------------------------
 
-    async def _shutdown_sequence(self) -> None:  # noqa: PLR0912
+    async def _shutdown_sequence(self) -> None:
         """
         Orderly teardown: stop /healthz HTTP server, cancel feed tasks,
         stop heartbeat thread, close GCS client and database pools.
@@ -1623,11 +1628,7 @@ class CollectorRuntime:
         # 3s join (vs heartbeat's 5s): watchdog body has no DB I/O; only a
         # path-stuck-on-cgroup-read could legitimately stall, and that's
         # rare enough that 3s is generous.
-        if (
-            self._rss_watchdog_thread is not None
-            and self._rss_watchdog_thread.is_alive()
-        ):
-            await asyncio.to_thread(self._rss_watchdog_thread.join, timeout=3)
+        await self._memory_watchdog.join(timeout_sec=3)
 
         # Cancel all feed tasks
         for task in self._feed_tasks.values():

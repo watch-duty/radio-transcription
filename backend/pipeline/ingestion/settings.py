@@ -3,9 +3,13 @@ from __future__ import annotations
 import os
 import uuid
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
-from backend.pipeline.storage.feed_store import SourceType
+from backend.pipeline.ingestion import source_runtime_specs
 from backend.pipeline.storage.settings import AlloyDBSettings
+
+if TYPE_CHECKING:
+    from backend.pipeline.storage.feed_store import SourceType
 
 
 def _require_env(name: str) -> str:
@@ -17,18 +21,11 @@ def _require_env(name: str) -> str:
     return value
 
 
-# Per-type claim-budget defaults (scaling plan §4/§6). The set of keys
-# IS the canonical "what types this fleet claims" registry — adding a
-# new claimable source type means adding one entry here. The runtime
-# and FeedStore both iterate this set; neither references SourceType
-# members directly. ECHO is intentionally absent: Echo feeds are
-# served by a separate cloud function, not VM-leased.
-_DEFAULT_CAPS: dict[SourceType, int] = {
-    SourceType.BCFY_FEEDS: 240,
-    SourceType.BCFY_CALLS: 600,
-    SourceType.OPENMHZ: 900,
-    SourceType.FIRE_NOTIFICATIONS: 300,
-}
+# Per-type claim-budget defaults. The key set comes from SourceRuntimeSpec so
+# adding a VM-claimable source updates caps, topic routing metadata, and URL
+# metadata in one place. ECHO is intentionally absent: Echo feeds are served by
+# a separate cloud function, not VM-leased.
+_DEFAULT_CAPS: dict[SourceType, int] = source_runtime_specs.default_caps()
 
 
 def _load_caps_from_env() -> dict[SourceType, int]:
@@ -233,12 +230,8 @@ class CollectorSettings:
         ),
     )
 
-    # RSS watchdog (WATCHDOG-01). Cgroup-aware self-monitoring daemon
-    # thread that pauses claims at sustained 70% RSS and triggers
-    # graceful shutdown at 90% RSS x 3 consecutive samples. See
-    # PITFALLS.md Pitfalls 1, 2, 3, 16, 18, 20. Hysteresis margin is
-    # hard-coded as pause_threshold - 0.10 (D-20) -- exposing it as a
-    # setting would invite the 5pp temptation rejected by D-08.
+    # Memory watchdog (WATCHDOG-01). See memory_watchdog.py for cgroup detection,
+    # pause/resume hysteresis, and graceful-shutdown trip behavior.
     rss_watchdog_poll_interval_sec: float = field(
         default_factory=lambda: float(
             os.environ.get("RSS_WATCHDOG_POLL_INTERVAL_SEC", "2.0"),

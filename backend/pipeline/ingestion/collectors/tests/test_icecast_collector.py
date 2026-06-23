@@ -238,6 +238,28 @@ class TestCreateFfmpegProcess(unittest.IsolatedAsyncioTestCase):
         value_index = args.index("-reconnect_on_http_error") + 1
         self.assertEqual(args[value_index], "429,500,502,503,504")
 
+    @patch(
+        "asyncio.create_subprocess_exec",
+        new_callable=AsyncMock,
+    )
+    async def test_timeout_flag_is_set(self, mock_exec: AsyncMock) -> None:
+        """Ffmpeg should have a network timeout set to prevent blocking indefinitely."""
+        mock_exec.return_value = AsyncMock()
+
+        await icecast_collector._create_ffmpeg_process(
+            "http://example.com/stream.mp3",
+            "/tmp/chunk_%06d.flac",  # noqa: S108
+            "Authorization: Basic dGVzdDp0ZXN0\r\n",
+        )
+
+        args = mock_exec.call_args.args
+        self.assertIn("-timeout", args)
+        value_index = args.index("-timeout") + 1
+        self.assertEqual(
+            args[value_index],
+            str(icecast_collector.FFMPEG_TIMEOUT_SEC * 1_000_000),
+        )
+
 
 class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
     """Tests for the public capture_icecast_stream API."""
@@ -377,7 +399,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         _assert_collector_failure(
             self,
             context.exception,
-            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
             "missing_broadcastify_credentials",
         )
 
@@ -473,7 +495,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
     async def test_ffmpeg_error_exit_code_includes_stderr(
         self, mock_create_ffmpeg: AsyncMock
     ) -> None:
-        """Test: ffmpeg non-zero exit raises a categorical tag and logs stderr context."""
+        """Test: ffmpeg non-zero exit raises diagnostic text and logs stderr."""
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=7777,
             wait_delay=0.0,
@@ -497,7 +519,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             self,
             context.exception,
             FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
-            "stream_http_403",
+            "HTTP error 403 Forbidden",
         )
         formatted = _formatted_error_calls(self.mock_logger)
         self.assertIn("ffmpeg exited with code 1", formatted)
@@ -536,11 +558,50 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             self,
             context.exception,
             FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-            "ffmpeg_exit_8",
+            "ffmpeg exited with code 8",
         )
         formatted = _formatted_error_calls(self.mock_logger)
         self.assertIn("ffmpeg exited with code 8", formatted)
         self.assertIn("(no stderr captured)", formatted)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_ffmpeg_error_exit_code_no_probe_result_is_inconclusive(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Ambiguous ffmpeg exit falls back when probing gives no evidence."""
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=7779,
+            wait_delay=0.0,
+            wait_result=1,
+        )
+
+        feed = _make_feed("no-probe-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        with patch(
+            "backend.pipeline.ingestion.collectors.icecast."
+            "icecast_collector._probe_stream_once",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            gen = icecast_collector.capture_icecast_stream(
+                feed,
+                shutdown_event,
+                url_base="https://mock.example.com/",
+                resources=_default_resources(),
+            )
+            with self.assertRaises(FeedFailure) as context:
+                await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+
+        _assert_collector_failure(
+            self,
+            context.exception,
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            "ffmpeg exited with code 1",
+        )
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
@@ -573,7 +634,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             self,
             context.exception,
             FeedStatusReason.SOURCE_OFFLINE,
-            "stream_http_404",
+            "HTTP error 404 Not Found",
         )
 
     @patch(
@@ -607,7 +668,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             self,
             context.exception,
             FeedStatusReason.SOURCE_RATE_LIMITED,
-            "stream_http_429",
+            "HTTP error 429 Too Many Requests",
         )
 
     @patch(
@@ -648,7 +709,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             self,
             context.exception,
             FeedStatusReason.SOURCE_RATE_LIMITED,
-            "stream_http_429",
+            "HTTP error 429 Too Many Requests",
         )
 
     @patch(
@@ -682,7 +743,41 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             self,
             context.exception,
             FeedStatusReason.SOURCE_UNREACHABLE,
-            "stream_http_503",
+            "Server returned 503 Service Unavailable",
+        )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_ffmpeg_error_exit_code_http_502_diagnostic(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Ffmpeg HTTP 502 diagnostics preserve provider evidence."""
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=7785,
+            wait_delay=0.0,
+            wait_result=8,
+            stderr_lines=[b"HTTP error 502 Bad Gateway\n"],
+        )
+
+        feed = _make_feed("bad-gateway-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_resources_with_probe_status(200, reason="OK"),
+        )
+        with self.assertRaises(FeedFailure) as context:
+            await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+
+        _assert_collector_failure(
+            self,
+            context.exception,
+            FeedStatusReason.SOURCE_UNREACHABLE,
+            "HTTP error 502 Bad Gateway",
         )
 
     @patch(
@@ -715,22 +810,21 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             self,
             context.exception,
             FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-            "ffmpeg_exit_8",
+            "ffmpeg exited with code 8",
         )
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
-    async def test_ffmpeg_signal_kill_normalizes_to_signal_tag(
+    async def test_ffmpeg_signal_kill_renders_signal_diagnostic(
         self, mock_create_ffmpeg: AsyncMock
     ) -> None:
-        """Test: signal-killed ffmpeg (negative returncode) maps to ffmpeg_signal_N tag.
+        """Test: signal-killed ffmpeg maps to diagnostic text.
 
         Python's subprocess.returncode is -N for signal-N termination on POSIX
-        (e.g. SIGKILL -> -9). The raised tag must stay snake_case (no literal
-        minus sign), so the collector splits sign and emits ``ffmpeg_signal_9``
-        rather than ``ffmpeg_exit_-9``.
+        (e.g. SIGKILL -> -9). The classifier still splits sign and emits a
+        normalized internal reason; the feed failure exposes a human diagnostic.
         """
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=7779,
@@ -755,7 +849,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             self,
             context.exception,
             FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-            "ffmpeg_signal_9",
+            "ffmpeg terminated by signal 9; Killed",
         )
         formatted = _formatted_error_calls(self.mock_logger)
         self.assertIn("ffmpeg exited with code -9", formatted)
@@ -823,7 +917,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             self,
             context.exception,
             FeedStatusReason.SOURCE_OFFLINE,
-            "stream_http_404",
+            "HTTP error 404 Not Found",
         )
         formatted = _formatted_error_calls(self.mock_logger)
         self.assertIn("no finalized segment within", formatted)
@@ -882,10 +976,18 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         fixed_anchor = datetime.datetime(
             2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC
         )
-        # First call sets stream_anchor_time; subsequent calls (the clamp) return a
-        # time far beyond any chunk_end_time so min() always returns chunk_end_time.
-        far_future = fixed_anchor + datetime.timedelta(hours=1)
-        mock_now_utc.side_effect = [fixed_anchor] + [far_future] * 10
+        # First call sets stream_anchor_time. Subsequent calls return a time slightly
+        # after each chunk's end time, so min() picks chunk_end_time, but lag remains low.
+        t0 = fixed_anchor
+        mock_now_utc.side_effect = [
+            t0,  # stream_anchor_time
+            t0 + datetime.timedelta(seconds=21),  # receipt_time (chunk 0)
+            t0 + datetime.timedelta(seconds=21),  # clamp (chunk 0)
+            t0 + datetime.timedelta(seconds=41),  # receipt_time (chunk 1)
+            t0 + datetime.timedelta(seconds=41),  # clamp (chunk 1)
+            t0 + datetime.timedelta(seconds=61),  # receipt_time (chunk 2)
+            t0 + datetime.timedelta(seconds=61),  # clamp (chunk 2)
+        ]
 
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=3333,
@@ -894,7 +996,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
                 b"FLAC_SEGMENT_1",
                 b"FLAC_SEGMENT_2",
             ],
-            wait_delay=0.1,
+            wait_delay=0.0,
             wait_result=0,
         )
 
@@ -1010,6 +1112,48 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(chunk.session_id)
         self.assertEqual(results[0].session_id, results[1].session_id)
         self.assertEqual(results[1].session_id, results[2].session_id)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_stream_lag_logged(
+        self, mock_create_ffmpeg: MagicMock, mock_now_utc: MagicMock
+    ) -> None:
+        """Test: stream lag exceeding threshold logs a warning but does not raise an error."""
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=8888,
+            segments=[b"FLAC_DATA_0", b"FLAC_DATA_1"],
+            wait_delay=0.5,
+            wait_result=0,
+        )
+
+        feed = _make_feed("lag-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        t0 = datetime.datetime(2026, 6, 20, 10, 0, 0, tzinfo=datetime.UTC)
+        mock_now_utc.side_effect = [
+            t0,  # stream_anchor_time
+            t0
+            + datetime.timedelta(seconds=85),  # receipt_time for first segment
+        ]
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_default_resources(),
+        )
+
+        chunk = await gen.__anext__()
+
+        self.assertEqual(chunk.audio_bytes, b"FLAC_DATA_0")
+        self.mock_logger.warning.assert_called_once()
+        log_args = self.mock_logger.warning.call_args.args
+        self.assertIn("Stream lag has exceeded threshold", log_args[0])
 
 
 class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):

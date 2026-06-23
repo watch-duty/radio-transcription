@@ -12,16 +12,18 @@ from cloudevents.http.event import CloudEvent
 from google.cloud import pubsub_v1
 
 from backend.pipeline.common.clients import audio_segments_client
+from backend.pipeline.common.container_helper import ForkDetector, fork_checked
 from backend.pipeline.common.log_helper import setup_logging
-from backend.pipeline.common.tracing_utils import setup_tracing
+from backend.pipeline.common.tracing_utils import (
+    setup_tracing,
+)
 from backend.pipeline.transcription.enums import TranscriberType
 from backend.pipeline.transcription.processor import TranscriptionEventProcessor
 from backend.pipeline.transcription.transcribers.base import Transcriber
 from backend.pipeline.transcription.transcribers.factory import get_transcriber
 
-# Setup Logging and Tracing
+# Setup Logging
 setup_logging()
-setup_tracing(service_name="transcription-service", use_batch=False)
 logger = logging.getLogger(__name__)
 
 
@@ -29,10 +31,26 @@ class TranscriptionServiceContainer:
     """Encapsulates the warm-started cached service container instances for GCF."""
 
     def __init__(self) -> None:
+        self._fork_detector = ForkDetector(self.reset_clients)
         self._transcriber: Transcriber | None = None
         self._publisher: pubsub_v1.PublisherClient | None = None
         self._processor: TranscriptionEventProcessor | None = None
 
+    def reset_clients(self) -> None:
+        if self._publisher is not None:
+            try:
+                close_fn = getattr(self._publisher, "close", None)
+                if close_fn is not None:
+                    close_fn()
+            except Exception:
+                logger.exception(
+                    "Failed to close Pub/Sub publisher client on fork reset"
+                )
+        self._transcriber = None
+        self._publisher = None
+        self._processor = None
+
+    @fork_checked
     def get_transcriber(self, project_id: str) -> Transcriber:
         """Warms up and caches the transcriber instance.
 
@@ -53,6 +71,7 @@ class TranscriptionServiceContainer:
             self._transcriber.setup()
         return self._transcriber
 
+    @fork_checked
     def get_publisher(self) -> pubsub_v1.PublisherClient:
         """Warms up and caches the Pub/Sub publisher client with ordering enabled.
 
@@ -69,6 +88,7 @@ class TranscriptionServiceContainer:
             )
         return self._publisher
 
+    @fork_checked
     def get_processor(self) -> TranscriptionEventProcessor:
         """Warms up and caches the Event Processor instance.
 
@@ -136,5 +156,7 @@ def transcribe_claim_check(cloud_event: CloudEvent) -> None:
     Args:
         cloud_event: The triggered Pub/Sub CloudEvent.
     """
+    setup_tracing(service_name="transcription-service", use_batch=False)
+
     processor = container.get_processor()
     processor.process_event(cloud_event)

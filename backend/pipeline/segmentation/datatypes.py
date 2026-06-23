@@ -24,12 +24,12 @@ logger = logging.getLogger(__name__)
 
 # Type alias for the segmentation Dead Letter Queue tagged output
 SegmentationDlqOutput = beam.pvalue.TaggedOutput[
-    Literal["normalization_dlq"],
+    Literal["segmentation_dlq"],
     dict[str, Any],
 ]
 
 # Type alias for the raw DLQ payload tuple yielded by StitcherEngine
-SegmentationRawDlqOutput = tuple[Literal["normalization_dlq"], dict[str, Any]]
+SegmentationRawDlqOutput = tuple[Literal["segmentation_dlq"], dict[str, Any]]
 
 
 TimeRange = bp_state.TimeRangeProto
@@ -63,26 +63,6 @@ class DownloadedChunkPayload:
     session_id: str
 
 
-@dataclass(frozen=True)
-class TranscriptionResult:
-    """Intermediate transcription result holding payload data before Protobuf serialization, bypassing Protobuf pickling issues during Dataflow shuffle."""
-
-    feed_id: str
-    session_id: str
-    contributing_audio_uris: list[str]
-    transcript: str
-    time_range: TimeRange
-    segment_id: str
-    start_audio_offset_ms: int
-    end_audio_offset_ms: int
-    canonical_audio_uri: str
-    playback_audio_uri: str
-    feed_metadata: FeedMetadata
-    missing_prior_context: bool = False
-    missing_post_context: bool = False
-    traceparent: str | None = None
-
-
 IdleFeedState = bp_state.IdleFeedStateProto
 ActiveStitchingState = bp_state.ActiveStitchingStateProto
 
@@ -111,6 +91,7 @@ class StitcherContext:
     buffer_duration_ms: int = 0
     speech_segments: list[TimeRange] = field(default_factory=list)
     traceparent: str | None = None
+    baggage: str | None = None
     prior_audio_tail: bytes | None = None
 
 
@@ -201,6 +182,7 @@ class FlushAction(StateMachineAction):
     isolated_audio_buffer_uris: list[str] = field(default_factory=list)
     speech_segments: list[TimeRange] = field(default_factory=list)
     traceparent: str | None = None
+    baggage: str | None = None
     audio_classification: int = 0
 
 

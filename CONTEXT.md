@@ -47,9 +47,18 @@ editable model package install.
 
 ### Canonical Manifest
 
-The row-per-audio-segment JSONL contract used before provider-specific model
-input conversion. Rows include fields such as `audio_filepath`, `text`,
-`offset`, and `duration`.
+The unified strict train/eval input contract used before provider-specific
+model input conversion. Each row is row-per-audio-segment JSONL with required
+`audio_filepath`, `text`, `offset`, `duration`, `example_id`, and `segment_id`
+fields. Strict `audio_filepath` values are model-ready `gs://...flac` clip
+URIs, and `(example_id, segment_id)` is the logical row identity, unique within
+one manifest.
+
+Optional shallow metadata may include `split`, `lang`, `dataset`,
+`source_audio`, and `audio_processing`. Strict validation through
+`validate_canonical_manifest(...)` ignores unknown row fields, unknown metadata
+keys, and prediction-enriched fields such as `pred_text_*`. See
+`model/data/manifests/README.md` for the detailed contract.
 
 ### Train, Validation, And Eval Splits
 
@@ -92,6 +101,15 @@ Evaluation outputs that let maintainers inspect or recalculate model quality,
 including local `wer_summary.{json,md}`, ledger rows, and GCS paths to raw
 Vertex batch inference results.
 
+### Normalized Inference Manifest
+
+A scorer-ready eval artifact that preserves canonical manifest rows and adds
+model prediction fields. It requires reference transcription text on every row;
+a single row owns a single inference input; prediction records must belong to
+that manifest's rows. A `pred_text_*` field is present only when a prediction
+record existed for that row, and an empty string value means the prediction
+record existed and contained empty text.
+
 ## Ingestion Context
 
 ### Feed
@@ -121,6 +139,13 @@ The source-specific scope used to decide whether item failures are isolated or
 feed-level. For polling collectors this is usually one response page or file
 listing.
 
+### Object-Scoped Failure
+
+A failure limited to one source object, item, media URL, or Echo GCS object
+notification. It does not prove the whole feed is broken by itself, so it
+should not promote to feed-level quarantine evidence without broader
+observation-boundary evidence.
+
 ### Collector-Local Failure Streak
 
 An in-memory streak of failed poll, fetch, connection, or source operations
@@ -129,14 +154,133 @@ audio is present.
 
 ### Feed Failure Episode
 
-A terminal feed-level failure recorded in storage after a collector or runtime
-decides the current feed cannot make progress. Consecutive feed failure
-episodes drive quarantine.
+A terminal failure recorded after policy decides retry, backoff, or probing is
+not expected to restore progress without operator intervention. Consecutive feed
+failure episodes drive quarantine, including v1 cases where the repair is a
+code, deploy, or internal system fix.
+
+### Non-Budgeted Ingestion Failure
+
+A visible, retryable ingestion failure that does not count toward feed
+quarantine because policy expects retry, backoff, or probing to recover without
+operator intervention, or because the condition is outside operator control.
+
+### External Source Condition
+
+A source/provider condition such as offline, unreachable, or rate-limited source
+access. It remains non-budgeted because retry, backoff, probing, or upstream
+recovery is the expected path.
+
+### Operator-Actionable Failure
+
+An ingestion failure that requires a human-initiated correction before normal
+claiming should resume. The correction may target one feed, a batch of feeds,
+code, deploy configuration, credentials, or another internal system.
+
+### Quarantine-Budgeted Failure
+
+An ingestion failure where retry, backoff, or probing is not expected to restore
+progress and an operator can fix the condition. Consecutive quarantine-budgeted
+failures drive quarantine.
+
+### Feed Configuration Failure
+
+A feed-row or source-specific feed configuration problem that prevents
+ingestion from addressing the intended source. Missing source identifiers and
+invalid source-specific feed paths are feed configuration failures.
+
+### Runtime Configuration Failure
+
+A shared deploy, environment, credential-location, transport, or source-class
+configuration problem that prevents ingestion from operating correctly. It is
+not specific to one feed row, even when first observed while processing one
+feed.
+
+### Pipeline-Owned Failure
+
+A post-capture ingestion failure after source capture has succeeded or
+partially succeeded. The source feed may be healthy, so v1 keeps these failures
+outside the feed quarantine budget while preserving visibility for repair and
+replay work. Echo v1 records these failures as non-budgeted status and returns
+success for the object notification to avoid retry loops and duplicate Pub/Sub
+publish risk until a durable hold/replay lane exists.
+
+### Post-Bookmark Publish Failure
+
+A pipeline-owned failure where captured audio was uploaded and the feed cursor
+was advanced, but the corresponding publish did not complete. It records
+pipeline-gap telemetry and releases the feed through the non-budgeted retry
+path in v1.
+
+### Retryable Pipeline Failure
+
+A post-capture ingestion failure that policy expects retry to recover without
+operator intervention. It remains visible but does not count toward quarantine.
+
+### Terminal Auth Or Access Refusal
+
+An explicit authentication or authorization refusal that remains after
+collector-local retry, token refresh, or reconnect policy has been exhausted.
+It remains non-budgeted in v1 because credential/session/provider state can
+recover outside feed-row action, and policy can later move the route if a
+specific terminal auth family proves deterministic.
+
+### Credential Access Failure
+
+A failure to retrieve or access credentials from an internal credential store.
+It is distinct from terminal auth or access refusal because the upstream source
+has not necessarily rejected the credential.
+
+### Source Payload Contract Failure
+
+A failure where the source returned apparently successful data, but its shape or
+encoding does not match the collector contract. It remains non-budgeted in v1
+because malformed provider responses can be transient or source-side. Avoid:
+ambiguous collector error, item failure.
+
+### Ambiguous Item Failure
+
+An item-scoped media/download/probe failure that cannot prove the whole feed or
+collector contract is broken. It remains non-budgeted unless later evidence
+promotes it to a more precise operator-actionable failure.
 
 ### Status Reason
 
-The current canonical abnormal-condition label for a feed. It says whether the
-likely owner is the source/provider or the ingestion system.
+The current canonical abnormal-condition label for a feed. It is visible to
+operators and is the v1 routing key for failure policy decisions.
+
+### Status Reason Owner
+
+The coarse ownership namespace encoded by a status reason prefix: `source`,
+`system`, or `pipeline`. It identifies the layer that owns the abnormal
+condition and is distinct from retry, quarantine, and logging policy.
+
+### Failure Policy Action
+
+A runtime handling category selected from a canonical status reason. Budgeted
+actions can move a feed toward quarantine. Non-budgeted actions make the
+failure visible while keeping it out of the feed quarantine budget.
+
+### Routing Policy
+
+The central mapping from canonical status reason to runtime handling category.
+In v1, this mapping is status-only so routing changes stay localized and can be
+switched without changing collector evidence extraction.
+
+### Unexpected System Failure
+
+The residual fallback for untyped bugs or missing classification evidence. It
+is non-budgeted until a future change replaces it with a more precise status
+reason or switches its action in the policy table.
+
+### Quarantine Reason
+
+The detailed diagnostic message persisted when a feed failure episode
+crosses the quarantine threshold. It describes that threshold-crossing episode
+for debugging; it is not the lifecycle owner label and does not summarize the
+full failure budget history. It is not a stable machine-readable code and
+should not drive control flow. Ingestion keeps the full useful diagnostic in
+memory; storage caps it only at the database persistence boundary.
 
 ### Quarantine
 

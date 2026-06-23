@@ -22,6 +22,7 @@ import {
   Post,
   Put,
   Queries,
+  Request,
   Response,
   Route,
   Security,
@@ -29,6 +30,7 @@ import {
   Tags,
 } from 'tsoa';
 
+import { AuthenticatedRequest } from '../authentication.js';
 import { FEEDS_STORE_API_URL } from '../config.js';
 import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
 
@@ -45,6 +47,7 @@ interface FeedBackend extends BaseFeedBackend {
   tags?: Tag[];
   quarantine_reason: string | null;
   status_reason: BackendFeedStatusReason | null;
+  last_speech_segment_timestamp: string | null;
 }
 
 interface FeedCreateBackend extends BaseFeedBackend {
@@ -130,6 +133,13 @@ function getArchiveUrl(
 }
 
 function convertFeedBackend(response: FeedBackend): Feed {
+  const lastHeartbeatParsed = response.last_heartbeat
+    ? Date.parse(response.last_heartbeat)
+    : undefined;
+  const lastSpeechParsed = response.last_speech_segment_timestamp
+    ? Date.parse(response.last_speech_segment_timestamp)
+    : undefined;
+
   return {
     id: response.id,
     name: response.name,
@@ -139,10 +149,11 @@ function convertFeedBackend(response: FeedBackend): Feed {
     archiveUrl: getArchiveUrl(response.source_type, response.source_feed_id),
     status: convertFeedStatusBackend(response.status),
     substatus: response.status,
-    lastHeartbeat: response.last_heartbeat ?? undefined,
+    lastHeartbeat: lastHeartbeatParsed,
     tags: response.tags,
     quarantineReason: response.quarantine_reason ?? undefined,
     statusReason: convertFeedStatusReason(response.status_reason),
+    lastSpeechSegmentTimestamp: lastSpeechParsed,
   };
 }
 
@@ -250,7 +261,14 @@ export class FeedsController extends Controller {
   @Response<{ message: string }>(403, 'Forbidden')
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
-  public async createFeed(@Body() requestBody: FeedCreate): Promise<Feed> {
+  public async createFeed(
+    @Request() request: AuthenticatedRequest,
+    @Body() requestBody: FeedCreate
+  ): Promise<Feed> {
+    if (!request.user?.isAdmin) {
+      throw new HttpError(403, 'Forbidden');
+    }
+
     try {
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       const response = await client.request<FeedBackend>({
@@ -277,9 +295,14 @@ export class FeedsController extends Controller {
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async updateFeed(
+    @Request() request: AuthenticatedRequest,
     @Path() feedId: string,
     @Body() requestBody: FeedUpdate
   ): Promise<Feed> {
+    if (!request.user?.isAdmin) {
+      throw new HttpError(403, 'Forbidden');
+    }
+
     try {
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       const response = await client.request<FeedBackend>({
@@ -304,7 +327,14 @@ export class FeedsController extends Controller {
   @Response<{ message: string }>(404, 'Not Found')
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
-  public async resetFeed(@Path() feedId: string): Promise<Feed> {
+  public async resetFeed(
+    @Path() feedId: string,
+    @Request() request: AuthenticatedRequest
+  ): Promise<Feed> {
+    if (!request.user?.isAdmin) {
+      throw new HttpError(403, 'Forbidden');
+    }
+
     const client = await getServiceClient(FEEDS_STORE_API_URL);
     try {
       const response = await client.request<FeedBackend>({
@@ -333,7 +363,14 @@ export class FeedsController extends Controller {
   @Response<{ message: string }>(404, 'Not Found')
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
-  public async deactivateFeed(@Path() feedId: string): Promise<void> {
+  public async deactivateFeed(
+    @Path() feedId: string,
+    @Request() request: AuthenticatedRequest
+  ): Promise<void> {
+    if (!request.user?.isAdmin) {
+      throw new HttpError(403, 'Forbidden');
+    }
+
     const client = await getServiceClient(FEEDS_STORE_API_URL);
     try {
       await client.request({
@@ -361,7 +398,14 @@ export class FeedsController extends Controller {
   @Response<{ message: string }>(404, 'Not Found')
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
-  public async deleteFeed(@Path() feedId: string): Promise<void> {
+  public async deleteFeed(
+    @Path() feedId: string,
+    @Request() request: AuthenticatedRequest
+  ): Promise<void> {
+    if (!request.user?.isAdmin) {
+      throw new HttpError(403, 'Forbidden');
+    }
+
     const client = await getServiceClient(FEEDS_STORE_API_URL);
     try {
       await client.request({

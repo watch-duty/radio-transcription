@@ -1,6 +1,10 @@
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
+from backend.pipeline.common.evaluation.annotations import (
+    RuleAnnotation,
+    TextMatchSpan,
+)
 from backend.pipeline.evaluation import service
 from backend.pipeline.schema_types import (
     EvaluationErrorType,
@@ -20,6 +24,13 @@ class TestEvaluationService(unittest.TestCase):
             text_evaluator=self.mock_evaluator,
         )
 
+        self.record_pipeline_stage_patch = patch(
+            "backend.pipeline.evaluation.service.record_pipeline_stage"
+        )
+        self.mock_record_pipeline_stage = (
+            self.record_pipeline_stage_patch.start()
+        )
+
         self.transcribed_audio = transcribed_pb2.TranscribedAudio()
         self.transcribed_audio.segment_id = "12345"
         self.transcribed_audio.transcript = "There is a fire"
@@ -30,6 +41,9 @@ class TestEvaluationService(unittest.TestCase):
         self.transcribed_audio.start_timestamp.nanos = 0
         self.transcribed_audio.end_timestamp.seconds = 1234567999
         self.transcribed_audio.end_timestamp.nanos = 0
+
+    def tearDown(self) -> None:
+        self.record_pipeline_stage_patch.stop()
 
     def test_successful_flow(self) -> None:
         """Tests a basic successful evaluation flow returning payload."""
@@ -52,6 +66,8 @@ class TestEvaluationService(unittest.TestCase):
         self.assertEqual(
             list(result_proto.evaluation_decisions), ["basic_fire_terms"]
         )
+        self.mock_record_pipeline_stage.assert_any_call("evaluation", "start")
+        self.mock_record_pipeline_stage.assert_any_call("evaluation", "success")
 
     def test_return_payload_if_not_flagged(self) -> None:
         """Ensures payload is returned even if the text is not flagged."""
@@ -105,6 +121,34 @@ class TestEvaluationService(unittest.TestCase):
         self.assertEqual(result_proto.start_audio_offset.nanos, 0)
         self.assertEqual(result_proto.end_audio_offset.seconds, 0)
         self.assertEqual(result_proto.end_audio_offset.nanos, 0)
+
+    def test_rule_annotations_packed_into_proto(self) -> None:
+        """Per-rule annotations from the evaluator land in the proto payload."""
+        self.mock_evaluator.evaluate.return_value = {
+            "is_flagged": True,
+            "triggered_rules": ["r1"],
+            "rule_annotations": {
+                "r1": RuleAnnotation(
+                    text_match=[
+                        TextMatchSpan(start=11, end=15, matched_text="fire")
+                    ],
+                )
+            },
+            "errors": [],
+        }
+
+        result_proto = self.service.evaluate(self.transcribed_audio)
+
+        assert result_proto is not None
+        self.assertEqual(len(result_proto.rule_annotations), 1)
+        self.assertIn("r1", result_proto.rule_annotations)
+        annotation = result_proto.rule_annotations["r1"]
+        self.assertEqual(annotation.WhichOneof("annotation"), "text_match")
+        self.assertEqual(len(annotation.text_match.spans), 1)
+        span = annotation.text_match.spans[0]
+        self.assertEqual(span.start, 11)
+        self.assertEqual(span.end, 15)
+        self.assertEqual(span.matched_text, "fire")
 
 
 if __name__ == "__main__":

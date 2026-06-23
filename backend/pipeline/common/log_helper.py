@@ -11,7 +11,6 @@ from google.cloud import logging as cloud_logging
 from backend.pipeline.common.env import is_gcp_env
 from backend.pipeline.common.tracing_utils import (
     get_trace_attributes,
-    setup_tracing,
 )
 
 logger = logging.getLogger(__name__)
@@ -99,8 +98,6 @@ def setup_logging() -> None:
     if is_gcp_env():
         client = cloud_logging.Client()
         client.setup_logging()
-
-        setup_tracing(use_batch=False)
     else:
         # Standardized format for local development or unsupported environments
         logging.basicConfig(
@@ -140,15 +137,105 @@ class TaskJsonFormatter(logging.Formatter):
         return json.dumps(log_record)
 
 
-def get_logger(name: str) -> logging.Logger:
-    """Returns a logger configured to output JSON lines to stdout, with propagation disabled to prevent duplicates in Dataflow."""
-    logger = logging.getLogger(name)
-    logger.propagate = False
+class _LoggingState:
+    structured_propagation = False
 
-    if not logger.handlers:
-        handler = logging.StreamHandler(sys.stdout)
-        handler.setFormatter(TaskJsonFormatter())
-        logger.addHandler(handler)
+
+class StructuredMessageFilter(logging.Filter):
+    """A filter that converts log record messages into JSON strings to preserve custom fields during propagation.
+
+    Useful in environments like Dataflow where logs propagate to a runner's root logger
+    which only transmits string messages.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.__dict__.get("structured_formatted", False):
+            return True
+
+        message = record.getMessage()
+        if record.exc_info:
+            exc_text = logging.Formatter().formatException(record.exc_info)
+            message = f"{message}\n{exc_text}"
+            record.exc_info = None
+            record.exc_text = None
+
+        log_record = {
+            "message": message,
+            "severity": record.levelname,
+            "logger": record.name,
+        }
+        # Extract attributes added by LoggerAdapter
+        for attr in ["system", "component", "feed_id", "session_id"]:
+            if hasattr(record, attr):
+                log_record[attr] = getattr(record, attr)
+
+        # Add trace info from OpenTelemetry
+        trace_attrs = get_trace_attributes()
+        if trace_attrs.get("trace"):
+            log_record["logging.googleapis.com/trace"] = trace_attrs["trace"]
+            log_record["logging.googleapis.com/spanId"] = trace_attrs["spanId"]
+
+        record.msg = json.dumps(log_record)
+        record.args = ()
+        record.__dict__["structured_formatted"] = True
+        return True
+
+
+def enable_structured_propagation() -> None:
+    """Enables propagation of structured JSON messages to the root logger globally.
+
+    This should be called at application/component startup when running in environments
+    (like Dataflow workers) where writing directly to stdout is wrapped/incorrectly parsed,
+    but the root logger has correct transport handlers.
+    """
+    _LoggingState.structured_propagation = True
+
+    # Retroactively update any loggers that have already been initialized.
+    # This prevents import-order issues where modules initialize their loggers
+    # at import-time before setup_logging() is called.
+    for logger in logging.Logger.manager.loggerDict.values():
+        if isinstance(logger, logging.Logger):
+            logger.propagate = True
+            logger.handlers = [
+                h
+                for h in logger.handlers
+                if not isinstance(h, logging.StreamHandler)
+            ]
+            if not any(
+                isinstance(f, StructuredMessageFilter) for f in logger.filters
+            ):
+                logger.addFilter(StructuredMessageFilter())
+
+
+def get_logger(name: str) -> logging.Logger:
+    """Returns a logger configured for the running environment.
+
+    If structured propagation is enabled (e.g. in Dataflow), logs propagate to the root logger
+    and use a filter to format messages as JSON strings, ensuring correct severity levels.
+    Otherwise (local development, Cloud Functions), logs are written directly to stdout as JSON.
+    """
+    logger = logging.getLogger(name)
+
+    if _LoggingState.structured_propagation:
+        logger.propagate = True
+        # If any StreamHandlers were previously registered (e.g. if get_logger()
+        # was called prior to setup_logging() enabling structured propagation),
+        # remove them to prevent double-logging to stdout.
+        logger.handlers = [
+            h
+            for h in logger.handlers
+            if not isinstance(h, logging.StreamHandler)
+        ]
+        if not any(
+            isinstance(f, StructuredMessageFilter) for f in logger.filters
+        ):
+            logger.addFilter(StructuredMessageFilter())
+    else:
+        logger.propagate = False
+        if not logger.handlers:
+            handler = logging.StreamHandler(sys.stdout)
+            handler.setFormatter(TaskJsonFormatter())
+            logger.addHandler(handler)
 
     return logger
 

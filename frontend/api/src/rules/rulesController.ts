@@ -16,6 +16,7 @@ import {
   Post,
   Put,
   Queries,
+  Request,
   Response,
   Route,
   Security,
@@ -23,6 +24,7 @@ import {
   Tags,
 } from 'tsoa';
 
+import { AuthenticatedRequest } from '../authentication.js';
 import { RULES_API_URL } from '../config.js';
 import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
 
@@ -281,7 +283,13 @@ export class RulesController extends Controller {
   @Response<{ message: string }>(403, 'Forbidden')
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
-  public async createRule(@Body() requestBody: RuleCreate): Promise<Rule> {
+  public async createRule(
+    @Request() request: AuthenticatedRequest,
+    @Body() requestBody: RuleCreate
+  ): Promise<Rule> {
+    if (!request.user?.isAdmin) {
+      throw new HttpError(403, 'Forbidden');
+    }
     try {
       const client = await this.getClient();
       const response = await client.request({
@@ -304,9 +312,13 @@ export class RulesController extends Controller {
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async updateRule(
+    @Request() request: AuthenticatedRequest,
     @Path() ruleId: string,
     @Body() requestBody: RuleUpdate
   ): Promise<Rule> {
+    if (!request.user?.isAdmin) {
+      throw new HttpError(403, 'Forbidden');
+    }
     try {
       const client = await this.getClient();
       const response = await client.request({
@@ -332,7 +344,13 @@ export class RulesController extends Controller {
   @Response<{ message: string }>(404, 'Not Found')
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
-  public async deleteRule(@Path() ruleId: string): Promise<void> {
+  public async deleteRule(
+    @Request() request: AuthenticatedRequest,
+    @Path() ruleId: string
+  ): Promise<void> {
+    if (!request.user?.isAdmin) {
+      throw new HttpError(403, 'Forbidden');
+    }
     try {
       const client = await this.getClient();
       await client.request({

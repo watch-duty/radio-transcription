@@ -2,14 +2,13 @@
 # Use Apache Beam Python SDK as the base image
 # IMPORTANT: When updating the version tag here, you must also update the
 # apache-beam dependency version in backend/pipeline/segmentation/pyproject.toml.
-FROM apache/beam_python3.13_sdk:2.73.0
+FROM apache/beam_python3.13_sdk:2.74.0
 
 
 # Install OS dependencies needed at runtime
 USER root
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    ffmpeg \
     libatomic1 \
     && rm -rf /var/lib/apt/lists/*
 

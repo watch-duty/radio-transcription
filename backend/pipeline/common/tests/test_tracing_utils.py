@@ -1,12 +1,17 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
+from cloudevents.http.event import CloudEvent
+from opentelemetry import baggage
 from opentelemetry.trace import get_current_span
 
 from backend.pipeline.common.tracing_utils import (
     ContextPropagationValidator,
+    extract_cloud_event_attributes,
     extract_trace_context,
     get_current_traceparent,
+    record_pipeline_stage,
+    with_baggage_and_span,
     with_tracer_context,
 )
 
@@ -98,3 +103,176 @@ class TestTracingUtils(unittest.TestCase):
         # 4. None traceparent string (in case casted improperly)
         ctx4 = extract_trace_context({"traceparent": None})  # type: ignore
         self.assertEqual(len(ctx4), 0)
+
+    def test_extract_trace_context_variations(self) -> None:
+        """Verifies that extract_trace_context correctly resolves trace context from different key formats and case variations."""
+        traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+        baggage_str = "key1=val1,key2=val2"
+
+        # 1. Uppercase keys
+        ctx_upper = extract_trace_context(
+            {"TRACEPARENT": traceparent, "BAGGAGE": baggage_str}
+        )
+        self.assertGreater(len(ctx_upper), 0)
+
+        # 2. Eventarc/CloudEvent style ce- prefix
+        ctx_ce = extract_trace_context(
+            {"ce-traceparent": traceparent, "ce-baggage": baggage_str}
+        )
+        self.assertGreater(len(ctx_ce), 0)
+
+        # 3. Pub/Sub unwrapped header style
+        ctx_pubsub = extract_trace_context(
+            {
+                "x-goog-pubsub-attr-traceparent": traceparent,
+                "x-goog-pubsub-attr-baggage": baggage_str,
+            }
+        )
+        self.assertGreater(len(ctx_pubsub), 0)
+
+    def test_with_baggage_and_span(self) -> None:
+        """Verifies that with_baggage_and_span attaches baggage and works within an active trace."""
+        traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+        self.assertEqual(baggage.get_baggage("test_key"), None)
+
+        with with_tracer_context(traceparent, "parent_span", __name__):
+            with with_baggage_and_span(
+                {"test_key": "test_val"}, "baggage_span", __name__
+            ) as span:
+                self.assertTrue(span.get_span_context().is_valid)
+                self.assertEqual(get_current_span(), span)
+                self.assertEqual(baggage.get_baggage("test_key"), "test_val")
+
+        self.assertEqual(baggage.get_baggage("test_key"), None)
+
+    @patch("backend.pipeline.common.tracing_utils._pipeline_stage_counter")
+    def test_record_pipeline_stage(self, mock_counter) -> None:
+        """Verifies that record_pipeline_stage increments the pipeline counter with correct labels."""
+        record_pipeline_stage("segmentation", "start")
+        mock_counter.add.assert_called_once_with(
+            1, {"stage": "segmentation", "status": "start"}
+        )
+
+        mock_counter.reset_mock()
+        record_pipeline_stage("transcription", "success")
+        mock_counter.add.assert_called_once_with(
+            1, {"stage": "transcription", "status": "success"}
+        )
+
+    def test_extract_cloud_event_attributes(self) -> None:
+        """Verifies that extract_cloud_event_attributes parses nested pub/sub, top-level attributes, and top-level fields."""
+        # 1. Pub/Sub attributes
+        ce1 = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test",
+            },
+            data={"message": {"attributes": {"traceparent": "tp1"}}},
+        )
+        attrs1 = extract_cloud_event_attributes(ce1)
+        self.assertEqual(attrs1.get("traceparent"), "tp1")
+
+        # 2. CloudEvent top-level attributes (with prefix normalization)
+        ce2 = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test",
+                "ce-traceparent": "tp2",
+                "x-goog-pubsub-attr-baggage": "bg2",
+            },
+            data={},
+        )
+        attrs2 = extract_cloud_event_attributes(ce2)
+        self.assertEqual(attrs2.get("ce-traceparent"), "tp2")
+        self.assertEqual(attrs2.get("traceparent"), "tp2")
+        self.assertEqual(attrs2.get("x-goog-pubsub-attr-baggage"), "bg2")
+        self.assertEqual(attrs2.get("baggage"), "bg2")
+
+        # 3. Top-level direct keys via dict representation
+        ce3: dict[str, object] = {"traceparent": "tp3"}
+        attrs3 = extract_cloud_event_attributes(ce3)
+        self.assertEqual(attrs3.get("traceparent"), "tp3")
+
+        # 4. Non-string type conversion and robust extraction
+        ce4 = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test",
+            },
+            data={
+                "message": {
+                    "attributes": {
+                        "traceparent": "tp4",
+                        "numeric_val": 12345,
+                        "bool_val": True,
+                    }
+                }
+            },
+        )
+        attrs4 = extract_cloud_event_attributes(ce4)
+        self.assertEqual(attrs4.get("traceparent"), "tp4")
+        self.assertEqual(attrs4.get("numeric_val"), "12345")
+        self.assertEqual(attrs4.get("bool_val"), "True")
+
+        # 5. Direct Message Payload (functions-framework style where data is the message itself)
+        ce5 = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test",
+            },
+            data={
+                "attributes": {
+                    "traceparent": "tp5",
+                    "baggage": "bg5",
+                },
+                "data": "CiQ...",
+            },
+        )
+        attrs5 = extract_cloud_event_attributes(ce5)
+        self.assertEqual(attrs5.get("traceparent"), "tp5")
+        self.assertEqual(attrs5.get("baggage"), "bg5")
+
+        # 6. Eventarc / CloudEvent Extensions (formal CloudEvent object with x-goog-pubsub-attr-)
+        ce6 = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test",
+                "x-goog-pubsub-attr-traceparent": "tp6",
+                "x-goog-pubsub-attr-baggage": "bg6",
+            },
+            data={},
+        )
+        attrs6 = extract_cloud_event_attributes(ce6)
+        self.assertEqual(attrs6.get("x-goog-pubsub-attr-traceparent"), "tp6")
+        self.assertEqual(attrs6.get("traceparent"), "tp6")
+        self.assertEqual(attrs6.get("x-goog-pubsub-attr-baggage"), "bg6")
+        self.assertEqual(attrs6.get("baggage"), "bg6")
+
+        # 7. Byte-key support (handling binary keys for top-level, message, and attributes)
+        ce7: dict[bytes, object] = {
+            b"data": {
+                b"message": {
+                    b"attributes": {
+                        b"traceparent": b"tp7",
+                        b"baggage": b"bg7",
+                    }
+                }
+            }
+        }
+        attrs7 = extract_cloud_event_attributes(ce7)
+        self.assertEqual(attrs7.get("traceparent"), "tp7")
+        self.assertEqual(attrs7.get("baggage"), "bg7")
+
+        # 8. Prefix normalization priority under conflict (plain key should not be overwritten)
+        ce8 = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test",
+                "traceparent": "tp_plain",
+                "ce-traceparent": "tp_prefixed",
+                "x-goog-pubsub-attr-traceparent": "tp_goog_prefixed",
+            },
+            data={},
+        )
+        attrs8 = extract_cloud_event_attributes(ce8)
+        self.assertEqual(attrs8.get("traceparent"), "tp_plain")

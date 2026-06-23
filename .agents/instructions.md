@@ -66,3 +66,10 @@ a larger resource-heavy run.
      - If the work corresponds to a tracked Linear ticket, prefix the PR title with the exact issue ID (e.g. `[GOO-123] feat: implementation...`).
      - For document updates, chores, metadata, or minor changes that do not warrant a ticket, you MUST prefix the PR title with `[ENG-ONLY]` or `[DEV-ONLY]` (e.g., `[ENG-ONLY] docs: update instructions`).
      - Failure to provide one of these prefixes will cause the remote GitHub Actions title validation check to fail immediately.
+
+## Protobuf Python Type Checking Standards
+
+We now maintain official `types-protobuf` stubs in `pyproject.toml` (`[dependency-groups.dev]`)!
+
+1. **Zero Ignore Comments Needed:** You do NOT need to sprinkle `# type: ignore` or `# pyright: ignore` comments on standard `google.protobuf` dynamic imports (like `Duration` or `Timestamp`). Remote CI static type checkers (`ty` / `pyright`) correctly resolve them.
+2. **Pristine Environment Harmony:** We maintain `reportUnusedTypeIgnoreComment = false` under `[tool.pyright]` in `pyproject.toml` to ensure absolutely robust, conflict-free local and remote validation.

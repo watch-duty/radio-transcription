@@ -8,15 +8,22 @@ import ListItem from '@mui/material/ListItem';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
-import type { Transcript } from '@transcription/common';
+import { type TranscriptAnnotationData } from '@transcription/common';
 
+import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
+import {
+  findEvaluationAnnotationData,
+  findTranscriptAnnotationData,
+} from '../../utils/annotationUtils';
+import { formatDuration } from '../../utils/timeUtils';
 import AudioPlayer from '../audio/AudioPlayer';
 import AlertTooltip from './AlertTooltip';
+import HighlightedTranscript from './HighlightedTranscript';
 
 interface TranscriptRowProps {
-  transcript: Transcript;
+  audioSegment: RenderableAudioSegment;
   index: number;
-  totalTranscripts: number;
+  totalAudioSegments: number;
   ruleIdToNameMap: Map<string, string>;
   rulesLoading: boolean;
   onToggleAudio: (segmentId: string, audioUri: string) => void;
@@ -27,12 +34,13 @@ interface TranscriptRowProps {
   isHighlighted?: boolean;
   redactTranscripts?: boolean;
   onRowClick: (segmentId: string) => void;
+  isTopAudioSegmentRow?: boolean;
 }
 
 export function TranscriptRow({
-  transcript,
+  audioSegment,
   index,
-  totalTranscripts,
+  totalAudioSegments,
   ruleIdToNameMap,
   rulesLoading,
   onToggleAudio,
@@ -43,9 +51,63 @@ export function TranscriptRow({
   isHighlighted = false,
   redactTranscripts = false,
   onRowClick,
+  isTopAudioSegmentRow = false,
 }: TranscriptRowProps) {
   const theme = useTheme();
-  const currentDate = new Date(transcript.startTimestamp);
+  const currentDate = new Date(audioSegment.startTimestamp);
+
+  const isSilence = !!audioSegment.isSilenceBundle;
+
+  function renderTranscriptionText(
+    transcriptAnnotation: TranscriptAnnotationData | null
+  ): string {
+    if (isSilence) {
+      return '[No speech detected]';
+    }
+
+    if (!transcriptAnnotation) {
+      return '[Waiting on transcript]';
+    }
+
+    if (transcriptAnnotation.errors.length > 0) {
+      return '[Transcription failed]';
+    }
+
+    return transcriptAnnotation.text;
+  }
+
+  const transcriptAnnotation = findTranscriptAnnotationData(
+    audioSegment.annotations
+  );
+
+  const hasErrors = transcriptAnnotation
+    ? transcriptAnnotation.errors.length > 0
+    : false;
+  const isWaiting = !isSilence && !transcriptAnnotation;
+  const isPlaceholder = isSilence || isWaiting || hasErrors;
+
+  const evaluationAnnotation = findEvaluationAnnotationData(
+    audioSegment.annotations
+  );
+
+  const isCurrentlyPlaying =
+    isAudioPlaying &&
+    (currentlyPlayingSegmentId === audioSegment.id ||
+      (audioSegment.isSilenceBundle &&
+        currentlyPlayingSegmentId &&
+        audioSegment.bundledSegmentIds?.includes(currentlyPlayingSegmentId)));
+
+  const isOngoingSilence = isSilence && isTopAudioSegmentRow;
+
+  const getBorderColor = () => {
+    if (isSilence) {
+      return theme.palette.grey[200];
+    }
+    if (isCurrentlyPlaying) {
+      return theme.palette.primary.main;
+    }
+    return theme.palette.primary.light;
+  };
 
   return (
     <Fragment>
@@ -84,9 +146,8 @@ export function TranscriptRow({
         </ListItem>
       )}
       <ListItem
-        id={`transcript-${transcript.segmentId}`}
-        divider={index < totalTranscripts - 1}
-        className="compactTable"
+        id={`transcript-${audioSegment.id}`}
+        divider={index < totalAudioSegments - 1}
         sx={{
           display: 'flex',
           alignItems: 'center',
@@ -94,11 +155,14 @@ export function TranscriptRow({
           bgcolor: isHighlighted ? 'action.selected' : 'inherit',
           scrollMarginTop: theme.spacing(5),
           cursor: 'pointer',
+          borderLeft: `5px solid ${getBorderColor()}`,
+          pt: isSilence ? '0px !important' : undefined,
+          pb: isSilence ? '0px !important' : undefined,
           '&:hover': {
             bgcolor: isHighlighted ? 'action.selected' : 'action.hover',
           },
         }}
-        onClick={() => onRowClick(transcript.segmentId)}
+        onClick={() => onRowClick(audioSegment.id)}
       >
         <Box
           sx={{
@@ -109,7 +173,9 @@ export function TranscriptRow({
           }}
         >
           <AlertTooltip
-            evaluationDecisions={transcript.evaluationDecisions}
+            evaluationDecisions={
+              isSilence ? [] : (evaluationAnnotation?.decisions ?? [])
+            }
             ruleIdToNameMap={ruleIdToNameMap}
             rulesLoading={rulesLoading}
           />
@@ -119,65 +185,101 @@ export function TranscriptRow({
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'flex-end',
-            minWidth: 'max-content',
+            width: 90,
+            flexShrink: 0,
           }}
         >
-          <Typography variant="caption" color="text.secondary">
-            {currentDate.toLocaleTimeString([], {
-              hour: '2-digit',
-              minute: '2-digit',
-              second: '2-digit',
-              timeZoneName: 'short',
-              hour12: false,
-            })}
-          </Typography>
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            sx={{ opacity: 0.8 }}
-          >
-            {Math.round(
-              (new Date(transcript.endTimestamp).getTime() -
-                new Date(transcript.startTimestamp).getTime()) /
-                1000
-            )}{' '}
-            sec
-          </Typography>
+          {!isSilence && (
+            <Typography variant="caption" color="text.secondary">
+              {currentDate.toLocaleTimeString([], {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                timeZoneName: 'short',
+                hour12: false,
+              })}
+            </Typography>
+          )}
+          {!isOngoingSilence && (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{
+                opacity: 0.8,
+                fontStyle: isSilence ? 'italic' : 'normal',
+              }}
+            >
+              {formatDuration(
+                (new Date(audioSegment.endTimestamp).getTime() -
+                  new Date(audioSegment.startTimestamp).getTime()) /
+                  1000
+              )}
+            </Typography>
+          )}
         </Box>
         <AudioPlayer
-          audioUri={transcript.playbackAudioUri}
-          segmentId={transcript.segmentId}
+          audioUri={audioSegment.playbackAudioUri ?? ''}
+          segmentId={audioSegment.id}
           onToggleAudio={onToggleAudio}
           isAudioPlaying={isAudioPlaying}
-          currentlyPlayingSegmentId={currentlyPlayingSegmentId}
+          currentlyPlayingSegmentId={
+            isCurrentlyPlaying ? audioSegment.id : currentlyPlayingSegmentId
+          }
         />
         <Typography
-          variant="body1"
+          variant={isSilence ? 'caption' : 'body1'}
+          color={
+            hasErrors
+              ? 'error.main'
+              : isPlaceholder
+                ? 'text.secondary'
+                : 'text.primary'
+          }
           sx={{
             flexGrow: 1,
             whiteSpace: 'pre-wrap',
             transition: 'filter 0.3s ease, opacity 0.3s ease',
             filter: redactTranscripts ? 'blur(6px)' : 'none',
             opacity: redactTranscripts ? 0.6 : 1,
+            fontStyle:
+              isSilence || isWaiting || hasErrors ? 'italic' : 'normal',
           }}
         >
-          {transcript.transcript}
+          {/* Placeholder strings (silence/waiting/error) have no real transcript to highlight. */}
+          {isPlaceholder ? (
+            renderTranscriptionText(transcriptAnnotation)
+          ) : (
+            <HighlightedTranscript
+              text={transcriptAnnotation?.text ?? ''}
+              ruleAnnotations={evaluationAnnotation?.ruleAnnotations}
+            />
+          )}
         </Typography>
         <Box sx={{ display: 'flex', gap: 1, flexShrink: 0 }}>
-          <Tooltip title="Copy transcript">
-            <IconButton
-              size="small"
-              aria-label="copy transcript"
-              onClick={(e) => {
-                e.stopPropagation();
-                navigator.clipboard.writeText(transcript.transcript);
-                triggerSnackbar('Transcript copied');
-              }}
-              sx={{ cursor: 'copy' }}
-            >
-              <ContentCopyIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
+          {!isSilence && (
+            <Tooltip title="Copy transcript">
+              <span>
+                <IconButton
+                  size="small"
+                  aria-label="copy transcript"
+                  onClick={(e) => {
+                    if (transcriptAnnotation?.text) {
+                      e.stopPropagation();
+                      navigator.clipboard.writeText(transcriptAnnotation.text);
+                      triggerSnackbar('Transcript copied');
+                    }
+                  }}
+                  sx={{ cursor: 'copy' }}
+                  disabled={
+                    !transcriptAnnotation ||
+                    transcriptAnnotation.errors.length > 0
+                  }
+                >
+                  <ContentCopyIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+          )}
           <Tooltip title="Copy transcript deep link">
             <IconButton
               size="small"
@@ -187,11 +289,11 @@ export function TranscriptRow({
                 const url = new URL(
                   window.location.origin + window.location.pathname
                 );
-                url.searchParams.set('feedId', transcript.feedId);
-                url.searchParams.set('segmentId', transcript.segmentId);
+                url.searchParams.set('feedId', audioSegment.feedId);
+                url.searchParams.set('segmentId', audioSegment.id);
                 url.searchParams.set(
                   'timestamp',
-                  new Date(transcript.startTimestamp).getTime().toString()
+                  new Date(audioSegment.startTimestamp).getTime().toString()
                 );
                 navigator.clipboard.writeText(url.toString());
                 triggerSnackbar('Transcript link copied');

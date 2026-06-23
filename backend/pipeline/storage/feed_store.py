@@ -14,26 +14,7 @@ from backend.pipeline.common.exceptions import (
     FeedAlreadyExistsError,
     FeedNameAlreadyExistsError,
 )
-from backend.pipeline.storage.feed_queries import (
-    COUNT_FEEDS_SQL,
-    COUNT_HELD_BY_TYPE_SQL,
-    CREATE_FEED_SQL,
-    DEACTIVATE_FEED_SQL,
-    DELETE_FEED_SQL,
-    GET_FEED_SQL,
-    LIST_FEEDS_ASC_SQL,
-    LIST_FEEDS_DESC_SQL,
-    RECORD_SOURCE_OBSERVATION_SQL,
-    RELEASE_FEED_SQL,
-    RELEASE_FEEDS_BATCH_SQL,
-    RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
-    REPORT_FAILURE_SQL,
-    RESET_FEED_SQL,
-    UPDATE_FEED_SQL,
-    UPDATE_PROGRESS_SQL,
-    build_acquire_feeds_batch_sql,
-    build_acquire_feeds_recovery_sql,
-)
+from backend.pipeline.storage import feed_lifecycle, feed_queries
 from backend.pipeline.storage.pagination_utils import (
     SortOrder,
     decode_cursor,
@@ -60,11 +41,12 @@ class SourceType(enum.StrEnum):
         2. **DB seed** — add a row in
            ``terraform/modules/alloydb/sql/ingestion/002_source_types.sql``
            and ``006_seed_source_types.sql``.
-        3. **Per-type cap registry** — add an entry to
-           ``backend.pipeline.ingestion.settings._DEFAULT_CAPS``. This
-           dict drives ``CollectorSettings.caps``, ``FeedStore``'s
-           generated acquire-batch SQL, and the ``claim_types`` filter on
-           the recovery path. **Skipping this step means VM workers
+        3. **Runtime source spec** — add an entry to
+           ``backend.pipeline.ingestion.source_runtime_specs``. This
+           registry drives ``CollectorSettings.caps``, ``FeedStore``'s
+           generated acquire-batch SQL, topic routing metadata, URL base
+           metadata, and the ``claim_types`` filter on the recovery path.
+           **Skipping this step means VM workers
            will silently never claim feeds of the new type** — neither
            the primary CTE nor the recovery sweep will pick them up.
 
@@ -98,17 +80,43 @@ class FeedStatus(enum.StrEnum):
     DEACTIVATED = "deactivated"
 
 
+_FEED_STATUS_REASON_OWNERS = frozenset({"source", "system", "pipeline"})
+
+
+def _status_reason_owner(status_reason: str) -> str:
+    """Return the owner namespace encoded by a status-reason prefix."""
+    owner, separator, _ = status_reason.partition("_")
+    if not separator or owner not in _FEED_STATUS_REASON_OWNERS:
+        msg = f"Unsupported status reason owner in {status_reason!r}"
+        raise ValueError(msg)
+    return owner
+
+
 class FeedStatusReason(enum.StrEnum):
     """Canonical abnormal feed reason stored in ``feeds.status_reason``."""
 
+    PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED = (
+        "pipeline_publish_after_bookmark_failed"
+    )
     SOURCE_OFFLINE = "source_offline"
     SOURCE_UNREACHABLE = "source_unreachable"
     SOURCE_RATE_LIMITED = "source_rate_limited"
     SYSTEM_AUTHENTICATION_FAILED = "system_authentication_failed"
     SYSTEM_CONFIGURATION_INVALID = "system_configuration_invalid"
+    SYSTEM_SOURCE_CONFIGURATION_INVALID = "system_source_configuration_invalid"
+    SYSTEM_RUNTIME_CONFIGURATION_INVALID = (
+        "system_runtime_configuration_invalid"
+    )
+    SYSTEM_CREDENTIAL_ACCESS_FAILED = "system_credential_access_failed"
+    SYSTEM_SOURCE_PAYLOAD_INVALID = "system_source_payload_invalid"
     SYSTEM_COLLECTOR_ERROR = "system_collector_error"
     SYSTEM_PIPELINE_ERROR = "system_pipeline_error"
     SYSTEM_UNEXPECTED_ERROR = "system_unexpected_error"
+
+    @property
+    def owner(self) -> str:
+        """Coarse owner namespace encoded by the reason prefix."""
+        return _status_reason_owner(self.value)
 
 
 class LeasedFeed(TypedDict):
@@ -162,6 +170,7 @@ class Feed(TypedDict):
     created_at: datetime.datetime
     source_feed_id: str | None
     tags: list[dict[str, str]] | None
+    last_speech_segment_timestamp: datetime.datetime | None
 
 
 @dataclass
@@ -209,11 +218,15 @@ class FeedStore:
         if claim_types is None:
             claim_types = [t for t in SourceType if t != SourceType.ECHO]
         self._claim_types: tuple[SourceType, ...] = tuple(claim_types)
-        self._acquire_feeds_batch_sql = build_acquire_feeds_batch_sql(
-            self._claim_types,
+        self._acquire_feeds_batch_sql = (
+            feed_queries.build_acquire_feeds_batch_sql(
+                self._claim_types,
+            )
         )
-        self._acquire_feeds_recovery_sql = build_acquire_feeds_recovery_sql(
-            self._claim_types,
+        self._acquire_feeds_recovery_sql = (
+            feed_queries.build_acquire_feeds_recovery_sql(
+                self._claim_types,
+            )
         )
 
     def _row_to_feed(self, row: asyncpg.Record) -> Feed:
@@ -261,6 +274,7 @@ class FeedStore:
             created_at=row["created_at"],
             source_feed_id=row["source_feed_id"],
             tags=tags,
+            last_speech_segment_timestamp=row["last_speech_segment_timestamp"],
         )
 
     @staticmethod
@@ -336,7 +350,7 @@ class FeedStore:
 
         """
         result = await self._pool.execute(
-            UPDATE_PROGRESS_SQL,
+            feed_queries.UPDATE_PROGRESS_SQL,
             new_gcs_path,
             feed_id,
             worker_id,
@@ -359,7 +373,7 @@ class FeedStore:
         the source cursor in ``last_bookmark_time``.
         """
         row = await self._pool.fetchrow(
-            RECORD_SOURCE_OBSERVATION_SQL,
+            feed_queries.RECORD_SOURCE_OBSERVATION_SQL,
             feed_id,
             worker_id,
             fencing_token,
@@ -405,7 +419,7 @@ class FeedStore:
         if not feed_ids:
             return []
         rows = await self._pool.fetch(
-            RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
+            feed_queries.RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
             feed_ids,
             worker_id,
         )
@@ -424,9 +438,9 @@ class FeedStore:
         feed_id: uuid.UUID,
         worker_id: uuid.UUID,
         fencing_token: int,
-        failure_threshold: int = 5,
-        backoff_base_sec: int = 15,
-        backoff_max_sec: int = 600,
+        failure_threshold: int = feed_lifecycle.DEFAULT_FAILURE_THRESHOLD,
+        backoff_base_sec: int = feed_lifecycle.DEFAULT_BACKOFF_BASE_SEC,
+        backoff_max_sec: int = feed_lifecycle.DEFAULT_BACKOFF_MAX_SEC,
         *,
         reason: str | None = None,
         status_reason: FeedStatusReason | None = None,
@@ -455,9 +469,9 @@ class FeedStore:
                 quarantine.
             backoff_base_sec: Base delay in seconds for the first retry.
             backoff_max_sec: Maximum backoff cap in seconds.
-            reason: Short snake_case tag for the failure mode
-                (e.g. ``"auth_failed"``).  Persisted to
-                ``feeds.quarantine_reason`` on transition to quarantined.
+            reason: Diagnostic failure text. Persisted to
+                ``feeds.quarantine_reason`` on transition to quarantined,
+                after applying the storage boundary length cap.
                 ``None`` (default) writes SQL NULL — preferred over an empty
                 string so triage queries can use ``WHERE quarantine_reason
                 IS NOT NULL``.
@@ -471,16 +485,19 @@ class FeedStore:
             already lost.
 
         """
-        status_reason_value = status_reason.value if status_reason is not None else None  # fmt: skip
+        status_reason_value = feed_lifecycle.status_reason_storage_value(
+            status_reason
+        )
+        stored_reason = feed_lifecycle.quarantine_reason_storage_value(reason)
         row = await self._pool.fetchrow(
-            REPORT_FAILURE_SQL,
+            feed_queries.REPORT_FAILURE_SQL,
             feed_id,
             worker_id,
             failure_threshold,
             fencing_token,
             backoff_max_sec,
             backoff_base_sec,
-            reason,  # $7 — populates quarantine_reason on transition
+            stored_reason,  # $7 — populates quarantine_reason on transition
             status_reason_value,
         )
         if row is None:
@@ -507,6 +524,35 @@ class FeedStore:
                 },
             )
         return status
+
+    async def release_non_budgeted_failure(
+        self,
+        feed_id: uuid.UUID,
+        worker_id: uuid.UUID,
+        fencing_token: int,
+        *,
+        retry_after: datetime.datetime,
+        status_reason: FeedStatusReason,
+    ) -> str | None:
+        """Release a non-feed-budgeted failure into retryable failing state.
+
+        This fenced path is for failures that should not consume the feed
+        quarantine budget: post-capture pipeline failures, unannotated
+        collector failures, source-class incidents, and unknown evidence. It
+        leaves ``quarantine_reason`` untouched, resets any previous
+        consecutive feed budget, and releases the lease for later retry.
+        """
+        row = await self._pool.fetchrow(
+            feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL,
+            feed_id,
+            worker_id,
+            fencing_token,
+            retry_after,
+            status_reason.value,
+        )
+        if row is None:
+            return None
+        return row["status"]
 
     async def release_feed(
         self,
@@ -537,7 +583,7 @@ class FeedStore:
 
         """
         result = await self._pool.execute(
-            RELEASE_FEED_SQL,
+            feed_queries.RELEASE_FEED_SQL,
             feed_id,
             worker_id,
             fencing_token,
@@ -661,7 +707,7 @@ class FeedStore:
         holds.
 
         Unknown ``source_type`` strings returned by the DB are silently
-        skipped. ``CREATE_FEED_SQL`` enforces referential integrity
+        skipped. ``feed_queries.CREATE_FEED_SQL`` enforces referential integrity
         against ``source_types``, so this should never trigger in
         practice — the skip path is defensive against a hypothetical
         schema drift.
@@ -673,7 +719,9 @@ class FeedStore:
             Dict mapping every ``SourceType`` to the count of active
             leases owned by this worker for that type (0 if none).
         """
-        rows = await self._pool.fetch(COUNT_HELD_BY_TYPE_SQL, worker_id)
+        rows = await self._pool.fetch(
+            feed_queries.COUNT_HELD_BY_TYPE_SQL, worker_id
+        )
         counts: dict[SourceType, int] = dict.fromkeys(SourceType, 0)
         for row in rows:
             try:
@@ -704,7 +752,9 @@ class FeedStore:
         Returns:
             The number of feeds actually released.
         """
-        result = await self._pool.execute(RELEASE_FEEDS_BATCH_SQL, worker_id)
+        result = await self._pool.execute(
+            feed_queries.RELEASE_FEEDS_BATCH_SQL, worker_id
+        )
         if result.startswith("UPDATE "):
             return int(result.split()[1])
         return 0
@@ -738,7 +788,7 @@ class FeedStore:
 
         try:
             row = await self._pool.fetchrow(
-                CREATE_FEED_SQL,
+                feed_queries.CREATE_FEED_SQL,
                 name,
                 source_type_str,
                 source_feed_id,
@@ -782,7 +832,7 @@ class FeedStore:
         """
         try:
             row = await self._pool.fetchrow(
-                UPDATE_FEED_SQL,
+                feed_queries.UPDATE_FEED_SQL,
                 feed_id,
                 name,
                 json.dumps(tags or []),
@@ -813,7 +863,7 @@ class FeedStore:
 
         Retrieves feed details including properties from `feed_properties`.
         """
-        row = await self._pool.fetchrow(GET_FEED_SQL, feed_id)
+        row = await self._pool.fetchrow(feed_queries.GET_FEED_SQL, feed_id)
         if row is None:
             return None
 
@@ -841,7 +891,11 @@ class FeedStore:
             cursor_ts, cursor_uid = decode_cursor(next_token)
 
         is_asc = order == SortOrder.ASC or order == "asc"
-        query = LIST_FEEDS_ASC_SQL if is_asc else LIST_FEEDS_DESC_SQL
+        query = (
+            feed_queries.LIST_FEEDS_ASC_SQL
+            if is_asc
+            else feed_queries.LIST_FEEDS_DESC_SQL
+        )
 
         tags_json = None
         if tags:
@@ -858,7 +912,7 @@ class FeedStore:
             limit + 1,
         )
         total_task = self._pool.fetchval(
-            COUNT_FEEDS_SQL,
+            feed_queries.COUNT_FEEDS_SQL,
             source_types,
             statuses,
             tags_json,
@@ -883,7 +937,9 @@ class FeedStore:
 
         Returns True if the feed status was set to deactivated, False otherwise.
         """
-        result = await self._pool.execute(DEACTIVATE_FEED_SQL, feed_id)
+        result = await self._pool.execute(
+            feed_queries.DEACTIVATE_FEED_SQL, feed_id
+        )
         return result == "UPDATE 1"
 
     async def delete_feed(self, feed_id: uuid.UUID) -> bool:
@@ -894,7 +950,7 @@ class FeedStore:
 
         Returns True if the feed was successfully deleted, False otherwise.
         """
-        result = await self._pool.execute(DELETE_FEED_SQL, feed_id)
+        result = await self._pool.execute(feed_queries.DELETE_FEED_SQL, feed_id)
         return result == "DELETE 1"
 
     async def reset_feed(self, feed_id: uuid.UUID) -> Feed | None:
@@ -912,7 +968,7 @@ class FeedStore:
             The updated ``Feed`` dict, or ``None`` if the feed was not found.
 
         """
-        row = await self._pool.fetchrow(RESET_FEED_SQL, feed_id)
+        row = await self._pool.fetchrow(feed_queries.RESET_FEED_SQL, feed_id)
         if row is None:
             return None
         return self._row_to_feed(row)

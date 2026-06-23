@@ -4,12 +4,14 @@ import asyncio
 import base64
 import collections
 import contextlib
+import dataclasses
 import datetime
 import logging
 import os
 import tempfile
 import time
 import uuid
+from enum import Enum, auto
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlencode, urljoin
@@ -23,15 +25,15 @@ from backend.pipeline.common.constants import (
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
 )
+from backend.pipeline.ingestion import quarantine_reason
 from backend.pipeline.ingestion.collectors.failure_classification import (
-    FailureClassification,
     collector_failure,
     missing_source_feed_id_failure,
 )
-from backend.pipeline.ingestion.collectors.failure_classifiers import (
+from backend.pipeline.ingestion.failure_classifiers import (
     ffmpeg as ffmpeg_classifier,
 )
-from backend.pipeline.ingestion.collectors.failure_classifiers import (
+from backend.pipeline.ingestion.failure_classifiers import (
     http_status,
 )
 from backend.pipeline.ingestion.models import (
@@ -56,6 +58,9 @@ POLL_INTERVAL_SEC = 0.25  # Polling interval for segment file checks
 STDERR_TAIL_LINES = 30  # Ring buffer size for ffmpeg stderr diagnostics
 
 _STREAM_PROBE_TIMEOUT_SEC = 10
+_MAX_ALLOWED_LAG_SECONDS = 60.0
+FFMPEG_TIMEOUT_SEC = 15  # Network socket timeout for ffmpeg (in seconds)
+
 
 # Stream endpoint semantics differ from item/API endpoints: a stream 404 means
 # the configured mount/feed is currently unavailable, while other 4xx statuses
@@ -69,13 +74,25 @@ _ICECAST_STREAM_HTTP_POLICY = http_status.HTTPStatusPolicy(
 )
 
 
+class _StreamProbeOutcome(Enum):
+    TERMINAL_FAILURE = auto()
+    STREAM_AVAILABLE = auto()
+    INCONCLUSIVE = auto()
+
+
+@dataclasses.dataclass(frozen=True)
+class _StreamProbeResult:
+    outcome: _StreamProbeOutcome
+    failure: FeedFailure | None = None
+
+
 def _build_auth_header() -> str:
     """Build Basic Auth header from env vars, raising if missing."""
     user = os.getenv("BROADCASTIFY_USERNAME")
     password = os.getenv("BROADCASTIFY_PASSWORD")
     if not user or not password:
         raise collector_failure(
-            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
             "missing_broadcastify_credentials",
         )
     credentials = f"{user}:{password}"
@@ -87,39 +104,47 @@ def _now_utc() -> datetime.datetime:
     return datetime.datetime.now(tz=datetime.UTC)
 
 
-def _classify_stream_http_status(status: int) -> FeedFailure | None:
+def _classify_stream_http_status(
+    status: int,
+    reason: str | None = None,
+) -> FeedFailure | None:
     """Classify stream endpoint HTTP status into a typed feed failure."""
-    classification = http_status.classify_http_status(
+    status_reason = http_status.classify_http_status(
         status,
-        reason_prefix="stream_http",
         policy=_ICECAST_STREAM_HTTP_POLICY,
     )
-    if classification is None:
+    if status_reason is None:
         return None
+    http_diagnostic = f"HTTP error {status}"
+    if reason:
+        http_diagnostic = f"{http_diagnostic} {reason}"
     return collector_failure(
-        classification.status_reason,
-        classification.reason,
+        status_reason,
+        http_diagnostic,
     )
 
 
-def _feed_failure_from_classification(
-    classification: FailureClassification,
+def _feed_failure_from_ffmpeg_info(
+    info: ffmpeg_classifier.FfmpegFailureInfo,
+    diagnostic_text: str | None = None,
 ) -> FeedFailure:
-    """Convert neutral classifier output into an Icecast feed failure."""
+    """Convert ffmpeg failure info into an Icecast feed failure."""
     return collector_failure(
-        classification.status_reason,
-        classification.reason,
+        info.status_reason,
+        ffmpeg_classifier.render_ffmpeg_diagnostic(info, diagnostic_text),
     )
 
 
-def _is_raw_ffmpeg_failure(classification: FailureClassification) -> bool:
+def _is_raw_ffmpeg_failure(info: ffmpeg_classifier.FfmpegFailureInfo) -> bool:
     """Return whether probe evidence should decide a raw ffmpeg fallback."""
     return (
-        classification.status_reason is FeedStatusReason.SYSTEM_COLLECTOR_ERROR
-        and (
-            classification.reason.startswith("ffmpeg_")
-            or classification.reason == "capture_timeout"
-        )
+        info.status_reason is FeedStatusReason.SYSTEM_COLLECTOR_ERROR
+        and info.kind
+        in {
+            ffmpeg_classifier.FfmpegFailureKind.PROCESS_EXIT,
+            ffmpeg_classifier.FfmpegFailureKind.PROCESS_SIGNAL,
+            ffmpeg_classifier.FfmpegFailureKind.TIMEOUT,
+        }
     )
 
 
@@ -133,20 +158,11 @@ def _headers_from_ffmpeg_auth_header(auth_header: str) -> dict[str, str]:
     return headers
 
 
-def _probe_keeps_raw_reason(probe_failure: FeedFailure) -> bool:
-    """Return whether ambiguous probe evidence should preserve raw ffmpeg reason."""
-    return (
-        probe_failure.status_reason is FeedStatusReason.SYSTEM_COLLECTOR_ERROR
-        and str(probe_failure)
-        in {"stream_available", "stream_probe_inconclusive"}
-    )
-
-
 async def _probe_stream_once(
     resources: CaptureResources,
     url: str,
     auth_header: str,
-) -> FeedFailure | None:
+) -> _StreamProbeResult:
     """Probe the same stream URL once after ambiguous ffmpeg failures."""
     try:
         async with resources.http_session.get(
@@ -154,24 +170,64 @@ async def _probe_stream_once(
             headers=_headers_from_ffmpeg_auth_header(auth_header),
             timeout=aiohttp.ClientTimeout(total=_STREAM_PROBE_TIMEOUT_SEC),
         ) as response:
-            classified = _classify_stream_http_status(response.status)
-            if classified is not None:
-                return classified
-            if response.status == 200:
-                return collector_failure(
-                    FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-                    "stream_available",
-                )
-            return collector_failure(
-                FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-                "stream_probe_inconclusive",
+            classified = _classify_stream_http_status(
+                response.status,
+                response.reason,
             )
-    except Exception:
+            if classified is not None:
+                return _StreamProbeResult(
+                    _StreamProbeOutcome.TERMINAL_FAILURE,
+                    classified,
+                )
+            if response.status == 200:
+                return _StreamProbeResult(_StreamProbeOutcome.STREAM_AVAILABLE)
+            return _StreamProbeResult(_StreamProbeOutcome.INCONCLUSIVE)
+    except Exception as exc:
         logger.warning("stream probe failed", exc_info=True)
-        return collector_failure(
-            FeedStatusReason.SOURCE_UNREACHABLE,
-            "stream_probe_failed",
+        return _StreamProbeResult(
+            _StreamProbeOutcome.TERMINAL_FAILURE,
+            collector_failure(
+                FeedStatusReason.SOURCE_UNREACHABLE,
+                f"stream_probe_failed: {quarantine_reason.exception_text(exc)}",
+            ),
         )
+
+
+async def _build_stream_capture_failure(
+    resources: CaptureResources,
+    url: str,
+    auth_header: str,
+    *,
+    exit_code: int | None,
+    timed_out: bool,
+    classification_text: str,
+    stderr_snippet: str | None,
+) -> FeedFailure:
+    """Build the feed failure for terminal ffmpeg stream-capture evidence."""
+    info = ffmpeg_classifier.classify_ffmpeg_failure(
+        exit_code=exit_code,
+        stderr_text=classification_text,
+        timed_out=timed_out,
+        http_policy=_ICECAST_STREAM_HTTP_POLICY,
+    )
+    if info is None:
+        return collector_failure(
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            "ffmpeg failed without classifiable terminal evidence",
+        )
+
+    if not _is_raw_ffmpeg_failure(info):
+        return _feed_failure_from_ffmpeg_info(info, classification_text)
+
+    probe = await _probe_stream_once(resources, url, auth_header)
+    if (
+        probe is not None
+        and probe.outcome is _StreamProbeOutcome.TERMINAL_FAILURE
+        and probe.failure is not None
+    ):
+        return probe.failure
+
+    return _feed_failure_from_ffmpeg_info(info, stderr_snippet)
 
 
 async def _drain_stderr(
@@ -214,7 +270,7 @@ def _segment_path(directory: Path, index: int) -> Path:
     return directory / f"chunk_{index:06d}.{AUDIO_FORMAT}"
 
 
-async def capture_icecast_stream(  # noqa: PLR0912, PLR0915
+async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
     url_base: str,
@@ -338,6 +394,20 @@ async def capture_icecast_stream(  # noqa: PLR0912, PLR0915
                         )
                         if process_done:
                             chunk_end_time = min(chunk_end_time, _now_utc())
+
+                        # Guard against cumulative network or system lag by measuring the drift
+                        # between wall-clock receipt time and expected stream time.
+                        lag = (receipt_time - chunk_end_time).total_seconds()
+                        if lag > _MAX_ALLOWED_LAG_SECONDS:
+                            logger.warning(
+                                "Feed %s (%s): Stream lag has exceeded threshold "
+                                "(%.1fs > %.1fs).",
+                                feed_id,
+                                feed_name,
+                                lag,
+                                _MAX_ALLOWED_LAG_SECONDS,
+                            )
+
                         yield CapturedChunk(
                             audio_bytes=segment_bytes,
                             chunk_start_time=chunk_start_time,
@@ -359,48 +429,33 @@ async def capture_icecast_stream(  # noqa: PLR0912, PLR0915
                     exit_code = wait_task.result()
                     if exit_code != 0:
                         stderr_snippet = (
-                            "\n".join(stderr_tail)
-                            if stderr_tail
-                            else "(no stderr captured)"
+                            "\n".join(stderr_tail) if stderr_tail else None
+                        )
+                        stderr_log_text = (
+                            stderr_snippet or "(no stderr captured)"
                         )
                         logger.error(
                             "Feed %s (%s) ffmpeg exited with code %d; stderr tail:\n%s",
                             feed_id,
                             feed_name,
                             exit_code,
-                            stderr_snippet,
+                            stderr_log_text,
                         )
                         classification_text = (
                             "\n".join(stderr_http_status_lines)
                             if stderr_http_status_lines
-                            else stderr_snippet
+                            else stderr_snippet or ""
                         )
-                        classification = (
-                            ffmpeg_classifier.classify_ffmpeg_failure(
-                                exit_code=exit_code,
-                                stderr_text=classification_text,
-                                http_policy=_ICECAST_STREAM_HTTP_POLICY,
-                            )
-                        )
-                        if classification is None:
-                            msg = "ffmpeg_failed_without_classification"
-                            raise RuntimeError(msg)
-                        if not _is_raw_ffmpeg_failure(classification):
-                            raise _feed_failure_from_classification(
-                                classification
-                            )
-                        probe_failure = await _probe_stream_once(
+                        failure = await _build_stream_capture_failure(
                             resources,
                             url,
                             auth_header,
+                            exit_code=exit_code,
+                            timed_out=False,
+                            classification_text=classification_text,
+                            stderr_snippet=stderr_snippet,
                         )
-                        if probe_failure is None or _probe_keeps_raw_reason(
-                            probe_failure
-                        ):
-                            raise _feed_failure_from_classification(
-                                classification
-                            )
-                        raise probe_failure
+                        raise failure
                     logger.info(
                         "Feed %s (%s): ffmpeg exited normally",
                         feed_id,
@@ -410,43 +465,31 @@ async def capture_icecast_stream(  # noqa: PLR0912, PLR0915
 
                 if time.monotonic() - last_activity_time > READ_TIMEOUT_SEC:
                     stderr_snippet = (
-                        "\n".join(stderr_tail)
-                        if stderr_tail
-                        else "(no stderr captured)"
+                        "\n".join(stderr_tail) if stderr_tail else None
                     )
+                    stderr_log_text = stderr_snippet or "(no stderr captured)"
                     logger.error(
                         "Feed %s (%s) no finalized segment within %ss; stderr tail:\n%s",
                         feed_id,
                         feed_name,
                         READ_TIMEOUT_SEC,
-                        stderr_snippet,
+                        stderr_log_text,
                     )
                     classification_text = (
                         "\n".join(stderr_http_status_lines)
                         if stderr_http_status_lines
-                        else stderr_snippet
+                        else stderr_snippet or ""
                     )
-                    classification = ffmpeg_classifier.classify_ffmpeg_failure(
-                        exit_code=process.returncode,
-                        stderr_text=classification_text,
-                        timed_out=True,
-                        http_policy=_ICECAST_STREAM_HTTP_POLICY,
-                    )
-                    if classification is None:
-                        msg = "capture_timeout"
-                        raise RuntimeError(msg)
-                    if not _is_raw_ffmpeg_failure(classification):
-                        raise _feed_failure_from_classification(classification)
-                    probe_failure = await _probe_stream_once(
+                    failure = await _build_stream_capture_failure(
                         resources,
                         url,
                         auth_header,
+                        exit_code=process.returncode,
+                        timed_out=True,
+                        classification_text=classification_text,
+                        stderr_snippet=stderr_snippet,
                     )
-                    if probe_failure is None or _probe_keeps_raw_reason(
-                        probe_failure
-                    ):
-                        raise _feed_failure_from_classification(classification)
-                    raise probe_failure
+                    raise failure
 
                 await asyncio.sleep(POLL_INTERVAL_SEC)
 
@@ -487,8 +530,10 @@ async def _create_ffmpeg_process(
     # 3. discardcorrupt: Mitigates parsing crashes over TCP jitter, which is necessary
     #    since our micro probesize doesn't deeply validate stream integrity.
     # 4. -reconnect 1 / -reconnect_at_eof 1 / -reconnect_streamed 1: Enables native
-    #    HTTP/TCP reconnects for short internet drops. The external Python timeout
-    #    (30s) acts as a secondary dead-man's switch if ffmpeg stalls.
+    #    HTTP/TCP reconnects for short internet drops.
+    # 5. -timeout: Sets a socket I/O timeout to prevent ffmpeg from
+    #    hanging indefinitely on a stalled TCP connection, allowing it to exit
+    #    gracefully instead of requiring a hard force-kill.
     return await asyncio.create_subprocess_exec(
         "ffmpeg", "-nostdin",
         "-reconnect", "1",
@@ -499,6 +544,7 @@ async def _create_ffmpeg_process(
         "-analyzeduration", "0",
         "-probesize", "32768",
         "-fflags", "nobuffer+flush_packets+discardcorrupt",
+        "-timeout", str(FFMPEG_TIMEOUT_SEC * 1_000_000),
         "-headers", auth_header,
         "-i", url,
         "-vn", "-sn", "-dn",

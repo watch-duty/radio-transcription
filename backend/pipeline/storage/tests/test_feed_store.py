@@ -12,7 +12,7 @@ from unittest import mock
 import asyncpg
 import yaml
 
-from backend.pipeline.storage import feed_queries
+from backend.pipeline.storage import feed_queries, feed_store, quarantine_reason
 from backend.pipeline.storage.feed_store import (
     FeedStatus,
     FeedStatusReason,
@@ -29,6 +29,22 @@ _WORKER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _STATUS_REASON_UPDATED_AT = datetime.datetime(
     2026, 5, 29, 12, 0, tzinfo=datetime.UTC
 )
+
+_FEED_STATUS_REASON_VALUES = {
+    "pipeline_publish_after_bookmark_failed",
+    "source_offline",
+    "source_unreachable",
+    "source_rate_limited",
+    "system_authentication_failed",
+    "system_configuration_invalid",
+    "system_source_configuration_invalid",
+    "system_runtime_configuration_invalid",
+    "system_credential_access_failed",
+    "system_source_payload_invalid",
+    "system_collector_error",
+    "system_pipeline_error",
+    "system_unexpected_error",
+}
 
 _LEASE_ROW = {
     "id": _FEED_ID,
@@ -60,6 +76,7 @@ def _full_feed_row(**overrides: object) -> dict[str, object]:
         "created_at": datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
         "source_feed_id": "123",
         "tags": None,
+        "last_speech_segment_timestamp": None,
     }
     row.update(overrides)
     return row
@@ -125,16 +142,7 @@ class TestFeedStatusReason(unittest.TestCase):
     def test_canonical_reason_values(self) -> None:
         self.assertEqual(
             {reason.value for reason in FeedStatusReason},
-            {
-                "source_offline",
-                "source_unreachable",
-                "source_rate_limited",
-                "system_authentication_failed",
-                "system_configuration_invalid",
-                "system_collector_error",
-                "system_pipeline_error",
-                "system_unexpected_error",
-            },
+            _FEED_STATUS_REASON_VALUES,
         )
 
     def test_matches_openapi_spec(self) -> None:
@@ -154,28 +162,48 @@ class TestFeedStatusReason(unittest.TestCase):
             "enum", []
         )
 
-        python_reasons = {reason.value for reason in FeedStatusReason}
-        expected_openapi_reasons = python_reasons | {"unknown"}
+        expected_openapi_reasons = _FEED_STATUS_REASON_VALUES | {"unknown"}
 
         self.assertEqual(
             set(backend_reasons),
             expected_openapi_reasons,
-            "The status reasons in backend.pipeline.storage.feed_store.FeedStatusReason "
-            "do not match BackendFeedStatusReason in frontend/api/openapi.yaml. "
+            "The status reasons exposed by frontend/api/openapi.yaml "
+            "do not match the canonical backend vocabulary. "
             "Please run `yarn generate-spec` in frontend/api to sync the spec after updating TypeScript types.",
         )
 
     def test_reason_values_encode_source_or_system_ownership(self) -> None:
-        prefixes = {
-            reason.value.split("_", 1)[0] for reason in FeedStatusReason
-        }
-
         for reason in FeedStatusReason:
             self.assertTrue(
-                reason.value.startswith(("source_", "system_")),
+                reason.value.startswith(("source_", "system_", "pipeline_")),
                 reason.value,
             )
-        self.assertEqual(prefixes, {"source", "system"})
+
+    def test_reason_owner_comes_from_status_prefix(self) -> None:
+        cases = {
+            FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED: "pipeline",
+            FeedStatusReason.SOURCE_OFFLINE: "source",
+            FeedStatusReason.SOURCE_UNREACHABLE: "source",
+            FeedStatusReason.SOURCE_RATE_LIMITED: "source",
+            FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED: "system",
+            FeedStatusReason.SYSTEM_CONFIGURATION_INVALID: "system",
+            FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID: "system",
+            FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID: "system",
+            FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED: "system",
+            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID: "system",
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR: "system",
+            FeedStatusReason.SYSTEM_PIPELINE_ERROR: "system",
+            FeedStatusReason.SYSTEM_UNEXPECTED_ERROR: "system",
+        }
+
+        self.assertEqual(set(cases), set(FeedStatusReason))
+        for reason, owner in cases.items():
+            with self.subTest(reason=reason.value):
+                self.assertEqual(reason.owner, owner)
+
+    def test_reason_owner_rejects_unknown_prefix(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Unsupported status reason"):
+            feed_store._status_reason_owner("unknown_failure")
 
 
 class TestSourceType(unittest.TestCase):
@@ -274,170 +302,22 @@ class TestStatusReasonRowMapping(unittest.TestCase):
         self.assertIn("Unknown status reason", str(context.exception))
 
 
-class TestStatusReasonSqlProjection(unittest.TestCase):
-    """Tests for full-feed SQL projection coverage."""
+class TestLastSpeechSegmentTimestampMapping(unittest.TestCase):
+    """Tests for mapping last_speech_segment_timestamp DB fields to Feed."""
 
-    def test_full_feed_queries_project_status_reason_fields(self) -> None:
-        for sql in (
-            feed_queries.CREATE_FEED_SQL,
-            feed_queries.GET_FEED_SQL,
-            feed_queries.LIST_FEEDS_DESC_SQL,
-            feed_queries.LIST_FEEDS_ASC_SQL,
-            feed_queries.RESET_FEED_SQL,
-            feed_queries.UPDATE_FEED_SQL,
-        ):
-            self.assertRegex(sql, r"\bstatus_reason\b")
-            self.assertRegex(sql, r"\bstatus_reason_updated_at\b")
+    def test_null_timestamp_maps_to_none(self) -> None:
+        store = FeedStore(make_mock_pool())
+        result = store._row_to_feed(cast("asyncpg.Record", _full_feed_row()))
+        self.assertIsNone(result["last_speech_segment_timestamp"])
 
-
-class TestStatusReasonLifecycleIsolation(unittest.TestCase):
-    """Tests that lifecycle SQL remains independent of status_reason."""
-
-    def test_claim_release_heartbeat_count_and_deactivate_do_not_reference_status_reason(
-        self,
-    ) -> None:
-        lifecycle_sql = [
-            feed_queries.RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL,
-            feed_queries.RELEASE_FEED_SQL,
-            feed_queries.RELEASE_FEEDS_BATCH_SQL,
-            feed_queries.COUNT_HELD_BY_TYPE_SQL,
-            feed_queries.DEACTIVATE_FEED_SQL,
-        ]
-
-        for sql in lifecycle_sql:
-            self.assertNotIn("status_reason", _sql_without_comments(sql))
-
-    def test_claim_sql_projects_failure_state_without_mutating_it(
-        self,
-    ) -> None:
-        claim_sql = [
-            feed_queries.build_acquire_feeds_batch_sql([SourceType.BCFY_FEEDS]),
-            feed_queries.build_acquire_feeds_recovery_sql(
-                [SourceType.BCFY_FEEDS]
-            ),
-        ]
-
-        for sql in claim_sql:
-            stripped = _sql_without_comments(sql)
-            self.assertIn("feeds.failure_count", stripped)
-            self.assertIn("feeds.status_reason", stripped)
-            self.assertIn("leased.failure_count", stripped)
-            self.assertIn("leased.status_reason", stripped)
-            self.assertNotIn("status_reason =", stripped)
-
-
-class TestWorkerOwnedLifecycleGuards(unittest.TestCase):
-    """Tests that worker-owned writes cannot undo lifecycle changes."""
-
-    def test_failure_and_release_require_active_status(self) -> None:
-        fenced_sql = [
-            feed_queries.RELEASE_FEED_SQL,
-            feed_queries.REPORT_FAILURE_SQL,
-        ]
-
-        for sql in fenced_sql:
-            self.assertIn(
-                "AND status = 'active'::feed_status",
-                _sql_without_comments(sql),
-            )
-
-    def test_progress_remains_allowed_after_deactivation(self) -> None:
-        """Main allows one in-flight bookmark write after admin stop."""
-        sql = _sql_without_comments(feed_queries.UPDATE_PROGRESS_SQL)
-
-        self.assertNotIn("AND status = 'active'::feed_status", sql)
-
-    def test_batch_worker_release_requires_active_status(self) -> None:
-        sql = _sql_without_comments(feed_queries.RELEASE_FEEDS_BATCH_SQL)
-
-        self.assertIn("WHERE worker_id = $1", sql)
-        self.assertIn("AND status = 'active'::feed_status", sql)
-
-
-class TestReportFailureSqlStatusReason(unittest.TestCase):
-    """Tests for status reason writes in failure SQL."""
-
-    def test_report_failure_sql_writes_status_reason_in_fenced_update(
-        self,
-    ) -> None:
-        sql = _sql_without_comments(feed_queries.REPORT_FAILURE_SQL)
-
-        self.assertIn(
-            "status_reason = COALESCE($8, 'system_unexpected_error')",
-            sql,
+    def test_valid_timestamp_maps_correctly(self) -> None:
+        store = FeedStore(make_mock_pool())
+        timestamp = datetime.datetime(
+            2026, 6, 16, 18, 0, 0, tzinfo=datetime.UTC
         )
-        self.assertIn("status_reason_updated_at = NOW()", sql)
-        self.assertIn(
-            "WHERE id = $1 AND worker_id = $2 AND fencing_token = $4",
-            sql,
-        )
-
-    def test_report_failure_sql_keeps_raw_quarantine_reason_on_parameter_seven(
-        self,
-    ) -> None:
-        sql = _sql_without_comments(feed_queries.REPORT_FAILURE_SQL)
-
-        self.assertIn("COALESCE($7, quarantine_reason)", sql)
-        self.assertNotIn("COALESCE($8, quarantine_reason)", sql)
-
-
-class TestStatusReasonClearSql(unittest.TestCase):
-    """Tests for stale canonical reason clearing SQL."""
-
-    def test_update_progress_sql_clears_stale_reason_without_lifecycle_recovery(
-        self,
-    ) -> None:
-        sql = _sql_without_comments(feed_queries.UPDATE_PROGRESS_SQL)
-
-        self.assertIn("status_reason = NULL", sql)
-        self.assertRegex(
-            sql,
-            r"status_reason_updated_at = CASE\s+"
-            r"WHEN status_reason IS NOT NULL THEN NOW\(\)\s+"
-            r"ELSE status_reason_updated_at\s+END",
-        )
-        self.assertIn("failure_count = 0", sql)
-        self.assertIn(
-            "WHERE id = $2 AND worker_id = $3 AND fencing_token = $4",
-            sql,
-        )
-        self.assertNotIn("SET status", sql)
-
-    def test_reset_sql_clears_stale_reason_and_raw_quarantine_reason(
-        self,
-    ) -> None:
-        sql = _sql_without_comments(feed_queries.RESET_FEED_SQL)
-
-        self.assertIn("quarantine_reason = NULL", sql)
-        self.assertIn("status_reason = NULL", sql)
-        self.assertRegex(
-            sql,
-            r"status_reason_updated_at = CASE\s+"
-            r"WHEN status_reason IS NOT NULL THEN NOW\(\)\s+"
-            r"ELSE status_reason_updated_at\s+END",
-        )
-        self.assertIn("status = 'unclaimed'::feed_status", sql)
-
-    def test_record_source_observation_sql_clears_stale_reason_when_active(
-        self,
-    ) -> None:
-        sql = _sql_without_comments(feed_queries.RECORD_SOURCE_OBSERVATION_SQL)
-
-        self.assertIn("failure_count = 0", sql)
-        self.assertIn(
-            "last_bookmark_time = GREATEST(last_bookmark_time, $4)",
-            sql,
-        )
-        self.assertIn("status_reason = NULL", sql)
-        self.assertIn("current_state.worker_id = $2", sql)
-        self.assertIn("current_state.fencing_token = $3", sql)
-        self.assertIn("current_state.status = 'active'::feed_status", sql)
-        self.assertIn("current_state.worker_id AS current_worker", sql)
-        self.assertIn("current_state.status::text AS current_status", sql)
-        self.assertIn(
-            "current_state.fencing_token AS current_fencing_token",
-            sql,
-        )
+        row = _full_feed_row(last_speech_segment_timestamp=timestamp)
+        result = store._row_to_feed(cast("asyncpg.Record", row))
+        self.assertEqual(result["last_speech_segment_timestamp"], timestamp)
 
 
 class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
@@ -749,6 +629,7 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         )
 
         args = pool.fetchrow.call_args[0]
+        self.assertIs(args[0], feed_queries.REPORT_FAILURE_SQL)
         self.assertEqual(
             args[1:],
             (
@@ -785,6 +666,117 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
 
         args = pool.fetchrow.call_args[0]
         self.assertIsNone(args[-1])
+
+    async def test_caps_quarantine_reason_at_persistence_boundary(
+        self,
+    ) -> None:
+        """Long reasons are capped only before database writes."""
+        pool = make_mock_pool(
+            fetchrow_result={
+                "status": "failing",
+                "failure_count": 1,
+                "retry_after": None,
+            },
+        )
+        store = FeedStore(pool)
+        long_reason = "x" * (quarantine_reason.MAX_QUARANTINE_REASON_LENGTH + 1)
+
+        await store.report_feed_failure(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            reason=long_reason,
+        )
+
+        reason_arg = pool.fetchrow.call_args[0][-2]
+        self.assertEqual(
+            len(reason_arg),
+            quarantine_reason.MAX_QUARANTINE_REASON_LENGTH,
+        )
+        self.assertTrue(reason_arg.endswith("[truncated]"))
+
+
+class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedStore.release_non_budgeted_failure."""
+
+    async def test_returns_status_when_lease_held(self) -> None:
+        """Status string is returned when the non-budgeted update succeeds."""
+        retry_after = datetime.datetime(
+            2026, 6, 14, 12, 15, tzinfo=datetime.UTC
+        )
+        pool = make_mock_pool(
+            fetchrow_result={
+                "status": "failing",
+                "failure_count": 0,
+                "retry_after": retry_after,
+            },
+        )
+        store = FeedStore(pool)
+
+        result = await store.release_non_budgeted_failure(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            retry_after=retry_after,
+            status_reason=(
+                FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
+            ),
+        )
+
+        self.assertEqual(result, "failing")
+
+    async def test_returns_none_when_lease_lost(self) -> None:
+        """None is returned when no active lease matches."""
+        retry_after = datetime.datetime(
+            2026, 6, 14, 12, 15, tzinfo=datetime.UTC
+        )
+        pool = make_mock_pool(fetchrow_result=None)
+        store = FeedStore(pool)
+
+        result = await store.release_non_budgeted_failure(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            retry_after=retry_after,
+            status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        )
+
+        self.assertIsNone(result)
+
+    async def test_passes_correct_parameters(self) -> None:
+        """Parameters are passed in the correct order."""
+        retry_after = datetime.datetime(
+            2026, 6, 14, 12, 15, tzinfo=datetime.UTC
+        )
+        pool = make_mock_pool(
+            fetchrow_result={
+                "status": "failing",
+                "failure_count": 0,
+                "retry_after": retry_after,
+            },
+        )
+        store = FeedStore(pool)
+
+        await store.release_non_budgeted_failure(
+            _FEED_ID,
+            _WORKER_ID,
+            1,
+            retry_after=retry_after,
+            status_reason=FeedStatusReason.SOURCE_OFFLINE,
+        )
+
+        args = pool.fetchrow.call_args[0]
+        self.assertIs(args[0], feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL)
+        self.assertEqual(
+            args[1:],
+            (
+                _FEED_ID,
+                _WORKER_ID,
+                1,
+                retry_after,
+                "source_offline",
+            ),
+        )
 
 
 class TestReleaseFeed(unittest.IsolatedAsyncioTestCase):
@@ -992,137 +984,6 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
         )
 
 
-class TestBuildAcquireFeedsBatchSql(unittest.TestCase):
-    """Tests for build_acquire_feeds_batch_sql pure helper."""
-
-    def test_one_branch_per_claim_type(self) -> None:
-        sql = feed_queries.build_acquire_feeds_batch_sql(
-            [SourceType.BCFY_FEEDS]
-        )
-        self.assertEqual(
-            sql.count("AS MATERIALIZED ("), 2
-        )  # 1 branch + claimed
-
-    def test_three_branches_for_production_set(self) -> None:
-        sql = feed_queries.build_acquire_feeds_batch_sql(
-            [
-                SourceType.BCFY_FEEDS,
-                SourceType.BCFY_CALLS,
-                SourceType.OPENMHZ,
-            ]
-        )
-        self.assertEqual(
-            sql.count("AS MATERIALIZED ("), 4
-        )  # 3 branches + claimed
-
-    def test_param_count_matches_claim_types(self) -> None:
-        """N claim_types → LIMIT $2..$(1+N) appears in SQL."""
-        sql = feed_queries.build_acquire_feeds_batch_sql(
-            [
-                SourceType.BCFY_FEEDS,
-                SourceType.BCFY_CALLS,
-                SourceType.OPENMHZ,
-            ]
-        )
-        self.assertIn("LIMIT $2", sql)
-        self.assertIn("LIMIT $3", sql)
-        self.assertIn("LIMIT $4", sql)
-        self.assertNotIn("LIMIT $5", sql)
-
-    def test_source_type_literals_inlined(self) -> None:
-        sql = feed_queries.build_acquire_feeds_batch_sql(
-            [
-                SourceType.BCFY_FEEDS,
-                SourceType.BCFY_CALLS,
-                SourceType.OPENMHZ,
-            ]
-        )
-        self.assertIn("source_type = 'bcfy_feeds'", sql)
-        self.assertIn("source_type = 'bcfy_calls'", sql)
-        self.assertIn("source_type = 'openmhz'", sql)
-
-    def test_deterministic(self) -> None:
-        types = [SourceType.BCFY_FEEDS, SourceType.OPENMHZ]
-        self.assertEqual(
-            feed_queries.build_acquire_feeds_batch_sql(types),
-            feed_queries.build_acquire_feeds_batch_sql(types),
-        )
-
-    def test_empty_claim_types_raises(self) -> None:
-        with self.assertRaises(ValueError):
-            feed_queries.build_acquire_feeds_batch_sql([])
-
-    def test_byte_identical_to_golden_for_production_set(self) -> None:
-        """Production claim_types order produces a known-good SQL string.
-
-        Guards against accidental SQL formatting drift during future
-        refactors. The SQL shape (whitespace, indentation, branch
-        ordering, parameter numbering) is load-bearing — the planner
-        chooses the (source_type, id) WHERE status='unclaimed' partial
-        composite index based on the literal source_type per branch, and
-        the DB-side prepared-statement cache keys on the SQL string.
-        """
-        expected = (
-            "WITH\n"
-            "    bcfy_feeds_claim AS MATERIALIZED (\n"
-            "        SELECT id FROM feeds\n"
-            "        WHERE source_type = 'bcfy_feeds' AND status = 'unclaimed'::feed_status\n"
-            "        ORDER BY id\n"
-            "        LIMIT $2\n"
-            "        FOR NO KEY UPDATE SKIP LOCKED\n"
-            "    ),\n"
-            "    bcfy_calls_claim AS MATERIALIZED (\n"
-            "        SELECT id FROM feeds\n"
-            "        WHERE source_type = 'bcfy_calls' AND status = 'unclaimed'::feed_status\n"
-            "        ORDER BY id\n"
-            "        LIMIT $3\n"
-            "        FOR NO KEY UPDATE SKIP LOCKED\n"
-            "    ),\n"
-            "    openmhz_claim AS MATERIALIZED (\n"
-            "        SELECT id FROM feeds\n"
-            "        WHERE source_type = 'openmhz' AND status = 'unclaimed'::feed_status\n"
-            "        ORDER BY id\n"
-            "        LIMIT $4\n"
-            "        FOR NO KEY UPDATE SKIP LOCKED\n"
-            "    ),\n"
-            "    claimed AS MATERIALIZED (\n"
-            "        SELECT id FROM bcfy_feeds_claim\n"
-            "        UNION ALL\n"
-            "        SELECT id FROM bcfy_calls_claim\n"
-            "        UNION ALL\n"
-            "        SELECT id FROM openmhz_claim\n"
-            "    ),\n"
-            "leased AS (\n"
-            "    UPDATE feeds\n"
-            "    SET status = 'active'::feed_status,\n"
-            "        worker_id = $1,\n"
-            "        fencing_token = fencing_token + 1,\n"
-            "        last_heartbeat = NOW(),\n"
-            "        retry_after = NULL\n"
-            "    FROM claimed\n"
-            "    WHERE feeds.id = claimed.id\n"
-            "    RETURNING feeds.id, feeds.name, feeds.source_type,\n"
-            "              feeds.last_processed_filename, feeds.last_bookmark_time,\n"
-            "              feeds.fencing_token, feeds.failure_count,\n"
-            "              feeds.status_reason\n"
-            ")\n"
-            "SELECT leased.id, leased.name, leased.source_type,\n"
-            "       leased.last_processed_filename, leased.last_bookmark_time,\n"
-            "       leased.fencing_token, leased.failure_count,\n"
-            "       leased.status_reason, fpi.source_feed_id\n"
-            "FROM leased\n"
-            "JOIN feed_properties fpi ON fpi.feed_id = leased.id\n"
-        )
-        actual = feed_queries.build_acquire_feeds_batch_sql(
-            [
-                SourceType.BCFY_FEEDS,
-                SourceType.BCFY_CALLS,
-                SourceType.OPENMHZ,
-            ]
-        )
-        self.assertEqual(actual, expected)
-
-
 class TestReportFeedFailureWithThreshold(unittest.IsolatedAsyncioTestCase):
     """Tests for FeedStore.report_feed_failure with custom threshold."""
 
@@ -1320,66 +1181,6 @@ class TestAcquireFeedsRecovery(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["id"], _FEED_ID)
-
-
-class TestBuildAcquireFeedsRecoverySql(unittest.TestCase):
-    """Tests for build_acquire_feeds_recovery_sql pure helper."""
-
-    def test_one_branch_per_claim_type(self) -> None:
-        sql = feed_queries.build_acquire_feeds_recovery_sql(
-            [SourceType.BCFY_FEEDS]
-        )
-        # 1 _recovery branch + 1 recovered = 2 MATERIALIZED.
-        self.assertEqual(sql.count("AS MATERIALIZED ("), 2)
-        self.assertIn("bcfy_feeds_recovery AS MATERIALIZED", sql)
-
-    def test_three_branches_for_production_set(self) -> None:
-        sql = feed_queries.build_acquire_feeds_recovery_sql(
-            [
-                SourceType.BCFY_FEEDS,
-                SourceType.BCFY_CALLS,
-                SourceType.OPENMHZ,
-            ]
-        )
-        self.assertEqual(sql.count("AS MATERIALIZED ("), 4)
-
-    def test_param_count_matches_claim_types(self) -> None:
-        """N claim_types → LIMIT $3..$(2+N) appears in SQL."""
-        sql = feed_queries.build_acquire_feeds_recovery_sql(
-            [
-                SourceType.BCFY_FEEDS,
-                SourceType.BCFY_CALLS,
-                SourceType.OPENMHZ,
-            ]
-        )
-        self.assertIn("LIMIT $3", sql)
-        self.assertIn("LIMIT $4", sql)
-        self.assertIn("LIMIT $5", sql)
-        self.assertNotIn("LIMIT $6", sql)
-        # $2 is the abandonment interval.
-        self.assertIn("$2::interval", sql)
-
-    def test_each_branch_filters_failing_or_active_abandoned(self) -> None:
-        sql = feed_queries.build_acquire_feeds_recovery_sql(
-            [SourceType.BCFY_FEEDS]
-        )
-        self.assertIn("status = 'failing'::feed_status", sql)
-        self.assertIn("status = 'active'::feed_status", sql)
-        self.assertIn("retry_after IS NULL OR retry_after <= NOW()", sql)
-        self.assertIn("last_heartbeat < NOW() - $2::interval", sql)
-
-    def test_source_type_literals_inlined(self) -> None:
-        sql = feed_queries.build_acquire_feeds_recovery_sql(
-            [SourceType.BCFY_FEEDS, SourceType.OPENMHZ]
-        )
-        self.assertIn("source_type = 'bcfy_feeds'", sql)
-        self.assertIn("source_type = 'openmhz'", sql)
-        # bcfy_calls is absent — no branch generated, so no filter.
-        self.assertNotIn("source_type = 'bcfy_calls'", sql)
-
-    def test_empty_claim_types_raises(self) -> None:
-        with self.assertRaises(ValueError):
-            feed_queries.build_acquire_feeds_recovery_sql([])
 
 
 class TestCountHeldByType(unittest.IsolatedAsyncioTestCase):

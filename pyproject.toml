@@ -16,7 +16,6 @@ dependencies = [
     "audio-segments-service",
     "feeds-service",
     "rules-service",
-    "transcripts-service",
     "normalization-pipeline",
     "segmentation-pipeline",
     "transcription-function",
@@ -27,12 +26,12 @@ dependencies = [
     "curl-cffi>=0.9.1",
     "urllib3>=2.7.0",
     "google-cloud-secret-manager>=2.26.0",
-    "pyjwt>=2.12.0",
+    "pyjwt>=2.13.0",
     "tenacity>=9.1.4",
     "asyncpg>=0.29.0",
     "psycopg[binary]>=3.2.0",
     "redis>=7.3.0",
-    "pydantic-settings>=2.0.0",
+    "pydantic-settings>=2.14.2",
 ]
 
 [tool.uv]
@@ -62,6 +61,7 @@ dev = [
   "soundfile>=0.12.1",
   "pyopenssl>=26.0.0",
   "deepdiff>=9.1.0",
+  "types-protobuf>=7.34.1",
 ]
 
 [tool.ruff]
@@ -226,6 +226,9 @@ known-first-party = ["backend", "local_dev"]
   "S113",   # requests.* require timeout=
   "T201",   # `print()` found
 ]
+".github/scripts/**.py" = [
+  "INP001", # Implicit namespaces (no __init__.py needed for standalone scripts)
+]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -236,6 +239,7 @@ exclude = ["model/", "backend/services/local-whisper-api/"]
 
 [tool.pyright]
 pythonVersion = "3.13"
+reportUnusedTypeIgnoreComment = false
 
 [tool.uv.workspace]
 members = [
@@ -248,7 +252,6 @@ members = [
     "backend/services/audio_segments",
     "backend/services/feeds",
     "backend/services/rules",
-    "backend/services/transcripts",
 ]
 
 [tool.uv.sources]
@@ -256,7 +259,6 @@ radio-transcription-common = { workspace = true }
 audio-segments-service = { workspace = true }
 feeds-service = { workspace = true }
 rules-service = { workspace = true }
-transcripts-service = { workspace = true }
 normalization-pipeline = { workspace = true }
 segmentation-pipeline = { workspace = true }
 transcription-function = { workspace = true }

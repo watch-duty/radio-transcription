@@ -5,6 +5,32 @@ import "google/protobuf/duration.proto";
 // Identifiers, timestamps, transcript, and evaluation decisions for transcribed audio.
 message EvaluatedTranscribedAudio {
 
+  // A span of text within the transcript that matched a rule.
+  message TextMatchSpan {
+    // Codepoint offset (inclusive) of the first character of the match.
+    int32 start = 1;
+
+    // Codepoint offset (exclusive) of the character after the last character of the match.
+    int32 end = 2;
+
+    // The matched substring, preserved with its original casing.
+    string matched_text = 3;
+  }
+
+  // Annotation kind for keyword/regex rules: one or more spans of matched text.
+  message TextMatchAnnotation {
+    repeated TextMatchSpan spans = 1;
+  }
+
+  // A single triggered rule's annotation. The rule_id lives in the
+  // rule_annotations map key, not here. The `annotation` oneof carries a payload
+  // specific to the rule kind (e.g. text spans for keyword/regex rules, future
+  // kinds for burst/audio/metadata rules).
+  message RuleAnnotation {
+    oneof annotation {
+      TextMatchAnnotation text_match = 1;
+    }
+  }
 
   // --- Identifiers ---
   // The unique identifier of the radio feed this transmission originated from (formatted as a RFC 4122 UUID).
@@ -63,7 +89,16 @@ message EvaluatedTranscribedAudio {
   // The human-readable name of the radio feed as stored in the database.
   string feed_name = 15;
 
-  // Reserved old enum field for backward compatibility in Pub/Sub schemas
+  // Per-rule annotations describing how each triggered rule matched, keyed by
+  // rule_id. This is an unordered sidecar: evaluation_decisions is the ordered
+  // source of truth for which rules fired; rule_annotations only carries the
+  // optional payload for rules that produced one. Text-match rules carry span
+  // offsets; future non-text rule kinds carry their own annotation messages via
+  // the oneof in RuleAnnotation.
+  map<string, RuleAnnotation> rule_annotations = 19;
+
+  // Reserved old enum field for backward compatibility in Pub/Sub schemas.
+  // Field 16 (external_id) removed in GOO-498.
   reserved 14, 16;
   reserved "external_id";
 }

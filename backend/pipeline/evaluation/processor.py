@@ -4,9 +4,11 @@ import base64
 import logging
 from typing import TYPE_CHECKING
 
-from backend.pipeline.common.exceptions import AlreadyExistsError
+from google.protobuf import json_format
+
 from backend.pipeline.common.tracing_utils import (
-    get_current_traceparent,
+    inject_otel_context,
+    parse_pubsub_cloudevent,
     with_tracer_context,
 )
 from backend.pipeline.schema_types import (
@@ -21,9 +23,6 @@ if TYPE_CHECKING:
         AudioSegmentsClient,
     )
     from backend.pipeline.common.clients.pubsub_client import PubSubClient
-    from backend.pipeline.common.clients.transcripts_client import (
-        TranscriptsClient,
-    )
     from backend.pipeline.evaluation.service import EvaluationService
 
 logger = logging.getLogger(__name__)
@@ -38,23 +37,20 @@ class EvaluationEventProcessor:
     def __init__(
         self,
         evaluation_service: EvaluationService,
-        transcripts_client: TranscriptsClient,
         publisher: PubSubClient,
         output_topic_path: str,
-        audio_segments_client: AudioSegmentsClient | None,
+        audio_segments_client: AudioSegmentsClient,
     ) -> None:
         """
         Initializes the EvaluationEventProcessor.
 
         Args:
             evaluation_service: The service to perform evaluations.
-            transcripts_client: Client to write to Transcripts API.
             publisher: Pub/Sub publisher client.
             output_topic_path: Topic path to publish alerts to.
-            audio_segments_client: Client for the Audio Segments API (optional).
+            audio_segments_client: Client for the Audio Segments API.
         """
         self.evaluation_service = evaluation_service
-        self.transcripts_client = transcripts_client
         self.publisher = publisher
         self.output_topic_path = output_topic_path
         self.audio_segments_client = audio_segments_client
@@ -66,14 +62,20 @@ class EvaluationEventProcessor:
         Args:
             cloud_event: The CloudEvent triggered by Pub/Sub.
         """
-        pubsub_message = cloud_event.data.get("message", {})
-        attributes = pubsub_message.get("attributes", {}) or {}
-        traceparent = attributes.get("traceparent", "")
+        try:
+            combined_attributes, raw_data = parse_pubsub_cloudevent(cloud_event)
+        except Exception as e:
+            logger.exception(
+                "Failed to parse CloudEvent payload envelope: %s", e
+            )
+            return
 
-        with with_tracer_context(traceparent, "evaluate_rules", __name__):
+        with with_tracer_context(
+            combined_attributes, "evaluate_rules", __name__
+        ):
             # 1. Decode the Incoming Message
             # TODO (https://linear.app/watchduty/issue/GOO-245/): Handle parse failure.
-            new_audio = self._parse_cloud_event(cloud_event)
+            new_audio = self._parse_cloud_event(raw_data)
             if new_audio is None:
                 logger.error(
                     "Transcribed audio could not be parsed for cloud event %s. Skipping.",
@@ -105,42 +107,37 @@ class EvaluationEventProcessor:
                 )
                 return
 
-            # 3. Always write to Transcripts API
-            # TODO (https://linear.app/watchduty/issue/GOO-245/): Handle write failure.
-            # TODO (https://linear.app/watchduty/issue/GOO-458/remaining-legacy-cleanup): cleanup after migration
+            # 3. Write to Annotation Segments table
             try:
-                self.transcripts_client.create_transcript(evaluated_payload)
-            except AlreadyExistsError:
-                logger.warning(
-                    "Transcript already exists for transmission %s which indicates we already processed this transmission. Continuing.",
-                    evaluated_payload.segment_id,
+                annotation_data = {
+                    "decisions": list(evaluated_payload.evaluation_decisions),
+                    "errors": list(evaluated_payload.errors),
+                    # preserving_proto_field_name keeps snake_case keys so the
+                    # JSON matches the audio-segments EvaluationAnnotationData schema.
+                    "rule_annotations": {
+                        rule_id: json_format.MessageToDict(
+                            annotation, preserving_proto_field_name=True
+                        )
+                        for rule_id, annotation in (
+                            evaluated_payload.rule_annotations.items()
+                        )
+                    },
+                }
+                self.audio_segments_client.add_audio_segment_annotation(
+                    audio_segment_id=new_audio.segment_id,
+                    annotation_type=AnnotationType.EVALUATION,
+                    data=annotation_data,
                 )
-
-            # 3.5 Write to Annotation Segments table
-            if self.audio_segments_client is not None:
-                # TODO (https://linear.app/watchduty/issue/GOO-449/ui-uibff-cutover-and-legacy-cleanup): Make this client required and call unconditional once the migration is complete.
-                try:
-                    annotation_data = {
-                        "decisions": list(
-                            evaluated_payload.evaluation_decisions
-                        ),
-                        "errors": list(evaluated_payload.errors),
-                    }
-                    self.audio_segments_client.add_audio_segment_annotation(
-                        audio_segment_id=new_audio.segment_id,
-                        annotation_type=AnnotationType.EVALUATION,
-                        data=annotation_data,
-                    )
-                    logger.info(
-                        "Successfully added evaluation annotation for segment %s",
-                        new_audio.segment_id,
-                    )
-                except Exception as e:
-                    logger.exception(
-                        "Failed to add evaluation annotation for segment %s: %s",
-                        new_audio.segment_id,
-                        e,
-                    )
+                logger.info(
+                    "Successfully added evaluation annotation for segment %s",
+                    new_audio.segment_id,
+                )
+            except Exception as e:
+                logger.exception(
+                    "Failed to add evaluation annotation for segment %s: %s",
+                    new_audio.segment_id,
+                    e,
+                )
 
             # 4. Publish to Downstream Topic if flagged or has errors
             if (
@@ -148,12 +145,14 @@ class EvaluationEventProcessor:
                 or len(evaluated_payload.errors) > 0
             ):
                 encoded_data = evaluated_payload.SerializeToString()
+                attrs: dict[str, str] = {}
+                inject_otel_context(attrs)
                 # TODO (https://linear.app/watchduty/issue/GOO-245/): Handle publish failure.
                 future = self.publisher.get_publisher().publish(
                     self.output_topic_path,
                     encoded_data,
                     ordering_key=evaluated_payload.feed_id,
-                    traceparent=get_current_traceparent(),
+                    **attrs,
                 )
                 message_id = future.result()
                 logger.info(
@@ -163,23 +162,21 @@ class EvaluationEventProcessor:
                 )
 
     def _parse_cloud_event(
-        self, cloud_event: cloudevent.CloudEvent
+        self, raw_data: str
     ) -> transcribed_pb2.TranscribedAudio | None:
         """
-        Parses the CloudEvent into a TranscribedAudio proto.
+        Parses the raw Pub/Sub data string into a TranscribedAudio proto.
 
         Args:
-            cloud_event: The raw CloudEvent data.
+            raw_data: The raw Pub/Sub data payload.
 
         Returns:
             A TranscribedAudio object or None if parsing fails.
         """
-        pubsub_message = cloud_event.data.get("message", {})
-        transcribed_audio = transcribed_pb2.TranscribedAudio()
-        raw_data = pubsub_message.get("data", "")
         if not raw_data:
             logger.error("No data provided in CloudEvent")
             return None
+        transcribed_audio = transcribed_pb2.TranscribedAudio()
         decoded_data = base64.b64decode(raw_data)
         transcribed_audio.ParseFromString(decoded_data)
         return transcribed_audio

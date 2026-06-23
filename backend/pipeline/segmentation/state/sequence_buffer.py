@@ -48,6 +48,7 @@ class SequenceBuffer:
         buffer_elements: list[BufferedChunk],
         chunk_duration_ms: int | None = None,
         traceparent: str | None = None,
+        baggage: str | None = None,
         max_emit: int | None = None,
     ) -> tuple[int, list[BufferedChunk], list[BufferedChunk], bool, bool]:
         """Processes a single incoming audio chunk against the expected sequence progression.
@@ -71,7 +72,9 @@ class SequenceBuffer:
 
         if abs(difference) <= epsilon_ms:
             # HAPPY PATH: The chunk matches our mathematical expectation exactly.
-            to_emit.append(BufferedChunk(current_ts_ms, gcs_uri, traceparent))
+            to_emit.append(
+                BufferedChunk(current_ts_ms, gcs_uri, traceparent, baggage)
+            )
             # Advance the expected timestamp. Use provided duration if available (for varying lengths),
             # otherwise fallback to fixed config duration.
             duration = (
@@ -91,6 +94,9 @@ class SequenceBuffer:
                     max_emit=max_emit,
                 )
             )
+            if expected_next_ts is None:
+                msg = "expected_next_ts cannot be None after draining"
+                raise ValueError(msg)
             to_emit.extend(drained)
         elif difference < -epsilon_ms:
             # LATE PATH: The chunk arrived later than its position in the sequence, meaning
@@ -100,7 +106,9 @@ class SequenceBuffer:
             logger.info(
                 f"Yielding late chunk at {current_ts_ms} (expected {expected_next_ts}) for isolated transcription."
             )
-            to_emit.append(BufferedChunk(current_ts_ms, gcs_uri, traceparent))
+            to_emit.append(
+                BufferedChunk(current_ts_ms, gcs_uri, traceparent, baggage)
+            )
         else:
             # FUTURE PATH: The difference > epsilon_ms, meaning this chunk arrived before
             # its predecessor. We store it in state, parking it until the missing chunk arrives.
@@ -112,7 +120,7 @@ class SequenceBuffer:
             heapq.heappush(
                 heap,
                 ComparableChunk(
-                    BufferedChunk(current_ts_ms, gcs_uri, traceparent)
+                    BufferedChunk(current_ts_ms, gcs_uri, traceparent, baggage)
                 ),
             )
             buffer_elements[:] = [item.chunk for item in heap]
@@ -127,11 +135,11 @@ class SequenceBuffer:
 
     def drain_ready_elements(
         self,
-        expected_next_ts: int,
+        expected_next_ts: int | None,
         buffer_elements: list[BufferedChunk],
         epsilon_ms: int = DEFAULT_FLOAT_TOLERANCE_MS,
         max_emit: int | None = None,
-    ) -> tuple[int, list[BufferedChunk], list[BufferedChunk]]:
+    ) -> tuple[int | None, list[BufferedChunk], list[BufferedChunk]]:
         """Drain sequentially-ready chunks from the buffer heap.
 
         Walks the min-heap in timestamp order and emits every chunk whose
@@ -139,7 +147,8 @@ class SequenceBuffer:
         expected pointer after each emission.
 
         Args:
-            expected_next_ts: The timestamp (ms) of the next expected chunk.
+            expected_next_ts: The timestamp (ms) of the next expected chunk, or
+                None if the sequence has not been initialized yet.
             buffer_elements: The current out-of-order buffer (mutated in-place).
             epsilon_ms: Float-arithmetic tolerance for timestamp matching.
             max_emit: Optional hard cap on the number of chunks emitted per call.
@@ -162,6 +171,8 @@ class SequenceBuffer:
             if max_emit is not None and len(to_emit) >= max_emit:
                 break
             smallest = heap[0].chunk
+            if expected_next_ts is None:
+                expected_next_ts = smallest.timestamp_ms
             difference = smallest.timestamp_ms - expected_next_ts
             if abs(difference) <= epsilon_ms:
                 heapq.heappop(heap)

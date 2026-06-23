@@ -32,6 +32,17 @@ from backend.services.feeds.models import Tag
 
 
 class TestSendNotification(TestCase):
+    def setUp(self) -> None:
+        self.record_pipeline_stage_patch = mock.patch(
+            "backend.pipeline.notification.send_notification.record_pipeline_stage"
+        )
+        self.mock_record_pipeline_stage = (
+            self.record_pipeline_stage_patch.start()
+        )
+
+    def tearDown(self) -> None:
+        self.record_pipeline_stage_patch.stop()
+
     def test_missing_app_url_raises(self) -> None:
         with mock.patch.dict(os.environ, {}, clear=True):
             container = NotificationServiceContainer()
@@ -103,6 +114,10 @@ class TestSendNotification(TestCase):
 
         mock_request_handler.send_notification.assert_called_once_with(
             expected_notification
+        )
+        self.mock_record_pipeline_stage.assert_any_call("notification", "start")
+        self.mock_record_pipeline_stage.assert_any_call(
+            "notification", "success"
         )
 
     @mock.patch("backend.pipeline.notification.send_notification.container")
@@ -238,7 +253,7 @@ class TestSendNotification(TestCase):
         send_notification(cloud_event)
 
         mock_with_tracer_context.assert_called_once_with(
-            "mock-traceparent",
+            event_data["message"]["attributes"],
             "send_notification",
             "backend.pipeline.notification.send_notification",
         )

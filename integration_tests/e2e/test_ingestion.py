@@ -1,5 +1,6 @@
 import logging
 import os
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,6 +14,7 @@ from integration_tests.feed_utils import (
 )
 from integration_tests.test_utils import (
     verify_audio_segments_via_api,
+    verify_multiple_audio_segments_via_api,
 )
 
 logger = logging.getLogger(__name__)
@@ -32,8 +34,10 @@ def test_ingestion_api_polling(test_polling_feed: tuple[str, str]) -> None:
     """Tests that audio ingestion service picks up a feed from API polling and results in a transcript."""
     feed_id, _ = test_polling_feed
 
-    # Broadcastify calls should have an external ID representing the full audio URL
-    verify_audio_segments_via_api(
+    # Broadcastify calls should have an external ID representing the full audio URL.
+    # We verify that at least 2 segments are generated, proving that the collector's
+    # single connection_session_id does not cause segment_id collisions.
+    verify_multiple_audio_segments_via_api(
         feed_id,
         lambda s: (
             isinstance(ext_id := s.get("external_audio_segment_id"), str)
@@ -41,6 +45,7 @@ def test_ingestion_api_polling(test_polling_feed: tuple[str, str]) -> None:
                 "http://mock-audio-server:8090/broadcastify_calls/2912/"
             )
         ),
+        min_count=2,
     )
 
 
@@ -62,8 +67,9 @@ def test_ingestion_echo(test_echo_feed: tuple[str, str]) -> None:
         )
 
     channel_name = source_feed_id
-    date_str = "20260326"
-    time_str = "143022"
+    now = datetime.now(UTC)
+    date_str = now.strftime("%Y%m%d")
+    time_str = now.strftime("%H%M%S")
     filename = f"{channel_name}_{date_str}_{time_str}.mp3"
     gcs_path = f"{channel_name}/{date_str}/{filename}"
 

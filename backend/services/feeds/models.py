@@ -6,10 +6,10 @@ from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from backend.pipeline.storage.feed_store import (  # noqa: TC001
-    FeedStatus,
-    FeedStatusReason,
-    SourceType,
+from backend.pipeline.storage.feed_store import (
+    FeedStatus,  # noqa: TC001
+    FeedStatusReason,  # noqa: TC001
+    SourceType,  # noqa: TC001
 )
 
 
@@ -87,6 +87,7 @@ class Feed(FeedBase):
     last_heartbeat: datetime.datetime | None
     quarantine_reason: str | None = None
     status_reason: FeedStatusReason | None = None
+    last_speech_segment_timestamp: datetime.datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

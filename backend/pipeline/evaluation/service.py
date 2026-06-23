@@ -1,7 +1,11 @@
+import datetime
 import logging
 
-from google.protobuf.duration_pb2 import Duration  # type: ignore
+from google.protobuf.duration_pb2 import Duration
+from opentelemetry import baggage, metrics
 
+from backend.pipeline.common.evaluation.annotations import RuleAnnotation
+from backend.pipeline.common.tracing_utils import record_pipeline_stage
 from backend.pipeline.evaluation.rules_evaluation import evaluator
 from backend.pipeline.schema_types import (
     evaluated_transcribed_audio_pb2 as evaluated_pb2,
@@ -11,6 +15,36 @@ from backend.pipeline.schema_types import (
 )
 
 logger = logging.getLogger(__name__)
+
+meter = metrics.get_meter(__name__)
+e2e_latency_histogram = meter.create_histogram(
+    "transcription_e2e_latency_ms",
+    description="End-to-end processing latency from ingestion to evaluation",
+    unit="ms",
+)
+
+
+def _record_e2e_latency(feed_id: str) -> None:
+    """Records the end-to-end latency metric if the ingest time baggage is present."""
+    ingest_time_ms_str = baggage.get_baggage("ingest_time_ms")
+    if not isinstance(ingest_time_ms_str, str):
+        return
+
+    try:
+        ingest_time_ms = int(ingest_time_ms_str)
+        current_time_ms = int(
+            datetime.datetime.now(datetime.UTC).timestamp() * 1000
+        )
+        latency_ms = current_time_ms - ingest_time_ms
+
+        e2e_latency_histogram.record(
+            latency_ms, attributes={"feed_id": feed_id}
+        )
+        logger.info("Recorded E2E latency: %sms", latency_ms)
+    except ValueError:
+        logger.warning(
+            "Invalid ingest_time_ms in baggage: %s", ingest_time_ms_str
+        )
 
 
 def _sanitize_duration(duration: Duration, context: str = "") -> None:
@@ -29,6 +63,22 @@ def _sanitize_duration(duration: Duration, context: str = "") -> None:
         )
         duration.seconds = 0
         duration.nanos = 0
+
+
+def _rule_annotation_to_proto(
+    annotation: RuleAnnotation,
+) -> evaluated_pb2.EvaluatedTranscribedAudio.RuleAnnotation:
+    proto = evaluated_pb2.EvaluatedTranscribedAudio.RuleAnnotation()
+    if annotation.text_match is not None:
+        proto.text_match.spans.extend(
+            evaluated_pb2.EvaluatedTranscribedAudio.TextMatchSpan(
+                start=span.start,
+                end=span.end,
+                matched_text=span.matched_text,
+            )
+            for span in annotation.text_match
+        )
+    return proto
 
 
 class EvaluationService:
@@ -63,6 +113,7 @@ class EvaluationService:
         Returns:
             The evaluated payload or None if processing was skipped.
         """
+        record_pipeline_stage("evaluation", "start")
         try:
             segment_id = new_audio.segment_id
             # Safeguard offset durations against sign mismatches (e.g. from negative timedeltas)
@@ -82,6 +133,7 @@ class EvaluationService:
                     "No transcript for ID: %s. Skipping evaluation.",
                     segment_id,
                 )
+                record_pipeline_stage("evaluation", "skipped")
                 return None
 
             # 2. Call the evaluator
@@ -105,6 +157,7 @@ class EvaluationService:
                 )
 
             # 4. Create Evaluation Result Payload
+            rule_annotations = evaluation_result.get("rule_annotations", {})
             evaluated_payload = evaluated_pb2.EvaluatedTranscribedAudio(
                 feed_id=new_audio.feed_id,
                 segment_id=new_audio.segment_id,
@@ -119,6 +172,10 @@ class EvaluationService:
                 canonical_audio_uri=new_audio.canonical_audio_uri,
                 playback_audio_uri=new_audio.playback_audio_uri,
                 feed_name=new_audio.feed_name,
+                rule_annotations={
+                    rule_id: _rule_annotation_to_proto(a)
+                    for rule_id, a in rule_annotations.items()
+                },
             )
             evaluated_payload.start_timestamp.CopyFrom(
                 new_audio.start_timestamp
@@ -131,7 +188,12 @@ class EvaluationService:
                 new_audio.end_audio_offset
             )
 
+            # 5. Record End-to-End Latency Metric via OpenTelemetry
+            _record_e2e_latency(new_audio.feed_id)
+            record_pipeline_stage("evaluation", "success")
+
         except Exception:
+            record_pipeline_stage("evaluation", "error")
             logger.exception("Error processing new audio message")
             raise
         else:

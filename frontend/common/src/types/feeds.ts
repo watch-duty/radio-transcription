@@ -17,11 +17,16 @@ export type FeedStatus = 'active' | 'inactive' | 'error';
 
 export type BackendFeedStatusReason =
   | 'unknown'
+  | 'pipeline_publish_after_bookmark_failed'
   | 'source_offline'
   | 'source_unreachable'
   | 'source_rate_limited'
   | 'system_authentication_failed'
   | 'system_configuration_invalid'
+  | 'system_source_configuration_invalid'
+  | 'system_runtime_configuration_invalid'
+  | 'system_credential_access_failed'
+  | 'system_source_payload_invalid'
   | 'system_collector_error'
   | 'system_pipeline_error'
   | 'system_unexpected_error';
@@ -43,10 +48,11 @@ export interface Feed extends BaseFeed {
   archiveUrl?: string;
   status: FeedStatus;
   substatus: BackendFeedStatus;
-  lastHeartbeat?: string;
+  lastHeartbeat?: number;
   tags?: Tag[];
   quarantineReason?: string;
   statusReason?: BackendFeedStatusReason;
+  lastSpeechSegmentTimestamp?: number;
 }
 
 export interface FeedCreate extends BaseFeed {
@@ -64,4 +70,3 @@ export interface ListFeedsResponse {
   nextToken?: string;
   total: number;
 }
-

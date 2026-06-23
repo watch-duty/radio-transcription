@@ -18,6 +18,7 @@ message BufferedChunkProto {
   int64 timestamp_ms = 1;
   string gcs_uri = 2;
   optional string traceparent = 3;
+  optional string baggage = 4;
 }
 
 // PCollection Elements (Cross-Worker Boundaries)
@@ -30,6 +31,7 @@ message ChunkMetadataProto {
   bool is_continuous = 6;
   // True recording event timestamp of the incoming audio chunk in milliseconds since epoch.
   optional int64 timestamp_ms = 7;
+  optional string baggage = 8;
 }
 
 message FlushRequestProto {
@@ -55,6 +57,7 @@ message FlushRequestProto {
   }
   AudioClassification audio_classification = 15;
   string segment_id = 16;
+  optional string baggage = 17;
 }
 
 // Persistent State Checkpoints
@@ -83,6 +86,7 @@ message ActiveStitchingStateProto {
   optional bytes prior_audio_tail = 17; // Caches contiguous tail samples
   optional string traceparent = 18;
   optional int32 sample_rate = 19;
+  optional string baggage = 20;
 }
 
 message TransmissionContextProto {

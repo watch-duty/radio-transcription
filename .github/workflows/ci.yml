@@ -6,12 +6,15 @@ permissions:
   contents: read
   actions: read
   packages: read
+  checks: write
 
 jobs:
   setup:
     runs-on: ubuntu-24.04
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
+      requires_backend: ${{ steps.filter.outputs.requires_backend }}
+      requires_model: ${{ steps.filter.outputs.requires_model }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,6 +37,35 @@ jobs:
             if (alreadyPassed) {
               core.notice('Workflow already passed for this commit, skipping all jobs');
             }
+      - name: Detect file changes for smart job routing
+        id: filter
+        if: steps.check.outputs.should_run == 'true'
+        run: |
+          # 1. Fetch upstream base commit cleanly without entirely suppressing network exit codes
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          if [ -n "$BASE_SHA" ]; then
+            git fetch origin "${{ github.event.pull_request.base.ref }}" 2>/dev/null
+            FILES=$(git diff --name-only "$BASE_SHA" "${{ github.event.pull_request.head.sha }}" 2>/dev/null)
+          else
+            git fetch origin main 2>/dev/null
+            FILES=$(git diff --name-only origin/main HEAD 2>/dev/null || git diff --name-only HEAD~1 HEAD)
+          fi
+          echo "Modified files: $FILES"
+
+          # 2. Filter A: requires_backend. If any modified file falls OUTSIDE model/ and .md, we require backend runs.
+          # Note: grep -v inverts match per line. If any modified file is not a model/ or .md file, it returns true (exit 0).
+          if echo "$FILES" | grep -qvE '^(model/|.*\.md)'; then
+            echo "requires_backend=true" >> $GITHUB_OUTPUT
+          else
+            echo "requires_backend=false" >> $GITHUB_OUTPUT
+          fi
+
+          # 3. Filter B: requires_model. If any modified file touches model/ or .github/workflows/, we require model runs.
+          if echo "$FILES" | grep -qE '^(model/|\.github/workflows/)'; then
+            echo "requires_model=true" >> $GITHUB_OUTPUT
+          else
+            echo "requires_model=false" >> $GITHUB_OUTPUT
+          fi
       - name: Validate merge with main (fail fast on conflicts)
         if: steps.check.outputs.should_run == 'true'
         run: |
@@ -44,7 +76,8 @@ jobs:
 
   code-quality-checks-python:
     needs: [setup]
-    if: needs.setup.outputs.should_run == 'true'
+    # Gated on both backend and model changes to ensure Colab notebook JSON schemas and Ruff Python formatting are strictly enforced across all ML and API PRs
+    if: needs.setup.outputs.should_run == 'true' && (needs.setup.outputs.requires_backend == 'true' || needs.setup.outputs.requires_model == 'true')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -64,12 +97,38 @@ jobs:
         run: uv sync
       - name: Generate Protobuf Python files
         run: mise run generate:protos
+      - name: Validate protobuf schemas
+        run: mise run lint:schemas
       - name: Run Python code quality checks
         run: mise run lint:python
 
+  run-model-tests:
+    needs: [setup]
+    if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_model == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 100
+      - name: Install mise, install tools
+        uses: jdx/mise-action@v3
+      - name: Cache uv dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-uv-${{ hashFiles('**/uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
+      - name: Install dependencies
+        run: uv sync
+      - name: Generate Protobuf Python files
+        run: mise run generate:protos
+      - name: Run model unit tests
+        run: mise run test:model
+
   code-quality-checks-typescript:
     needs: [setup]
-    if: needs.setup.outputs.should_run == 'true'
+    if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_backend == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -105,7 +164,7 @@ jobs:
 
   terraform-checks:
     needs: [setup]
-    if: needs.setup.outputs.should_run == 'true'
+    if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_backend == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -123,20 +182,12 @@ jobs:
 
   run-backend-tests:
     needs: [setup]
-    if: needs.setup.outputs.should_run == 'true'
+    if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_backend == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 100
-      - name: Cache APT packages
-        uses: awalsh128/cache-apt-pkgs-action@v1
-        with:
-          packages: ffmpeg libomp5-18
-      - name: Install system dependencies (ffmpeg for pydub, libomp5 for TenVAD)
-        run: |
-          sudo apt-get update -o Acquire::http::Timeout="10"
-          sudo apt-get install -y ffmpeg libomp5 libc++1 libc++abi1
       - name: Install mise, install tools
         # mise installs uv and other project-specific tools. see: .tool-versions
         uses: jdx/mise-action@v3
@@ -164,11 +215,20 @@ jobs:
           docker pull google/alloydbomni:15 || true
           docker pull fsouza/fake-gcs-server:latest || true
       - name: Run tests
-        run: uv run python -m pytest backend/ -q
+        run: |
+          set -o pipefail
+          uv run python -m pytest backend/ -q --cov=backend/pipeline --cov-report=term-missing --color=no \
+            | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o backend_unit_test_coverage.txt
+      - name: Create Coverage Check Run
+        uses: ./.github/actions/post-backend-coverage
+        if: always()
+        with:
+          name: "Backend Unit Test Coverage"
+          coverage-report-location: "backend_unit_test_coverage.txt"
 
   run-frontend-tests:
     needs: [setup]
-    if: needs.setup.outputs.should_run == 'true'
+    if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_backend == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -185,10 +245,30 @@ jobs:
         run: yarn --cwd frontend/api install --frozen-lockfile --non-interactive && yarn --cwd frontend/transcription-ui install --frozen-lockfile --non-interactive
       - name: Run proxy tests
         working-directory: frontend/api
-        run: yarn test --watch=false
+        run: |
+          set -o pipefail
+          yarn test --watch=false --coverage --coverage.all --coverage.include=src/**/* --coverage.reporter=json-summary --coverage.reporter=text --no-color \
+            | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o frontend_api_test_coverage.txt
+      - name: Create Frontend Proxy Coverage Check Run
+        uses: ./.github/actions/post-frontend-coverage
+        if: always()
+        with:
+          name: "Frontend Proxy API Coverage"
+          coverage-report-location: "frontend/api/frontend_api_test_coverage.txt"
+          json-summary-location: "frontend/api/coverage/coverage-summary.json"
       - name: Run UI tests
         working-directory: frontend/transcription-ui
-        run: yarn test --watch=false
+        run: |
+          set -o pipefail
+          yarn test --watch=false --coverage --coverage.all --coverage.include=src/**/* --coverage.reporter=json-summary --coverage.reporter=text --no-color \
+            | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o frontend_ui_test_coverage.txt
+      - name: Create UI Coverage Check Run
+        uses: ./.github/actions/post-frontend-coverage
+        if: always()
+        with:
+          name: "Frontend UI Coverage"
+          coverage-report-location: "frontend/transcription-ui/frontend_ui_test_coverage.txt"
+          json-summary-location: "frontend/transcription-ui/coverage/coverage-summary.json"
 
   # Builds each service's Dockerfile and verifies all transitive imports resolve
   # and required environment variables are documented. This catches:
@@ -202,7 +282,7 @@ jobs:
   # Dockerfiles include protobuf generation.
   docker-smoke-test:
     needs: [setup]
-    if: needs.setup.outputs.should_run == 'true'
+    if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_backend == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -259,7 +339,7 @@ jobs:
   # migrations from silently defeating HOT updates and bloating the table.
   alloydb-hot-protection-check:
     needs: [setup]
-    if: needs.setup.outputs.should_run == 'true'
+    if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_backend == 'true'
     runs-on: ubuntu-24.04
     services:
       postgres:

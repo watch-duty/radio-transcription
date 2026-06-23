@@ -11,9 +11,19 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - 'model/colabs/**'
+      - '**.md'
   pull_request:
     branches:
       - main
+    paths-ignore:
+      - 'model/colabs/**'
+      - '**.md'
+
+permissions:
+  contents: read
+  checks: write
 
 jobs:
   component-tests:
@@ -37,7 +47,17 @@ jobs:
         run: mise run generate:protos
 
       - name: Run component tests
-        run: mise run test:component
+        run: |
+          set -o pipefail
+          mise run test:component --cov=backend/pipeline/storage --cov-report=term-missing --color=no \
+            | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o storage_integration_test_coverage.txt
+
+      - name: Create Coverage Check Run
+        uses: ./.github/actions/post-backend-coverage
+        if: always()
+        with:
+          name: "Storage Integration Coverage"
+          coverage-report-location: "storage_integration_test_coverage.txt"
 
   e2e-tests:
     runs-on: ubuntu-24.04
@@ -66,9 +86,32 @@ jobs:
             -f docker-compose.yml \
             --load
 
+      # Note we are not collecting test coverage stats because the tests are run
+      # in Docker, so it'll be difficult to collect true coverage.
+      # What's more important is that the connections between each service are
+      # properly tested.
       - name: Run E2E tests
         run: |
-          docker compose -f docker-compose.yml --env-file local_dev/LOCAL.env run --rm integration-tests sh -c "pip install -q uv && uv sync && uv run python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto && uv run pytest integration_tests/ --ignore=integration_tests/storage/ -n auto -v -s --log-cli-level=INFO"
+          set -o pipefail
+          docker compose \
+            -f docker-compose.yml \
+            --env-file local_dev/LOCAL.env \
+            run --rm integration-tests sh -c "
+              pip install -q uv && \
+              uv sync && \
+              uv run python -m grpc_tools.protoc \
+                -I=protos \
+                --python_out=backend/pipeline/schema_types \
+                protos/*.proto && \
+              uv run pytest integration_tests/ \
+                --ignore=integration_tests/storage/ \
+                -n auto -v -s \
+                --log-cli-level=INFO \
+                --cov=backend/pipeline \
+                --cov=backend/services \
+                --cov-report=term-missing \
+                --color=no
+            "
 
       - name: Print container logs on failure
         if: failure()

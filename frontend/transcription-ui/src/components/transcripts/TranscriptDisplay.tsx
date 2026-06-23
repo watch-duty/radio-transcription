@@ -1,42 +1,83 @@
-import React from 'react';
+import React, { useEffect, useReducer } from 'react';
 import { GroupedVirtuoso, type VirtuosoHandle } from 'react-virtuoso';
 
 import Box from '@mui/material/Box';
-import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
 import ListItem from '@mui/material/ListItem';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
-import type {
-  InfiniteData,
-  InfiniteQueryObserverResult,
-} from '@tanstack/react-query';
-import type { Transcript } from '@transcription/common';
 
+import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
 import { getRelativeTimeString } from '../../utils/timeUtils';
 import TranscriptRow from './TranscriptRow';
-import type { ListTranscriptsData } from './TranscriptView';
+
+// Start loading the next page a few rows before the user reaches the very edge
+// so it's ready by the time they get there. Rows are variable height, so this
+// converts a row count to an approximate pixel threshold. `atTopThreshold`
+// brings the "load newer" trigger forward; `increaseViewportBy` renders rows
+// past the viewport, which makes `endReached` (load older) fire that bit early.
+const PREFETCH_ROW_COUNT = 5;
+const ESTIMATED_ROW_HEIGHT_PX = 96;
+const PREFETCH_THRESHOLD_PX = PREFETCH_ROW_COUNT * ESTIMATED_ROW_HEIGHT_PX;
+
+// How often the "Last refresh" label re-computes its relative time.
+const LAST_REFRESH_TICK_MS = 10000;
+
+/**
+ * Shows "Last refresh: <relative time>" (or a spinner while polling). Re-renders
+ * itself on a timer so the relative time keeps advancing even when the rest of
+ * the view is idle (e.g. polling is paused because the user scrolled away).
+ */
+const LastRefreshIndicator: React.FC<{
+  lastUpdated: number;
+  isPolling: boolean;
+}> = ({ lastUpdated, isPolling }) => {
+  const [, tick] = useReducer((n) => n + 1, 0);
+  useEffect(() => {
+    const id = setInterval(tick, LAST_REFRESH_TICK_MS);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{ whiteSpace: 'nowrap' }}
+      >
+        Last refresh:
+      </Typography>
+      {isPolling ? (
+        <CircularProgress size={12} />
+      ) : (
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ whiteSpace: 'nowrap' }}
+        >
+          {getRelativeTimeString(lastUpdated, false)}
+        </Typography>
+      )}
+    </Box>
+  );
+};
 
 export interface TranscriptDisplayProps {
   ref?: React.Ref<VirtuosoHandle>;
-  transcripts: Transcript[];
+  audioSegments: RenderableAudioSegment[];
+  // Virtuoso scroll-anchoring offset for prepended (newer) segments.
+  firstItemIndex: number;
   groupCounts: number[];
   groupTitles: string[];
-  setIsViewAtTopOfTranscripts: (atTop: boolean) => void;
-  hasNewerTranscripts: boolean;
-  isFetchingNewerTranscripts: boolean;
-  fetchNewerTranscripts: () => Promise<
-    InfiniteQueryObserverResult<InfiniteData<ListTranscriptsData>, Error>
-  >;
-  isTranscriptsFetching: boolean;
-  isTranscriptsPolling: boolean;
-  hasOlderTranscripts: boolean;
-  isFetchingOlderTranscripts: boolean;
-  fetchOlderTranscripts: () => Promise<
-    InfiniteQueryObserverResult<InfiniteData<ListTranscriptsData>, Error>
-  >;
-  // Unix timestamp in ms when the transcripts query last updated with a success.
-  transcriptsLastUpdated: number | null;
+  setIsViewAtTopOfAudioSegments: (atTop: boolean) => void;
+  hasNewerAudioSegments: boolean;
+  isFetchingNewerAudioSegments: boolean;
+  isAudioSegmentsPolling: boolean;
+  hasOlderAudioSegments: boolean;
+  isFetchingOlderAudioSegments: boolean;
+  fetchOlderAudioSegments: () => void;
+  // Unix timestamp in ms when the audio segments query last updated with a success.
+  audioSegmentsLastUpdated: number | null;
   triggerSnackbar: (message: string) => void;
   ruleIdToNameMap: Map<string, string>;
   rulesLoading: boolean;
@@ -50,19 +91,18 @@ export interface TranscriptDisplayProps {
 
 export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
   ref,
-  transcripts,
+  audioSegments,
+  firstItemIndex,
   groupCounts,
   groupTitles,
-  setIsViewAtTopOfTranscripts,
-  hasNewerTranscripts,
-  isFetchingNewerTranscripts,
-  fetchNewerTranscripts,
-  isTranscriptsFetching,
-  hasOlderTranscripts,
-  isFetchingOlderTranscripts,
-  fetchOlderTranscripts,
-  isTranscriptsPolling,
-  transcriptsLastUpdated,
+  setIsViewAtTopOfAudioSegments,
+  hasNewerAudioSegments,
+  isFetchingNewerAudioSegments,
+  hasOlderAudioSegments,
+  isFetchingOlderAudioSegments,
+  fetchOlderAudioSegments,
+  isAudioSegmentsPolling,
+  audioSegmentsLastUpdated,
   triggerSnackbar,
   ruleIdToNameMap,
   rulesLoading,
@@ -86,8 +126,12 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
     >
       <GroupedVirtuoso
         ref={ref}
+        firstItemIndex={firstItemIndex}
         groupCounts={groupCounts}
-        atTopStateChange={(atTop) => setIsViewAtTopOfTranscripts(atTop)}
+        atTopThreshold={PREFETCH_THRESHOLD_PX}
+        increaseViewportBy={PREFETCH_THRESHOLD_PX}
+        atTopStateChange={(atTop) => setIsViewAtTopOfAudioSegments(atTop)}
+        endReached={fetchOlderAudioSegments}
         groupContent={(index) => {
           const title = groupTitles[index];
           return (
@@ -118,40 +162,13 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
                 >
                   {title}
                 </Typography>
-                {!hasNewerTranscripts ? (
-                  <>
-                    {transcriptsLastUpdated && (
-                      <Box
-                        sx={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 0.5,
-                        }}
-                      >
-                        <Typography
-                          variant="caption"
-                          color="text.secondary"
-                          sx={{ whiteSpace: 'nowrap' }}
-                        >
-                          Last refresh:
-                        </Typography>
-                        {isTranscriptsPolling ? (
-                          <CircularProgress size={12} />
-                        ) : (
-                          <Typography
-                            variant="caption"
-                            color="text.secondary"
-                            sx={{ whiteSpace: 'nowrap' }}
-                          >
-                            {getRelativeTimeString(
-                              transcriptsLastUpdated,
-                              false
-                            )}
-                          </Typography>
-                        )}
-                      </Box>
-                    )}
-                  </>
+                {!hasNewerAudioSegments ? (
+                  audioSegmentsLastUpdated && (
+                    <LastRefreshIndicator
+                      lastUpdated={audioSegmentsLastUpdated}
+                      isPolling={isAudioSegmentsPolling}
+                    />
+                  )
                 ) : (
                   <Typography
                     variant="caption"
@@ -166,13 +183,17 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
           );
         }}
         itemContent={(index) => {
-          const transcript = transcripts[index];
+          // Virtuoso reports the absolute index (firstItemIndex + position);
+          // convert it back to the position within audioSegments.
+          const position = index - firstItemIndex;
+          const audioSegment = audioSegments[position];
+          if (!audioSegment) return null;
           return (
             <TranscriptRow
-              key={transcript.segmentId}
-              transcript={transcript}
-              index={index}
-              totalTranscripts={transcripts.length}
+              key={audioSegment.id}
+              audioSegment={audioSegment}
+              index={position}
+              totalAudioSegments={audioSegments.length}
               ruleIdToNameMap={ruleIdToNameMap}
               rulesLoading={rulesLoading}
               onToggleAudio={onToggleAudio}
@@ -180,88 +201,38 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
               currentlyPlayingSegmentId={currentlyPlayingSegmentId}
               triggerSnackbar={triggerSnackbar}
               showHeader={false}
-              isHighlighted={transcript.segmentId === highlightedSegmentId}
+              isHighlighted={
+                audioSegment.id === highlightedSegmentId ||
+                (audioSegment.isSilenceBundle &&
+                  audioSegment.bundledSegmentIds?.includes(
+                    highlightedSegmentId ?? ''
+                  ))
+              }
               redactTranscripts={redactTranscripts}
               onRowClick={onRowClick}
+              isTopAudioSegmentRow={position === 0 && !hasNewerAudioSegments}
             />
           );
         }}
         components={{
           Header: () =>
-            hasNewerTranscripts ? (
-              <Box
-                sx={{
-                  display: 'flex',
-                  justifyContent: 'center',
-                  py: 1,
-                  gap: 1,
-                }}
-              >
-                {isFetchingNewerTranscripts ? (
-                  <CircularProgress size={40} />
-                ) : (
-                  <Button
-                    variant="outlined"
-                    onClick={async () => {
-                      const result = await fetchNewerTranscripts();
-                      if (
-                        result.data &&
-                        (
-                          result.data.pages[0] as {
-                            transcripts: Transcript[];
-                          }
-                        )?.transcripts.length === 0
-                      ) {
-                        triggerSnackbar('No newer transcripts found');
-                      }
-                    }}
-                    disabled={isTranscriptsFetching}
-                    sx={{ minWidth: '160px', textTransform: 'none' }}
-                  >
-                    Load newer transcripts
-                  </Button>
-                )}
+            isFetchingNewerAudioSegments ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 1 }}>
+                <CircularProgress size={28} />
               </Box>
             ) : null,
-          Footer: () => {
-            if (hasOlderTranscripts) {
-              return (
-                <Box
-                  sx={{
-                    display: 'flex',
-                    justifyContent: 'center',
-                    py: 1,
-                  }}
-                >
-                  {isFetchingOlderTranscripts ? (
-                    <CircularProgress size={40} />
-                  ) : (
-                    <Button
-                      variant="outlined"
-                      onClick={() => fetchOlderTranscripts()}
-                      disabled={isTranscriptsFetching}
-                      sx={{ minWidth: '160px', textTransform: 'none' }}
-                    >
-                      Load older transcripts
-                    </Button>
-                  )}
-                </Box>
-              );
-            }
-            return (
-              <Box
-                sx={{
-                  display: 'flex',
-                  justifyContent: 'center',
-                  py: 2,
-                }}
-              >
+          Footer: () =>
+            isFetchingOlderAudioSegments ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 1 }}>
+                <CircularProgress size={28} />
+              </Box>
+            ) : !hasOlderAudioSegments ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
                 <Typography variant="caption" color="text.secondary">
                   No more transcripts found
                 </Typography>
               </Box>
-            );
-          },
+            ) : null,
         }}
       />
     </Paper>

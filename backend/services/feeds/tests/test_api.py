@@ -1,16 +1,22 @@
+import datetime
 import unittest
 import uuid
 from unittest.mock import AsyncMock
 
 from fastapi import status
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from backend.pipeline.common.auth import verify_oidc_token
 from backend.pipeline.common.exceptions import (
     FeedAlreadyExistsError,
     FeedNameAlreadyExistsError,
 )
-from backend.pipeline.storage.feed_store import FeedStatus, SourceType
+from backend.pipeline.storage.feed_store import (
+    FeedStatus,
+    FeedStatusReason,
+    SourceType,
+)
 from backend.pipeline.storage.pagination_utils import SortOrder
 from backend.services.feeds.main import app
 from backend.services.feeds.models import Feed, ListFeedsResponse, Tag
@@ -33,6 +39,53 @@ class TestFeedsAPI(unittest.TestCase):
     def tearDown(self) -> None:
         """Clean up after each test."""
         app.dependency_overrides.clear()
+
+    def test_status_reason_serializes_as_public_api_value(
+        self,
+    ) -> None:
+        """Every stored status reason is a public API status reason."""
+        for status_reason in FeedStatusReason:
+            with self.subTest(status_reason=status_reason.value):
+                feed = Feed.model_validate(
+                    {
+                        "id": uuid.uuid4(),
+                        "name": "Test Feed",
+                        "source_type": SourceType.BCFY_FEEDS,
+                        "source_feed_id": "123",
+                        "status": FeedStatus.FAILING,
+                        "last_heartbeat": None,
+                        "status_reason": status_reason.value,
+                    }
+                )
+
+                self.assertEqual(
+                    feed.model_dump(mode="json")["status_reason"],
+                    status_reason.value,
+                )
+
+    def test_status_reason_field_uses_canonical_enum(self) -> None:
+        """The feed API model reuses the canonical backend status enum."""
+        self.assertEqual(
+            Feed.model_fields["status_reason"].annotation,
+            FeedStatusReason | None,
+        )
+
+    def test_unrecognized_status_reason_fails_backend_validation(
+        self,
+    ) -> None:
+        """The backend feed API only accepts canonical status reasons."""
+        with self.assertRaises(ValidationError):
+            Feed.model_validate(
+                {
+                    "id": uuid.uuid4(),
+                    "name": "Test Feed",
+                    "source_type": SourceType.BCFY_FEEDS,
+                    "source_feed_id": "123",
+                    "status": FeedStatus.FAILING,
+                    "last_heartbeat": None,
+                    "status_reason": "backend_reason_added_without_mapping",
+                }
+            )
 
     def test_create_feed_success(self) -> None:
         """Test creating a feed successfully."""
@@ -158,6 +211,32 @@ class TestFeedsAPI(unittest.TestCase):
         data = response.json()
         self.assertEqual(data["id"], str(feed_id))
         self.assertEqual(data["tags"], [{"key": "county", "value": "Fulton"}])
+
+    def test_get_feed_with_last_speech_segment_timestamp(self) -> None:
+        """Test fetching an existing feed with last_speech_segment_timestamp."""
+        feed_id = uuid.uuid4()
+        timestamp = datetime.datetime(
+            2026, 6, 16, 18, 0, 0, tzinfo=datetime.UTC
+        )
+        mock_feed = Feed(
+            id=feed_id,
+            name="Test Feed",
+            source_type=SourceType.BCFY_FEEDS,
+            source_feed_id="123",
+            status=FeedStatus.ACTIVE,
+            last_heartbeat=None,
+            last_speech_segment_timestamp=timestamp,
+        )
+        self.mock_service.get_feed.return_value = mock_feed
+
+        response = self.client.get(f"/v1/feeds/{feed_id}")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertEqual(data["id"], str(feed_id))
+        self.assertEqual(
+            data["last_speech_segment_timestamp"], "2026-06-16T18:00:00Z"
+        )
 
     def test_get_feed_not_found(self) -> None:
         """Test fetching a non-existent feed returns 404."""

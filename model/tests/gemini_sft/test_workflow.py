@@ -9,6 +9,7 @@ import unittest.mock
 from pathlib import Path
 from typing import Any
 
+from fake_gcs import FakeStorageClient
 from gemini_sft import cli
 from gemini_sft import evaluate as evaluate_module
 from gemini_sft import tune as tune_module
@@ -16,115 +17,40 @@ from gemini_sft.config import load_run_config
 from gemini_sft.prepare import prepare_run
 
 
-def _split_gcs(uri: str) -> tuple[str, str]:
-    assert uri.startswith("gs://")
-    bucket, blob = uri[len("gs://") :].split("/", maxsplit=1)
-    return bucket, blob
-
-
-class FakeBlob:
-    def __init__(
-        self,
-        store: dict[tuple[str, str], str],
-        uploads: list[str],
-        bucket: str,
-        name: str,
-    ) -> None:
-        self._store = store
-        self._uploads = uploads
-        self._bucket = bucket
-        self.name = name
-
-    def exists(self, **_: Any) -> bool:
-        return (self._bucket, self.name) in self._store
-
-    def upload_from_filename(self, filename: str, **_: Any) -> None:
-        self._store[(self._bucket, self.name)] = Path(filename).read_text(
-            encoding="utf-8"
-        )
-        self._uploads.append(f"gs://{self._bucket}/{self.name}")
-
-    def upload_from_string(
-        self, data: str, content_type: str | None = None, **_: Any
-    ) -> None:
-        del content_type
-        self._store[(self._bucket, self.name)] = data
-        self._uploads.append(f"gs://{self._bucket}/{self.name}")
-
-    def download_to_filename(self, filename: str, **_: Any) -> None:
-        Path(filename).parent.mkdir(parents=True, exist_ok=True)
-        Path(filename).write_text(
-            self._store[(self._bucket, self.name)], encoding="utf-8"
-        )
-
-    def download_as_text(self, **_: Any) -> str:
-        return self._store[(self._bucket, self.name)]
-
-
-class FakeBucket:
-    def __init__(
-        self,
-        store: dict[tuple[str, str], str],
-        uploads: list[str],
-        name: str,
-    ) -> None:
-        self._store = store
-        self._uploads = uploads
-        self.name = name
-
-    def blob(self, name: str) -> FakeBlob:
-        return FakeBlob(self._store, self._uploads, self.name, name)
-
-    def list_blobs(
-        self, prefix: str = "", max_results: int | None = None
-    ) -> list[types.SimpleNamespace]:
-        names = [
-            blob_name
-            for bucket_name, blob_name in self._store
-            if bucket_name == self.name and blob_name.startswith(prefix)
-        ]
-        if max_results is not None:
-            names = names[:max_results]
-        return [types.SimpleNamespace(name=name) for name in names]
-
-
-class FakeStorageClient:
-    def __init__(self) -> None:
-        self.store: dict[tuple[str, str], str] = {}
-        self.uploads: list[str] = []
-
-    def bucket(self, name: str) -> FakeBucket:
-        return FakeBucket(self.store, self.uploads, name)
-
-    def put(self, uri: str, text: str) -> None:
-        self.store[_split_gcs(uri)] = text
-
-    def get(self, uri: str) -> str:
-        return self.store[_split_gcs(uri)]
-
-    def has(self, uri: str) -> bool:
-        return _split_gcs(uri) in self.store
-
-
 def _manifest(rows: list[dict[str, Any]]) -> str:
     return "".join(json.dumps(row) + "\n" for row in rows)
 
 
 def _row(
-    uri: str, text: str = "alpha", duration: float = 3.0
+    uri: str,
+    text: str = "alpha",
+    duration: float = 3.0,
+    *,
+    example_id: str | None = None,
+    segment_id: str = "001",
+    offset: float = 0.0,
+    split: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    if example_id is None:
+        example_id = uri.rsplit("/", maxsplit=1)[-1].removesuffix(".flac")
+    row = {
         "audio_filepath": uri,
         "text": text,
-        "offset": 0.0,
+        "offset": offset,
         "duration": duration,
+        "example_id": example_id,
+        "segment_id": segment_id,
     }
+    if split is not None:
+        row["split"] = split
+    return row
 
 
 def _config_text(round_id: str = "round-a") -> str:
     return f"""
 round_id = "{round_id}"
 dataset = "wd-internal-v1"
+inference_dataset_slug = "echo/eval"
 train_manifest_uri = "gs://source/manifests/train.jsonl"
 validation_manifest_uri = "gs://source/manifests/validation.jsonl"
 eval_manifest_uri = "gs://source/manifests/eval.jsonl"
@@ -140,6 +66,42 @@ epoch_count = 6
 adapter_size = "SIXTEEN"
 learning_rate_multiplier = 1.0
 """
+
+
+def _fake_wer(
+    refs: list[str],
+    hyps: list[str],
+    normalizer: Any = None,
+) -> dict[str, float | int]:
+    del normalizer
+    total_words = sum(len(ref.split()) for ref in refs)
+    return {
+        "wer": 0.0 if refs == hyps else 1.0,
+        "hits": total_words if refs == hyps else 0,
+        "substitutions": 0 if refs == hyps else total_words,
+        "deletions": 0,
+        "insertions": 0,
+    }
+
+
+def _fake_cer(
+    refs: list[str],
+    hyps: list[str],
+    normalizer: Any = None,
+) -> dict[str, float]:
+    del normalizer
+    return {"cer": 0.0 if refs == hyps else 1.0}
+
+
+def _patched_eval_scoring() -> Any:
+    return unittest.mock.patch.multiple(
+        evaluate_module,
+        build_normalizer=lambda: None,
+        compute_wer=_fake_wer,
+        compute_cer=_fake_cer,
+        duration_bucket_wer=lambda *_, **__: [],
+        keyword_metrics=lambda *_, **__: [],
+    )
 
 
 def _write_config_file(tmp: Path, round_id: str = "round-a") -> Path:
@@ -170,6 +132,19 @@ def _seed_source_manifests(
     storage.put(train_uri, "audio")
     storage.put(validation_uri, "audio")
     storage.put(eval_uri, "audio")
+
+
+def _assert_no_prepared_outputs(
+    test_case: unittest.TestCase,
+    tmp: Path,
+    storage: FakeStorageClient,
+) -> None:
+    gemini_dir = tmp / "results" / "round-a" / "model_inputs" / "gemini"
+    test_case.assertFalse((gemini_dir / "train.jsonl").exists())
+    test_case.assertFalse((gemini_dir / "validation.jsonl").exists())
+    test_case.assertFalse(
+        storage.has("gs://test-bucket/sft/runs/round-a/config.json")
+    )
 
 
 class TestCli(unittest.TestCase):
@@ -270,6 +245,299 @@ class TestPrepareRun(unittest.TestCase):
         self.assertFalse(
             storage.has("gs://test-bucket/sft/runs/round-a/config.json")
         )
+
+    def test_prepare_rejects_invalid_or_empty_manifests_before_gemini_jsonl(
+        self,
+    ) -> None:
+        invalid_manifest = _manifest(
+            [
+                {
+                    "audio_filepath": "local/audio.mp3",
+                    "text": "bad",
+                    "offset": 0.0,
+                    "duration": 1.0,
+                    "example_id": "bad",
+                    "segment_id": "001",
+                }
+            ]
+        )
+        cases = [
+            (
+                "train",
+                "invalid",
+                invalid_manifest,
+                "Canonical Manifest validation failed",
+            ),
+            (
+                "validation",
+                "invalid",
+                invalid_manifest,
+                "Canonical Manifest validation failed",
+            ),
+            (
+                "eval",
+                "invalid",
+                invalid_manifest,
+                "Canonical Manifest validation failed",
+            ),
+            ("train", "empty", "", "train manifest has zero parsed rows"),
+            (
+                "validation",
+                "empty",
+                "",
+                "validation manifest has zero parsed rows",
+            ),
+            ("eval", "empty", "", "eval manifest has zero parsed rows"),
+        ]
+        manifest_uris = {
+            "train": "gs://source/manifests/train.jsonl",
+            "validation": "gs://source/manifests/validation.jsonl",
+            "eval": "gs://source/manifests/eval.jsonl",
+        }
+
+        for role, mode, content, message in cases:
+            with self.subTest(role=role, mode=mode):
+                with tempfile.TemporaryDirectory() as tmp_s:
+                    tmp = Path(tmp_s)
+                    storage = FakeStorageClient()
+                    _seed_source_manifests(storage)
+                    storage.put(manifest_uris[role], content)
+                    run_cfg = load_run_config(_write_config_file(tmp))
+
+                    with self.assertRaisesRegex(ValueError, message):
+                        prepare_run(
+                            run_cfg=run_cfg,
+                            storage_client=storage,
+                            results_dir=tmp / "results",
+                        )
+
+                    _assert_no_prepared_outputs(self, tmp, storage)
+
+    def test_train_eval_uri_and_identity_overlap_reports_both_categories(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            _seed_source_manifests(storage)
+            storage.put(
+                "gs://source/manifests/train.jsonl",
+                _manifest(
+                    [
+                        _row(
+                            "gs://audio/shared.flac",
+                            "shared audio train",
+                            4.0,
+                            example_id="train-audio",
+                            segment_id="001",
+                        ),
+                        _row(
+                            "gs://audio/train-identity.flac",
+                            "shared identity train",
+                            4.0,
+                            example_id="shared-example",
+                            segment_id="seg-001",
+                        ),
+                    ]
+                ),
+            )
+            storage.put(
+                "gs://source/manifests/eval.jsonl",
+                _manifest(
+                    [
+                        _row(
+                            "gs://audio/shared.flac",
+                            "shared audio eval",
+                            6.0,
+                            example_id="eval-audio",
+                            segment_id="001",
+                        ),
+                        _row(
+                            "gs://audio/eval-identity.flac",
+                            "shared identity eval",
+                            6.0,
+                            example_id="shared-example",
+                            segment_id="seg-001",
+                        ),
+                    ]
+                ),
+            )
+            run_cfg = load_run_config(_write_config_file(tmp))
+
+            with self.assertRaisesRegex(ValueError, "train and eval") as ctx:
+                prepare_run(
+                    run_cfg=run_cfg,
+                    storage_client=storage,
+                    results_dir=tmp / "results",
+                )
+
+            message = str(ctx.exception)
+            self.assertIn("audio URI(s)", message)
+            self.assertIn("identity value(s)", message)
+            _assert_no_prepared_outputs(self, tmp, storage)
+
+    def test_prepare_rejects_mismatched_split_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            _seed_source_manifests(storage)
+            storage.put(
+                "gs://source/manifests/train.jsonl",
+                _manifest(
+                    [
+                        _row(
+                            "gs://audio/train.flac",
+                            "train transcript",
+                            4.0,
+                            split="eval",
+                        )
+                    ]
+                ),
+            )
+            storage.put(
+                "gs://source/manifests/validation.jsonl",
+                _manifest(
+                    [
+                        _row(
+                            "gs://audio/validation.flac",
+                            "validation transcript",
+                            5.0,
+                            split="train",
+                        )
+                    ]
+                ),
+            )
+            storage.put(
+                "gs://source/manifests/eval.jsonl",
+                _manifest(
+                    [
+                        _row(
+                            "gs://audio/eval.flac",
+                            "eval transcript",
+                            6.0,
+                            split="validation",
+                        )
+                    ]
+                ),
+            )
+            run_cfg = load_run_config(_write_config_file(tmp))
+
+            with self.assertRaisesRegex(
+                ValueError, "Canonical Manifest validation failed"
+            ):
+                prepare_run(
+                    run_cfg=run_cfg,
+                    storage_client=storage,
+                    results_dir=tmp / "results",
+                )
+
+            _assert_no_prepared_outputs(self, tmp, storage)
+
+    def test_train_eval_identity_overlap_fails_before_writing_gemini_jsonl(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            _seed_source_manifests(
+                storage,
+                train_uri="gs://audio/train.flac",
+                eval_uri="gs://audio/eval.flac",
+            )
+            storage.put(
+                "gs://source/manifests/train.jsonl",
+                _manifest(
+                    [
+                        _row(
+                            "gs://audio/train.flac",
+                            "train transcript",
+                            4.0,
+                            example_id="shared-example",
+                            segment_id="seg-001",
+                        )
+                    ]
+                ),
+            )
+            storage.put(
+                "gs://source/manifests/eval.jsonl",
+                _manifest(
+                    [
+                        _row(
+                            "gs://audio/eval.flac",
+                            "eval transcript",
+                            6.0,
+                            example_id="shared-example",
+                            segment_id="seg-001",
+                        )
+                    ]
+                ),
+            )
+            run_cfg = load_run_config(_write_config_file(tmp))
+
+            with self.assertRaisesRegex(ValueError, "identity"):
+                prepare_run(
+                    run_cfg=run_cfg,
+                    storage_client=storage,
+                    results_dir=tmp / "results",
+                )
+
+            gemini_dir = tmp / "results" / "round-a" / "model_inputs"
+            self.assertFalse((gemini_dir / "gemini" / "train.jsonl").exists())
+            self.assertFalse(
+                (gemini_dir / "gemini" / "validation.jsonl").exists()
+            )
+            self.assertFalse(
+                storage.has("gs://test-bucket/sft/runs/round-a/config.json")
+            )
+
+    def test_train_validation_identity_overlap_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            _seed_source_manifests(
+                storage,
+                train_uri="gs://audio/train.flac",
+                validation_uri="gs://audio/validation.flac",
+            )
+            storage.put(
+                "gs://source/manifests/train.jsonl",
+                _manifest(
+                    [
+                        _row(
+                            "gs://audio/train.flac",
+                            "train transcript",
+                            4.0,
+                            example_id="shared-example",
+                            segment_id="seg-001",
+                        )
+                    ]
+                ),
+            )
+            storage.put(
+                "gs://source/manifests/validation.jsonl",
+                _manifest(
+                    [
+                        _row(
+                            "gs://audio/validation.flac",
+                            "validation transcript",
+                            5.0,
+                            example_id="shared-example",
+                            segment_id="seg-001",
+                        )
+                    ]
+                ),
+            )
+            run_cfg = load_run_config(_write_config_file(tmp))
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "train and validation.*identity",
+            ):
+                prepare_run(
+                    run_cfg=run_cfg,
+                    storage_client=storage,
+                    results_dir=tmp / "results",
+                )
 
     def test_validation_eval_overlap_is_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
@@ -562,6 +830,82 @@ class TestTuneRun(unittest.TestCase):
 
 
 class TestEvaluateRun(unittest.TestCase):
+    def test_eval_rejects_invalid_eval_manifest_before_batch_inference(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            _seed_source_manifests(storage)
+            cfg_path = _write_config_file(tmp)
+            run_cfg = load_run_config(cfg_path)
+            storage.put(
+                run_cfg.paths.canonical_eval_uri,
+                _manifest(
+                    [
+                        {
+                            "audio_filepath": "local/audio.mp3",
+                            "text": "bad",
+                            "offset": 0.0,
+                            "duration": 1.0,
+                            "example_id": "bad",
+                            "segment_id": "001",
+                        }
+                    ]
+                ),
+            )
+            config = run_cfg.to_record_dict()
+            storage.put(run_cfg.paths.config_uri, json.dumps(config))
+            args = argparse.Namespace(config=str(cfg_path), base_only=True)
+
+            with unittest.mock.patch.object(
+                evaluate_module,
+                "submit_batch_inference",
+            ) as submit:
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "Canonical Manifest validation failed",
+                ):
+                    evaluate_module.evaluate_run(
+                        args,
+                        run_cfg,
+                        storage,
+                        config,
+                    )
+
+        submit.assert_not_called()
+
+    def test_eval_rejects_empty_eval_manifest_before_batch_inference(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            _seed_source_manifests(storage)
+            cfg_path = _write_config_file(tmp)
+            run_cfg = load_run_config(cfg_path)
+            storage.put(run_cfg.paths.canonical_eval_uri, "")
+            config = run_cfg.to_record_dict()
+            storage.put(run_cfg.paths.config_uri, json.dumps(config))
+            args = argparse.Namespace(config=str(cfg_path), base_only=True)
+
+            with unittest.mock.patch.object(
+                evaluate_module,
+                "submit_batch_inference",
+            ) as submit:
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "eval manifest has zero parsed rows",
+                ):
+                    evaluate_module.evaluate_run(
+                        args,
+                        run_cfg,
+                        storage,
+                        config,
+                    )
+
+        submit.assert_not_called()
+
     def test_eval_handler_returns_clean_error_when_vertex_extra_missing(
         self,
     ) -> None:
@@ -654,6 +998,7 @@ class TestEvaluateRun(unittest.TestCase):
                     "submit_batch_inference",
                     return_value=output_uri,
                 ),
+                _patched_eval_scoring(),
             ):
                 rc = evaluate_module.evaluate_run(
                     args, run_cfg, storage, run_cfg.to_record_dict()
@@ -666,7 +1011,22 @@ class TestEvaluateRun(unittest.TestCase):
                 )
             )
             self.assertEqual(metrics["base_batch_output_uri"], output_uri)
+            self.assertEqual(
+                metrics["base_inference_manifest_uri"],
+                "gs://test-bucket/inference_manifests/echo/eval/"
+                "gemini_3_1_flash_lite/round-a/base.jsonl",
+            )
             self.assertEqual(metrics["base_wer"], 0.0)
+            manifest_rows = [
+                json.loads(line)
+                for line in storage.get(
+                    metrics["base_inference_manifest_uri"]
+                ).splitlines()
+            ]
+            self.assertEqual(
+                manifest_rows[0]["pred_text_gemini_3_1_flash_lite"],
+                "eval transcript",
+            )
 
     def test_eval_manifest_uri_comes_from_gcs_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
@@ -724,6 +1084,7 @@ class TestEvaluateRun(unittest.TestCase):
                     "submit_batch_inference",
                     return_value=output_uri,
                 ),
+                _patched_eval_scoring(),
             ):
                 rc = evaluate_module.evaluate_run(
                     args, run_cfg, storage, config
@@ -737,6 +1098,98 @@ class TestEvaluateRun(unittest.TestCase):
 
         self.assertEqual(rc, 0)
         self.assertEqual(metrics["base_wer"], 0.0)
+
+    def test_eval_normalized_manifest_omits_missing_prediction_field(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            _seed_source_manifests(storage, eval_uri="gs://audio/eval-1.flac")
+            cfg_path = _write_config_file(tmp)
+            run_cfg = load_run_config(cfg_path)
+            storage.put(
+                run_cfg.paths.canonical_eval_uri,
+                _manifest(
+                    [
+                        _row(
+                            "gs://audio/eval-1.flac",
+                            "first",
+                            example_id="eval-1",
+                        ),
+                        _row(
+                            "gs://audio/eval-2.flac",
+                            "second",
+                            example_id="eval-2",
+                        ),
+                    ]
+                ),
+            )
+            storage.put(
+                run_cfg.paths.config_uri, json.dumps(run_cfg.to_record_dict())
+            )
+            output_uri = f"{run_cfg.paths.gcs_prefix}/evals/base/output/"
+            storage.put(
+                f"{output_uri}predictions.jsonl",
+                json.dumps(
+                    {
+                        "request": {
+                            "contents": [
+                                {
+                                    "parts": [
+                                        {
+                                            "fileData": {
+                                                "fileUri": "gs://audio/eval-1.flac"
+                                            }
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        "response": {
+                            "candidates": [
+                                {"content": {"parts": [{"text": "first"}]}}
+                            ]
+                        },
+                    }
+                )
+                + "\n",
+            )
+            args = argparse.Namespace(config=str(cfg_path), base_only=True)
+
+            with (
+                unittest.mock.patch.object(
+                    evaluate_module, "RESULTS_DIR", tmp / "results"
+                ),
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "submit_batch_inference",
+                    return_value=output_uri,
+                ),
+                _patched_eval_scoring(),
+            ):
+                rc = evaluate_module.evaluate_run(
+                    args, run_cfg, storage, run_cfg.to_record_dict()
+                )
+
+            metrics = json.loads(
+                (tmp / "results" / "round-a" / "wer_summary.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            manifest_rows = [
+                json.loads(line)
+                for line in storage.get(
+                    metrics["base_inference_manifest_uri"]
+                ).splitlines()
+            ]
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            manifest_rows[0]["pred_text_gemini_3_1_flash_lite"],
+            "first",
+        )
+        self.assertNotIn("pred_text_gemini_3_1_flash_lite", manifest_rows[1])
 
     def test_eval_requires_canonical_eval_uri_in_gcs_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
@@ -769,6 +1222,92 @@ class TestEvaluateRun(unittest.TestCase):
             storage = FakeStorageClient()
             run_cfg = load_run_config(_write_config_file(tmp))
             output_uri = f"{run_cfg.paths.gcs_prefix}/evals/base/output/"
+            eval_rows = [
+                types.SimpleNamespace(audio_filepath="gs://audio/eval.flac")
+            ]
+
+            with unittest.mock.patch.object(
+                evaluate_module,
+                "submit_batch_inference",
+                return_value=output_uri,
+            ):
+                preds = evaluate_module.batch_infer(
+                    storage_client=storage,
+                    run_gcs_prefix=run_cfg.paths.gcs_prefix,
+                    gcp_project=run_cfg.gcp_project,
+                    location=run_cfg.location,
+                    model_id="gemini-3.1-flash-lite",
+                    label="base",
+                    eval_rows=eval_rows,
+                    system_prompt="sys",
+                    user_prompt="user",
+                )
+
+        self.assertIsNone(preds)
+
+    def test_batch_infer_rejects_duplicate_eval_audio_uris(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            run_cfg = load_run_config(_write_config_file(tmp))
+            eval_rows = [
+                types.SimpleNamespace(audio_filepath="gs://audio/eval.flac"),
+                types.SimpleNamespace(audio_filepath="gs://audio/eval.flac"),
+            ]
+
+            with unittest.mock.patch.object(
+                evaluate_module,
+                "submit_batch_inference",
+            ) as submit:
+                preds = evaluate_module.batch_infer(
+                    storage_client=storage,
+                    run_gcs_prefix=run_cfg.paths.gcs_prefix,
+                    gcp_project=run_cfg.gcp_project,
+                    location=run_cfg.location,
+                    model_id="gemini-3.1-flash-lite",
+                    label="base",
+                    eval_rows=eval_rows,
+                    system_prompt="sys",
+                    user_prompt="user",
+                )
+
+        self.assertIsNone(preds)
+        submit.assert_not_called()
+
+    def test_batch_infer_rejects_prediction_uri_outside_eval_manifest(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            run_cfg = load_run_config(_write_config_file(tmp))
+            output_uri = f"{run_cfg.paths.gcs_prefix}/evals/base/output/"
+            storage.put(
+                f"{output_uri}predictions.jsonl",
+                json.dumps(
+                    {
+                        "request": {
+                            "contents": [
+                                {
+                                    "parts": [
+                                        {
+                                            "fileData": {
+                                                "fileUri": "gs://audio/other.flac"
+                                            }
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        "response": {
+                            "candidates": [
+                                {"content": {"parts": [{"text": "other"}]}}
+                            ]
+                        },
+                    }
+                )
+                + "\n",
+            )
             eval_rows = [
                 types.SimpleNamespace(audio_filepath="gs://audio/eval.flac")
             ]

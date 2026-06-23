@@ -16,14 +16,13 @@ def setup_fastapi_tracing(app: typing.Any, *, service_name: str) -> None:
         app: The FastAPI application instance.
         service_name: Name of the service to register traces under.
     """
-    setup_tracing(use_batch=False)
-
     tracer = get_tracer(service_name)
 
     @app.middleware("http")
     async def trace_middleware(
         request: Request, call_next: typing.Any
     ) -> Response:
+        setup_tracing(use_batch=False)
         headers = dict(request.headers)
         context = TraceContextTextMapPropagator().extract(carrier=headers)
 
