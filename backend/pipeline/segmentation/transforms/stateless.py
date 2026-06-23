@@ -42,7 +42,6 @@ from apache_beam.utils.shared import Shared
 from google.protobuf.duration_pb2 import Duration
 from google.protobuf.timestamp_pb2 import Timestamp
 from opentelemetry import context as otel_context
-from opentelemetry import trace
 
 from backend.pipeline.common.constants import (
     MICROSECONDS_PER_MS,
