@@ -2462,6 +2462,36 @@ async def test_deactivate_feed_succeeds(
     assert "last_heartbeat" not in after_values
 
 
+async def test_deactivate_feed_is_idempotent_without_duplicate_audit(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """Repeated deactivation keeps existing state without another audit row."""
+    feed_id = await _insert_feed(
+        db_pool,
+        "Deactivate Idempotent Audit Feed",
+        status="active",
+        source_feed_id=f"deactivate-idempotent-{uuid.uuid4()}",
+    )
+
+    first_result = await store.deactivate_feed(feed_id, actor_id=_TEST_ACTOR_ID)
+    revision_after_first = await _get_feed_audit_revision(db_pool, feed_id)
+    second_result = await store.deactivate_feed(feed_id, actor_id=_TEST_ACTOR_ID)
+
+    row = await _get_feed_status(db_pool, feed_id)
+    audit_rows = await _fetch_audit_events(db_pool, feed_id)
+    revision_after_second = await _get_feed_audit_revision(db_pool, feed_id)
+
+    assert first_result is True
+    assert second_result is True
+    assert row["status"] == "deactivated"
+    assert revision_after_first == 1
+    assert revision_after_second == revision_after_first
+    assert [audit_row["action"] for audit_row in audit_rows] == [
+        "feed.deactivated"
+    ]
+
+
 # -- Tests: delete_feed ------------------------------------------------
 
 
