@@ -11,6 +11,10 @@ from backend.pipeline.common.clients.session_helper import (
     create_resilient_session,
 )
 from backend.pipeline.common.env import is_gcp_env
+from backend.pipeline.common.evaluation.annotations import (
+    RuleAnnotation,
+    TextMatchSpan,
+)
 from backend.pipeline.common.rules import models
 from backend.pipeline.common.tracing_utils import get_current_traceparent
 from backend.pipeline.schema_types import EvaluationErrorType
@@ -46,6 +50,9 @@ def _get_compiled_keyword_regex(
 class EvaluationResult(TypedDict):
     is_flagged: bool
     triggered_rules: list[str]
+    # Keyed by rule_id. triggered_rules is the ordered source of truth; this
+    # map only carries the optional payload for rules that produced one.
+    rule_annotations: dict[str, RuleAnnotation]
     errors: list[EvaluationErrorType]
 
 
@@ -73,70 +80,88 @@ class BaseTextEvaluator(ABC):
             An EvaluationResult containing flagging status and triggered rules.
         """
 
-    def _evaluate_rule(self, rule: models.Rule, text: str) -> bool:
+    def _evaluate_rule(
+        self, rule: models.Rule, text: str
+    ) -> RuleAnnotation | None:
         """
         Evaluates a single rule against the text.
 
-        Args:
-            rule: The rule to evaluate.
-            text: The text to evaluate against.
-
-        Returns:
-            True if the rule triggers, False otherwise.
+        Returns a RuleAnnotation describing how the rule matched, or None if
+        the rule did not fire. For keyword/regex rules the annotation carries
+        every match span; future non-text rule kinds will return a different
+        annotation payload.
         """
         conditions = rule.conditions
 
         if isinstance(conditions, models.RegexConditions):
-            flags = re.IGNORECASE if "i" in conditions.flags else 0
-            return bool(re.search(conditions.expression, text, flags))
+            return self._evaluate_regex(conditions, text)
 
         if isinstance(conditions, models.KeywordConditions):
-            # Filter out empty, empty-string, or whitespace-only keywords
-            valid_keywords = [
-                k.strip() for k in conditions.keywords if k and k.strip()
-            ]
-            if not valid_keywords:
-                return False
-
-            # 1. Fast-path substring pre-check using optimized in-operator
-            target_text = text if conditions.case_sensitive else text.lower()
-            keywords_to_check = (
-                valid_keywords
-                if conditions.case_sensitive
-                else [k.lower() for k in valid_keywords]
-            )
-
-            has_substrings = True
-            if conditions.operator == models.LogicalOperator.ANY:
-                has_substrings = any(
-                    k in target_text for k in keywords_to_check
-                )
-            elif conditions.operator == models.LogicalOperator.ALL:
-                has_substrings = all(
-                    k in target_text for k in keywords_to_check
-                )
-
-            if not has_substrings:
-                return False
-
-            # 2. Retrieve cached/compiled regex for precise word boundary verification
-            compiled = _get_compiled_keyword_regex(
-                tuple(valid_keywords),
-                case_sensitive=conditions.case_sensitive,
-                operator=conditions.operator,
-            )
-
-            if conditions.operator == models.LogicalOperator.ANY and isinstance(
-                compiled, re.Pattern
-            ):
-                return bool(compiled.search(text))
-            if conditions.operator == models.LogicalOperator.ALL and isinstance(
-                compiled, list
-            ):
-                return all(bool(p.search(text)) for p in compiled)
+            return self._evaluate_keywords(conditions, text)
 
         # For now, we skip GroupConditions as it requires a rule lookup
-        return False
+        return None
+
+    def _evaluate_regex(
+        self, conditions: models.RegexConditions, text: str
+    ) -> RuleAnnotation | None:
+        flags = re.IGNORECASE if "i" in conditions.flags else 0
+        spans = [
+            TextMatchSpan(
+                start=m.start(),
+                end=m.end(),
+                matched_text=m.group(0),
+            )
+            for m in re.finditer(conditions.expression, text, flags)
+        ]
+        if not spans:
+            return None
+        return RuleAnnotation(text_match=spans)
+
+    def _evaluate_keywords(
+        self, conditions: models.KeywordConditions, text: str
+    ) -> RuleAnnotation | None:
+        # Filter out empty, empty-string, or whitespace-only keywords
+        valid_keywords = [
+            k.strip() for k in conditions.keywords if k and k.strip()
+        ]
+        if not valid_keywords:
+            return None
+
+        # Reuse the cached word-boundary patterns so span capture matches
+        # the flagging semantics exactly.
+        compiled = _get_compiled_keyword_regex(
+            tuple(valid_keywords),
+            case_sensitive=conditions.case_sensitive,
+            operator=conditions.operator,
+        )
+
+        if conditions.operator == models.LogicalOperator.ANY and isinstance(
+            compiled, re.Pattern
+        ):
+            per_keyword_matches = [list(compiled.finditer(text))]
+            if not any(per_keyword_matches):
+                return None
+        elif conditions.operator == models.LogicalOperator.ALL and isinstance(
+            compiled, list
+        ):
+            per_keyword_matches = [list(p.finditer(text)) for p in compiled]
+            if not all(per_keyword_matches):
+                return None
+        else:
+            return None
+
+        # Span order is unspecified; consumers that need ordering sort themselves.
+        spans = [
+            TextMatchSpan(
+                start=m.start(),
+                end=m.end(),
+                matched_text=m.group(0),
+            )
+            for matches in per_keyword_matches
+            for m in matches
+        ]
+        return RuleAnnotation(text_match=spans)
 
     def _organize_rules(self, rules: list[models.Rule]) -> OrganizedRules:
         organized_rules = OrganizedRules()
@@ -165,20 +190,29 @@ class BaseTextEvaluator(ABC):
         self, rules: list[models.Rule], text: str, feed_id: str
     ) -> EvaluationResult:
         if not text:
-            return {"is_flagged": False, "triggered_rules": [], "errors": []}
+            return {
+                "is_flagged": False,
+                "triggered_rules": [],
+                "rule_annotations": {},
+                "errors": [],
+            }
 
         organized_rules = self._organize_rules(rules)
         rules_to_evaluate = self._get_applicable_rules(organized_rules, feed_id)
 
-        matches = []
+        triggered_rules: list[str] = []
+        rule_annotations: dict[str, RuleAnnotation] = {}
         for rule in rules_to_evaluate:
-            if self._evaluate_rule(rule, text):
-                matches.append(rule.rule_id)
+            annotation = self._evaluate_rule(rule, text)
+            if annotation is None or rule.rule_id in rule_annotations:
+                continue
+            triggered_rules.append(rule.rule_id)
+            rule_annotations[rule.rule_id] = annotation
 
-        unique_matches = list(dict.fromkeys(matches))
         return {
-            "is_flagged": len(unique_matches) > 0,
-            "triggered_rules": unique_matches,
+            "is_flagged": len(triggered_rules) > 0,
+            "triggered_rules": triggered_rules,
+            "rule_annotations": rule_annotations,
             "errors": [],
         }
 
@@ -264,6 +298,7 @@ class RemoteTextEvaluator(BaseTextEvaluator):
             return {
                 "is_flagged": False,
                 "triggered_rules": [],
+                "rule_annotations": {},
                 "errors": [EvaluationErrorType.ERROR_FEED_ID_MISSING],
             }
         try:
@@ -273,6 +308,7 @@ class RemoteTextEvaluator(BaseTextEvaluator):
             return {
                 "is_flagged": False,
                 "triggered_rules": [],
+                "rule_annotations": {},
                 "errors": [EvaluationErrorType.ERROR_RULES_FETCH_FAILED],
             }
 
