@@ -18,6 +18,7 @@ import {
 import { formatDuration } from '../../utils/timeUtils';
 import AudioPlayer from '../audio/AudioPlayer';
 import AlertTooltip from './AlertTooltip';
+import HighlightedTranscript from './HighlightedTranscript';
 
 interface TranscriptRowProps {
   audioSegment: RenderableAudioSegment;
@@ -244,7 +245,15 @@ export function TranscriptRow({
               isSilence || isWaiting || hasErrors ? 'italic' : 'normal',
           }}
         >
-          {renderTranscriptionText(transcriptAnnotation)}
+          {/* Placeholder strings (silence/waiting/error) have no real transcript to highlight. */}
+          {isPlaceholder ? (
+            renderTranscriptionText(transcriptAnnotation)
+          ) : (
+            <HighlightedTranscript
+              text={transcriptAnnotation?.text ?? ''}
+              ruleAnnotations={evaluationAnnotation?.ruleAnnotations}
+            />
+          )}
         </Typography>
         <Box sx={{ display: 'flex', gap: 1, flexShrink: 0 }}>
           {!isSilence && (

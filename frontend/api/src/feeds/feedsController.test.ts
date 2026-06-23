@@ -49,7 +49,7 @@ describe('FeedsController', () => {
     archiveUrl: undefined,
     status: 'active',
     substatus: 'active',
-    lastHeartbeat: '2024-01-01T00:00:00Z',
+    lastHeartbeat: Date.parse('2024-01-01T00:00:00Z'),
   };
 
   const mockAdminRequest = {

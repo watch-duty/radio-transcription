@@ -7,6 +7,12 @@ repos:
         language: system
         files: ^protos/.*\.proto$
         pass_filenames: false
+      - id: validate-schemas
+        name: validate pubsub schemas
+        entry: mise run lint:schemas
+        language: system
+        files: ^protos/.*\.proto$
+        pass_filenames: false
       - id: ruff-check
         name: ruff check
         entry: uv run ruff check --force-exclude --fix
