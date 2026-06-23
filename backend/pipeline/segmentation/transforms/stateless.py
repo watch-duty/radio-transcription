@@ -40,6 +40,7 @@ from backend.pipeline.schema_types.continuous_audio_pb2 import (
 from backend.pipeline.schema_types.segmented_audio_pb2 import (
     SegmentedAudio,
 )
+from backend.pipeline.segmentation import log_helper
 from backend.pipeline.segmentation.constants import (
     DEAD_LETTER_QUEUE_TAG,
 )
@@ -57,6 +58,12 @@ from backend.pipeline.segmentation.options import (
 from backend.pipeline.segmentation.storage import (
     acquire_shared_gcs_client,
 )
+
+# WARNING: Do NOT remove or bypass setup_logging().
+# It explicitly configures structured log propagation for the
+# Dataflow worker harness. Removing this will cause all worker logs
+# to be rendered as DEBUG severity in Cloud Logging.
+log_helper.setup_logging()
 
 logger = get_task_logger(
     __name__, {"system": "transcription", "component": "transforms"}
