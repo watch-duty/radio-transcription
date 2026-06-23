@@ -57,6 +57,7 @@ export function TranscriptRow({
   const currentDate = new Date(audioSegment.startTimestamp);
 
   const isSilence = !!audioSegment.isSilenceBundle;
+  const { externalAudioSegmentId } = audioSegment;
 
   function renderTranscriptionText(
     transcriptAnnotation: TranscriptAnnotationData | null
@@ -239,14 +240,20 @@ export function TranscriptRow({
           sx={{
             flexGrow: 1,
             whiteSpace: 'pre-wrap',
-            transition: 'filter 0.3s ease, opacity 0.3s ease',
-            filter: redactTranscripts ? 'blur(6px)' : 'none',
-            opacity: redactTranscripts ? 0.6 : 1,
             fontStyle:
               isSilence || isWaiting || hasErrors ? 'italic' : 'normal',
           }}
         >
-          {renderTranscriptionText(transcriptAnnotation)}
+          <Box
+            component="span"
+            sx={{
+              transition: 'filter 0.3s ease, opacity 0.3s ease',
+              filter: redactTranscripts ? 'blur(6px)' : 'none',
+              opacity: redactTranscripts ? 0.6 : 1,
+            }}
+          >
+            {renderTranscriptionText(transcriptAnnotation)}
+          </Box>
           {!isSilence && (
             <Tooltip title="Copy transcript">
               <Box
@@ -258,6 +265,9 @@ export function TranscriptRow({
                   marginLeft: '8px',
                   opacity: 0,
                   '.transcript-row-item:hover &': {
+                    opacity: 1,
+                  },
+                  '&:focus-within': {
                     opacity: 1,
                   },
                 }}
@@ -292,7 +302,7 @@ export function TranscriptRow({
             alignItems: 'center',
           }}
         >
-          {audioSegment.externalAudioSegmentId && (
+          {externalAudioSegmentId && (
             <Tooltip title="Copy external segment ID">
               <span>
                 <IconButton
@@ -300,9 +310,7 @@ export function TranscriptRow({
                   aria-label="copy external segment id"
                   onClick={(e) => {
                     e.stopPropagation();
-                    navigator.clipboard.writeText(
-                      audioSegment.externalAudioSegmentId!
-                    );
+                    navigator.clipboard.writeText(externalAudioSegmentId);
                     triggerSnackbar('External segment ID copied');
                   }}
                   sx={{ cursor: 'copy' }}
