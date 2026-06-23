@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
-import time
 from dataclasses import dataclass
-from urllib import request
 
 from backend.pipeline.common.env import is_gcp_env
 
@@ -15,24 +14,15 @@ GCP_SERVICE_ACCOUNT_ACTOR_PREFIX = "service_account:gcp:"
 LOCAL_SERVICE_ACCOUNT_ACTOR_ID = "service_account:local:development"
 UNRESOLVED_GCP_SERVICE_ACCOUNT_ACTOR_ID = "service_account:gcp:unresolved"
 MAX_ACTOR_ID_LENGTH = 512
-
-_METADATA_SERVICE_ACCOUNT_EMAIL_URL = (
-    "http://metadata.google.internal/computeMetadata/v1/"
-    "instance/service-accounts/default/email"
-)
-_METADATA_HEADERS = {"Metadata-Flavor": "Google"}
-_METADATA_TIMEOUT_SECONDS = 1.0
-_METADATA_RETRY_SECONDS = 60.0
+CONFIGURED_SERVICE_ACTOR_ENV = "FEED_AUDIT_ACTOR_ID"
 
 
 @dataclass
 class _RuntimeActorState:
-    cached_gcp_actor_id: str | None = None
-    refresh_in_flight: bool = False
-    next_refresh_monotonic: float = 0.0
+    logged_unresolved_reasons: set[str]
 
 
-_runtime_actor_state = _RuntimeActorState()
+_runtime_actor_state = _RuntimeActorState(logged_unresolved_reasons=set())
 _runtime_actor_lock = threading.Lock()
 
 
@@ -63,84 +53,53 @@ def is_well_formed_google_user_actor_id(actor_id: str) -> bool:
     return bool(google_sub) and not _contains_whitespace(google_sub)
 
 
+def is_well_formed_actor_id(actor_id: str | None) -> bool:
+    if actor_id is None:
+        return False
+
+    if not actor_id:
+        return False
+
+    if len(actor_id) > MAX_ACTOR_ID_LENGTH:
+        return False
+
+    return not _contains_whitespace(actor_id)
+
+
 def runtime_service_actor_id() -> str:
     if not is_gcp_env():
         return LOCAL_SERVICE_ACCOUNT_ACTOR_ID
 
-    should_refresh = False
-    with _runtime_actor_lock:
-        if _runtime_actor_state.cached_gcp_actor_id is not None:
-            return _runtime_actor_state.cached_gcp_actor_id
+    configured_actor_id = os.environ.get(CONFIGURED_SERVICE_ACTOR_ENV)
+    if is_well_formed_actor_id(configured_actor_id):
+        return configured_actor_id
 
-        now = time.monotonic()
-        if (
-            not _runtime_actor_state.refresh_in_flight
-            and now >= _runtime_actor_state.next_refresh_monotonic
-        ):
-            _runtime_actor_state.refresh_in_flight = True
-            should_refresh = True
-
-    if should_refresh:
-        _refresh_metadata_actor_cache()
-        with _runtime_actor_lock:
-            if _runtime_actor_state.cached_gcp_actor_id is not None:
-                return _runtime_actor_state.cached_gcp_actor_id
-
+    reason = "missing" if configured_actor_id is None else "malformed"
+    _log_unresolved_gcp_actor_config(reason)
     return UNRESOLVED_GCP_SERVICE_ACCOUNT_ACTOR_ID
+
+
+def _log_unresolved_gcp_actor_config(reason: str) -> None:
+    with _runtime_actor_lock:
+        if reason in _runtime_actor_state.logged_unresolved_reasons:
+            return
+        _runtime_actor_state.logged_unresolved_reasons.add(reason)
+
+    logger.error(
+        "feed_audit_actor_unresolved",
+        extra={
+            "event": "feed_audit_actor_unresolved",
+            "gcp_runtime_detected": True,
+            "reason": reason,
+            "fallback_actor": UNRESOLVED_GCP_SERVICE_ACCOUNT_ACTOR_ID,
+        },
+    )
 
 
 def _contains_whitespace(value: str) -> bool:
     return any(char.isspace() for char in value)
 
 
-def _refresh_metadata_actor_cache() -> None:
-    try:
-        service_account_email = _fetch_metadata_service_account_email()
-    except Exception:
-        logger.exception(
-            "Failed to resolve GCP service-account actor from metadata; "
-            "using actor_id=%s",
-            UNRESOLVED_GCP_SERVICE_ACCOUNT_ACTOR_ID,
-        )
-        next_refresh_monotonic = time.monotonic() + _METADATA_RETRY_SECONDS
-        with _runtime_actor_lock:
-            _runtime_actor_state.refresh_in_flight = False
-            _runtime_actor_state.next_refresh_monotonic = next_refresh_monotonic
-        return
-
-    actor_id = f"{GCP_SERVICE_ACCOUNT_ACTOR_PREFIX}{service_account_email}"
-    with _runtime_actor_lock:
-        _runtime_actor_state.cached_gcp_actor_id = actor_id
-        _runtime_actor_state.refresh_in_flight = False
-        _runtime_actor_state.next_refresh_monotonic = 0.0
-
-
-def _fetch_metadata_service_account_email() -> str:
-    metadata_request = request.Request(  # noqa: S310
-        _METADATA_SERVICE_ACCOUNT_EMAIL_URL,
-        headers=_METADATA_HEADERS,
-    )
-
-    # Fixed GCP metadata endpoint; no user-controlled URL is opened here.
-    with request.urlopen(  # noqa: S310
-        metadata_request,
-        timeout=_METADATA_TIMEOUT_SECONDS,
-    ) as response:
-        service_account_email = response.read().decode("utf-8").strip()
-
-    if not _is_valid_metadata_service_account_email(service_account_email):
-        msg = "Invalid service-account email from metadata server"
-        raise ValueError(msg)
-
-    return service_account_email
-
-
-def _is_valid_metadata_service_account_email(email: str) -> bool:
-    return bool(email) and "@" in email and not _contains_whitespace(email)
-
-
 def _reset_runtime_service_actor_cache_for_tests() -> None:
     with _runtime_actor_lock:
-        _runtime_actor_state.cached_gcp_actor_id = None
-        _runtime_actor_state.refresh_in_flight = False
-        _runtime_actor_state.next_refresh_monotonic = 0.0
+        _runtime_actor_state.logged_unresolved_reasons.clear()

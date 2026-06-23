@@ -141,9 +141,22 @@ lifecycle work remain separate follow-up concerns.
 
 The required namespaced causal actor string on each Feed Audit Event. An
 `actor_id` identifies the human admin or service/runtime component that caused
-the event. Current v0.2 forms are `user:google:<sub>` for trusted
-admin-originated writes, `service_account:gcp:<email>` for autonomous GCP
-runtime writers, and `service_account:local:development` for local development.
+the event. Current v0.3 forms are `user:google:<sub>` for trusted
+admin-originated writes, `service_account:gcp:<service-account-unique-id>` for
+autonomous GCP runtime writers, `service_account:gcp:unresolved` when GCP actor
+configuration is missing or malformed, and `service_account:local:development`
+for local development.
+
+Autonomous audit-writing GCP workloads receive
+`FEED_AUDIT_ACTOR_ID=service_account:gcp:<service-account-unique-id>` from
+deployment/IaC. Application code consumes that value and does not perform
+runtime metadata, IAM, or token calls just to discover its own audit actor.
+Missing or malformed GCP configuration records `service_account:gcp:unresolved`
+and emits an operational error log; it must not block ingestion work. Workloads
+in the same audit-writing path may share one service account, while different
+audit-writing paths should use different service accounts when actor
+attribution should remain meaningful. Humans resolve opaque unique IDs through
+GCP/IaC/deployment records rather than an application lookup table.
 
 ### Leased Feed
 

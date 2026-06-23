@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from unittest import mock
 
 import pytest
@@ -43,7 +44,7 @@ def test_google_user_actor_rejects_too_long_sub() -> None:
         ("user:google:", False),
         ("user:google:admin sub", False),
         ("user:google:" + ("x" * 502), False),
-        ("service_account:gcp:test@example.iam.gserviceaccount.com", False),
+        ("service_account:gcp:1234567890", False),
         ("service:collector-runtime", False),
     ],
 )
@@ -53,56 +54,130 @@ def test_google_user_actor_validator(actor_id: str, expected) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("actor_id", "expected"),
+    [
+        ("service_account:gcp:1234567890", True),
+        ("service_account:gcp:unresolved", True),
+        ("service_account:local:development", True),
+        ("user:google:admin-sub-123", True),
+        ("", False),
+        ("   ", False),
+        ("service_account:gcp:bad value", False),
+        ("service_account:gcp:bad\nvalue", False),
+        (None, False),
+        ("x" * (actor_identity.MAX_ACTOR_ID_LENGTH + 1), False),
+    ],
+)
+def test_generic_actor_id_validator(
+    actor_id: str | None,
+    expected: bool,
+) -> None:
+    assert actor_identity.is_well_formed_actor_id(actor_id) is expected
+
+
 def test_runtime_service_actor_uses_local_fallback_outside_gcp() -> None:
     with (
         mock.patch.object(actor_identity, "is_gcp_env", return_value=False),
-        mock.patch.object(
-            actor_identity,
-            "_fetch_metadata_service_account_email",
-        ) as fetch_metadata,
+        mock.patch.dict(os.environ, {}, clear=True),
     ):
         actor_id = actor_identity.runtime_service_actor_id()
 
     assert actor_id == "service_account:local:development"
-    fetch_metadata.assert_not_called()
 
 
-def test_runtime_service_actor_caches_gcp_metadata_email() -> None:
-    with (
-        mock.patch.object(actor_identity, "is_gcp_env", return_value=True),
-        mock.patch.object(
-            actor_identity,
-            "_fetch_metadata_service_account_email",
-            return_value="test-sa@example.iam.gserviceaccount.com",
-        ) as fetch_metadata,
-    ):
-        actor_id = actor_identity.runtime_service_actor_id()
-        repeated_actor_id = actor_identity.runtime_service_actor_id()
-
-    assert (
-        actor_id
-        == "service_account:gcp:test-sa@example.iam.gserviceaccount.com"
-    )
-    assert repeated_actor_id == actor_id
-    fetch_metadata.assert_called_once_with()
-
-
-def test_runtime_service_actor_returns_unresolved_when_gcp_metadata_fails(
+def test_runtime_service_actor_uses_local_fallback_with_bad_env_outside_gcp(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     with (
         caplog.at_level(logging.ERROR),
-        mock.patch.object(
-            actor_identity,
-            "_fetch_metadata_service_account_email",
-            side_effect=RuntimeError("metadata unavailable"),
-        ) as fetch_metadata,
+        mock.patch.object(actor_identity, "is_gcp_env", return_value=False),
+        mock.patch.dict(
+            os.environ,
+            {actor_identity.CONFIGURED_SERVICE_ACTOR_ENV: "bad value"},
+            clear=True,
+        ),
+    ):
+        actor_id = actor_identity.runtime_service_actor_id()
+
+    assert actor_id == "service_account:local:development"
+    assert "feed_audit_actor_unresolved" not in caplog.text
+
+
+def test_runtime_service_actor_uses_configured_gcp_actor() -> None:
+    configured_actor_id = "service_account:gcp:1234567890"
+
+    with (
         mock.patch.object(actor_identity, "is_gcp_env", return_value=True),
+        mock.patch.dict(
+            os.environ,
+            {actor_identity.CONFIGURED_SERVICE_ACTOR_ENV: configured_actor_id},
+            clear=True,
+        ),
+    ):
+        actor_id = actor_identity.runtime_service_actor_id()
+        repeated_actor_id = actor_identity.runtime_service_actor_id()
+
+    assert actor_id == configured_actor_id
+    assert repeated_actor_id == configured_actor_id
+
+
+def test_runtime_service_actor_returns_unresolved_when_gcp_config_missing(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with (
+        caplog.at_level(logging.ERROR),
+        mock.patch.object(actor_identity, "is_gcp_env", return_value=True),
+        mock.patch.dict(os.environ, {}, clear=True),
     ):
         actor_id = actor_identity.runtime_service_actor_id()
         repeated_actor_id = actor_identity.runtime_service_actor_id()
 
     assert actor_id == "service_account:gcp:unresolved"
     assert repeated_actor_id == "service_account:gcp:unresolved"
-    assert "Failed to resolve GCP service-account actor" in caplog.text
-    fetch_metadata.assert_called_once_with()
+    unresolved_records = [
+        record
+        for record in caplog.records
+        if record.message == "feed_audit_actor_unresolved"
+    ]
+    assert len(unresolved_records) == 1
+    assert unresolved_records[0].event == "feed_audit_actor_unresolved"
+    assert unresolved_records[0].gcp_runtime_detected is True
+    assert unresolved_records[0].reason == "missing"
+    assert (
+        unresolved_records[0].fallback_actor
+        == "service_account:gcp:unresolved"
+    )
+
+
+def test_runtime_service_actor_returns_unresolved_when_gcp_config_malformed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    bad_actor_id = "service_account:gcp:bad value"
+
+    with (
+        caplog.at_level(logging.ERROR),
+        mock.patch.object(actor_identity, "is_gcp_env", return_value=True),
+        mock.patch.dict(
+            os.environ,
+            {actor_identity.CONFIGURED_SERVICE_ACTOR_ENV: bad_actor_id},
+            clear=True,
+        ),
+    ):
+        actor_id = actor_identity.runtime_service_actor_id()
+        repeated_actor_id = actor_identity.runtime_service_actor_id()
+
+    assert actor_id == "service_account:gcp:unresolved"
+    assert repeated_actor_id == "service_account:gcp:unresolved"
+    assert bad_actor_id not in caplog.text
+    unresolved_records = [
+        record
+        for record in caplog.records
+        if record.message == "feed_audit_actor_unresolved"
+    ]
+    assert len(unresolved_records) == 1
+    assert unresolved_records[0].reason == "malformed"
+    assert (
+        unresolved_records[0].fallback_actor
+        == "service_account:gcp:unresolved"
+    )

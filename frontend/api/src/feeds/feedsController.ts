@@ -33,6 +33,7 @@ import {
 import { AuthenticatedRequest } from '../authentication.js';
 import { FEEDS_STORE_API_URL } from '../config.js';
 import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
+import { feedMutationActorHeaders } from './actor_headers.js';
 
 interface BaseFeedBackend {
   name: string;
@@ -269,11 +270,13 @@ export class FeedsController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
 
+    const actorHeaders = feedMutationActorHeaders(request);
     try {
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       const response = await client.request<FeedBackend>({
         url: FEEDS_STORE_API_URL,
         method: 'POST',
+        headers: actorHeaders,
         data: convertFeedCreate(requestBody),
       });
       return convertFeedBackend(response.data);
@@ -303,11 +306,13 @@ export class FeedsController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
 
+    const actorHeaders = feedMutationActorHeaders(request);
     try {
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       const response = await client.request<FeedBackend>({
         url: `${FEEDS_STORE_API_URL}/${feedId}`,
         method: 'PUT',
+        headers: actorHeaders,
         data: convertFeedUpdate(requestBody),
       });
       return convertFeedBackend(response.data);
@@ -335,11 +340,13 @@ export class FeedsController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
 
-    const client = await getServiceClient(FEEDS_STORE_API_URL);
+    const actorHeaders = feedMutationActorHeaders(request);
     try {
+      const client = await getServiceClient(FEEDS_STORE_API_URL);
       const response = await client.request<FeedBackend>({
         url: `${FEEDS_STORE_API_URL}/${feedId}/reset`,
         method: 'POST',
+        headers: actorHeaders,
       });
       return convertFeedBackend(response.data);
     } catch (error: unknown) {
@@ -371,11 +378,13 @@ export class FeedsController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
 
-    const client = await getServiceClient(FEEDS_STORE_API_URL);
+    const actorHeaders = feedMutationActorHeaders(request);
     try {
+      const client = await getServiceClient(FEEDS_STORE_API_URL);
       await client.request({
         url: `${FEEDS_STORE_API_URL}/${feedId}/deactivate`,
         method: 'POST',
+        headers: actorHeaders,
       });
     } catch (error: unknown) {
       const { status, message } = handleBackendError(
@@ -406,11 +415,13 @@ export class FeedsController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
 
-    const client = await getServiceClient(FEEDS_STORE_API_URL);
+    const actorHeaders = feedMutationActorHeaders(request);
     try {
+      const client = await getServiceClient(FEEDS_STORE_API_URL);
       await client.request({
         url: `${FEEDS_STORE_API_URL}/${feedId}`,
         method: 'DELETE',
+        headers: actorHeaders,
       });
     } catch (error: unknown) {
       const { status, message } = handleBackendError(
