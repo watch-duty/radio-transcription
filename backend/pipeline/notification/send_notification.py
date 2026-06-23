@@ -12,11 +12,13 @@ from backend.pipeline.common.clients.feeds_client import FeedsClient
 from backend.pipeline.common.constants import MS_PER_SECOND, NANOS_PER_MS
 from backend.pipeline.common.container_helper import ForkDetector, fork_checked
 from backend.pipeline.common.exceptions import NonRetryableError
-from backend.pipeline.common.log_helper import setup_logging
+from backend.pipeline.common.log_helper import (
+    record_pipeline_stage,
+    setup_logging,
+)
 from backend.pipeline.common.storage.redis_service import RedisService
 from backend.pipeline.common.tracing_utils import (
     parse_pubsub_cloudevent,
-    record_pipeline_stage,
     setup_tracing,
     with_tracer_context,
 )

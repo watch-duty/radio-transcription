@@ -19,10 +19,10 @@ from backend.pipeline.common.constants import (
     MS_PER_SECOND,
     NANOS_PER_MS,
 )
+from backend.pipeline.common.log_helper import record_pipeline_stage
 from backend.pipeline.common.tracing_utils import (
     inject_otel_context,
     parse_pubsub_cloudevent,
-    record_pipeline_stage,
     with_tracer_context,
 )
 from backend.pipeline.schema_types.normalized_audio_pb2 import (

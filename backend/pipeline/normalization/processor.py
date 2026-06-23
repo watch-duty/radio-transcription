@@ -18,11 +18,11 @@ from backend.pipeline.common.constants import (
     GCS_DOWNLOAD_TIMEOUT_SEC,
     NANOS_PER_SECOND,
 )
+from backend.pipeline.common.log_helper import record_pipeline_stage
 from backend.pipeline.common.storage import gcs_uploader
 from backend.pipeline.common.tracing_utils import (
     inject_otel_context,
     parse_pubsub_cloudevent,
-    record_pipeline_stage,
     with_tracer_context,
 )
 from backend.pipeline.normalization import audio_processor
