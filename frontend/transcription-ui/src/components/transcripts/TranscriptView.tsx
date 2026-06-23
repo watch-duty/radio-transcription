@@ -100,7 +100,7 @@ export function TranscriptView({
   const wasFetchingNewer = useRef(false);
 
   const { volumeDb, setVolumeDb, pan, setPan, speed, setSpeed } =
-    useAudioControls();
+    useAudioControls(searchedFeedId);
 
   // Passed to useAudioPlayback so its `onEnd` callback reads the current list
   // rather than a stale closure when deciding whether to auto-advance.
