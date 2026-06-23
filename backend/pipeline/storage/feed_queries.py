@@ -754,6 +754,7 @@ WITH before_row AS (
     FROM feeds f
     JOIN feed_properties fp ON fp.feed_id = f.id
     WHERE f.id = $1
+      AND f.status <> 'active'::feed_status
     FOR UPDATE
 ),
 {
@@ -798,6 +799,7 @@ WITH before_row AS (
     FROM feeds f
     JOIN feed_properties fp ON fp.feed_id = f.id
     WHERE f.id = $1
+      AND f.status <> 'active'::feed_status
     FOR UPDATE
 ),
 updated AS (

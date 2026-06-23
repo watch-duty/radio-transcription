@@ -449,7 +449,7 @@ class TestHandle:
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_download_failure_records_non_budgeted_status(
-        self, mock_store, _patch_globals, caplog
+        self, mock_store, _patch_globals
     ) -> None:
         feed_id = uuid.uuid4()
         self._set_feed(
@@ -465,12 +465,9 @@ class TestHandle:
         gcs.bucket.return_value.blob.return_value.download_as_bytes.side_effect = Exception(
             "GCS error"
         )
-        caplog.set_level(
-            logging.ERROR,
-            logger="backend.pipeline.ingestion.collectors.echo.main",
-        )
 
-        _handle(self._make_event())
+        with pytest.raises(Exception, match="GCS error"):
+            _handle(self._make_event())
 
         self._assert_non_budgeted_failure_recorded(
             mock_store,
@@ -480,10 +477,6 @@ class TestHandle:
         )
         mock_store.record_heartbeat.assert_not_called()
         _patch_globals["publisher"].publish.assert_not_called()
-        assert "will return success for object notification" in caplog.text
-        assert "echo_recording_download_failed" in caplog.text
-        assert "GCS error" in caplog.text
-        assert "Traceback" in caplog.text
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_duration_failure_records_collector_reason(
@@ -583,7 +576,8 @@ class TestHandle:
         ].bucket.return_value.blob.return_value.upload_from_string
         upload_call.side_effect = Exception("upload error")
 
-        _handle(self._make_event())
+        with pytest.raises(Exception, match="upload error"):
+            _handle(self._make_event())
 
         self._assert_non_budgeted_failure_recorded(
             mock_store,
@@ -595,7 +589,7 @@ class TestHandle:
         _patch_globals["publisher"].publish.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_globals")
-    def test_non_budgeted_recording_db_error_keeps_return_success_policy(
+    def test_pipeline_failure_recording_db_error_preserves_retry(
         self, mock_store, _patch_globals
     ) -> None:
         feed_id = uuid.uuid4()
@@ -620,7 +614,8 @@ class TestHandle:
         with patch(
             "backend.pipeline.ingestion.collectors.echo.main.logger"
         ) as mock_logger:
-            _handle(self._make_event())
+            with pytest.raises(Exception, match="Original error"):
+                _handle(self._make_event())
 
         self._assert_non_budgeted_failure_recorded(
             mock_store,
@@ -628,21 +623,10 @@ class TestHandle:
             status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
             reason="echo_recording_download_failed",
         )
-        assert mock_logger.exception.call_count == 2
-        first_call, second_call = mock_logger.exception.call_args_list
-        log_args, log_kwargs = first_call
-        assert log_args[:4] == (
-            "Echo processing failure will return success for "
-            "object notification: "
-            "feed=%s status_reason=%s reason=%s",
-            feed_id,
-            "system_pipeline_error",
-            "echo_recording_download_failed",
-        )
+        assert mock_logger.exception.call_count == 1
+        log_args, log_kwargs = mock_logger.exception.call_args
+        assert log_args == ("Failed to record failure for feed %s", feed_id)
         assert log_kwargs == {}
-        second_args, second_kwargs = second_call
-        assert second_args == ("Failed to record failure for feed %s", feed_id)
-        assert second_kwargs == {}
 
     @pytest.mark.usefixtures("_patch_globals")
     def test_malformed_filename_skips_gracefully(self, mock_store) -> None:
@@ -702,7 +686,8 @@ class TestHandle:
         pub = _patch_globals["publisher"]
         pub.publish.return_value.result.side_effect = Exception("Pub/Sub error")
 
-        _handle(self._make_event())
+        with pytest.raises(Exception, match="Pub/Sub error"):
+            _handle(self._make_event())
 
         self._assert_non_budgeted_failure_recorded(
             mock_store,
@@ -730,7 +715,8 @@ class TestHandle:
             "publisher error"
         )
 
-        _handle(self._make_event())
+        with pytest.raises(Exception, match="publisher error"):
+            _handle(self._make_event())
 
         self._assert_non_budgeted_failure_recorded(
             mock_store,
@@ -756,7 +742,8 @@ class TestHandle:
         )
         mock_store.record_heartbeat.side_effect = Exception("heartbeat error")
 
-        _handle(self._make_event())
+        with pytest.raises(Exception, match="heartbeat error"):
+            _handle(self._make_event())
 
         self._assert_non_budgeted_failure_recorded(
             mock_store,

@@ -70,7 +70,6 @@ _HEARTBEAT_WRITE_FAILED = "echo_heartbeat_write_failed"
 # This is separate from feed-budget routing, which is handled by failure_policy.
 _RETURN_SUCCESS_AFTER_FAILURE_RECORD_ATTEMPT_STATUS_REASONS = {
     FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-    FeedStatusReason.SYSTEM_PIPELINE_ERROR,
 }
 
 # ---------------------------------------------------------------------------

@@ -2560,6 +2560,12 @@ class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
         self.assertIn("before_values", sql)
         self.assertIn("'{}'::jsonb", sql)
 
+    async def test_sql_refuses_to_delete_active_feed(self) -> None:
+        """Active feeds must be deactivated before hard deletion."""
+        sql = feed_queries.DELETE_FEED_SQL
+
+        self.assertIn("AND f.status <> 'active'::feed_status", sql)
+
     async def test_missing_feed_returns_false_without_audit_or_delete(
         self,
     ) -> None:
@@ -2631,6 +2637,12 @@ class TestResetFeed(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIn("'feed.reset'", feed_queries.RESET_FEED_SQL)
         self.assertNotIn("'feed.recovered'", feed_queries.RESET_FEED_SQL)
+
+    async def test_sql_refuses_to_reset_active_feed(self) -> None:
+        """Active feeds must be deactivated before admin reset."""
+        sql = feed_queries.RESET_FEED_SQL
+
+        self.assertIn("AND f.status <> 'active'::feed_status", sql)
 
     async def test_missing_feed_returns_none_without_audit(self) -> None:
         """Missing reset target does not allocate sequence or audit."""

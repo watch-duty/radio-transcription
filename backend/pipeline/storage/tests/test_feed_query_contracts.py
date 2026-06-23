@@ -177,6 +177,24 @@ class TestWorkerOwnedLifecycleGuards(unittest.TestCase):
         self.assertIn("WHERE worker_id = $1", sql)
         self.assertIn("AND status = 'active'::feed_status", sql)
 
+    def test_admin_reset_and_delete_refuse_active_feeds(self) -> None:
+        """Active feeds must be deactivated before reset or hard delete."""
+        for sql in (
+            feed_queries.RESET_FEED_SQL,
+            feed_queries.DELETE_FEED_SQL,
+        ):
+            stripped = _sql_without_comments(sql)
+            self.assertIn(
+                "AND f.status <> 'active'::feed_status",
+                stripped,
+            )
+
+        deactivate_sql = _sql_without_comments(feed_queries.DEACTIVATE_FEED_SQL)
+        self.assertNotIn(
+            "AND f.status <> 'active'::feed_status",
+            deactivate_sql,
+        )
+
 
 class TestReportFailureSqlStatusReason(unittest.TestCase):
     """Tests for status reason writes in failure SQL."""
