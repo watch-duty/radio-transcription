@@ -5,12 +5,15 @@ from cloudevents.http.event import CloudEvent
 from opentelemetry import baggage
 from opentelemetry.trace import get_current_span
 
+from backend.pipeline.common import tracing_utils
 from backend.pipeline.common.log_helper import record_pipeline_stage
 from backend.pipeline.common.tracing_utils import (
     ContextPropagationValidator,
     extract_cloud_event_attributes,
     extract_trace_context,
     get_current_traceparent,
+    get_tracer,
+    setup_tracing,
     with_baggage_and_span,
     with_tracer_context,
 )
@@ -290,3 +293,42 @@ class TestTracingUtils(unittest.TestCase):
         )
         attrs8 = extract_cloud_event_attributes(ce8)
         self.assertEqual(attrs8.get("traceparent"), "tp_plain")
+
+    @patch(
+        "backend.pipeline.common.tracing_utils.is_gcp_env", return_value=True
+    )
+    @patch("backend.pipeline.common.tracing_utils.CloudTraceSpanExporter")
+    @patch("backend.pipeline.common.tracing_utils.set_tracer_provider")
+    def test_custom_provider_fallback(
+        self, mock_set_global, mock_exporter, mock_is_gcp
+    ) -> None:
+        """Verifies that setup_tracing initializes our custom provider.
+
+        Ensures that get_tracer uses it, even if the global OTel registration
+        fails (e.g. if the singleton provider was already locked by the runner).
+        """
+        # Reset state
+        tracing_utils._state.custom_provider = None
+
+        # Mock set_tracer_provider to simulate that it was already called and throws
+        mock_set_global.side_effect = ValueError("Already set")
+
+        with patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"}):
+            setup_tracing(service_name="test_service", use_batch=False)
+
+        # Verify that _state.custom_provider is set, despite the global set failure!
+        provider = tracing_utils._state.custom_provider
+        self.assertIsNotNone(provider)
+        assert provider is not None
+
+        # Verify that calling get_tracer returns a tracer from our custom provider!
+        tracer = get_tracer("test_tracer")
+        self.assertEqual(tracer, provider.get_tracer("test_tracer"))
+
+        # Verify that starting a span works and it attaches to the global context
+        with tracer.start_as_current_span("test_span") as span:
+            self.assertTrue(span.get_span_context().is_valid)
+            self.assertEqual(get_current_span(), span)
+
+        # Clean up
+        tracing_utils._state.custom_provider = None

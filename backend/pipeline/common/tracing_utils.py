@@ -25,10 +25,12 @@ from opentelemetry.sdk.trace.export import (
 )
 from opentelemetry.trace import (
     Span,
+    Tracer,
     get_current_span,
-    get_tracer,
-    get_tracer_provider,
     set_tracer_provider,
+)
+from opentelemetry.trace import (
+    get_tracer as otel_get_tracer,
 )
 from opentelemetry.trace.propagation.tracecontext import (
     TraceContextTextMapPropagator,
@@ -36,8 +38,36 @@ from opentelemetry.trace.propagation.tracecontext import (
 
 from backend.pipeline.common.env import is_gcp_env
 
+
+class _TracingState:
+    custom_provider: TracerProvider | None = None
+
+
 _setup_lock = threading.Lock()
+_state = _TracingState()
 telemetry_logger = logging.getLogger("telemetry.validation")
+
+
+def get_tracer(
+    instrumenting_module_name: str,
+    instrumenting_library_version: str | None = None,
+    schema_url: str | None = None,
+) -> Tracer:
+    """Returns a tracer from our custom provider if initialized.
+
+    Falls back to the global OTel get_tracer if not initialized.
+    """
+    if _state.custom_provider is not None:
+        return _state.custom_provider.get_tracer(
+            instrumenting_module_name,
+            instrumenting_library_version,
+            schema_url,
+        )
+    return otel_get_tracer(
+        instrumenting_module_name,
+        instrumenting_library_version,
+        schema_url=schema_url,
+    )
 
 
 class ContextPropagationValidator(SpanProcessor):
@@ -86,14 +116,12 @@ def setup_tracing(
     # from automatic metric collection (we only use OTel for tracing).
     os.environ.setdefault("OTEL_METRICS_EXPORTER", "none")
 
-    current_provider = get_tracer_provider()
-    if isinstance(current_provider, TracerProvider):
+    if _state.custom_provider is not None:
         return
 
     with _setup_lock:
         # Double check locking pattern after acquiring lock
-        current_provider = get_tracer_provider()
-        if isinstance(current_provider, TracerProvider):
+        if _state.custom_provider is not None:
             return
 
         project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or ""
@@ -136,7 +164,16 @@ def setup_tracing(
         else:
             provider.add_span_processor(SimpleSpanProcessor(exporter))
 
-        set_tracer_provider(provider)
+        _state.custom_provider = provider
+        # Try to set as global provider for auto-instrumentation / standard libraries.
+        # This will log a warning if a global provider was already set, but that is fine.
+        try:
+            set_tracer_provider(provider)
+        except Exception:
+            telemetry_logger.debug(
+                "Failed to set global tracer provider; "
+                "utilizing fallback custom provider."
+            )
 
 
 def get_current_traceparent() -> str:
