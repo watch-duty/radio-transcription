@@ -601,9 +601,7 @@ export function TranscriptView({
         sourceUrl={sourceUrl}
         archiveUrl={archiveUrl}
         status={activeFeedData?.status ?? searchedFeed?.status}
-        lastHeartbeat={
-          activeFeedData?.lastHeartbeat ?? searchedFeed?.lastHeartbeat
-        }
+        lastSpeechSegmentTimestamp={activeFeedData?.lastSpeechSegmentTimestamp}
         triggerSnackbar={triggerSnackbar}
         onError={onError}
       />

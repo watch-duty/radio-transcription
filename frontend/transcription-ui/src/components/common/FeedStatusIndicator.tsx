@@ -8,7 +8,7 @@ import type {
   FeedStatus,
 } from '@transcription/common';
 
-import { getRelativeTimeString } from '../../utils/timeUtils';
+import RelativeTimeDisplay from './RelativeTimeDisplay';
 
 const FEED_SUBSTATUS_UI_TEXT_DISPLAY: Record<BackendFeedStatus, string> = {
   unclaimed: 'Unclaimed',
@@ -87,12 +87,14 @@ export function FeedStatusIndicator({
   statusReason,
   quarantineReason,
   lastHeartbeat,
+  lastSpeechSegmentTimestamp,
 }: {
   status?: FeedStatus;
   substatus?: BackendFeedStatus;
   statusReason?: BackendFeedStatusReason;
   quarantineReason?: string;
-  lastHeartbeat?: string;
+  lastHeartbeat?: number;
+  lastSpeechSegmentTimestamp?: number;
 }) {
   if (!status) {
     return null;
@@ -113,60 +115,63 @@ export function FeedStatusIndicator({
     <Box
       sx={{
         display: 'flex',
-        alignItems: 'center',
-        gap: 1,
+        flexDirection: 'column',
+        alignItems: 'flex-start',
+        gap: 0.5,
         minWidth: 0,
         overflow: 'hidden',
       }}
     >
-      <Tooltip title={substatusText}>
-        <Box
-          sx={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 1,
-          }}
-        >
-          <Badge
-            color={statusConfig.color}
-            variant="dot"
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1,
+          minWidth: 0,
+        }}
+      >
+        <Tooltip title={substatusText}>
+          <Box
             sx={{
-              py: 0,
-              px: 0.5,
               display: 'flex',
               alignItems: 'center',
-              flexShrink: 0,
-            }}
-          />
-          <Typography
-            variant="body2"
-            sx={{
-              color:
-                statusConfig.color === 'default'
-                  ? 'text.secondary'
-                  : `${statusConfig.color}.main`,
-              fontWeight: 600,
-              textTransform: 'uppercase',
-              flexShrink: 0,
+              gap: 1,
             }}
           >
-            {statusConfig.displayText}
-          </Typography>
-        </Box>
-      </Tooltip>
+            <Badge
+              color={statusConfig.color}
+              variant="dot"
+              sx={{
+                py: 0,
+                px: 0.5,
+                display: 'flex',
+                alignItems: 'center',
+                flexShrink: 0,
+              }}
+            />
+            <Typography
+              variant="body2"
+              sx={{
+                color:
+                  statusConfig.color === 'default'
+                    ? 'text.secondary'
+                    : `${statusConfig.color}.main`,
+                fontWeight: 600,
+                textTransform: 'uppercase',
+                flexShrink: 0,
+              }}
+            >
+              {statusConfig.displayText}
+            </Typography>
+          </Box>
+        </Tooltip>
+        <RelativeTimeDisplay
+          label="Latest"
+          timestamp={lastSpeechSegmentTimestamp}
+        />
+      </Box>
       {lastHeartbeat && (
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            minWidth: 0,
-          }}
-        >
-          Last updated: {getRelativeTimeString(lastHeartbeat)}
-        </Typography>
+        <RelativeTimeDisplay label="Last heartbeat" timestamp={lastHeartbeat} />
       )}
     </Box>
   );
