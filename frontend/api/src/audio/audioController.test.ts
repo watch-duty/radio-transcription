@@ -162,6 +162,50 @@ describe('listAudioSegments', () => {
     });
   });
 
+  it('should convert waveform annotation duration_seconds to camelCase', async () => {
+    const mockBackendResponse = {
+      segments: [
+        {
+          id: 'segment-1',
+          feed_id: 'feed-1',
+          classification: 'SPEECH',
+          start_timestamp: '2026-01-01T10:00:00Z',
+          end_timestamp: '2026-01-01T10:01:00Z',
+          missing_prior_context: false,
+          missing_post_context: false,
+          source_audio_uris: ['gs://bucket/audio.ogg'],
+          canonical_audio_uri: null,
+          start_audio_offset: null,
+          end_audio_offset: null,
+          playback_audio_uri: null,
+          external_audio_segment_id: null,
+          created_at: '2026-01-01T10:02:00Z',
+          annotations: [
+            {
+              audio_segment_id: 'segment-1',
+              type: 'WAVEFORM',
+              created_at: '2026-01-01T10:03:00Z',
+              data: {
+                peaks: [[0.1, 0.5, 0.25]],
+                duration_seconds: 1.5,
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
+
+    const controller = new AudioController();
+    const result = await controller.listAudioSegments('test', { limit: 100 });
+
+    expect(result.segments[0].annotations[0].data).toEqual({
+      peaks: [[0.1, 0.5, 0.25]],
+      durationSeconds: 1.5,
+    });
+  });
+
   it('should forward is_alert parameter if true', async () => {
     const mockBackendResponse = { segments: [] };
     mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });

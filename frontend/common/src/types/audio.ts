@@ -7,6 +7,7 @@ export enum AudioClassification {
 export enum AnnotationType {
   TRANSCRIPT = 'TRANSCRIPT',
   EVALUATION = 'EVALUATION',
+  WAVEFORM = 'WAVEFORM',
 }
 
 export interface TranscriptAnnotationData {
@@ -34,10 +35,18 @@ export interface EvaluationAnnotationData {
   ruleAnnotations?: RuleAnnotationMap;
 }
 
+export interface WaveformAnnotationData {
+  peaks: number[][];
+  durationSeconds: number;
+}
+
 export interface Annotation {
   type: AnnotationType;
   createdAt: string;
-  data: TranscriptAnnotationData | EvaluationAnnotationData;
+  data:
+    | TranscriptAnnotationData
+    | EvaluationAnnotationData
+    | WaveformAnnotationData;
 }
 
 export interface AudioSegment {
