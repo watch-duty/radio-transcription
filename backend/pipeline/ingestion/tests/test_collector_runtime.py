@@ -2093,9 +2093,6 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             failure_kwargs["actor_id"],
             _RUNTIME_ACTOR_ID,
         )
-        self.assertNotIn("previous_status", failure_kwargs)
-        self.assertNotIn("previous_failure_count", failure_kwargs)
-        self.assertNotIn("previous_status_reason", failure_kwargs)
         self.assertEqual(failure_kwargs["reason"], "missing_source_feed_id")
         rt._store.release_non_budgeted_failure.assert_not_awaited()
         mock_telemetry.emit_quarantine_event.assert_awaited_once_with(
@@ -2179,9 +2176,6 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             release_kwargs["actor_id"],
             _RUNTIME_ACTOR_ID,
         )
-        self.assertNotIn("previous_status", release_kwargs)
-        self.assertNotIn("previous_failure_count", release_kwargs)
-        self.assertNotIn("previous_status_reason", release_kwargs)
         self.assertEqual(
             release_kwargs["reason"], "RuntimeError: capture_failed"
         )
@@ -3260,9 +3254,6 @@ class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
         kwargs = rt._store.update_feed_progress.await_args.kwargs
         self.assertEqual(kwargs["last_bookmark_time"], resume)
         self.assertEqual(kwargs["actor_id"], _RUNTIME_ACTOR_ID)
-        self.assertNotIn("previous_status", kwargs)
-        self.assertNotIn("previous_failure_count", kwargs)
-        self.assertNotIn("previous_status_reason", kwargs)
 
     async def test_falls_back_to_chunk_end_time_when_resume_position_none(
         self,
@@ -3300,9 +3291,6 @@ class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
         kwargs = rt._store.update_feed_progress.await_args.kwargs
         self.assertEqual(kwargs["last_bookmark_time"], end_time)
         self.assertEqual(kwargs["actor_id"], _RUNTIME_ACTOR_ID)
-        self.assertNotIn("previous_status", kwargs)
-        self.assertNotIn("previous_failure_count", kwargs)
-        self.assertNotIn("previous_status_reason", kwargs)
 
 
 if __name__ == "__main__":

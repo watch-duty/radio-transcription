@@ -20,14 +20,16 @@ from backend.pipeline.storage.feed_store import (
     SourceType,
 )
 
-_TEST_ACTOR_ID = "service:feeds-service"
+_TEST_ACTOR_ID = (
+    "service_account:gcp:feeds-service@example.iam.gserviceaccount.com"
+)
 _INVALID_ACTOR_ID = "system actor"
 
 
 @pytest.fixture
 async def store(db_pool: asyncpg.Pool) -> FeedStore:
     """Provides a FeedStore instance with a clean database."""
-    await db_pool.execute("TRUNCATE feeds CASCADE")
+    await db_pool.execute("TRUNCATE feed_audit_events, feeds CASCADE")
     return FeedStore(db_pool)
 
 

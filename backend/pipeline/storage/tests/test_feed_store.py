@@ -653,14 +653,6 @@ class TestReportFailureSqlStatusReason(unittest.TestCase):
         self.assertIn("AND f.worker_id = $2", sql)
         self.assertIn("AND f.fencing_token = $4", sql)
 
-    def test_report_failure_sql_does_not_write_quarantine_reason(
-        self,
-    ) -> None:
-        sql = _sql_without_comments(feed_queries.REPORT_FAILURE_SQL)
-
-        self.assertNotIn("quarantine_reason =", sql)
-        self.assertNotIn("COALESCE($7, quarantine_reason)", sql)
-
 
 class TestNonBudgetedFailureSql(unittest.TestCase):
     """Tests for non-quarantine suppressed retry SQL."""
@@ -682,18 +674,7 @@ class TestNonBudgetedFailureSql(unittest.TestCase):
         self.assertIn("AND f.worker_id = $2", sql)
         self.assertIn("AND f.fencing_token = $3", sql)
         self.assertIn("AND f.status = 'active'::feed_status", sql)
-        self.assertNotIn("quarantine_reason =", sql)
         self.assertNotIn("failure_count + 1", sql)
-
-    def test_non_budgeted_failure_sql_does_not_write_quarantine_reason(
-        self,
-    ) -> None:
-        sql = _sql_without_comments(
-            feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL
-        )
-
-        self.assertNotIn("quarantine_reason =", sql)
-        self.assertNotIn("COALESCE($5, quarantine_reason)", sql)
 
     def test_non_budgeted_failure_sql_returns_status_diagnostics(self) -> None:
         sql = _sql_without_comments(

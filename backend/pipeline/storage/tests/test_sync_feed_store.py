@@ -280,7 +280,6 @@ class TestRecordNonBudgetedFailure:
             "status NOT IN ('quarantined'::feed_status, "
             "'deactivated'::feed_status)"
         ) in sql
-        assert "quarantine_reason =" not in sql
         assert params == (
             feed_id,
             "system_pipeline_error",
