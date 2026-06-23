@@ -18,12 +18,8 @@ import { useTheme } from '@mui/material/styles';
 import { useQuery } from '@tanstack/react-query';
 import { AudioClassification, type AudioSegment } from '@transcription/common';
 
-import {
-  type PlaybackController,
-  WebAudioPlayer,
-  createAudioContext,
-} from '../../audio/WebAudioPlayer';
 import { useAuth } from '../../context/AuthContext';
+import { useAudioPlayback } from '../../hooks/useAudioPlayback';
 import {
   type AlertFilter,
   useAudioSegments,
@@ -35,7 +31,6 @@ import {
 import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
-import { getAudioUrl } from '../../utils/audioUtils';
 import AudioDisplay from '../audio/AudioDisplay';
 import FeedSearchView from '../feeds/FeedSearchView';
 import FeedHeader from './FeedHeader';
@@ -116,9 +111,6 @@ export function TranscriptView({
   const [redactTranscripts, setRedactTranscripts] = useState(false);
   const [alertFilter, setAlertFilter] = useState<AlertFilter>('all');
 
-  const [currentlyPlayingSegmentId, setCurrentlyPlayingSegmentId] = useState<
-    string | null
-  >(null);
   const [highlightedSegmentId, setHighlightedSegmentId] = useState<
     string | null
   >(targetSegmentId);
@@ -141,75 +133,22 @@ export function TranscriptView({
   const newerLoadAnchorId = useRef<string | null>(null);
   const wasFetchingNewer = useRef(false);
 
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const playerRef = useRef<WebAudioPlayer | null>(null);
-  const currentAudio = useRef<PlaybackController | null>(null);
-  const [playbackEndedForId, setPlaybackEndedForId] = useState<string | null>(
-    null
-  );
-  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
-
-  // A mutable reference to the latest list of audio segments. This prevents stale closures
-  // inside the audio lifecycle callbacks (like onEnd), ensuring continuous playback logic
-  // always evaluates against the most up-to-date audio segments list even if it updates mid-playback.
+  // Passed to useAudioPlayback so its `onEnd` callback reads the current list
+  // rather than a stale closure when deciding whether to auto-advance.
   const audioSegmentsRef = useRef<AudioSegment[]>([]);
 
-  useEffect(() => {
-    return () => {
-      audioContextRef.current?.close().catch(() => {});
-      audioContextRef.current = null;
-      playerRef.current = null;
-      currentAudio.current = null;
-    };
-  }, []);
-
-  // Play and pause audio from a URL.
-  const toggleAudio = useCallback(
-    (segmentId: string, audioUri: string) => {
-      // Lazy-build on first play so the AudioContext is created inside a user gesture.
-      const context = (audioContextRef.current ??= createAudioContext());
-      const player = (playerRef.current ??= new WebAudioPlayer(context));
-      player.resume();
-
-      const newAudio = currentlyPlayingSegmentId !== segmentId;
-
-      if (newAudio) {
-        currentAudio.current?.unload();
-        currentAudio.current = null;
-        setCurrentlyPlayingSegmentId(segmentId);
-        setHighlightedSegmentId(segmentId);
-      }
-
-      if (!currentAudio.current) {
-        currentAudio.current = player.load(getAudioUrl(audioUri), {
-          onPlay: () => setIsAudioPlaying(true),
-          onPause: () => setIsAudioPlaying(false),
-          onError: () => setIsAudioPlaying(false),
-          onEnd: () => {
-            const currentAudioSegments = audioSegmentsRef.current;
-            const currentIndex = currentAudioSegments.findIndex(
-              (t) => t.id === segmentId
-            );
-            const hasNext = currentIndex > 0;
-
-            if (!hasNext) {
-              setIsAudioPlaying(false);
-            }
-
-            setPlaybackEndedForId(segmentId);
-            currentAudio.current = null;
-          },
-        });
-      }
-
-      if (!isAudioPlaying || newAudio) {
-        currentAudio.current.play();
-      } else {
-        currentAudio.current.pause();
-      }
-    },
-    [currentlyPlayingSegmentId, isAudioPlaying]
-  );
+  const {
+    isAudioPlaying,
+    currentlyPlayingSegmentId,
+    playbackEndedForId,
+    setPlaybackEndedForId,
+    currentAudioRef,
+    toggle: toggleAudio,
+    stop: stopPlayback,
+  } = useAudioPlayback({
+    audioSegmentsRef,
+    onPlaySegment: setHighlightedSegmentId,
+  });
 
   // Side effects for segments that arrive from a live poll: notify, bump the
   // unread badge when backgrounded, and optionally autoplay the latest.
@@ -390,7 +329,13 @@ export function TranscriptView({
     }
 
     setPlaybackEndedForId(null);
-  }, [playbackEndedForId, audioSegments, rawAudioSegments, toggleAudio]);
+  }, [
+    playbackEndedForId,
+    audioSegments,
+    rawAudioSegments,
+    toggleAudio,
+    setPlaybackEndedForId,
+  ]);
 
   // This is used to group audio segments by date and display them in the UI.
   // groupCounts is an array of numbers representing the number of audio segments in each group.
@@ -603,15 +548,12 @@ export function TranscriptView({
 
   const handleFeedSelect = (feedId: string) => {
     setSearchedFeedId(feedId);
-    playerRef.current?.stop();
-    currentAudio.current = null;
+    stopPlayback();
     // Reset all state
     handleFilterByDateTime(null);
     setNewMessageCount(0);
-    setCurrentlyPlayingSegmentId(null);
     setHighlightedSegmentId(null);
     setIsViewAtTopOfAudioSegments(true);
-    setPlaybackEndedForId(null);
     // Update URL params
     setSearchParams((prev) => {
       prev.set('feedId', feedId);
@@ -696,7 +638,7 @@ export function TranscriptView({
         onClipClick={handleClipClick}
         isAudioPlaying={isAudioPlaying}
         onTogglePlayPause={handleTogglePlayPause}
-        currentAudioRef={currentAudio}
+        currentAudioRef={currentAudioRef}
       />
 
       <Box
