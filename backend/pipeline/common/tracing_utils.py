@@ -9,20 +9,10 @@ from contextlib import contextmanager
 from typing import Any, cast
 
 from cloudevents.http.event import CloudEvent
-from opentelemetry import baggage, metrics
+from opentelemetry import baggage
 from opentelemetry.baggage.propagation import W3CBaggagePropagator
 from opentelemetry.context import Context, attach, detach, get_current
-from opentelemetry.exporter.cloud_monitoring import (
-    CloudMonitoringMetricsExporter,
-)
 from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
-from opentelemetry.metrics import get_meter_provider, set_meter_provider
-from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-from opentelemetry.sdk.metrics.view import (
-    ExplicitBucketHistogramAggregation,
-    View,
-)
 from opentelemetry.sdk.resources import (
     SERVICE_INSTANCE_ID,
     SERVICE_NAME,
@@ -48,18 +38,6 @@ from backend.pipeline.common.env import is_gcp_env
 
 _setup_lock = threading.Lock()
 telemetry_logger = logging.getLogger("telemetry.validation")
-
-# Shared pipeline stage counter
-_pipeline_meter = metrics.get_meter("pipeline_telemetry")
-_pipeline_stage_counter = _pipeline_meter.create_counter(
-    "pipeline_stage_count",
-    description="Number of audio chunks that reached each pipeline stage",
-)
-
-
-def record_pipeline_stage(stage: str, status: str = "start") -> None:
-    """Records that an audio chunk has reached a stage/status in the pipeline."""
-    _pipeline_stage_counter.add(1, {"stage": stage, "status": status})
 
 
 class ContextPropagationValidator(SpanProcessor):
@@ -91,7 +69,6 @@ def setup_tracing(
     service_name: str | None = None,
     is_ingestion: bool | None = None,
     use_batch: bool = True,
-    setup_metrics: bool = False,
 ) -> None:
     """Sets up tracing for the context thread-safely.
 
@@ -160,59 +137,6 @@ def setup_tracing(
             provider.add_span_processor(SimpleSpanProcessor(exporter))
 
         set_tracer_provider(provider)
-        if setup_metrics:
-            current_meter_provider = get_meter_provider()
-            if not isinstance(current_meter_provider, MeterProvider):
-                metrics_exporter = CloudMonitoringMetricsExporter(
-                    project_id=project_id
-                )
-                # Use default export interval
-                reader = PeriodicExportingMetricReader(metrics_exporter)
-
-                # Custom bucket boundaries for E2E latency. The default OTel boundaries cap at 10s,
-                # causing p99/p95 percentiles to flatline at 10s in Cloud Monitoring.
-                # This progressive scale goes from 500ms up to 30 minutes (1,800,000 ms) to capture
-                # normal runs, transcription times, and long queued jobs while keeping bucket count low.
-                latency_view = View(
-                    instrument_name="transcription_e2e_latency_ms",
-                    aggregation=ExplicitBucketHistogramAggregation(
-                        boundaries=[
-                            500.0,
-                            1000.0,
-                            2000.0,
-                            3000.0,
-                            4000.0,
-                            5000.0,
-                            7500.0,
-                            10000.0,
-                            15000.0,
-                            20000.0,
-                            30000.0,
-                            45000.0,
-                            60000.0,
-                            90000.0,
-                            120000.0,
-                            180000.0,
-                            240000.0,
-                            300000.0,
-                            420000.0,
-                            540000.0,
-                            660000.0,
-                            780000.0,
-                            900000.0,
-                            1200000.0,
-                            1500000.0,
-                            1800000.0,
-                        ]
-                    ),
-                )
-
-                meter_provider = MeterProvider(
-                    metric_readers=[reader],
-                    resource=resource,
-                    views=[latency_view],
-                )
-                set_meter_provider(meter_provider)
 
 
 def get_current_traceparent() -> str:

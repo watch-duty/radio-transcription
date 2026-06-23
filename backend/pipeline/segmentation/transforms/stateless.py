@@ -111,17 +111,17 @@ class ParseAndKeyFn(beam.DoFn):
 
     def __init__(self, *, is_continuous: bool = True) -> None:
         self.is_continuous = is_continuous
-
-    @override
-    def setup(self) -> None:
-        """Initializes tracing and metrics for the worker."""
-        setup_tracing(service_name="segmentation-pipeline")
         self.segmentation_start = Metrics.counter(
             self.__class__, "segmentation_start"
         )
         self.segmentation_error = Metrics.counter(
             self.__class__, "segmentation_error"
         )
+
+    @override
+    def setup(self) -> None:
+        """Initializes tracing for the worker."""
+        setup_tracing(service_name="segmentation-pipeline")
 
     @override
     def process(

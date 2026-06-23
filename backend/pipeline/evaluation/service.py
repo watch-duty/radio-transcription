@@ -2,10 +2,13 @@ import datetime
 import logging
 
 from google.protobuf.duration_pb2 import Duration
-from opentelemetry import baggage, metrics
+from opentelemetry import baggage
 
 from backend.pipeline.common.evaluation.annotations import RuleAnnotation
-from backend.pipeline.common.tracing_utils import record_pipeline_stage
+from backend.pipeline.common.log_helper import (
+    pipeline_metrics_logger,
+    record_pipeline_stage,
+)
 from backend.pipeline.evaluation.rules_evaluation import evaluator
 from backend.pipeline.schema_types import (
     evaluated_transcribed_audio_pb2 as evaluated_pb2,
@@ -15,13 +18,6 @@ from backend.pipeline.schema_types import (
 )
 
 logger = logging.getLogger(__name__)
-
-meter = metrics.get_meter(__name__)
-e2e_latency_histogram = meter.create_histogram(
-    "transcription_e2e_latency_ms",
-    description="End-to-end processing latency from ingestion to evaluation",
-    unit="ms",
-)
 
 
 def _record_e2e_latency(feed_id: str) -> None:
@@ -37,10 +33,16 @@ def _record_e2e_latency(feed_id: str) -> None:
         )
         latency_ms = current_time_ms - ingest_time_ms
 
-        e2e_latency_histogram.record(
-            latency_ms, attributes={"feed_id": feed_id}
+        pipeline_metrics_logger.info(
+            f"Recorded E2E latency: {latency_ms}ms (feed_id: {feed_id})",
+            extra={
+                "json_fields": {
+                    "event_type": "e2e_latency",
+                    "latency_ms": latency_ms,
+                    "feed_id": feed_id,
+                }
+            },
         )
-        logger.info("Recorded E2E latency: %sms", latency_ms)
     except ValueError:
         logger.warning(
             "Invalid ingest_time_ms in baggage: %s", ingest_time_ms_str

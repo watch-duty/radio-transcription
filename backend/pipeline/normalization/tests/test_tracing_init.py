@@ -25,5 +25,6 @@ class TestTracingInitialization(unittest.TestCase):
         mock_event = mock.MagicMock()
         normalization_main.normalize_claim_check(mock_event)
         mock_setup_tracing.assert_called_once_with(
-            service_name="normalization-service", use_batch=False
+            service_name="normalization-service",
+            use_batch=False,
         )
