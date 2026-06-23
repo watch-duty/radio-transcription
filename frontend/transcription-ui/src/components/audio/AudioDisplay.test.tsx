@@ -16,7 +16,7 @@ import {
   type AudioSegment,
 } from '@transcription/common';
 
-import type { PlaybackController } from '../../audio/webAudioPlayer';
+import type { PlaybackController } from '../../audio/WebAudioPlayer';
 import { getAudioUrl } from '../../utils/audioUtils';
 import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { AudioDisplay } from './AudioDisplay';

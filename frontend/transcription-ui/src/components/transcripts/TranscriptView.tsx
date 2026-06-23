@@ -22,7 +22,7 @@ import {
   type PlaybackController,
   WebAudioPlayer,
   createAudioContext,
-} from '../../audio/webAudioPlayer';
+} from '../../audio/WebAudioPlayer';
 import { useAuth } from '../../context/AuthContext';
 import {
   type AlertFilter,

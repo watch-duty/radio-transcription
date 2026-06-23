@@ -12,7 +12,7 @@ import { type Theme, useTheme } from '@mui/material/styles';
 import { type AudioSegment } from '@transcription/common';
 import WavesurferPlayer from '@wavesurfer/react';
 
-import type { PlaybackController } from '../../audio/webAudioPlayer';
+import type { PlaybackController } from '../../audio/WebAudioPlayer';
 import { findEvaluationAnnotationData } from '../../utils/annotationUtils';
 import { getAudioUrl } from '../../utils/audioUtils';
 import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';

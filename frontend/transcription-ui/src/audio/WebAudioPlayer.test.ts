@@ -8,7 +8,7 @@ import {
   dbToGain,
   formatVolumeDb,
   gainToDb,
-} from './webAudioPlayer';
+} from './WebAudioPlayer';
 
 describe('audioMath', () => {
   describe('dbToGain', () => {
