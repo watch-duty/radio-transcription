@@ -16,7 +16,7 @@ dependencies = [
     "pydantic>=2.12.5",
     "radio-transcription-common",
     "requests>=2.31.0",
-    "google-genai",
+    "google-genai>=1.74.0",
 ]
 
 [tool.setuptools]

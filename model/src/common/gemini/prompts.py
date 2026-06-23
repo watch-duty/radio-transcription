@@ -31,6 +31,8 @@ GEMINI_TRANSCRIBE_SYSTEM_PROMPT = (
     " the transcript."
 )
 
+# TODO: https://linear.app/watchduty/issue/GOO-687/update-prompt-to-allow-for-dynamic-text
+# Update the prompt to allow for dynamic text to be specified.
 GEMINI_TRANSCRIBE_WITH_CONTEXT_SYSTEM_PROMPT = (
     "Evaluate all audio specifically as VHF/UHF fire-related dispatch radio traffic."
     " The audio likely contains mic clicks, RF static, radio hum, and possibly some"
