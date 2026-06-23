@@ -1120,10 +1120,10 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
-    async def test_stream_lag_exceeded(
+    async def test_stream_lag_logged(
         self, mock_create_ffmpeg: MagicMock, mock_now_utc: MagicMock
     ) -> None:
-        """Test: stream lag exceeding threshold raises SOURCE_UNREACHABLE FeedFailure."""
+        """Test: stream lag exceeding threshold logs a warning but does not raise an error."""
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=8888,
             segments=[b"FLAC_DATA_0", b"FLAC_DATA_1"],
@@ -1148,15 +1148,12 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             resources=_default_resources(),
         )
 
-        with self.assertRaises(FeedFailure) as context:
-            await gen.__anext__()
+        chunk = await gen.__anext__()
 
-        _assert_collector_failure(
-            self,
-            context.exception,
-            FeedStatusReason.SOURCE_UNREACHABLE,
-            "stream_lag_exceeded",
-        )
+        self.assertEqual(chunk.audio_bytes, b"FLAC_DATA_0")
+        self.mock_logger.warning.assert_called_once()
+        log_args = self.mock_logger.warning.call_args.args
+        self.assertIn("Stream lag has exceeded threshold", log_args[0])
 
 
 class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
