@@ -297,9 +297,10 @@ class TestTracingUtils(unittest.TestCase):
     @patch(
         "backend.pipeline.common.tracing_utils.is_gcp_env", return_value=True
     )
+    @patch("backend.pipeline.common.tracing_utils.CloudTraceSpanExporter")
     @patch("backend.pipeline.common.tracing_utils.set_tracer_provider")
     def test_custom_provider_fallback(
-        self, mock_set_global, mock_is_gcp
+        self, mock_set_global, mock_exporter, mock_is_gcp
     ) -> None:
         """Verifies that setup_tracing initializes our custom provider.
 
