@@ -200,11 +200,11 @@ describe('WebAudioPlayer', () => {
     const player = new WebAudioPlayer(new AudioContext());
     player.setSpeed(1.25);
 
-    const onplay = vi.fn();
-    const onend = vi.fn();
+    const onPlay = vi.fn();
+    const onEnd = vi.fn();
     const handle = player.load('https://example.com/clip.m4a', {
-      onplay,
-      onend,
+      onPlay,
+      onEnd,
     });
 
     expect(lastAudio.src).toBe('https://example.com/clip.m4a');
@@ -214,10 +214,10 @@ describe('WebAudioPlayer', () => {
     handle.play();
     expect(lastContext.resume).toHaveBeenCalled();
     expect(lastAudio.play).toHaveBeenCalled();
-    expect(onplay).toHaveBeenCalled();
+    expect(onPlay).toHaveBeenCalled();
 
     lastAudio.emit('ended');
-    expect(onend).toHaveBeenCalled();
+    expect(onEnd).toHaveBeenCalled();
   });
 
   it('reads and writes the playback position', () => {
@@ -245,23 +245,23 @@ describe('WebAudioPlayer', () => {
     const player = new WebAudioPlayer(new AudioContext());
     const stale = player.load('https://example.com/first.m4a', {});
 
-    const onpause = vi.fn();
-    player.load('https://example.com/second.m4a', { onpause });
+    const onPause = vi.fn();
+    player.load('https://example.com/second.m4a', { onPause });
 
     stale.unload();
 
     lastAudio.emit('pause');
-    expect(onpause).toHaveBeenCalled();
+    expect(onPause).toHaveBeenCalled();
   });
 
   it('clears the source on stop, firing pause, but leaves the context open', () => {
     const player = new WebAudioPlayer(new AudioContext());
-    const onpause = vi.fn();
-    player.load('https://example.com/clip.m4a', { onpause });
+    const onPause = vi.fn();
+    player.load('https://example.com/clip.m4a', { onPause });
     player.stop();
 
     expect(lastAudio.pause).toHaveBeenCalled();
-    expect(onpause).toHaveBeenCalled();
+    expect(onPause).toHaveBeenCalled();
     expect(lastAudio.removeAttribute).toHaveBeenCalledWith('src');
     expect(lastContext.close).not.toHaveBeenCalled();
   });

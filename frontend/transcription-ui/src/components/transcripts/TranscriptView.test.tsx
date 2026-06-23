@@ -170,10 +170,10 @@ const audioEngineMock = vi.hoisted(() => ({
   playSpy: vi.fn(),
   lastSrc: null as string | null,
   lastCallbacks: null as {
-    onplay?: () => void;
-    onpause?: () => void;
-    onend?: () => void;
-    onerror?: () => void;
+    onPlay?: () => void;
+    onPause?: () => void;
+    onEnd?: () => void;
+    onError?: () => void;
   } | null,
 }));
 
@@ -195,9 +195,9 @@ vi.mock('../../audio/WebAudioPlayer', () => ({
       return {
         play: () => {
           audioEngineMock.playSpy();
-          callbacks.onplay?.();
+          callbacks.onPlay?.();
         },
-        pause: () => callbacks.onpause?.(),
+        pause: () => callbacks.onPause?.(),
         stop: () => {},
         getCurrentTime: () => 0,
         setCurrentTime: () => {},
@@ -1243,7 +1243,7 @@ describe('TranscriptView', () => {
     expect(playSpy).toHaveBeenCalled();
 
     act(() => {
-      audioEngineMock.lastCallbacks?.onend?.();
+      audioEngineMock.lastCallbacks?.onEnd?.();
     });
 
     await waitFor(() => {

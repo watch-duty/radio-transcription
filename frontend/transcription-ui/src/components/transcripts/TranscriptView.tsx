@@ -150,7 +150,7 @@ export function TranscriptView({
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
 
   // A mutable reference to the latest list of audio segments. This prevents stale closures
-  // inside the audio lifecycle callbacks (like onend), ensuring continuous playback logic
+  // inside the audio lifecycle callbacks (like onEnd), ensuring continuous playback logic
   // always evaluates against the most up-to-date audio segments list even if it updates mid-playback.
   const audioSegmentsRef = useRef<AudioSegment[]>([]);
 
@@ -182,10 +182,10 @@ export function TranscriptView({
 
       if (!currentAudio.current) {
         currentAudio.current = player.load(getAudioUrl(audioUri), {
-          onplay: () => setIsAudioPlaying(true),
-          onpause: () => setIsAudioPlaying(false),
-          onerror: () => setIsAudioPlaying(false),
-          onend: () => {
+          onPlay: () => setIsAudioPlaying(true),
+          onPause: () => setIsAudioPlaying(false),
+          onError: () => setIsAudioPlaying(false),
+          onEnd: () => {
             const currentAudioSegments = audioSegmentsRef.current;
             const currentIndex = currentAudioSegments.findIndex(
               (t) => t.id === segmentId

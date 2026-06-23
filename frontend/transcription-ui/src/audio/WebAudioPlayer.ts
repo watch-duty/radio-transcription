@@ -22,10 +22,10 @@ export function formatVolumeDb(db: number): string {
 }
 
 export interface AudioCallbacks {
-  onplay?: () => void;
-  onpause?: () => void;
-  onend?: () => void;
-  onerror?: () => void;
+  onPlay?: () => void;
+  onPause?: () => void;
+  onEnd?: () => void;
+  onError?: () => void;
 }
 
 export interface PlaybackController {
@@ -115,10 +115,10 @@ export class WebAudioPlayer {
     this.detachListeners();
 
     const listeners: GraphListeners = {
-      play: () => callbacks.onplay?.(),
-      pause: () => callbacks.onpause?.(),
-      ended: () => callbacks.onend?.(),
-      error: () => callbacks.onerror?.(),
+      play: () => callbacks.onPlay?.(),
+      pause: () => callbacks.onPause?.(),
+      ended: () => callbacks.onEnd?.(),
+      error: () => callbacks.onError?.(),
     };
     this.audio.addEventListener('play', listeners.play);
     this.audio.addEventListener('pause', listeners.pause);
