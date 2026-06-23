@@ -158,9 +158,21 @@ describe('FeedsController', () => {
       await controller.listFeeds(query);
 
       expect(mockRequest).toHaveBeenCalledWith({
-        url: 'http://feeds-api.example.com?limit=10&next_token=token_abc&order=asc&source_types=openmhz%2Cecho&statuses=active&tags=%7B+%22key%22%3A+%22region%22%2C+%22value%22%3A+%22West%22+%7D&tags=%7B+%22key%22%3A+%22county%22%2C+%22value%22%3A+%22Fulton%22+%7D',
+        url: 'http://feeds-api.example.com?limit=10&next_token=token_abc&order=asc&source_types=openmhz%2Cecho&statuses=active&tags=%5B%7B%22key%22%3A%22region%22%2C%22value%22%3A%22West%22%7D%2C%7B%22key%22%3A%22county%22%2C%22value%22%3A%22Fulton%22%7D%5D',
         method: 'GET',
       });
+    });
+
+    it('should reject malformed tag filters before calling backend', async () => {
+      const controller = new FeedsController();
+
+      await expect(
+        controller.listFeeds({ tags: ['not-json'] })
+      ).rejects.toMatchObject({
+        status: 400,
+        message: 'Invalid tags query parameter',
+      });
+      expect(mockRequest).not.toHaveBeenCalled();
     });
   });
 

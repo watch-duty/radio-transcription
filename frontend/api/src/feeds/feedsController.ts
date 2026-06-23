@@ -47,7 +47,7 @@ interface FeedBackend extends BaseFeedBackend {
   status: BackendFeedStatus;
   last_heartbeat: string | null;
   tags?: Tag[];
-  quarantine_reason: string | null;
+  quarantine_reason?: string | null;
   status_reason: BackendFeedStatusReason | null;
   last_speech_segment_timestamp: string | null;
 }
@@ -159,6 +159,19 @@ function convertFeedBackend(response: FeedBackend): Feed {
   };
 }
 
+function appendTagFilters(queryParams: URLSearchParams, tags: string[]): void {
+  let parsedTags: unknown[];
+  try {
+    parsedTags = tags.flatMap((tag) => {
+      const parsed = JSON.parse(tag) as unknown;
+      return Array.isArray(parsed) ? parsed : [parsed];
+    });
+  } catch {
+    throw new HttpError(400, 'Invalid tags query parameter');
+  }
+  queryParams.append('tags', JSON.stringify(parsedTags));
+}
+
 function convertFeedCreate(create: FeedCreate): FeedCreateBackend {
   return {
     name: create.name,
@@ -199,10 +212,8 @@ export class FeedsController extends Controller {
       if (query?.statuses) {
         queryParams.append('statuses', query.statuses);
       }
-      if (query?.tags) {
-        for (const tag of query.tags) {
-          queryParams.append('tags', tag);
-        }
+      if (query?.tags?.length) {
+        appendTagFilters(queryParams, query.tags);
       }
       if (query?.name) {
         queryParams.append('name', query.name);
@@ -227,6 +238,7 @@ export class FeedsController extends Controller {
             total: data.total,
           };
     } catch (error: unknown) {
+      if (error instanceof HttpError) throw error;
       const { status, message } = handleBackendError(error, 'fetching feeds');
       throw new HttpError(status, message);
     }
@@ -331,6 +343,7 @@ export class FeedsController extends Controller {
   @Response<{ message: string }>(401, 'Unauthorized')
   @Response<{ message: string }>(403, 'Forbidden')
   @Response<{ message: string }>(404, 'Not Found')
+  @Response<{ message: string }>(409, 'Conflict')
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async resetFeed(
@@ -406,6 +419,7 @@ export class FeedsController extends Controller {
   @Response<{ message: string }>(401, 'Unauthorized')
   @Response<{ message: string }>(403, 'Forbidden')
   @Response<{ message: string }>(404, 'Not Found')
+  @Response<{ message: string }>(409, 'Conflict')
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async deleteFeed(
