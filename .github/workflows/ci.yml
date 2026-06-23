@@ -97,6 +97,8 @@ jobs:
         run: uv sync
       - name: Generate Protobuf Python files
         run: mise run generate:protos
+      - name: Validate protobuf schemas
+        run: mise run lint:schemas
       - name: Run Python code quality checks
         run: mise run lint:python
 

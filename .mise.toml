@@ -17,7 +17,7 @@ frontend_dir = "frontend"
 # ---------------------------------------------------------------------------- #
 
 [tasks.lint]
-depends = ["lint:python", "lint:terraform", "lint:frontend"]
+depends = ["lint:python", "lint:terraform", "lint:frontend", "lint:schemas"]
 
 [tasks."lint:ruff:check"]
 description = "Run ruff linter check"
@@ -86,6 +86,10 @@ run = """
 uv run python scripts/notebook_formatter.py
 uv run ruff format --check model/colabs
 """
+
+[tasks."lint:schemas"]
+description = "Validate that Pub/Sub schemas contain exactly one top-level message type"
+run = "uv run python scripts/validate_schemas.py"
 
 [tasks."lint:python"]
 description = "Run all Python code quality and type checks"
