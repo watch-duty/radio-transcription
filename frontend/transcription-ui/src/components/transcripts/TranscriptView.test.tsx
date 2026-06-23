@@ -3,7 +3,6 @@ import type { ReactElement } from 'react';
 import { MemoryRouter } from 'react-router';
 import { VirtuosoMockContext } from 'react-virtuoso';
 
-import { Howl } from 'howler';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -30,6 +29,35 @@ import { listRules } from '../../service/listRules';
 import { renderWithQueryClient } from '../../test/testUtils';
 import TranscriptView from './TranscriptView';
 
+// The VirtuosoMockContext renders every item, which makes Virtuoso fire
+// endReached on mount and never fire atTopStateChange (its scroll state machine
+// is inert in jsdom). Both make pagination triggers non-deterministic. We wrap
+// the real GroupedVirtuoso to capture these callbacks and withhold them from the
+// real component, so tests drive scroll-to-top / scroll-to-bottom explicitly.
+const virtuosoCallbacks = vi.hoisted(() => ({
+  atTopStateChange: undefined as ((atTop: boolean) => void) | undefined,
+  endReached: undefined as ((index: number) => void) | undefined,
+}));
+
+vi.mock('react-virtuoso', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react-virtuoso')>();
+  return {
+    ...actual,
+    GroupedVirtuoso: ({
+      atTopStateChange,
+      endReached,
+      ...props
+    }: Record<string, unknown> & {
+      atTopStateChange?: (atTop: boolean) => void;
+      endReached?: (index: number) => void;
+    }) => {
+      virtuosoCallbacks.atTopStateChange = atTopStateChange;
+      virtuosoCallbacks.endReached = endReached;
+      return <actual.GroupedVirtuoso {...props} />;
+    },
+  };
+});
+
 const renderTranscriptView = (
   ui: ReactElement,
   options: { initialEntries?: string[] } = {}
@@ -45,6 +73,25 @@ const renderTranscriptView = (
     </MemoryRouter>
   );
 };
+
+// Simulates the user scrolling away from the top of the virtualized list and
+// back, which is what triggers loading newer segments via atTopStateChange.
+function scrollAwayAndBackToTop() {
+  if (!virtuosoCallbacks.atTopStateChange) {
+    throw new Error('atTopStateChange callback not captured');
+  }
+  act(() => virtuosoCallbacks.atTopStateChange!(false));
+  act(() => virtuosoCallbacks.atTopStateChange!(true));
+}
+
+// Simulates the user scrolling to the bottom of the list, which triggers
+// loading older segments via endReached.
+function scrollToBottom() {
+  if (!virtuosoCallbacks.endReached) {
+    throw new Error('endReached callback not captured');
+  }
+  act(() => virtuosoCallbacks.endReached!(0));
+}
 
 function makeMockAudioSegment(
   id: string,
@@ -119,6 +166,48 @@ vi.mock('@wavesurfer/react', () => ({
   default: () => <div data-testid="wavesurfer-player" />,
 }));
 
+const audioEngineMock = vi.hoisted(() => ({
+  playSpy: vi.fn(),
+  lastSrc: null as string | null,
+  lastCallbacks: null as {
+    onPlay?: () => void;
+    onPause?: () => void;
+    onEnd?: () => void;
+    onError?: () => void;
+  } | null,
+}));
+
+vi.mock('../../audio/WebAudioPlayer', () => ({
+  createAudioContext: () => ({ close: () => Promise.resolve() }),
+  WebAudioPlayer: class {
+    resume() {}
+    setVolumeDb() {}
+    setPan() {}
+    setSpeed() {}
+    stop() {}
+    dispose() {}
+    load(
+      src: string,
+      callbacks: NonNullable<typeof audioEngineMock.lastCallbacks>
+    ) {
+      audioEngineMock.lastSrc = src;
+      audioEngineMock.lastCallbacks = callbacks;
+      return {
+        play: () => {
+          audioEngineMock.playSpy();
+          callbacks.onPlay?.();
+        },
+        pause: () => callbacks.onPause?.(),
+        stop: () => {},
+        getCurrentTime: () => 0,
+        setCurrentTime: () => {},
+        unload: () => {},
+        off: () => {},
+      };
+    }
+  },
+}));
+
 describe('TranscriptView', () => {
   const mockHandleError = vi.fn();
 
@@ -137,7 +226,7 @@ describe('TranscriptView', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     mockHandleError.mockClear();
-    // Default mock for listTranscripts to prevent errors on mount
+    // Default mock for listAudioSegments to prevent errors on mount
     vi.mocked(listAudioSegments).mockResolvedValue({
       segments: [],
       nextToken: undefined,
@@ -454,10 +543,8 @@ describe('TranscriptView', () => {
       expect(screen.getByText('Transcript 1')).toBeTruthy();
     });
 
-    const loadMoreButton = screen.getByRole('button', {
-      name: /Load older transcripts/i,
-    });
-    fireEvent.click(loadMoreButton);
+    // Infinite scroll: scrolling to the bottom triggers loading older
+    scrollToBottom();
 
     await waitFor(() => {
       expect(listAudioSegments).toHaveBeenCalledTimes(2);
@@ -507,10 +594,8 @@ describe('TranscriptView', () => {
       expect(screen.getByText('Transcript 1')).toBeTruthy();
     });
 
-    const loadNewerButton = screen.getByRole('button', {
-      name: /Load newer transcripts/i,
-    });
-    fireEvent.click(loadNewerButton);
+    // Infinite scroll: scrolling away from the top and back triggers loading newer
+    scrollAwayAndBackToTop();
 
     await waitFor(() => {
       expect(listAudioSegments).toHaveBeenCalledTimes(2);
@@ -598,10 +683,8 @@ describe('TranscriptView', () => {
       expect(screen.getByText('Transcript 2 (Alert only)')).toBeTruthy();
     });
 
-    const loadNewerButton = screen.getByRole('button', {
-      name: /Load newer transcripts/i,
-    });
-    fireEvent.click(loadNewerButton);
+    // Infinite scroll: scrolling away from the top and back triggers loading newer
+    scrollAwayAndBackToTop();
 
     await waitFor(() => {
       expect(listAudioSegments).toHaveBeenCalledTimes(3);
@@ -807,7 +890,7 @@ describe('TranscriptView', () => {
   it('automatically plays newly received audio when Always play latest audio checkbox is checked', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
-    const playSpy = vi.spyOn(Howl.prototype, 'play');
+    const playSpy = audioEngineMock.playSpy;
 
     const initialAudioSegments = [
       makeMockAudioSegment(
@@ -874,7 +957,7 @@ describe('TranscriptView', () => {
   it('does not automatically play newly received audio when Always play latest audio checkbox is unchecked', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
-    const playSpy = vi.spyOn(Howl.prototype, 'play');
+    const playSpy = audioEngineMock.playSpy;
 
     const initialAudioSegments = [
       makeMockAudioSegment(
@@ -1109,29 +1192,7 @@ describe('TranscriptView', () => {
   });
 
   it('advances playback to the next silence segment inside a silence bundle when the current one finishes', async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let lastHowlOptions: any = null;
-
-    const initSpy = vi
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .spyOn(Howl.prototype as any, 'init')
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .mockImplementation(function (this: any, o: any) {
-        lastHowlOptions = o;
-        this._sounds = [];
-        return this;
-      });
-
-    const playSpy = vi
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .spyOn(Howl.prototype as any, 'play')
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .mockImplementation(function (this: any) {
-        if (lastHowlOptions?.onplay) {
-          lastHowlOptions.onplay();
-        }
-        return this;
-      });
+    const playSpy = audioEngineMock.playSpy;
 
     const mockSilence1 = {
       id: 'silence-1',
@@ -1178,20 +1239,15 @@ describe('TranscriptView', () => {
     const playButton = screen.getAllByLabelText('play')[1];
     fireEvent.click(playButton);
 
-    expect(initSpy).toHaveBeenCalled();
-    expect(lastHowlOptions.src).toEqual([
-      expect.stringContaining('silence-1.m4a'),
-    ]);
+    expect(audioEngineMock.lastSrc).toContain('silence-1.m4a');
     expect(playSpy).toHaveBeenCalled();
 
     act(() => {
-      lastHowlOptions.onend();
+      audioEngineMock.lastCallbacks?.onEnd?.();
     });
 
     await waitFor(() => {
-      expect(lastHowlOptions.src).toEqual([
-        expect.stringContaining('silence-2.m4a'),
-      ]);
+      expect(audioEngineMock.lastSrc).toContain('silence-2.m4a');
     });
   });
 

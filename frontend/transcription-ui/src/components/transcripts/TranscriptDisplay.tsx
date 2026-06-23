@@ -1,41 +1,81 @@
-import React from 'react';
+import React, { useEffect, useReducer } from 'react';
 import { GroupedVirtuoso, type VirtuosoHandle } from 'react-virtuoso';
 
 import Box from '@mui/material/Box';
-import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
 import ListItem from '@mui/material/ListItem';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
-import type {
-  InfiniteData,
-  InfiniteQueryObserverResult,
-} from '@tanstack/react-query';
-import type { AudioSegment } from '@transcription/common';
 
-import type { ListAudioSegmentsData } from '../../hooks/useAudioSegments';
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
 import { getRelativeTimeString } from '../../utils/timeUtils';
 import TranscriptRow from './TranscriptRow';
 
+// Start loading the next page a few rows before the user reaches the very edge
+// so it's ready by the time they get there. Rows are variable height, so this
+// converts a row count to an approximate pixel threshold. `atTopThreshold`
+// brings the "load newer" trigger forward; `increaseViewportBy` renders rows
+// past the viewport, which makes `endReached` (load older) fire that bit early.
+const PREFETCH_ROW_COUNT = 5;
+const ESTIMATED_ROW_HEIGHT_PX = 96;
+const PREFETCH_THRESHOLD_PX = PREFETCH_ROW_COUNT * ESTIMATED_ROW_HEIGHT_PX;
+
+// How often the "Last refresh" label re-computes its relative time.
+const LAST_REFRESH_TICK_MS = 10000;
+
+/**
+ * Shows "Last refresh: <relative time>" (or a spinner while polling). Re-renders
+ * itself on a timer so the relative time keeps advancing even when the rest of
+ * the view is idle (e.g. polling is paused because the user scrolled away).
+ */
+const LastRefreshIndicator: React.FC<{
+  lastUpdated: number;
+  isPolling: boolean;
+}> = ({ lastUpdated, isPolling }) => {
+  const [, tick] = useReducer((n) => n + 1, 0);
+  useEffect(() => {
+    const id = setInterval(tick, LAST_REFRESH_TICK_MS);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{ whiteSpace: 'nowrap' }}
+      >
+        Last refresh:
+      </Typography>
+      {isPolling ? (
+        <CircularProgress size={12} />
+      ) : (
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ whiteSpace: 'nowrap' }}
+        >
+          {getRelativeTimeString(lastUpdated, false)}
+        </Typography>
+      )}
+    </Box>
+  );
+};
+
 export interface TranscriptDisplayProps {
   ref?: React.Ref<VirtuosoHandle>;
   audioSegments: RenderableAudioSegment[];
+  // Virtuoso scroll-anchoring offset for prepended (newer) segments.
+  firstItemIndex: number;
   groupCounts: number[];
   groupTitles: string[];
   setIsViewAtTopOfAudioSegments: (atTop: boolean) => void;
   hasNewerAudioSegments: boolean;
   isFetchingNewerAudioSegments: boolean;
-  fetchNewerAudioSegments: () => Promise<
-    InfiniteQueryObserverResult<InfiniteData<ListAudioSegmentsData>, Error>
-  >;
-  isAudioSegmentsFetching: boolean;
   isAudioSegmentsPolling: boolean;
   hasOlderAudioSegments: boolean;
   isFetchingOlderAudioSegments: boolean;
-  fetchOlderAudioSegments: () => Promise<
-    InfiniteQueryObserverResult<InfiniteData<ListAudioSegmentsData>, Error>
-  >;
+  fetchOlderAudioSegments: () => void;
   // Unix timestamp in ms when the audio segments query last updated with a success.
   audioSegmentsLastUpdated: number | null;
   triggerSnackbar: (message: string) => void;
@@ -52,13 +92,12 @@ export interface TranscriptDisplayProps {
 export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
   ref,
   audioSegments,
+  firstItemIndex,
   groupCounts,
   groupTitles,
   setIsViewAtTopOfAudioSegments,
   hasNewerAudioSegments,
   isFetchingNewerAudioSegments,
-  fetchNewerAudioSegments,
-  isAudioSegmentsFetching,
   hasOlderAudioSegments,
   isFetchingOlderAudioSegments,
   fetchOlderAudioSegments,
@@ -87,8 +126,12 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
     >
       <GroupedVirtuoso
         ref={ref}
+        firstItemIndex={firstItemIndex}
         groupCounts={groupCounts}
+        atTopThreshold={PREFETCH_THRESHOLD_PX}
+        increaseViewportBy={PREFETCH_THRESHOLD_PX}
         atTopStateChange={(atTop) => setIsViewAtTopOfAudioSegments(atTop)}
+        endReached={fetchOlderAudioSegments}
         groupContent={(index) => {
           const title = groupTitles[index];
           return (
@@ -120,39 +163,12 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
                   {title}
                 </Typography>
                 {!hasNewerAudioSegments ? (
-                  <>
-                    {audioSegmentsLastUpdated && (
-                      <Box
-                        sx={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 0.5,
-                        }}
-                      >
-                        <Typography
-                          variant="caption"
-                          color="text.secondary"
-                          sx={{ whiteSpace: 'nowrap' }}
-                        >
-                          Last refresh:
-                        </Typography>
-                        {isAudioSegmentsPolling ? (
-                          <CircularProgress size={12} />
-                        ) : (
-                          <Typography
-                            variant="caption"
-                            color="text.secondary"
-                            sx={{ whiteSpace: 'nowrap' }}
-                          >
-                            {getRelativeTimeString(
-                              audioSegmentsLastUpdated,
-                              false
-                            )}
-                          </Typography>
-                        )}
-                      </Box>
-                    )}
-                  </>
+                  audioSegmentsLastUpdated && (
+                    <LastRefreshIndicator
+                      lastUpdated={audioSegmentsLastUpdated}
+                      isPolling={isAudioSegmentsPolling}
+                    />
+                  )
                 ) : (
                   <Typography
                     variant="caption"
@@ -167,12 +183,16 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
           );
         }}
         itemContent={(index) => {
-          const audioSegment = audioSegments[index];
+          // Virtuoso reports the absolute index (firstItemIndex + position);
+          // convert it back to the position within audioSegments.
+          const position = index - firstItemIndex;
+          const audioSegment = audioSegments[position];
+          if (!audioSegment) return null;
           return (
             <TranscriptRow
               key={audioSegment.id}
               audioSegment={audioSegment}
-              index={index}
+              index={position}
               totalAudioSegments={audioSegments.length}
               ruleIdToNameMap={ruleIdToNameMap}
               rulesLoading={rulesLoading}
@@ -190,86 +210,29 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
               }
               redactTranscripts={redactTranscripts}
               onRowClick={onRowClick}
-              isTopAudioSegmentRow={index === 0 && !hasNewerAudioSegments}
+              isTopAudioSegmentRow={position === 0 && !hasNewerAudioSegments}
             />
           );
         }}
         components={{
           Header: () =>
-            hasNewerAudioSegments ? (
-              <Box
-                sx={{
-                  display: 'flex',
-                  justifyContent: 'center',
-                  py: 1,
-                  gap: 1,
-                }}
-              >
-                {isFetchingNewerAudioSegments ? (
-                  <CircularProgress size={40} />
-                ) : (
-                  <Button
-                    variant="outlined"
-                    onClick={async () => {
-                      const result = await fetchNewerAudioSegments();
-                      if (
-                        result.data &&
-                        (
-                          result.data.pages[0] as {
-                            segments: AudioSegment[];
-                          }
-                        )?.segments.length === 0
-                      ) {
-                        triggerSnackbar('No newer transcripts found');
-                      }
-                    }}
-                    disabled={isAudioSegmentsFetching}
-                    sx={{ minWidth: '160px', textTransform: 'none' }}
-                  >
-                    Load newer transcripts
-                  </Button>
-                )}
+            isFetchingNewerAudioSegments ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 1 }}>
+                <CircularProgress size={28} />
               </Box>
             ) : null,
-          Footer: () => {
-            if (hasOlderAudioSegments) {
-              return (
-                <Box
-                  sx={{
-                    display: 'flex',
-                    justifyContent: 'center',
-                    py: 1,
-                  }}
-                >
-                  {isFetchingOlderAudioSegments ? (
-                    <CircularProgress size={40} />
-                  ) : (
-                    <Button
-                      variant="outlined"
-                      onClick={() => fetchOlderAudioSegments()}
-                      disabled={isAudioSegmentsFetching}
-                      sx={{ minWidth: '160px', textTransform: 'none' }}
-                    >
-                      Load older transcripts
-                    </Button>
-                  )}
-                </Box>
-              );
-            }
-            return (
-              <Box
-                sx={{
-                  display: 'flex',
-                  justifyContent: 'center',
-                  py: 2,
-                }}
-              >
+          Footer: () =>
+            isFetchingOlderAudioSegments ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 1 }}>
+                <CircularProgress size={28} />
+              </Box>
+            ) : !hasOlderAudioSegments ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
                 <Typography variant="caption" color="text.secondary">
                   No more transcripts found
                 </Typography>
               </Box>
-            );
-          },
+            ) : null,
         }}
       />
     </Paper>
