@@ -8,6 +8,7 @@ import {
   dbToGain,
   formatVolumeDb,
   gainToDb,
+  snapVolumeToDefault,
 } from './WebAudioPlayer';
 
 describe('audioMath', () => {
@@ -56,6 +57,28 @@ describe('audioMath', () => {
 
     it('shows Muted at the floor', () => {
       expect(formatVolumeDb(VOLUME_MIN_DB)).toBe('Muted');
+    });
+  });
+
+  describe('snapVolumeToDefault', () => {
+    it('snaps values within the default zone to 0', () => {
+      expect(snapVolumeToDefault(1)).toBe(0);
+      expect(snapVolumeToDefault(-1)).toBe(0);
+      expect(snapVolumeToDefault(0)).toBe(0);
+    });
+
+    it('leaves values outside the zone untouched', () => {
+      expect(snapVolumeToDefault(2)).toBe(2);
+      expect(snapVolumeToDefault(-6)).toBe(-6);
+    });
+
+    it('honors a custom snap width', () => {
+      expect(snapVolumeToDefault(2, 3)).toBe(0);
+      expect(snapVolumeToDefault(4, 3)).toBe(4);
+    });
+
+    it('disables snapping at width 0', () => {
+      expect(snapVolumeToDefault(1, 0)).toBe(1);
     });
   });
 });

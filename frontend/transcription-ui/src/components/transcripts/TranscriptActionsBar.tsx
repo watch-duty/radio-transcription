@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 
+import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import FilterIcon from '@mui/icons-material/Tune';
 import VolumeDownIcon from '@mui/icons-material/VolumeDown';
 import VolumeOffIcon from '@mui/icons-material/VolumeOff';
@@ -10,6 +11,7 @@ import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
 import FormControlLabel from '@mui/material/FormControlLabel';
+import IconButton from '@mui/material/IconButton';
 import MenuItem from '@mui/material/MenuItem';
 import Popover from '@mui/material/Popover';
 import Select from '@mui/material/Select';
@@ -22,11 +24,15 @@ import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 
 import {
+  DEFAULT_PAN,
+  DEFAULT_SPEED,
+  DEFAULT_VOLUME_DB,
   PAN_OPTIONS,
   SPEED_OPTIONS,
   VOLUME_MAX_DB,
   VOLUME_MIN_DB,
   formatVolumeDb,
+  snapVolumeToDefault,
 } from '../../audio/WebAudioPlayer';
 import type { AlertFilter } from '../../hooks/useAudioSegments';
 import { isSafari } from '../../utils/browser';
@@ -82,9 +88,9 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
 
   const volumeLabel = formatVolumeDb(volumeDb);
   const isMuted = volumeLabel === 'Muted';
-  const volumeActive = volumeDb !== 0;
-  const panLabel = pan !== 0 ? PAN_LABELS[pan] : null;
-  const speedActive = speed !== 1;
+  const volumeActive = volumeDb !== DEFAULT_VOLUME_DB;
+  const panLabel = pan !== DEFAULT_PAN ? PAN_LABELS[pan] : null;
+  const speedActive = speed !== DEFAULT_SPEED;
   const VolumeIcon = isMuted
     ? VolumeOffIcon
     : volumeDb < 0
@@ -232,13 +238,27 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
                 sx={{
                   display: 'flex',
                   justifyContent: 'space-between',
-                  alignItems: 'baseline',
+                  alignItems: 'center',
                 }}
               >
                 <Typography variant="subtitle2">Volume</Typography>
-                <Typography variant="caption" color="text.secondary">
-                  {formatVolumeDb(volumeDb)}
-                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <Typography variant="caption" color="text.secondary">
+                    {formatVolumeDb(volumeDb)}
+                  </Typography>
+                  {volumeActive && (
+                    <Tooltip title="Reset to default">
+                      <IconButton
+                        size="small"
+                        aria-label="Reset volume"
+                        onClick={() => setVolumeDb(DEFAULT_VOLUME_DB)}
+                        sx={{ p: 0.25 }}
+                      >
+                        <RestartAltIcon sx={{ fontSize: 16 }} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                </Box>
               </Box>
               <Slider
                 aria-label="Volume"
@@ -247,7 +267,15 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
                 min={VOLUME_MIN_DB}
                 max={VOLUME_MAX_DB}
                 step={1}
-                onChange={(_, value) => setVolumeDb(value as number)}
+                marks={[{ value: 0 }]}
+                onChange={(event, value) => {
+                  const db = value as number;
+                  // Snap to the default while dragging, but leave keyboard
+                  // steps exact so every dB stays reachable with the arrows.
+                  setVolumeDb(
+                    event.type === 'keydown' ? db : snapVolumeToDefault(db)
+                  );
+                }}
                 sx={{ display: 'block', mt: 0.5, mb: 0, py: 0.5 }}
               />
             </Box>

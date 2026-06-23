@@ -1,6 +1,9 @@
 import { useCallback, useState } from 'react';
 
 import {
+  DEFAULT_PAN,
+  DEFAULT_SPEED,
+  DEFAULT_VOLUME_DB,
   PAN_OPTIONS,
   SPEED_OPTIONS,
   VOLUME_MAX_DB,
@@ -16,10 +19,6 @@ const STORAGE_KEYS = {
   pan: 'rt.audio.pan',
   speed: 'rt.audio.speed',
 } as const;
-
-const DEFAULT_VOLUME_DB = 0;
-const DEFAULT_PAN = 0;
-const DEFAULT_SPEED = 1;
 
 export interface AudioControls {
   volumeDb: number;

@@ -546,6 +546,47 @@ describe('TranscriptActionsBar', () => {
     expect(screen.getByTestId('VolumeOffIcon')).toBeTruthy();
   });
 
+  it('shows a reset control only when volume is off default, and resets to 0', () => {
+    const setVolumeDb = vi.fn();
+    const { rerender } = renderBar({ volumeDb: 0, setVolumeDb });
+    fireEvent.click(screen.getByRole('button', { name: 'audio controls' }));
+    expect(screen.queryByRole('button', { name: 'Reset volume' })).toBeNull();
+
+    rerender(
+      <TranscriptActionsBar
+        {...audioControlProps}
+        volumeDb={-6}
+        setVolumeDb={setVolumeDb}
+        searchedTimestamp={null}
+        hasNewerAudioSegments={false}
+        redactTranscripts={false}
+        setRedactTranscripts={mockSetRedactTranscripts}
+        dateTime={null}
+        setDateTime={vi.fn()}
+        alertFilter="all"
+        setAlertFilter={vi.fn()}
+        onClickViewLatest={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reset volume' }));
+    expect(setVolumeDb).toHaveBeenCalledWith(0);
+  });
+
+  it('keeps keyboard volume steps exact near the default', () => {
+    const setVolumeDb = vi.fn();
+    renderBar({ volumeDb: 1, setVolumeDb });
+    fireEvent.click(screen.getByRole('button', { name: 'audio controls' }));
+
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Volume' }), {
+      key: 'ArrowDown',
+    });
+
+    // 1 → 0 by one step; the keyboard path is not snapped, so it lands on 0
+    // through the step itself, not a snap, and -1 stays reachable.
+    expect(setVolumeDb).toHaveBeenCalledWith(0);
+  });
+
   it('disables the speed control for Safari users', () => {
     vi.stubGlobal('navigator', {
       userAgent:

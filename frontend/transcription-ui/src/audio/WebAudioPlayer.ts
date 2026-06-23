@@ -10,6 +10,13 @@ export const VOLUME_MAX_DB = 20;
 export const SPEED_OPTIONS = [0.5, 1.0, 1.25, 1.5, 2.0] as const;
 export const PAN_OPTIONS = [-1, 0, 1] as const;
 
+// The single source of truth for "default" audio settings. A future global
+// settings UI replaces these, and both persistence and the off-default badges
+// on the speaker button follow automatically.
+export const DEFAULT_VOLUME_DB = 0;
+export const DEFAULT_PAN = 0;
+export const DEFAULT_SPEED = 1;
+
 // Below this, snap to silence instead of an inaudible-but-nonzero gain.
 const MUTE_THRESHOLD_DB = VOLUME_MIN_DB + 1;
 
@@ -25,6 +32,19 @@ export function formatVolumeDb(db: number): string {
   if (db < MUTE_THRESHOLD_DB) return 'Muted';
   const rounded = Math.round(db);
   return rounded > 0 ? `+${rounded} dB` : `${rounded} dB`;
+}
+
+// Default width of the snap zone: a value within this many dB of the 0 default
+// is pulled to exactly 0 so the slider settles on the default when dragged near
+// it. Exposed as a default so a future global setting can override `snapDb`;
+// passing 0 disables snapping.
+export const VOLUME_SNAP_DB = 1;
+
+export function snapVolumeToDefault(
+  db: number,
+  snapDb: number = VOLUME_SNAP_DB
+): number {
+  return Math.abs(db) <= snapDb ? 0 : db;
 }
 
 export interface AudioCallbacks {
