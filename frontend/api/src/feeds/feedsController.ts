@@ -30,8 +30,6 @@ import {
   Tags,
 } from 'tsoa';
 
-import { feedMutationActorHeaders } from './actor_headers.js';
-
 import { AuthenticatedRequest } from '../authentication.js';
 import { FEEDS_STORE_API_URL } from '../config.js';
 import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
@@ -47,7 +45,7 @@ interface FeedBackend extends BaseFeedBackend {
   status: BackendFeedStatus;
   last_heartbeat: string | null;
   tags?: Tag[];
-  status_reason_detail?: string | null;
+  quarantine_reason: string | null;
   status_reason: BackendFeedStatusReason | null;
   last_speech_segment_timestamp: string | null;
 }
@@ -153,23 +151,10 @@ function convertFeedBackend(response: FeedBackend): Feed {
     substatus: response.status,
     lastHeartbeat: lastHeartbeatParsed,
     tags: response.tags,
-    quarantineReason: response.status_reason_detail ?? undefined,
+    quarantineReason: response.quarantine_reason ?? undefined,
     statusReason: convertFeedStatusReason(response.status_reason),
     lastSpeechSegmentTimestamp: lastSpeechParsed,
   };
-}
-
-function appendTagFilters(queryParams: URLSearchParams, tags: string[]): void {
-  let parsedTags: unknown[];
-  try {
-    parsedTags = tags.flatMap((tag) => {
-      const parsed = JSON.parse(tag) as unknown;
-      return Array.isArray(parsed) ? parsed : [parsed];
-    });
-  } catch {
-    throw new HttpError(400, 'Invalid tags query parameter');
-  }
-  queryParams.append('tags', JSON.stringify(parsedTags));
 }
 
 function convertFeedCreate(create: FeedCreate): FeedCreateBackend {
@@ -212,8 +197,10 @@ export class FeedsController extends Controller {
       if (query?.statuses) {
         queryParams.append('statuses', query.statuses);
       }
-      if (query?.tags?.length) {
-        appendTagFilters(queryParams, query.tags);
+      if (query?.tags) {
+        for (const tag of query.tags) {
+          queryParams.append('tags', tag);
+        }
       }
       if (query?.name) {
         queryParams.append('name', query.name);
@@ -238,7 +225,6 @@ export class FeedsController extends Controller {
             total: data.total,
           };
     } catch (error: unknown) {
-      if (error instanceof HttpError) throw error;
       const { status, message } = handleBackendError(error, 'fetching feeds');
       throw new HttpError(status, message);
     }
@@ -283,13 +269,11 @@ export class FeedsController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
 
-    const actorHeaders = feedMutationActorHeaders(request);
     try {
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       const response = await client.request<FeedBackend>({
         url: FEEDS_STORE_API_URL,
         method: 'POST',
-        headers: actorHeaders,
         data: convertFeedCreate(requestBody),
       });
       return convertFeedBackend(response.data);
@@ -319,13 +303,11 @@ export class FeedsController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
 
-    const actorHeaders = feedMutationActorHeaders(request);
     try {
       const client = await getServiceClient(FEEDS_STORE_API_URL);
       const response = await client.request<FeedBackend>({
         url: `${FEEDS_STORE_API_URL}/${feedId}`,
         method: 'PUT',
-        headers: actorHeaders,
         data: convertFeedUpdate(requestBody),
       });
       return convertFeedBackend(response.data);
@@ -343,7 +325,6 @@ export class FeedsController extends Controller {
   @Response<{ message: string }>(401, 'Unauthorized')
   @Response<{ message: string }>(403, 'Forbidden')
   @Response<{ message: string }>(404, 'Not Found')
-  @Response<{ message: string }>(409, 'Conflict')
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async resetFeed(
@@ -354,13 +335,11 @@ export class FeedsController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
 
-    const actorHeaders = feedMutationActorHeaders(request);
+    const client = await getServiceClient(FEEDS_STORE_API_URL);
     try {
-      const client = await getServiceClient(FEEDS_STORE_API_URL);
       const response = await client.request<FeedBackend>({
         url: `${FEEDS_STORE_API_URL}/${feedId}/reset`,
         method: 'POST',
-        headers: actorHeaders,
       });
       return convertFeedBackend(response.data);
     } catch (error: unknown) {
@@ -392,13 +371,11 @@ export class FeedsController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
 
-    const actorHeaders = feedMutationActorHeaders(request);
+    const client = await getServiceClient(FEEDS_STORE_API_URL);
     try {
-      const client = await getServiceClient(FEEDS_STORE_API_URL);
       await client.request({
         url: `${FEEDS_STORE_API_URL}/${feedId}/deactivate`,
         method: 'POST',
-        headers: actorHeaders,
       });
     } catch (error: unknown) {
       const { status, message } = handleBackendError(
@@ -419,7 +396,6 @@ export class FeedsController extends Controller {
   @Response<{ message: string }>(401, 'Unauthorized')
   @Response<{ message: string }>(403, 'Forbidden')
   @Response<{ message: string }>(404, 'Not Found')
-  @Response<{ message: string }>(409, 'Conflict')
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async deleteFeed(
@@ -430,13 +406,11 @@ export class FeedsController extends Controller {
       throw new HttpError(403, 'Forbidden');
     }
 
-    const actorHeaders = feedMutationActorHeaders(request);
+    const client = await getServiceClient(FEEDS_STORE_API_URL);
     try {
-      const client = await getServiceClient(FEEDS_STORE_API_URL);
       await client.request({
         url: `${FEEDS_STORE_API_URL}/${feedId}`,
         method: 'DELETE',
-        headers: actorHeaders,
       });
     } catch (error: unknown) {
       const { status, message } = handleBackendError(

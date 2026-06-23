@@ -1167,17 +1167,6 @@ paths:
                 required:
                   - message
                 type: object
-        "409":
-          description: Conflict
-          content:
-            application/json:
-              schema:
-                properties:
-                  message:
-                    type: string
-                required:
-                  - message
-                type: object
         "500":
           description: Internal Server Error
           content:
@@ -1237,17 +1226,6 @@ paths:
                 type: object
         "404":
           description: Not Found
-          content:
-            application/json:
-              schema:
-                properties:
-                  message:
-                    type: string
-                required:
-                  - message
-                type: object
-        "409":
-          description: Conflict
           content:
             application/json:
               schema:

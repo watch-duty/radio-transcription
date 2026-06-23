@@ -53,29 +53,12 @@ describe('FeedsController', () => {
   };
 
   const mockAdminRequest = {
-    user: { isAdmin: true, sub: 'admin-sub-123' },
+    user: { isAdmin: true },
   } as unknown as express.Request;
 
   const mockNonAdminRequest = {
     user: { isAdmin: false },
   } as unknown as express.Request;
-
-  const expectedActorHeaders = {
-    'X-WD-Actor-Id': 'user:google:admin-sub-123',
-  };
-
-  const malformedAdminRequests = [
-    ['missing sub', { user: { isAdmin: true } }],
-    ['empty sub', { user: { isAdmin: true, sub: '' } }],
-    ['blank sub', { user: { isAdmin: true, sub: '   ' } }],
-    ['space in sub', { user: { isAdmin: true, sub: 'admin sub' } }],
-    ['leading whitespace', { user: { isAdmin: true, sub: ' admin-sub-123' } }],
-    ['trailing whitespace', { user: { isAdmin: true, sub: 'admin-sub-123 ' } }],
-  ] as const;
-
-  function asExpressRequest(request: unknown): express.Request {
-    return request as express.Request;
-  }
 
   describe('listFeeds', () => {
     it('should return converted feeds on success', async () => {
@@ -89,7 +72,6 @@ describe('FeedsController', () => {
         url: 'http://feeds-api.example.com',
         method: 'GET',
       });
-      expect(mockRequest.mock.calls[0][0]).not.toHaveProperty('headers');
     });
 
     it('should return feeds with tags on success', async () => {
@@ -106,27 +88,6 @@ describe('FeedsController', () => {
         {
           ...expectedFrontendFeed,
           tags: [{ key: 'county', value: 'Fulton' }],
-        },
-      ]);
-    });
-
-    it('should map backend status_reason_detail to frontend quarantineReason', async () => {
-      mockRequest.mockResolvedValueOnce({
-        data: [
-          {
-            ...mockBackendFeed,
-            status_reason_detail: 'provider timeout',
-          },
-        ],
-      });
-
-      const controller = new FeedsController();
-      const result = await controller.listFeeds();
-
-      expect(result).toEqual([
-        {
-          ...expectedFrontendFeed,
-          quarantineReason: 'provider timeout',
         },
       ]);
     });
@@ -179,21 +140,9 @@ describe('FeedsController', () => {
       await controller.listFeeds(query);
 
       expect(mockRequest).toHaveBeenCalledWith({
-        url: 'http://feeds-api.example.com?limit=10&next_token=token_abc&order=asc&source_types=openmhz%2Cecho&statuses=active&tags=%5B%7B%22key%22%3A%22region%22%2C%22value%22%3A%22West%22%7D%2C%7B%22key%22%3A%22county%22%2C%22value%22%3A%22Fulton%22%7D%5D',
+        url: 'http://feeds-api.example.com?limit=10&next_token=token_abc&order=asc&source_types=openmhz%2Cecho&statuses=active&tags=%7B+%22key%22%3A+%22region%22%2C+%22value%22%3A+%22West%22+%7D&tags=%7B+%22key%22%3A+%22county%22%2C+%22value%22%3A+%22Fulton%22+%7D',
         method: 'GET',
       });
-    });
-
-    it('should reject malformed tag filters before calling backend', async () => {
-      const controller = new FeedsController();
-
-      await expect(
-        controller.listFeeds({ tags: ['not-json'] })
-      ).rejects.toMatchObject({
-        status: 400,
-        message: 'Invalid tags query parameter',
-      });
-      expect(mockRequest).not.toHaveBeenCalled();
     });
   });
 
@@ -209,7 +158,6 @@ describe('FeedsController', () => {
         url: 'http://feeds-api.example.com/feed_123',
         method: 'GET',
       });
-      expect(mockRequest.mock.calls[0][0]).not.toHaveProperty('headers');
     });
 
     it('should return feed with tags on success', async () => {
@@ -256,7 +204,6 @@ describe('FeedsController', () => {
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://feeds-api.example.com',
         method: 'POST',
-        headers: expectedActorHeaders,
         data: {
           name: 'Test Feed',
           source_type: 'openmhz',
@@ -288,7 +235,6 @@ describe('FeedsController', () => {
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://feeds-api.example.com',
         method: 'POST',
-        headers: expectedActorHeaders,
         data: {
           name: 'Test Feed',
           source_type: 'openmhz',
@@ -330,7 +276,6 @@ describe('FeedsController', () => {
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://feeds-api.example.com/feed_123',
         method: 'PUT',
-        headers: expectedActorHeaders,
         data: {
           name: 'Updated Feed',
           tags: undefined,
@@ -365,7 +310,6 @@ describe('FeedsController', () => {
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://feeds-api.example.com/feed_123',
         method: 'PUT',
-        headers: expectedActorHeaders,
         data: {
           name: 'Updated Feed',
           tags: [{ key: 'county', value: 'Fulton' }],
@@ -419,7 +363,7 @@ describe('FeedsController', () => {
 
   describe('resetFeed', () => {
     const mockAdminRequest = {
-      user: { isAdmin: true, sub: 'admin-sub-123' },
+      user: { isAdmin: true },
     } as unknown as express.Request;
 
     it('should return converted feed on success', async () => {
@@ -432,7 +376,6 @@ describe('FeedsController', () => {
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://feeds-api.example.com/feed_123/reset',
         method: 'POST',
-        headers: expectedActorHeaders,
       });
     });
 
@@ -485,7 +428,7 @@ describe('FeedsController', () => {
 
   describe('deactivateFeed', () => {
     const mockAdminRequest = {
-      user: { isAdmin: true, sub: 'admin-sub-123' },
+      user: { isAdmin: true },
     } as unknown as express.Request;
 
     it('should return 204 on success', async () => {
@@ -497,7 +440,6 @@ describe('FeedsController', () => {
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://feeds-api.example.com/feed_123/deactivate',
         method: 'POST',
-        headers: expectedActorHeaders,
       });
     });
 
@@ -528,7 +470,7 @@ describe('FeedsController', () => {
 
   describe('deleteFeed', () => {
     const mockAdminRequest = {
-      user: { isAdmin: true, sub: 'admin-sub-123' },
+      user: { isAdmin: true },
     } as unknown as express.Request;
 
     it('should return 204 on success', async () => {
@@ -540,7 +482,6 @@ describe('FeedsController', () => {
       expect(mockRequest).toHaveBeenCalledWith({
         url: 'http://feeds-api.example.com/feed_123',
         method: 'DELETE',
-        headers: expectedActorHeaders,
       });
     });
 
@@ -567,81 +508,6 @@ describe('FeedsController', () => {
         controller.deleteFeed('feed_123', mockAdminRequest)
       ).rejects.toThrow(/Not Found/);
     });
-  });
-
-  describe('admin mutation actor forwarding', () => {
-    const createPayload = {
-      name: 'Test Feed',
-      sourceType: SourceType.OPENMHZ,
-      sourceFeedId: 'src_123',
-    };
-    const updatePayload = {
-      name: 'Updated Feed',
-    };
-
-    it.each(malformedAdminRequests)(
-      'createFeed rejects %s before calling backend',
-      async (_label, request) => {
-        const controller = new FeedsController();
-
-        await expect(
-          controller.createFeed(asExpressRequest(request), createPayload)
-        ).rejects.toThrow(/Forbidden/);
-        expect(mockRequest).not.toHaveBeenCalled();
-      }
-    );
-
-    it.each(malformedAdminRequests)(
-      'updateFeed rejects %s before calling backend',
-      async (_label, request) => {
-        const controller = new FeedsController();
-
-        await expect(
-          controller.updateFeed(
-            asExpressRequest(request),
-            'feed_123',
-            updatePayload
-          )
-        ).rejects.toThrow(/Forbidden/);
-        expect(mockRequest).not.toHaveBeenCalled();
-      }
-    );
-
-    it.each(malformedAdminRequests)(
-      'resetFeed rejects %s before calling backend',
-      async (_label, request) => {
-        const controller = new FeedsController();
-
-        await expect(
-          controller.resetFeed('feed_123', asExpressRequest(request))
-        ).rejects.toThrow(/Forbidden/);
-        expect(mockRequest).not.toHaveBeenCalled();
-      }
-    );
-
-    it.each(malformedAdminRequests)(
-      'deactivateFeed rejects %s before calling backend',
-      async (_label, request) => {
-        const controller = new FeedsController();
-
-        await expect(
-          controller.deactivateFeed('feed_123', asExpressRequest(request))
-        ).rejects.toThrow(/Forbidden/);
-        expect(mockRequest).not.toHaveBeenCalled();
-      }
-    );
-
-    it.each(malformedAdminRequests)(
-      'deleteFeed rejects %s before calling backend',
-      async (_label, request) => {
-        const controller = new FeedsController();
-
-        await expect(
-          controller.deleteFeed('feed_123', asExpressRequest(request))
-        ).rejects.toThrow(/Forbidden/);
-        expect(mockRequest).not.toHaveBeenCalled();
-      }
-    );
   });
 
   describe('sourceUrl computation', () => {
