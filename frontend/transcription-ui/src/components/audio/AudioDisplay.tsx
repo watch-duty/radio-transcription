@@ -241,10 +241,7 @@ export function AudioDisplay({
 
     const updateProgress = () => {
       if (currentAudioRef.current) {
-        const currentTime = currentAudioRef.current.getCurrentTime();
-        if (typeof currentTime === 'number') {
-          setLocalCurrentTimeSeconds(currentTime);
-        }
+        setLocalCurrentTimeSeconds(currentAudioRef.current.getCurrentTime());
       }
       animationFrameId = requestAnimationFrame(updateProgress);
     };
