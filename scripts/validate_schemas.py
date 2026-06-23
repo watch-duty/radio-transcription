@@ -1,4 +1,4 @@
-# ruff: noqa: INP001
+#!/usr/bin/env python3
 """Script to validate that all Pub/Sub schema definitions are valid.
 
 GCP Pub/Sub requires that a Protocol Buffer schema definition contains
