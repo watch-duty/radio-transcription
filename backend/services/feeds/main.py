@@ -17,6 +17,7 @@ from backend.pipeline.common.auth import verify_oidc_token
 from backend.pipeline.common.exceptions import (
     FeedAlreadyExistsError,
     FeedNameAlreadyExistsError,
+    FeedStateConflictError,
 )
 from backend.pipeline.common.fastapi_tracing import setup_fastapi_tracing
 from backend.pipeline.storage.connection import (
@@ -263,7 +264,13 @@ async def delete_feed(
     """Hard delete a feed, along with all its transcripts and audio segments."""
     service: FeedService = request.app.state.feed_service
     actor_id = _resolve_admin_actor_id(request)
-    success = await service.delete_feed(feed_id, actor_id=actor_id)
+    try:
+        success = await service.delete_feed(feed_id, actor_id=actor_id)
+    except FeedStateConflictError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(e),
+        ) from e
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -283,7 +290,13 @@ async def reset_feed(
     """Reset a feed to unclaimed status with zero failure count."""
     service: FeedService = request.app.state.feed_service
     actor_id = _resolve_admin_actor_id(request)
-    feed = await service.reset_feed(feed_id, actor_id=actor_id)
+    try:
+        feed = await service.reset_feed(feed_id, actor_id=actor_id)
+    except FeedStateConflictError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(e),
+        ) from e
     if not feed:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

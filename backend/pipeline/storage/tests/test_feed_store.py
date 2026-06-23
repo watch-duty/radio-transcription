@@ -16,6 +16,7 @@ import yaml
 from backend.pipeline.common.exceptions import (
     FeedAlreadyExistsError,
     FeedNameAlreadyExistsError,
+    FeedStateConflictError,
 )
 from backend.pipeline.storage import feed_queries, feed_store, quarantine_reason
 from backend.pipeline.storage.feed_store import (
@@ -2519,7 +2520,11 @@ class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
         """Successful hard delete inserts feed.deleted before deletion."""
         pool = make_mock_pool(transaction=True)
         conn = pool.acquired_connection
-        conn.fetchrow.return_value = {"id": _FEED_ID}
+        conn.fetchrow.return_value = {
+            "id": _FEED_ID,
+            "blocked_active": False,
+            "current_status": "unclaimed",
+        }
         store = FeedStore(pool)
 
         result = await store.delete_feed(
@@ -2546,7 +2551,11 @@ class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
         """feed.deleted has full before_values and empty after_values."""
         pool = make_mock_pool(transaction=True)
         conn = pool.acquired_connection
-        conn.fetchrow.return_value = {"id": _FEED_ID}
+        conn.fetchrow.return_value = {
+            "id": _FEED_ID,
+            "blocked_active": False,
+            "current_status": "unclaimed",
+        }
         store = FeedStore(pool)
 
         result = await store.delete_feed(
@@ -2564,7 +2573,30 @@ class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
         """Active feeds must be deactivated before hard deletion."""
         sql = feed_queries.DELETE_FEED_SQL
 
-        self.assertIn("AND f.status <> 'active'::feed_status", sql)
+        self.assertIn("WHERE before_row.status = 'active'::feed_status", sql)
+        self.assertIn(
+            "WHERE before_row.status <> 'active'::feed_status",
+            sql,
+        )
+
+    async def test_active_feed_delete_raises_state_conflict(self) -> None:
+        """Active feeds return a conflict marker instead of looking missing."""
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.return_value = {
+            "id": _FEED_ID,
+            "blocked_active": True,
+            "current_status": "active",
+        }
+        store = FeedStore(pool)
+
+        with self.assertRaisesRegex(
+            FeedStateConflictError, "cannot be deleted"
+        ):
+            await store.delete_feed(
+                _FEED_ID,
+                actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            )
 
     async def test_missing_feed_returns_false_without_audit_or_delete(
         self,
@@ -2610,6 +2642,8 @@ class TestResetFeed(unittest.IsolatedAsyncioTestCase):
             status_reason_detail=None,
             feed_revision=4,
         )
+        reset_row["blocked_active"] = False
+        reset_row["current_status"] = "unclaimed"
         pool = make_mock_pool(transaction=True)
         conn = pool.acquired_connection
         conn.fetchrow.return_value = reset_row
@@ -2642,7 +2676,24 @@ class TestResetFeed(unittest.IsolatedAsyncioTestCase):
         """Active feeds must be deactivated before admin reset."""
         sql = feed_queries.RESET_FEED_SQL
 
-        self.assertIn("AND f.status <> 'active'::feed_status", sql)
+        self.assertIn("AND before_row.status <> 'active'::feed_status", sql)
+        self.assertIn("WHERE before_row.status = 'active'::feed_status", sql)
+
+    async def test_active_feed_reset_raises_state_conflict(self) -> None:
+        """Active feeds return a conflict marker instead of looking missing."""
+        active_row = _full_feed_row(status="active")
+        active_row["blocked_active"] = True
+        active_row["current_status"] = "active"
+        pool = make_mock_pool(transaction=True)
+        conn = pool.acquired_connection
+        conn.fetchrow.return_value = active_row
+        store = FeedStore(pool)
+
+        with self.assertRaisesRegex(FeedStateConflictError, "cannot be reset"):
+            await store.reset_feed(
+                _FEED_ID,
+                actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            )
 
     async def test_missing_feed_returns_none_without_audit(self) -> None:
         """Missing reset target does not allocate sequence or audit."""

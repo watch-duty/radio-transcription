@@ -11,6 +11,7 @@ from backend.pipeline.common.auth import verify_oidc_token
 from backend.pipeline.common.exceptions import (
     FeedAlreadyExistsError,
     FeedNameAlreadyExistsError,
+    FeedStateConflictError,
 )
 from backend.pipeline.storage.feed_store import (
     FeedStatus,
@@ -627,6 +628,23 @@ class TestFeedsAPI(unittest.TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
+    def test_delete_feed_active_conflict(self) -> None:
+        """Test deleting an active feed returns 409."""
+        feed_id = uuid.uuid4()
+        self.mock_service.delete_feed.side_effect = FeedStateConflictError(
+            str(feed_id),
+            "deleted",
+            "active",
+        )
+
+        response = self.client.delete(
+            f"/v1/feeds/{feed_id}",
+            headers=_ACTOR_HEADERS,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertIn("cannot be deleted", response.json()["detail"])
+
     def test_reset_feed_success(self) -> None:
         """Test resetting a feed successfully."""
         feed_id = uuid.uuid4()
@@ -664,6 +682,23 @@ class TestFeedsAPI(unittest.TestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_reset_feed_active_conflict(self) -> None:
+        """Test resetting an active feed returns 409."""
+        feed_id = uuid.uuid4()
+        self.mock_service.reset_feed.side_effect = FeedStateConflictError(
+            str(feed_id),
+            "reset",
+            "active",
+        )
+
+        response = self.client.post(
+            f"/v1/feeds/{feed_id}/reset",
+            headers=_ACTOR_HEADERS,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        self.assertIn("cannot be reset", response.json()["detail"])
 
     def test_update_feed_success(self) -> None:
         """Test updating a feed successfully."""

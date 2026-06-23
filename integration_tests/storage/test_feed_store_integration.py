@@ -12,6 +12,7 @@ import pytest
 from backend.pipeline.common.exceptions import (
     FeedAlreadyExistsError,
     FeedNameAlreadyExistsError,
+    FeedStateConflictError,
 )
 from backend.pipeline.storage.feed_store import (
     FeedStatus,
@@ -2596,6 +2597,29 @@ async def test_delete_feed_returns_false_if_not_found(store: FeedStore) -> None:
     assert result is False
 
 
+async def test_delete_feed_active_feed_raises_conflict_without_audit(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """delete_feed returns a state conflict for active feeds."""
+    feed_id = await _insert_feed(
+        db_pool,
+        "Active Delete Conflict Feed",
+        status="active",
+    )
+
+    with pytest.raises(FeedStateConflictError, match="cannot be deleted"):
+        await store.delete_feed(feed_id, actor_id=_TEST_ACTOR_ID)
+
+    row = await db_pool.fetchrow(
+        "SELECT status FROM feeds WHERE id = $1", feed_id
+    )
+    assert row is not None
+    assert row["status"] == "active"
+    audit_rows = await _fetch_audit_events(db_pool, feed_id)
+    assert audit_rows == []
+
+
 # -- Tests: reset_feed ------------------------------------------------
 
 
@@ -2758,3 +2782,28 @@ async def test_reset_feed_returns_none_if_not_found(store: FeedStore) -> None:
     """reset_feed returns None for non-existent ID."""
     result = await store.reset_feed(uuid.uuid4(), actor_id=_TEST_ACTOR_ID)
     assert result is None
+
+
+async def test_reset_feed_active_feed_raises_conflict_without_audit(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """reset_feed returns a state conflict for active feeds."""
+    feed_id = await _insert_feed(
+        db_pool,
+        "Active Reset Conflict Feed",
+        status="active",
+    )
+
+    with pytest.raises(FeedStateConflictError, match="cannot be reset"):
+        await store.reset_feed(feed_id, actor_id=_TEST_ACTOR_ID)
+
+    row = await db_pool.fetchrow(
+        "SELECT status, audit_revision FROM feeds WHERE id = $1",
+        feed_id,
+    )
+    assert row is not None
+    assert row["status"] == "active"
+    assert row["audit_revision"] == 0
+    audit_rows = await _fetch_audit_events(db_pool, feed_id)
+    assert audit_rows == []

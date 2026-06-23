@@ -13,6 +13,7 @@ import asyncpg.exceptions
 from backend.pipeline.common.exceptions import (
     FeedAlreadyExistsError,
     FeedNameAlreadyExistsError,
+    FeedStateConflictError,
 )
 from backend.pipeline.storage import feed_lifecycle, feed_queries
 from backend.pipeline.storage.pagination_utils import (
@@ -1023,7 +1024,15 @@ class FeedStore:
                 feed_id,
                 required_actor_id,
             )
-        return row is not None
+        if row is None:
+            return False
+        if row["blocked_active"]:
+            raise FeedStateConflictError(
+                str(feed_id),
+                "deleted",
+                row["current_status"],
+            )
+        return True
 
     async def reset_feed(
         self,
@@ -1055,4 +1064,10 @@ class FeedStore:
             )
         if row is None:
             return None
+        if row["blocked_active"]:
+            raise FeedStateConflictError(
+                str(feed_id),
+                "reset",
+                row["current_status"],
+            )
         return self._row_to_feed(row)
