@@ -9,4 +9,4 @@ class TranscriberType(StrEnum):
     MOCK = "mock"
     GOOGLE_CHIRP_V3 = "google_chirp_v3"
     LOCAL_WHISPER = "local_whisper"
-    GEMINI = "gemini_flash_lite_v3.1"
+    GEMINI = "gemini"

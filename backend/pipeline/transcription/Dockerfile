@@ -21,10 +21,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 COPY backend/ ./backend/
 COPY protos/ ./protos
-COPY model/src/common/gemini/prompts.py ./model/src/common/gemini/prompts.py
-COPY model/src/common/gemini/vertex.py ./model/src/common/gemini/vertex.py
-
-
 
 # 2. Create the directory for the generated files
 RUN mkdir -p ./backend/pipeline/schema_types

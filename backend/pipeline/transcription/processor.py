@@ -12,6 +12,7 @@ import requests
 from cloudevents.http.event import CloudEvent
 from google.api_core.exceptions import GoogleAPICallError
 from google.cloud import pubsub_v1
+from google.genai import errors as genai_errors
 
 from backend.pipeline.common.clients import audio_segments_client
 from backend.pipeline.common.constants import (
@@ -249,9 +250,10 @@ def _is_transient_exception(e: Exception) -> bool:
     """Determines if an exception is transient and should be retried."""
     is_transient = False
     match e:
-        case GoogleAPICallError() if e.code in (429, 409) or (
-            e.code and e.code >= 500
-        ):
+        case GoogleAPICallError() | genai_errors.APIError() if e.code in (
+            429,
+            409,
+        ) or (e.code and e.code >= 500):
             is_transient = True
         case grpc.Call():
             try:
