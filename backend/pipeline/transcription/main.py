@@ -4,6 +4,7 @@ Triggered by Pub/Sub push events containing serialized NormalizedAudio
 claim-check metadata. Delegates processing to TranscriptionEventProcessor.
 """
 
+import asyncio
 import logging
 import os
 
@@ -162,4 +163,4 @@ def transcribe_claim_check(cloud_event: CloudEvent) -> None:
     )
 
     processor = container.get_processor()
-    processor.process_event(cloud_event)
+    asyncio.run(processor.process_event(cloud_event))

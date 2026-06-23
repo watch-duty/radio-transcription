@@ -5,7 +5,7 @@ from unittest import mock
 from backend.pipeline.transcription import main as transcription_main
 
 
-class TestTracingInitialization(unittest.TestCase):
+class TestTracingInitialization(unittest.IsolatedAsyncioTestCase):
     def test_tracing_not_initialized_on_import(self) -> None:
         """Verifies that setup_tracing is not called during module import."""
         with mock.patch(
@@ -22,6 +22,8 @@ class TestTracingInitialization(unittest.TestCase):
         mock_setup_tracing: mock.MagicMock,
     ) -> None:
         """Verifies setup_tracing is called when the cloud event handler runs."""
+        mock_processor = mock.AsyncMock()
+        mock_container.get_processor.return_value = mock_processor
         mock_event = mock.MagicMock()
         transcription_main.transcribe_claim_check(mock_event)
         mock_setup_tracing.assert_called_once_with(

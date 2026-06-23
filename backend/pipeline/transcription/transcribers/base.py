@@ -18,7 +18,7 @@ class Transcriber(abc.ABC):
         """
 
     @abc.abstractmethod
-    def transcribe(
+    async def transcribe(
         self,
         *,
         audio_data: bytes | None = None,

@@ -1,5 +1,6 @@
 """Google Cloud Speech-to-Text Chirp V3 transcriber implementation."""
 
+import asyncio
 import pathlib
 
 import pydantic
@@ -125,7 +126,7 @@ class GoogleChirpV3Transcriber(Transcriber):
             ]
         )
 
-    def transcribe(
+    async def transcribe(
         self,
         *,
         audio_data: bytes | None = None,
@@ -133,7 +134,8 @@ class GoogleChirpV3Transcriber(Transcriber):
         duration_ms: int,
     ) -> str | None:
         """Transcribes the given audio payload using GCP Speech V2 API."""
-        if not self.client:
+        client = self.client
+        if not client:
             msg = "Transcriber client used before setup() was called."
             raise RuntimeError(msg)
 
@@ -179,7 +181,11 @@ class GoogleChirpV3Transcriber(Transcriber):
             multiplier=2.0,
             deadline=float(DEFAULT_RETRY_MAX_SECONDS * DEFAULT_MAX_RETRIES),
         )
-        response = self.client.recognize(request=request, retry=retry_policy)
+
+        def _call_api() -> cloud_speech.RecognizeResponse:
+            return client.recognize(request=request, retry=retry_policy)
+
+        response = await asyncio.to_thread(_call_api)
         return self._parse_response(response)
 
     def _parse_response(
