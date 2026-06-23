@@ -1,6 +1,5 @@
 """Google Cloud Speech-to-Text Chirp V3 transcriber implementation."""
 
-import asyncio
 import pathlib
 from typing import override
 
