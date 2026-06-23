@@ -9,8 +9,6 @@ import {
 import { useSearchParams } from 'react-router';
 import type { VirtuosoHandle } from 'react-virtuoso';
 
-import { Howl } from 'howler';
-
 import Box from '@mui/material/Box';
 import Checkbox from '@mui/material/Checkbox';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -20,6 +18,11 @@ import { useTheme } from '@mui/material/styles';
 import { useQuery } from '@tanstack/react-query';
 import { AudioClassification, type AudioSegment } from '@transcription/common';
 
+import {
+  type PlaybackController,
+  WebAudioPlayer,
+  createAudioContext,
+} from '../../audio/WebAudioPlayer';
 import { useAuth } from '../../context/AuthContext';
 import {
   type AlertFilter,
@@ -138,47 +141,51 @@ export function TranscriptView({
   const newerLoadAnchorId = useRef<string | null>(null);
   const wasFetchingNewer = useRef(false);
 
-  const currentAudio = useRef<Howl>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const playerRef = useRef<WebAudioPlayer | null>(null);
+  const currentAudio = useRef<PlaybackController | null>(null);
   const [playbackEndedForId, setPlaybackEndedForId] = useState<string | null>(
     null
   );
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
 
   // A mutable reference to the latest list of audio segments. This prevents stale closures
-  // inside the Howl audio lifecycle callbacks (like onend), ensuring continuous playback logic
+  // inside the audio lifecycle callbacks (like onEnd), ensuring continuous playback logic
   // always evaluates against the most up-to-date audio segments list even if it updates mid-playback.
   const audioSegmentsRef = useRef<AudioSegment[]>([]);
 
-  // Cleanup effect to ensure audio is unloaded when component unmounts
   useEffect(() => {
     return () => {
-      currentAudio.current?.unload();
+      audioContextRef.current?.close().catch(() => {});
+      audioContextRef.current = null;
+      playerRef.current = null;
+      currentAudio.current = null;
     };
   }, []);
 
   // Play and pause audio from a URL.
   const toggleAudio = useCallback(
     (segmentId: string, audioUri: string) => {
+      // Lazy-build on first play so the AudioContext is created inside a user gesture.
+      const context = (audioContextRef.current ??= createAudioContext());
+      const player = (playerRef.current ??= new WebAudioPlayer(context));
+      player.resume();
+
       const newAudio = currentlyPlayingSegmentId !== segmentId;
 
       if (newAudio) {
-        if (currentAudio.current) {
-          currentAudio.current.off();
-          currentAudio.current.unload();
-          currentAudio.current = null;
-        }
+        currentAudio.current?.unload();
+        currentAudio.current = null;
         setCurrentlyPlayingSegmentId(segmentId);
         setHighlightedSegmentId(segmentId);
       }
 
       if (!currentAudio.current) {
-        const sound = new Howl({
-          src: [getAudioUrl(audioUri)],
-          html5: true,
-          preload: true,
-          onplay: () => setIsAudioPlaying(true),
-          onpause: () => setIsAudioPlaying(false),
-          onend: () => {
+        currentAudio.current = player.load(getAudioUrl(audioUri), {
+          onPlay: () => setIsAudioPlaying(true),
+          onPause: () => setIsAudioPlaying(false),
+          onError: () => setIsAudioPlaying(false),
+          onEnd: () => {
             const currentAudioSegments = audioSegmentsRef.current;
             const currentIndex = currentAudioSegments.findIndex(
               (t) => t.id === segmentId
@@ -190,16 +197,11 @@ export function TranscriptView({
             }
 
             setPlaybackEndedForId(segmentId);
-            sound.unload();
-            if (currentAudio.current === sound) {
-              currentAudio.current = null;
-            }
+            currentAudio.current = null;
           },
         });
-        currentAudio.current = sound;
       }
 
-      // Play is no current audio or changing audio
       if (!isAudioPlaying || newAudio) {
         currentAudio.current.play();
       } else {
@@ -601,9 +603,8 @@ export function TranscriptView({
 
   const handleFeedSelect = (feedId: string) => {
     setSearchedFeedId(feedId);
-    // Stop audio
-    currentAudio.current?.stop();
-    currentAudio.current?.unload();
+    playerRef.current?.stop();
+    currentAudio.current = null;
     // Reset all state
     handleFilterByDateTime(null);
     setNewMessageCount(0);
@@ -611,7 +612,6 @@ export function TranscriptView({
     setHighlightedSegmentId(null);
     setIsViewAtTopOfAudioSegments(true);
     setPlaybackEndedForId(null);
-    setIsAudioPlaying(false);
     // Update URL params
     setSearchParams((prev) => {
       prev.set('feedId', feedId);
