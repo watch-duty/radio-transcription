@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import logging
 import os
-import threading
-from dataclasses import dataclass
 
 from backend.pipeline.common.env import is_gcp_env
 
@@ -16,14 +14,7 @@ UNRESOLVED_GCP_SERVICE_ACCOUNT_ACTOR_ID = "service_account:gcp:unresolved"
 MAX_ACTOR_ID_LENGTH = 512
 CONFIGURED_SERVICE_ACTOR_ENV = "FEED_AUDIT_ACTOR_ID"
 
-
-@dataclass
-class _RuntimeActorState:
-    logged_unresolved_reasons: set[str]
-
-
-_runtime_actor_state = _RuntimeActorState(logged_unresolved_reasons=set())
-_runtime_actor_lock = threading.Lock()
+_cached_runtime_service_actor_id: str | None = None
 
 
 def actor_id_from_google_sub(sub: str) -> str:
@@ -79,6 +70,16 @@ def is_well_formed_actor_id(actor_id: str | None) -> bool:
 
 
 def runtime_service_actor_id() -> str:
+    global _cached_runtime_service_actor_id  # noqa: PLW0603
+
+    if _cached_runtime_service_actor_id is not None:
+        return _cached_runtime_service_actor_id
+
+    _cached_runtime_service_actor_id = _resolve_runtime_service_actor_id()
+    return _cached_runtime_service_actor_id
+
+
+def _resolve_runtime_service_actor_id() -> str:
     if not is_gcp_env():
         return LOCAL_SERVICE_ACCOUNT_ACTOR_ID
 
@@ -97,11 +98,6 @@ def runtime_service_actor_id() -> str:
 
 
 def _log_unresolved_gcp_actor_config(reason: str) -> None:
-    with _runtime_actor_lock:
-        if reason in _runtime_actor_state.logged_unresolved_reasons:
-            return
-        _runtime_actor_state.logged_unresolved_reasons.add(reason)
-
     logger.error(
         "feed_audit_actor_unresolved",
         extra={
@@ -118,5 +114,6 @@ def _contains_whitespace(value: str) -> bool:
 
 
 def _reset_runtime_service_actor_cache_for_tests() -> None:
-    with _runtime_actor_lock:
-        _runtime_actor_state.logged_unresolved_reasons.clear()
+    global _cached_runtime_service_actor_id  # noqa: PLW0603
+
+    _cached_runtime_service_actor_id = None
