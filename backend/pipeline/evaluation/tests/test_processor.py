@@ -81,6 +81,7 @@ class TestEvaluationEventProcessor(unittest.TestCase):
             data={
                 "decisions": ["test_rule"],
                 "errors": [],
+                "rule_annotations": {},
             },
         )
         self.mock_raw_publisher.publish.assert_called_once()
@@ -90,6 +91,43 @@ class TestEvaluationEventProcessor(unittest.TestCase):
             call_args.args[1], self.evaluated_payload.SerializeToString()
         )
         self.assertEqual(call_args.kwargs["ordering_key"], "1234")
+
+    def test_process_event_serializes_rule_annotations(self) -> None:
+        self.evaluated_payload.evaluation_decisions.append("rule-1")
+        span = self.evaluated_payload.rule_annotations[
+            "rule-1"
+        ].text_match.spans.add()
+        span.start = 5
+        span.end = 9
+        span.matched_text = "fire"
+        self.mock_service.evaluate.return_value = self.evaluated_payload
+
+        serialized_audio = self.transcribed_audio.SerializeToString()
+        base64_audio = base64.b64encode(serialized_audio).decode("utf-8")
+        cloud_event = self._create_mock_event(
+            {"message": {"data": base64_audio}}
+        )
+        self.mock_raw_publisher.publish.return_value = MagicMock()
+
+        self.processor.process_event(cloud_event)
+
+        self.mock_audio_segments_client.add_audio_segment_annotation.assert_called_once_with(
+            audio_segment_id="12345",
+            annotation_type=AnnotationType.EVALUATION,
+            data={
+                "decisions": ["rule-1"],
+                "errors": [],
+                "rule_annotations": {
+                    "rule-1": {
+                        "text_match": {
+                            "spans": [
+                                {"start": 5, "end": 9, "matched_text": "fire"}
+                            ]
+                        }
+                    }
+                },
+            },
+        )
 
     def test_process_event_not_flagged_skips_publish(self) -> None:
         # Setup
@@ -114,6 +152,7 @@ class TestEvaluationEventProcessor(unittest.TestCase):
             data={
                 "decisions": [],
                 "errors": [],
+                "rule_annotations": {},
             },
         )
         self.mock_raw_publisher.publish.assert_not_called()

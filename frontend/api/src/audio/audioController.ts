@@ -3,6 +3,7 @@ import type {
   Annotation,
   AudioClassification,
   AudioSegment,
+  RuleAnnotation,
 } from '@transcription/common';
 import {
   Controller,
@@ -33,11 +34,22 @@ interface TranscriptAnnotationBackend extends BaseAnnotationBackend {
   };
 }
 
+interface TextMatchSpanResponse {
+  start: number;
+  end: number;
+  matched_text: string;
+}
+
+interface RuleAnnotationResponse {
+  text_match?: TextMatchSpanResponse[];
+}
+
 interface EvaluationAnnotationBackend extends BaseAnnotationBackend {
   type: AnnotationType.EVALUATION;
   data: {
     decisions: string[];
     errors: string[];
+    rule_annotations?: Record<string, RuleAnnotationResponse>;
   };
 }
 
@@ -63,7 +75,40 @@ interface AudioSegmentBackend {
   annotations?: AnnotationBackend[];
 }
 
+function convertRuleAnnotation(
+  response: RuleAnnotationResponse
+): RuleAnnotation {
+  return {
+    textMatch: response.text_match
+      ? response.text_match.map((s) => ({
+          startIndex: s.start,
+          endIndex: s.end,
+          matchedText: s.matched_text,
+        }))
+      : undefined,
+  };
+}
+
 function convertAnnotationBackend(response: AnnotationBackend): Annotation {
+  if (response.type === AnnotationType.EVALUATION) {
+    return {
+      type: response.type,
+      createdAt: response.created_at,
+      data: {
+        decisions: response.data.decisions,
+        errors: response.data.errors,
+        ruleAnnotations: Object.fromEntries(
+          Object.entries(response.data.rule_annotations ?? {}).map(
+            ([ruleId, annotation]) => [
+              ruleId,
+              convertRuleAnnotation(annotation),
+            ]
+          )
+        ),
+      },
+    };
+  }
+
   return {
     type: response.type,
     createdAt: response.created_at,
