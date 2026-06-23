@@ -34,17 +34,18 @@ export function formatVolumeDb(db: number): string {
   return rounded > 0 ? `+${rounded} dB` : `${rounded} dB`;
 }
 
-// Default width of the snap zone: a value within this many dB of the 0 default
-// is pulled to exactly 0 so the slider settles on the default when dragged near
-// it. Exposed as a default so a future global setting can override `snapDb`;
-// passing 0 disables snapping.
+// Default width of the snap zone: a value within this many dB of the default is
+// pulled to exactly the default so the slider settles there when dragged near
+// it. Both the snap center (`defaultDb`) and width (`snapDb`) are parameters so
+// a future global settings UI can drive them; passing snapDb 0 disables snapping.
 export const VOLUME_SNAP_DB = 1;
 
 export function snapVolumeToDefault(
   db: number,
+  defaultDb: number = DEFAULT_VOLUME_DB,
   snapDb: number = VOLUME_SNAP_DB
 ): number {
-  return Math.abs(db) <= snapDb ? 0 : db;
+  return Math.abs(db - defaultDb) <= snapDb ? defaultDb : db;
 }
 
 export interface AudioCallbacks {

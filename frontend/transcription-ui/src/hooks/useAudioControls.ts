@@ -27,6 +27,9 @@ export interface AudioControls {
   setPan: (pan: number) => void;
   speed: number;
   setSpeed: (speed: number) => void;
+  // Clears this feed's overrides so it re-inherits the (global) defaults,
+  // rather than pinning it to the current default values.
+  reset: () => void;
 }
 
 function feedKey(base: string, feedId: string): string {
@@ -63,6 +66,7 @@ function initFromOptions(
 function initSpeed(feedId: string): number {
   // Safari mangles playbackRate through Web Audio, so speed is pinned to 1×
   // there; ignore any persisted value (the UI also disables the control).
+  // https://bugs.webkit.org/show_bug.cgi?id=311000
   if (isSafari()) return DEFAULT_SPEED;
   return initFromOptions(
     STORAGE_KEYS.speed,
@@ -79,8 +83,9 @@ export function useAudioControls(feedId: string): AudioControls {
   );
   const [speed, setSpeedState] = useState(() => initSpeed(feedId));
 
-  // The view stays mounted across feed switches, so reload each feed's stored
-  // settings when the id changes (re-running the initializers re-reads storage).
+  // Reload each feed's stored settings when the id changes. The view stays
+  // mounted across feed switches, so this uses React's "adjust state during
+  // render" pattern (not an effect) to re-read storage with no flash.
   const [loadedFeedId, setLoadedFeedId] = useState(feedId);
   if (loadedFeedId !== feedId) {
     setLoadedFeedId(feedId);
@@ -122,5 +127,20 @@ export function useAudioControls(feedId: string): AudioControls {
     [persist]
   );
 
-  return { volumeDb, setVolumeDb, pan, setPan, speed, setSpeed };
+  const reset = useCallback(() => {
+    // Remove the overrides (never the bare global key) and reload, so the feed
+    // falls back to the global default — now and if that default later changes.
+    if (feedId) {
+      localStorage.removeItem(feedKey(STORAGE_KEYS.volumeDb, feedId));
+      localStorage.removeItem(feedKey(STORAGE_KEYS.pan, feedId));
+      localStorage.removeItem(feedKey(STORAGE_KEYS.speed, feedId));
+    }
+    setVolumeDbState(initVolumeDb(feedId));
+    setPanState(
+      initFromOptions(STORAGE_KEYS.pan, feedId, PAN_OPTIONS, DEFAULT_PAN)
+    );
+    setSpeedState(initSpeed(feedId));
+  }, [feedId]);
+
+  return { volumeDb, setVolumeDb, pan, setPan, speed, setSpeed, reset };
 }

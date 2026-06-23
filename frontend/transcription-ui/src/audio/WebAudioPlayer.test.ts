@@ -61,7 +61,7 @@ describe('audioMath', () => {
   });
 
   describe('snapVolumeToDefault', () => {
-    it('snaps values within the default zone to 0', () => {
+    it('snaps values within the zone to the default', () => {
       expect(snapVolumeToDefault(1)).toBe(0);
       expect(snapVolumeToDefault(-1)).toBe(0);
       expect(snapVolumeToDefault(0)).toBe(0);
@@ -72,13 +72,18 @@ describe('audioMath', () => {
       expect(snapVolumeToDefault(-6)).toBe(-6);
     });
 
+    it('snaps toward a non-zero default', () => {
+      expect(snapVolumeToDefault(5, 6)).toBe(6);
+      expect(snapVolumeToDefault(3, 6)).toBe(3);
+    });
+
     it('honors a custom snap width', () => {
-      expect(snapVolumeToDefault(2, 3)).toBe(0);
-      expect(snapVolumeToDefault(4, 3)).toBe(4);
+      expect(snapVolumeToDefault(2, 0, 3)).toBe(0);
+      expect(snapVolumeToDefault(4, 0, 3)).toBe(4);
     });
 
     it('disables snapping at width 0', () => {
-      expect(snapVolumeToDefault(1, 0)).toBe(1);
+      expect(snapVolumeToDefault(1, 0, 0)).toBe(1);
     });
   });
 });

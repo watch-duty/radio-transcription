@@ -99,7 +99,7 @@ export function TranscriptView({
   const newerLoadAnchorId = useRef<string | null>(null);
   const wasFetchingNewer = useRef(false);
 
-  const { volumeDb, setVolumeDb, pan, setPan, speed, setSpeed } =
+  const { volumeDb, setVolumeDb, pan, setPan, speed, setSpeed, reset } =
     useAudioControls(searchedFeedId);
 
   // Passed to useAudioPlayback so its `onEnd` callback reads the current list
@@ -654,6 +654,7 @@ export function TranscriptView({
           setPan={setPan}
           speed={speed}
           setSpeed={setSpeed}
+          onResetAudio={reset}
         />
         {audioSegments.length > 0 ? (
           <TranscriptDisplay

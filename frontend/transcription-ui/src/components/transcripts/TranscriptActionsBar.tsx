@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 
 import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import FilterIcon from '@mui/icons-material/Tune';
-import VolumeDownIcon from '@mui/icons-material/VolumeDown';
 import VolumeOffIcon from '@mui/icons-material/VolumeOff';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import { FormControl, InputLabel } from '@mui/material';
@@ -11,7 +10,6 @@ import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
 import FormControlLabel from '@mui/material/FormControlLabel';
-import IconButton from '@mui/material/IconButton';
 import MenuItem from '@mui/material/MenuItem';
 import Popover from '@mui/material/Popover';
 import Select from '@mui/material/Select';
@@ -40,6 +38,9 @@ import { DateTimePicker } from '../common/DateTimePicker';
 
 const PAN_LABELS: Record<number, string> = { '-1': 'L', '0': 'C', '1': 'R' };
 
+// Only resize the speaker icon once the gain is more than this far from default.
+const VOLUME_ICON_SCALE_THRESHOLD_DB = 4;
+
 export interface TranscriptActionsBarProps {
   hasNewerAudioSegments: boolean;
   searchedTimestamp: Date | null;
@@ -56,6 +57,7 @@ export interface TranscriptActionsBarProps {
   setPan: (pan: number) => void;
   speed: number;
   setSpeed: (speed: number) => void;
+  onResetAudio: () => void;
 }
 
 const APPLIED_FILTER_BG_COLOR = '#bbdefb';
@@ -76,6 +78,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   setPan,
   speed,
   setSpeed,
+  onResetAudio,
 }) => {
   const theme = useTheme();
   const isDarkTheme = theme.palette.mode === 'dark';
@@ -91,11 +94,14 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   const volumeActive = volumeDb !== DEFAULT_VOLUME_DB;
   const panLabel = pan !== DEFAULT_PAN ? PAN_LABELS[pan] : null;
   const speedActive = speed !== DEFAULT_SPEED;
-  const VolumeIcon = isMuted
-    ? VolumeOffIcon
-    : volumeDb < 0
-      ? VolumeDownIcon
-      : VolumeUpIcon;
+  // The icon stays put except for mute; the scale below conveys cut vs. boost.
+  const VolumeIcon = isMuted ? VolumeOffIcon : VolumeUpIcon;
+  const volumeIconScale =
+    volumeDb < DEFAULT_VOLUME_DB - VOLUME_ICON_SCALE_THRESHOLD_DB
+      ? 0.7
+      : volumeDb > DEFAULT_VOLUME_DB + VOLUME_ICON_SCALE_THRESHOLD_DB
+        ? 1.3
+        : 1;
 
   const activeSummary = [
     volumeActive ? volumeLabel : null,
@@ -103,7 +109,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
     speedActive ? `${speed}×` : null,
   ].filter(Boolean);
   const audioTooltip = activeSummary.length
-    ? `Audio controls — ${activeSummary.join(', ')}`
+    ? activeSummary.join(', ')
     : 'Audio controls';
   const audioBadgeSx = {
     '& .MuiBadge-badge': {
@@ -113,17 +119,6 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
       px: 0.5,
       boxShadow: `0 0 0 2px ${theme.palette.background.paper}`,
     },
-  };
-  const audioButtonSx = {
-    minWidth: 0,
-    p: 0.75,
-    ...(volumeActive
-      ? {}
-      : {
-          bgcolor: 'background.paper',
-          color: 'primary.main',
-          '&:hover': { bgcolor: 'action.hover' },
-        }),
   };
   const [localDateTime, setLocalDateTime] = useState<Date | null>(dateTime);
   const [localAlertFilter, setLocalAlertFilter] =
@@ -187,6 +182,10 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
         display: 'flex',
         justifyContent: 'space-between',
         mb: 0.5,
+        // Lift the bar (and its overflowing speaker badges) above the list's
+        // sticky headers (zIndex 1) so they aren't clipped behind them.
+        position: 'relative',
+        zIndex: 2,
       }}
     >
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -202,16 +201,25 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
               color="primary"
               badgeContent={panLabel}
               invisible={!panLabel}
+              anchorOrigin={{
+                vertical: 'bottom',
+                horizontal: pan < DEFAULT_PAN ? 'left' : 'right',
+              }}
               sx={audioBadgeSx}
             >
               <Button
                 color="primary"
-                variant="contained"
-                sx={audioButtonSx}
+                variant="outlined"
+                sx={{ minWidth: 0, p: 0.75 }}
                 aria-label="audio controls"
                 onClick={(e) => setAudioAnchorEl(e.currentTarget)}
               >
-                <VolumeIcon />
+                <VolumeIcon
+                  sx={{
+                    transform: `scale(${volumeIconScale})`,
+                    transition: 'transform 0.15s ease',
+                  }}
+                />
               </Button>
             </Badge>
           </Badge>
@@ -238,27 +246,13 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
                 sx={{
                   display: 'flex',
                   justifyContent: 'space-between',
-                  alignItems: 'center',
+                  alignItems: 'baseline',
                 }}
               >
                 <Typography variant="subtitle2">Volume</Typography>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  <Typography variant="caption" color="text.secondary">
-                    {formatVolumeDb(volumeDb)}
-                  </Typography>
-                  {volumeActive && (
-                    <Tooltip title="Reset to default">
-                      <IconButton
-                        size="small"
-                        aria-label="Reset volume"
-                        onClick={() => setVolumeDb(DEFAULT_VOLUME_DB)}
-                        sx={{ p: 0.25 }}
-                      >
-                        <RestartAltIcon sx={{ fontSize: 16 }} />
-                      </IconButton>
-                    </Tooltip>
-                  )}
-                </Box>
+                <Typography variant="caption" color="text.secondary">
+                  {formatVolumeDb(volumeDb)}
+                </Typography>
               </Box>
               <Slider
                 aria-label="Volume"
@@ -267,14 +261,14 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
                 min={VOLUME_MIN_DB}
                 max={VOLUME_MAX_DB}
                 step={1}
-                marks={[{ value: 0 }]}
+                marks={[{ value: DEFAULT_VOLUME_DB }]}
                 onChange={(event, value) => {
                   const db = value as number;
-                  // Snap to the default while dragging, but leave keyboard
-                  // steps exact so every dB stays reachable with the arrows.
-                  setVolumeDb(
-                    event.type === 'keydown' ? db : snapVolumeToDefault(db)
-                  );
+                  // MUI emits keyboard changes as a `keydown` event and pointer
+                  // drags as mouse/touch events. Magnetize the default on a drag
+                  // only, so arrow-key steps stay exact and every dB is reachable.
+                  const fromKeyboard = event.type === 'keydown';
+                  setVolumeDb(fromKeyboard ? db : snapVolumeToDefault(db));
                 }}
                 sx={{ display: 'block', mt: 0.5, mb: 0, py: 0.5 }}
               />
@@ -332,6 +326,27 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
                   ))}
                 </ToggleButtonGroup>
               </Tooltip>
+            </Box>
+
+            <Box
+              sx={{
+                display: 'flex',
+                justifyContent: 'flex-end',
+                borderTop: 1,
+                borderColor: 'divider',
+                pt: 1,
+              }}
+            >
+              {/* Always enabled (not hidden when at defaults) so keyboard focus
+                  isn't lost the moment a reset returns everything to default. */}
+              <Button
+                size="small"
+                startIcon={<RestartAltIcon />}
+                onClick={onResetAudio}
+                sx={{ textTransform: 'none' }}
+              >
+                Reset
+              </Button>
             </Box>
           </Box>
         </Popover>

@@ -31,6 +31,7 @@ const audioControlProps = {
   setPan: vi.fn(),
   speed: 1,
   setSpeed: vi.fn(),
+  onResetAudio: vi.fn(),
 };
 
 describe('TranscriptActionsBar', () => {
@@ -524,9 +525,10 @@ describe('TranscriptActionsBar', () => {
     expect(screen.getByTestId('VolumeUpIcon')).toBeTruthy();
   });
 
-  it('reflects volume direction in the speaker icon', () => {
+  it('only swaps the speaker icon for mute; otherwise keeps the volume icon', () => {
     const { rerender } = renderBar({ volumeDb: -6 });
-    expect(screen.getByTestId('VolumeDownIcon')).toBeTruthy();
+    // A cut still shows the volume icon — the icon scale conveys direction.
+    expect(screen.getByTestId('VolumeUpIcon')).toBeTruthy();
 
     rerender(
       <TranscriptActionsBar
@@ -546,45 +548,28 @@ describe('TranscriptActionsBar', () => {
     expect(screen.getByTestId('VolumeOffIcon')).toBeTruthy();
   });
 
-  it('shows a reset control only when volume is off default, and resets to 0', () => {
-    const setVolumeDb = vi.fn();
-    const { rerender } = renderBar({ volumeDb: 0, setVolumeDb });
+  it('asks to reset all controls when "Reset" is clicked', () => {
+    const onResetAudio = vi.fn();
+    renderBar({ volumeDb: -6, pan: 1, speed: 1.5, onResetAudio });
     fireEvent.click(screen.getByRole('button', { name: 'audio controls' }));
-    expect(screen.queryByRole('button', { name: 'Reset volume' })).toBeNull();
 
-    rerender(
-      <TranscriptActionsBar
-        {...audioControlProps}
-        volumeDb={-6}
-        setVolumeDb={setVolumeDb}
-        searchedTimestamp={null}
-        hasNewerAudioSegments={false}
-        redactTranscripts={false}
-        setRedactTranscripts={mockSetRedactTranscripts}
-        dateTime={null}
-        setDateTime={vi.fn()}
-        alertFilter="all"
-        setAlertFilter={vi.fn()}
-        onClickViewLatest={vi.fn()}
-      />
-    );
+    fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Reset volume' }));
-    expect(setVolumeDb).toHaveBeenCalledWith(0);
+    expect(onResetAudio).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps keyboard volume steps exact near the default', () => {
+  it('keeps keyboard volume steps exact inside the snap zone', () => {
     const setVolumeDb = vi.fn();
-    renderBar({ volumeDb: 1, setVolumeDb });
+    renderBar({ volumeDb: 2, setVolumeDb });
     fireEvent.click(screen.getByRole('button', { name: 'audio controls' }));
 
     fireEvent.keyDown(screen.getByRole('slider', { name: 'Volume' }), {
       key: 'ArrowDown',
     });
 
-    // 1 → 0 by one step; the keyboard path is not snapped, so it lands on 0
-    // through the step itself, not a snap, and -1 stays reachable.
-    expect(setVolumeDb).toHaveBeenCalledWith(0);
+    // 2 → 1 by one step. A drag would snap 1 to the default (0); the keyboard
+    // path must land on 1, proving the snap is bypassed and ±1 dB stays reachable.
+    expect(setVolumeDb).toHaveBeenCalledWith(1);
   });
 
   it('disables the speed control for Safari users', () => {

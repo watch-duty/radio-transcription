@@ -103,6 +103,19 @@ describe('useAudioControls', () => {
     expect(localStorage.getItem('rt.audio.volumeDb.feed-1')).toBeNull();
   });
 
+  it('reset clears the feed overrides and re-inherits the global default', () => {
+    localStorage.setItem('rt.audio.volumeDb', '9'); // global default
+    localStorage.setItem('rt.audio.volumeDb.feed-1', '3'); // this feed's override
+
+    const { result } = renderHook(() => useAudioControls(FEED));
+    expect(result.current.volumeDb).toBe(3);
+
+    act(() => result.current.reset());
+
+    expect(localStorage.getItem('rt.audio.volumeDb.feed-1')).toBeNull();
+    expect(result.current.volumeDb).toBe(9); // falls back to the global default
+  });
+
   it('clamps an out-of-range stored volume', () => {
     localStorage.setItem('rt.audio.volumeDb.feed-1', '999');
     const { result } = renderHook(() => useAudioControls(FEED));
