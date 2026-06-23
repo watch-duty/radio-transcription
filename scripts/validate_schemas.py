@@ -56,8 +56,8 @@ def validate_proto(filepath: Path) -> bool:
         )
 
         if result.returncode != 0:
-            print(f"Error compiling '{filepath}':", file=sys.stderr)  # noqa: T201
-            print(result.stderr.decode("utf-8"), file=sys.stderr)  # noqa: T201
+            sys.stderr.write(f"Error compiling '{filepath}':\n")
+            sys.stderr.write(result.stderr.decode("utf-8") + "\n")
             return False
 
         with descriptor_set_path.open("rb") as f:
@@ -73,21 +73,18 @@ def validate_proto(filepath: Path) -> bool:
                 num_messages = len(fd.message_type)
                 if num_messages > 1:
                     message_names = [m.name for m in fd.message_type]
-                    print(  # noqa: T201
+                    sys.stderr.write(
                         f"Error: Pub/Sub schema '{target_filename}' has {num_messages} "
-                        f"top-level message types defined: {', '.join(message_names)}.",
-                        file=sys.stderr,
+                        f"top-level message types defined: {', '.join(message_names)}.\n"
                     )
-                    print(  # noqa: T201
+                    sys.stderr.write(
                         "GCP Pub/Sub schemas must contain exactly one top-level message type. "
-                        "Please nest helper messages inside the main message.",
-                        file=sys.stderr,
+                        "Please nest helper messages inside the main message.\n"
                     )
                     return False
                 if num_messages == 0:
-                    print(  # noqa: T201
-                        f"Error: Pub/Sub schema '{target_filename}' has no top-level message type defined.",
-                        file=sys.stderr,
+                    sys.stderr.write(
+                        f"Error: Pub/Sub schema '{target_filename}' has no top-level message type defined.\n"
                     )
                     return False
                 break
@@ -99,13 +96,13 @@ def main() -> None:
     protos_dir = Path("protos")
 
     if not protos_dir.is_dir():
-        print(f"No .proto files found in '{protos_dir}' directory.")  # noqa: T201
+        sys.stdout.write(f"No .proto files found in '{protos_dir}' directory.\n")
         sys.exit(0)
 
     proto_files = list(protos_dir.glob("*.proto"))
 
     if not proto_files:
-        print(f"No .proto files found in '{protos_dir}' directory.")  # noqa: T201
+        sys.stdout.write(f"No .proto files found in '{protos_dir}' directory.\n")
         sys.exit(0)
 
     errors = 0
@@ -118,7 +115,7 @@ def main() -> None:
 
     if errors > 0:
         sys.exit(1)
-    print("All Pub/Sub schemas validated successfully.")  # noqa: T201
+    sys.stdout.write("All Pub/Sub schemas validated successfully.\n")
 
 
 if __name__ == "__main__":
