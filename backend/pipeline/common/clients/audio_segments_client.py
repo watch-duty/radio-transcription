@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -120,6 +121,12 @@ class AsyncAudioSegmentsClient:
         """
         self.api_url = api_url.rstrip("/")
         self.max_retries = max_retries
+        transport = httpx.AsyncHTTPTransport(retries=max_retries)
+        self.client = httpx.AsyncClient(transport=transport)
+
+    async def close(self) -> None:
+        """Closes the underlying HTTP client session connection pool."""
+        await self.client.aclose()
 
     async def add_audio_segment_annotation(
         self,
@@ -144,7 +151,7 @@ class AsyncAudioSegmentsClient:
             headers["traceparent"] = traceparent
 
         if is_gcp_env():
-            token = get_id_token(self.api_url)
+            token = await asyncio.to_thread(get_id_token, self.api_url)
             headers["Authorization"] = f"Bearer {token}"
 
         payload = {
@@ -152,15 +159,13 @@ class AsyncAudioSegmentsClient:
             "data": data,
         }
 
-        transport = httpx.AsyncHTTPTransport(retries=self.max_retries)
-        async with httpx.AsyncClient(transport=transport) as client:
-            response = await client.post(
-                f"{self.api_url}/v1/audio_segments/{audio_segment_id}/annotations",
-                json=payload,
-                headers=headers,
-                timeout=10.0,
-            )
-            response.raise_for_status()
+        response = await self.client.post(
+            f"{self.api_url}/v1/audio_segments/{audio_segment_id}/annotations",
+            json=payload,
+            headers=headers,
+            timeout=10.0,
+        )
+        response.raise_for_status()
 
     async def add_audio_segment(self, segment: dict) -> None:
         """
@@ -178,15 +183,13 @@ class AsyncAudioSegmentsClient:
             headers["traceparent"] = traceparent
 
         if is_gcp_env():
-            token = get_id_token(self.api_url)
+            token = await asyncio.to_thread(get_id_token, self.api_url)
             headers["Authorization"] = f"Bearer {token}"
 
-        transport = httpx.AsyncHTTPTransport(retries=self.max_retries)
-        async with httpx.AsyncClient(transport=transport) as client:
-            response = await client.post(
-                f"{self.api_url}/v1/audio_segments",
-                json=segment,
-                headers=headers,
-                timeout=10.0,
-            )
-            response.raise_for_status()
+        response = await self.client.post(
+            f"{self.api_url}/v1/audio_segments",
+            json=segment,
+            headers=headers,
+            timeout=10.0,
+        )
+        response.raise_for_status()

@@ -171,13 +171,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         processor = None
     yield
     # Clean up client connection pools/channels on exit
-    if processor and processor.transcriber:
-        try:
-            await processor.transcriber.close()
-        except Exception:
-            logger.exception(
-                "Failed to close transcriber client on lifespan shutdown"
-            )
+    if processor:
+        if processor.transcriber:
+            try:
+                await processor.transcriber.close()
+            except Exception:
+                logger.exception(
+                    "Failed to close transcriber client on lifespan shutdown"
+                )
+        if processor.audio_segments_client:
+            try:
+                await processor.audio_segments_client.close()
+            except Exception:
+                logger.exception(
+                    "Failed to close audio segments client on lifespan shutdown"
+                )
     container.reset_clients()
 
 
