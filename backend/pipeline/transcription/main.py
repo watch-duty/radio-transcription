@@ -4,6 +4,7 @@ Triggered by Pub/Sub push events containing serialized NormalizedAudio
 claim-check metadata. Delegates processing to TranscriptionEventProcessor.
 """
 
+import asyncio
 import logging
 import os
 from collections.abc import AsyncGenerator
