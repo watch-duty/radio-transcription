@@ -58,37 +58,33 @@ def test_runtime_service_actor_uses_local_fallback_outside_gcp() -> None:
         mock.patch.object(actor_identity, "is_gcp_env", return_value=False),
         mock.patch.object(
             actor_identity,
-            "_start_metadata_refresh_thread",
-        ) as start_refresh,
+            "_fetch_metadata_service_account_email",
+        ) as fetch_metadata,
     ):
         actor_id = actor_identity.runtime_service_actor_id()
 
     assert actor_id == "service_account:local:development"
-    start_refresh.assert_not_called()
+    fetch_metadata.assert_not_called()
 
 
 def test_runtime_service_actor_caches_gcp_metadata_email() -> None:
-    with mock.patch.object(
-        actor_identity,
-        "_fetch_metadata_service_account_email",
-        return_value="test-sa@example.iam.gserviceaccount.com",
-    ):
-        actor_identity._refresh_metadata_actor_cache()
-
     with (
         mock.patch.object(actor_identity, "is_gcp_env", return_value=True),
         mock.patch.object(
             actor_identity,
-            "_start_metadata_refresh_thread",
-        ) as start_refresh,
+            "_fetch_metadata_service_account_email",
+            return_value="test-sa@example.iam.gserviceaccount.com",
+        ) as fetch_metadata,
     ):
         actor_id = actor_identity.runtime_service_actor_id()
+        repeated_actor_id = actor_identity.runtime_service_actor_id()
 
     assert (
         actor_id
         == "service_account:gcp:test-sa@example.iam.gserviceaccount.com"
     )
-    start_refresh.assert_not_called()
+    assert repeated_actor_id == actor_id
+    fetch_metadata.assert_called_once_with()
 
 
 def test_runtime_service_actor_returns_unresolved_when_gcp_metadata_fails(
@@ -100,22 +96,13 @@ def test_runtime_service_actor_returns_unresolved_when_gcp_metadata_fails(
             actor_identity,
             "_fetch_metadata_service_account_email",
             side_effect=RuntimeError("metadata unavailable"),
-        ),
-    ):
-        actor_identity._refresh_metadata_actor_cache()
-
-    assert "Failed to resolve GCP service-account actor" in caplog.text
-
-    with (
+        ) as fetch_metadata,
         mock.patch.object(actor_identity, "is_gcp_env", return_value=True),
-        mock.patch.object(
-            actor_identity,
-            "_start_metadata_refresh_thread",
-        ) as start_refresh,
     ):
         actor_id = actor_identity.runtime_service_actor_id()
         repeated_actor_id = actor_identity.runtime_service_actor_id()
 
     assert actor_id == "service_account:gcp:unresolved"
     assert repeated_actor_id == "service_account:gcp:unresolved"
-    start_refresh.assert_not_called()
+    assert "Failed to resolve GCP service-account actor" in caplog.text
+    fetch_metadata.assert_called_once_with()

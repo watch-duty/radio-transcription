@@ -35,7 +35,8 @@ WITH guarded_columns(attname) AS (
         ('last_processed_filename'),
         ('last_bookmark_time'),
         ('failure_count'),
-        ('status_reason_detail')
+        ('status_reason_detail'),
+        ('audit_revision')
 ),
 feed_indexes AS (
     SELECT

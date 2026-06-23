@@ -127,11 +127,8 @@ BEGIN
     END IF;
 END $$;
 
-CREATE INDEX IF NOT EXISTS idx_feed_audit_events_feed_revision
-    ON feed_audit_events (feed_id, feed_revision DESC);
-
 CREATE INDEX IF NOT EXISTS idx_feed_audit_events_feed_occurred_at
-    ON feed_audit_events (feed_id, occurred_at DESC, id DESC);
+    ON feed_audit_events (feed_id, occurred_at DESC, feed_revision DESC);
 
 CREATE INDEX IF NOT EXISTS idx_feed_audit_events_occurred_at
     ON feed_audit_events (occurred_at);

@@ -97,7 +97,8 @@ def test_migration_defines_delete_safe_audit_schema() -> None:
         "feed_audit_events_revision_positive",
         "feed_audit_events_feed_revision_unique",
         "feed_audit_events_json_object_shape",
-        "idx_feed_audit_events_feed_revision",
+        "idx_feed_audit_events_feed_occurred_at",
+        "ON feed_audit_events (feed_id, occurred_at DESC, feed_revision DESC)",
         "jsonb_typeof(before_values) = 'object'",
         "jsonb_typeof(after_values) = 'object'",
     ):
@@ -174,6 +175,7 @@ def test_migration_defines_status_reason_detail_and_hot_guard() -> None:
 
     assert "WITH guarded_columns(attname) AS" in guard_sql
     assert "('status_reason_detail')" in guard_sql
+    assert "('audit_revision')" in guard_sql
     assert "('retry_after')" not in guard_sql
     for token in (
         "feed_indexes AS",

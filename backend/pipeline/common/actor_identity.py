@@ -67,46 +67,30 @@ def runtime_service_actor_id() -> str:
     if not is_gcp_env():
         return LOCAL_SERVICE_ACCOUNT_ACTOR_ID
 
+    should_refresh = False
     with _runtime_actor_lock:
         if _runtime_actor_state.cached_gcp_actor_id is not None:
             return _runtime_actor_state.cached_gcp_actor_id
 
-        _schedule_metadata_refresh_locked(now=time.monotonic())
+        now = time.monotonic()
+        if (
+            not _runtime_actor_state.refresh_in_flight
+            and now >= _runtime_actor_state.next_refresh_monotonic
+        ):
+            _runtime_actor_state.refresh_in_flight = True
+            should_refresh = True
+
+    if should_refresh:
+        _refresh_metadata_actor_cache()
+        with _runtime_actor_lock:
+            if _runtime_actor_state.cached_gcp_actor_id is not None:
+                return _runtime_actor_state.cached_gcp_actor_id
 
     return UNRESOLVED_GCP_SERVICE_ACCOUNT_ACTOR_ID
 
 
 def _contains_whitespace(value: str) -> bool:
     return any(char.isspace() for char in value)
-
-
-def _schedule_metadata_refresh_locked(*, now: float) -> None:
-    if _runtime_actor_state.refresh_in_flight:
-        return
-    if now < _runtime_actor_state.next_refresh_monotonic:
-        return
-
-    _runtime_actor_state.refresh_in_flight = True
-    try:
-        _start_metadata_refresh_thread()
-    except Exception:
-        _runtime_actor_state.refresh_in_flight = False
-        _runtime_actor_state.next_refresh_monotonic = (
-            now + _METADATA_RETRY_SECONDS
-        )
-        logger.exception(
-            "Failed to start GCP service-account actor refresh; using actor_id=%s",
-            UNRESOLVED_GCP_SERVICE_ACCOUNT_ACTOR_ID,
-        )
-
-
-def _start_metadata_refresh_thread() -> None:
-    thread = threading.Thread(
-        target=_refresh_metadata_actor_cache,
-        name="gcp-service-account-actor-refresh",
-        daemon=True,
-    )
-    thread.start()
 
 
 def _refresh_metadata_actor_cache() -> None:
