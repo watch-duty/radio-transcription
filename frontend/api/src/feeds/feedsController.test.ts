@@ -110,6 +110,27 @@ describe('FeedsController', () => {
       ]);
     });
 
+    it('should map backend status_reason_detail to frontend quarantineReason', async () => {
+      mockRequest.mockResolvedValueOnce({
+        data: [
+          {
+            ...mockBackendFeed,
+            status_reason_detail: 'provider timeout',
+          },
+        ],
+      });
+
+      const controller = new FeedsController();
+      const result = await controller.listFeeds();
+
+      expect(result).toEqual([
+        {
+          ...expectedFrontendFeed,
+          quarantineReason: 'provider timeout',
+        },
+      ]);
+    });
+
     it('should throw error on API failure', async () => {
       mockRequest.mockRejectedValueOnce(new Error('Network Error'));
       const controller = new FeedsController();

@@ -245,9 +245,9 @@ feed.
 A post-capture ingestion failure after source capture has succeeded or
 partially succeeded. The source feed may be healthy, so v1 keeps these failures
 outside the feed quarantine budget while preserving visibility for repair and
-replay work. Echo v1 records these failures as non-budgeted status and returns
-success for the object notification to avoid retry loops and duplicate Pub/Sub
-publish risk until a durable hold/replay lane exists.
+replay work. Echo v1 records these failures as non-budgeted status; transient
+pipeline delivery failures still raise so the object notification can retry
+instead of silently losing captured audio.
 
 ### Post-Bookmark Publish Failure
 

@@ -1825,6 +1825,38 @@ async def test_update_feed_succeeds(
     assert "last_heartbeat" not in after_values
 
 
+async def test_update_feed_no_op_does_not_write_audit_event(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """No-op metadata saves return the feed without advancing audit history."""
+    tags = [{"key": "county", "value": "Fulton"}]
+    feed = await store.create_feed(
+        name="Original Name",
+        source_type="bcfy_feeds",
+        source_feed_id="src_123",
+        tags=tags,
+        actor_id=_TEST_ACTOR_ID,
+    )
+    revision_before = await _get_feed_audit_revision(db_pool, feed["id"])
+
+    updated_feed = await store.update_feed(
+        feed_id=feed["id"],
+        name="Original Name",
+        tags=tags,
+        actor_id=_TEST_ACTOR_ID,
+    )
+
+    assert updated_feed is not None
+    assert updated_feed["name"] == "Original Name"
+    assert updated_feed["tags"] == tags
+    assert (
+        await _get_feed_audit_revision(db_pool, feed["id"]) == revision_before
+    )
+    audit_rows = await _fetch_audit_events(db_pool, feed["id"])
+    assert [row["action"] for row in audit_rows] == ["feed.created"]
+    assert [row["feed_revision"] for row in audit_rows] == [1]
+
+
 async def test_update_feed_already_exists(
     db_pool: asyncpg.Pool, store: FeedStore
 ) -> None:

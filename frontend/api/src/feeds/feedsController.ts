@@ -47,7 +47,7 @@ interface FeedBackend extends BaseFeedBackend {
   status: BackendFeedStatus;
   last_heartbeat: string | null;
   tags?: Tag[];
-  quarantine_reason?: string | null;
+  status_reason_detail?: string | null;
   status_reason: BackendFeedStatusReason | null;
   last_speech_segment_timestamp: string | null;
 }
@@ -153,7 +153,7 @@ function convertFeedBackend(response: FeedBackend): Feed {
     substatus: response.status,
     lastHeartbeat: lastHeartbeatParsed,
     tags: response.tags,
-    quarantineReason: response.quarantine_reason ?? undefined,
+    quarantineReason: response.status_reason_detail ?? undefined,
     statusReason: convertFeedStatusReason(response.status_reason),
     lastSpeechSegmentTimestamp: lastSpeechParsed,
   };
