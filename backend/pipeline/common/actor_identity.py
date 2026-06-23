@@ -14,6 +14,7 @@ GOOGLE_USER_ACTOR_PREFIX = "user:google:"
 GCP_SERVICE_ACCOUNT_ACTOR_PREFIX = "service_account:gcp:"
 LOCAL_SERVICE_ACCOUNT_ACTOR_ID = "service_account:local:development"
 UNRESOLVED_GCP_SERVICE_ACCOUNT_ACTOR_ID = "service_account:gcp:unresolved"
+MAX_ACTOR_ID_LENGTH = 512
 
 _METADATA_SERVICE_ACCOUNT_EMAIL_URL = (
     "http://metadata.google.internal/computeMetadata/v1/"
@@ -44,10 +45,17 @@ def actor_id_from_google_sub(sub: str) -> str:
         msg = "Google user sub must not contain whitespace"
         raise ValueError(msg)
 
-    return f"{GOOGLE_USER_ACTOR_PREFIX}{normalized_sub}"
+    actor_id = f"{GOOGLE_USER_ACTOR_PREFIX}{normalized_sub}"
+    if len(actor_id) > MAX_ACTOR_ID_LENGTH:
+        msg = "Google user actor ID is too long"
+        raise ValueError(msg)
+
+    return actor_id
 
 
 def is_well_formed_google_user_actor_id(actor_id: str) -> bool:
+    if len(actor_id) > MAX_ACTOR_ID_LENGTH:
+        return False
     if not actor_id.startswith(GOOGLE_USER_ACTOR_PREFIX):
         return False
 

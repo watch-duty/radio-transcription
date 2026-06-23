@@ -28,12 +28,21 @@ def test_google_user_actor_rejects_blank_or_whitespace_sub(sub: str) -> None:
         actor_identity.actor_id_from_google_sub(sub)
 
 
+def test_google_user_actor_rejects_too_long_sub() -> None:
+    prefix_len = len(actor_identity.GOOGLE_USER_ACTOR_PREFIX)
+    sub = "x" * (actor_identity.MAX_ACTOR_ID_LENGTH - prefix_len + 1)
+
+    with pytest.raises(ValueError, match="too long"):
+        actor_identity.actor_id_from_google_sub(sub)
+
+
 @pytest.mark.parametrize(
     ("actor_id", "expected"),
     [
         ("user:google:admin-sub-123", True),
         ("user:google:", False),
         ("user:google:admin sub", False),
+        ("user:google:" + ("x" * 502), False),
         ("service_account:gcp:test@example.iam.gserviceaccount.com", False),
         ("service:collector-runtime", False),
     ],
