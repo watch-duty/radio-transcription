@@ -119,9 +119,21 @@ def test_migration_defines_delete_safe_audit_schema() -> None:
     for pattern in (
         feed_fk_pattern,
         r"ON\s+DELETE\s+CASCADE",
-        r"DROP\s+COLUMN\s+quarantine_reason",
     ):
         assert re.search(pattern, sql, flags=re.IGNORECASE) is None
+
+
+def test_deprecated_detail_column_drop_migration_is_narrow() -> None:
+    text = _read(
+        "terraform/modules/alloydb/sql/ingestion/030_drop_quarantine_reason.sql"
+    )
+    normalized = _normalized_sql(text)
+
+    assert (
+        "ALTER TABLE feeds DROP COLUMN IF EXISTS quarantine_reason"
+        in normalized
+    )
+    assert "status_reason_detail" not in normalized
 
 
 def test_migration_defines_actor_and_action_constraints() -> None:
