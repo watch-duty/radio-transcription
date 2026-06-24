@@ -295,6 +295,20 @@ class TestTracingUtils(unittest.TestCase):
         attrs8 = extract_cloud_event_attributes(ce8)
         self.assertEqual(attrs8.get("traceparent"), "tp_plain")
 
+        # 9. Raw Pub/Sub push notification dictionary (message at top level of dict)
+        ce9 = {
+            "message": {
+                "attributes": {
+                    "traceparent": "tp9",
+                    "baggage": "bg9",
+                },
+                "data": "ey...",
+            }
+        }
+        attrs9 = extract_cloud_event_attributes(ce9)
+        self.assertEqual(attrs9.get("traceparent"), "tp9")
+        self.assertEqual(attrs9.get("baggage"), "bg9")
+
     @patch(
         "backend.pipeline.common.tracing_utils.is_gcp_env", return_value=True
     )

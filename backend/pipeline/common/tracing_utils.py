@@ -404,13 +404,17 @@ def extract_cloud_event_attributes(
     if hasattr(cloud_event, "data"):
         data = cloud_event.data
         ce_attrs = getattr(cloud_event, "attributes", None)
+        pubsub_container = data
     else:
         data_dict: Mapping[Any, Any] = cloud_event
         data = data_dict.get("data") or data_dict.get(b"data")
         ce_attrs = data_dict.get("attributes") or data_dict.get(b"attributes")
+        pubsub_container = data if data is not None else data_dict
 
     # 1. Extract from nested Pub/Sub message attributes
-    combined_attributes.update(_extract_nested_pubsub_attributes(data))
+    combined_attributes.update(
+        _extract_nested_pubsub_attributes(pubsub_container)
+    )
 
     # 2. Extract from top-level CloudEvent attributes
     if isinstance(ce_attrs, dict):
