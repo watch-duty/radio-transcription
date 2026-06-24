@@ -59,6 +59,11 @@ class TranscriptionServiceContainer:
         self._publisher = None
         self._processor = None
 
+    @property
+    def processor(self) -> TranscriptionEventProcessor | None:
+        """Returns the cached processor if it has been warmed up, otherwise None."""
+        return self._processor
+
     @fork_checked
     def get_transcriber(self, project_id: str) -> Transcriber:
         """Warms up and caches the transcriber instance.
@@ -161,17 +166,13 @@ class TranscriptionServiceContainer:
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """Warms up container services on startup and resets/closes them on shutdown."""
     container = TranscriptionServiceContainer()
-    try:
-        processor = container.get_processor()
-        app.state.processor = processor
-    except Exception:
-        logger.exception(
-            "Failed to eager warm-up container services on startup"
-        )
-        processor = None
+    container.eager_warmup()
+    if container.processor:
+        app.state.processor = container.processor
     yield
     # Clean up client connection pools/channels on exit
-    if processor:
+    if container.processor:
+        processor = container.processor
         if processor.transcriber:
             try:
                 await processor.transcriber.close()
