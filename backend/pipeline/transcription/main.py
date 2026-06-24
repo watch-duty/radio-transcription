@@ -9,15 +9,7 @@ import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-<<<<<<< HEAD
-<<<<<<< HEAD
 from fastapi import FastAPI, HTTPException, Request, Response, status
-=======
-from fastapi import FastAPI, Request, Response, status
->>>>>>> bfb4fabe ([GOO-680] refactor(transcription): migrate container to app.state pattern and close transcriber client)
-=======
-from fastapi import FastAPI, HTTPException, Request, Response, status
->>>>>>> 4c96249d ([GOO-680] refactor(transcription): safety check container._processor on lifespan shutdown and annotate lifespan return type)
 from google.cloud import pubsub_v1
 
 from backend.pipeline.common.clients import audio_segments_client
@@ -198,21 +190,11 @@ async def transcribe_claim_check(envelope: dict, request: Request) -> Response:
     """Entry point for Pub/Sub push HTTP POST requests."""
     setup_tracing(service_name="transcription-service", use_batch=False)
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 4c96249d ([GOO-680] refactor(transcription): safety check container._processor on lifespan shutdown and annotate lifespan return type)
     processor = getattr(request.app.state, "processor", None)
     if not processor:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Transcription service is not initialized",
         )
-<<<<<<< HEAD
-=======
-    processor = request.app.state.processor
->>>>>>> bfb4fabe ([GOO-680] refactor(transcription): migrate container to app.state pattern and close transcriber client)
-=======
->>>>>>> 4c96249d ([GOO-680] refactor(transcription): safety check container._processor on lifespan shutdown and annotate lifespan return type)
     await processor.process_event(envelope)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
