@@ -1212,7 +1212,7 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
     async def test_omitted_status_reason_passes_none_for_sql_fallback(
         self,
     ) -> None:
-        """Omitted status_reason lets SQL apply the compatibility fallback."""
+        """Omitted status_reason lets SQL apply the default fallback."""
         pool = make_mock_pool(transaction=True)
         pool.acquired_connection.fetchrow.return_value = _failure_update_row()
         store = FeedStore(pool)

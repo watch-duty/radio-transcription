@@ -2,8 +2,8 @@
 
 The helper functions here encode policy that is easier to miss from an
 individual collector: feed-level ownership should be bounded, source-aware,
-    and promoted only at a source-specific observation boundary. Status reason
-    details remain diagnostic text. See README.md in this directory for the
+and promoted only at a source-specific observation boundary. Status reason
+details remain diagnostic text. See README.md in this directory for the
 operator-facing rationale.
 """
 

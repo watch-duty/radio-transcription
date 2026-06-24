@@ -1008,7 +1008,7 @@ async def test_failure_without_status_reason_records_unexpected_fallback(
     db_pool: asyncpg.Pool,
     store: FeedStore,
 ) -> None:
-    """Legacy failure calls store the temporary compatibility fallback reason."""
+    """Omitted status_reason stores the default unexpected-error reason."""
     worker = uuid.uuid4()
     feed_id = await _insert_feed(
         db_pool,
