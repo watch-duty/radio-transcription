@@ -14,10 +14,10 @@ interface SegmentInfoPopoverProps {
   triggerSnackbar: (message: string) => void;
 }
 
-export const SegmentInfoPopover: React.FC<SegmentInfoPopoverProps> = ({
+export function SegmentInfoPopover({
   audioSegment,
   triggerSnackbar,
-}) => {
+}: SegmentInfoPopoverProps) {
   const [infoAnchorEl, setInfoAnchorEl] = useState<HTMLElement | null>(null);
 
   const handleInfoClick = (event: React.MouseEvent<HTMLElement>) => {
@@ -31,19 +31,24 @@ export const SegmentInfoPopover: React.FC<SegmentInfoPopoverProps> = ({
 
   const { id, externalAudioSegmentId } = audioSegment;
 
+  const open = Boolean(infoAnchorEl);
+  const popoverId = open ? `segment-info-popover-${id}` : undefined;
+
   return (
     <>
       <Tooltip title="View segment info">
         <IconButton
           size="small"
           aria-label="view segment info"
+          aria-describedby={popoverId}
           onClick={handleInfoClick}
         >
           <InfoOutlinedIcon fontSize="small" />
         </IconButton>
       </Tooltip>
       <Popover
-        open={Boolean(infoAnchorEl)}
+        id={popoverId}
+        open={open}
         anchorEl={infoAnchorEl}
         onClose={handleInfoClose}
         anchorOrigin={{
@@ -157,6 +162,4 @@ export const SegmentInfoPopover: React.FC<SegmentInfoPopoverProps> = ({
       </Popover>
     </>
   );
-};
-
-export default SegmentInfoPopover;
+}

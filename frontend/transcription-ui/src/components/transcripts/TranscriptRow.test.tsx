@@ -415,7 +415,9 @@ describe('TranscriptRow', () => {
       </MemoryRouter>
     );
 
-    expect(screen.queryByLabelText('view segment info')).toBeNull();
+    expect(
+      screen.queryByLabelText('view segment info')
+    ).not.toBeInTheDocument();
   });
 
   it('renders segment info button for admins', () => {
@@ -439,6 +441,6 @@ describe('TranscriptRow', () => {
       </MemoryRouter>
     );
 
-    expect(screen.getByLabelText('view segment info')).toBeTruthy();
+    expect(screen.getByLabelText('view segment info')).toBeInTheDocument();
   });
 });

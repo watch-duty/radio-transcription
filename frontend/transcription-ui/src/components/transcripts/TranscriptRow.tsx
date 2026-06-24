@@ -18,7 +18,7 @@ import {
 } from '../../utils/annotationUtils';
 import { formatDuration } from '../../utils/timeUtils';
 import AudioPlayer from '../audio/AudioPlayer';
-import SegmentInfoPopover from '../common/SegmentInfoPopover';
+import { SegmentInfoPopover } from '../common/SegmentInfoPopover';
 import AlertTooltip from './AlertTooltip';
 import HighlightedTranscript from './HighlightedTranscript';
 

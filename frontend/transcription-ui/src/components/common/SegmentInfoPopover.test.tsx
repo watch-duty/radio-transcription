@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { AudioClassification, type AudioSegment } from '@transcription/common';
 
-import SegmentInfoPopover from './SegmentInfoPopover';
+import { SegmentInfoPopover } from './SegmentInfoPopover';
 
 const mockAudioSegment: AudioSegment = {
   id: 'tx-123',
@@ -39,7 +39,7 @@ describe('SegmentInfoPopover', () => {
     cleanup();
   });
 
-  it('renders info button and opens popover with details on click', () => {
+  it('renders info button and opens popover with details on click', async () => {
     const segmentWithExtId = {
       ...mockAudioSegment,
       externalAudioSegmentId: 'ext-segment-abc-123',
@@ -54,18 +54,18 @@ describe('SegmentInfoPopover', () => {
 
     // Verify info button is rendered
     const infoButton = screen.getByLabelText('view segment info');
-    expect(infoButton).toBeTruthy();
+    expect(infoButton).toBeInTheDocument();
 
     // Popover content shouldn't be visible yet
-    expect(screen.queryByText('Segment Details')).toBeNull();
+    expect(screen.queryByText('Segment Details')).not.toBeInTheDocument();
 
     // Click to open popover
     fireEvent.click(infoButton);
 
     // Verify popover is visible
-    expect(screen.getByText('Segment Details')).toBeTruthy();
-    expect(screen.getByText('tx-123')).toBeTruthy();
-    expect(screen.getByText('ext-segment-abc-123')).toBeTruthy();
+    expect(await screen.findByText('Segment Details')).toBeInTheDocument();
+    expect(screen.getByText('tx-123')).toBeInTheDocument();
+    expect(screen.getByText('ext-segment-abc-123')).toBeInTheDocument();
 
     // Test copying segment ID from popover
     const copySegmentIdBtn = screen.getByLabelText('copy segment id');
@@ -84,7 +84,7 @@ describe('SegmentInfoPopover', () => {
     );
   });
 
-  it('does not render external segment ID inside popover if not present', () => {
+  it('does not render external segment ID inside popover if not present', async () => {
     render(
       <SegmentInfoPopover
         audioSegment={mockAudioSegment}
@@ -95,8 +95,10 @@ describe('SegmentInfoPopover', () => {
     const infoButton = screen.getByLabelText('view segment info');
     fireEvent.click(infoButton);
 
-    expect(screen.getByText('Segment Details')).toBeTruthy();
-    expect(screen.getByText('tx-123')).toBeTruthy();
-    expect(screen.queryByLabelText('copy external segment id')).toBeNull();
+    expect(await screen.findByText('Segment Details')).toBeInTheDocument();
+    expect(screen.getByText('tx-123')).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText('copy external segment id')
+    ).not.toBeInTheDocument();
   });
 });
