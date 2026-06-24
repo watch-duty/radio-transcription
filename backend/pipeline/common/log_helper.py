@@ -173,19 +173,14 @@ class TaskJsonFormatter(logging.Formatter):
             "logger": record.name,
         }
 
-        # Check if the message is already a JSON string to avoid double-serialization
-        if (
-            isinstance(message, str)
-            and message.strip().startswith("{")
-            and message.strip().endswith("}")
-        ):
-            try:
-                parsed_msg = json.loads(message)
-            except json.JSONDecodeError:
-                parsed_msg = None
-
+        # If the message is already serialized JSON, merge its fields to
+        # avoid double-serialization.
+        try:
+            parsed_msg = json.loads(message)
             if isinstance(parsed_msg, dict):
                 log_record.update(parsed_msg)
+        except (json.JSONDecodeError, TypeError):
+            pass
 
         # Extract custom extra attributes
         log_record.update(
@@ -233,19 +228,14 @@ class StructuredMessageFilter(logging.Filter):
             "logger": record.name,
         }
 
-        # Check if the message is already a JSON string to avoid double-serialization
-        if (
-            isinstance(message, str)
-            and message.strip().startswith("{")
-            and message.strip().endswith("}")
-        ):
-            try:
-                parsed_msg = json.loads(message)
-            except json.JSONDecodeError:
-                parsed_msg = None
-
+        # If the message is already serialized JSON, merge its fields to
+        # avoid double-serialization.
+        try:
+            parsed_msg = json.loads(message)
             if isinstance(parsed_msg, dict):
                 log_record.update(parsed_msg)
+        except (json.JSONDecodeError, TypeError):
+            pass
 
         # Extract custom extra attributes
         log_record.update(
