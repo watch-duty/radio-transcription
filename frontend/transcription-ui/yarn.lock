@@ -1921,7 +1921,8 @@
     yaml-diff-patch "2.0.0"
 
 "@transcription/common@link:../common":
-  version "1.0.0"
+  version "0.0.0"
+  uid ""
 
 "@tree-sitter-grammars/tree-sitter-yaml@=0.7.1":
   version "0.7.1"
