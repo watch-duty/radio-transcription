@@ -22,7 +22,7 @@ from backend.pipeline.storage import (
     feed_audit_sql,
     feed_queries,
     feed_store,
-    quarantine_reason,
+    status_reason_detail,
 )
 from backend.pipeline.storage.feed_store import (
     FeedStatus,
@@ -40,7 +40,7 @@ _WORKER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _STATUS_REASON_UPDATED_AT = datetime.datetime(
     2026, 5, 29, 12, 0, tzinfo=datetime.UTC
 )
-_FEEDS_SERVICE_ACTOR_ID = "user:google:admin-sub-123"
+_FEEDS_SERVICE_ACTOR_ID = "user:google:admin@example.com"
 _COLLECTOR_SERVICE_ACCOUNT_ACTOR_ID = (
     "service_account:gcp:123456789012345678901"
 )
@@ -83,7 +83,7 @@ def _full_feed_row(**overrides: object) -> dict[str, object]:
         "status": "unclaimed",
         "status_reason": None,
         "status_reason_updated_at": None,
-        "quarantine_reason": None,
+        "status_reason_detail": None,
         "failure_count": 0,
         "retry_after": None,
         "worker_id": None,
@@ -91,7 +91,6 @@ def _full_feed_row(**overrides: object) -> dict[str, object]:
         "last_processed_filename": None,
         "last_bookmark_time": None,
         "created_at": datetime.datetime(2026, 4, 10, tzinfo=datetime.UTC),
-        "status_reason_detail": None,
         "feed_revision": 1,
         "source_feed_id": "123",
         "tags": "[]",
@@ -518,9 +517,6 @@ class TestFeedAuditSql(unittest.TestCase):
         ):
             self.assertIn(key, snapshot_sql)
 
-        self.assertNotIn("'quarantine_reason'", snapshot_sql)
-        self.assertNotIn("'last_bookmark_time'", snapshot_sql)
-
         for sql in (
             feed_queries.UPDATE_FEED_SQL,
             feed_queries.RESET_FEED_SQL,
@@ -546,7 +542,6 @@ class TestFeedAuditSql(unittest.TestCase):
         sql = _normalized_sql(feed_queries.RESET_FEED_SQL)
 
         self.assertIn("status_reason_detail = NULL", sql)
-        self.assertIn("quarantine_reason = NULL", sql)
         self.assertIn("RETURNING feeds.*", sql)
 
 
@@ -765,14 +760,13 @@ class TestStatusReasonClearSql(unittest.TestCase):
         )
         self.assertNotIn("SET status", sql)
 
-    def test_reset_sql_clears_stale_reason_and_raw_quarantine_reason(
+    def test_reset_sql_clears_stale_reason_and_status_reason_detail(
         self,
     ) -> None:
         sql = _sql_without_comments(feed_queries.RESET_FEED_SQL)
 
-        self.assertIn("quarantine_reason = NULL", sql)
-        self.assertIn("status_reason = NULL", sql)
         self.assertIn("status_reason_detail = NULL", sql)
+        self.assertIn("status_reason = NULL", sql)
         self.assertRegex(
             sql,
             r"status_reason_updated_at = CASE\s+"
@@ -1234,14 +1228,16 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[-2], "raw")
         self.assertEqual(args[-1], _COLLECTOR_SERVICE_ACCOUNT_ACTOR_ID)
 
-    async def test_failure_write_has_no_separate_quarantine_reason_parameter(
+    async def test_failure_write_passes_status_reason_detail(
         self,
     ) -> None:
-        """Failure writes send status reason and detail only."""
+        """Failure writes send status reason and bounded detail."""
         pool = make_mock_pool(transaction=True)
         pool.acquired_connection.fetchrow.return_value = _failure_update_row()
         store = FeedStore(pool)
-        long_reason = "x" * (quarantine_reason.MAX_QUARANTINE_REASON_LENGTH + 1)
+        long_reason = "x" * (
+            status_reason_detail.MAX_STATUS_REASON_DETAIL_LENGTH + 1
+        )
 
         await store.report_feed_failure(
             _FEED_ID,
@@ -1257,7 +1253,7 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         reason_arg = args[-2]
         self.assertEqual(
             len(reason_arg),
-            quarantine_reason.MAX_QUARANTINE_REASON_LENGTH,
+            status_reason_detail.MAX_STATUS_REASON_DETAIL_LENGTH,
         )
         self.assertTrue(reason_arg.endswith("[truncated]"))
 
@@ -1266,7 +1262,9 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         """Long diagnostic detail is capped before persistence."""
         pool = make_mock_pool(transaction=True)
-        long_reason = "x" * (quarantine_reason.MAX_QUARANTINE_REASON_LENGTH + 1)
+        long_reason = "x" * (
+            status_reason_detail.MAX_STATUS_REASON_DETAIL_LENGTH + 1
+        )
         pool.acquired_connection.fetchrow.return_value = _failure_update_row()
         store = FeedStore(pool)
 
@@ -1281,7 +1279,7 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         detail_arg = pool.acquired_connection.fetchrow.await_args.args[-2]
         self.assertEqual(
             len(detail_arg),
-            quarantine_reason.MAX_QUARANTINE_REASON_LENGTH,
+            status_reason_detail.MAX_STATUS_REASON_DETAIL_LENGTH,
         )
         self.assertTrue(detail_arg.endswith("[truncated]"))
 

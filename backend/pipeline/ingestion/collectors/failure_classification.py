@@ -2,8 +2,8 @@
 
 The helper functions here encode policy that is easier to miss from an
 individual collector: feed-level ownership should be bounded, source-aware,
-and promoted only at a source-specific observation boundary. Quarantine
-reasons remain diagnostic text. See README.md in this directory for the
+    and promoted only at a source-specific observation boundary. Status reason
+    details remain diagnostic text. See README.md in this directory for the
 operator-facing rationale.
 """
 
@@ -22,7 +22,7 @@ MISSING_SOURCE_FEED_ID_REASON = "missing_source_feed_id"
 
 @dataclasses.dataclass(frozen=True)
 class FailureInfo:
-    """Feed status plus quarantine-reason text before scope is applied."""
+    """Feed status plus detail text before scope is applied."""
 
     status_reason: FeedStatusReason
     reason: str

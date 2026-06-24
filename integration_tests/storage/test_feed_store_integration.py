@@ -96,8 +96,8 @@ async def _get_feed_diagnostics(
     """Read lifecycle and diagnostic feed fields from the database."""
     row = await pool.fetchrow(
         "SELECT status, failure_count, worker_id, fencing_token,"
-        " retry_after, quarantine_reason, status_reason,"
-        " status_reason_updated_at, status_reason_detail,"
+        " retry_after, status_reason, status_reason_updated_at,"
+        " status_reason_detail,"
         " last_processed_filename, last_bookmark_time"
         " FROM feeds WHERE id = $1::uuid",
         str(feed_id),
@@ -1001,7 +1001,7 @@ async def test_failure_records_canonical_reason_and_timestamp(
     assert row["worker_id"] is None
     assert row["status_reason"] == "source_offline"
     assert row["status_reason_updated_at"] is not None
-    assert row["quarantine_reason"] is None
+    assert row["status_reason_detail"] is None
 
 
 async def test_failure_without_status_reason_records_unexpected_fallback(
@@ -1154,7 +1154,6 @@ async def test_quarantine_preserves_diagnostic_detail_separately_from_canonical_
     assert row["status"] == "quarantined"
     assert row["failure_count"] == 5
     assert row["status_reason_detail"] == "ffmpeg_exit_1"
-    assert row["quarantine_reason"] is None
     assert row["status_reason"] == "system_collector_error"
     assert row["status_reason_updated_at"] is not None
 
@@ -2700,11 +2699,11 @@ async def test_reset_feed_succeeds(
     assert "last_heartbeat" not in after_values
 
 
-async def test_reset_clears_stale_status_reason_with_clear_timestamp_and_raw_quarantine_reason(
+async def test_reset_clears_stale_status_reason_with_clear_timestamp_and_status_reason_detail(
     db_pool: asyncpg.Pool,
     store: FeedStore,
 ) -> None:
-    """Reset clears stale canonical and raw quarantine reasons."""
+    """Reset clears stale canonical reason and status reason detail."""
     old_reason_ts = datetime.datetime(2026, 5, 29, 12, 0, tzinfo=datetime.UTC)
     worker = uuid.uuid4()
     feed_id = await _insert_feed(
@@ -2716,7 +2715,7 @@ async def test_reset_clears_stale_status_reason_with_clear_timestamp_and_raw_qua
         last_heartbeat_age_seconds=1000,
     )
     await db_pool.execute(
-        "UPDATE feeds SET quarantine_reason = $1, status_reason = $2,"
+        "UPDATE feeds SET status_reason_detail = $1, status_reason = $2,"
         " status_reason_updated_at = $3 WHERE id = $4",
         "raw outage",
         FeedStatusReason.SOURCE_UNREACHABLE.value,
@@ -2735,7 +2734,7 @@ async def test_reset_clears_stale_status_reason_with_clear_timestamp_and_raw_qua
     assert status_reason_updated_at is not None
     assert status_reason_updated_at > old_reason_ts
     row = await _get_feed_diagnostics(db_pool, feed_id)
-    assert row["quarantine_reason"] is None
+    assert row["status_reason_detail"] is None
 
 
 async def test_reset_clears_status_reason_detail_in_row_and_audit(

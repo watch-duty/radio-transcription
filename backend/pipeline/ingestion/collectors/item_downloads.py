@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from backend.pipeline.ingestion import quarantine_reason
+from backend.pipeline.ingestion import status_reason_detail
 from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.failure_classifiers import (
     http_status,
@@ -36,7 +36,7 @@ def item_download_failed(
     """Classify retry exhaustion without terminal HTTP evidence."""
     reason = ITEM_DOWNLOAD_FAILED_REASON
     if exc is not None:
-        reason = f"{reason}: {quarantine_reason.exception_text(exc)}"
+        reason = f"{reason}: {status_reason_detail.exception_text(exc)}"
     return failure_classification.ItemFailure(
         feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
         reason,
