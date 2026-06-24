@@ -42,6 +42,7 @@ _CLAIM: dict[SourceType, int] = {SourceType.BCFY_CALLS: 1}
 _FAKE_GCS_PORT = 4443
 _TEST_BUCKET = "test-audio-bucket"
 _FLAC_MAGIC = b"fLaC"
+_RUNTIME_ACTOR_ID = "service_account:gcp:123456789012345678901"
 
 _COL_MOD = (
     "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector"
@@ -274,6 +275,7 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 gcs_path,
                 feed["fencing_token"],
                 chunk.chunk_start_time,
+                actor_id=_RUNTIME_ACTOR_ID,
             )
             self.assertTrue(ok)
             chunks_uploaded.append(gcs_path)
@@ -360,6 +362,7 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 gcs_path,
                 feed["fencing_token"],
                 chunk.chunk_start_time,
+                actor_id=_RUNTIME_ACTOR_ID,
             )
             gcs_paths.append(gcs_path)
             seq += 1

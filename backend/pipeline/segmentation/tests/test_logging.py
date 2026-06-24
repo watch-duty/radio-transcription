@@ -42,6 +42,33 @@ class TestTaskJsonFormatter(unittest.TestCase):
                 log_record["logging.googleapis.com/spanId"], "00f067aa0ba902b7"
             )
 
+    def test_format_extracts_extra_fields(self) -> None:
+        record = logging.LogRecord(
+            "name", logging.INFO, "pathname", 1, "msg", (), None
+        )
+        record.gcs_uri = "gs://bucket/file.flac"
+        record.duration_ms = 5000
+        formatter = TaskJsonFormatter()
+
+        log_str = formatter.format(record)
+        log_record = json.loads(log_str)
+
+        self.assertEqual(log_record["gcs_uri"], "gs://bucket/file.flac")
+        self.assertEqual(log_record["duration_ms"], 5000)
+
+    def test_format_heals_json_message(self) -> None:
+        inner_json = json.dumps({"real_message": "hello", "custom_key": 42})
+        record = logging.LogRecord(
+            "name", logging.INFO, "pathname", 1, inner_json, (), None
+        )
+        formatter = TaskJsonFormatter()
+
+        log_str = formatter.format(record)
+        log_record = json.loads(log_str)
+
+        self.assertEqual(log_record["real_message"], "hello")
+        self.assertEqual(log_record["custom_key"], 42)
+
     def test_format_sets_no_trace_info_when_span_invalid(self) -> None:
         with mock.patch(
             "backend.pipeline.common.log_helper.get_trace_attributes",
@@ -93,6 +120,33 @@ class TestStructuredPropagationLogging(unittest.TestCase):
         self.assertEqual(log_data["logger"], "test_logger")
         self.assertEqual(log_data["feed_id"], "feed_123")
         self.assertEqual(log_data["session_id"], "session_456")
+
+    def test_structured_message_filter_extracts_extra_fields(self) -> None:
+        record = logging.LogRecord(
+            "name", logging.INFO, "pathname", 1, "msg", (), None
+        )
+        record.gcs_uri = "gs://bucket/file.flac"
+        record.duration_ms = 5000
+        filt = StructuredMessageFilter()
+        res = filt.filter(record)
+
+        self.assertTrue(res)
+        log_data = json.loads(record.msg)
+        self.assertEqual(log_data["gcs_uri"], "gs://bucket/file.flac")
+        self.assertEqual(log_data["duration_ms"], 5000)
+
+    def test_structured_message_filter_heals_json_message(self) -> None:
+        inner_json = json.dumps({"real_message": "hello", "custom_key": 42})
+        record = logging.LogRecord(
+            "name", logging.INFO, "pathname", 1, inner_json, (), None
+        )
+        filt = StructuredMessageFilter()
+        res = filt.filter(record)
+
+        self.assertTrue(res)
+        log_data = json.loads(record.msg)
+        self.assertEqual(log_data["real_message"], "hello")
+        self.assertEqual(log_data["custom_key"], 42)
 
     def test_get_logger_with_structured_propagation(self) -> None:
         # Clean up logger if it exists to avoid side effects

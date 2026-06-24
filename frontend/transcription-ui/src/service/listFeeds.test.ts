@@ -104,7 +104,7 @@ describe('listFeeds', () => {
     );
   });
 
-  it('should serialize query parameters correctly including JSON-serialized tags array', async () => {
+  it('should serialize query parameters correctly including repeated JSON tag filters', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
       text: async () => JSON.stringify({ feeds: [], total: 0 }),
@@ -119,7 +119,10 @@ describe('listFeeds', () => {
       name: 'Alpha',
       sourceTypes: ['bcfy_feeds', 'echo'],
       statuses: ['Active'],
-      tags: [{ key: 'County', value: 'Marin' }],
+      tags: [
+        { key: 'County', value: 'Marin' },
+        { key: 'State', value: 'CA' },
+      ],
     });
 
     const urlParams1 = new URLSearchParams(
@@ -128,7 +131,10 @@ describe('listFeeds', () => {
     expect(urlParams1.get('name')).toBe('Alpha');
     expect(urlParams1.get('sourceTypes')).toBe('bcfy_feeds,echo');
     expect(urlParams1.get('statuses')).toBe('active');
-    expect(urlParams1.get('tags')).toBe('[{"key":"County","value":"Marin"}]');
+    expect(urlParams1.getAll('tags')).toEqual([
+      '{"key":"County","value":"Marin"}',
+      '{"key":"State","value":"CA"}',
+    ]);
 
     // Test Inactive and Error status mapping
     await listFeeds('tokenXYZ', {

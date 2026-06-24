@@ -25,7 +25,7 @@ hf = [
     "huggingface_hub>=0.30",
     "evaluate>=0.4",
 ]
-vertex = ["google-genai>=2.3,<3"]
+vertex = ["google-genai>=2.10,<3"]
 dev = ["pytest>=9.0,<10", "pytest-xdist>=3"]
 # A convenience bundle of every runtime extra.
 all = [
@@ -36,7 +36,7 @@ all = [
     "soundfile>=0.13,<0.14",
     "huggingface_hub>=0.30",
     "evaluate>=0.4",
-    "google-genai>=2.3,<3",
+    "google-genai>=2.10,<3",
 ]
 
 [project.scripts]

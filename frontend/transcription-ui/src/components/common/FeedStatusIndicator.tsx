@@ -47,17 +47,21 @@ const FEED_STATUS_UI_CONFIG: Record<
   error: { displayText: 'Error', color: 'error' },
 };
 
+function formatStatusReason(statusReason: BackendFeedStatusReason): string {
+  return FEED_STATUS_REASON_UI_TEXT_DISPLAY[statusReason] ?? statusReason;
+}
+
 /**
- * Formats substatus, statusReason, and quarantineReason into a human-readable tooltip text.
+ * Formats substatus, statusReason, and statusReasonDetail into a human-readable tooltip text.
  */
 function formatSubstatusTooltipText({
   substatus,
   statusReason,
-  quarantineReason,
+  statusReasonDetail,
 }: {
   substatus?: BackendFeedStatus;
   statusReason?: BackendFeedStatusReason;
-  quarantineReason?: string;
+  statusReasonDetail?: string;
 }): string {
   const parts: string[] = [];
 
@@ -65,17 +69,15 @@ function formatSubstatusTooltipText({
     const substatusDisplay =
       FEED_SUBSTATUS_UI_TEXT_DISPLAY[substatus] ?? substatus;
     const reasonDisplay = statusReason
-      ? ` (${FEED_STATUS_REASON_UI_TEXT_DISPLAY[statusReason] ?? statusReason})`
+      ? ` (${formatStatusReason(statusReason)})`
       : '';
     parts.push(`${substatusDisplay}${reasonDisplay}`);
   } else if (statusReason) {
-    parts.push(
-      `(${FEED_STATUS_REASON_UI_TEXT_DISPLAY[statusReason] ?? statusReason})`
-    );
+    parts.push(`(${formatStatusReason(statusReason)})`);
   }
 
-  if (quarantineReason) {
-    parts.push(quarantineReason);
+  if (statusReasonDetail) {
+    parts.push(statusReasonDetail);
   }
 
   return parts.join(': ');
@@ -85,14 +87,14 @@ export function FeedStatusIndicator({
   status,
   substatus,
   statusReason,
-  quarantineReason,
+  statusReasonDetail,
   lastHeartbeat,
   lastSpeechSegmentTimestamp,
 }: {
   status?: FeedStatus;
   substatus?: BackendFeedStatus;
   statusReason?: BackendFeedStatusReason;
-  quarantineReason?: string;
+  statusReasonDetail?: string;
   lastHeartbeat?: number;
   lastSpeechSegmentTimestamp?: number;
 }) {
@@ -108,7 +110,7 @@ export function FeedStatusIndicator({
   const substatusText = formatSubstatusTooltipText({
     substatus,
     statusReason,
-    quarantineReason,
+    statusReasonDetail,
   });
 
   return (
