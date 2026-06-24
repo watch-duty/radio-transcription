@@ -63,9 +63,9 @@ def _resolve_admin_actor_id(request: Request) -> str:
     """Resolve the BFF-provided human actor for admin mutations.
 
     The BFF authenticates the user, checks admin access, and derives this
-    header from the verified Google user ``sub``. The Authorization token on
-    the BFF-to-feeds-service request authenticates the BFF service account, not
-    the human user, so feeds-service cannot derive this actor from that token.
+    header from the verified Google user email. The Authorization token on the
+    BFF-to-feeds-service request authenticates the BFF service account, not the
+    human user, so feeds-service cannot derive this actor from that token.
     Keep feeds-service admin mutation routes private to the BFF service account;
     any public ingress path to feeds-service must strip ``X-WD-Actor-Id``.
     """

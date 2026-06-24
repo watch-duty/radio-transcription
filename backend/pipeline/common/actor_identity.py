@@ -15,16 +15,16 @@ MAX_ACTOR_ID_LENGTH = 512
 CONFIGURED_SERVICE_ACTOR_ENV = "FEED_AUDIT_ACTOR_ID"
 
 
-def actor_id_from_google_sub(sub: str) -> str:
-    normalized_sub = sub.strip()
-    if not normalized_sub:
-        msg = "Google user sub is required"
+def actor_id_from_google_email(email: str) -> str:
+    normalized_email = email.strip().lower()
+    if not normalized_email:
+        msg = "Google user email is required"
         raise ValueError(msg)
-    if _contains_whitespace(normalized_sub):
-        msg = "Google user sub must not contain whitespace"
+    if _contains_whitespace(normalized_email):
+        msg = "Google user email must not contain whitespace"
         raise ValueError(msg)
 
-    actor_id = f"{GOOGLE_USER_ACTOR_PREFIX}{normalized_sub}"
+    actor_id = f"{GOOGLE_USER_ACTOR_PREFIX}{normalized_email}"
     if len(actor_id) > MAX_ACTOR_ID_LENGTH:
         msg = "Google user actor ID is too long"
         raise ValueError(msg)
@@ -38,8 +38,8 @@ def is_well_formed_google_user_actor_id(actor_id: str) -> bool:
     if not actor_id.startswith(GOOGLE_USER_ACTOR_PREFIX):
         return False
 
-    google_sub = actor_id[len(GOOGLE_USER_ACTOR_PREFIX) :]
-    return bool(google_sub) and not _contains_whitespace(google_sub)
+    google_user_id = actor_id[len(GOOGLE_USER_ACTOR_PREFIX) :]
+    return bool(google_user_id) and not _contains_whitespace(google_user_id)
 
 
 def is_well_formed_gcp_service_account_actor_id(actor_id: str) -> bool:

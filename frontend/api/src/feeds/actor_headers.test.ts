@@ -9,28 +9,28 @@ vi.mock('../config.js', () => ({
   FEEDS_STORE_API_URL: 'http://feeds-api.example.com',
 }));
 
-function requestWithSub(sub: unknown): express.Request {
+function requestWithEmail(email: unknown): express.Request {
   return {
-    user: { isAdmin: true, sub },
+    user: { isAdmin: true, email },
   } as unknown as express.Request;
 }
 
 describe('feedMutationActorHeaders', () => {
-  it('returns actor header from authenticated user sub', () => {
-    expect(feedMutationActorHeaders(requestWithSub('admin-sub-123'))).toEqual({
-      'X-WD-Actor-Id': 'user:google:admin-sub-123',
+  it('returns actor header from authenticated user email', () => {
+    expect(
+      feedMutationActorHeaders(requestWithEmail(' Admin@Example.com '))
+    ).toEqual({
+      'X-WD-Actor-Id': 'user:google:admin@example.com',
     });
   });
 
   it.each([
     ['missing user', {}],
-    ['missing sub', { user: { isAdmin: true } }],
-    ['empty sub', requestWithSub('')],
-    ['blank sub', requestWithSub('   ')],
-    ['space in sub', requestWithSub('admin sub')],
-    ['leading whitespace', requestWithSub(' admin-sub-123')],
-    ['trailing whitespace', requestWithSub('admin-sub-123 ')],
-    ['newline in sub', requestWithSub('admin\nsub')],
+    ['missing email', { user: { isAdmin: true } }],
+    ['empty email', requestWithEmail('')],
+    ['blank email', requestWithEmail('   ')],
+    ['space in email', requestWithEmail('admin @example.com')],
+    ['newline in email', requestWithEmail('admin\n@example.com')],
   ])('throws 403 Forbidden for %s', (_label, request) => {
     try {
       feedMutationActorHeaders(request as express.Request);

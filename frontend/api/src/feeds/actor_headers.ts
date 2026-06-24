@@ -7,12 +7,12 @@ const GOOGLE_USER_ACTOR_PREFIX = 'user:google:';
 export function feedMutationActorHeaders(
   request: AuthenticatedRequest
 ): Record<string, string> {
-  const sub = request.user?.sub;
-  if (!sub || /\s/.test(sub)) {
+  const email = request.user?.email?.trim().toLowerCase();
+  if (!email || /\s/.test(email)) {
     throw new HttpError(403, 'Forbidden');
   }
 
   return {
-    [ACTOR_ID_HEADER]: `${GOOGLE_USER_ACTOR_PREFIX}${sub}`,
+    [ACTOR_ID_HEADER]: `${GOOGLE_USER_ACTOR_PREFIX}${email}`,
   };
 }

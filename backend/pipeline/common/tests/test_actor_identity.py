@@ -10,30 +10,35 @@ import pytest
 from backend.pipeline.common import actor_identity
 
 
-def test_google_user_actor_from_sub() -> None:
-    actor_id = actor_identity.actor_id_from_google_sub(" admin-sub-123 ")
+def test_google_user_actor_from_email() -> None:
+    actor_id = actor_identity.actor_id_from_google_email(" Admin@Example.com ")
 
-    assert actor_id == "user:google:admin-sub-123"
-
-
-@pytest.mark.parametrize("sub", ["", "   ", "admin sub", "admin\nsub"])
-def test_google_user_actor_rejects_blank_or_whitespace_sub(sub: str) -> None:
-    with pytest.raises(ValueError, match="Google user sub"):
-        actor_identity.actor_id_from_google_sub(sub)
+    assert actor_id == "user:google:admin@example.com"
 
 
-def test_google_user_actor_rejects_too_long_sub() -> None:
+@pytest.mark.parametrize(
+    "email",
+    ["", "   ", "admin @example.com", "admin\n@example.com"],
+)
+def test_google_user_actor_rejects_blank_or_whitespace_email(
+    email: str,
+) -> None:
+    with pytest.raises(ValueError, match="Google user email"):
+        actor_identity.actor_id_from_google_email(email)
+
+
+def test_google_user_actor_rejects_too_long_email() -> None:
     prefix_len = len(actor_identity.GOOGLE_USER_ACTOR_PREFIX)
-    sub = "x" * (actor_identity.MAX_ACTOR_ID_LENGTH - prefix_len + 1)
+    email = "x" * (actor_identity.MAX_ACTOR_ID_LENGTH - prefix_len + 1)
 
     with pytest.raises(ValueError, match="too long"):
-        actor_identity.actor_id_from_google_sub(sub)
+        actor_identity.actor_id_from_google_email(email)
 
 
 @pytest.mark.parametrize(
     ("actor_id", "expected"),
     [
-        ("user:google:admin-sub-123", True),
+        ("user:google:admin@example.com", True),
         ("user:google:", False),
         ("user:google:admin sub", False),
         ("user:google:" + ("x" * 502), False),
@@ -62,7 +67,7 @@ def test_google_user_actor_validator(actor_id: str, expected) -> None:
         ("service_account:gcp:１２３", False),
         ("service_account:gcp:²³", False),
         ("service_account:local:development", False),
-        ("user:google:admin-sub-123", False),
+        ("user:google:admin@example.com", False),
         ("service_account:gcp:" + ("1" * 493), False),
     ],
 )

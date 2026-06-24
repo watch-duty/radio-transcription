@@ -53,7 +53,7 @@ describe('FeedsController', () => {
   };
 
   const mockAdminRequest = {
-    user: { isAdmin: true, sub: 'admin-sub-123' },
+    user: { isAdmin: true, email: 'admin@example.com' },
   } as unknown as express.Request;
 
   const mockNonAdminRequest = {
@@ -61,16 +61,14 @@ describe('FeedsController', () => {
   } as unknown as express.Request;
 
   const expectedActorHeaders = {
-    'X-WD-Actor-Id': 'user:google:admin-sub-123',
+    'X-WD-Actor-Id': 'user:google:admin@example.com',
   };
 
   const malformedAdminRequests = [
-    ['missing sub', { user: { isAdmin: true } }],
-    ['empty sub', { user: { isAdmin: true, sub: '' } }],
-    ['blank sub', { user: { isAdmin: true, sub: '   ' } }],
-    ['space in sub', { user: { isAdmin: true, sub: 'admin sub' } }],
-    ['leading whitespace', { user: { isAdmin: true, sub: ' admin-sub-123' } }],
-    ['trailing whitespace', { user: { isAdmin: true, sub: 'admin-sub-123 ' } }],
+    ['missing email', { user: { isAdmin: true } }],
+    ['empty email', { user: { isAdmin: true, email: '' } }],
+    ['blank email', { user: { isAdmin: true, email: '   ' } }],
+    ['space in email', { user: { isAdmin: true, email: 'admin @example.com' } }],
   ] as const;
 
   function asExpressRequest(request: unknown): express.Request {
@@ -419,7 +417,7 @@ describe('FeedsController', () => {
 
   describe('resetFeed', () => {
     const mockAdminRequest = {
-      user: { isAdmin: true, sub: 'admin-sub-123' },
+      user: { isAdmin: true, email: 'admin@example.com' },
     } as unknown as express.Request;
 
     it('should return converted feed on success', async () => {
@@ -485,7 +483,7 @@ describe('FeedsController', () => {
 
   describe('deactivateFeed', () => {
     const mockAdminRequest = {
-      user: { isAdmin: true, sub: 'admin-sub-123' },
+      user: { isAdmin: true, email: 'admin@example.com' },
     } as unknown as express.Request;
 
     it('should return 204 on success', async () => {
@@ -528,7 +526,7 @@ describe('FeedsController', () => {
 
   describe('deleteFeed', () => {
     const mockAdminRequest = {
-      user: { isAdmin: true, sub: 'admin-sub-123' },
+      user: { isAdmin: true, email: 'admin@example.com' },
     } as unknown as express.Request;
 
     it('should return 204 on success', async () => {
