@@ -34,6 +34,8 @@ WITH guarded_columns(attname) AS (
         ('last_bookmark_time'),
         ('failure_count'),
         ('retry_after'),
+        ('status_reason'),
+        ('status_reason_updated_at'),
         ('status_reason_detail'),
         ('audit_revision')
 ),

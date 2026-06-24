@@ -177,6 +177,8 @@ def test_migration_defines_status_reason_detail_and_hot_guard() -> None:
     assert "status_reason_detail" not in table_sql
 
     assert "WITH guarded_columns(attname) AS" in guard_sql
+    assert "('status_reason')" in guard_sql
+    assert "('status_reason_updated_at')" in guard_sql
     assert "('status_reason_detail')" in guard_sql
     assert "('audit_revision')" in guard_sql
     assert "('retry_after')" in guard_sql
