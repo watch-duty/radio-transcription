@@ -526,8 +526,12 @@ class OrderedStitchAudioFn(beam.DoFn):
 
     # --- Timers ---
 
+    # NOTE: The string value here is the Windmill-persisted timer family name. To rename it,
+    # use a two-step deploy: (1) add the new name alongside this one and deploy via --update,
+    # (2) remove this spec once prod has drained it. See the GOO-667 incident — renaming in a
+    # single update causes NOT_FOUND crashes for every key that has this timer scheduled.
     GAP_TIMER_EVENT_SPEC = TimerSpec(
-        "gap_timer_event", beam.TimeDomain.WATERMARK
+        "out_of_order_timer", beam.TimeDomain.WATERMARK
     )
     GAP_TIMER_EVENT = beam.DoFn.TimerParam(GAP_TIMER_EVENT_SPEC)
 
