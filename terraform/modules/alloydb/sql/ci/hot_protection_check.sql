@@ -9,11 +9,9 @@
 -- guarded columns below are mutated at high frequency by claim, heartbeat,
 -- progress, release, or failure paths.
 --
--- retry_after is intentionally not in the guarded set. It is mutable, but it
--- is written only on failure-to-retry transitions and is intentionally indexed
--- by idx_feeds_failing_retryable. Keeping it out of the guarded set avoids an
--- allow-list for the initial guard while still protecting the high-churn feed
--- columns.
+-- retry_after is intentionally indexed only by idx_feeds_failing_retryable.
+-- It is mutable, so keep it guarded and explicitly exempt that one direct
+-- reference. Any future retry_after index must be reviewed deliberately.
 --
 -- This query uses pg_depend to find catalog-level index dependencies on those
 -- columns. Direct key references are classified as direct; predicate and
@@ -35,6 +33,7 @@ WITH guarded_columns(attname) AS (
         ('last_processed_filename'),
         ('last_bookmark_time'),
         ('failure_count'),
+        ('retry_after'),
         ('status_reason_detail'),
         ('audit_revision')
 ),
@@ -72,10 +71,9 @@ index_column_dependencies AS (
 ),
 allowed_references AS (
     SELECT
-        NULL::text AS indexname,
-        NULL::text AS attname,
-        NULL::text AS reference_kind
-     WHERE FALSE
+        'idx_feeds_failing_retryable'::text AS indexname,
+        'retry_after'::text AS attname,
+        'direct'::text AS reference_kind
 ),
 violations AS (
     SELECT DISTINCT * FROM index_column_dependencies

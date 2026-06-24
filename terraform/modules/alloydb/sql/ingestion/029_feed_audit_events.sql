@@ -27,6 +27,8 @@ END $$;
 -- Durable audit rows for meaningful feed mutations.
 CREATE TABLE IF NOT EXISTS feed_audit_events (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    -- Deliberately not a FOREIGN KEY to feeds(id): audit history must remain
+    -- queryable after an admin hard-deletes the current-state feed row.
     feed_id              UUID NOT NULL,
     action               TEXT NOT NULL,
     actor_id             TEXT NOT NULL,

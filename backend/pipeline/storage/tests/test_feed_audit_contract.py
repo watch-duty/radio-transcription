@@ -179,11 +179,14 @@ def test_migration_defines_status_reason_detail_and_hot_guard() -> None:
     assert "WITH guarded_columns(attname) AS" in guard_sql
     assert "('status_reason_detail')" in guard_sql
     assert "('audit_revision')" in guard_sql
-    assert "('retry_after')" not in guard_sql
+    assert "('retry_after')" in guard_sql
     for token in (
         "feed_indexes AS",
         "index_column_dependencies AS",
         "allowed_references AS",
+        "'idx_feeds_failing_retryable'::text AS indexname",
+        "'retry_after'::text AS attname",
+        "'direct'::text AS reference_kind",
         "violations AS",
         "pg_depend",
         "d.objid = i.indexrelid",
@@ -194,12 +197,6 @@ def test_migration_defines_status_reason_detail_and_hot_guard() -> None:
         "ELSE 'derived'",
     ):
         assert token in normalized_guard
-    assert re.search(
-        r"allowed_references\s+AS\s*\([^)]*WHERE\s+FALSE",
-        normalized_guard,
-        flags=re.IGNORECASE,
-    )
-    assert "idx_feeds_failing_retryable" not in guard_sql
     assert "c.relname <> " not in guard_sql
     assert "pg_get_expr" not in guard_sql
     assert r"\m" not in guard_sql

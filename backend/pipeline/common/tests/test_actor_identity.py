@@ -59,6 +59,8 @@ def test_google_user_actor_validator(actor_id: str, expected) -> None:
         ),
         ("service_account:gcp:bad value", False),
         ("service_account:gcp:bad\nvalue", False),
+        ("service_account:gcp:１２３", False),
+        ("service_account:gcp:²³", False),
         ("service_account:local:development", False),
         ("user:google:admin-sub-123", False),
         ("service_account:gcp:" + ("1" * 493), False),

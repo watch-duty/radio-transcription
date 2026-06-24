@@ -60,6 +60,15 @@ setup_fastapi_tracing(app, service_name="feeds-service")
 
 
 def _resolve_admin_actor_id(request: Request) -> str:
+    """Resolve the BFF-provided human actor for admin mutations.
+
+    The BFF authenticates the user, checks admin access, and derives this
+    header from the verified Google user ``sub``. The Authorization token on
+    the BFF-to-feeds-service request authenticates the BFF service account, not
+    the human user, so feeds-service cannot derive this actor from that token.
+    Keep feeds-service admin mutation routes private to the BFF service account;
+    any public ingress path to feeds-service must strip ``X-WD-Actor-Id``.
+    """
     actor_id = request.headers.get(_INTERNAL_ACTOR_ID_HEADER)
     if actor_id is None or not is_well_formed_google_user_actor_id(actor_id):
         raise HTTPException(

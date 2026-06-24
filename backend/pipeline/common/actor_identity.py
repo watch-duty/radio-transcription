@@ -51,7 +51,10 @@ def is_well_formed_gcp_service_account_actor_id(actor_id: str) -> bool:
     service_account_unique_id = actor_id[
         len(GCP_SERVICE_ACCOUNT_ACTOR_PREFIX) :
     ]
-    return service_account_unique_id.isdigit()
+    return (
+        service_account_unique_id.isascii()
+        and service_account_unique_id.isdecimal()
+    )
 
 
 def is_well_formed_actor_id(actor_id: str | None) -> bool:
