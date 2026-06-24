@@ -66,100 +66,114 @@ export function AudioControl({
         }}
       >
         <Tooltip title="Rewind to previous detected speech">
-          <IconButton
-            onClick={onFastRewind}
-            size="large"
-            color="primary"
-            sx={{ p: 0.5 }}
-            aria-label="rewind to previous detected speech"
-            disabled={disableControls}
-          >
-            <Icon
-              baseClassName="material-symbols-outlined"
-              fontSize="large"
-              sx={{ transform: 'scaleX(-1)' }}
+          <span>
+            <IconButton
+              onClick={onFastRewind}
+              size="large"
+              color="primary"
+              sx={{ p: 0.5 }}
+              aria-label="rewind to previous detected speech"
+              disabled={disableControls}
             >
-              chat_paste_go
-            </Icon>
-          </IconButton>
+              <Icon
+                baseClassName="material-symbols-outlined"
+                fontSize="large"
+                sx={{ transform: 'scaleX(-1)' }}
+              >
+                chat_paste_go
+              </Icon>
+            </IconButton>
+          </span>
         </Tooltip>
         <Tooltip title="Rewind to previous segment">
-          <IconButton
-            onClick={onSkipToPrevious}
-            size="large"
-            color="primary"
-            sx={{ p: 0.5 }}
-            aria-label="rewind to previous segment"
-            disabled={disableControls}
-          >
-            <SkipPreviousIcon fontSize="large" />
-          </IconButton>
+          <span>
+            <IconButton
+              onClick={onSkipToPrevious}
+              size="large"
+              color="primary"
+              sx={{ p: 0.5 }}
+              aria-label="rewind to previous segment"
+              disabled={disableControls}
+            >
+              <SkipPreviousIcon fontSize="large" />
+            </IconButton>
+          </span>
         </Tooltip>
         <Tooltip title="Rewind 5 seconds">
-          <IconButton
-            onClick={onReplay5}
-            size="large"
-            color="primary"
-            sx={{ p: 0.5 }}
-            aria-label="rewind 5 seconds"
-            disabled={disableControls}
-          >
-            <Replay5Icon fontSize="large" />
-          </IconButton>
+          <span>
+            <IconButton
+              onClick={onReplay5}
+              size="large"
+              color="primary"
+              sx={{ p: 0.5 }}
+              aria-label="rewind 5 seconds"
+              disabled={disableControls}
+            >
+              <Replay5Icon fontSize="large" />
+            </IconButton>
+          </span>
         </Tooltip>
         <Tooltip title={isAudioPlaying ? 'Pause' : 'Play'}>
-          <IconButton
-            onClick={onTogglePlayPause}
-            size="large"
-            color="primary"
-            sx={{ p: 0.5 }}
-            aria-label={isAudioPlaying ? 'pause' : 'play'}
-            disabled={disableControls}
-          >
-            {isAudioPlaying ? (
-              <PauseIcon fontSize="large" />
-            ) : (
-              <PlayArrowIcon fontSize="large" />
-            )}
-          </IconButton>
+          <span>
+            <IconButton
+              onClick={onTogglePlayPause}
+              size="large"
+              color="primary"
+              sx={{ p: 0.5 }}
+              aria-label={isAudioPlaying ? 'pause' : 'play'}
+              disabled={disableControls}
+            >
+              {isAudioPlaying ? (
+                <PauseIcon fontSize="large" />
+              ) : (
+                <PlayArrowIcon fontSize="large" />
+              )}
+            </IconButton>
+          </span>
         </Tooltip>
         <Tooltip title="Advance 5 seconds">
-          <IconButton
-            onClick={onForward5}
-            size="large"
-            color="primary"
-            sx={{ p: 0.5 }}
-            aria-label="advance 5 seconds"
-            disabled={disableControls}
-          >
-            <Forward5Icon fontSize="large" />
-          </IconButton>
+          <span>
+            <IconButton
+              onClick={onForward5}
+              size="large"
+              color="primary"
+              sx={{ p: 0.5 }}
+              aria-label="advance 5 seconds"
+              disabled={disableControls}
+            >
+              <Forward5Icon fontSize="large" />
+            </IconButton>
+          </span>
         </Tooltip>
         <Tooltip title="Advance to next segment">
-          <IconButton
-            onClick={onSkipToNext}
-            size="large"
-            color="primary"
-            sx={{ p: 0.5 }}
-            aria-label="advance to next segment"
-            disabled={disableControls}
-          >
-            <SkipNextIcon fontSize="large" />
-          </IconButton>
+          <span>
+            <IconButton
+              onClick={onSkipToNext}
+              size="large"
+              color="primary"
+              sx={{ p: 0.5 }}
+              aria-label="advance to next segment"
+              disabled={disableControls}
+            >
+              <SkipNextIcon fontSize="large" />
+            </IconButton>
+          </span>
         </Tooltip>
         <Tooltip title="Advance to next detected speech">
-          <IconButton
-            onClick={onFastForward}
-            size="large"
-            color="primary"
-            sx={{ p: 0.5 }}
-            aria-label="advance to next detected speech"
-            disabled={disableControls}
-          >
-            <Icon baseClassName="material-symbols-outlined" fontSize="large">
-              chat_paste_go
-            </Icon>
-          </IconButton>
+          <span>
+            <IconButton
+              onClick={onFastForward}
+              size="large"
+              color="primary"
+              sx={{ p: 0.5 }}
+              aria-label="advance to next detected speech"
+              disabled={disableControls}
+            >
+              <Icon baseClassName="material-symbols-outlined" fontSize="large">
+                chat_paste_go
+              </Icon>
+            </IconButton>
+          </span>
         </Tooltip>
       </Box>
 
