@@ -5,6 +5,12 @@ import logging
 from typing import TYPE_CHECKING
 
 import httpx
+from tenacity import (
+    AsyncRetrying,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from backend.pipeline.common.auth_client import get_id_token
 from backend.pipeline.common.clients.session_helper import (
@@ -106,6 +112,13 @@ class AudioSegmentsClient:
         response.raise_for_status()
 
 
+def is_transient_error(e: BaseException) -> bool:
+    """Retries on all network errors and transient 429/5xx status codes."""
+    if isinstance(e, httpx.HTTPStatusError):
+        return e.response.status_code in {429, 500, 502, 503, 504}
+    return isinstance(e, httpx.RequestError)
+
+
 class AsyncAudioSegmentsClient:
     """
     Resilient asynchronous client for interacting with the Audio Segments API.
@@ -159,13 +172,20 @@ class AsyncAudioSegmentsClient:
             "data": data,
         }
 
-        response = await self.client.post(
-            f"{self.api_url}/v1/audio_segments/{audio_segment_id}/annotations",
-            json=payload,
-            headers=headers,
-            timeout=10.0,
-        )
-        response.raise_for_status()
+        async for attempt in AsyncRetrying(
+            retry=retry_if_exception(is_transient_error),
+            stop=stop_after_attempt(self.max_retries),
+            wait=wait_exponential(multiplier=0.5, min=0.5, max=2.0),
+            reraise=True,
+        ):
+            with attempt:
+                response = await self.client.post(
+                    f"{self.api_url}/v1/audio_segments/{audio_segment_id}/annotations",
+                    json=payload,
+                    headers=headers,
+                    timeout=10.0,
+                )
+                response.raise_for_status()
 
     async def add_audio_segment(self, segment: dict) -> None:
         """
@@ -186,10 +206,17 @@ class AsyncAudioSegmentsClient:
             token = await asyncio.to_thread(get_id_token, self.api_url)
             headers["Authorization"] = f"Bearer {token}"
 
-        response = await self.client.post(
-            f"{self.api_url}/v1/audio_segments",
-            json=segment,
-            headers=headers,
-            timeout=10.0,
-        )
-        response.raise_for_status()
+        async for attempt in AsyncRetrying(
+            retry=retry_if_exception(is_transient_error),
+            stop=stop_after_attempt(self.max_retries),
+            wait=wait_exponential(multiplier=0.5, min=0.5, max=2.0),
+            reraise=True,
+        ):
+            with attempt:
+                response = await self.client.post(
+                    f"{self.api_url}/v1/audio_segments",
+                    json=segment,
+                    headers=headers,
+                    timeout=10.0,
+                )
+                response.raise_for_status()
