@@ -48,7 +48,7 @@ describe('FeedStatusIndicator', () => {
     expect(screen.getByText('unknown_status')).toBeTruthy();
   });
 
-  it('displays substatus tooltip on hover', async () => {
+  it('displays substatus tooltip when substatus differs from visible status', async () => {
     render(<FeedStatusIndicator status="inactive" substatus="active" />);
     const statusText = screen.getByText('Inactive');
     fireEvent.mouseOver(statusText);
