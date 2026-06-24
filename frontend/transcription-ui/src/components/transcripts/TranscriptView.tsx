@@ -600,7 +600,6 @@ export function TranscriptView({
         onSelectFeed={handleFeedSelect}
         sourceUrl={sourceUrl}
         archiveUrl={archiveUrl}
-        liveFeed={activeFeedData}
         status={activeFeedData?.status ?? searchedFeed?.status}
         lastSpeechSegmentTimestamp={activeFeedData?.lastSpeechSegmentTimestamp}
         triggerSnackbar={triggerSnackbar}

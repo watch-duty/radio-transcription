@@ -882,7 +882,7 @@ describe('TranscriptView', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Active')).toBeTruthy();
-      expect(screen.getByText('Last heartbeat: 10 minutes ago')).toBeTruthy();
+      expect(screen.queryByText(/heartbeat|updated/i)).toBeNull();
       expect(screen.getByText('Latest: 5 minutes ago')).toBeTruthy();
     });
 

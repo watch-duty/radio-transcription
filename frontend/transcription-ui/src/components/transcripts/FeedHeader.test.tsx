@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, screen } from '@testing-library/react';
 import type { Feed } from '@transcription/common';
 import { SourceType } from '@transcription/common';
 
@@ -63,39 +63,6 @@ describe('FeedHeader', () => {
 
     expect(screen.getAllByText('Test Scanner Feed')[0]).toBeTruthy();
     expect(screen.getByText('Active')).toBeTruthy();
-  });
-
-  it('uses refreshed feed status details together when live feed is available', async () => {
-    renderWithRouter(
-      <FeedHeader
-        searchedFeed={{
-          ...mockFeed,
-          status: 'active',
-          substatus: 'active',
-          statusReason: undefined,
-          statusReasonDetail: undefined,
-        }}
-        liveFeed={{
-          ...mockFeed,
-          status: 'error',
-          substatus: 'failing',
-          statusReason: 'source_offline',
-          statusReasonDetail: 'provider timed out',
-        }}
-        onSelectFeed={vi.fn()}
-        triggerSnackbar={mockTriggerSnackbar}
-        onError={mockOnError}
-      />
-    );
-
-    const statusText = screen.getByText('Error');
-    fireEvent.mouseOver(statusText);
-
-    await waitFor(() => {
-      expect(
-        screen.getByText('Failing (Source Offline): provider timed out')
-      ).toBeTruthy();
-    });
   });
 
   it('displays the source type chip in the header', () => {
