@@ -27,6 +27,14 @@ vi.mock('../audio/AudioPlayer', () => ({
   ),
 }));
 
+let mockIsAdmin = false;
+
+vi.mock('../../context/AuthContext', () => ({
+  useAuth: vi.fn(() => ({
+    isAdmin: mockIsAdmin,
+  })),
+}));
+
 const mockAudioSegment: AudioSegment = {
   id: 'tx-123',
   feedId: 'feed-123',
@@ -69,6 +77,7 @@ describe('TranscriptRow', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockIsAdmin = false;
     Object.assign(navigator, {
       clipboard: {
         writeText: vi.fn().mockImplementation(() => Promise.resolve()),
@@ -385,5 +394,53 @@ describe('TranscriptRow', () => {
     expect(screen.getByText('[No speech detected]')).toBeTruthy();
     expect(screen.queryByText('10 sec')).toBeNull();
     expect(screen.queryByText(/16:00/)).toBeNull();
+  });
+
+  it('does not render segment info button for non-admins', () => {
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          audioSegment={mockAudioSegment}
+          index={0}
+          totalAudioSegments={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onToggleAudio={mockOnToggleAudio}
+          isAudioPlaying={false}
+          onRowClick={mockOnRowClick}
+          currentlyPlayingSegmentId={null}
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+        />
+      </MemoryRouter>
+    );
+
+    expect(
+      screen.queryByLabelText('view segment info')
+    ).not.toBeInTheDocument();
+  });
+
+  it('renders segment info button for admins', () => {
+    mockIsAdmin = true;
+
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          audioSegment={mockAudioSegment}
+          index={0}
+          totalAudioSegments={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onToggleAudio={mockOnToggleAudio}
+          isAudioPlaying={false}
+          onRowClick={mockOnRowClick}
+          currentlyPlayingSegmentId={null}
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+        />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByLabelText('view segment info')).toBeInTheDocument();
   });
 });
