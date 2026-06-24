@@ -9,7 +9,11 @@ import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+<<<<<<< HEAD
 from fastapi import FastAPI, HTTPException, Request, Response, status
+=======
+from fastapi import FastAPI, Request, Response, status
+>>>>>>> bfb4fabe ([GOO-680] refactor(transcription): migrate container to app.state pattern and close transcriber client)
 from google.cloud import pubsub_v1
 
 from backend.pipeline.common.clients import audio_segments_client
@@ -177,11 +181,15 @@ async def transcribe_claim_check(envelope: dict, request: Request) -> Response:
     """Entry point for Pub/Sub push HTTP POST requests."""
     setup_tracing(service_name="transcription-service", use_batch=False)
 
+<<<<<<< HEAD
     processor = getattr(request.app.state, "processor", None)
     if not processor:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Transcription service is not initialized",
         )
+=======
+    processor = request.app.state.processor
+>>>>>>> bfb4fabe ([GOO-680] refactor(transcription): migrate container to app.state pattern and close transcriber client)
     await processor.process_event(envelope)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
