@@ -1001,7 +1001,7 @@ async def test_failure_records_canonical_reason_and_timestamp(
     assert row["worker_id"] is None
     assert row["status_reason"] == "source_offline"
     assert row["status_reason_updated_at"] is not None
-    assert row["status_reason_detail"] is None
+    assert row["status_reason_detail"] == "raw_404"
 
 
 async def test_failure_without_status_reason_records_unexpected_fallback(
