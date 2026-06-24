@@ -6,10 +6,10 @@ claim-check metadata. Delegates processing to TranscriptionEventProcessor.
 
 import logging
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, Response, status
+from fastapi import FastAPI, HTTPException, Request, Response, status
 from google.cloud import pubsub_v1
 
 from backend.pipeline.common.clients import audio_segments_client
@@ -146,15 +146,16 @@ class TranscriptionServiceContainer:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """Warms up container services on startup and resets/closes them on shutdown."""
     container = TranscriptionServiceContainer()
     container.eager_warmup()
-    app.state.processor = container.get_processor()
+    if container._processor:
+        app.state.processor = container._processor
     yield
     # Clean up client connection pools/channels on exit
-    if hasattr(app.state, "processor"):
-        processor = app.state.processor
+    if container._processor:
+        processor = container._processor
         if processor.transcriber:
             try:
                 await processor.transcriber.close()
@@ -173,6 +174,11 @@ async def transcribe_claim_check(envelope: dict, request: Request) -> Response:
     """Entry point for Pub/Sub push HTTP POST requests."""
     setup_tracing(service_name="transcription-service", use_batch=False)
 
-    processor = request.app.state.processor
+    processor = getattr(request.app.state, "processor", None)
+    if not processor:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Transcription service is not initialized",
+        )
     await processor.process_event(envelope)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
