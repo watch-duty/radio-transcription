@@ -149,20 +149,23 @@ class TranscriptionServiceContainer:
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """Warms up container services on startup and resets/closes them on shutdown."""
     container = TranscriptionServiceContainer()
-    container.eager_warmup()
-    if container._processor:
-        app.state.processor = container._processor
+    try:
+        processor = container.get_processor()
+        app.state.processor = processor
+    except Exception:
+        logger.exception(
+            "Failed to eager warm-up container services on startup"
+        )
+        processor = None
     yield
     # Clean up client connection pools/channels on exit
-    if container._processor:
-        processor = container._processor
-        if processor.transcriber:
-            try:
-                await processor.transcriber.close()
-            except Exception:
-                logger.exception(
-                    "Failed to close transcriber client on lifespan shutdown"
-                )
+    if processor and processor.transcriber:
+        try:
+            await processor.transcriber.close()
+        except Exception:
+            logger.exception(
+                "Failed to close transcriber client on lifespan shutdown"
+            )
     container.reset_clients()
 
 
