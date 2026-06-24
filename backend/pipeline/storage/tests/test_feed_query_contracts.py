@@ -253,7 +253,9 @@ class TestNonBudgetedFailureSql(unittest.TestCase):
             feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL
         )
 
-        self.assertIn("status::text AS status", sql)
+        self.assertIn(
+            "RETURNING feeds.*, feeds.audit_revision AS feed_revision", sql
+        )
         self.assertIn("failure_count", sql)
         self.assertIn("retry_after", sql)
         self.assertIn("audit_revision AS feed_revision", sql)

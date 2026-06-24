@@ -18,7 +18,12 @@ from backend.pipeline.common.exceptions import (
     FeedNameAlreadyExistsError,
     FeedStateConflictError,
 )
-from backend.pipeline.storage import feed_queries, feed_store, quarantine_reason
+from backend.pipeline.storage import (
+    feed_audit_sql,
+    feed_queries,
+    feed_store,
+    quarantine_reason,
+)
 from backend.pipeline.storage.feed_store import (
     FeedStatus,
     FeedStatusReason,
@@ -494,17 +499,37 @@ class TestFeedAuditSql(unittest.TestCase):
             self.assertIn("before_values", stripped)
             self.assertIn("after_values", stripped)
 
-    def test_audit_snapshots_use_allowlist_not_star_projection(self) -> None:
+    def test_audit_snapshots_use_explicit_allowlist_on_row_ctes(self) -> None:
+        snapshot_sql = feed_audit_sql.audit_snapshot_sql("before_row")
+
+        for key in (
+            "'id'",
+            "'name'",
+            "'source_type'",
+            "'status'",
+            "'failure_count'",
+            "'retry_after'",
+            "'status_reason'",
+            "'status_reason_updated_at'",
+            "'status_reason_detail'",
+            "'created_at'",
+            "'feed_properties.source_feed_id'",
+            "'feed_properties.tags'",
+        ):
+            self.assertIn(key, snapshot_sql)
+
+        self.assertNotIn("'quarantine_reason'", snapshot_sql)
+        self.assertNotIn("'last_bookmark_time'", snapshot_sql)
+
         for sql in (
-            feed_queries.CREATE_FEED_SQL,
             feed_queries.UPDATE_FEED_SQL,
             feed_queries.RESET_FEED_SQL,
             feed_queries.REPORT_FAILURE_SQL,
         ):
             stripped = _sql_without_comments(sql)
+            self.assertRegex(stripped, r"SELECT\s+f\.\*")
             self.assertIn("'feed_properties.source_feed_id'", stripped)
             self.assertIn("'feed_properties.tags'", stripped)
-            self.assertNotIn("SELECT f.*", stripped)
             self.assertNotIn("SELECT fp.*", stripped)
 
     def test_runtime_audit_actions_are_selected_in_sql(self) -> None:
@@ -521,8 +546,8 @@ class TestFeedAuditSql(unittest.TestCase):
         sql = _normalized_sql(feed_queries.RESET_FEED_SQL)
 
         self.assertIn("status_reason_detail = NULL", sql)
-        self.assertIn("feeds.quarantine_reason", sql)
-        self.assertIn("feeds.status_reason_detail", sql)
+        self.assertIn("quarantine_reason = NULL", sql)
+        self.assertIn("RETURNING feeds.*", sql)
 
 
 class TestFeedAuditStorageBoundary(unittest.TestCase):
@@ -682,7 +707,9 @@ class TestNonBudgetedFailureSql(unittest.TestCase):
             feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL
         )
 
-        self.assertIn("status::text AS status", sql)
+        self.assertIn(
+            "RETURNING feeds.*, feeds.audit_revision AS feed_revision", sql
+        )
         self.assertIn("failure_count", sql)
         self.assertIn("retry_after", sql)
         self.assertIn("audit_revision AS feed_revision", sql)

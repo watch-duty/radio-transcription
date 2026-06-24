@@ -24,10 +24,7 @@ _AUDIT_AFTER_SNAPSHOT_SQL = feed_audit_sql.audit_snapshot_sql("after_row")
 UPDATE_PROGRESS_SQL = f"""\
 WITH before_row AS (
     SELECT
-{feed_audit_sql.audit_source_projection("f")},
-        f.worker_id,
-        f.fencing_token,
-        f.audit_revision
+{feed_audit_sql.audit_source_projection("f")}
     FROM feeds f
     JOIN feed_properties fp ON fp.feed_id = f.id
     WHERE f.id = $2 AND f.worker_id = $3 AND f.fencing_token = $4
@@ -50,14 +47,10 @@ updated AS (
         status_reason = NULL
     FROM before_row
     WHERE feeds.id = before_row.id
-    RETURNING feeds.id, feeds.name, feeds.source_type, feeds.status,
-              feeds.failure_count, feeds.retry_after, feeds.status_reason,
-              feeds.status_reason_updated_at, feeds.status_reason_detail,
-              feeds.quarantine_reason, feeds.last_bookmark_time,
-              feeds.created_at, feeds.audit_revision AS feed_revision
+    RETURNING feeds.*, feeds.audit_revision AS feed_revision
 ),
 after_row AS (
-    SELECT u.*, fp.source_feed_id, fp.tags
+    SELECT u.*, fp.source_feed_id, COALESCE(fp.tags, '[]'::jsonb) AS tags
     FROM updated u
     JOIN feed_properties fp ON fp.feed_id = u.id
 ),
@@ -85,10 +78,7 @@ FROM after_row
 RECORD_SOURCE_OBSERVATION_SQL = f"""\
 WITH current_state AS (
     SELECT
-{feed_audit_sql.audit_source_projection("f")},
-        f.worker_id,
-        f.fencing_token,
-        f.audit_revision
+{feed_audit_sql.audit_source_projection("f")}
     FROM feeds f
     JOIN feed_properties fp ON fp.feed_id = f.id
     WHERE f.id = $1
@@ -113,14 +103,10 @@ do_update AS (
       AND current_state.worker_id = $2
       AND current_state.fencing_token = $3
       AND current_state.status = 'active'::feed_status
-    RETURNING feeds.id, feeds.name, feeds.source_type, feeds.status,
-              feeds.failure_count, feeds.retry_after, feeds.status_reason,
-              feeds.status_reason_updated_at, feeds.status_reason_detail,
-              feeds.quarantine_reason, feeds.last_bookmark_time,
-              feeds.created_at, feeds.audit_revision AS feed_revision
+    RETURNING feeds.*, feeds.audit_revision AS feed_revision
 ),
 after_row AS (
-    SELECT do_update.*, fp.source_feed_id, fp.tags
+    SELECT do_update.*, fp.source_feed_id, COALESCE(fp.tags, '[]'::jsonb) AS tags
     FROM do_update
     JOIN feed_properties fp ON fp.feed_id = do_update.id
 ),
@@ -465,10 +451,7 @@ def build_acquire_feeds_recovery_sql(claim_types: Sequence[SourceType]) -> str:
 REPORT_FAILURE_SQL = f"""\
 WITH before_row AS (
     SELECT
-{feed_audit_sql.audit_source_projection("f")},
-        f.worker_id,
-        f.fencing_token,
-        f.audit_revision
+{feed_audit_sql.audit_source_projection("f")}
     FROM feeds f
     JOIN feed_properties fp ON fp.feed_id = f.id
     WHERE f.id = $1
@@ -499,15 +482,10 @@ updated AS (
         END
     FROM before_row
     WHERE feeds.id = before_row.id
-    RETURNING feeds.id, feeds.name, feeds.source_type,
-              feeds.status::text AS status, feeds.failure_count,
-              feeds.retry_after, feeds.status_reason,
-              feeds.status_reason_updated_at, feeds.status_reason_detail,
-              feeds.quarantine_reason, feeds.last_bookmark_time,
-              feeds.created_at, feeds.audit_revision AS feed_revision
+    RETURNING feeds.*, feeds.audit_revision AS feed_revision
 ),
 after_row AS (
-    SELECT u.*, fp.source_feed_id, fp.tags
+    SELECT u.*, fp.source_feed_id, COALESCE(fp.tags, '[]'::jsonb) AS tags
     FROM updated u
     JOIN feed_properties fp ON fp.feed_id = u.id
 ),
@@ -535,10 +513,7 @@ FROM after_row
 RELEASE_NON_BUDGETED_FAILURE_SQL = f"""\
 WITH before_row AS (
     SELECT
-{feed_audit_sql.audit_source_projection("f")},
-        f.worker_id,
-        f.fencing_token,
-        f.audit_revision
+{feed_audit_sql.audit_source_projection("f")}
     FROM feeds f
     JOIN feed_properties fp ON fp.feed_id = f.id
     WHERE f.id = $1
@@ -563,15 +538,10 @@ updated AS (
         END
     FROM before_row
     WHERE feeds.id = before_row.id
-    RETURNING feeds.id, feeds.name, feeds.source_type,
-              feeds.status::text AS status, feeds.failure_count,
-              feeds.retry_after, feeds.status_reason,
-              feeds.status_reason_updated_at, feeds.status_reason_detail,
-              feeds.quarantine_reason, feeds.last_bookmark_time,
-              feeds.created_at, feeds.audit_revision AS feed_revision
+    RETURNING feeds.*, feeds.audit_revision AS feed_revision
 ),
 after_row AS (
-    SELECT u.*, fp.source_feed_id, fp.tags
+    SELECT u.*, fp.source_feed_id, COALESCE(fp.tags, '[]'::jsonb) AS tags
     FROM updated u
     JOIN feed_properties fp ON fp.feed_id = u.id
 ),
@@ -600,12 +570,7 @@ CREATE_FEED_SQL = f"""\
 WITH new_feed AS (
     INSERT INTO feeds (name, source_type, audit_revision)
     VALUES ($1, $2, 1)
-    RETURNING id, name, source_type, status, status_reason,
-              status_reason_updated_at, failure_count, worker_id,
-              last_heartbeat, last_processed_filename,
-              last_bookmark_time, created_at, quarantine_reason,
-              status_reason_detail, retry_after,
-              audit_revision AS feed_revision
+    RETURNING feeds.*, feeds.audit_revision AS feed_revision
 ),
 new_props AS (
     INSERT INTO feed_properties (feed_id, source_feed_id, source_type, tags)
@@ -613,7 +578,7 @@ new_props AS (
     RETURNING source_feed_id, tags
 ),
 after_row AS (
-    SELECT nf.*, np.source_feed_id, np.tags,
+    SELECT nf.*, np.source_feed_id, COALESCE(np.tags, '[]'::jsonb) AS tags,
            NULL::timestamptz AS last_speech_segment_timestamp
     FROM new_feed nf
     JOIN new_props np ON TRUE
@@ -709,8 +674,7 @@ LIMIT $7
 DEACTIVATE_FEED_SQL = f"""\
 WITH before_row AS (
     SELECT
-{feed_audit_sql.audit_source_projection("f")},
-        f.audit_revision
+{feed_audit_sql.audit_source_projection("f")}
     FROM feeds f
     JOIN feed_properties fp ON fp.feed_id = f.id
     WHERE f.id = $1
@@ -723,14 +687,10 @@ updated AS (
     FROM before_row
     WHERE feeds.id = before_row.id
       AND before_row.status <> 'deactivated'::feed_status
-    RETURNING feeds.id, feeds.name, feeds.source_type, feeds.status,
-              feeds.failure_count, feeds.retry_after, feeds.status_reason,
-              feeds.status_reason_updated_at, feeds.status_reason_detail,
-              feeds.quarantine_reason, feeds.last_bookmark_time,
-              feeds.created_at, feeds.audit_revision AS feed_revision
+    RETURNING feeds.*, feeds.audit_revision AS feed_revision
 ),
 after_row AS (
-    SELECT u.*, fp.source_feed_id, fp.tags
+    SELECT u.*, fp.source_feed_id, COALESCE(fp.tags, '[]'::jsonb) AS tags
     FROM updated u
     JOIN feed_properties fp ON fp.feed_id = u.id
 ),
@@ -759,8 +719,7 @@ WITH target_feed AS (
 ),
 before_row AS (
     SELECT
-{feed_audit_sql.audit_source_projection("f")},
-        f.audit_revision
+{feed_audit_sql.audit_source_projection("f")}
     FROM feeds f
     JOIN feed_properties fp ON fp.feed_id = f.id
     JOIN target_feed target ON target.id = f.id
@@ -813,8 +772,7 @@ WITH target_feed AS (
 ),
 before_row AS (
     SELECT
-{feed_audit_sql.audit_source_projection("f")},
-        f.audit_revision
+{feed_audit_sql.audit_source_projection("f")}
     FROM feeds f
     JOIN feed_properties fp ON fp.feed_id = f.id
     JOIN target_feed target ON target.id = f.id
@@ -837,16 +795,10 @@ updated AS (
         status_reason = NULL
     FROM before_row
     WHERE feeds.id = before_row.id
-    RETURNING feeds.id, feeds.name, feeds.source_type, feeds.status,
-              feeds.failure_count, feeds.retry_after, feeds.worker_id,
-              feeds.status_reason, feeds.status_reason_updated_at,
-              feeds.last_heartbeat, feeds.last_processed_filename,
-              feeds.last_bookmark_time, feeds.created_at,
-              feeds.quarantine_reason, feeds.status_reason_detail,
-              feeds.audit_revision AS feed_revision
+    RETURNING feeds.*, feeds.audit_revision AS feed_revision
 ),
 after_row AS (
-    SELECT u.*, fp.source_feed_id, fp.tags,
+    SELECT u.*, fp.source_feed_id, COALESCE(fp.tags, '[]'::jsonb) AS tags,
            (
                SELECT s.end_timestamp
                FROM audio_segments s
@@ -879,11 +831,7 @@ LEFT JOIN after_row ON after_row.id = target_feed.id
 UPDATE_FEED_SQL = f"""\
 WITH before_row AS (
     SELECT
-{feed_audit_sql.audit_source_projection("f")},
-        f.worker_id,
-        f.last_heartbeat,
-        f.last_processed_filename,
-        f.audit_revision
+{feed_audit_sql.audit_source_projection("f")}
     FROM feeds f
     JOIN feed_properties fp ON fp.feed_id = f.id
     WHERE f.id = $1
@@ -905,13 +853,7 @@ updated_feed AS (
     FROM change
     WHERE feeds.id = change.id
       AND change.changed
-    RETURNING feeds.id, feeds.name, feeds.source_type, feeds.status,
-              feeds.status_reason, feeds.status_reason_updated_at,
-              feeds.failure_count, feeds.worker_id, feeds.last_heartbeat,
-              feeds.last_processed_filename, feeds.last_bookmark_time,
-              feeds.created_at, feeds.quarantine_reason,
-              feeds.status_reason_detail, feeds.retry_after,
-              feeds.audit_revision AS feed_revision
+    RETURNING feeds.*
 ),
 updated_props AS (
     UPDATE feed_properties
@@ -921,31 +863,15 @@ updated_props AS (
     RETURNING source_feed_id, tags
 ),
 updated_row AS (
-    SELECT uf.*, up.source_feed_id, up.tags
+    SELECT uf.*, up.source_feed_id, COALESCE(up.tags, '[]'::jsonb) AS tags,
+           uf.audit_revision AS feed_revision
     FROM updated_feed uf
     JOIN updated_props up ON TRUE
 ),
 unchanged_row AS (
-    SELECT
-        change.id,
-        change.name,
-        change.source_type,
-        change.status,
-        change.status_reason,
-        change.status_reason_updated_at,
-        change.failure_count,
-        change.worker_id,
-        change.last_heartbeat,
-        change.last_processed_filename,
-        change.last_bookmark_time,
-        change.created_at,
-        change.quarantine_reason,
-        change.status_reason_detail,
-        change.retry_after,
-        change.audit_revision AS feed_revision,
-        change.source_feed_id,
-        change.tags
-    FROM change
+    SELECT before_row.*, before_row.audit_revision AS feed_revision
+    FROM before_row
+    JOIN change ON change.id = before_row.id
     WHERE NOT change.changed
 ),
 result_row AS (

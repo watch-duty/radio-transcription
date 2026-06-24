@@ -30,8 +30,7 @@ AND f.source_type = 'echo'
 HEARTBEAT_SQL = f"""\
 WITH before_row AS (
     SELECT
-{feed_audit_sql.audit_source_projection("f")},
-        f.audit_revision
+{feed_audit_sql.audit_source_projection("f")}
     FROM feeds f
     JOIN feed_properties fp ON fp.feed_id = f.id
     WHERE f.id = %s
@@ -56,15 +55,10 @@ updated AS (
         status_reason = NULL
     FROM before_row
     WHERE feeds.id = before_row.id
-    RETURNING feeds.id, feeds.name, feeds.source_type,
-              feeds.status::text AS status, feeds.failure_count,
-              feeds.retry_after, feeds.status_reason,
-              feeds.status_reason_updated_at, feeds.status_reason_detail,
-              feeds.quarantine_reason, feeds.last_bookmark_time,
-              feeds.created_at, feeds.audit_revision AS feed_revision
+    RETURNING feeds.*, feeds.audit_revision AS feed_revision
 ),
 after_row AS (
-    SELECT u.*, fp.source_feed_id, fp.tags
+    SELECT u.*, fp.source_feed_id, COALESCE(fp.tags, '[]'::jsonb) AS tags
     FROM updated u
     JOIN feed_properties fp ON fp.feed_id = u.id
 ),
@@ -100,8 +94,7 @@ FROM after_row
 RECORD_FAILURE_SQL = f"""\
 WITH before_row AS (
     SELECT
-{feed_audit_sql.audit_source_projection("f")},
-        f.audit_revision
+{feed_audit_sql.audit_source_projection("f")}
     FROM feeds f
     JOIN feed_properties fp ON fp.feed_id = f.id
     WHERE f.id = %s
@@ -133,15 +126,10 @@ updated AS (
     FROM before_row
     CROSS JOIN status_reason_input
     WHERE feeds.id = before_row.id
-    RETURNING feeds.id, feeds.name, feeds.source_type,
-              feeds.status::text AS status, feeds.failure_count,
-              feeds.retry_after, feeds.status_reason,
-              feeds.status_reason_updated_at, feeds.status_reason_detail,
-              feeds.quarantine_reason, feeds.last_bookmark_time,
-              feeds.created_at, feeds.audit_revision AS feed_revision
+    RETURNING feeds.*, feeds.audit_revision AS feed_revision
 ),
 after_row AS (
-    SELECT u.*, fp.source_feed_id, fp.tags
+    SELECT u.*, fp.source_feed_id, COALESCE(fp.tags, '[]'::jsonb) AS tags
     FROM updated u
     JOIN feed_properties fp ON fp.feed_id = u.id
 ),
@@ -171,8 +159,7 @@ FROM after_row
 RECORD_NON_BUDGETED_FAILURE_SQL = f"""\
 WITH before_row AS (
     SELECT
-{feed_audit_sql.audit_source_projection("f")},
-        f.audit_revision
+{feed_audit_sql.audit_source_projection("f")}
     FROM feeds f
     JOIN feed_properties fp ON fp.feed_id = f.id
     WHERE f.id = %s
@@ -196,15 +183,10 @@ updated AS (
     FROM before_row
     CROSS JOIN status_reason_input
     WHERE feeds.id = before_row.id
-    RETURNING feeds.id, feeds.name, feeds.source_type,
-              feeds.status::text AS status, feeds.failure_count,
-              feeds.retry_after, feeds.status_reason,
-              feeds.status_reason_updated_at, feeds.status_reason_detail,
-              feeds.quarantine_reason, feeds.last_bookmark_time,
-              feeds.created_at, feeds.audit_revision AS feed_revision
+    RETURNING feeds.*, feeds.audit_revision AS feed_revision
 ),
 after_row AS (
-    SELECT u.*, fp.source_feed_id, fp.tags
+    SELECT u.*, fp.source_feed_id, COALESCE(fp.tags, '[]'::jsonb) AS tags
     FROM updated u
     JOIN feed_properties fp ON fp.feed_id = u.id
 ),

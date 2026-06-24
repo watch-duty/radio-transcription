@@ -4,7 +4,7 @@ from __future__ import annotations
 
 # ruff: noqa: S608
 
-AUDIT_SNAPSHOT_FIELDS = (
+AUDITED_FEED_STATE_FIELDS = (
     ("id", "id"),
     ("name", "name"),
     ("source_type", "source_type"),
@@ -14,8 +14,6 @@ AUDIT_SNAPSHOT_FIELDS = (
     ("status_reason", "status_reason"),
     ("status_reason_updated_at", "status_reason_updated_at"),
     ("status_reason_detail", "status_reason_detail"),
-    ("quarantine_reason", "quarantine_reason"),
-    ("last_bookmark_time", "last_bookmark_time"),
     ("created_at", "created_at"),
     ("feed_properties.source_feed_id", "source_feed_id"),
     ("feed_properties.tags", "tags"),
@@ -25,7 +23,7 @@ AUDIT_SNAPSHOT_FIELDS = (
 def audit_snapshot_sql(alias: str) -> str:
     """Return a JSONB object expression for the maintained audit allowlist."""
     parts: list[str] = []
-    for key, column in AUDIT_SNAPSHOT_FIELDS:
+    for key, column in AUDITED_FEED_STATE_FIELDS:
         value = f"{alias}.{column}"
         if column in {"source_type", "status"}:
             value = f"{value}::text"
@@ -36,22 +34,17 @@ def audit_snapshot_sql(alias: str) -> str:
 
 
 def audit_source_projection(alias: str = "f") -> str:
-    """Return the feed fields needed to build an audit snapshot."""
+    """Return row-shaped feed state used by audit snapshot builders.
+
+    Keep the durable audit JSON allowlist in ``AUDITED_FEED_STATE_FIELDS``.
+    This projection intentionally carries the full feed row through mutation
+    CTEs so adding a non-audited ``feeds`` column does not require touching
+    every audited SQL statement.
+    """
     return (
-        f"    {alias}.id,\n"
-        f"    {alias}.name,\n"
-        f"    {alias}.source_type,\n"
-        f"    {alias}.status,\n"
-        f"    {alias}.failure_count,\n"
-        f"    {alias}.retry_after,\n"
-        f"    {alias}.status_reason,\n"
-        f"    {alias}.status_reason_updated_at,\n"
-        f"    {alias}.status_reason_detail,\n"
-        f"    {alias}.quarantine_reason,\n"
-        f"    {alias}.last_bookmark_time,\n"
-        f"    {alias}.created_at,\n"
+        f"    {alias}.*,\n"
         "    fp.source_feed_id,\n"
-        "    fp.tags"
+        "    COALESCE(fp.tags, '[]'::jsonb) AS tags"
     )
 
 
