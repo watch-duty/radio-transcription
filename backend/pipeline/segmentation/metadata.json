@@ -1,17 +1,17 @@
 {
-  "name": "Transcription Pipeline Template",
-  "description": "Flex Template for the Audio Transcription Pipeline (Dataflow).",
+  "name": "Audio Segmentation Pipeline Template",
+  "description": "Flex Template for the Audio Segmentation & Stitching Pipeline (Dataflow).",
   "parameters": [
     {
       "name": "input_subscription",
       "label": "Input Subscription",
-      "helpText": "Full path of the Pub/Sub ordered subscription for audio feeds (e.g. projects/your-project/subscriptions/audio-sub).",
+      "helpText": "Full path of the Pub/Sub ordered subscription for raw continuous audio feeds (e.g. projects/your-project/subscriptions/continuous-audio-sub).",
       "isOptional": false
     },
     {
       "name": "output_topic",
       "label": "Output Topic",
-      "helpText": "Full path of the Pub/Sub topic to publish transcribed text to.",
+      "helpText": "Full path of the Pub/Sub topic to publish segmented audio metadata to.",
       "isOptional": false
     },
     {
