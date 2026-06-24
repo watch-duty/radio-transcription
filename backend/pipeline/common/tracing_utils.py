@@ -8,7 +8,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from typing import Any, TypeVar, cast
+from typing import Any, cast
 
 from cloudevents.http.event import CloudEvent
 from opentelemetry import baggage
@@ -25,6 +25,7 @@ from opentelemetry.sdk.trace.export import (
     BatchSpanProcessor,
     ConsoleSpanExporter,
     SimpleSpanProcessor,
+    SpanExporter,
 )
 from opentelemetry.trace import (
     Span,
@@ -97,6 +98,18 @@ class ContextPropagationValidator(SpanProcessor):
         pass
 
 
+def _resolve_exporter(*, is_console: bool) -> SpanExporter:
+    """Resolves and returns the appropriate OpenTelemetry SpanExporter."""
+    if is_console:
+        return ConsoleSpanExporter()
+
+    project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or ""
+    if not project_id:
+        msg = "GOOGLE_CLOUD_PROJECT environment variable must be set in GCP environment."
+        raise ValueError(msg)
+    return CloudTraceSpanExporter(project_id=project_id)
+
+
 def setup_tracing(
     *,
     service_name: str | None = None,
@@ -147,15 +160,7 @@ def setup_tracing(
         )
 
         provider = TracerProvider(resource=resource)
-
-        if is_console:
-            exporter = ConsoleSpanExporter()
-        else:
-            project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or ""
-            if not project_id:
-                msg = "GOOGLE_CLOUD_PROJECT environment variable must be set in GCP environment."
-                raise ValueError(msg)
-            exporter = CloudTraceSpanExporter(project_id=project_id)
+        exporter = _resolve_exporter(is_console=is_console)
 
         if is_ingestion is None:
             is_ingestion = os.environ.get("IS_INGESTION_SERVICE") == "true"
@@ -482,9 +487,6 @@ def parse_pubsub_cloudevent(
     combined_attributes = extract_cloud_event_attributes(cloud_event)
 
     return combined_attributes, raw_data
-
-
-T = TypeVar("T")
 
 
 async def traced_to_thread[T](
