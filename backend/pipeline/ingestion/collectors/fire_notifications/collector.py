@@ -94,12 +94,13 @@ async def _process_file_list(
                     source_type=feed["source_type"],
                 )
             continue
-        mp3_bytes = audio_result
+        audio_bytes = audio_result
 
         try:
-            # to_thread: probe_audio_metadata shells out to ffprobe — keep it off the event loop.
+            # to_thread: probe_audio_metadata shells out to ffprobe — keep
+            # it off the event loop.
             duration_ms, mime_type = await asyncio.to_thread(
-                probe_audio_metadata, mp3_bytes, input_format="mp3"
+                probe_audio_metadata, audio_bytes, input_format="mp3"
             )
         except Exception as exc:
             info = ffmpeg_classifier.classify_ffprobe_exception(exc)
@@ -167,11 +168,11 @@ async def _process_file_list(
             "FN Audio ready: source_feed_id=%s uuid=%s size=%d duration_ms=%d",
             source_feed_id,
             f.uuid,
-            len(mp3_bytes),
+            len(audio_bytes),
             duration_ms,
         )
         yield CapturedChunk(
-            audio_bytes=mp3_bytes,
+            audio_bytes=audio_bytes,
             chunk_start_time=f.start_time,
             chunk_end_time=end_time,
             session_id=connection_session_id,

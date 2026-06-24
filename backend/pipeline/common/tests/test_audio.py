@@ -82,6 +82,43 @@ class TestAudioUtils(unittest.TestCase):
         self.assertNotIn("-f", mock_run.call_args.args[0])
 
     @patch("subprocess.run")
+    def test_probe_audio_metadata_success(self, mock_run: MagicMock) -> None:
+        """Test metadata extraction for various formats using JSON output."""
+        # 1. Test MP3
+        mock_result = MagicMock()
+        mock_result.stdout = (
+            b'{"format": {"duration": "15.500000", "format_name": "mp3"}}'
+        )
+        mock_run.return_value = mock_result
+
+        duration, mime = audio_helper.probe_audio_metadata(b"dummy mp3")
+        self.assertEqual(duration, 15500)
+        self.assertEqual(mime, audio_helper.models.AudioMimeType.MPEG)
+
+        # 2. Test M4A/MP4
+        mock_result.stdout = (
+            b'{"format": {"duration": "19.584000", "format_name": '
+            b'"mov,mp4,m4a,3g2,mj2"}}'
+        )
+        duration, mime = audio_helper.probe_audio_metadata(b"dummy m4a")
+        self.assertEqual(duration, 19584)
+        self.assertEqual(mime, audio_helper.models.AudioMimeType.MP4)
+
+        # 3. Test Unrecognized format defaults to MPEG and logs warning
+        mock_result.stdout = (
+            b'{"format": {"duration": "10.000000", "format_name": '
+            b'"unknown_format"}}'
+        )
+        with patch("backend.pipeline.common.audio.logger") as mock_logger:
+            duration, mime = audio_helper.probe_audio_metadata(b"dummy exotic")
+            self.assertEqual(duration, 10000)
+            self.assertEqual(mime, audio_helper.models.AudioMimeType.MPEG)
+            mock_logger.warning.assert_called_once_with(
+                "Unrecognized ffprobe audio format name %r; defaulting to MPEG/MP3",
+                "unknown_format",
+            )
+
+    @patch("subprocess.run")
     def test_get_audio_duration_forces_mp3_format(
         self, mock_run: MagicMock
     ) -> None:

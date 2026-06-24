@@ -26,13 +26,18 @@ def _map_format_to_mime(format_name: str | None) -> models.AudioMimeType:
         (("mp3", "mp2", "mp1"), models.AudioMimeType.MPEG),
         (("mov", "mp4", "m4a", "3g2", "mj2"), models.AudioMimeType.MP4),
         (("aac",), models.AudioMimeType.AAC),
-        (("wav", "dts"), models.AudioMimeType.WAV),
+        (("wav",), models.AudioMimeType.WAV),
         (("flac",), models.AudioMimeType.FLAC),
         (("ogg",), models.AudioMimeType.OGG),
     ]
     for keys, mime in mappings:
         if any(key in names for key in keys):
             return mime
+
+    logger.warning(
+        "Unrecognized ffprobe audio format name %r; defaulting to MPEG/MP3",
+        format_name,
+    )
     return models.AudioMimeType.MPEG
 
 
