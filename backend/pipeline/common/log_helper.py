@@ -130,8 +130,38 @@ def setup_logging() -> None:
         )
 
 
+RESERVED_ATTRS = {
+    "args",
+    "asctime",
+    "created",
+    "exc_info",
+    "exc_text",
+    "filename",
+    "funcName",
+    "levelname",
+    "levelno",
+    "lineno",
+    "message",
+    "module",
+    "msecs",
+    "msg",
+    "name",
+    "pathname",
+    "process",
+    "processName",
+    "relativeCreated",
+    "stack_info",
+    "thread",
+    "threadName",
+    "taskName",
+}
+
+
 class TaskJsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
+        if record.__dict__.get("structured_formatted", False):
+            return record.msg
+
         message = record.getMessage()
         if record.exc_info:
             exc_text = self.formatException(record.exc_info)
@@ -142,10 +172,24 @@ class TaskJsonFormatter(logging.Formatter):
             "severity": record.levelname,
             "logger": record.name,
         }
-        # Extract attributes added by LoggerAdapter
-        for attr in ["system", "component", "feed_id", "session_id"]:
-            if hasattr(record, attr):
-                log_record[attr] = getattr(record, attr)
+
+        # If the message is already serialized JSON, merge its fields to
+        # avoid double-serialization.
+        try:
+            parsed_msg = json.loads(message)
+            if isinstance(parsed_msg, dict):
+                log_record.update(parsed_msg)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Extract custom extra attributes
+        log_record.update(
+            {
+                key: value
+                for key, value in record.__dict__.items()
+                if key not in RESERVED_ATTRS and not key.startswith("_")
+            }
+        )
 
         # Add trace info from OpenTelemetry
         trace_attrs = get_trace_attributes()
@@ -183,10 +227,24 @@ class StructuredMessageFilter(logging.Filter):
             "severity": record.levelname,
             "logger": record.name,
         }
-        # Extract attributes added by LoggerAdapter
-        for attr in ["system", "component", "feed_id", "session_id"]:
-            if hasattr(record, attr):
-                log_record[attr] = getattr(record, attr)
+
+        # If the message is already serialized JSON, merge its fields to
+        # avoid double-serialization.
+        try:
+            parsed_msg = json.loads(message)
+            if isinstance(parsed_msg, dict):
+                log_record.update(parsed_msg)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Extract custom extra attributes
+        log_record.update(
+            {
+                key: value
+                for key, value in record.__dict__.items()
+                if key not in RESERVED_ATTRS and not key.startswith("_")
+            }
+        )
 
         # Add trace info from OpenTelemetry
         trace_attrs = get_trace_attributes()
@@ -208,6 +266,14 @@ def enable_structured_propagation() -> None:
     but the root logger has correct transport handlers.
     """
     _LoggingState.structured_propagation = True
+
+    # Retroactively update the root logger to remove StreamHandler to avoid duplicate stdout logs.
+    root_logger = logging.getLogger()
+    root_logger.handlers = [
+        h
+        for h in root_logger.handlers
+        if not isinstance(h, logging.StreamHandler)
+    ]
 
     # Retroactively update any loggers that have already been initialized.
     # This prevents import-order issues where modules initialize their loggers
