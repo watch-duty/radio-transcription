@@ -10,6 +10,7 @@ import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import { type TranscriptAnnotationData } from '@transcription/common';
 
+import { useAuth } from '../../context/AuthContext';
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
 import {
   findEvaluationAnnotationData,
@@ -18,6 +19,8 @@ import {
 import { formatDuration } from '../../utils/timeUtils';
 import AudioPlayer from '../audio/AudioPlayer';
 import AlertTooltip from './AlertTooltip';
+import HighlightedTranscript from './HighlightedTranscript';
+import { SegmentInfoPopover } from './SegmentInfoPopover';
 
 interface TranscriptRowProps {
   audioSegment: RenderableAudioSegment;
@@ -53,6 +56,7 @@ export function TranscriptRow({
   isTopAudioSegmentRow = false,
 }: TranscriptRowProps) {
   const theme = useTheme();
+  const { isAdmin } = useAuth();
 
   const [isHovered, setIsHovered] = useState(false);
 
@@ -251,7 +255,15 @@ export function TranscriptRow({
               isSilence || isWaiting || hasErrors ? 'italic' : 'normal',
           }}
         >
-          {renderTranscriptionText(transcriptAnnotation)}
+          {/* Placeholder strings (silence/waiting/error) have no real transcript to highlight. */}
+          {isPlaceholder ? (
+            renderTranscriptionText(transcriptAnnotation)
+          ) : (
+            <HighlightedTranscript
+              text={transcriptAnnotation?.text ?? ''}
+              ruleAnnotations={evaluationAnnotation?.ruleAnnotations}
+            />
+          )}
         </Typography>
         <Box sx={{ display: 'flex', gap: 1, flexShrink: 0 }}>
           {!isSilence && (
@@ -301,6 +313,12 @@ export function TranscriptRow({
               <LinkIcon fontSize="small" />
             </IconButton>
           </Tooltip>
+          {isAdmin && (
+            <SegmentInfoPopover
+              audioSegment={audioSegment}
+              triggerSnackbar={triggerSnackbar}
+            />
+          )}
         </Box>
       </ListItem>
     </Box>

@@ -151,8 +151,6 @@ def evaluate_transcribed_audio_segment(
     Args:
         cloud_event: The CloudEvent triggered by Pub/Sub.
     """
-    setup_tracing(
-        service_name="evaluation-service", use_batch=False, setup_metrics=True
-    )
+    setup_tracing(service_name="evaluation-service", use_batch=False)
     proc = container.get_processor()
     proc.process_event(cloud_event)

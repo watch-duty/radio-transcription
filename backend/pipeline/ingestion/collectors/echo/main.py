@@ -20,10 +20,14 @@ from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
 from opentelemetry import trace
 
+from backend.pipeline.common.actor_identity import (
+    resolve_runtime_service_actor_id,
+)
 from backend.pipeline.common.audio import get_audio_duration
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.gcp_helper import publish_audio_chunk_sync
 from backend.pipeline.common.log_helper import setup_logging
+from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.failure_classifiers import (
@@ -32,7 +36,10 @@ from backend.pipeline.ingestion.failure_classifiers import (
 from backend.pipeline.ingestion.settings import _require_env
 from backend.pipeline.storage.feed_store import FeedStatus, FeedStatusReason
 from backend.pipeline.storage.sync_connection import connect_db
-from backend.pipeline.storage.sync_feed_store import SyncFeedStore
+from backend.pipeline.storage.sync_feed_store import (
+    ResolvedEchoFeed,
+    SyncFeedStore,
+)
 
 if TYPE_CHECKING:
     from cloudevents.http import event as cloudevent
@@ -65,7 +72,6 @@ _HEARTBEAT_WRITE_FAILED = "echo_heartbeat_write_failed"
 # This is separate from feed-budget routing, which is handled by failure_policy.
 _RETURN_SUCCESS_AFTER_FAILURE_RECORD_ATTEMPT_STATUS_REASONS = {
     FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-    FeedStatusReason.SYSTEM_PIPELINE_ERROR,
 }
 
 # ---------------------------------------------------------------------------
@@ -87,6 +93,12 @@ def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
     """Sync entry point for Eventarc GCS OBJECT_FINALIZE events."""
     global gcs_client, pubsub_client, feed_store  # noqa: PLW0603
 
+    setup_tracing(
+        service_name="echo-ingestion",
+        is_ingestion=True,
+        use_batch=False,
+    )
+
     with tracer.start_as_current_span("echo_ingestion"):
         if gcs_client is None:
             gcs_client = storage.Client()
@@ -97,10 +109,17 @@ def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
             pubsub_client = PubSubClient()
         if feed_store is None:
             feed_store = SyncFeedStore(connect_db)
-        _handle(cloud_event)
+        _handle(
+            cloud_event,
+            actor_id=resolve_runtime_service_actor_id(),
+        )
 
 
-def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR0912, PLR0915
+def _handle(  # noqa: PLR0911, PLR0912, PLR0915
+    cloud_event: cloudevent.CloudEvent,
+    *,
+    actor_id: str,
+) -> None:
     """Core handler — fully synchronous."""
     if gcs_client is None or pubsub_client is None or feed_store is None:
         msg = (
@@ -248,7 +267,10 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
 
         # Unconditional heartbeat — also resets failure_count if recovering.
         try:
-            feed_store.record_heartbeat(feed["id"])
+            feed_store.record_heartbeat(
+                feed["id"],
+                actor_id=actor_id,
+            )
         except Exception:
             failure = _pipeline_failure(_HEARTBEAT_WRITE_FAILED)
             raise
@@ -274,7 +296,7 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
                 classification.status_reason.value,
                 classification.reason,
             )
-        _record_failure_by_policy(feed["id"], classification)
+        _record_failure_by_policy(feed, classification, actor_id=actor_id)
         if should_return_success:
             return
         raise
@@ -302,13 +324,16 @@ def _pipeline_failure(
 
 
 def _record_failure_by_policy(
-    feed_id: uuid.UUID,
+    feed: ResolvedEchoFeed,
     classification: failure_classification.FailureInfo,
+    *,
+    actor_id: str,
 ) -> None:
     if feed_store is None:
         msg = "Feed store is not initialized"
         raise RuntimeError(msg)
 
+    feed_id = feed["id"]
     action = failure_policy.classify_failure_policy(
         classification.status_reason,
     )
@@ -319,13 +344,16 @@ def _record_failure_by_policy(
         ):
             feed_store.record_failure(
                 feed_id,
+                actor_id=actor_id,
                 reason=classification.reason,
                 status_reason=classification.status_reason,
             )
         else:
             feed_store.record_non_budgeted_failure(
                 feed_id,
+                actor_id=actor_id,
                 status_reason=classification.status_reason,
+                reason=classification.reason,
             )
     except Exception:
         logger.exception("Failed to record failure for feed %s", feed_id)
