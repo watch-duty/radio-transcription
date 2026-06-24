@@ -155,6 +155,28 @@ class TestAudioUtils(unittest.TestCase):
             audio_helper.FFPROBE_TIMEOUT_SEC,
         )
 
+    @patch("backend.pipeline.common.audio.tempfile.NamedTemporaryFile")
+    @patch("subprocess.run")
+    def test_get_audio_duration_fallback_to_autodetect(
+        self, mock_run: MagicMock, mock_temp_file: MagicMock
+    ) -> None:
+        temp_file = _NamedTemporaryFileStub()
+        mock_temp_file.return_value = temp_file
+
+        def _run_side_effect(command, **kwargs):
+            if "-f" in command:
+                raise subprocess.CalledProcessError(
+                    1, command, stderr=b"forced format error"
+                )
+            return MagicMock(stdout=b"19.584000\n")
+
+        mock_run.side_effect = _run_side_effect
+
+        duration_ms = get_audio_duration(b"dummy audio", input_format="mp3")
+
+        self.assertEqual(duration_ms, 19584)
+        self.assertEqual(mock_run.call_count, 2)
+
     @unittest.skipIf(not _ffmpeg_available, "ffmpeg not available")
     def test_get_audio_duration_handles_headerless_lame_mp3(self) -> None:
         """Regression: MP3 without a Xing/Info frame (what echo devices emit).

@@ -8,7 +8,7 @@ import random
 import uuid
 from typing import TYPE_CHECKING
 
-from backend.pipeline.common.audio import get_audio_duration
+from backend.pipeline.common.audio import probe_audio_metadata
 from backend.pipeline.ingestion import quarantine_reason
 from backend.pipeline.ingestion.collectors import (
     control_flow,
@@ -30,7 +30,6 @@ from backend.pipeline.ingestion.failure_classifiers import (
     ffmpeg as ffmpeg_classifier,
 )
 from backend.pipeline.ingestion.models import (
-    AudioMimeType,
     CapturedChunk,
     CaptureEvent,
     FeedFailure,
@@ -98,9 +97,9 @@ async def _process_file_list(
         mp3_bytes = audio_result
 
         try:
-            # to_thread: get_audio_duration shells out to ffprobe — keep it off the event loop.
-            duration_ms = await asyncio.to_thread(
-                get_audio_duration, mp3_bytes, input_format="mp3"
+            # to_thread: probe_audio_metadata shells out to ffprobe — keep it off the event loop.
+            duration_ms, mime_type = await asyncio.to_thread(
+                probe_audio_metadata, mp3_bytes, input_format="mp3"
             )
         except Exception as exc:
             info = ffmpeg_classifier.classify_ffprobe_exception(exc)
@@ -177,7 +176,7 @@ async def _process_file_list(
             chunk_end_time=end_time,
             session_id=connection_session_id,
             receipt_time=receipt_time,
-            mime_type=AudioMimeType.MPEG,
+            mime_type=mime_type,
             resume_position=f.start_time,
             external_audio_segment_id=f"{f.uuid}|{f.filename}",
         )
