@@ -1,6 +1,7 @@
 """Google Cloud Speech-to-Text Chirp V3 transcriber implementation."""
 
 import pathlib
+from typing import override
 
 import pydantic
 from google.api_core import client_options
@@ -106,6 +107,12 @@ class GoogleChirpV3Transcriber(Transcriber):
     def setup(self) -> None:
         """Instantiates the Speech-to-Text API gRPC client."""
         self.client = self._init_client()
+
+    @override
+    async def close(self) -> None:
+        """Closes the underlying SpeechAsyncClient connection/channel."""
+        if self.client:
+            await self.client.transport.close()
 
     def _build_adaptation(self) -> cloud_speech.SpeechAdaptation | None:
         """Builds a SpeechAdaptation from the configured phrase hints."""
