@@ -14,6 +14,7 @@ from cloudevents.http.event import CloudEvent
 from google.api_core.exceptions import GoogleAPICallError
 from google.cloud import pubsub_v1
 from google.genai import errors as genai_errors
+from opentelemetry.trace import StatusCode
 
 from backend.pipeline.common.clients import audio_segments_client
 from backend.pipeline.common.constants import (
@@ -75,7 +76,7 @@ class TranscriptionEventProcessor:
 
         with with_tracer_context(
             combined_attributes, "transcribe_claim_check", __name__
-        ):
+        ) as root_span:
             errors = []
             transcript = ""
             segment_id = ""
@@ -155,6 +156,8 @@ class TranscriptionEventProcessor:
                     errors.append(f"Transient Failure: {e}")
                     raise
 
+                root_span.record_exception(e)
+                root_span.set_status(StatusCode.ERROR)
                 logger.exception(
                     "Permanent failure processing transcription claim for transmission %s (feed %s): %s. "
                     "Acknowledging message without retry.",
@@ -268,6 +271,8 @@ class TranscriptionEventProcessor:
                     segment_id,
                 )
             except Exception as write_err:
+                span.record_exception(write_err)
+                span.set_status(StatusCode.ERROR)
                 logger.exception(
                     "Failed to add transcript annotation for segment %s: %s",
                     segment_id,
