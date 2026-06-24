@@ -46,7 +46,7 @@ class WaveformAnnotationData(BaseModel):
     """Data for a waveform annotation."""
 
     peaks: list[list[float]]
-    duration_seconds: float
+    duration_seconds: float = Field(gt=0)
 
 
 class TranscriptAnnotation(BaseModel):
