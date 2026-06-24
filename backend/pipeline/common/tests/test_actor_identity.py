@@ -76,28 +76,6 @@ def test_gcp_service_account_actor_validator(
     )
 
 
-@pytest.mark.parametrize(
-    ("actor_id", "expected"),
-    [
-        ("service_account:gcp:1234567890", True),
-        ("service_account:gcp:unresolved", True),
-        ("service_account:local:development", True),
-        ("user:google:admin-sub-123", True),
-        ("", False),
-        ("   ", False),
-        ("service_account:gcp:bad value", False),
-        ("service_account:gcp:bad\nvalue", False),
-        (None, False),
-        ("x" * (actor_identity.MAX_ACTOR_ID_LENGTH + 1), False),
-    ],
-)
-def test_generic_actor_id_validator(
-    actor_id: str | None,
-    expected,
-) -> None:
-    assert actor_identity.is_well_formed_actor_id(actor_id) is expected
-
-
 def test_runtime_service_actor_uses_local_fallback_outside_gcp() -> None:
     with (
         mock.patch.object(actor_identity, "is_gcp_env", return_value=False),

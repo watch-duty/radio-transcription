@@ -740,16 +740,17 @@ before_row AS (
 deleted_audio_segments AS (
     DELETE FROM audio_segments
     WHERE feed_id IN (SELECT feed_id FROM write_audit)
-    RETURNING feed_id
+    RETURNING 1
 ),
 deleted_transcripts AS (
     DELETE FROM transcripts
     WHERE feed_id IN (SELECT feed_id FROM write_audit)
-    RETURNING feed_id
+    RETURNING 1
 ),
 deleted_feed AS (
     DELETE FROM feeds
     WHERE id IN (SELECT feed_id FROM write_audit)
+      -- Force child-delete CTE evaluation before deleting the parent feed row.
       AND (SELECT COUNT(*) FROM deleted_audio_segments) >= 0
       AND (SELECT COUNT(*) FROM deleted_transcripts) >= 0
     RETURNING id

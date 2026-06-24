@@ -57,19 +57,6 @@ def is_well_formed_gcp_service_account_actor_id(actor_id: str) -> bool:
     )
 
 
-def is_well_formed_actor_id(actor_id: str | None) -> bool:
-    if actor_id is None:
-        return False
-
-    if not actor_id:
-        return False
-
-    if len(actor_id) > MAX_ACTOR_ID_LENGTH:
-        return False
-
-    return not _contains_whitespace(actor_id)
-
-
 def resolve_runtime_service_actor_id() -> str:
     if not is_gcp_env():
         return LOCAL_SERVICE_ACCOUNT_ACTOR_ID
