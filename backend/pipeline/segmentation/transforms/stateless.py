@@ -199,15 +199,20 @@ class ParseAndKeyFn(beam.DoFn):
                     timestamp_ms=start_ms,
                 )
                 logger.debug(
-                    "Parsed ContinuousAudio feed_id=%s gcs_uri=%s duration=%dms",
-                    feed_id,
-                    chunk_proto.gcs_uri,
-                    chunk_proto.duration_ms,
+                    "Parsed ContinuousAudio",
+                    extra={
+                        "feed_id": feed_id,
+                        "gcs_uri": chunk_proto.gcs_uri,
+                        "duration_ms": chunk_proto.duration_ms,
+                    },
                 )
                 outputs.append((feed_id, metadata))
         except Exception as e:
             msg = f"Failed to parse or validate payload: {e}"
-            logger.exception(msg)
+            logger.exception(
+                "Failed to parse or validate payload",
+                extra={"error": str(e)},
+            )
             self.segmentation_error.inc()
             outputs.append(
                 beam.pvalue.TaggedOutput(
@@ -309,8 +314,8 @@ class UploadRawSegmentFn(beam.DoFn):
             token = otel_context.attach(parent_context)
             try:
                 task_logger.debug(
-                    "[Stateless Stitch] Downloading GCS chunk: %s",
-                    chunk.gcs_uri,
+                    "[Stateless Stitch] Downloading GCS chunk",
+                    extra={"gcs_uri": chunk.gcs_uri},
                 )
                 parsed_uri = urllib.parse.urlparse(chunk.gcs_uri)
                 bucket_name = parsed_uri.netloc
@@ -331,7 +336,10 @@ class UploadRawSegmentFn(beam.DoFn):
                 samples, sr = sf.read(in_mem_file, dtype="int16")
             except Exception as e:
                 err_msg = f"Failed downloading chunk {chunk.gcs_uri}: {e}"
-                task_logger.exception(err_msg)
+                task_logger.exception(
+                    "Failed downloading chunk",
+                    extra={"gcs_uri": chunk.gcs_uri, "error": str(e)},
+                )
                 raise RuntimeError(err_msg) from e
             else:
                 self.gcs_chunks_downloaded.inc()
@@ -458,7 +466,8 @@ class UploadRawSegmentFn(beam.DoFn):
         self.upload_latency_ms.update(int(upload_duration_ms))
 
         task_logger.info(
-            f"[Stateless Stitch] Successfully uploaded stitched FLAC: gs://{self.staging_audio_bucket}/{flac_path}"
+            "[Stateless Stitch] Successfully uploaded stitched FLAC",
+            extra={"gcs_uri": f"gs://{self.staging_audio_bucket}/{flac_path}"},
         )
         return f"gs://{self.staging_audio_bucket}/{flac_path}"
 
