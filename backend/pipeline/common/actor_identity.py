@@ -48,12 +48,9 @@ def is_well_formed_gcp_service_account_actor_id(actor_id: str) -> bool:
     if not actor_id.startswith(GCP_SERVICE_ACCOUNT_ACTOR_PREFIX):
         return False
 
-    service_account_unique_id = actor_id[
-        len(GCP_SERVICE_ACCOUNT_ACTOR_PREFIX) :
-    ]
-    return (
-        service_account_unique_id.isascii()
-        and service_account_unique_id.isdecimal()
+    service_account_id = actor_id[len(GCP_SERVICE_ACCOUNT_ACTOR_PREFIX) :]
+    return bool(service_account_id) and not _contains_whitespace(
+        service_account_id,
     )
 
 

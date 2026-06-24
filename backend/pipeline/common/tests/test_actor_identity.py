@@ -56,16 +56,22 @@ def test_google_user_actor_validator(actor_id: str, expected) -> None:
     ("actor_id", "expected"),
     [
         ("service_account:gcp:1234567890", True),
-        ("service_account:gcp:", False),
-        ("service_account:gcp:unresolved", False),
         (
             "service_account:gcp:feeds-service@example.iam.gserviceaccount.com",
-            False,
+            True,
         ),
+        (
+            "service_account:gcp:"
+            "feeds-service@example.iam.gserviceaccount.com?uid=1234567890",
+            True,
+        ),
+        ("service_account:gcp:unresolved", True),
+        ("service_account:gcp:", False),
+        ("service_account:gcp:feeds-service", True),
         ("service_account:gcp:bad value", False),
         ("service_account:gcp:bad\nvalue", False),
-        ("service_account:gcp:１２３", False),
-        ("service_account:gcp:²³", False),
+        ("service_account:gcp:１２３", True),
+        ("service_account:gcp:²³", True),
         ("service_account:local:development", False),
         ("user:google:admin@example.com", False),
         ("service_account:gcp:" + ("1" * 493), False),
@@ -109,9 +115,20 @@ def test_runtime_service_actor_uses_local_fallback_with_bad_env_outside_gcp(
     assert "feed_audit_actor_unresolved" not in caplog.text
 
 
-def test_runtime_service_actor_uses_configured_gcp_actor() -> None:
-    configured_actor_id = "service_account:gcp:1234567890"
-
+@pytest.mark.parametrize(
+    "configured_actor_id",
+    [
+        "service_account:gcp:1234567890",
+        "service_account:gcp:feeds-service@example.iam.gserviceaccount.com",
+        (
+            "service_account:gcp:"
+            "feeds-service@example.iam.gserviceaccount.com?uid=1234567890"
+        ),
+    ],
+)
+def test_runtime_service_actor_uses_configured_gcp_actor(
+    configured_actor_id: str,
+) -> None:
     with (
         mock.patch.object(actor_identity, "is_gcp_env", return_value=True),
         mock.patch.dict(
@@ -180,11 +197,12 @@ def test_runtime_service_actor_returns_unresolved_when_gcp_config_malformed(
     assert record.fallback_actor == "service_account:gcp:unresolved"
 
 
-def test_runtime_service_actor_rejects_email_actor_in_gcp_config(
+def test_runtime_service_actor_returns_unresolved_when_gcp_config_has_whitespace(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    email_actor_id = (
-        "service_account:gcp:feeds-service@example.iam.gserviceaccount.com"
+    malformed_actor_id = (
+        "service_account:gcp:"
+        "feeds-service@example.iam.gserviceaccount.com?uid=bad value"
     )
 
     with (
@@ -192,14 +210,14 @@ def test_runtime_service_actor_rejects_email_actor_in_gcp_config(
         mock.patch.object(actor_identity, "is_gcp_env", return_value=True),
         mock.patch.dict(
             os.environ,
-            {actor_identity.CONFIGURED_SERVICE_ACTOR_ENV: email_actor_id},
+            {actor_identity.CONFIGURED_SERVICE_ACTOR_ENV: malformed_actor_id},
             clear=True,
         ),
     ):
         actor_id = actor_identity.resolve_runtime_service_actor_id()
 
     assert actor_id == "service_account:gcp:unresolved"
-    assert email_actor_id not in caplog.text
+    assert malformed_actor_id not in caplog.text
     unresolved_records = [
         record
         for record in caplog.records

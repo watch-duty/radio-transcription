@@ -144,22 +144,25 @@ remain separate follow-up concerns.
 
 The required namespaced causal actor string on each Feed Audit Event. An
 `actor_id` identifies the human admin or service/runtime component that caused
-the event. Current v0.3 forms are `user:google:<sub>` for trusted
-admin-originated writes, `service_account:gcp:<service-account-unique-id>` for
-autonomous GCP runtime writers, `service_account:gcp:unresolved` when GCP actor
-configuration is missing or malformed, and `service_account:local:development`
-for local development.
+the event. Current v0.3 forms are `user:google:<email>` for trusted
+admin-originated writes, `service_account:gcp:<service-account-unique-id>`,
+`service_account:gcp:<service-account-email>`, or
+`service_account:gcp:<service-account-email>?uid=<service-account-unique-id>`
+for autonomous GCP runtime writers, `service_account:gcp:unresolved` when GCP
+actor configuration is missing or malformed, and
+`service_account:local:development` for local development.
 
 Autonomous audit-writing GCP workloads receive
-`FEED_AUDIT_ACTOR_ID=service_account:gcp:<service-account-unique-id>` from
-deployment/IaC. Application code consumes that value and does not perform
-runtime metadata, IAM, or token calls just to discover its own audit actor.
-Missing or malformed GCP configuration records `service_account:gcp:unresolved`
-and emits an operational error log; it must not block ingestion work. Workloads
-in the same audit-writing path may share one service account, while different
-audit-writing paths should use different service accounts when actor
-attribution should remain meaningful. Humans resolve opaque unique IDs through
-GCP/IaC/deployment records rather than an application lookup table.
+`FEED_AUDIT_ACTOR_ID` from deployment/IaC. Application code consumes that value
+and only enforces the `service_account:gcp:` namespace plus the same non-empty,
+bounded, no-whitespace storage hygiene as the database. Deployment owns whether
+the GCP suffix is the service account unique ID, email, or an email-plus-uid
+composite. Application code does not perform runtime metadata, IAM, or token
+calls just to discover its own audit actor. Missing or malformed GCP
+configuration records `service_account:gcp:unresolved` and emits an operational
+error log; it must not block ingestion work. Workloads in the same audit-writing
+path may share one service account, while different audit-writing paths should
+use different service accounts when actor attribution should remain meaningful.
 
 ### Leased Feed
 
