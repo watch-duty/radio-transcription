@@ -103,26 +103,63 @@ async def _process_file_list(
                 get_audio_duration, mp3_bytes, input_format="mp3"
             )
         except Exception as exc:
+            info = ffmpeg_classifier.classify_ffprobe_exception(exc)
             reason = ffmpeg_classifier.ffprobe_exception_failure_reason(exc)
-            logger.warning(
-                "Failed to compute duration for corrupt audio file in feed %s (%s): "
-                "uuid=%s filename=%s size=%d start_time=%s reason=%s. "
-                "Permanently skipping corrupt audio file.",
-                feed["id"],
-                feed.get("name", "Unknown"),
-                f.uuid,
-                f.filename,
-                f.size,
-                f.start_time,
-                reason,
+
+            # Permanently skip only if the exception indicates that ffprobe ran,
+            # inspected the downloaded MP3 bytes, and exited with a positive exit code.
+            is_permanent = (
+                info is not None
+                and info.kind
+                is ffmpeg_classifier.FfmpegFailureKind.PROCESS_EXIT
+                and info.exit_code is not None
+                and info.exit_code > 0
             )
-            outcome.record_failure(
-                ItemFailure(
-                    feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+
+            if is_permanent:
+                logger.warning(
+                    "Failed to compute duration for corrupt audio file in feed %s (%s): "
+                    "uuid=%s filename=%s size=%s start_time=%s reason=%s. "
+                    "Permanently skipping corrupt audio file.",
+                    feed["id"],
+                    feed.get("name", "Unknown"),
+                    f.uuid,
+                    f.filename,
+                    f.size if f.size is not None else "unknown",
+                    f.start_time,
                     reason,
                 )
-            )
-            yield SourceObservation(resume_position=f.start_time)
+                outcome.record_failure(
+                    ItemFailure(
+                        feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                        reason,
+                    )
+                )
+                yield SourceObservation(resume_position=f.start_time)
+            else:
+                logger.warning(
+                    "Failed to compute duration for audio file in feed %s (%s): "
+                    "uuid=%s filename=%s size=%s start_time=%s reason=%s. "
+                    "This failure is retryable.",
+                    feed["id"],
+                    feed.get("name", "Unknown"),
+                    f.uuid,
+                    f.filename,
+                    f.size if f.size is not None else "unknown",
+                    f.start_time,
+                    reason,
+                )
+                status_reason = (
+                    info.status_reason
+                    if info is not None
+                    else feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR
+                )
+                outcome.record_failure(
+                    ItemFailure(
+                        status_reason,
+                        reason,
+                    )
+                )
             continue
 
         end_time = f.start_time + datetime.timedelta(milliseconds=duration_ms)

@@ -760,7 +760,7 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
     @patch(
         "backend.pipeline.ingestion.collectors.fire_notifications.collector.telemetry.emit_call_download_failed",
     )
-    async def test_duration_generic_failure_promotes_exception_reason(
+    async def test_duration_generic_failure_is_retryable(
         self,
         mock_emit: MagicMock,
     ) -> None:
@@ -808,19 +808,140 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(ctx.exception), expected_reason)
         log_text = "\n".join(logs.output)
         self.assertIn(expected_reason, log_text)
-        self.assertIn("Permanently skipping corrupt audio file.", log_text)
+        self.assertIn("This failure is retryable.", log_text)
+        self.assertNotIn("Permanently skipping corrupt audio file.", log_text)
         self.assertIn("CHAN-feed", log_text)
         self.assertNotIn("Traceback", log_text)
         self.assertNotIn("uuid1", self.processed_uuids)
         mock_emit.assert_not_called()
 
-        # Verify that a SourceObservation with the correct start time was yielded
-        self.assertEqual(len(events), 1)
-        self.assertIsInstance(events[0], SourceObservation)
-        self.assertEqual(
-            events[0].resume_position,
-            datetime.datetime(2026, 5, 20, 12, 0, 0, tzinfo=datetime.UTC),
+        # Verify that no events were yielded (since the failure is retryable and bookmark is not advanced)
+        self.assertEqual(events, [])
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.telemetry.emit_call_download_failed",
+    )
+    async def test_duration_timeout_failure_is_retryable(
+        self,
+        mock_emit: MagicMock,
+    ) -> None:
+        self.client.download_audio.return_value = b"mp3_bytes"
+        files = [
+            FireNotificationsFile(
+                uuid="uuid1",
+                filename="CHAN 2026-05-20 12-00-00.mp3",
+                start_time=datetime.datetime(
+                    2026, 5, 20, 12, 0, 0, tzinfo=datetime.UTC
+                ),
+                size=1000,
+            ),
+        ]
+
+        expected_reason = "ffprobe timed out after 10s"
+        with (
+            patch(
+                "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
+                side_effect=subprocess.TimeoutExpired(
+                    cmd=["ffprobe"], timeout=10.0
+                ),
+            ),
+            self.assertLogs(
+                "backend.pipeline.ingestion.collectors.fire_notifications.collector",
+                level="WARNING",
+            ) as logs,
+        ):
+            events = []
+            with self.assertRaises(FeedFailure) as ctx:
+                async for event in collector._process_file_list(
+                    files,
+                    self.client,
+                    self.shutdown,
+                    "session-id",
+                    self.feed,  # type: ignore
+                    self.processed_uuids,
+                    "CHAN",
+                    ItemBatchOutcome(),
+                ):
+                    events.append(event)
+
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
         )
+        self.assertEqual(str(ctx.exception), expected_reason)
+        log_text = "\n".join(logs.output)
+        self.assertIn(expected_reason, log_text)
+        self.assertIn("This failure is retryable.", log_text)
+        self.assertNotIn("Permanently skipping corrupt audio file.", log_text)
+        self.assertIn("CHAN-feed", log_text)
+        self.assertNotIn("Traceback", log_text)
+        self.assertNotIn("uuid1", self.processed_uuids)
+        mock_emit.assert_not_called()
+
+        # Verify that no events were yielded
+        self.assertEqual(events, [])
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.telemetry.emit_call_download_failed",
+    )
+    async def test_duration_probe_failed_with_size_none_does_not_crash(
+        self,
+        mock_emit: MagicMock,
+    ) -> None:
+        self.client.download_audio.return_value = b"mp3_bytes"
+        files = [
+            FireNotificationsFile(
+                uuid="uuid1",
+                filename="CHAN 2026-05-20 12-00-00.mp3",
+                start_time=datetime.datetime(
+                    2026, 5, 20, 12, 0, 0, tzinfo=datetime.UTC
+                ),
+                size=None,
+            ),
+        ]
+
+        expected_reason = (
+            "ffprobe exited with code 1; "
+            "Invalid data found when processing input"
+        )
+        with (
+            patch(
+                "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
+                side_effect=subprocess.CalledProcessError(
+                    1,
+                    ["ffprobe"],
+                    stderr=b"Invalid data found when processing input\n",
+                ),
+            ),
+            self.assertLogs(
+                "backend.pipeline.ingestion.collectors.fire_notifications.collector",
+                level="WARNING",
+            ) as logs,
+        ):
+            events = []
+            with self.assertRaises(FeedFailure) as ctx:
+                async for event in collector._process_file_list(
+                    files,
+                    self.client,
+                    self.shutdown,
+                    "session-id",
+                    self.feed,  # type: ignore
+                    self.processed_uuids,
+                    "CHAN",
+                    ItemBatchOutcome(),
+                ):
+                    events.append(event)
+
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+        )
+        self.assertEqual(str(ctx.exception), expected_reason)
+        log_text = "\n".join(logs.output)
+        self.assertIn("size=unknown", log_text)
+        self.assertIn("Permanently skipping corrupt audio file.", log_text)
+        self.assertNotIn("Traceback", log_text)
+        mock_emit.assert_not_called()
 
 
 @patch.dict(
