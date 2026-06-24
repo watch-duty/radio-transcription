@@ -78,7 +78,7 @@ class GeminiTranscriber(base.Transcriber):
             location=self.location,
         )
 
-    def transcribe(
+    async def transcribe(
         self,
         *,
         audio_data: bytes | None = None,
@@ -136,7 +136,7 @@ class GeminiTranscriber(base.Transcriber):
         )
 
         # TODO(https://linear.app/watchduty/issue/GOO-579/add-retry-policy-for-gemini-transcriber): Add in retry policy
-        response = self.client.models.generate_content(
+        response = await self.client.aio.models.generate_content(
             # TODO(https://linear.app/watchduty/issue/GOO-584/update-gemini-31-flash-lite-to-use-fine-tuned-model): Use fine tuned model
             model=self.config.model,
             contents=contents,
