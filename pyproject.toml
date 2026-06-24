@@ -276,8 +276,7 @@ filterwarnings = [
 
 [tool.coverage.run]
 omit = [
-    "**/test_*.py",
-    "**/*_test.py",
+    "**/*test*",
     "**/tests/**",
     "**/conftest.py",
 ]
