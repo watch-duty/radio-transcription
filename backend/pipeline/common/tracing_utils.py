@@ -1,12 +1,14 @@
 """Utilities for distributed tracing in Apache Beam."""
 
+import asyncio
 import logging
 import os
 import threading
+import time
 import uuid
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 
 from cloudevents.http.event import CloudEvent
 from opentelemetry import baggage
@@ -474,3 +476,41 @@ def parse_pubsub_cloudevent(
     combined_attributes = extract_cloud_event_attributes(cloud_event)
 
     return combined_attributes, raw_data
+
+
+T = TypeVar("T")
+
+
+async def traced_to_thread[T](
+    span_name: str,
+    func: Callable[..., T],
+    *args: Any,
+    **kwargs: Any,
+) -> T:
+    """Wraps asyncio.to_thread in a child span, recording thread execution start and end.
+
+    This captures thread pool queue delay, actual execution duration, and dispatch delay.
+    """
+    tracer = get_tracer(__name__)
+    with tracer.start_as_current_span(span_name) as span:
+
+        def worker() -> T:
+            # Under asyncio.to_thread, contextvars are automatically propagated.
+            # Record when execution starts inside the thread pool worker thread.
+            start_time = time.time()
+            span.set_attribute("thread.start_time", start_time)
+            span.add_event("thread_execution_start")
+            telemetry_logger.info(
+                "Thread execution for span '%s' started", span_name
+            )
+            try:
+                return func(*args, **kwargs)
+            finally:
+                end_time = time.time()
+                span.set_attribute("thread.end_time", end_time)
+                span.add_event("thread_execution_end")
+                telemetry_logger.info(
+                    "Thread execution for span '%s' finished", span_name
+                )
+
+        return await asyncio.to_thread(worker)
