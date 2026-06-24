@@ -47,6 +47,10 @@ const FEED_STATUS_UI_CONFIG: Record<
   error: { displayText: 'Error', color: 'error' },
 };
 
+function formatStatusReason(statusReason: BackendFeedStatusReason): string {
+  return FEED_STATUS_REASON_UI_TEXT_DISPLAY[statusReason] ?? statusReason;
+}
+
 /**
  * Formats substatus, statusReason, and statusReasonDetail into a human-readable tooltip text.
  */
@@ -65,13 +69,11 @@ function formatSubstatusTooltipText({
     const substatusDisplay =
       FEED_SUBSTATUS_UI_TEXT_DISPLAY[substatus] ?? substatus;
     const reasonDisplay = statusReason
-      ? ` (${FEED_STATUS_REASON_UI_TEXT_DISPLAY[statusReason] ?? statusReason})`
+      ? ` (${formatStatusReason(statusReason)})`
       : '';
     parts.push(`${substatusDisplay}${reasonDisplay}`);
   } else if (statusReason) {
-    parts.push(
-      `(${FEED_STATUS_REASON_UI_TEXT_DISPLAY[statusReason] ?? statusReason})`
-    );
+    parts.push(`(${formatStatusReason(statusReason)})`);
   }
 
   if (statusReasonDetail) {
