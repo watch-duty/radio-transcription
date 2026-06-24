@@ -2,7 +2,7 @@ import type * as express from 'express';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { feedMutationActorHeaders } from './actor_headers.js';
+import { feedMutationActorHeaders } from './actorHeaders.js';
 
 vi.mock('../config.js', () => ({
   AUTH_BACKEND: 'google',

@@ -30,7 +30,7 @@ import {
   Tags,
 } from 'tsoa';
 
-import { feedMutationActorHeaders } from './actor_headers.js';
+import { feedMutationActorHeaders } from './actorHeaders.js';
 
 import { AuthenticatedRequest } from '../authentication.js';
 import { FEEDS_STORE_API_URL } from '../config.js';
