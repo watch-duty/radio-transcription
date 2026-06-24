@@ -6,7 +6,7 @@ import json
 import logging
 import subprocess
 import tempfile
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from backend.pipeline.ingestion import models
 
@@ -15,23 +15,44 @@ logger = logging.getLogger(__name__)
 FFPROBE_TIMEOUT_SEC = 10
 type AudioInputFormat = Literal["mp3"]
 
+# Maps ffprobe format_name tokens to AudioMimeType. Keys are lower-cased
+# substrings that may appear in a comma-separated format_name string.
+_FORMAT_MIME_MAP: dict[str, models.AudioMimeType] = {
+    "mp3": models.AudioMimeType.MPEG,
+    "mp2": models.AudioMimeType.MPEG,
+    "mp1": models.AudioMimeType.MPEG,
+    "mov": models.AudioMimeType.MP4,
+    "mp4": models.AudioMimeType.MP4,
+    "m4a": models.AudioMimeType.MP4,
+    "3g2": models.AudioMimeType.MP4,
+    "mj2": models.AudioMimeType.MP4,
+    "aac": models.AudioMimeType.AAC,
+    "wav": models.AudioMimeType.WAV,
+    "flac": models.AudioMimeType.FLAC,
+    "ogg": models.AudioMimeType.OGG,
+}
+
+
+class ProbeResult(NamedTuple):
+    """Parsed output from a single ffprobe invocation.
+
+    Attributes:
+        duration: Raw duration string from ffprobe (e.g. "12.345" or "N/A"),
+            or None if the field was absent.
+        format_name: Raw format_name string from ffprobe (e.g. "mp3" or
+            "mov,mp4,m4a,3gp,3g2,mj2"), or None if the field was absent.
+    """
+
+    duration: str | None
+    format_name: str | None
+
 
 def _map_format_to_mime(format_name: str | None) -> models.AudioMimeType:
     if not format_name:
         return models.AudioMimeType.MPEG
-    names = [name.strip().lower() for name in format_name.split(",")]
-
-    # Map candidate format/codec tags to the standard AudioMimeType enums
-    mappings = [
-        (("mp3", "mp2", "mp1"), models.AudioMimeType.MPEG),
-        (("mov", "mp4", "m4a", "3g2", "mj2"), models.AudioMimeType.MP4),
-        (("aac",), models.AudioMimeType.AAC),
-        (("wav",), models.AudioMimeType.WAV),
-        (("flac",), models.AudioMimeType.FLAC),
-        (("ogg",), models.AudioMimeType.OGG),
-    ]
-    for keys, mime in mappings:
-        if any(key in names for key in keys):
+    for token in (t.strip().lower() for t in format_name.split(",")):
+        mime = _FORMAT_MIME_MAP.get(token)
+        if mime is not None:
             return mime
 
     logger.warning(
@@ -41,9 +62,7 @@ def _map_format_to_mime(format_name: str | None) -> models.AudioMimeType:
     return models.AudioMimeType.MPEG
 
 
-def _probe_file(
-    file_path: str, format_args: list[str]
-) -> tuple[str | None, str | None]:
+def _probe_file(file_path: str, format_args: list[str]) -> ProbeResult:
     """Execute ffprobe JSON metadata inspection on the given file path.
 
     Raises:
@@ -73,13 +92,13 @@ def _probe_file(
         data = json.loads(stdout_str)
         if isinstance(data, dict):
             format_info = data.get("format", {})
-            return (
-                format_info.get("duration"),
-                format_info.get("format_name"),
+            return ProbeResult(
+                duration=format_info.get("duration"),
+                format_name=format_info.get("format_name"),
             )
-        return str(data).strip(), None
+        return ProbeResult(duration=str(data).strip(), format_name=None)
     except json.JSONDecodeError:
-        return stdout_str, None
+        return ProbeResult(duration=stdout_str, format_name=None)
 
 
 def _run_verbose_probe(file_path: str) -> str:
@@ -129,15 +148,12 @@ def probe_audio_metadata(
         f.write(audio_bytes)
         f.flush()
 
-        output_duration = None
-        output_format = None
+        result: ProbeResult | None = None
 
         # 1. Try with the specified input format first if provided
         if input_format is not None:
             try:
-                output_duration, output_format = _probe_file(
-                    f.name, _input_format_args(input_format)
-                )
+                result = _probe_file(f.name, _input_format_args(input_format))
             except (subprocess.SubprocessError, UnicodeDecodeError) as e:
                 logger.debug(
                     "ffprobe failed to probe metadata with forced format %s: %s",
@@ -145,18 +161,19 @@ def probe_audio_metadata(
                     e,
                 )
 
-            if output_duration is None:
+            if result is None or result.duration is None:
                 logger.warning(
                     "ffprobe failed to probe metadata with forced format %s; "
                     "retrying with auto-detection",
                     input_format,
                 )
+                result = None
 
-        # 2. Try with auto-detection (either because input_format was None, or
-        # forced format failed)
-        if output_duration is None:
+        # 2. Try with auto-detection (either because input_format was None,
+        # or the forced-format probe failed)
+        if result is None:
             try:
-                output_duration, output_format = _probe_file(f.name, [])
+                result = _probe_file(f.name, [])
             except subprocess.CalledProcessError as e:
                 stderr_text = _run_verbose_probe(f.name)
                 raise subprocess.CalledProcessError(
@@ -166,7 +183,7 @@ def probe_audio_metadata(
                     stderr=stderr_text.encode("utf-8"),
                 ) from e
 
-            if output_duration == "N/A" or output_duration is None:
+            if result.duration in (None, "N/A"):
                 stderr_text = _run_verbose_probe(f.name)
                 raise subprocess.CalledProcessError(
                     returncode=1,
@@ -175,8 +192,9 @@ def probe_audio_metadata(
                     stderr=stderr_text.encode("utf-8"),
                 )
 
-        duration_sec = float(output_duration)
-        mime_type = _map_format_to_mime(output_format)
+        duration_str = result.duration or ""
+        duration_sec = float(duration_str)
+        mime_type = _map_format_to_mime(result.format_name)
         return int(duration_sec * 1000), mime_type
 
 
@@ -184,6 +202,9 @@ def get_audio_duration(
     audio_bytes: bytes, *, input_format: AudioInputFormat | None = None
 ) -> int:
     """Calculate duration of audio bytes using ffprobe.
+
+    Backward-compatible shim over ``probe_audio_metadata`` for callers that
+    only need the duration and do not require the detected MIME type.
 
     Writes to a temp file so ffprobe can seek; reading from stdin returns
     ``N/A`` for MP3s without a Xing/Info frame (the encoding the echo
