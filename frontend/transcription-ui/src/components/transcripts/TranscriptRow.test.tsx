@@ -27,6 +27,14 @@ vi.mock('../audio/AudioPlayer', () => ({
   ),
 }));
 
+let mockIsAdmin = false;
+
+vi.mock('../../context/AuthContext', () => ({
+  useAuth: vi.fn(() => ({
+    isAdmin: mockIsAdmin,
+  })),
+}));
+
 const mockAudioSegment: AudioSegment = {
   id: 'tx-123',
   feedId: 'feed-123',
@@ -69,6 +77,7 @@ describe('TranscriptRow', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockIsAdmin = false;
     Object.assign(navigator, {
       clipboard: {
         writeText: vi.fn().mockImplementation(() => Promise.resolve()),
@@ -338,43 +347,7 @@ describe('TranscriptRow', () => {
     expect(screen.queryByText(/16:00/)).toBeNull();
   });
 
-  it('renders and triggers copy external segment ID action successfully when present', () => {
-    const segmentWithExtId = {
-      ...mockAudioSegment,
-      externalAudioSegmentId: 'ext-segment-abc-123',
-    };
-
-    render(
-      <MemoryRouter>
-        <TranscriptRow
-          audioSegment={segmentWithExtId}
-          index={0}
-          totalAudioSegments={1}
-          ruleIdToNameMap={ruleIdToNameMap}
-          rulesLoading={false}
-          onToggleAudio={mockOnToggleAudio}
-          isAudioPlaying={false}
-          onRowClick={mockOnRowClick}
-          currentlyPlayingSegmentId={null}
-          triggerSnackbar={mockTriggerSnackbar}
-          showHeader={false}
-        />
-      </MemoryRouter>
-    );
-
-    const copyButton = screen.getByLabelText('copy external segment id');
-    expect(copyButton).toBeTruthy();
-    fireEvent.click(copyButton);
-
-    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(
-      'ext-segment-abc-123'
-    );
-    expect(mockTriggerSnackbar).toHaveBeenCalledWith(
-      'External segment ID copied'
-    );
-  });
-
-  it('does not render external segment ID if not present', () => {
+  it('does not render segment info button for non-admins', () => {
     render(
       <MemoryRouter>
         <TranscriptRow
@@ -393,6 +366,30 @@ describe('TranscriptRow', () => {
       </MemoryRouter>
     );
 
-    expect(screen.queryByLabelText('copy external segment id')).toBeNull();
+    expect(screen.queryByLabelText('view segment info')).toBeNull();
+  });
+
+  it('renders segment info button for admins', () => {
+    mockIsAdmin = true;
+
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          audioSegment={mockAudioSegment}
+          index={0}
+          totalAudioSegments={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onToggleAudio={mockOnToggleAudio}
+          isAudioPlaying={false}
+          onRowClick={mockOnRowClick}
+          currentlyPlayingSegmentId={null}
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+        />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByLabelText('view segment info')).toBeTruthy();
   });
 });

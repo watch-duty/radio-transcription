@@ -1,6 +1,5 @@
 import { Fragment } from 'react';
 
-import AudioFileIcon from '@mui/icons-material/AudioFile';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import LinkIcon from '@mui/icons-material/Link';
 import Box from '@mui/material/Box';
@@ -11,6 +10,7 @@ import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import { type TranscriptAnnotationData } from '@transcription/common';
 
+import { useAuth } from '../../context/AuthContext';
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
 import {
   findEvaluationAnnotationData,
@@ -18,6 +18,7 @@ import {
 } from '../../utils/annotationUtils';
 import { formatDuration } from '../../utils/timeUtils';
 import AudioPlayer from '../audio/AudioPlayer';
+import SegmentInfoPopover from '../common/SegmentInfoPopover';
 import AlertTooltip from './AlertTooltip';
 
 interface TranscriptRowProps {
@@ -54,10 +55,10 @@ export function TranscriptRow({
   isTopAudioSegmentRow = false,
 }: TranscriptRowProps) {
   const theme = useTheme();
+  const { isAdmin } = useAuth();
   const currentDate = new Date(audioSegment.startTimestamp);
 
   const isSilence = !!audioSegment.isSilenceBundle;
-  const { externalAudioSegmentId } = audioSegment;
 
   function renderTranscriptionText(
     transcriptAnnotation: TranscriptAnnotationData | null
@@ -254,24 +255,18 @@ export function TranscriptRow({
           >
             {renderTranscriptionText(transcriptAnnotation)}
           </Box>
+        </Typography>
+        <Box
+          sx={{
+            display: 'flex',
+            gap: 1,
+            flexShrink: 0,
+            alignItems: 'center',
+          }}
+        >
           {!isSilence && (
             <Tooltip title="Copy transcript">
-              <Box
-                component="span"
-                className="copy-transcript-btn"
-                sx={{
-                  display: 'inline-block',
-                  verticalAlign: 'middle',
-                  marginLeft: '8px',
-                  opacity: 0,
-                  '.transcript-row-item:hover &': {
-                    opacity: 1,
-                  },
-                  '&:focus-within': {
-                    opacity: 1,
-                  },
-                }}
-              >
+              <span>
                 <IconButton
                   size="small"
                   aria-label="copy transcript"
@@ -289,33 +284,6 @@ export function TranscriptRow({
                   }
                 >
                   <ContentCopyIcon fontSize="small" />
-                </IconButton>
-              </Box>
-            </Tooltip>
-          )}
-        </Typography>
-        <Box
-          sx={{
-            display: 'flex',
-            gap: 1,
-            flexShrink: 0,
-            alignItems: 'center',
-          }}
-        >
-          {externalAudioSegmentId && (
-            <Tooltip title="Copy external segment ID">
-              <span>
-                <IconButton
-                  size="small"
-                  aria-label="copy external segment id"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    navigator.clipboard.writeText(externalAudioSegmentId);
-                    triggerSnackbar('External segment ID copied');
-                  }}
-                  sx={{ cursor: 'copy' }}
-                >
-                  <AudioFileIcon fontSize="small" />
                 </IconButton>
               </span>
             </Tooltip>
@@ -343,6 +311,12 @@ export function TranscriptRow({
               <LinkIcon fontSize="small" />
             </IconButton>
           </Tooltip>
+          {isAdmin && (
+            <SegmentInfoPopover
+              audioSegment={audioSegment}
+              triggerSnackbar={triggerSnackbar}
+            />
+          )}
         </Box>
       </ListItem>
     </Fragment>
