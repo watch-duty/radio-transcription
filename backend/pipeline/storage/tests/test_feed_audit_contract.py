@@ -70,12 +70,16 @@ def test_repository_glossary_defines_audit_terms() -> None:
 
     actor_section = _markdown_section(text, "### Actor ID")
     for token in (
-        "`user:google:<sub>`",
+        "`user:google:<email>`",
         "`service_account:gcp:<service-account-unique-id>`",
+        "`service_account:gcp:<service-account-email>`",
+        "`service_account:gcp:<service-account-email>?uid=<service-account-unique-id>`",
         "`service_account:gcp:unresolved`",
         "`service_account:local:development`",
-        "`FEED_AUDIT_ACTOR_ID=service_account:gcp:<service-account-unique-id>`",
-        "GCP/IaC/deployment records",
+        "`FEED_AUDIT_ACTOR_ID`",
+        "Deployment owns whether",
+        "same non-empty,",
+        "bounded, no-whitespace storage hygiene",
     ):
         assert token in actor_section
 

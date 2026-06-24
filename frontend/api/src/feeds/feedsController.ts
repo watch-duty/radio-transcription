@@ -403,7 +403,7 @@ export class FeedsController extends Controller {
     } catch (error: unknown) {
       const { status, message } = handleBackendError(
         error,
-        `deleting feed ${feedId}`
+        `deactivating feed ${feedId}`
       );
       throw new HttpError(status, message);
     }

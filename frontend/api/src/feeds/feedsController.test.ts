@@ -68,7 +68,10 @@ describe('FeedsController', () => {
     ['missing email', { user: { isAdmin: true } }],
     ['empty email', { user: { isAdmin: true, email: '' } }],
     ['blank email', { user: { isAdmin: true, email: '   ' } }],
-    ['space in email', { user: { isAdmin: true, email: 'admin @example.com' } }],
+    [
+      'space in email',
+      { user: { isAdmin: true, email: 'admin @example.com' } },
+    ],
   ] as const;
 
   function asExpressRequest(request: unknown): express.Request {
