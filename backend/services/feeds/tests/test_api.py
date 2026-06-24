@@ -22,7 +22,7 @@ from backend.pipeline.storage.pagination_utils import SortOrder
 from backend.services.feeds.main import app
 from backend.services.feeds.models import Feed, ListFeedsResponse, Tag
 
-_ACTOR_ID = "user:google:admin-sub-123"
+_ACTOR_ID = "user:google:admin@example.com"
 _ACTOR_HEADERS = {"X-WD-Actor-Id": _ACTOR_ID}
 
 
@@ -257,7 +257,7 @@ class TestFeedsAPI(unittest.TestCase):
         self.mock_service.create_feed.assert_not_called()
 
     def test_create_feed_malformed_actor_header_rejects(self) -> None:
-        """Actor context must be a non-empty Google-sub actor ID."""
+        """Actor context must be a non-empty Google user actor ID."""
         payload = {
             "name": "Test Feed",
             "source_type": "bcfy_feeds",

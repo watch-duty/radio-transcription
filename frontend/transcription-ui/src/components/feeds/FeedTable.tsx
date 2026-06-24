@@ -193,7 +193,7 @@ export function FeedTable({
   };
 
   const sortFeeds = useMemo(() => {
-    return feeds.sort((a, b) => {
+    return [...feeds].sort((a, b) => {
       let comparison = 0;
       if (sortConfig.column === 'name') {
         comparison = a.name.localeCompare(b.name);
@@ -320,7 +320,7 @@ export function FeedTable({
             status={feed.status}
             substatus={feed.substatus}
             statusReason={feed.statusReason}
-            quarantineReason={feed.quarantineReason}
+            statusReasonDetail={feed.statusReasonDetail}
             lastHeartbeat={allowEdit ? feed.lastHeartbeat : undefined}
             lastSpeechSegmentTimestamp={feed.lastSpeechSegmentTimestamp}
           />

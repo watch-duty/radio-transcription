@@ -10,7 +10,7 @@ from backend.services.feeds.models import BcfyFeedsCreate, FeedUpdate, Tag
 from backend.services.feeds.service import FeedService
 
 _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
-_ADMIN_ACTOR_ID = "user:google:admin-sub-123"
+_ADMIN_ACTOR_ID = "user:google:admin@example.com"
 
 
 def _store_feed(**overrides: object) -> dict[str, object]:
