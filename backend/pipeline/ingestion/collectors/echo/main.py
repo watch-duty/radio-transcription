@@ -24,6 +24,7 @@ from backend.pipeline.common.audio import get_audio_duration
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.gcp_helper import publish_audio_chunk_sync
 from backend.pipeline.common.log_helper import setup_logging
+from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.failure_classifiers import (
@@ -86,6 +87,12 @@ feed_store: SyncFeedStore | None = None
 def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
     """Sync entry point for Eventarc GCS OBJECT_FINALIZE events."""
     global gcs_client, pubsub_client, feed_store  # noqa: PLW0603
+
+    setup_tracing(
+        service_name="echo-ingestion",
+        is_ingestion=True,
+        use_batch=False,
+    )
 
     with tracer.start_as_current_span("echo_ingestion"):
         if gcs_client is None:

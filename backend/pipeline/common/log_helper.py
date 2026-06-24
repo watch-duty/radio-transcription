@@ -14,6 +14,25 @@ from backend.pipeline.common.tracing_utils import (
 )
 
 logger = logging.getLogger(__name__)
+pipeline_metrics_logger = logging.getLogger("pipeline.metrics")
+
+
+def record_pipeline_stage(stage: str, status: str = "start") -> None:
+    """Records that an audio chunk has reached a stage/status in the pipeline.
+
+    Emits a structured log to power Log-Based Metrics. This avoids data loss
+    from scale-to-zero container destruction in Cloud Run / GCF.
+    """
+    pipeline_metrics_logger.info(
+        f"Pipeline stage recorded: {stage} -> {status}",
+        extra={
+            "json_fields": {
+                "event_type": "pipeline_stage",
+                "stage": stage,
+                "status": status,
+            }
+        },
+    )
 
 
 def _handle_sys_exception(

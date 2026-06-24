@@ -17,7 +17,7 @@ frontend_dir = "frontend"
 # ---------------------------------------------------------------------------- #
 
 [tasks.lint]
-depends = ["lint:python", "lint:terraform", "lint:frontend"]
+depends = ["lint:python", "lint:terraform", "lint:frontend", "lint:schemas"]
 
 [tasks."lint:ruff:check"]
 description = "Run ruff linter check"
@@ -86,6 +86,10 @@ run = """
 uv run python scripts/notebook_formatter.py
 uv run ruff format --check model/colabs
 """
+
+[tasks."lint:schemas"]
+description = "Validate that Pub/Sub schemas contain exactly one top-level message type"
+run = "uv run python scripts/validate_schemas.py"
 
 [tasks."lint:python"]
 description = "Run all Python code quality and type checks"
@@ -165,6 +169,15 @@ if [ "$response" = "y" ] || [ "$response" = "Y" ]; then
 fi
 """
 
+[tasks."install:hooks"]
+description = "Install git pre-commit hook if missing"
+run = """
+if [ ! -f .git/hooks/pre-commit ]; then
+  echo "Installing git pre-commit hook..."
+  uv run pre-commit install
+fi
+"""
+
 [tasks."dev:start"]
 description = "Start the transcription pipeline in local Docker containers"
 depends = ["dev:stop", "build:common", "generate:protos", "install:api", "install:env"]
@@ -192,7 +205,7 @@ docker-compose --env-file local_dev/LOCAL.env logs --tail 100 -t -f {{ arg(name=
 
 [tasks.dev]
 description = "Start the entire system (backend (via Docker) and frontend UI hosted locally)"
-depends = ["dev:start", "build:common", "install:ui", "install:env"]
+depends = ["dev:start", "build:common", "install:ui", "install:env", "install:hooks"]
 run = "yarn --cwd frontend/transcription-ui run local"
 
 [tasks."dev:add-audio"]
@@ -220,11 +233,12 @@ docker-compose --env-file local_dev/LOCAL.env -f docker-compose.yml -f docker-co
 
 [tasks."dev:whisper"]
 description = "Start the entire system (transcription pipeline, API services, and frontend UI) with a local ASR model (Whisper)"
-depends = ["dev:whisper:start", "build:common", "install:ui", "install:api", "install:env"]
+depends = ["dev:whisper:start", "build:common", "install:ui", "install:api", "install:env", "install:hooks"]
 run = "yarn --cwd frontend/transcription-ui run local"
 
-[tasks."dev:remote:init"]
+[tasks."dev:init"]
 description = "Automatically fetch and configure remote dev environment variables from GCP for running Frontend UI against the dev GCP environment"
+depends = ["install:hooks"]
 run = """
 export PROJECT_ID=$(gcloud config get-value project)
 gcloud auth application-default login --impersonate-service-account=radio-transcription-api-dev@$PROJECT_ID.iam.gserviceaccount.com
@@ -237,7 +251,7 @@ depends = ["dev:stop", "build:common", "install:ui"]
 run = """
 if [ ! -f frontend/transcription-ui/.env.dev.local ]; then
   echo "No configuration found. Initializing..."
-  mise run dev:remote:init
+  mise run dev:init
 fi
 
 yarn --cwd frontend/transcription-ui dev
@@ -250,7 +264,7 @@ env = { VITE_API_BASE_URL = "", VITE_PROXY_API_TARGET = "http://localhost:8080" 
 run = """
 if [ ! -f frontend/api/.env.local ] || [ ! -f frontend/transcription-ui/.env.dev.local ]; then
   echo "No configuration found. Initializing..."
-  mise run dev:remote:init
+  mise run dev:init
 fi
 
 npx concurrently "yarn --cwd frontend/api local" "yarn --cwd frontend/transcription-ui dev"

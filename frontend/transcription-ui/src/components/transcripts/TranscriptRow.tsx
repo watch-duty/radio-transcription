@@ -20,6 +20,7 @@ import { formatDuration } from '../../utils/timeUtils';
 import AudioPlayer from '../audio/AudioPlayer';
 import SegmentInfoPopover from '../common/SegmentInfoPopover';
 import AlertTooltip from './AlertTooltip';
+import HighlightedTranscript from './HighlightedTranscript';
 
 interface TranscriptRowProps {
   audioSegment: RenderableAudioSegment;
@@ -245,16 +246,15 @@ export function TranscriptRow({
               isSilence || isWaiting || hasErrors ? 'italic' : 'normal',
           }}
         >
-          <Box
-            component="span"
-            sx={{
-              transition: 'filter 0.3s ease, opacity 0.3s ease',
-              filter: redactTranscripts ? 'blur(6px)' : 'none',
-              opacity: redactTranscripts ? 0.6 : 1,
-            }}
-          >
-            {renderTranscriptionText(transcriptAnnotation)}
-          </Box>
+          {/* Placeholder strings (silence/waiting/error) have no real transcript to highlight. */}
+          {isPlaceholder ? (
+            renderTranscriptionText(transcriptAnnotation)
+          ) : (
+            <HighlightedTranscript
+              text={transcriptAnnotation?.text ?? ''}
+              ruleAnnotations={evaluationAnnotation?.ruleAnnotations}
+            />
+          )}
         </Typography>
         <Box
           sx={{

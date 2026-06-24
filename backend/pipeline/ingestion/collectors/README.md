@@ -17,6 +17,15 @@ If this document disagrees with those files or their tests, the code and tests
 win. Update this guide when a behavior change would make the guidance
 misleading.
 
+## Overview
+
+| Method | Mechanism | Audio segmented? |
+|--------|----------|--------|
+| Continuous streaming icecast | VM | No |
+| Polling (API, fetching) | VM | Yes |
+| Push (Echo) | Cloud Function (on demand) | Yes|
+
+
 ## Feed Failure Runtime Boundary
 
 VM collectors have one job: turn a source-specific stream or polling API into

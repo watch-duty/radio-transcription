@@ -13,6 +13,7 @@ from backend.services.audio_segments.models import (
     AnnotationType,
     AudioClassification,
     EvaluationAnnotationData,
+    WaveformAnnotationData,
 )
 
 
@@ -101,6 +102,32 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             result.data.model_dump(),
             {"decisions": ["rule-1"], "errors": [], "rule_annotations": {}},
         )
+
+    async def test_add_waveform_annotation_success(self) -> None:
+        waveform_data = {
+            "peaks": [[0.0, 0.5, 0.25, 1.0]],
+            "duration_seconds": 4.0,
+        }
+        waveform_row = {
+            "audio_segment_id": _SEGMENT_ID,
+            "type": "WAVEFORM",
+            "data": waveform_data,
+            "created_at": datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+            "updated_at": datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+        }
+        self.pool.fetchrow.return_value = waveform_row
+
+        result = await self.store.add_annotation(
+            str(_SEGMENT_ID),
+            AnnotationType.WAVEFORM,
+            waveform_data,
+        )
+
+        self.assertEqual(result.type, "WAVEFORM")
+        data = result.data
+        assert isinstance(data, WaveformAnnotationData)
+        self.assertEqual(data.peaks, [[0.0, 0.5, 0.25, 1.0]])
+        self.assertEqual(data.duration_seconds, 4.0)
 
     async def test_add_evaluation_annotation_with_rule_annotations(
         self,

@@ -3,7 +3,6 @@ import type { ReactElement } from 'react';
 import { MemoryRouter } from 'react-router';
 import { VirtuosoMockContext } from 'react-virtuoso';
 
-import { Howl } from 'howler';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -167,6 +166,48 @@ vi.mock('@wavesurfer/react', () => ({
   default: () => <div data-testid="wavesurfer-player" />,
 }));
 
+const audioEngineMock = vi.hoisted(() => ({
+  playSpy: vi.fn(),
+  lastSrc: null as string | null,
+  lastCallbacks: null as {
+    onPlay?: () => void;
+    onPause?: () => void;
+    onEnd?: () => void;
+    onError?: () => void;
+  } | null,
+}));
+
+vi.mock('../../audio/WebAudioPlayer', () => ({
+  createAudioContext: () => ({ close: () => Promise.resolve() }),
+  WebAudioPlayer: class {
+    resume() {}
+    setVolumeDb() {}
+    setPan() {}
+    setSpeed() {}
+    stop() {}
+    dispose() {}
+    load(
+      src: string,
+      callbacks: NonNullable<typeof audioEngineMock.lastCallbacks>
+    ) {
+      audioEngineMock.lastSrc = src;
+      audioEngineMock.lastCallbacks = callbacks;
+      return {
+        play: () => {
+          audioEngineMock.playSpy();
+          callbacks.onPlay?.();
+        },
+        pause: () => callbacks.onPause?.(),
+        stop: () => {},
+        getCurrentTime: () => 0,
+        setCurrentTime: () => {},
+        unload: () => {},
+        off: () => {},
+      };
+    }
+  },
+}));
+
 describe('TranscriptView', () => {
   const mockHandleError = vi.fn();
 
@@ -210,7 +251,7 @@ describe('TranscriptView', () => {
       sourceType: SourceType.BCFY_FEEDS,
       status: 'active' as FeedStatus,
       substatus: 'active' as BackendFeedStatus,
-      lastHeartbeat: '2026-04-10T12:00:00Z',
+      lastSpeechSegmentTimestamp: Date.parse('2026-04-10T12:00:00Z'),
     });
     // Default mock for listRules
     vi.mocked(listRules).mockResolvedValue([]);
@@ -819,7 +860,8 @@ describe('TranscriptView', () => {
       sourceType: SourceType.BCFY_FEEDS,
       status: 'active' as FeedStatus,
       substatus: 'active' as BackendFeedStatus,
-      lastHeartbeat: new Date(fixedNow.getTime() - 5 * 60 * 1000).toISOString(),
+      lastHeartbeat: fixedNow.getTime() - 10 * 60 * 1000,
+      lastSpeechSegmentTimestamp: fixedNow.getTime() - 5 * 60 * 1000,
     };
     vi.mocked(getFeed).mockResolvedValue(mockFeed);
     vi.mocked(listAudioSegments).mockResolvedValue({
@@ -840,7 +882,8 @@ describe('TranscriptView', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Active')).toBeTruthy();
-      expect(screen.getByText('Last updated: 5 minutes ago')).toBeTruthy();
+      expect(screen.queryByText(/heartbeat|updated/i)).toBeNull();
+      expect(screen.getByText('Latest: 5 minutes ago')).toBeTruthy();
     });
 
     vi.useRealTimers();
@@ -849,7 +892,7 @@ describe('TranscriptView', () => {
   it('automatically plays newly received audio when Always play latest audio checkbox is checked', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
-    const playSpy = vi.spyOn(Howl.prototype, 'play');
+    const playSpy = audioEngineMock.playSpy;
 
     const initialAudioSegments = [
       makeMockAudioSegment(
@@ -916,7 +959,7 @@ describe('TranscriptView', () => {
   it('does not automatically play newly received audio when Always play latest audio checkbox is unchecked', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
-    const playSpy = vi.spyOn(Howl.prototype, 'play');
+    const playSpy = audioEngineMock.playSpy;
 
     const initialAudioSegments = [
       makeMockAudioSegment(
@@ -1151,29 +1194,7 @@ describe('TranscriptView', () => {
   });
 
   it('advances playback to the next silence segment inside a silence bundle when the current one finishes', async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let lastHowlOptions: any = null;
-
-    const initSpy = vi
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .spyOn(Howl.prototype as any, 'init')
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .mockImplementation(function (this: any, o: any) {
-        lastHowlOptions = o;
-        this._sounds = [];
-        return this;
-      });
-
-    const playSpy = vi
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .spyOn(Howl.prototype as any, 'play')
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .mockImplementation(function (this: any) {
-        if (lastHowlOptions?.onplay) {
-          lastHowlOptions.onplay();
-        }
-        return this;
-      });
+    const playSpy = audioEngineMock.playSpy;
 
     const mockSilence1 = {
       id: 'silence-1',
@@ -1220,20 +1241,15 @@ describe('TranscriptView', () => {
     const playButton = screen.getAllByLabelText('play')[1];
     fireEvent.click(playButton);
 
-    expect(initSpy).toHaveBeenCalled();
-    expect(lastHowlOptions.src).toEqual([
-      expect.stringContaining('silence-1.m4a'),
-    ]);
+    expect(audioEngineMock.lastSrc).toContain('silence-1.m4a');
     expect(playSpy).toHaveBeenCalled();
 
     act(() => {
-      lastHowlOptions.onend();
+      audioEngineMock.lastCallbacks?.onEnd?.();
     });
 
     await waitFor(() => {
-      expect(lastHowlOptions.src).toEqual([
-        expect.stringContaining('silence-2.m4a'),
-      ]);
+      expect(audioEngineMock.lastSrc).toContain('silence-2.m4a');
     });
   });
 

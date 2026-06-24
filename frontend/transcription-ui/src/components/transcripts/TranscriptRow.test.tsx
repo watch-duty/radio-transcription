@@ -114,6 +114,55 @@ describe('TranscriptRow', () => {
     expect(screen.queryByText(/Monday/i)).toBeNull();
   });
 
+  it('highlights matched spans from the evaluation annotation', () => {
+    const highlightedSegment: AudioSegment = {
+      ...mockAudioSegment,
+      annotations: [
+        {
+          type: AnnotationType.TRANSCRIPT,
+          createdAt: '2026-04-15T16:00:00Z',
+          data: { text: 'This is a test transcription', errors: [] },
+        },
+        {
+          type: AnnotationType.EVALUATION,
+          createdAt: '2026-04-15T16:00:00Z',
+          data: {
+            decisions: ['rule-1'],
+            errors: [],
+            ruleAnnotations: {
+              'rule-1': {
+                textMatch: [
+                  { startIndex: 10, endIndex: 14, matchedText: 'test' },
+                ],
+              },
+            },
+          },
+        },
+      ],
+    };
+
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          audioSegment={highlightedSegment}
+          index={0}
+          totalAudioSegments={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onToggleAudio={mockOnToggleAudio}
+          isAudioPlaying={false}
+          onRowClick={mockOnRowClick}
+          currentlyPlayingSegmentId={null}
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+        />
+      </MemoryRouter>
+    );
+
+    // The matched substring renders in its own highlighted element.
+    expect(screen.getByText('test')).toBeTruthy();
+  });
+
   it('renders Day Header accurately when showHeader is true', () => {
     render(
       <MemoryRouter>

@@ -221,7 +221,7 @@ You can run the frontend locally while connecting directly to the GCP dev enviro
 #### Step 2a: Initialize Environment Configs
 Run the helper initialization task:
 ```bash
-mise run dev:remote:init
+mise run dev:init
 ```
 This script will:
 * Check that your local Application Default Credentials (ADC) are configured to impersonate the service account. If not, it will output the exact login command for you to run.
