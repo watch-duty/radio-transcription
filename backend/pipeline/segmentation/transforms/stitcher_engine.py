@@ -257,11 +257,7 @@ class StitcherEngine:
                 )
 
                 task_logger.info(
-                    "[Stale Timer] Fired for session. Emitting buffered contents.",
-                    extra={
-                        "session_id": session_id,
-                        "segment_id": segment_id,
-                    },
+                    f"[Stale Timer] Fired for session {session_id}. Emitting buffered contents {segment_id}."
                 )
                 self.stale_flushes.inc()
 
@@ -299,8 +295,7 @@ class StitcherEngine:
                 if not self.stitch_config.route_to_dlq:
                     raise
                 task_logger.exception(
-                    "Error yielding stale buffer",
-                    extra={"feed_id": feed_id},
+                    "Error yielding stale buffer for feed %s", feed_id
                 )
                 yield (
                     trans_constants.DEAD_LETTER_QUEUE_TAG,
@@ -343,11 +338,7 @@ class StitcherEngine:
                 trans_utils.get_duration_ms(action.time_range),
             )
             task_logger.info(
-                "[Flush] Emitting segment",
-                extra={
-                    "segment_id": segment_id,
-                    "chunk_count": len(processed_uris),
-                },
+                f"[Flush] Emitting segment {segment_id} with {len(processed_uris)} chunks"
             )
 
             # In backfill/catch-up mode (e.g., pipeline recovering from maintenance or outage),
@@ -365,11 +356,8 @@ class StitcherEngine:
                     < trans_constants.OVERLAPPING_TRANSMISSION_TOLERANCE_MS
                 ):
                     task_logger.warning(
-                        "Potential growing/overlapping transmission detected! Starts at nearly the same time as previous.",
-                        extra={
-                            "current_start_ms": current_start_ms,
-                            "last_start_ms": last_start_ms,
-                        },
+                        f"Potential growing/overlapping transmission detected! "
+                        f"Starts at nearly the same time ({current_start_ms}ms) as previous ({last_start_ms}ms)."
                     )
 
                 last_start_ms_state.write(current_start_ms)
@@ -487,8 +475,7 @@ class StitcherEngine:
 
                 # 1. Download audio and run speech detection
                 task_logger.debug(
-                    "[Download] Downloading audio",
-                    extra={"gcs_uri": chunk.gcs_uri},
+                    f"[Download] Downloading audio for {chunk.gcs_uri}"
                 )
                 chunk_data = self.processor.download_audio_and_detect(
                     chunk.gcs_uri,
@@ -497,8 +484,7 @@ class StitcherEngine:
                 )
                 self._record_chunk_evaluation_metrics(chunk_data)
                 task_logger.debug(
-                    "[Download] Downloaded audio",
-                    extra={"gcs_uri": chunk.gcs_uri},
+                    f"[Download] Downloaded audio for {chunk.gcs_uri}"
                 )
 
                 payload = datatypes.DownloadedChunkPayload(
@@ -578,11 +564,9 @@ class StitcherEngine:
             if not self.stitch_config.route_to_dlq:
                 raise
             task_logger.exception(
-                "Error processing chunk",
-                extra={
-                    "gcs_uri": chunk.gcs_uri,
-                    "feed_id": feed_id,
-                },
+                "Error processing chunk %s for feed %s",
+                chunk.gcs_uri,
+                feed_id,
             )
             dlq_payload = {
                 "feed_id": feed_id,
