@@ -430,7 +430,11 @@ class TestProcessFeedSideEffectOrdering(unittest.IsolatedAsyncioTestCase):
             call_order.append("publish")
             return "message-1"
 
-        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt = CollectorRuntime(
+            capture_fn=_one_chunk,
+            settings=_make_settings(),
+            runtime_actor_id=_RUNTIME_ACTOR_ID,
+        )
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
@@ -503,7 +507,11 @@ class TestProcessFeedShutdown(unittest.IsolatedAsyncioTestCase):
         async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
-        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt = CollectorRuntime(
+            capture_fn=_one_chunk,
+            settings=_make_settings(),
+            runtime_actor_id=_RUNTIME_ACTOR_ID,
+        )
         rt._shutdown = asyncio.Event()
         rt._shutdown.set()
         rt._lease_lost = asyncio.Event()
@@ -527,7 +535,11 @@ class TestProcessFeedNormalCompletion(unittest.IsolatedAsyncioTestCase):
         async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
-        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt = CollectorRuntime(
+            capture_fn=_one_chunk,
+            settings=_make_settings(),
+            runtime_actor_id=_RUNTIME_ACTOR_ID,
+        )
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
@@ -575,6 +587,7 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
         rt = CollectorRuntime(
             capture_fn=_one_observation,
             settings=_make_settings(),
+            runtime_actor_id=_RUNTIME_ACTOR_ID,
         )
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
@@ -613,6 +626,7 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
         rt = CollectorRuntime(
             capture_fn=_one_observation,
             settings=_make_settings(),
+            runtime_actor_id=_RUNTIME_ACTOR_ID,
         )
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
@@ -630,10 +644,6 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
         with (
             _mock_upload_audio(),
             _mock_pubsub_publish(),
-            mock.patch(
-                "backend.pipeline.ingestion.collector_runtime.runtime_service_actor_id",
-                return_value=_RUNTIME_ACTOR_ID,
-            ),
         ):
             await rt._process_feed(feed)
 
@@ -676,6 +686,7 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
         rt = CollectorRuntime(
             capture_fn=_one_observation,
             settings=_make_settings(),
+            runtime_actor_id=_RUNTIME_ACTOR_ID,
         )
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
@@ -693,10 +704,6 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
         with (
             _mock_upload_audio(),
             _mock_pubsub_publish(),
-            mock.patch(
-                "backend.pipeline.ingestion.collector_runtime.runtime_service_actor_id",
-                return_value=_RUNTIME_ACTOR_ID,
-            ),
         ):
             await rt._process_feed(feed)
 
@@ -2049,7 +2056,9 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             yield _make_captured_chunk(b"audio")
 
         rt = CollectorRuntime(
-            capture_fn=_failing_capture, settings=_make_settings()
+            capture_fn=_failing_capture,
+            settings=_make_settings(),
+            runtime_actor_id=_RUNTIME_ACTOR_ID,
         )
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
@@ -2073,10 +2082,6 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             mock.patch(
                 "backend.pipeline.ingestion.collector_runtime.quarantine_telemetry"
             ) as mock_telemetry,
-            mock.patch(
-                "backend.pipeline.ingestion.collector_runtime.runtime_service_actor_id",
-                return_value=_RUNTIME_ACTOR_ID,
-            ),
             self.assertLogs(
                 "backend.pipeline.ingestion.collector_runtime",
                 level=logging.INFO,
@@ -2135,7 +2140,9 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             yield _make_captured_chunk(b"audio")
 
         rt = CollectorRuntime(
-            capture_fn=_failing_capture, settings=_make_settings()
+            capture_fn=_failing_capture,
+            settings=_make_settings(),
+            runtime_actor_id=_RUNTIME_ACTOR_ID,
         )
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
@@ -2156,10 +2163,6 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             mock.patch(
                 "backend.pipeline.ingestion.collector_runtime.quarantine_telemetry"
             ) as mock_telemetry,
-            mock.patch(
-                "backend.pipeline.ingestion.collector_runtime.runtime_service_actor_id",
-                return_value=_RUNTIME_ACTOR_ID,
-            ),
         ):
             mock_telemetry.emit_quarantine_event = mock.AsyncMock()
             await rt._process_feed(feed)
@@ -2587,7 +2590,11 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
-        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt = CollectorRuntime(
+            capture_fn=_one_chunk,
+            settings=_make_settings(),
+            runtime_actor_id=_RUNTIME_ACTOR_ID,
+        )
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
@@ -3222,7 +3229,11 @@ class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
                 resume_position=resume,
             )
 
-        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt = CollectorRuntime(
+            capture_fn=_one_chunk,
+            settings=_make_settings(),
+            runtime_actor_id=_RUNTIME_ACTOR_ID,
+        )
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
@@ -3241,10 +3252,6 @@ class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
         with (
             _mock_upload_audio(),
             _mock_pubsub_publish(),
-            mock.patch(
-                "backend.pipeline.ingestion.collector_runtime.runtime_service_actor_id",
-                return_value=_RUNTIME_ACTOR_ID,
-            ),
         ):
             await rt._process_feed(feed)
 
@@ -3267,7 +3274,11 @@ class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
                 # resume_position defaults to None (stream/push collectors).
             )
 
-        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt = CollectorRuntime(
+            capture_fn=_one_chunk,
+            settings=_make_settings(),
+            runtime_actor_id=_RUNTIME_ACTOR_ID,
+        )
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
@@ -3278,10 +3289,6 @@ class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
         with (
             _mock_upload_audio(),
             _mock_pubsub_publish(),
-            mock.patch(
-                "backend.pipeline.ingestion.collector_runtime.runtime_service_actor_id",
-                return_value=_RUNTIME_ACTOR_ID,
-            ),
         ):
             await rt._process_feed(_FEED)
 

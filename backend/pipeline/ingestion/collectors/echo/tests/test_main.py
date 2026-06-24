@@ -16,9 +16,13 @@ from google.api_core.exceptions import NotFound
 from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.collectors.echo.main import (
     SEGMENTED_PUBSUB_TOPIC_PATH,
-    _handle,
     _parse_timestamp,
-    _record_failure_by_policy,
+)
+from backend.pipeline.ingestion.collectors.echo.main import (
+    _handle as _handle_impl,
+)
+from backend.pipeline.ingestion.collectors.echo.main import (
+    _record_failure_by_policy as _record_failure_by_policy_impl,
 )
 from backend.pipeline.schema_types.segmented_audio_pb2 import SegmentedAudio
 from backend.pipeline.storage.feed_store import FeedStatus, FeedStatusReason
@@ -28,6 +32,21 @@ from backend.pipeline.storage.sync_feed_store import (
 )
 
 _ECHO_ACTOR_ID = "service_account:gcp:109876543210987654321"
+
+
+def _handle(cloud_event) -> None:
+    _handle_impl(cloud_event, actor_id=_ECHO_ACTOR_ID)
+
+
+def _record_failure_by_policy(
+    feed: ResolvedEchoFeed,
+    classification: failure_classification.FailureInfo,
+) -> None:
+    _record_failure_by_policy_impl(
+        feed,
+        classification,
+        actor_id=_ECHO_ACTOR_ID,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -98,10 +117,6 @@ class TestHandle:
             patch(
                 "backend.pipeline.ingestion.collectors.echo.main.get_audio_duration"
             ) as mock_get_duration,
-            patch(
-                "backend.pipeline.ingestion.collectors.echo.main.runtime_service_actor_id",
-                return_value=_ECHO_ACTOR_ID,
-            ),
         ):
             mock_pubsub.get_publisher.return_value = mock_publisher
             mock_gcs.bucket.return_value.blob.return_value.download_as_bytes.return_value = b"mp3-placeholder"
@@ -189,10 +204,6 @@ class TestHandle:
             patch(
                 "backend.pipeline.ingestion.collectors.echo.main.feed_store",
                 mock_store,
-            ),
-            patch(
-                "backend.pipeline.ingestion.collectors.echo.main.runtime_service_actor_id",
-                return_value=_ECHO_ACTOR_ID,
             ),
         ):
             _record_failure_by_policy(

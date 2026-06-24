@@ -10,14 +10,6 @@ import pytest
 from backend.pipeline.common import actor_identity
 
 
-def setup_function() -> None:
-    actor_identity._reset_runtime_service_actor_cache_for_tests()
-
-
-def teardown_function() -> None:
-    actor_identity._reset_runtime_service_actor_cache_for_tests()
-
-
 def test_google_user_actor_from_sub() -> None:
     actor_id = actor_identity.actor_id_from_google_sub(" admin-sub-123 ")
 
@@ -109,7 +101,7 @@ def test_runtime_service_actor_uses_local_fallback_outside_gcp() -> None:
         mock.patch.object(actor_identity, "is_gcp_env", return_value=False),
         mock.patch.dict(os.environ, {}, clear=True),
     ):
-        actor_id = actor_identity.runtime_service_actor_id()
+        actor_id = actor_identity.resolve_runtime_service_actor_id()
 
     assert actor_id == "service_account:local:development"
 
@@ -126,7 +118,7 @@ def test_runtime_service_actor_uses_local_fallback_with_bad_env_outside_gcp(
             clear=True,
         ),
     ):
-        actor_id = actor_identity.runtime_service_actor_id()
+        actor_id = actor_identity.resolve_runtime_service_actor_id()
 
     assert actor_id == "service_account:local:development"
     assert "feed_audit_actor_unresolved" not in caplog.text
@@ -143,8 +135,8 @@ def test_runtime_service_actor_uses_configured_gcp_actor() -> None:
             clear=True,
         ),
     ):
-        actor_id = actor_identity.runtime_service_actor_id()
-        repeated_actor_id = actor_identity.runtime_service_actor_id()
+        actor_id = actor_identity.resolve_runtime_service_actor_id()
+        repeated_actor_id = actor_identity.resolve_runtime_service_actor_id()
 
     assert actor_id == configured_actor_id
     assert repeated_actor_id == configured_actor_id
@@ -158,11 +150,9 @@ def test_runtime_service_actor_returns_unresolved_when_gcp_config_missing(
         mock.patch.object(actor_identity, "is_gcp_env", return_value=True),
         mock.patch.dict(os.environ, {}, clear=True),
     ):
-        actor_id = actor_identity.runtime_service_actor_id()
-        repeated_actor_id = actor_identity.runtime_service_actor_id()
+        actor_id = actor_identity.resolve_runtime_service_actor_id()
 
     assert actor_id == "service_account:gcp:unresolved"
-    assert repeated_actor_id == "service_account:gcp:unresolved"
     unresolved_records = [
         record
         for record in caplog.records
@@ -190,11 +180,9 @@ def test_runtime_service_actor_returns_unresolved_when_gcp_config_malformed(
             clear=True,
         ),
     ):
-        actor_id = actor_identity.runtime_service_actor_id()
-        repeated_actor_id = actor_identity.runtime_service_actor_id()
+        actor_id = actor_identity.resolve_runtime_service_actor_id()
 
     assert actor_id == "service_account:gcp:unresolved"
-    assert repeated_actor_id == "service_account:gcp:unresolved"
     assert bad_actor_id not in caplog.text
     unresolved_records = [
         record
@@ -223,7 +211,7 @@ def test_runtime_service_actor_rejects_email_actor_in_gcp_config(
             clear=True,
         ),
     ):
-        actor_id = actor_identity.runtime_service_actor_id()
+        actor_id = actor_identity.resolve_runtime_service_actor_id()
 
     assert actor_id == "service_account:gcp:unresolved"
     assert email_actor_id not in caplog.text

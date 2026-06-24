@@ -235,13 +235,8 @@ class TestEchoCollectorIntegration(unittest.TestCase):
             ),
             patch.object(echo_main, "STAGING_BUCKET", _STAGING_BUCKET),
             patch.object(echo_main, "get_audio_duration", duration_mock),
-            patch.object(
-                echo_main,
-                "runtime_service_actor_id",
-                return_value=_ECHO_ACTOR_ID,
-            ),
         ):
-            echo_main._handle(event)
+            echo_main._handle(event, actor_id=_ECHO_ACTOR_ID)
 
     # -- Tests ------------------------------------------------------------
 

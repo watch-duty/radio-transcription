@@ -14,8 +14,6 @@ UNRESOLVED_GCP_SERVICE_ACCOUNT_ACTOR_ID = "service_account:gcp:unresolved"
 MAX_ACTOR_ID_LENGTH = 512
 CONFIGURED_SERVICE_ACTOR_ENV = "FEED_AUDIT_ACTOR_ID"
 
-_cached_runtime_service_actor_id: str | None = None
-
 
 def actor_id_from_google_sub(sub: str) -> str:
     normalized_sub = sub.strip()
@@ -69,17 +67,7 @@ def is_well_formed_actor_id(actor_id: str | None) -> bool:
     return not _contains_whitespace(actor_id)
 
 
-def runtime_service_actor_id() -> str:
-    global _cached_runtime_service_actor_id  # noqa: PLW0603
-
-    if _cached_runtime_service_actor_id is not None:
-        return _cached_runtime_service_actor_id
-
-    _cached_runtime_service_actor_id = _resolve_runtime_service_actor_id()
-    return _cached_runtime_service_actor_id
-
-
-def _resolve_runtime_service_actor_id() -> str:
+def resolve_runtime_service_actor_id() -> str:
     if not is_gcp_env():
         return LOCAL_SERVICE_ACCOUNT_ACTOR_ID
 
@@ -111,9 +99,3 @@ def _log_unresolved_gcp_actor_config(reason: str) -> None:
 
 def _contains_whitespace(value: str) -> bool:
     return any(char.isspace() for char in value)
-
-
-def _reset_runtime_service_actor_cache_for_tests() -> None:
-    global _cached_runtime_service_actor_id  # noqa: PLW0603
-
-    _cached_runtime_service_actor_id = None

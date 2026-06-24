@@ -20,7 +20,9 @@ from google.api_core.exceptions import NotFound, PreconditionFailed
 from google.cloud import storage
 from opentelemetry import trace
 
-from backend.pipeline.common.actor_identity import runtime_service_actor_id
+from backend.pipeline.common.actor_identity import (
+    resolve_runtime_service_actor_id,
+)
 from backend.pipeline.common.audio import get_audio_duration
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.gcp_helper import publish_audio_chunk_sync
@@ -107,10 +109,17 @@ def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
             pubsub_client = PubSubClient()
         if feed_store is None:
             feed_store = SyncFeedStore(connect_db)
-        _handle(cloud_event)
+        _handle(
+            cloud_event,
+            actor_id=resolve_runtime_service_actor_id(),
+        )
 
 
-def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR0912, PLR0915
+def _handle(  # noqa: PLR0911, PLR0912, PLR0915
+    cloud_event: cloudevent.CloudEvent,
+    *,
+    actor_id: str,
+) -> None:
     """Core handler — fully synchronous."""
     if gcs_client is None or pubsub_client is None or feed_store is None:
         msg = (
@@ -260,7 +269,7 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
         try:
             feed_store.record_heartbeat(
                 feed["id"],
-                actor_id=runtime_service_actor_id(),
+                actor_id=actor_id,
             )
         except Exception:
             failure = _pipeline_failure(_HEARTBEAT_WRITE_FAILED)
@@ -287,7 +296,7 @@ def _handle(cloud_event: cloudevent.CloudEvent) -> None:  # noqa: PLR0911, PLR09
                 classification.status_reason.value,
                 classification.reason,
             )
-        _record_failure_by_policy(feed, classification)
+        _record_failure_by_policy(feed, classification, actor_id=actor_id)
         if should_return_success:
             return
         raise
@@ -317,6 +326,8 @@ def _pipeline_failure(
 def _record_failure_by_policy(
     feed: ResolvedEchoFeed,
     classification: failure_classification.FailureInfo,
+    *,
+    actor_id: str,
 ) -> None:
     if feed_store is None:
         msg = "Feed store is not initialized"
@@ -333,14 +344,14 @@ def _record_failure_by_policy(
         ):
             feed_store.record_failure(
                 feed_id,
-                actor_id=runtime_service_actor_id(),
+                actor_id=actor_id,
                 reason=classification.reason,
                 status_reason=classification.status_reason,
             )
         else:
             feed_store.record_non_budgeted_failure(
                 feed_id,
-                actor_id=runtime_service_actor_id(),
+                actor_id=actor_id,
                 status_reason=classification.status_reason,
                 reason=classification.reason,
             )

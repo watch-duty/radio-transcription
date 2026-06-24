@@ -18,7 +18,9 @@ from google.api_core import exceptions as google_exceptions
 from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
 
 from backend.pipeline.common import gcp_helper, tracing_utils
-from backend.pipeline.common.actor_identity import runtime_service_actor_id
+from backend.pipeline.common.actor_identity import (
+    resolve_runtime_service_actor_id,
+)
 from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.common.log_helper import setup_asyncio_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
@@ -120,6 +122,8 @@ class CollectorRuntime:
     Args:
         capture_fn: Async generator factory ``(feed, shutdown_event) -> AsyncIterator[CaptureEvent]``.
         settings: Runtime configuration. Defaults to ``CollectorSettings()``.
+        runtime_actor_id: Optional producer-owned audit actor. Defaults to the
+            configured runtime service actor.
 
     """
 
@@ -127,6 +131,7 @@ class CollectorRuntime:
         self,
         capture_fn: CaptureFn,
         settings: CollectorSettings | None = None,
+        runtime_actor_id: str | None = None,
     ) -> None:
         if settings is None:
             from backend.pipeline.ingestion.settings import CollectorSettings  # noqa: I001, PLC0415
@@ -134,6 +139,11 @@ class CollectorRuntime:
             settings = CollectorSettings()
         self._capture_fn = capture_fn
         self._collector_settings = settings
+        self._runtime_actor_id = (
+            runtime_actor_id
+            if runtime_actor_id is not None
+            else resolve_runtime_service_actor_id()
+        )
         # threading.Event (not asyncio.Event) — the heartbeat OS thread
         # and memory watchdog thread can't use asyncio primitives; they need a
         # shared thread-safe stop signal.
@@ -782,7 +792,7 @@ class CollectorRuntime:
                     captured_chunk.resume_position
                     or captured_chunk.chunk_end_time
                 ),
-                actor_id=runtime_service_actor_id(),
+                actor_id=self._runtime_actor_id,
             )
 
         duration_ms = int(
@@ -955,7 +965,7 @@ class CollectorRuntime:
                 worker_id,
                 fencing_token,
                 self._collector_settings.feed_failure_threshold,
-                actor_id=runtime_service_actor_id(),
+                actor_id=self._runtime_actor_id,
                 reason=reason,
                 status_reason=status_reason,
             )
@@ -1042,7 +1052,7 @@ class CollectorRuntime:
                 fencing_token,
                 retry_after=retry_after,
                 status_reason=status_reason,
-                actor_id=runtime_service_actor_id(),
+                actor_id=self._runtime_actor_id,
                 reason=reason,
             )
         except Exception:
@@ -1096,7 +1106,7 @@ class CollectorRuntime:
                 worker_id,
                 fencing_token,
                 observation.resume_position,
-                actor_id=runtime_service_actor_id(),
+                actor_id=self._runtime_actor_id,
             )
 
         try:
