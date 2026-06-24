@@ -4,7 +4,11 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
 import httpx
+import requests.auth
 from tenacity import (
     AsyncRetrying,
     retry_if_exception,
@@ -44,6 +48,8 @@ class AudioSegmentsClient:
             backoff_factor=0.5,  # [0.5s, 1.0s, 2.0s]
             raise_on_status=False,
         )
+        if is_gcp_env():
+            self.session.auth = GCPMetadataAuth(self.api_url)
 
     def add_audio_segment_annotation(
         self,
@@ -66,10 +72,6 @@ class AudioSegmentsClient:
         traceparent = get_current_traceparent()
         if traceparent:
             headers["traceparent"] = traceparent
-
-        if is_gcp_env():
-            token = get_id_token(self.api_url)
-            self.session.headers.update({"Authorization": f"Bearer {token}"})
 
         payload = {
             "type": str(annotation_type),
@@ -99,10 +101,6 @@ class AudioSegmentsClient:
         if traceparent:
             headers["traceparent"] = traceparent
 
-        if is_gcp_env():
-            token = get_id_token(self.api_url)
-            self.session.headers.update({"Authorization": f"Bearer {token}"})
-
         response = self.session.post(
             f"{self.api_url}/v1/audio_segments",
             json=segment,
@@ -110,6 +108,33 @@ class AudioSegmentsClient:
             timeout=10,
         )
         response.raise_for_status()
+
+
+class GCPMetadataAuth(requests.auth.AuthBase):
+    """Custom requests authentication class that fetches GCP ID tokens."""
+
+    def __init__(self, audience: str) -> None:
+        self.audience = audience
+
+    def __call__(self, r: requests.PreparedRequest) -> requests.PreparedRequest:
+        token = get_id_token(self.audience)
+        if r.headers is not None:
+            r.headers["Authorization"] = f"Bearer {token}"
+        return r
+
+
+class GCPMetadataAsyncAuth(httpx.Auth):
+    """Custom httpx authentication class that fetches GCP ID tokens asynchronously."""
+
+    def __init__(self, audience: str) -> None:
+        self.audience = audience
+
+    async def async_auth_flow(
+        self, request: httpx.Request
+    ) -> AsyncGenerator[httpx.Request, httpx.Response]:
+        token = await asyncio.to_thread(get_id_token, self.audience)
+        request.headers["Authorization"] = f"Bearer {token}"
+        yield request
 
 
 def is_transient_error(e: BaseException) -> bool:
@@ -135,7 +160,8 @@ class AsyncAudioSegmentsClient:
         self.api_url = api_url.rstrip("/")
         self.max_retries = max_retries
         transport = httpx.AsyncHTTPTransport(retries=max_retries)
-        self.client = httpx.AsyncClient(transport=transport)
+        auth = GCPMetadataAsyncAuth(self.api_url) if is_gcp_env() else None
+        self.client = httpx.AsyncClient(transport=transport, auth=auth)
 
     async def close(self) -> None:
         """Closes the underlying HTTP client session connection pool."""
@@ -162,10 +188,6 @@ class AsyncAudioSegmentsClient:
         traceparent = get_current_traceparent()
         if traceparent:
             headers["traceparent"] = traceparent
-
-        if is_gcp_env():
-            token = await asyncio.to_thread(get_id_token, self.api_url)
-            headers["Authorization"] = f"Bearer {token}"
 
         payload = {
             "type": str(annotation_type),
@@ -201,10 +223,6 @@ class AsyncAudioSegmentsClient:
         traceparent = get_current_traceparent()
         if traceparent:
             headers["traceparent"] = traceparent
-
-        if is_gcp_env():
-            token = await asyncio.to_thread(get_id_token, self.api_url)
-            headers["Authorization"] = f"Bearer {token}"
 
         async for attempt in AsyncRetrying(
             retry=retry_if_exception(is_transient_error),

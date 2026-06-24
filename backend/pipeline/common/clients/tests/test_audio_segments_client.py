@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from backend.pipeline.common.clients.audio_segments_client import (
     AsyncAudioSegmentsClient,
     AudioSegmentsClient,
+    GCPMetadataAsyncAuth,
+    GCPMetadataAuth,
 )
 from backend.services.audio_segments.models import AnnotationType
 
@@ -78,29 +80,30 @@ class TestAudioSegmentsClient(unittest.TestCase):
         self.assertEqual(kwargs["json"]["data"], annotation_data)
 
     @patch("backend.pipeline.common.clients.audio_segments_client.is_gcp_env")
-    @patch("backend.pipeline.common.clients.audio_segments_client.get_id_token")
-    def test_add_audio_segment_annotation_adds_auth_in_gcp(
-        self, mock_get_id_token, mock_is_gcp_env
-    ) -> None:
-        # Setup
+    def test_client_initializes_with_auth_in_gcp(self, mock_is_gcp_env) -> None:
         mock_is_gcp_env.return_value = True
+        client = AudioSegmentsClient("http://test-api.com")
+        auth = client.session.auth
+        self.assertIsNotNone(auth)
+        self.assertIsInstance(auth, GCPMetadataAuth)
+        if isinstance(auth, GCPMetadataAuth):
+            self.assertEqual(auth.audience, "http://test-api.com")
+
+    @patch("backend.pipeline.common.clients.audio_segments_client.get_id_token")
+    def test_gcp_metadata_auth_adds_header(self, mock_get_id_token) -> None:
         mock_get_id_token.return_value = "fake-token"
+        auth = GCPMetadataAuth(audience="http://audience")
+        request = MagicMock()
+        request.headers = {}
 
-        mock_response = MagicMock()
-        self.mock_session.post.return_value = mock_response
+        result = auth(request)
 
-        # Execute
-        self.client.add_audio_segment_annotation(
-            audio_segment_id="segment-id-123",
-            annotation_type=AnnotationType.EVALUATION,
-            data={"key": "val"},
-        )
-
-        # Verify
-        self.mock_session.headers.update.assert_called_with(
-            {"Authorization": "Bearer fake-token"}
-        )
-        self.mock_session.post.assert_called_once()
+        self.assertIsNotNone(result.headers)
+        if result.headers is not None:
+            self.assertEqual(
+                result.headers["Authorization"], "Bearer fake-token"
+            )
+        mock_get_id_token.assert_called_once_with("http://audience")
 
     def test_add_audio_segment_annotation_propagates_exception(self) -> None:
         # Setup
@@ -186,27 +189,35 @@ class TestAsyncAudioSegmentsClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["json"]["data"], annotation_data)
 
     @patch("backend.pipeline.common.clients.audio_segments_client.is_gcp_env")
-    @patch("backend.pipeline.common.clients.audio_segments_client.get_id_token")
-    async def test_add_audio_segment_annotation_adds_auth_in_gcp(
-        self, mock_get_id_token, mock_is_gcp_env
+    def test_async_client_initializes_with_auth_in_gcp(
+        self, mock_is_gcp_env
     ) -> None:
         mock_is_gcp_env.return_value = True
+        client = AsyncAudioSegmentsClient("http://test-api.com")
+        auth = client.client.auth
+        self.assertIsNotNone(auth)
+        self.assertIsInstance(auth, GCPMetadataAsyncAuth)
+        if isinstance(auth, GCPMetadataAsyncAuth):
+            self.assertEqual(auth.audience, "http://test-api.com")
+
+    @patch("backend.pipeline.common.clients.audio_segments_client.get_id_token")
+    async def test_gcp_metadata_async_auth_adds_header(
+        self, mock_get_id_token
+    ) -> None:
         mock_get_id_token.return_value = "fake-token"
+        auth = GCPMetadataAsyncAuth(audience="http://audience")
+        request = MagicMock()
+        request.headers = {}
 
-        mock_response = MagicMock()
-        self.mock_post.return_value = mock_response
+        flow = auth.async_auth_flow(request)
+        async for req in flow:
+            self.assertIsNotNone(req.headers)
+            if req.headers is not None:
+                self.assertEqual(
+                    req.headers["Authorization"], "Bearer fake-token"
+                )
 
-        await self.client.add_audio_segment_annotation(
-            audio_segment_id="segment-id-123",
-            annotation_type=AnnotationType.EVALUATION,
-            data={"key": "val"},
-        )
-
-        self.mock_post.assert_called_once()
-        _, kwargs = self.mock_post.call_args
-        self.assertEqual(
-            kwargs["headers"]["Authorization"], "Bearer fake-token"
-        )
+        mock_get_id_token.assert_called_once_with("http://audience")
 
     async def test_add_audio_segment_annotation_propagates_exception(
         self,
