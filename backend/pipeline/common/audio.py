@@ -50,10 +50,7 @@ def get_audio_duration(
         )
         output = result.stdout.decode().strip()
         if output == "N/A":
-            logger.warning(
-                "ffprobe returned N/A for duration, using fallback 5000ms"
-            )
-            # Log more info to debug why ffprobe failed to get duration
+            stderr_parts = ["ffprobe returned N/A for duration"]
             try:
                 probe_result = subprocess.run(
                     [
@@ -70,12 +67,19 @@ def get_audio_duration(
                     check=False,
                     timeout=FFPROBE_TIMEOUT_SEC,
                 )
-                logger.info(
-                    f"Probe details for N/A file (Size: {len(audio_bytes)} bytes):\nSTDOUT:\n{probe_result.stdout}\nSTDERR:\n{probe_result.stderr}"
-                )
+                if probe_result.stdout:
+                    stderr_parts.append(f"STDOUT:\n{probe_result.stdout}")
+                if probe_result.stderr:
+                    stderr_parts.append(f"STDERR:\n{probe_result.stderr}")
             except Exception as probe_err:
-                logger.warning(f"Failed to run verbose probe: {probe_err}")
-            return 5000
+                stderr_parts.append(f"Failed to run verbose probe: {probe_err}")
+
+            raise subprocess.CalledProcessError(
+                returncode=1,
+                cmd=result.args,
+                output=result.stdout,
+                stderr="\n".join(stderr_parts).encode("utf-8"),
+            )
         duration_sec = float(output)
         return int(duration_sec * 1000)
 
