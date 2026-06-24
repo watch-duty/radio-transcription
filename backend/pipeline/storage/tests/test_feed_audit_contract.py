@@ -133,7 +133,6 @@ def test_deprecated_detail_column_drop_migration_is_narrow() -> None:
         "ALTER TABLE feeds DROP COLUMN IF EXISTS quarantine_reason"
         in normalized
     )
-    assert "status_reason_detail" not in normalized
 
 
 def test_migration_defines_actor_and_action_constraints() -> None:

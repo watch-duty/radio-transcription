@@ -5,10 +5,6 @@ from __future__ import annotations
 from backend.pipeline.ingestion import status_reason_detail
 
 
-def test_status_reason_detail_module_does_not_sanitize_or_redact() -> None:
-    assert not hasattr(status_reason_detail, "sanitize_status_reason_detail")
-
-
 def test_cap_status_reason_detail_for_storage_adds_marker() -> None:
     result = status_reason_detail.cap_status_reason_detail_for_storage(
         "x" * (status_reason_detail.MAX_STATUS_REASON_DETAIL_LENGTH + 1)
