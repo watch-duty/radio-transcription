@@ -23,6 +23,7 @@ from opentelemetry.sdk.resources import (
 from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.export import (
     BatchSpanProcessor,
+    ConsoleSpanExporter,
     SimpleSpanProcessor,
 )
 from opentelemetry.trace import (
@@ -110,7 +111,9 @@ def setup_tracing(
     within a single Python worker process space. Distributed Dataflow worker instances
     will spin up separate process environments.
     """
-    if not is_gcp_env():
+    is_console = os.environ.get("OTEL_TRACES_EXPORTER") == "console"
+
+    if not is_gcp_env() and not is_console:
         # Do not set up tracing for local development or tests
         return
 
@@ -125,8 +128,6 @@ def setup_tracing(
         # Double check locking pattern after acquiring lock
         if _state.custom_provider is not None:
             return
-
-        project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or ""
 
         # Resolve service metadata from environment if not explicitly provided
         if service_name is None:
@@ -145,11 +146,16 @@ def setup_tracing(
             }
         )
 
-        if not project_id:
-            msg = "GOOGLE_CLOUD_PROJECT environment variable must be set in GCP environment."
-            raise ValueError(msg)
         provider = TracerProvider(resource=resource)
-        exporter = CloudTraceSpanExporter(project_id=project_id)
+
+        if is_console:
+            exporter = ConsoleSpanExporter()
+        else:
+            project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or ""
+            if not project_id:
+                msg = "GOOGLE_CLOUD_PROJECT environment variable must be set in GCP environment."
+                raise ValueError(msg)
+            exporter = CloudTraceSpanExporter(project_id=project_id)
 
         if is_ingestion is None:
             is_ingestion = os.environ.get("IS_INGESTION_SERVICE") == "true"
