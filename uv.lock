@@ -2945,6 +2945,7 @@ dependencies = [
     { name = "protobuf" },
     { name = "pydantic" },
     { name = "redis" },
+    { name = "tenacity" },
 ]
 
 [package.metadata]
@@ -2965,6 +2966,7 @@ requires-dist = [
     { name = "protobuf", specifier = ">=5.29.6" },
     { name = "pydantic", specifier = ">=2.10.6" },
     { name = "redis", specifier = ">=7.3.0" },
+    { name = "tenacity", specifier = ">=9.1.4" },
 ]
 
 [[package]]
