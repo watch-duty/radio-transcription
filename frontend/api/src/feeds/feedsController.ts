@@ -273,6 +273,7 @@ export class FeedsController extends Controller {
   @SuccessResponse('201', 'Created')
   @Response<{ message: string }>(401, 'Unauthorized')
   @Response<{ message: string }>(403, 'Forbidden')
+  @Response<{ message: string }>(409, 'Conflict')
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async createFeed(
@@ -308,6 +309,7 @@ export class FeedsController extends Controller {
   @Response<{ message: string }>(401, 'Unauthorized')
   @Response<{ message: string }>(403, 'Forbidden')
   @Response<{ message: string }>(404, 'Not Found')
+  @Response<{ message: string }>(409, 'Conflict')
   @Response<{ message: string }>(500, 'Internal Server Error')
   @Extension('x-google-backend', 'radio-transcription-api')
   public async updateFeed(
