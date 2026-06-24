@@ -14,7 +14,14 @@ from google.api_core.exceptions import (
     ServiceUnavailable,
 )
 from google.genai import errors as genai_errors
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+    InMemorySpanExporter,
+)
+from opentelemetry.trace import StatusCode
 
+from backend.pipeline.common import tracing_utils
 from backend.pipeline.common.clients.audio_segments_client import (
     AsyncAudioSegmentsClient,
 )
@@ -806,14 +813,6 @@ class IsTransientExceptionTest(unittest.TestCase):
 
 class TranscriptionProcessorTracingTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-        from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
-            InMemorySpanExporter,
-        )
-
-        from backend.pipeline.common import tracing_utils
-
         # Setup in-memory provider
         self.provider = TracerProvider()
         self.exporter = InMemorySpanExporter()
@@ -824,8 +823,6 @@ class TranscriptionProcessorTracingTest(unittest.IsolatedAsyncioTestCase):
         tracing_utils._state.custom_provider = self.provider
 
     def tearDown(self) -> None:
-        from backend.pipeline.common import tracing_utils
-
         tracing_utils._state.custom_provider = self.original_provider
 
     async def test_processor_span_nesting_and_attributes(self) -> None:
@@ -902,19 +899,26 @@ class TranscriptionProcessorTracingTest(unittest.IsolatedAsyncioTestCase):
 
         # Find root span and verify trace ID propagation
         root_span = next(s for s in spans if s.name == "transcribe_claim_check")
+        root_span_ctx = root_span.get_span_context()
+        self.assertIsNotNone(root_span_ctx)
+        assert root_span_ctx is not None
         self.assertEqual(
-            format(root_span.get_span_context().trace_id, "032x"),
+            format(root_span_ctx.trace_id, "032x"),
             "4bf92f3577b34da6a3ce929d0e0e4736",
         )
 
         # Verify attributes on transcribe_audio
         transcribe_span = next(s for s in spans if s.name == "transcribe_audio")
+        self.assertIsNotNone(transcribe_span.attributes)
+        assert transcribe_span.attributes is not None
         self.assertEqual(
             transcribe_span.attributes.get("segment_id"), "tx-1111"
         )
         self.assertEqual(transcribe_span.attributes.get("feed_id"), "feed-2222")
         self.assertEqual(transcribe_span.attributes.get("duration_ms"), 5000)
         # Verify it is nested under root
+        self.assertIsNotNone(transcribe_span.parent)
+        assert transcribe_span.parent is not None
         self.assertEqual(
             transcribe_span.parent.span_id, root_span.context.span_id
         )
@@ -923,17 +927,19 @@ class TranscriptionProcessorTracingTest(unittest.IsolatedAsyncioTestCase):
         publish_span = next(
             s for s in spans if s.name == "publish_transcribed_audio"
         )
+        self.assertIsNotNone(publish_span.parent)
+        assert publish_span.parent is not None
         self.assertEqual(publish_span.parent.span_id, root_span.context.span_id)
 
         write_span = next(
             s for s in spans if s.name == "write_transcript_annotation"
         )
+        self.assertIsNotNone(write_span.parent)
+        assert write_span.parent is not None
         self.assertEqual(write_span.parent.span_id, root_span.context.span_id)
 
     async def test_processor_span_error_recording(self) -> None:
         """Verifies that spans record errors and set status to ERROR on failure."""
-        from opentelemetry.trace import StatusCode
-
         mock_transcriber = MagicMock(spec=Transcriber)
         # Simulate permanent failure by throwing ValueError
         mock_transcriber.transcribe.side_effect = ValueError(
