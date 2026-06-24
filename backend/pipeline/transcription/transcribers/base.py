@@ -18,7 +18,7 @@ class Transcriber(abc.ABC):
         """
 
     @abc.abstractmethod
-    def transcribe(
+    async def transcribe(
         self,
         *,
         audio_data: bytes | None = None,
@@ -35,3 +35,7 @@ class Transcriber(abc.ABC):
         Returns:
             The transcribed text, or None if unintelligible or empty.
         """
+
+    async def close(self) -> None:
+        """Optional cleanup hook for closing client connections."""
+        return
