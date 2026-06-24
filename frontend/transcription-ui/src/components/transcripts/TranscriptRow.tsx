@@ -1,4 +1,4 @@
-import { Fragment } from 'react';
+import { useState } from 'react';
 
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import LinkIcon from '@mui/icons-material/Link';
@@ -53,6 +53,9 @@ export function TranscriptRow({
   isTopAudioSegmentRow = false,
 }: TranscriptRowProps) {
   const theme = useTheme();
+
+  const [isHovered, setIsHovered] = useState(false);
+
   const currentDate = new Date(audioSegment.startTimestamp);
 
   const isSilence = !!audioSegment.isSilenceBundle;
@@ -109,7 +112,10 @@ export function TranscriptRow({
   };
 
   return (
-    <Fragment>
+    <Box
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
       {showHeader && (
         <ListItem
           sx={{
@@ -224,6 +230,7 @@ export function TranscriptRow({
           currentlyPlayingSegmentId={
             isCurrentlyPlaying ? audioSegment.id : currentlyPlayingSegmentId
           }
+          hideButton={!isHovered}
         />
         <Typography
           variant={isSilence ? 'caption' : 'body1'}
@@ -296,7 +303,7 @@ export function TranscriptRow({
           </Tooltip>
         </Box>
       </ListItem>
-    </Fragment>
+    </Box>
   );
 }
 

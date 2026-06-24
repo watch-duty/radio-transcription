@@ -10,9 +10,7 @@ import { useSearchParams } from 'react-router';
 import type { VirtuosoHandle } from 'react-virtuoso';
 
 import Box from '@mui/material/Box';
-import Checkbox from '@mui/material/Checkbox';
 import CircularProgress from '@mui/material/CircularProgress';
-import FormControlLabel from '@mui/material/FormControlLabel';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import { useQuery } from '@tanstack/react-query';
@@ -36,6 +34,7 @@ import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { getAudioUrl } from '../../utils/audioUtils';
+import { AudioControl } from '../audio/AudioControl';
 import AudioDisplay from '../audio/AudioDisplay';
 import FeedSearchView from '../feeds/FeedSearchView';
 import FeedHeader from './FeedHeader';
@@ -495,6 +494,252 @@ export function TranscriptView({
     setHighlightedSegmentId(segmentId);
   };
 
+  const skipToNext = () => {
+    const targetId = isAudioPlaying
+      ? currentlyPlayingSegmentId || highlightedSegmentId
+      : highlightedSegmentId ||
+        currentlyPlayingSegmentId ||
+        audioSegments[0]?.id;
+    if (!targetId) return;
+
+    const specificSegmentIdx = rawAudioSegments.findIndex((s) => s.id === targetId);
+    if (specificSegmentIdx !== -1) {
+      // Find the next newer raw segment (index decreasing) that has a playbackAudioUri
+      let nextIdx = specificSegmentIdx - 1;
+      while (nextIdx >= 0) {
+        const nextSegment = rawAudioSegments[nextIdx];
+        if (nextSegment?.playbackAudioUri) {
+          toggleAudio(nextSegment.id, nextSegment.playbackAudioUri);
+          
+          // Scroll the corresponding consolidated row into view
+          const displayIdx = audioSegments.findIndex((t) =>
+            matchesSegmentId(t, nextSegment.id)
+          );
+          if (displayIdx !== -1) {
+            virtuosoRef.current?.scrollToIndex({
+              index: displayIdx,
+              align: 'center',
+              behavior: 'smooth',
+            });
+          }
+          return;
+        }
+        nextIdx--;
+      }
+    }
+  };
+
+  const skipToPrevious = () => {
+    const targetId = isAudioPlaying
+      ? currentlyPlayingSegmentId || highlightedSegmentId
+      : highlightedSegmentId ||
+        currentlyPlayingSegmentId ||
+        audioSegments[0]?.id;
+    if (!targetId) return;
+
+    const specificSegmentIdx = rawAudioSegments.findIndex((s) => s.id === targetId);
+    if (specificSegmentIdx !== -1) {
+      // Find the next older raw segment (index increasing) that has a playbackAudioUri
+      let prevIdx = specificSegmentIdx + 1;
+      while (prevIdx < rawAudioSegments.length) {
+        const previousSegment = rawAudioSegments[prevIdx];
+        if (previousSegment?.playbackAudioUri) {
+          toggleAudio(previousSegment.id, previousSegment.playbackAudioUri);
+          
+          // Scroll the corresponding consolidated row into view
+          const displayIdx = audioSegments.findIndex((t) =>
+            matchesSegmentId(t, previousSegment.id)
+          );
+          if (displayIdx !== -1) {
+            virtuosoRef.current?.scrollToIndex({
+              index: displayIdx,
+              align: 'center',
+              behavior: 'smooth',
+            });
+          }
+          return;
+        }
+        prevIdx++;
+      }
+    }
+  };
+
+  const skipToNextSpeech = () => {
+    const targetId = isAudioPlaying
+      ? currentlyPlayingSegmentId || highlightedSegmentId
+      : highlightedSegmentId ||
+        currentlyPlayingSegmentId ||
+        audioSegments[0]?.id;
+    if (!targetId) return;
+
+    const currentConsolidatedIdx = audioSegments.findIndex((t) =>
+      matchesSegmentId(t, targetId)
+    );
+    if (currentConsolidatedIdx !== -1) {
+      // Find the next newer consolidated segment (index decreasing) that is a speech segment and has a playbackAudioUri
+      let nextIdx = currentConsolidatedIdx - 1;
+      while (nextIdx >= 0) {
+        const nextSegment = audioSegments[nextIdx];
+        if (!nextSegment.isSilenceBundle && nextSegment.playbackAudioUri) {
+          toggleAudio(nextSegment.id, nextSegment.playbackAudioUri);
+
+          virtuosoRef.current?.scrollToIndex({
+            index: nextIdx,
+            align: 'center',
+            behavior: 'smooth',
+          });
+          return;
+        }
+        nextIdx--;
+      }
+    }
+  };
+
+  const skipToPreviousSpeech = () => {
+    const targetId = isAudioPlaying
+      ? currentlyPlayingSegmentId || highlightedSegmentId
+      : highlightedSegmentId ||
+        currentlyPlayingSegmentId ||
+        audioSegments[0]?.id;
+    if (!targetId) return;
+
+    const currentConsolidatedIdx = audioSegments.findIndex((t) =>
+      matchesSegmentId(t, targetId)
+    );
+    if (currentConsolidatedIdx !== -1) {
+      // Find the next older consolidated segment (index increasing) that is a speech segment and has a playbackAudioUri
+      let prevIdx = currentConsolidatedIdx + 1;
+      while (prevIdx < audioSegments.length) {
+        const prevSegment = audioSegments[prevIdx];
+        if (!prevSegment.isSilenceBundle && prevSegment.playbackAudioUri) {
+          toggleAudio(prevSegment.id, prevSegment.playbackAudioUri);
+
+          virtuosoRef.current?.scrollToIndex({
+            index: prevIdx,
+            align: 'center',
+            behavior: 'smooth',
+          });
+          return;
+        }
+        prevIdx++;
+      }
+    }
+  };
+
+  const skipTime = (offsetSeconds: number) => {
+    // Determine the active segment (playing or highlighted)
+    const activeId = currentlyPlayingSegmentId || highlightedSegmentId;
+    if (!activeId) return;
+
+    const currentIdx = rawAudioSegments.findIndex((s) => s.id === activeId);
+    if (currentIdx === -1) return;
+    const activeSegment = rawAudioSegments[currentIdx];
+
+    // Get current playback time (default to 0 if paused/not loaded)
+    const currentTime = currentAudio.current ? currentAudio.current.getCurrentTime() : 0;
+
+    const getSegmentDuration = (s: typeof activeSegment) =>
+      (new Date(s.endTimestamp).getTime() - new Date(s.startTimestamp).getTime()) / 1000;
+
+    const activeDuration = getSegmentDuration(activeSegment);
+    const targetTime = currentTime + offsetSeconds;
+
+    // Helper to scroll a segment into view in the transcript
+    const scrollSegmentIntoView = (segmentId: string) => {
+      const displayIdx = audioSegments.findIndex((t) => matchesSegmentId(t, segmentId));
+      if (displayIdx !== -1) {
+        virtuosoRef.current?.scrollToIndex({
+          index: displayIdx,
+          align: 'center',
+          behavior: 'smooth',
+        });
+      }
+    };
+
+    // CASE 1: Within the bounds of the current segment
+    if (targetTime >= 0 && targetTime <= activeDuration) {
+      if (!currentAudio.current && activeSegment.playbackAudioUri) {
+        // If paused/not loaded, load it first
+        toggleAudio(activeSegment.id, activeSegment.playbackAudioUri);
+      }
+      currentAudio.current?.setCurrentTime(targetTime);
+      return;
+    }
+
+    // CASE 2: Overshot backwards (Replay / older segments)
+    if (targetTime < 0) {
+      let remainingOvershoot = -targetTime;
+      let nextIdx = currentIdx + 1; // Older segments have higher indexes
+
+      while (nextIdx < rawAudioSegments.length) {
+        const segment = rawAudioSegments[nextIdx];
+        if (segment.playbackAudioUri) {
+          const duration = getSegmentDuration(segment);
+          if (duration >= remainingOvershoot) {
+            // Target is inside this older segment, counting from its end
+            const seekTime = duration - remainingOvershoot;
+            toggleAudio(segment.id, segment.playbackAudioUri);
+            currentAudio.current?.setCurrentTime(seekTime);
+            scrollSegmentIntoView(segment.id);
+            return;
+          } else {
+            // Consume the entire segment and keep going backward
+            remainingOvershoot -= duration;
+          }
+        }
+        nextIdx++;
+      }
+
+      // Fallback: If we overshot the oldest segment, play the oldest from the start (0)
+      for (let i = rawAudioSegments.length - 1; i >= 0; i--) {
+        const segment = rawAudioSegments[i];
+        if (segment.playbackAudioUri) {
+          toggleAudio(segment.id, segment.playbackAudioUri);
+          currentAudio.current?.setCurrentTime(0);
+          scrollSegmentIntoView(segment.id);
+          return;
+        }
+      }
+    }
+
+    // CASE 3: Overshot forwards (Forward / newer segments)
+    if (targetTime > activeDuration) {
+      let remainingOvershoot = targetTime - activeDuration;
+      let nextIdx = currentIdx - 1; // Newer segments have lower indexes
+
+      while (nextIdx >= 0) {
+        const segment = rawAudioSegments[nextIdx];
+        if (segment.playbackAudioUri) {
+          const duration = getSegmentDuration(segment);
+          if (duration >= remainingOvershoot) {
+            // Target is inside this newer segment, counting from its start
+            const seekTime = remainingOvershoot;
+            toggleAudio(segment.id, segment.playbackAudioUri);
+            currentAudio.current?.setCurrentTime(seekTime);
+            scrollSegmentIntoView(segment.id);
+            return;
+          } else {
+            // Consume the entire segment and keep going forward
+            remainingOvershoot -= duration;
+          }
+        }
+        nextIdx--;
+      }
+
+      // Fallback: If we overshot the newest segment, seek to the end of the newest segment
+      for (let i = 0; i < rawAudioSegments.length; i++) {
+        const segment = rawAudioSegments[i];
+        if (segment.playbackAudioUri) {
+          const duration = getSegmentDuration(segment);
+          toggleAudio(segment.id, segment.playbackAudioUri);
+          currentAudio.current?.setCurrentTime(duration);
+          scrollSegmentIntoView(segment.id);
+          return;
+        }
+      }
+    }
+  };
+
   const handleTogglePlayPause = () => {
     const targetId = isAudioPlaying
       ? currentlyPlayingSegmentId || highlightedSegmentId
@@ -666,28 +911,21 @@ export function TranscriptView({
         onError={onError}
       />
 
-      <Box
-        sx={{
-          display: 'flex',
-          justifyContent: 'flex-end',
-          alignItems: 'center',
-          gap: 2,
-          // This space allows room for the alert icon which hovers above the AudioDisplay.
-          mb: 2.5,
-        }}
-      >
-        <FormControlLabel
-          control={
-            <Checkbox
-              checked={playLatestAudio}
-              onChange={(e) => setPlayLatestAudio(e.target.checked)}
-              disabled={!searchedFeed}
-            />
-          }
-          label="Always play latest audio"
-          slotProps={{ typography: { variant: 'body2' } }}
-        />
-      </Box>
+      <AudioControl
+        sx={{ mt: 1 }}
+        isAudioPlaying={isAudioPlaying}
+        onTogglePlayPause={handleTogglePlayPause}
+        onSkipToNext={skipToNext}
+        onSkipToPrevious={skipToPrevious}
+        onFastForward={skipToNextSpeech}
+        onFastRewind={skipToPreviousSpeech}
+        onReplay5={() => skipTime(-5)}
+        onForward5={() => skipTime(5)}
+        playLatestAudio={playLatestAudio}
+        onChangePlayLatestAudio={setPlayLatestAudio}
+        disableControls={rawAudioSegments.length === 0}
+        disableCheckbox={!searchedFeed}
+      />
 
       <AudioDisplay
         audioSegments={rawAudioSegments}
@@ -695,7 +933,6 @@ export function TranscriptView({
         highlightedSegmentId={highlightedSegmentId}
         onClipClick={handleClipClick}
         isAudioPlaying={isAudioPlaying}
-        onTogglePlayPause={handleTogglePlayPause}
         currentAudioRef={currentAudio}
       />
 
