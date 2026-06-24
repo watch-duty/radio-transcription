@@ -28,5 +28,19 @@ class FeedNameAlreadyExistsError(Exception):
         super().__init__(f"Feed with name '{name}' already exists")
 
 
+class FeedStateConflictError(Exception):
+    """Raised when a feed exists but cannot accept the requested state change."""
+
+    def __init__(
+        self, feed_id: str, operation: str, current_status: str
+    ) -> None:
+        self.feed_id = feed_id
+        self.operation = operation
+        self.current_status = current_status
+        super().__init__(
+            f"Feed {feed_id} is currently {current_status} and cannot be {operation}"
+        )
+
+
 class NonRetryableError(Exception):
     """Exception raised for non-retryable errors that should not trigger a message retry."""

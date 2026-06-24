@@ -38,6 +38,7 @@ MOCK_ENV_VARS = {
 
 _FAKE_GCS_PORT = 4443
 _TEST_BUCKET = "test-audio-bucket"
+_RUNTIME_ACTOR_ID = "service_account:gcp:123456789012345678901"
 
 # Audio constants
 _FLAC_MAGIC = b"fLaC"
@@ -275,6 +276,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 gcs_path,
                 feed["fencing_token"],
                 capture_chunk.chunk_end_time,
+                actor_id=_RUNTIME_ACTOR_ID,
             )
             self.assertTrue(ok)
             last_chunk_ts = capture_chunk.chunk_end_time
@@ -338,6 +340,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 gcs_path,
                 feed["fencing_token"],
                 capture_chunk.chunk_end_time,
+                actor_id=_RUNTIME_ACTOR_ID,
             )
             gcs_paths.append(gcs_path)
             chunk_timestamps.append(capture_chunk.chunk_end_time)
@@ -400,6 +403,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 gcs_path,
                 feed["fencing_token"],
                 capture_chunk.chunk_end_time,
+                actor_id=_RUNTIME_ACTOR_ID,
             )
             gcs_paths.append(gcs_path)
             last_chunk_ts = capture_chunk.chunk_end_time
@@ -457,6 +461,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             feed["id"],
             self.worker_id,
             feed["fencing_token"],
+            actor_id=_RUNTIME_ACTOR_ID,
             reason=str(ctx.exception),
             status_reason=ctx.exception.status_reason,
         )
