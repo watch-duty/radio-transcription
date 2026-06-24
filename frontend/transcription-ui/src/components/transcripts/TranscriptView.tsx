@@ -502,7 +502,9 @@ export function TranscriptView({
         audioSegments[0]?.id;
     if (!targetId) return;
 
-    const specificSegmentIdx = rawAudioSegments.findIndex((s) => s.id === targetId);
+    const specificSegmentIdx = rawAudioSegments.findIndex(
+      (s) => s.id === targetId
+    );
     if (specificSegmentIdx !== -1) {
       // Find the next newer raw segment (index decreasing) that has a playbackAudioUri
       let nextIdx = specificSegmentIdx - 1;
@@ -510,7 +512,7 @@ export function TranscriptView({
         const nextSegment = rawAudioSegments[nextIdx];
         if (nextSegment?.playbackAudioUri) {
           toggleAudio(nextSegment.id, nextSegment.playbackAudioUri);
-          
+
           // Scroll the corresponding consolidated row into view
           const displayIdx = audioSegments.findIndex((t) =>
             matchesSegmentId(t, nextSegment.id)
@@ -537,7 +539,9 @@ export function TranscriptView({
         audioSegments[0]?.id;
     if (!targetId) return;
 
-    const specificSegmentIdx = rawAudioSegments.findIndex((s) => s.id === targetId);
+    const specificSegmentIdx = rawAudioSegments.findIndex(
+      (s) => s.id === targetId
+    );
     if (specificSegmentIdx !== -1) {
       // Find the next older raw segment (index increasing) that has a playbackAudioUri
       let prevIdx = specificSegmentIdx + 1;
@@ -545,7 +549,7 @@ export function TranscriptView({
         const previousSegment = rawAudioSegments[prevIdx];
         if (previousSegment?.playbackAudioUri) {
           toggleAudio(previousSegment.id, previousSegment.playbackAudioUri);
-          
+
           // Scroll the corresponding consolidated row into view
           const displayIdx = audioSegments.findIndex((t) =>
             matchesSegmentId(t, previousSegment.id)
@@ -636,17 +640,23 @@ export function TranscriptView({
     const activeSegment = rawAudioSegments[currentIdx];
 
     // Get current playback time (default to 0 if paused/not loaded)
-    const currentTime = currentAudio.current ? currentAudio.current.getCurrentTime() : 0;
+    const currentTime = currentAudio.current
+      ? currentAudio.current.getCurrentTime()
+      : 0;
 
     const getSegmentDuration = (s: typeof activeSegment) =>
-      (new Date(s.endTimestamp).getTime() - new Date(s.startTimestamp).getTime()) / 1000;
+      (new Date(s.endTimestamp).getTime() -
+        new Date(s.startTimestamp).getTime()) /
+      1000;
 
     const activeDuration = getSegmentDuration(activeSegment);
     const targetTime = currentTime + offsetSeconds;
 
     // Helper to scroll a segment into view in the transcript
     const scrollSegmentIntoView = (segmentId: string) => {
-      const displayIdx = audioSegments.findIndex((t) => matchesSegmentId(t, segmentId));
+      const displayIdx = audioSegments.findIndex((t) =>
+        matchesSegmentId(t, segmentId)
+      );
       if (displayIdx !== -1) {
         virtuosoRef.current?.scrollToIndex({
           index: displayIdx,
