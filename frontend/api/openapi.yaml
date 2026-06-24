@@ -246,13 +246,13 @@ components:
           items:
             $ref: "#/components/schemas/Tag"
           type: array
-        statusReasonDetail:
-          type: string
         statusReason:
           $ref: "#/components/schemas/BackendFeedStatusReason"
         lastSpeechSegmentTimestamp:
           type: number
           format: double
+        statusReasonDetail:
+          type: string
       required:
         - name
         - sourceType
