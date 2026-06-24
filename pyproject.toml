@@ -273,3 +273,12 @@ filterwarnings = [
     "ignore:cannot collect test class 'TestStream':pytest.PytestCollectionWarning",
     "ignore:Cannot monitor channel state:pytest.PytestUnhandledThreadExceptionWarning",
 ]
+
+[tool.coverage.run]
+omit = [
+    "**/test_*.py",
+    "**/*_test.py",
+    "**/tests/**",
+    "**/conftest.py",
+]
+
