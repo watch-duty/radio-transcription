@@ -150,7 +150,6 @@ export function TranscriptRow({
       )}
       <ListItem
         id={`transcript-${audioSegment.id}`}
-        className="transcript-row-item"
         divider={index < totalAudioSegments - 1}
         sx={{
           display: 'flex',
@@ -242,6 +241,9 @@ export function TranscriptRow({
           sx={{
             flexGrow: 1,
             whiteSpace: 'pre-wrap',
+            transition: 'filter 0.3s ease, opacity 0.3s ease',
+            filter: redactTranscripts ? 'blur(6px)' : 'none',
+            opacity: redactTranscripts ? 0.6 : 1,
             fontStyle:
               isSilence || isWaiting || hasErrors ? 'italic' : 'normal',
           }}
@@ -256,14 +258,7 @@ export function TranscriptRow({
             />
           )}
         </Typography>
-        <Box
-          sx={{
-            display: 'flex',
-            gap: 1,
-            flexShrink: 0,
-            alignItems: 'center',
-          }}
-        >
+        <Box sx={{ display: 'flex', gap: 1, flexShrink: 0 }}>
           {!isSilence && (
             <Tooltip title="Copy transcript">
               <span>
