@@ -517,6 +517,8 @@ class TestFeedAuditSql(unittest.TestCase):
         ):
             self.assertIn(key, snapshot_sql)
 
+        self.assertNotIn("'last_bookmark_time'", snapshot_sql)
+
         for sql in (
             feed_queries.UPDATE_FEED_SQL,
             feed_queries.RESET_FEED_SQL,

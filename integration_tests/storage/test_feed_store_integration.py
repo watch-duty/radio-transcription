@@ -2733,8 +2733,6 @@ async def test_reset_clears_stale_status_reason_with_clear_timestamp_and_status_
     status_reason_updated_at = feed["status_reason_updated_at"]
     assert status_reason_updated_at is not None
     assert status_reason_updated_at > old_reason_ts
-    row = await _get_feed_diagnostics(db_pool, feed_id)
-    assert row["status_reason_detail"] is None
 
 
 async def test_reset_clears_status_reason_detail_in_row_and_audit(

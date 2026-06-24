@@ -344,7 +344,10 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         self.assertEqual(row["status"], "failing")
         self.assertEqual(row["status_reason"], "system_pipeline_error")
         self.assertIsNone(row["retry_after"])
-        self.assertIsNone(row["status_reason_detail"])
+        self.assertEqual(
+            row["status_reason_detail"],
+            "echo_pubsub_publish_failed",
+        )
         events = self._get_audit_rows(feed_id)
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["action"], "feed.failure_reported")
