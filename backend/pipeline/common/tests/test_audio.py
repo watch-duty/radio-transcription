@@ -122,7 +122,7 @@ class TestAudioUtils(unittest.TestCase):
 
     @patch("backend.pipeline.common.audio.tempfile.NamedTemporaryFile")
     @patch("subprocess.run")
-    def test_get_audio_duration_na_fallback_keeps_temp_file_alive(
+    def test_get_audio_duration_na_raises_called_process_error_keeps_temp_file_alive(
         self, mock_run: MagicMock, mock_temp_file: MagicMock
     ) -> None:
         temp_file = _NamedTemporaryFileStub()
@@ -133,14 +133,22 @@ class TestAudioUtils(unittest.TestCase):
             if "-show_format" in command:
                 verbose_probe_observed["temp_file_closed"] = temp_file.closed
                 verbose_probe_observed["timeout"] = kwargs.get("timeout")
-                return MagicMock(stdout="", stderr="")
-            return MagicMock(stdout=b"N/A\n")
+                return MagicMock(stdout="mock-stdout", stderr="mock-stderr")
+            res = MagicMock(stdout=b"N/A\n")
+            res.args = command
+            return res
 
         mock_run.side_effect = _run_side_effect
 
-        duration_ms = get_audio_duration(b"dummy audio")
+        with self.assertRaises(subprocess.CalledProcessError) as ctx:
+            get_audio_duration(b"dummy audio")
 
-        self.assertEqual(duration_ms, 5000)
+        self.assertEqual(ctx.exception.returncode, 1)
+        self.assertIn(
+            b"ffprobe returned N/A for duration", ctx.exception.stderr
+        )
+        self.assertIn(b"STDOUT:\nmock-stdout", ctx.exception.stderr)
+        self.assertIn(b"STDERR:\nmock-stderr", ctx.exception.stderr)
         self.assertFalse(verbose_probe_observed["temp_file_closed"])
         self.assertEqual(
             verbose_probe_observed["timeout"],
