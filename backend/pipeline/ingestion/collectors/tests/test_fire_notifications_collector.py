@@ -326,8 +326,8 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
 
         chunks = []
         with patch(
-            "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
-            return_value=30000,
+            "backend.pipeline.ingestion.collectors.fire_notifications.collector.probe_audio_metadata",
+            return_value=(30000, AudioMimeType.MPEG),
         ) as mock_duration:
             async for chunk in collector._process_file_list(
                 files,
@@ -359,6 +359,47 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         self.assertIn("uuid1", self.processed_uuids)
         self.assertIn("uuid2", self.processed_uuids)
 
+    async def test_process_files_m4a(self) -> None:
+        self.client.download_audio.return_value = b"m4a_bytes"
+        files = [
+            FireNotificationsFile(
+                uuid="uuid1",
+                filename="CHAN 2026-05-20 12-00-00.mp3",
+                start_time=datetime.datetime(
+                    2026, 5, 20, 12, 0, 0, tzinfo=datetime.UTC
+                ),
+                size=1000,
+            ),
+        ]
+
+        chunks = []
+        with patch(
+            "backend.pipeline.ingestion.collectors.fire_notifications.collector.probe_audio_metadata",
+            return_value=(15000, AudioMimeType.MP4),
+        ) as mock_duration:
+            async for chunk in collector._process_file_list(
+                files,
+                self.client,
+                self.shutdown,
+                "session-id",
+                self.feed,  # type: ignore
+                self.processed_uuids,
+                "CHAN",
+                ItemBatchOutcome(),
+            ):
+                chunks.append(chunk)
+
+        self.assertEqual(len(chunks), 1)
+        mock_duration.assert_called_once_with(b"m4a_bytes", input_format="mp3")
+        chunk0 = chunks[0]
+        assert isinstance(chunk0, CapturedChunk)
+        self.assertEqual(chunk0.session_id, "session-id")
+        self.assertEqual(chunk0.audio_bytes, b"m4a_bytes")
+        self.assertEqual(chunk0.mime_type, AudioMimeType.MP4)
+        self.assertEqual(chunk0.resume_position, chunk0.chunk_start_time)
+        self.assertEqual(len(self.processed_uuids), 1)
+        self.assertIn("uuid1", self.processed_uuids)
+
     async def test_process_files_with_duplicates(self) -> None:
         self.client.download_audio.return_value = b"mp3_bytes"
         files = [
@@ -382,8 +423,8 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
 
         chunks = []
         with patch(
-            "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
-            return_value=30000,
+            "backend.pipeline.ingestion.collectors.fire_notifications.collector.probe_audio_metadata",
+            return_value=(30000, AudioMimeType.MPEG),
         ) as mock_duration:
             async for chunk in collector._process_file_list(
                 files,
@@ -438,8 +479,8 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
 
         chunks = []
         with patch(
-            "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
-            return_value=30000,
+            "backend.pipeline.ingestion.collectors.fire_notifications.collector.probe_audio_metadata",
+            return_value=(30000, AudioMimeType.MPEG),
         ) as mock_duration:
             async for chunk in collector._process_file_list(
                 files,
@@ -624,8 +665,8 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
 
         chunks = []
         with patch(
-            "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
-            return_value=30000,
+            "backend.pipeline.ingestion.collectors.fire_notifications.collector.probe_audio_metadata",
+            return_value=(30000, AudioMimeType.MPEG),
         ):
             async for chunk in collector._process_file_list(
                 files,
@@ -710,7 +751,7 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         )
         with (
             patch(
-                "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
+                "backend.pipeline.ingestion.collectors.fire_notifications.collector.probe_audio_metadata",
                 side_effect=subprocess.CalledProcessError(
                     1,
                     ["ffprobe"],
@@ -779,7 +820,7 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         expected_reason = "ValueError: bad mp3"
         with (
             patch(
-                "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
+                "backend.pipeline.ingestion.collectors.fire_notifications.collector.probe_audio_metadata",
                 side_effect=ValueError("bad mp3"),
             ),
             self.assertLogs(
@@ -840,7 +881,7 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         expected_reason = "ffprobe timed out after 10s"
         with (
             patch(
-                "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
+                "backend.pipeline.ingestion.collectors.fire_notifications.collector.probe_audio_metadata",
                 side_effect=subprocess.TimeoutExpired(
                     cmd=["ffprobe"], timeout=10.0
                 ),
@@ -906,7 +947,7 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         )
         with (
             patch(
-                "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
+                "backend.pipeline.ingestion.collectors.fire_notifications.collector.probe_audio_metadata",
                 side_effect=subprocess.CalledProcessError(
                     1,
                     ["ffprobe"],
@@ -1293,8 +1334,8 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
 
         events = []
         with patch(
-            "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
-            return_value=1000,
+            "backend.pipeline.ingestion.collectors.fire_notifications.collector.probe_audio_metadata",
+            return_value=(1000, AudioMimeType.MPEG),
         ):
             async for event in collector.fire_notifications_collector(
                 self.feed,  # type: ignore
@@ -1365,8 +1406,8 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
 
         events = []
         with patch(
-            "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
-            return_value=1000,
+            "backend.pipeline.ingestion.collectors.fire_notifications.collector.probe_audio_metadata",
+            return_value=(1000, AudioMimeType.MPEG),
         ):
             async for event in collector.fire_notifications_collector(
                 self.feed,  # type: ignore
@@ -1428,8 +1469,8 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         },
     )
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
-        return_value=15000,
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.probe_audio_metadata",
+        return_value=(15000, AudioMimeType.MPEG),
     )
     async def test_bookmark_progression(self, mock_duration: MagicMock) -> None:
         feed = LeasedFeed(
@@ -1529,8 +1570,8 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
         },
     )
     @patch(
-        "backend.pipeline.ingestion.collectors.fire_notifications.collector.get_audio_duration",
-        return_value=15000,
+        "backend.pipeline.ingestion.collectors.fire_notifications.collector.probe_audio_metadata",
+        return_value=(15000, AudioMimeType.MPEG),
     )
     async def test_bookmark_progression_with_duplicates(
         self, mock_duration: MagicMock
