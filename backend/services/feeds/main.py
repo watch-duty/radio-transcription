@@ -10,10 +10,14 @@ if TYPE_CHECKING:
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 
+from backend.pipeline.common.actor_identity import (
+    is_well_formed_google_user_actor_id,
+)
 from backend.pipeline.common.auth import verify_oidc_token
 from backend.pipeline.common.exceptions import (
     FeedAlreadyExistsError,
     FeedNameAlreadyExistsError,
+    FeedStateConflictError,
 )
 from backend.pipeline.common.fastapi_tracing import setup_fastapi_tracing
 from backend.pipeline.storage.connection import (
@@ -31,6 +35,8 @@ from .models import Feed, FeedCreate, FeedUpdate, ListFeedsResponse, Tag
 from .service import FeedService
 
 logger = logging.getLogger(__name__)
+
+_INTERNAL_ACTOR_ID_HEADER = "X-WD-Actor-Id"
 
 
 @asynccontextmanager
@@ -53,6 +59,26 @@ app = FastAPI(
 setup_fastapi_tracing(app, service_name="feeds-service")
 
 
+def _resolve_admin_actor_id(request: Request) -> str:
+    """Resolve the BFF-provided human actor for admin mutations.
+
+    The BFF authenticates the user, checks admin access, and derives this
+    header from the verified Google user ``sub``. The Authorization token on
+    the BFF-to-feeds-service request authenticates the BFF service account, not
+    the human user, so feeds-service cannot derive this actor from that token.
+    Keep feeds-service admin mutation routes private to the BFF service account;
+    any public ingress path to feeds-service must strip ``X-WD-Actor-Id``.
+    """
+    actor_id = request.headers.get(_INTERNAL_ACTOR_ID_HEADER)
+    if actor_id is None or not is_well_formed_google_user_actor_id(actor_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Trusted actor context required",
+        )
+
+    return actor_id
+
+
 @app.post(
     "/v1/feeds",
     status_code=status.HTTP_201_CREATED,
@@ -65,8 +91,9 @@ async def create_feed(
 ) -> Feed:
     """Create a new feed."""
     service: FeedService = request.app.state.feed_service
+    actor_id = _resolve_admin_actor_id(request)
     try:
-        return await service.create_feed(feed_in)
+        return await service.create_feed(feed_in, actor_id=actor_id)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -111,8 +138,9 @@ async def update_feed(
 ) -> Feed:
     """Update an existing feed."""
     service: FeedService = request.app.state.feed_service
+    actor_id = _resolve_admin_actor_id(request)
     try:
-        feed = await service.update_feed(feed_id, feed_in)
+        feed = await service.update_feed(feed_id, feed_in, actor_id=actor_id)
         if not feed:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -224,7 +252,8 @@ async def deactivate_feed(
 ) -> None:
     """Deactivate a feed until an explicit reset."""
     service: FeedService = request.app.state.feed_service
-    success = await service.deactivate_feed(feed_id)
+    actor_id = _resolve_admin_actor_id(request)
+    success = await service.deactivate_feed(feed_id, actor_id=actor_id)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -243,7 +272,14 @@ async def delete_feed(
 ) -> None:
     """Hard delete a feed, along with all its transcripts and audio segments."""
     service: FeedService = request.app.state.feed_service
-    success = await service.delete_feed(feed_id)
+    actor_id = _resolve_admin_actor_id(request)
+    try:
+        success = await service.delete_feed(feed_id, actor_id=actor_id)
+    except FeedStateConflictError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(e),
+        ) from e
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -262,7 +298,14 @@ async def reset_feed(
 ) -> Feed:
     """Reset a feed to unclaimed status with zero failure count."""
     service: FeedService = request.app.state.feed_service
-    feed = await service.reset_feed(feed_id)
+    actor_id = _resolve_admin_actor_id(request)
+    try:
+        feed = await service.reset_feed(feed_id, actor_id=actor_id)
+    except FeedStateConflictError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(e),
+        ) from e
     if not feed:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

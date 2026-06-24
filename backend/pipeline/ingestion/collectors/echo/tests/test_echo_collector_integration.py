@@ -37,6 +37,7 @@ _FAKE_GCS_PORT = 4443
 _ECHO_BUCKET = "wd-echo-recordings-test"
 _STAGING_BUCKET = "ingestion-staging-test"
 _SEGMENTED_PUBSUB_TOPIC_PATH = "projects/test/topics/segmented-audio-test"
+_ECHO_ACTOR_ID = "service_account:gcp:109876543210987654321"
 
 
 def _docker_available() -> bool:
@@ -138,7 +139,7 @@ class TestEchoCollectorIntegration(unittest.TestCase):
                 row_factory=cast("Any", dict_row),
             ),
         )
-        self.conn.execute("TRUNCATE feeds CASCADE")
+        self.conn.execute("TRUNCATE feed_audit_events, feeds CASCADE")
 
         # Point GCS client at fake server
         os.environ["STORAGE_EMULATOR_HOST"] = self._gcs_url
@@ -175,11 +176,20 @@ class TestEchoCollectorIntegration(unittest.TestCase):
     def _get_feed_row(self, feed_id: uuid.UUID) -> dict[str, Any]:
         row = self.conn.execute(
             "SELECT status::text, failure_count, status_reason, retry_after,"
-            " quarantine_reason FROM feeds WHERE id = %s",
+            " status_reason_detail, quarantine_reason FROM feeds WHERE id = %s",
             (feed_id,),
         ).fetchone()
         assert row is not None
         return row
+
+    def _get_audit_rows(self, feed_id: uuid.UUID) -> list[dict[str, Any]]:
+        cursor = self.conn.execute(
+            "SELECT action, actor_id, feed_revision, before_values,"
+            " after_values FROM feed_audit_events"
+            " WHERE feed_id = %s ORDER BY feed_revision",
+            (feed_id,),
+        )
+        return list(cursor.fetchall())
 
     def _upload_mp3(self, name: str) -> bytes:
         mp3_bytes = _make_mp3_bytes()
@@ -226,7 +236,7 @@ class TestEchoCollectorIntegration(unittest.TestCase):
             patch.object(echo_main, "STAGING_BUCKET", _STAGING_BUCKET),
             patch.object(echo_main, "get_audio_duration", duration_mock),
         ):
-            echo_main._handle(event)
+            echo_main._handle(event, actor_id=_ECHO_ACTOR_ID)
 
     # -- Tests ------------------------------------------------------------
 
@@ -251,6 +261,7 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         chunk = SegmentedAudio()
         chunk.ParseFromString(publish_args[1])
         self.assertEqual(chunk.feed_id, str(feed_id))
+        self.assertEqual(self._get_audit_rows(feed_id), [])
 
     def test_unknown_channel_skips_silently(self) -> None:
         """MP3 from unregistered channel -> no GCS write, no publish."""
@@ -261,15 +272,33 @@ class TestEchoCollectorIntegration(unittest.TestCase):
 
         self.mock_publisher.publish.assert_not_called()
 
+    def test_deactivated_feed_drops_event_without_audit(self) -> None:
+        """Deactivated feed -> drop event (return 200), no storage mutation."""
+        channel = "deactivated-ch"
+        feed_id = self._insert_echo_feed(channel, status="deactivated")
+        name = f"{channel}/20260326/deactivated_20260326_143022.mp3"
+        self._upload_mp3(name)
+
+        self._run_handler(self._make_cloud_event(name))
+
+        row = self._get_feed_row(feed_id)
+        self.assertEqual(row["status"], "deactivated")
+        self.assertEqual(row["failure_count"], 0)
+        self.assertEqual(self._get_audit_rows(feed_id), [])
+        self.mock_publisher.publish.assert_not_called()
+
     def test_quarantined_feed_drops_event(self) -> None:
         """Quarantined feed -> drop event (return 200), no publish."""
         channel = "quarantined-ch"
-        self._insert_echo_feed(channel, status="quarantined")
+        feed_id = self._insert_echo_feed(channel, status="quarantined")
         name = f"{channel}/20260326/quarantined_20260326_143022.mp3"
         self._upload_mp3(name)
 
         self._run_handler(self._make_cloud_event(name))
 
+        row = self._get_feed_row(feed_id)
+        self.assertEqual(row["status"], "quarantined")
+        self.assertEqual(self._get_audit_rows(feed_id), [])
         self.mock_publisher.publish.assert_not_called()
 
     def test_malformed_filename_skips_gracefully(self) -> None:
@@ -293,7 +322,9 @@ class TestEchoCollectorIntegration(unittest.TestCase):
 
         # Pre-set failure_count to 4 (one below threshold)
         self.conn.execute(
-            "UPDATE feeds SET failure_count = 4, status = 'failing'"
+            "UPDATE feeds SET failure_count = 4, status = 'failing',"
+            " status_reason = 'source_unreachable',"
+            " status_reason_detail = 'offline'"
             " WHERE id = %s",
             (feed_id,),
         )
@@ -314,6 +345,24 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         self.assertEqual(row["status_reason"], "system_pipeline_error")
         self.assertIsNone(row["retry_after"])
         self.assertIsNone(row["quarantine_reason"])
+        events = self._get_audit_rows(feed_id)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["action"], "feed.failure_reported")
+        self.assertEqual(
+            events[0]["actor_id"],
+            _ECHO_ACTOR_ID,
+        )
+        self.assertEqual(events[0]["before_values"]["status"], "failing")
+        self.assertEqual(events[0]["before_values"]["failure_count"], 4)
+        self.assertEqual(
+            events[0]["before_values"]["status_reason"],
+            "source_unreachable",
+        )
+        self.assertEqual(events[0]["after_values"]["status"], "failing")
+        self.assertEqual(
+            events[0]["after_values"]["status_reason"],
+            "system_pipeline_error",
+        )
 
     def test_duration_failure_does_not_block_later_valid_object(self) -> None:
         """One bad Echo object cannot quarantine or block later objects."""
@@ -321,7 +370,9 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         feed_id = self._insert_echo_feed(channel)
 
         self.conn.execute(
-            "UPDATE feeds SET failure_count = 4, status = 'failing'"
+            "UPDATE feeds SET failure_count = 4, status = 'failing',"
+            " status_reason = 'source_unreachable',"
+            " status_reason_detail = 'offline'"
             " WHERE id = %s",
             (feed_id,),
         )
@@ -349,6 +400,29 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         self.assertEqual(good_row["status"], "active")
         self.assertIsNone(good_row["status_reason"])
         self.mock_publisher.publish.assert_called_once()
+        events = self._get_audit_rows(feed_id)
+        self.assertEqual(
+            [event["action"] for event in events],
+            [
+                "feed.failure_reported",
+                "feed.recovered",
+            ],
+        )
+        self.assertEqual(
+            events[0]["before_values"]["status_reason"],
+            "source_unreachable",
+        )
+        self.assertEqual(
+            events[-1]["actor_id"],
+            _ECHO_ACTOR_ID,
+        )
+        self.assertEqual(events[-1]["before_values"]["status"], "failing")
+        self.assertEqual(
+            events[-1]["before_values"]["status_reason"],
+            "system_collector_error",
+        )
+        self.assertEqual(events[-1]["before_values"]["status"], "failing")
+        self.assertEqual(events[-1]["after_values"]["status"], "active")
 
     def test_success_resets_failure_count(self) -> None:
         """Successful processing resets failure_count to 0."""
@@ -357,7 +431,9 @@ class TestEchoCollectorIntegration(unittest.TestCase):
 
         # Pre-set a previous failure
         self.conn.execute(
-            "UPDATE feeds SET failure_count = 2, status = 'failing'"
+            "UPDATE feeds SET failure_count = 2, status = 'failing',"
+            " status_reason = 'source_unreachable',"
+            " status_reason_detail = 'offline'"
             " WHERE id = %s",
             (feed_id,),
         )
@@ -370,6 +446,21 @@ class TestEchoCollectorIntegration(unittest.TestCase):
         row = self._get_feed_row(feed_id)
         self.assertEqual(row["failure_count"], 0)
         self.assertEqual(row["status"], "active")
+        events = self._get_audit_rows(feed_id)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["action"], "feed.recovered")
+        self.assertEqual(
+            events[0]["actor_id"],
+            _ECHO_ACTOR_ID,
+        )
+        self.assertEqual(events[0]["before_values"]["status"], "failing")
+        self.assertEqual(events[0]["before_values"]["failure_count"], 2)
+        self.assertEqual(
+            events[0]["before_values"]["status_reason"],
+            "source_unreachable",
+        )
+        self.assertEqual(events[0]["before_values"]["status"], "failing")
+        self.assertEqual(events[0]["after_values"]["status"], "active")
 
     def test_non_mp3_file_ignored(self) -> None:
         """Non-MP3 file -> return immediately, no DB lookup."""
