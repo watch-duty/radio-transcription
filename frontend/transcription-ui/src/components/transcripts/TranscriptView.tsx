@@ -618,8 +618,7 @@ export function TranscriptView({
         onSkipToPrevious={skipToPrevious}
         onFastForward={skipToNextSpeech}
         onFastRewind={skipToPreviousSpeech}
-        onReplay5={() => skipTime(-5)}
-        onForward5={() => skipTime(5)}
+        onSkipTime={skipTime}
         playLatestAudio={playLatestAudio}
         onChangePlayLatestAudio={setPlayLatestAudio}
         disableControls={rawAudioSegments.length === 0}

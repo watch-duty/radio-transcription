@@ -19,8 +19,7 @@ export interface AudioControlProps {
   onSkipToPrevious: () => void;
   onFastForward: () => void;
   onFastRewind: () => void;
-  onReplay5: () => void;
-  onForward5: () => void;
+  onSkipTime: (offsetSeconds: number) => void;
   playLatestAudio: boolean;
   onChangePlayLatestAudio: (checked: boolean) => void;
   disableControls?: boolean;
@@ -35,8 +34,7 @@ export function AudioControl({
   onSkipToPrevious,
   onFastForward,
   onFastRewind,
-  onReplay5,
-  onForward5,
+  onSkipTime,
   playLatestAudio,
   onChangePlayLatestAudio,
   disableControls = false,
@@ -102,7 +100,7 @@ export function AudioControl({
         <Tooltip title="Rewind 5 seconds">
           <span>
             <IconButton
-              onClick={onReplay5}
+              onClick={() => onSkipTime(-5)}
               size="large"
               color="primary"
               sx={{ p: 0.5 }}
@@ -134,7 +132,7 @@ export function AudioControl({
         <Tooltip title="Advance 5 seconds">
           <span>
             <IconButton
-              onClick={onForward5}
+              onClick={() => onSkipTime(5)}
               size="large"
               color="primary"
               sx={{ p: 0.5 }}
