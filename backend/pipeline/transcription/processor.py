@@ -13,6 +13,8 @@ import requests
 from cloudevents.http.event import CloudEvent
 from google.api_core.exceptions import GoogleAPICallError
 from google.cloud import pubsub_v1
+from google.genai import errors as genai_errors
+from opentelemetry.trace import StatusCode
 
 from backend.pipeline.common.clients import audio_segments_client
 from backend.pipeline.common.constants import (
@@ -21,6 +23,7 @@ from backend.pipeline.common.constants import (
 )
 from backend.pipeline.common.log_helper import record_pipeline_stage
 from backend.pipeline.common.tracing_utils import (
+    get_tracer,
     inject_otel_context,
     parse_pubsub_cloudevent,
     with_tracer_context,
@@ -73,7 +76,7 @@ class TranscriptionEventProcessor:
 
         with with_tracer_context(
             combined_attributes, "transcribe_claim_check", __name__
-        ):
+        ) as root_span:
             errors = []
             transcript = ""
             segment_id = ""
@@ -108,11 +111,16 @@ class TranscriptionEventProcessor:
                 duration_ms = self._get_duration_ms(claim)
 
                 # Retrieve active transcriber and run Speech API on ephemeral mono FLAC link
-                transcript = await self.transcriber.transcribe(
-                    uri=claim.transcription_audio_uri
-                    or claim.canonical_audio_uri,
-                    duration_ms=duration_ms,
-                )
+                tracer = get_tracer(__name__)
+                with tracer.start_as_current_span("transcribe_audio") as span:
+                    span.set_attribute("segment_id", segment_id)
+                    span.set_attribute("feed_id", feed_id)
+                    span.set_attribute("duration_ms", duration_ms)
+                    transcript = await self.transcriber.transcribe(
+                        uri=claim.transcription_audio_uri
+                        or claim.canonical_audio_uri,
+                        duration_ms=duration_ms,
+                    )
 
                 if not transcript:
                     logger.info(
@@ -122,39 +130,12 @@ class TranscriptionEventProcessor:
                     transcript = CHIRP_UNINTELLIGIBLE_MARKER
 
                 # Build TranscribedAudio egress protobuf message
-                out_proto = TranscribedAudio(
-                    segment_id=claim.segment_id,
-                    feed_id=claim.feed_id,
-                    transcript=transcript,
-                    start_timestamp=claim.start_timestamp,
-                    end_timestamp=claim.end_timestamp,
-                    missing_prior_context=claim.missing_prior_context,
-                    missing_post_context=claim.missing_post_context,
-                    source_audio_uris=claim.source_audio_uris,
-                    start_audio_offset=claim.start_audio_offset,
-                    end_audio_offset=claim.end_audio_offset,
-                    canonical_audio_uri=claim.canonical_audio_uri,
-                    playback_audio_uri=claim.playback_audio_uri,
-                    feed_name=claim.feed_name,
-                    transcription_audio_uri=claim.transcription_audio_uri,
-                )
+                out_proto = self._build_egress_message(claim, transcript)
 
                 # Egress to final output topic, strictly ordered by feed_id
-                topic_name = self.output_topic.split("/")[-1]
-                topic_path = self.publisher.topic_path(
-                    self.project_id, topic_name
+                message_id = await self._publish_egress(
+                    feed_id, segment_id, out_proto
                 )
-
-                attrs: dict[str, str] = {}
-                inject_otel_context(attrs)
-
-                future = self.publisher.publish(
-                    topic=topic_path,
-                    data=out_proto.SerializeToString(),
-                    ordering_key=feed_id,
-                    **attrs,
-                )
-                message_id = await asyncio.wrap_future(future)
                 record_pipeline_stage("transcription", "success")
                 logger.info(
                     "Successfully transcribed and published egress message %s for transmission %s (feed %s)",
@@ -175,6 +156,8 @@ class TranscriptionEventProcessor:
                     errors.append(f"Transient Failure: {e}")
                     raise
 
+                root_span.record_exception(e)
+                root_span.set_status(StatusCode.ERROR)
                 logger.exception(
                     "Permanent failure processing transcription claim for transmission %s (feed %s): %s. "
                     "Acknowledging message without retry.",
@@ -215,6 +198,50 @@ class TranscriptionEventProcessor:
         else:
             return claim
 
+    def _build_egress_message(
+        self, claim: NormalizedAudio, transcript: str
+    ) -> TranscribedAudio:
+        """Constructs the TranscribedAudio egress message."""
+        return TranscribedAudio(
+            segment_id=claim.segment_id,
+            feed_id=claim.feed_id,
+            transcript=transcript,
+            start_timestamp=claim.start_timestamp,
+            end_timestamp=claim.end_timestamp,
+            missing_prior_context=claim.missing_prior_context,
+            missing_post_context=claim.missing_post_context,
+            source_audio_uris=claim.source_audio_uris,
+            start_audio_offset=claim.start_audio_offset,
+            end_audio_offset=claim.end_audio_offset,
+            canonical_audio_uri=claim.canonical_audio_uri,
+            playback_audio_uri=claim.playback_audio_uri,
+            feed_name=claim.feed_name,
+            transcription_audio_uri=claim.transcription_audio_uri,
+        )
+
+    async def _publish_egress(
+        self, feed_id: str, segment_id: str, egress_msg: TranscribedAudio
+    ) -> str:
+        """Publishes the TranscribedAudio egress message downstream and awaits acknowledgment."""
+        topic_name = self.output_topic.split("/")[-1]
+        topic_path = self.publisher.topic_path(self.project_id, topic_name)
+
+        tracer = get_tracer(__name__)
+        with tracer.start_as_current_span("publish_transcribed_audio") as span:
+            span.set_attribute("segment_id", segment_id)
+            span.set_attribute("feed_id", feed_id)
+
+            attrs: dict[str, str] = {}
+            inject_otel_context(attrs)
+
+            future = self.publisher.publish(
+                topic=topic_path,
+                data=egress_msg.SerializeToString(),
+                ordering_key=feed_id,
+                **attrs,
+            )
+            return await asyncio.wrap_future(future)
+
     async def _write_transcript_annotation(
         self, segment_id: str, transcript: str, errors: list[str]
     ) -> None:
@@ -222,37 +249,45 @@ class TranscriptionEventProcessor:
         if self.audio_segments_client is None:
             return
 
-        try:
-            annotation_data = {
-                "text": transcript,
-                "errors": errors,
-            }
-            await self.audio_segments_client.add_audio_segment_annotation(
-                audio_segment_id=segment_id,
-                annotation_type=(
-                    audio_segments_models.AnnotationType.TRANSCRIPT
-                ),
-                data=annotation_data,
-            )
-            logger.info(
-                "Successfully added transcript annotation for segment %s",
-                segment_id,
-            )
-        except Exception as write_err:
-            logger.exception(
-                "Failed to add transcript annotation for segment %s: %s",
-                segment_id,
-                write_err,
-            )
+        tracer = get_tracer(__name__)
+        with tracer.start_as_current_span(
+            "write_transcript_annotation"
+        ) as span:
+            span.set_attribute("segment_id", segment_id)
+            try:
+                annotation_data = {
+                    "text": transcript,
+                    "errors": errors,
+                }
+                await self.audio_segments_client.add_audio_segment_annotation(
+                    audio_segment_id=segment_id,
+                    annotation_type=(
+                        audio_segments_models.AnnotationType.TRANSCRIPT
+                    ),
+                    data=annotation_data,
+                )
+                logger.info(
+                    "Successfully added transcript annotation for segment %s",
+                    segment_id,
+                )
+            except Exception as write_err:
+                span.record_exception(write_err)
+                span.set_status(StatusCode.ERROR)
+                logger.exception(
+                    "Failed to add transcript annotation for segment %s: %s",
+                    segment_id,
+                    write_err,
+                )
 
 
 def _is_transient_exception(e: Exception) -> bool:
     """Determines if an exception is transient and should be retried."""
     is_transient = False
     match e:
-        case GoogleAPICallError() if e.code in (429, 409) or (
-            e.code and e.code >= 500
-        ):
+        case GoogleAPICallError() | genai_errors.APIError() if e.code in (
+            429,
+            409,
+        ) or (e.code and e.code >= 500):
             is_transient = True
         case grpc.Call():
             try:

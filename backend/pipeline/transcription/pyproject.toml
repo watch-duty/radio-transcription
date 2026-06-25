@@ -14,10 +14,9 @@ dependencies = [
     "opentelemetry-sdk>=1.41.1",
     "opentelemetry-exporter-gcp-trace>=1.12.0",
     "pydantic>=2.12.5",
-    # Adding betterproto because it is required to load the generated betterproto schema types.
-    "betterproto>=2.0.0b6",
     "radio-transcription-common",
     "requests>=2.31.0",
+    "google-genai>=1.74.0",
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.27.0",
 ]
