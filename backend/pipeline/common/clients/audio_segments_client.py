@@ -118,7 +118,8 @@ class GCPMetadataAuth(requests.auth.AuthBase):
 
     def __call__(self, r: requests.PreparedRequest) -> requests.PreparedRequest:
         token = get_id_token(self.audience)
-        r.headers["Authorization"] = f"Bearer {token}"
+        if r.headers is not None:
+            r.headers["Authorization"] = f"Bearer {token}"
         return r
 
 
