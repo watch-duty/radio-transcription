@@ -41,7 +41,11 @@ export function findNextAudioSegment(
   if (currentIdx === -1) return null;
 
   const step = direction === 'forward' ? -1 : 1; // forward = next newer = index decreasing; backward = next older = index increasing
-  for (let i = currentIdx + step; i >= 0 && i < rawAudioSegments.length; i += step) {
+  for (
+    let i = currentIdx + step;
+    i >= 0 && i < rawAudioSegments.length;
+    i += step
+  ) {
     const nextSegment = rawAudioSegments[i];
     if (nextSegment?.playbackAudioUri) {
       return { id: nextSegment.id, uri: nextSegment.playbackAudioUri };
@@ -89,6 +93,11 @@ export interface SkipTimeDestination {
 /**
  * Calculates the destination segment and relative seek time when skipping forward or backward by an offset,
  * accounting for segment boundaries and overshooting.
+ *
+ * @returns The destination skip target, or null if:
+ *          - The active segment is not found in rawAudioSegments.
+ *          - The target segment lacks a playable audio URI (e.g. it is a non-audio segment).
+ *          - There are no playable segments available in the skip direction.
  */
 export function calculateSkipTimeDestination(
   rawAudioSegments: AudioSegment[],
@@ -120,9 +129,12 @@ export function calculateSkipTimeDestination(
   // CASE 2: Overshot backwards (Replay / older segments)
   if (targetTime < 0) {
     let remainingOvershoot = -targetTime;
-    let nextIdx = currentIdx + 1; // Older segments have higher indexes
 
-    while (nextIdx < rawAudioSegments.length) {
+    for (
+      let nextIdx = currentIdx + 1;
+      nextIdx < rawAudioSegments.length;
+      nextIdx++
+    ) {
       const segment = rawAudioSegments[nextIdx];
       if (segment.playbackAudioUri) {
         const duration = getSegmentDuration(segment);
@@ -136,7 +148,6 @@ export function calculateSkipTimeDestination(
           remainingOvershoot -= duration;
         }
       }
-      nextIdx++;
     }
 
     // Fallback: If we overshot the oldest segment, play the oldest from the start (0)
@@ -155,9 +166,8 @@ export function calculateSkipTimeDestination(
   // CASE 3: Overshot forwards (Forward / newer segments)
   if (targetTime > activeDuration) {
     let remainingOvershoot = targetTime - activeDuration;
-    let nextIdx = currentIdx - 1; // Newer segments have lower indexes
 
-    while (nextIdx >= 0) {
+    for (let nextIdx = currentIdx - 1; nextIdx >= 0; nextIdx--) {
       const segment = rawAudioSegments[nextIdx];
       if (segment.playbackAudioUri) {
         const duration = getSegmentDuration(segment);
@@ -171,7 +181,6 @@ export function calculateSkipTimeDestination(
           remainingOvershoot -= duration;
         }
       }
-      nextIdx--;
     }
 
     // Fallback: If we overshot the newest segment, seek to the end of the newest segment

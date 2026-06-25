@@ -409,9 +409,7 @@ export function TranscriptView({
   }, [isAudioSegmentsSuccess, targetSegmentId, audioSegments]);
 
   const handleClipClick = (segmentId: string) => {
-    const index = audioSegments.findIndex((t) =>
-      isWithinSegment(t, segmentId)
-    );
+    const index = audioSegments.findIndex((t) => isWithinSegment(t, segmentId));
     if (index !== -1) {
       virtuosoRef.current?.scrollToIndex({
         index,
