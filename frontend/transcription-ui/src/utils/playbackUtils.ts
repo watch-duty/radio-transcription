@@ -22,11 +22,8 @@ export function getSegmentDuration(segment: {
   startTimestamp: string;
   endTimestamp: string;
 }): number {
-  return (
-    (new Date(segment.endTimestamp).getTime() -
-      new Date(segment.startTimestamp).getTime()) /
-    1000
-  );
+  const diffMs = new Date(segment.endTimestamp).getTime() - new Date(segment.startTimestamp).getTime();
+  return Math.max(0, diffMs / 1000);
 }
 
 /**
