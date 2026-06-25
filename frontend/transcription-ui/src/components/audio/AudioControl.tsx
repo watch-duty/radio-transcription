@@ -7,7 +7,7 @@ import SkipPreviousIcon from '@mui/icons-material/SkipPrevious';
 import Box from '@mui/material/Box';
 import Checkbox from '@mui/material/Checkbox';
 import FormControlLabel from '@mui/material/FormControlLabel';
-import Icon from '@mui/material/Icon';
+import Icon, { type IconProps } from '@mui/material/Icon';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
 import type { SxProps, Theme } from '@mui/material/styles';
@@ -73,13 +73,10 @@ export function AudioControl({
               aria-label="rewind to previous detected speech"
               disabled={disableControls}
             >
-              <Icon
-                baseClassName="material-symbols-outlined"
+              <MoveToSpeechIcon
                 fontSize="large"
                 sx={{ transform: 'scaleX(-1)' }}
-              >
-                chat_paste_go
-              </Icon>
+              />
             </IconButton>
           </span>
         </Tooltip>
@@ -167,9 +164,7 @@ export function AudioControl({
               aria-label="advance to next detected speech"
               disabled={disableControls}
             >
-              <Icon baseClassName="material-symbols-outlined" fontSize="large">
-                chat_paste_go
-              </Icon>
+              <MoveToSpeechIcon fontSize="large" />
             </IconButton>
           </span>
         </Tooltip>
@@ -190,5 +185,13 @@ export function AudioControl({
         />
       </Box>
     </Box>
+  );
+}
+
+function MoveToSpeechIcon(props: IconProps) {
+  return (
+    <Icon baseClassName="material-symbols-outlined" {...props}>
+      chat_paste_go
+    </Icon>
   );
 }

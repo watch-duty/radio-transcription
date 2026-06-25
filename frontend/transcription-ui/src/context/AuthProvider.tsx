@@ -16,7 +16,6 @@ const MAX_REFRESH_ATTEMPTS = 10; // Max attempts to refresh token
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [token, setToken] = useState<string | null>(null);
-  const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [isCheckingSession, setIsCheckingSession] = useState(true);
   const isRefreshingRef = useRef(false);
 
@@ -26,14 +25,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     isError: isUserInfoError,
   } = useUserInfo(token);
 
-  useEffect(() => {
-    if (userInfo) {
-      setIsAdmin(userInfo.isAdmin);
-    } else if (isUserInfoError || !token) {
-      setIsAdmin(false);
-    }
-  }, [userInfo, isUserInfoError, token]);
-
+  const isAdmin = userInfo?.isAdmin ?? false;
   /**
    * Effect which checks the user's session.
    * Only runs once when the component mounts.
@@ -147,7 +139,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         token,
         setToken,
         isAdmin,
-        setIsAdmin,
+        setIsAdmin: () => {},
         isLoading: isUserInfoLoading,
         isError: isUserInfoError,
       }}

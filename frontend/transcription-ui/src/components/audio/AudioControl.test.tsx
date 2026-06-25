@@ -11,9 +11,9 @@ describe('AudioControl', () => {
   const mockOnSkipToPrevious = vi.fn();
   const mockOnFastForward = vi.fn();
   const mockOnFastRewind = vi.fn();
-  const mockOnReplay5 = vi.fn();
+  const mockOnSkipTime = vi.fn();
   const mockOnForward5 = vi.fn();
-  const mockOnChangePlayLatestAudio = vi.fn();
+  const mockTogglePlayLatestAudio = vi.fn();
 
   const defaultProps = {
     isAudioPlaying: false,
@@ -22,10 +22,9 @@ describe('AudioControl', () => {
     onSkipToPrevious: mockOnSkipToPrevious,
     onFastForward: mockOnFastForward,
     onFastRewind: mockOnFastRewind,
-    onReplay5: mockOnReplay5,
-    onForward5: mockOnForward5,
+    onSkipTime: mockOnSkipTime,
     playLatestAudio: true,
-    onChangePlayLatestAudio: mockOnChangePlayLatestAudio,
+    togglePlayLatestAudio: mockTogglePlayLatestAudio,
   };
 
   beforeEach(() => {
@@ -78,7 +77,7 @@ describe('AudioControl', () => {
   it('triggers callback for rewind 5 seconds button', () => {
     render(<AudioControl {...defaultProps} />);
     fireEvent.click(screen.getByLabelText('rewind 5 seconds'));
-    expect(mockOnReplay5).toHaveBeenCalledTimes(1);
+    expect(mockOnSkipTime).toHaveBeenCalledTimes(1);
   });
 
   it('triggers callback for play/pause button', () => {
@@ -111,7 +110,7 @@ describe('AudioControl', () => {
       name: 'Always play latest audio',
     });
     fireEvent.click(checkbox);
-    expect(mockOnChangePlayLatestAudio).toHaveBeenCalledWith(false);
+    expect(mockOnTogglePlayPause).toHaveBeenCalledWith(false);
   });
 
   it('disables all buttons when disableControls is true', () => {

@@ -67,33 +67,11 @@ export function TranscriptView({
     [targetTimestampParam]
   );
 
-  const [searchedFeedId, setSearchedFeedId] = useState<string>(
-    targetFeedId || ''
-  );
-  const [searchedTimestamp, setSearchedTimestamp] = useState<Date | null>(
-    targetTimestamp
-  );
+  const searchedFeedId = targetFeedId || '';
+  const searchedTimestamp = targetTimestamp;
 
   const [newMessageCount, setNewMessageCount] = useState(0);
   const [playLatestAudio, setPlayLatestAudio] = useState(true);
-
-  // Effect which sets the searched feed ID based on the search params changing.
-  useEffect(() => {
-    if (targetFeedId) {
-      setSearchedFeedId(targetFeedId);
-    } else {
-      setSearchedFeedId('');
-    }
-  }, [targetFeedId]);
-
-  // Effect which sets the searched timestamp based on the search params changing.
-  useEffect(() => {
-    if (targetTimestamp) {
-      setSearchedTimestamp(targetTimestamp);
-    } else {
-      setSearchedTimestamp(null);
-    }
-  }, [targetTimestamp]);
 
   const [redactTranscripts, setRedactTranscripts] = useState(false);
   const [alertFilter, setAlertFilter] = useState<AlertFilter>('all');
@@ -517,14 +495,28 @@ export function TranscriptView({
 
   // A different feed / timestamp / alert filter replaces the list wholesale
   // rather than prepending, so reset the anchoring baseline.
-  useEffect(() => {
+  const [prevFeedId, setPrevFeedId] = useState(searchedFeedId);
+  const [prevTimestamp, setPrevTimestamp] = useState(searchedTimestamp);
+  const [prevAlertFilter, setPrevAlertFilter] = useState(alertFilter);
+
+  if (
+    searchedFeedId !== prevFeedId ||
+    searchedTimestamp?.getTime() !== prevTimestamp?.getTime() ||
+    alertFilter !== prevAlertFilter
+  ) {
+    setPrevFeedId(searchedFeedId);
+    setPrevTimestamp(searchedTimestamp);
+    setPrevAlertFilter(alertFilter);
     setFirstItemIndex(VIRTUOSO_START_INDEX);
+  }
+
+  // Reset refs inside an effect since they should not be modified during render
+  useEffect(() => {
     newerLoadAnchorId.current = null;
     hasScrolledAwayFromTop.current = false;
   }, [searchedFeedId, searchedTimestamp, alertFilter]);
 
   const handleFilterByDateTime = (date: Date | null) => {
-    setSearchedTimestamp(date);
     setSearchParams((prev) => {
       if (date) {
         prev.set('timestamp', date.getTime().toString());
@@ -551,7 +543,6 @@ export function TranscriptView({
   };
 
   const handleFeedSelect = (feedId: string) => {
-    setSearchedFeedId(feedId);
     stopPlayback();
     // Reset all state
     handleFilterByDateTime(null);

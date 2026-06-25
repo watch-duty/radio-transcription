@@ -22,7 +22,9 @@ export function getSegmentDuration(segment: {
   startTimestamp: string;
   endTimestamp: string;
 }): number {
-  const diffMs = new Date(segment.endTimestamp).getTime() - new Date(segment.startTimestamp).getTime();
+  const diffMs =
+    new Date(segment.endTimestamp).getTime() -
+    new Date(segment.startTimestamp).getTime();
   return Math.max(0, diffMs / 1000);
 }
 
