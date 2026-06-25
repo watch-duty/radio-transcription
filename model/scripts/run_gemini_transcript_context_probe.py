@@ -124,6 +124,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-output-tokens", type=int, default=512)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument(
+        "--log-every",
+        type=int,
+        default=100,
+        help=(
+            "Log progress every N processed rows. Set to 0 to keep only "
+            "start, error, and completion logs."
+        ),
+    )
+    parser.add_argument(
         "--output-jsonl",
         default=None,
         help="Output JSONL path. Defaults under model/data/inference_manifests.",
@@ -444,6 +453,22 @@ def output_row(
     }
 
 
+def should_log_progress(
+    *,
+    processed: int,
+    target_total: int,
+    log_every: int,
+    has_error: bool,
+) -> bool:
+    """Return whether to emit a coarse progress log line."""
+    return (
+        has_error
+        or processed == 1
+        or processed == target_total
+        or (log_every > 0 and processed % log_every == 0)
+    )
+
+
 async def process_episode(
     *,
     episode_id: str,
@@ -494,16 +519,23 @@ async def process_episode(
 
         async with write_lock:
             progress["processed"] += 1
-            LOGGER.info(
-                "%d/%d mode=%s window=%s episode=%s history=%s error=%s",
-                progress["processed"],
-                target_total,
-                args.mode,
-                args.window,
-                episode_id,
-                out_row.get("context_history_size"),
-                bool(out_row.get(f"error_{MODEL_KEY}")),
-            )
+            has_error = bool(out_row.get(f"error_{MODEL_KEY}"))
+            if should_log_progress(
+                processed=progress["processed"],
+                target_total=target_total,
+                log_every=args.log_every,
+                has_error=has_error,
+            ):
+                LOGGER.info(
+                    "%d/%d mode=%s window=%s episode=%s history=%s error=%s",
+                    progress["processed"],
+                    target_total,
+                    args.mode,
+                    args.window,
+                    episode_id,
+                    out_row.get("context_history_size"),
+                    has_error,
+                )
     return output_rows
 
 
@@ -594,6 +626,14 @@ def main() -> int:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
     )
+    for logger_name in (
+        "httpcore",
+        "httpx",
+        "google.genai",
+        "google_genai",
+        "google_genai.models",
+    ):
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
     asyncio.run(run_async(args))
     return 0
 
