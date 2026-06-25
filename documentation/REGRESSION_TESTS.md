@@ -36,10 +36,7 @@ export GCP_ECHO_BUCKET="<gcs-echo-recordings-bucket>"
 ```
 
 ### Execution Command
-> [!IMPORTANT]
-> [!IMPORTANT]
-> **Concurrency Constraint**: E2E integration tests share unique database resources (like the `regression-test-channel-echo` feed). Pytest in this repository runs with parallel workers (`-n auto`) by default, which will trigger database race conditions. You **MUST** force sequential execution.
-> The new `mise` task handles this concurrency constraint (`-n 0`) automatically!
+**Concurrency Constraint**: E2E integration tests share unique database resources (like the `regression-test-channel-echo` feed). Pytest in this repository runs with parallel workers (`-n auto`) by default, which will trigger database race conditions. You **MUST** force sequential execution.
 
 ```bash
 # Run the integration tests sequentially via mise
