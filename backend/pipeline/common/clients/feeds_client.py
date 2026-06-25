@@ -45,9 +45,17 @@ class FeedsClient:
         try:
             response = self.session.get(url, headers=headers, timeout=5)
             response.raise_for_status()
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 404:
+                logger.warning("Feed %s not found in feeds API", feed_id)
+                return []
+            logger.exception(
+                "HTTP error fetching feed %s from feeds API", feed_id
+            )
+            raise
         except requests.exceptions.RequestException:
             logger.exception("Error fetching feed %s from feeds API", feed_id)
-            return None
+            raise
 
         try:
             data = response.json()

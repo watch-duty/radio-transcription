@@ -552,7 +552,7 @@ WITH updated_feed AS (
 ),
 updated_props AS (
     UPDATE feed_properties
-    SET tags = $3
+    SET tags = COALESCE($3::jsonb, tags)
     WHERE feed_id = $1
     RETURNING source_feed_id, tags
 )

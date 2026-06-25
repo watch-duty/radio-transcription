@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import json
 import uuid
 from typing import TYPE_CHECKING
 
@@ -1683,6 +1684,38 @@ async def test_update_feed_succeeds(
     assert row is not None
     assert row["name"] == "Updated Name"
     assert row["source_feed_id"] == "src_123"
+
+
+async def test_update_feed_preserves_existing_tags(
+    db_pool: asyncpg.Pool, store: FeedStore
+) -> None:
+    """update_feed does not wipe existing tags if tags parameter is None."""
+    tags = [{"key": "county", "value": "Fulton"}]
+    feed = await store.create_feed(
+        name="Original Name",
+        source_type="bcfy_feeds",
+        source_feed_id="src_123",
+        tags=tags,
+    )
+
+    # Update only the name (tags is None by default)
+    updated_feed = await store.update_feed(
+        feed_id=feed["id"],
+        name="Updated Name",
+    )
+
+    assert updated_feed is not None
+    assert updated_feed["name"] == "Updated Name"
+    # Verify tags are preserved
+    assert updated_feed["tags"] == tags
+
+    # Verify in DB
+    row = await db_pool.fetchrow(
+        "SELECT fp.tags FROM feed_properties fp WHERE fp.feed_id = $1",
+        feed["id"],
+    )
+    assert row is not None
+    assert json.loads(row["tags"]) == tags
 
 
 async def test_update_feed_already_exists(

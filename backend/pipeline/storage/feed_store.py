@@ -830,12 +830,13 @@ class FeedStore:
         Updates the feed in the `feeds` table and its corresponding
         properties in the `feed_properties` table.
         """
+        tags_json = json.dumps(tags) if tags is not None else None
         try:
             row = await self._pool.fetchrow(
                 feed_queries.UPDATE_FEED_SQL,
                 feed_id,
                 name,
-                json.dumps(tags or []),
+                tags_json,
             )
         except asyncpg.exceptions.UniqueViolationError as e:
             logger.warning(
