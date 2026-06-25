@@ -14,7 +14,14 @@ from google.api_core.exceptions import (
     ServiceUnavailable,
 )
 from google.genai import errors as genai_errors
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
+    InMemorySpanExporter,
+)
+from opentelemetry.trace import StatusCode
 
+from backend.pipeline.common import tracing_utils
 from backend.pipeline.common.clients.audio_segments_client import (
     AsyncAudioSegmentsClient,
 )
@@ -802,3 +809,199 @@ class IsTransientExceptionTest(unittest.TestCase):
 
         e = genai_errors.APIError(400, {})
         self.assertFalse(_is_transient_exception(e))
+
+
+class TranscriptionProcessorTracingTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        # Setup in-memory provider
+        self.provider = TracerProvider()
+        self.exporter = InMemorySpanExporter()
+        self.provider.add_span_processor(SimpleSpanProcessor(self.exporter))
+
+        # Inject as custom provider
+        self.original_provider = tracing_utils._state.custom_provider
+        tracing_utils._state.custom_provider = self.provider
+
+    def tearDown(self) -> None:
+        tracing_utils._state.custom_provider = self.original_provider
+
+    async def test_processor_span_nesting_and_attributes(self) -> None:
+        """Verifies that processing a transcription event generates the correct nested tracing spans and attributes."""
+        # Mocks
+        mock_transcriber = MagicMock(spec=Transcriber)
+        mock_transcriber.transcribe.return_value = "Test transcript text"
+
+        mock_publisher = MagicMock()
+        mock_future = Future()
+        mock_future.set_result("msg-12345")
+        mock_publisher.publish.return_value = mock_future
+        mock_publisher.topic_path.return_value = (
+            "projects/test-proj/topics/egress"
+        )
+
+        mock_audio_segments_client = MagicMock(spec=AsyncAudioSegmentsClient)
+
+        claim = NormalizedAudio(
+            segment_id="tx-1111",
+            feed_id="feed-2222",
+            source_audio_uris=["gs://bucket/raw1.flac"],
+            canonical_audio_uri="gs://bucket/normalized.flac",
+            playback_audio_uri="gs://bucket/normalized.m4a",
+            feed_name="Test Feed",
+            start_timestamp={"seconds": 1000, "nanos": 0},
+            end_timestamp={"seconds": 1005, "nanos": 0},
+        )
+
+        data_bytes = claim.SerializeToString()
+        envelope = {
+            "message": {
+                "data": base64.b64encode(data_bytes).decode("utf-8"),
+                "attributes": {
+                    "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+                },
+            }
+        }
+
+        cloud_event = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test-source",
+            },
+            data=envelope,
+        )
+
+        processor = TranscriptionEventProcessor(
+            project_id="test-proj",
+            output_topic="projects/test-proj/topics/egress",
+            transcriber=mock_transcriber,
+            publisher=mock_publisher,
+            audio_segments_client=mock_audio_segments_client,
+        )
+
+        await processor.process_event(cloud_event)
+
+        # Get all finished spans
+        spans = self.exporter.get_finished_spans()
+
+        # We expect 4 finished spans:
+        # 1. transcribe_audio
+        # 2. publish_transcribed_audio
+        # 3. write_transcript_annotation
+        # 4. transcribe_claim_check (parent)
+        self.assertEqual(len(spans), 4)
+
+        # Verify names
+        names = [span.name for span in spans]
+        self.assertIn("transcribe_audio", names)
+        self.assertIn("publish_transcribed_audio", names)
+        self.assertIn("write_transcript_annotation", names)
+        self.assertIn("transcribe_claim_check", names)
+
+        # Find root span and verify trace ID propagation
+        root_span = next(s for s in spans if s.name == "transcribe_claim_check")
+        root_span_ctx = root_span.get_span_context()
+        self.assertIsNotNone(root_span_ctx)
+        assert root_span_ctx is not None
+        self.assertEqual(
+            format(root_span_ctx.trace_id, "032x"),
+            "4bf92f3577b34da6a3ce929d0e0e4736",
+        )
+
+        # Verify attributes on transcribe_audio
+        transcribe_span = next(s for s in spans if s.name == "transcribe_audio")
+        self.assertIsNotNone(transcribe_span.attributes)
+        assert transcribe_span.attributes is not None
+        self.assertEqual(
+            transcribe_span.attributes.get("segment_id"), "tx-1111"
+        )
+        self.assertEqual(transcribe_span.attributes.get("feed_id"), "feed-2222")
+        self.assertEqual(transcribe_span.attributes.get("duration_ms"), 5000)
+        # Verify it is nested under root
+        self.assertIsNotNone(transcribe_span.parent)
+        assert transcribe_span.parent is not None
+        self.assertEqual(
+            transcribe_span.parent.span_id, root_span.context.span_id
+        )
+
+        # Verify nesting of other child spans
+        publish_span = next(
+            s for s in spans if s.name == "publish_transcribed_audio"
+        )
+        self.assertIsNotNone(publish_span.parent)
+        assert publish_span.parent is not None
+        self.assertEqual(publish_span.parent.span_id, root_span.context.span_id)
+
+        write_span = next(
+            s for s in spans if s.name == "write_transcript_annotation"
+        )
+        self.assertIsNotNone(write_span.parent)
+        assert write_span.parent is not None
+        self.assertEqual(write_span.parent.span_id, root_span.context.span_id)
+
+    async def test_processor_span_error_recording(self) -> None:
+        """Verifies that spans record errors and set status to ERROR on failure."""
+        mock_transcriber = MagicMock(spec=Transcriber)
+        # Simulate permanent failure by throwing ValueError
+        mock_transcriber.transcribe.side_effect = ValueError(
+            "Corrupt audio file"
+        )
+
+        mock_publisher = MagicMock()
+        mock_audio_segments_client = MagicMock(spec=AsyncAudioSegmentsClient)
+        # Mock database write to fail as well
+        mock_audio_segments_client.add_audio_segment_annotation.side_effect = (
+            RuntimeError("DB down")
+        )
+
+        claim = NormalizedAudio(
+            segment_id="tx-1111",
+            feed_id="feed-2222",
+            source_audio_uris=["gs://bucket/raw1.flac"],
+            canonical_audio_uri="gs://bucket/normalized.flac",
+            playback_audio_uri="gs://bucket/normalized.m4a",
+            feed_name="Test Feed",
+            start_timestamp={"seconds": 1000, "nanos": 0},
+            end_timestamp={"seconds": 1005, "nanos": 0},
+        )
+
+        envelope = {
+            "message": {
+                "data": base64.b64encode(claim.SerializeToString()).decode(
+                    "utf-8"
+                ),
+                "attributes": {},
+            }
+        }
+        cloud_event = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test-source",
+            },
+            data=envelope,
+        )
+
+        processor = TranscriptionEventProcessor(
+            project_id="test-proj",
+            output_topic="projects/test-proj/topics/egress",
+            transcriber=mock_transcriber,
+            publisher=mock_publisher,
+            audio_segments_client=mock_audio_segments_client,
+        )
+
+        await processor.process_event(cloud_event)
+
+        spans = self.exporter.get_finished_spans()
+
+        # Verify transcribe_audio span is set to ERROR
+        transcribe_span = next(s for s in spans if s.name == "transcribe_audio")
+        self.assertEqual(transcribe_span.status.status_code, StatusCode.ERROR)
+
+        # Verify write_transcript_annotation span is set to ERROR
+        write_span = next(
+            s for s in spans if s.name == "write_transcript_annotation"
+        )
+        self.assertEqual(write_span.status.status_code, StatusCode.ERROR)
+
+        # Verify root span is set to ERROR
+        root_span = next(s for s in spans if s.name == "transcribe_claim_check")
+        self.assertEqual(root_span.status.status_code, StatusCode.ERROR)
