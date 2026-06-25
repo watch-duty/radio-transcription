@@ -23,6 +23,9 @@ interface UseAudioPlaybackParams {
   audioSegmentsRef: RefObject<AudioSegment[]>;
   // Called when a new segment starts so the view can highlight it.
   onPlaySegment: (segmentId: string) => void;
+  volumeDb: number;
+  pan: number;
+  speed: number;
 }
 
 interface UseAudioPlayback {
@@ -41,10 +44,33 @@ interface UseAudioPlayback {
 export function useAudioPlayback({
   audioSegmentsRef,
   onPlaySegment,
+  volumeDb,
+  pan,
+  speed,
 }: UseAudioPlaybackParams): UseAudioPlayback {
   const audioContextRef = useRef<AudioContext | null>(null);
   const playerRef = useRef<WebAudioPlayer | null>(null);
   const currentAudio = useRef<PlaybackController | null>(null);
+
+  // Refs keep these out of `togglePlay`'s deps so its identity stays stable.
+  const volumeDbRef = useRef(volumeDb);
+  const panRef = useRef(pan);
+  const speedRef = useRef(speed);
+
+  // Push control changes into the engine; the player is created lazily on first
+  // play, so before then these only update the refs that `togglePlay` reads.
+  useEffect(() => {
+    volumeDbRef.current = volumeDb;
+    playerRef.current?.setVolumeDb(volumeDb);
+  }, [volumeDb]);
+  useEffect(() => {
+    panRef.current = pan;
+    playerRef.current?.setPan(pan);
+  }, [pan]);
+  useEffect(() => {
+    speedRef.current = speed;
+    playerRef.current?.setSpeed(speed);
+  }, [speed]);
 
   const [currentlyPlayingSegmentId, setCurrentlyPlayingSegmentId] = useState<
     string | null
@@ -69,6 +95,9 @@ export function useAudioPlayback({
       const context = (audioContextRef.current ??= createAudioContext());
       const player = (playerRef.current ??= new WebAudioPlayer(context));
       player.resume();
+      player.setVolumeDb(volumeDbRef.current);
+      player.setPan(panRef.current);
+      player.setSpeed(speedRef.current);
 
       const newAudio = currentlyPlayingSegmentId !== segmentId;
 

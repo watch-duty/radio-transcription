@@ -2,13 +2,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  VOLUME_MAX_DB,
-  VOLUME_MIN_DB,
   WebAudioPlayer,
   dbToGain,
   formatVolumeDb,
   gainToDb,
+  snapVolumeToDefault,
 } from './WebAudioPlayer';
+import { VOLUME_MAX_DB, VOLUME_MIN_DB } from './audioSettings';
 
 describe('audioMath', () => {
   describe('dbToGain', () => {
@@ -56,6 +56,33 @@ describe('audioMath', () => {
 
     it('shows Muted at the floor', () => {
       expect(formatVolumeDb(VOLUME_MIN_DB)).toBe('Muted');
+    });
+  });
+
+  describe('snapVolumeToDefault', () => {
+    it('snaps values within the zone to the default', () => {
+      expect(snapVolumeToDefault(1)).toBe(0);
+      expect(snapVolumeToDefault(-1)).toBe(0);
+      expect(snapVolumeToDefault(0)).toBe(0);
+    });
+
+    it('leaves values outside the zone untouched', () => {
+      expect(snapVolumeToDefault(2)).toBe(2);
+      expect(snapVolumeToDefault(-6)).toBe(-6);
+    });
+
+    it('snaps toward a non-zero default', () => {
+      expect(snapVolumeToDefault(5, 6)).toBe(6);
+      expect(snapVolumeToDefault(3, 6)).toBe(3);
+    });
+
+    it('honors a custom snap width', () => {
+      expect(snapVolumeToDefault(2, 0, 3)).toBe(0);
+      expect(snapVolumeToDefault(4, 0, 3)).toBe(4);
+    });
+
+    it('disables snapping at width 0', () => {
+      expect(snapVolumeToDefault(1, 0, 0)).toBe(1);
     });
   });
 });

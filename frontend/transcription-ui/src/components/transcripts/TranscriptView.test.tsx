@@ -178,7 +178,8 @@ const audioEngineMock = vi.hoisted(() => ({
   } | null,
 }));
 
-vi.mock('../../audio/WebAudioPlayer', () => ({
+vi.mock('../../audio/WebAudioPlayer', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../audio/WebAudioPlayer')>()),
   createAudioContext: () => ({ close: () => Promise.resolve() }),
   WebAudioPlayer: class {
     resume() {}
