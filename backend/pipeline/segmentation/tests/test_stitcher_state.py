@@ -452,9 +452,10 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         )  # OTHER (silence)
 
     def test_silent_chunk_audio_is_fully_retained(self) -> None:
-        """Verifies that when a completely silent chunk is processed after active speech,
-        the trailing silent audio is fully retained in the state machine buffer and
-        correctly flushed as a separate OTHER segment without any data loss.
+        """Verifies that when a completely silent chunk is processed after
+        active speech, the trailing silent audio is fully retained in the
+        state machine buffer and correctly flushed as a separate OTHER segment
+        without any data loss.
         """
         # Chunk 1: Speech from 0.0s to 10.0s, chunk duration 15.0s.
         # Trailing silence: 10.0s to 15.0s (5000ms >= 3000ms significant_gap_ms).
@@ -467,8 +468,7 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
             (
                 a
                 for a in actions1
-                if isinstance(a, FlushAction)
-                and a.audio_classification == 1
+                if isinstance(a, FlushAction) and a.audio_classification == 1
             ),
             None,
         )
@@ -502,8 +502,7 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
             (
                 a
                 for a in actions3
-                if isinstance(a, FlushAction)
-                and a.audio_classification == 2
+                if isinstance(a, FlushAction) and a.audio_classification == 2
             ),
             None,
         )

@@ -800,8 +800,9 @@ class AudioStitchingStateMachine:
         actions: list[StateMachineAction],
         on_significant_gap: Callable[[int], list[StateMachineAction]],
     ) -> bool:
-        """Evaluates a silence gap, either executing the significant gap callback or
-        appending the sub-threshold pause to the active speech transmission.
+        """Evaluates a silence gap, either executing the significant gap
+        callback or appending the sub-threshold pause to the active speech
+        transmission.
 
         Returns:
             True if the silence gap was processed, False otherwise.
@@ -820,7 +821,9 @@ class AudioStitchingStateMachine:
 
         if silence_start_rel_ms < silence_end_rel_ms:
             silence_gap_end_abs_ms = chunk_data.start_ms + silence_end_rel_ms
-            silence_gap_ms = silence_gap_end_abs_ms - ctx.last_segment_end_time_ms
+            silence_gap_ms = (
+                silence_gap_end_abs_ms - ctx.last_segment_end_time_ms
+            )
 
             if silence_gap_ms >= self.config.significant_gap_ms:
                 new_actions = on_significant_gap(silence_start_rel_ms)
@@ -851,18 +854,10 @@ class AudioStitchingStateMachine:
         samples_per_ms: int,
         actions: list[StateMachineAction],
     ) -> int:
-        """Handles silence interval between consecutive speech utterances within a chunk,
-        either flushing a significant gap or appending a short pause.
+        """Handles silence interval between consecutive speech utterances
+        within a chunk, either flushing a significant gap or appending
+        a short pause.
         """
-        def on_sig_gap(silence_start_rel: int) -> list[StateMachineAction]:
-            return self._capture_intra_chunk_silence(
-                chunk_data,
-                ctx,
-                current_file_cursor_ms,
-                speech_start_rel_ms,
-                samples_per_ms,
-            )
-
         was_processed = self._process_silence(
             chunk_data,
             ctx,
@@ -870,7 +865,13 @@ class AudioStitchingStateMachine:
             speech_start_rel_ms,
             samples_per_ms,
             actions,
-            on_sig_gap,
+            lambda silence_start: self._capture_intra_chunk_silence(
+                chunk_data,
+                ctx,
+                current_file_cursor_ms,
+                speech_start_rel_ms,
+                samples_per_ms,
+            ),
         )
         return speech_start_rel_ms if was_processed else current_file_cursor_ms
 
@@ -882,14 +883,9 @@ class AudioStitchingStateMachine:
         samples_per_ms: int,
         actions: list[StateMachineAction],
     ) -> None:
-        """Handles trailing silence at the end of a chunk, either flushing a significant gap
-        or appending a short pause.
+        """Handles trailing silence at the end of a chunk, either flushing
+        a significant gap or appending a short pause.
         """
-        def on_sig_gap(silence_start_rel: int) -> list[StateMachineAction]:
-            return self._capture_trailing_chunk_silence(
-                chunk_data, ctx, silence_start_rel, samples_per_ms
-            )
-
         self._process_silence(
             chunk_data,
             ctx,
@@ -897,7 +893,9 @@ class AudioStitchingStateMachine:
             chunk_data.duration_ms,
             samples_per_ms,
             actions,
-            on_sig_gap,
+            lambda silence_start: self._capture_trailing_chunk_silence(
+                chunk_data, ctx, silence_start, samples_per_ms
+            ),
         )
 
     def _process_speech_segments(
