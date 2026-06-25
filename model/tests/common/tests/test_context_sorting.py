@@ -3,6 +3,17 @@ import unittest
 from pathlib import Path
 from collections import defaultdict
 
+def get_parent_recording(entry):
+    uri = entry.get("original_audio_uri") or entry.get("audio_uri")
+    if uri:
+        return uri
+    filepath = entry.get("audio_filepath", "")
+    filename = Path(filepath).name
+    match = re.match(r"^(.*?)(?:_\d{8}_\d{2})?(?:__seg|-row-)", filename)
+    if match:
+        return match.group(1)
+    return ""
+
 def group_and_sort_manifest_entries(entries):
     channels = defaultdict(list)
     for entry in entries:
@@ -31,7 +42,7 @@ def group_and_sort_manifest_entries(entries):
     for cid in channels:
         channels[cid].sort(
             key=lambda x: (
-                x.get("original_audio_uri") or x.get("audio_uri") or x.get("audio_filepath", ""),
+                get_parent_recording(x),
                 x.get("original_offset") if x.get("original_offset") is not None else x.get("offset", 0),
                 x.get("start_time", 0),
             )
@@ -99,19 +110,19 @@ class TestContextSortingAndGrouping(unittest.TestCase):
         # with offset and start_time indicating chronology.
         entries = [
             {
-                "audio_filepath": "gs://bucket/audio/wa_cathlamet/Wahkiakum_Fire_Disp_20250326_07__seg3.wav",
+                "audio_filepath": "gs://bucket/audio/wa_cathlamet/Wahkiakum_Fire_Disp_20250326_07__segA.wav",
                 "offset": 10.5,
                 "start_time": 0.0,
                 "text": "third segment",
             },
             {
-                "audio_filepath": "gs://bucket/audio/wa_cathlamet/Wahkiakum_Fire_Disp_20250326_07__seg1.wav",
+                "audio_filepath": "gs://bucket/audio/wa_cathlamet/Wahkiakum_Fire_Disp_20250326_07__segB.wav",
                 "offset": 1.5,
                 "start_time": 0.0,
                 "text": "first segment",
             },
             {
-                "audio_filepath": "gs://bucket/audio/wa_cathlamet/Wahkiakum_Fire_Disp_20250326_07__seg2.wav",
+                "audio_filepath": "gs://bucket/audio/wa_cathlamet/Wahkiakum_Fire_Disp_20250326_07__segC.wav",
                 "offset": 5.0,
                 "start_time": 0.0,
                 "text": "second segment",

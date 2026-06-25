@@ -93,6 +93,19 @@ def clean_text_for_wer(text: str) -> str:
     return text.strip()
 
 
+def get_parent_recording(entry: dict) -> str:
+    """Helper to extract parent recording base identifier for sorting."""
+    uri = entry.get("original_audio_uri") or entry.get("audio_uri")
+    if uri:
+        return uri
+    filepath = entry.get("audio_filepath", "")
+    filename = Path(filepath).name
+    match = re.match(r"^(.*?)(?:_\d{8}_\d{2})?(?:__seg|-row-)", filename)
+    if match:
+        return match.group(1)
+    return ""
+
+
 def sample_deepest_channels(
     channel_counts: dict[str, int],
     sample_size: int,
@@ -550,7 +563,7 @@ async def main_async(args: argparse.Namespace) -> None:
     for cid in channels:
         channels[cid].sort(
             key=lambda x: (
-                x.get("original_audio_uri") or x.get("audio_uri") or x.get("audio_filepath", ""),
+                get_parent_recording(x),
                 x.get("original_offset") if x.get("original_offset") is not None else x.get("offset", 0),
                 x.get("start_time", 0),
             )
