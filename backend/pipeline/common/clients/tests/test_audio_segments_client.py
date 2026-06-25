@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -146,6 +147,14 @@ class TestAudioSegmentsClient(unittest.TestCase):
 
 class TestAsyncAudioSegmentsClient(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
+        from backend.pipeline.common.clients.audio_segments_client import (
+            _async_audience_locks,
+            _async_token_cache,
+        )
+
+        _async_token_cache.clear()
+        _async_audience_locks.clear()
+
         self.api_url = "http://test-api.com"
         self.client = AsyncAudioSegmentsClient(self.api_url)
         self.post_patcher = patch(
@@ -202,11 +211,14 @@ class TestAsyncAudioSegmentsClient(unittest.IsolatedAsyncioTestCase):
         if isinstance(auth, GCPMetadataAsyncAuth):
             self.assertEqual(auth.audience, "http://test-api.com")
 
-    @patch("backend.pipeline.common.clients.audio_segments_client.get_id_token")
-    async def test_gcp_metadata_async_auth_adds_header(
-        self, mock_get_id_token
-    ) -> None:
-        mock_get_id_token.return_value = "fake-token"
+    @patch("httpx.AsyncClient.get", new_callable=AsyncMock)
+    async def test_gcp_metadata_async_auth_adds_header(self, mock_get) -> None:
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = "fake-token"
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
         auth = GCPMetadataAsyncAuth(audience="http://audience")
         request = MagicMock()
         request.headers = {}
@@ -219,7 +231,86 @@ class TestAsyncAudioSegmentsClient(unittest.IsolatedAsyncioTestCase):
                     req.headers["Authorization"], "Bearer fake-token"
                 )
 
-        mock_get_id_token.assert_called_once_with("http://audience")
+        mock_get.assert_called_once()
+        args, kwargs = mock_get.call_args
+        self.assertEqual(args[0], "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity")
+        self.assertEqual(kwargs["params"]["audience"], "http://audience")
+
+    @patch("httpx.AsyncClient.get", new_callable=AsyncMock)
+    async def test_gcp_metadata_async_auth_caches_token(self, mock_get) -> None:
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = "fake-token"
+        mock_response.raise_for_status.return_value = None
+        mock_get.return_value = mock_response
+
+        auth = GCPMetadataAsyncAuth(audience="http://audience")
+
+        # First request: should call fetch
+        req1 = MagicMock(headers={})
+        async for req in auth.async_auth_flow(req1):
+            self.assertEqual(req.headers["Authorization"], "Bearer fake-token")
+
+        self.assertEqual(mock_get.call_count, 1)
+
+        # Second request: should use cache
+        req2 = MagicMock(headers={})
+        async for req in auth.async_auth_flow(req2):
+            self.assertEqual(req.headers["Authorization"], "Bearer fake-token")
+
+        self.assertEqual(mock_get.call_count, 1)
+
+    @patch("httpx.AsyncClient.get", new_callable=AsyncMock)
+    async def test_gcp_metadata_async_auth_expires_and_refreshes(
+        self, mock_get
+    ) -> None:
+        mock_response1 = MagicMock(text="fake-token-1")
+        mock_response1.raise_for_status.return_value = None
+        mock_response2 = MagicMock(text="fake-token-2")
+        mock_response2.raise_for_status.return_value = None
+        mock_get.side_effect = [mock_response1, mock_response2]
+
+        auth = GCPMetadataAsyncAuth(audience="http://audience")
+
+        # Fetch first token
+        req1 = MagicMock(headers={})
+        async for req in auth.async_auth_flow(req1):
+            self.assertEqual(req.headers["Authorization"], "Bearer fake-token-1")
+
+        # Mock time moving forward past TTL (2700s)
+        import time
+        with patch("time.monotonic", return_value=time.monotonic() + 2701):
+            req2 = MagicMock(headers={})
+            async for req in auth.async_auth_flow(req2):
+                self.assertEqual(req.headers["Authorization"], "Bearer fake-token-2")
+
+        self.assertEqual(mock_get.call_count, 2)
+
+    @patch("httpx.AsyncClient.get", new_callable=AsyncMock)
+    async def test_concurrent_async_auth_requests_are_serialized(
+        self, mock_get
+    ) -> None:
+        # Simulate a slow network fetch
+        async def slow_get(*args, **kwargs):
+            await asyncio.sleep(0.1)
+            mock_response = MagicMock(text="slow-token")
+            mock_response.raise_for_status.return_value = None
+            return mock_response
+
+        mock_get.side_effect = slow_get
+
+        auth = GCPMetadataAsyncAuth(audience="http://audience")
+
+        # Start 5 concurrent tasks requesting auth flow
+        async def run_flow(task_id: int):
+            req = MagicMock(headers={})
+            async for r in auth.async_auth_flow(req):
+                return r.headers["Authorization"]
+
+        results = await asyncio.gather(*[run_flow(i) for i in range(5)])
+
+        self.assertEqual(set(results), {"Bearer slow-token"})
+        self.assertEqual(mock_get.call_count, 1)
 
     async def test_add_audio_segment_annotation_propagates_exception(
         self,
