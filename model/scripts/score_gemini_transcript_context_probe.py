@@ -12,6 +12,9 @@ from typing import Any
 from common import scoring
 
 MODEL_KEY = "gemini_transcript_context"
+REF_NORM_KEY = "_score_ref_norm"
+PRED_NORM_KEY = "_score_pred_norm"
+HISTORY_NORM_KEY = "_score_history_norms"
 
 
 def parse_args() -> argparse.Namespace:
@@ -52,54 +55,58 @@ def is_blank_or_unintelligible(text: str) -> bool:
     return not stripped or stripped == "[UNINTELLIGIBLE]"
 
 
-def exact_history_match(row: dict[str, Any], normalizer: Any) -> bool:
+def prepare_rows(
+    rows: list[dict[str, Any]],
+    normalizer: Any,
+) -> None:
+    """Cache normalized scoring strings once per row."""
+    for row in rows:
+        if REF_NORM_KEY in row:
+            continue
+        row[REF_NORM_KEY] = normalizer(str(row.get("text", ""))).strip()
+        row[PRED_NORM_KEY] = normalizer(prediction(row)).strip()
+        row[HISTORY_NORM_KEY] = [
+            normalizer(str(item)).strip()
+            for item in row.get(f"history_pred_text_{MODEL_KEY}") or []
+        ]
+
+
+def exact_history_match(row: dict[str, Any]) -> bool:
     """Return whether prediction exactly copies a retained history transcript."""
-    pred_norm = normalizer(prediction(row))
-    history = row.get(f"history_pred_text_{MODEL_KEY}") or []
-    for item in history:
-        history_norm = normalizer(str(item))
+    pred_norm = str(row.get(PRED_NORM_KEY, ""))
+    for history_norm in row.get(HISTORY_NORM_KEY, []):
         if history_norm and pred_norm == history_norm:
             return True
     return False
 
 
-def history_substring_hit(row: dict[str, Any], normalizer: Any) -> bool:
+def history_substring_hit(row: dict[str, Any]) -> bool:
     """Return whether prediction contains a retained history transcript."""
-    pred_norm = normalizer(prediction(row))
-    history = row.get(f"history_pred_text_{MODEL_KEY}") or []
-    for item in history:
-        history_norm = normalizer(str(item))
+    pred_norm = str(row.get(PRED_NORM_KEY, ""))
+    for history_norm in row.get(HISTORY_NORM_KEY, []):
         if len(history_norm.split()) >= 2 and history_norm in pred_norm:
             return True
     return False
 
 
-def scorable_rows(
-    rows: list[dict[str, Any]],
-    normalizer: Any,
-) -> list[dict[str, Any]]:
+def scorable_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Return rows whose references remain non-empty after normalization."""
-    return [row for row in rows if normalizer(str(row.get("text", ""))).strip()]
+    return [row for row in rows if str(row.get(REF_NORM_KEY, "")).strip()]
 
 
-def summarize_subset(
-    rows: list[dict[str, Any]],
-    normalizer: Any,
-) -> dict[str, Any]:
+def summarize_subset(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Compute WER and safety metrics for one row subset."""
-    scored_rows = scorable_rows(rows, normalizer)
-    references = [str(row["text"]) for row in scored_rows]
-    hypotheses = [prediction(row) for row in scored_rows]
+    scored_rows = scorable_rows(rows)
+    references = [str(row[REF_NORM_KEY]) for row in scored_rows]
+    hypotheses = [str(row[PRED_NORM_KEY]) for row in scored_rows]
     if scored_rows:
         wer = scoring.compute_wer(
             references,
             hypotheses,
-            normalizer=normalizer,
         )
         cer = scoring.compute_cer(
             references,
             hypotheses,
-            normalizer=normalizer,
         )
     else:
         wer = {
@@ -112,17 +119,11 @@ def summarize_subset(
         cer = {"cer": None}
     blanks = sum(is_blank_or_unintelligible(prediction(row)) for row in rows)
     errors = sum(bool(row.get(f"error_{MODEL_KEY}")) for row in rows)
-    exact_copies = sum(exact_history_match(row, normalizer) for row in rows)
-    substring_hits = sum(history_substring_hit(row, normalizer) for row in rows)
-    perfect = 0
-    for row in scored_rows:
-        row_score = scoring.compute_wer(
-            [str(row["text"])],
-            [prediction(row)],
-            normalizer=normalizer,
-        )
-        if row_score["wer"] == 0:
-            perfect += 1
+    exact_copies = sum(exact_history_match(row) for row in rows)
+    substring_hits = sum(history_substring_hit(row) for row in rows)
+    perfect = sum(
+        row[REF_NORM_KEY] == row[PRED_NORM_KEY] for row in scored_rows
+    )
     return {
         "rows": len(rows),
         "scored_rows": len(scored_rows),
@@ -148,6 +149,7 @@ def summarize_subset(
 def summarize_file(path: str, normalizer: Any) -> dict[str, Any]:
     """Summarize one probe output file."""
     rows = load_jsonl(path)
+    prepare_rows(rows, normalizer)
     by_dataset: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         by_dataset[str(row.get("dataset_name", "unknown"))].append(row)
@@ -156,9 +158,9 @@ def summarize_file(path: str, normalizer: Any) -> dict[str, Any]:
         "path": path,
         "mode": first.get("context_mode"),
         "window": first.get("context_window"),
-        "overall": summarize_subset(rows, normalizer),
+        "overall": summarize_subset(rows),
         "by_dataset": {
-            dataset: summarize_subset(dataset_rows, normalizer)
+            dataset: summarize_subset(dataset_rows)
             for dataset, dataset_rows in sorted(by_dataset.items())
         },
     }
