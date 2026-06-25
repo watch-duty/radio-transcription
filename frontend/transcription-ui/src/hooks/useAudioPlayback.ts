@@ -16,11 +16,15 @@ import {
   createAudioContext,
 } from '../audio/WebAudioPlayer';
 import { getAudioUrl } from '../utils/audioUtils';
+import { getNextContinuousSegment } from '../utils/playbackUtils';
+import { type RenderableAudioSegment } from './useConsolidatedAudioSegments';
 
 interface UseAudioPlaybackParams {
-  // The latest audio segments, read inside the `onEnd` callback so continuous
+  // The latest consolidated audio segments, read inside the `onEnd` callback so continuous
   // playback always evaluates against the current list.
-  audioSegmentsRef: RefObject<AudioSegment[]>;
+  audioSegmentsRef: RefObject<RenderableAudioSegment[]>;
+  // The latest raw audio segments, used to find segments within bundles.
+  rawAudioSegmentsRef: RefObject<AudioSegment[]>;
   // Called when a new segment starts so the view can highlight it.
   onPlaySegment: (segmentId: string) => void;
 }
@@ -40,6 +44,7 @@ interface UseAudioPlayback {
 // the transcript-domain concerns (which segment to advance to, highlighting).
 export function useAudioPlayback({
   audioSegmentsRef,
+  rawAudioSegmentsRef,
   onPlaySegment,
 }: UseAudioPlaybackParams): UseAudioPlayback {
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -53,6 +58,18 @@ export function useAudioPlayback({
     null
   );
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
+
+  // Mutable refs to keep state fresh and avoid stale closures in audio event listeners
+  const currentlyPlayingSegmentIdRef = useRef<string | null>(null);
+  const isAudioPlayingRef = useRef(false);
+
+  useEffect(() => {
+    currentlyPlayingSegmentIdRef.current = currentlyPlayingSegmentId;
+  }, [currentlyPlayingSegmentId]);
+
+  useEffect(() => {
+    isAudioPlayingRef.current = isAudioPlaying;
+  }, [isAudioPlaying]);
 
   useEffect(() => {
     return () => {
@@ -70,50 +87,64 @@ export function useAudioPlayback({
       const player = (playerRef.current ??= new WebAudioPlayer(context));
       player.resume();
 
-      const newAudio = currentlyPlayingSegmentId !== segmentId;
+      const newAudio = currentlyPlayingSegmentIdRef.current !== segmentId;
 
       if (newAudio) {
         currentAudio.current?.unload();
         currentAudio.current = null;
         setCurrentlyPlayingSegmentId(segmentId);
+        currentlyPlayingSegmentIdRef.current = segmentId;
         onPlaySegment(segmentId);
       }
 
       if (!currentAudio.current) {
         currentAudio.current = player.load(getAudioUrl(audioUri), {
-          onPlay: () => setIsAudioPlaying(true),
-          onPause: () => setIsAudioPlaying(false),
-          onError: () => setIsAudioPlaying(false),
+          onPlay: () => {
+            setIsAudioPlaying(true);
+            isAudioPlayingRef.current = true;
+          },
+          onPause: () => {
+            setIsAudioPlaying(false);
+            isAudioPlayingRef.current = false;
+          },
+          onError: () => {
+            setIsAudioPlaying(false);
+            isAudioPlayingRef.current = false;
+          },
           onEnd: () => {
-            const currentAudioSegments = audioSegmentsRef.current;
-            const currentIndex = currentAudioSegments.findIndex(
-              (t) => t.id === segmentId
+            const next = getNextContinuousSegment(
+              audioSegmentsRef.current ?? [],
+              rawAudioSegmentsRef.current ?? [],
+              segmentId
             );
-            const hasNext = currentIndex > 0;
 
-            if (!hasNext) {
+            if (next) {
+              // Transition and play the next segment synchronously to bypass background tab throttling
+              togglePlay(next.id, next.uri);
+            } else {
               setIsAudioPlaying(false);
+              isAudioPlayingRef.current = false;
+              setPlaybackEndedForId(segmentId);
+              currentAudio.current = null;
             }
-
-            setPlaybackEndedForId(segmentId);
-            currentAudio.current = null;
           },
         });
       }
 
-      if (!isAudioPlaying || newAudio) {
+      if (!isAudioPlayingRef.current || newAudio) {
         currentAudio.current.play();
       } else {
         currentAudio.current.pause();
       }
     },
-    [currentlyPlayingSegmentId, isAudioPlaying, audioSegmentsRef, onPlaySegment]
+    [audioSegmentsRef, rawAudioSegmentsRef, onPlaySegment]
   );
 
   const stop = useCallback(() => {
     playerRef.current?.stop();
     currentAudio.current = null;
     setCurrentlyPlayingSegmentId(null);
+    currentlyPlayingSegmentIdRef.current = null;
     setPlaybackEndedForId(null);
   }, []);
 

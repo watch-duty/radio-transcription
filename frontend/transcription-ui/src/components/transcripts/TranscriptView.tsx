@@ -22,7 +22,10 @@ import {
   type AlertFilter,
   useAudioSegments,
 } from '../../hooks/useAudioSegments';
-import { useConsolidatedAudioSegments } from '../../hooks/useConsolidatedAudioSegments';
+import {
+  type RenderableAudioSegment,
+  useConsolidatedAudioSegments,
+} from '../../hooks/useConsolidatedAudioSegments';
 import { useTranscriptPlayback } from '../../hooks/useTranscriptPlayback';
 import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
@@ -100,18 +103,18 @@ export function TranscriptView({
 
   // Passed to useAudioPlayback so its `onEnd` callback reads the current list
   // rather than a stale closure when deciding whether to auto-advance.
-  const audioSegmentsRef = useRef<AudioSegment[]>([]);
+  const audioSegmentsRef = useRef<RenderableAudioSegment[]>([]);
+  const rawAudioSegmentsRef = useRef<AudioSegment[]>([]);
 
   const {
     isAudioPlaying,
     currentlyPlayingSegmentId,
-    playbackEndedForId,
-    setPlaybackEndedForId,
     currentAudioRef,
     togglePlay: toggleAudio,
     stop: stopPlayback,
   } = useAudioPlayback({
     audioSegmentsRef,
+    rawAudioSegmentsRef,
     onPlaySegment: setHighlightedSegmentId,
   });
 
@@ -232,10 +235,14 @@ export function TranscriptView({
 
   const audioSegments = useConsolidatedAudioSegments(rawAudioSegments);
 
-  // Keep the ref in sync with the audio segments so that audio lifecycle callbacks can access the latest list.
+  // Keep the refs in sync with the audio segments so that audio lifecycle callbacks can access the latest list.
   useEffect(() => {
     audioSegmentsRef.current = audioSegments;
   }, [audioSegments]);
+
+  useEffect(() => {
+    rawAudioSegmentsRef.current = rawAudioSegments;
+  }, [rawAudioSegments]);
 
   const {
     skipToNext,
@@ -253,71 +260,6 @@ export function TranscriptView({
     virtuosoRef,
     toggleAudio,
   });
-
-  // Handles continuous auto-play by advancing to the next newer audio segment when the current audio finishes.
-  // Since the audio segment list is sorted newest-first, the next transmission in time is at `currentIndex - 1`.
-  useEffect(() => {
-    if (!playbackEndedForId) return;
-
-    // 1. First check if the ended segment was part of a silence bundle, and if there is a next newer segment in that same bundle!
-    const parentBundle = audioSegments.find(
-      (t) =>
-        t.isSilenceBundle && t.bundledSegmentIds?.includes(playbackEndedForId)
-    );
-
-    if (parentBundle && parentBundle.bundledSegmentIds) {
-      const endedIdx =
-        parentBundle.bundledSegmentIds.indexOf(playbackEndedForId);
-      if (
-        endedIdx !== -1 &&
-        endedIdx < parentBundle.bundledSegmentIds.length - 1
-      ) {
-        const nextSegmentId = parentBundle.bundledSegmentIds[endedIdx + 1];
-        const nextSegment = rawAudioSegments.find(
-          (s) => s.id === nextSegmentId
-        );
-        if (nextSegment && nextSegment.playbackAudioUri) {
-          toggleAudio(nextSegment.id, nextSegment.playbackAudioUri);
-          setPlaybackEndedForId(null);
-          return;
-        }
-      }
-    }
-
-    // 2. If it was a Speech segment, or the last segment in a silence bundle, advance to the next newer audio segment row
-    const currentIndex = audioSegments.findIndex((t) =>
-      isWithinSegment(t, playbackEndedForId)
-    );
-
-    if (currentIndex > 0) {
-      const nextAudioSegment = audioSegments[currentIndex - 1];
-      if (nextAudioSegment.playbackAudioUri) {
-        // If the next audio segment is a silence bundle, play its first segment
-        if (
-          nextAudioSegment.isSilenceBundle &&
-          nextAudioSegment.bundledSegmentIds &&
-          nextAudioSegment.bundledSegmentIds.length > 0
-        ) {
-          const firstId = nextAudioSegment.bundledSegmentIds[0];
-          const firstSegment = rawAudioSegments.find((s) => s.id === firstId);
-          if (firstSegment && firstSegment.playbackAudioUri) {
-            toggleAudio(firstSegment.id, firstSegment.playbackAudioUri);
-            setPlaybackEndedForId(null);
-            return;
-          }
-        }
-        toggleAudio(nextAudioSegment.id, nextAudioSegment.playbackAudioUri);
-      }
-    }
-
-    setPlaybackEndedForId(null);
-  }, [
-    playbackEndedForId,
-    audioSegments,
-    rawAudioSegments,
-    toggleAudio,
-    setPlaybackEndedForId,
-  ]);
 
   // This is used to group audio segments by date and display them in the UI.
   // groupCounts is an array of numbers representing the number of audio segments in each group.
