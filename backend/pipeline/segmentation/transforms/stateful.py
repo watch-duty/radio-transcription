@@ -716,7 +716,12 @@ class OrderedStitchAudioFn(beam.DoFn):
             _write_transmission_context(
                 transmission_context_state, curr_context
             )
-            deferred_drain_timer.set(timestamp)
+            advance_sec = max(
+                trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                float(metadata.duration_ms)
+                / float(common_constants.MS_PER_SECOND),
+            )
+            deferred_drain_timer.set(timestamp + advance_sec)
             return
 
         results = []
@@ -825,11 +830,13 @@ class OrderedStitchAudioFn(beam.DoFn):
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
         gap_timer_event: RuntimeTimer = GAP_TIMER_EVENT,  # type: ignore
+        gap_timer_event_v2: RuntimeTimer = GAP_TIMER_EVENT_V2,  # type: ignore
         gap_timer_proc: RuntimeTimer = GAP_TIMER_PROC,  # type: ignore
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
     ]:
         """Handles the gap timeout triggered by the legacy event-time watermark timer."""
+        gap_timer_event.clear()
         yield from self._handle_gap_timeout_common(
             feed_id=feed_id,
             transmission_context_state=transmission_context_state,
@@ -837,7 +844,7 @@ class OrderedStitchAudioFn(beam.DoFn):
             stale_timer_event=stale_timer_event,
             stale_timer_proc=stale_timer_proc,
             timestamp=timestamp,
-            gap_timer_event=gap_timer_event,
+            gap_timer_event=gap_timer_event_v2,
             gap_timer_proc=gap_timer_proc,
             timer_type="event",
         )
@@ -879,11 +886,13 @@ class OrderedStitchAudioFn(beam.DoFn):
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
         gap_timer_event: RuntimeTimer = GAP_TIMER_EVENT,  # type: ignore
+        gap_timer_event_v2: RuntimeTimer = GAP_TIMER_EVENT_V2,  # type: ignore
         gap_timer_proc: RuntimeTimer = GAP_TIMER_PROC,  # type: ignore
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
     ]:
         """Handles the gap timeout triggered by the processing-time clock."""
+        gap_timer_event.clear()
         yield from self._handle_gap_timeout_common(
             feed_id=feed_id,
             transmission_context_state=transmission_context_state,
@@ -891,7 +900,7 @@ class OrderedStitchAudioFn(beam.DoFn):
             stale_timer_event=stale_timer_event,
             stale_timer_proc=stale_timer_proc,
             timestamp=timestamp,
-            gap_timer_event=gap_timer_event,
+            gap_timer_event=gap_timer_event_v2,
             gap_timer_proc=gap_timer_proc,
             timer_type="processing",
         )
@@ -1097,7 +1106,23 @@ class OrderedStitchAudioFn(beam.DoFn):
             )
             if new_buffer_elements and clamped:
                 # Still clamped, re-arm the deferral timer to self-chain into another bundle!
-                deferred_drain_timer.set(timestamp)
+                emitted_duration_ms = (
+                    (
+                        new_expected_next_ts
+                        - curr_context.expected_next_chunk_start_ms
+                    )
+                    if (
+                        curr_context.expected_next_chunk_start_ms is not None
+                        and new_expected_next_ts is not None
+                    )
+                    else 0
+                )
+                advance_sec = max(
+                    trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                    float(emitted_duration_ms)
+                    / float(common_constants.MS_PER_SECOND),
+                )
+                deferred_drain_timer.set(timestamp + advance_sec)
 
             curr_context = replace(
                 curr_context,
