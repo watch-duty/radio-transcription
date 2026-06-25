@@ -21,7 +21,7 @@ export interface AudioControlProps {
   onFastRewind: () => void;
   onSkipTime: (offsetSeconds: number) => void;
   playLatestAudio: boolean;
-  onChangePlayLatestAudio: (checked: boolean) => void;
+  togglePlayLatestAudio: (checked: boolean) => void;
   disableControls?: boolean;
   disableCheckbox?: boolean;
   sx?: SxProps<Theme>;
@@ -36,7 +36,7 @@ export function AudioControl({
   onFastRewind,
   onSkipTime,
   playLatestAudio,
-  onChangePlayLatestAudio,
+  togglePlayLatestAudio,
   disableControls = false,
   disableCheckbox = false,
   sx,
@@ -181,7 +181,7 @@ export function AudioControl({
           control={
             <Checkbox
               checked={playLatestAudio}
-              onChange={(e) => onChangePlayLatestAudio(e.target.checked)}
+              onChange={(e) => togglePlayLatestAudio(e.target.checked)}
               disabled={disableCheckbox}
             />
           }

@@ -620,7 +620,7 @@ export function TranscriptView({
         onFastRewind={skipToPreviousSpeech}
         onSkipTime={skipTime}
         playLatestAudio={playLatestAudio}
-        onChangePlayLatestAudio={setPlayLatestAudio}
+        togglePlayLatestAudio={setPlayLatestAudio}
         disableControls={rawAudioSegments.length === 0}
         disableCheckbox={!searchedFeed}
       />
