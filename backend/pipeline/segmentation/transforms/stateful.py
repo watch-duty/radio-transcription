@@ -836,7 +836,8 @@ class OrderedStitchAudioFn(beam.DoFn):
         tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
     ]:
         """Handles the gap timeout triggered by the legacy event-time watermark timer."""
-        gap_timer_event.clear()
+        if hasattr(gap_timer_event, "clear"):
+            gap_timer_event.clear()
         yield from self._handle_gap_timeout_common(
             feed_id=feed_id,
             transmission_context_state=transmission_context_state,
@@ -892,7 +893,8 @@ class OrderedStitchAudioFn(beam.DoFn):
         tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
     ]:
         """Handles the gap timeout triggered by the processing-time clock."""
-        gap_timer_event.clear()
+        if hasattr(gap_timer_event, "clear"):
+            gap_timer_event.clear()
         yield from self._handle_gap_timeout_common(
             feed_id=feed_id,
             transmission_context_state=transmission_context_state,
@@ -940,8 +942,10 @@ class OrderedStitchAudioFn(beam.DoFn):
         with tracing_utils.with_tracer_context(
             trace_attrs, "handle_audio_gap", __name__
         ):
-            gap_timer_event.clear()
-            gap_timer_proc.clear()
+            if hasattr(gap_timer_event, "clear"):
+                gap_timer_event.clear()
+            if hasattr(gap_timer_proc, "clear"):
+                gap_timer_proc.clear()
             curr_context = replace(curr_context, order_timer_active=False)
             _write_transmission_context(
                 transmission_context_state, curr_context
