@@ -33,7 +33,7 @@
     "pluralize": "^8.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "react-router": "^7.15.0",
+    "react-router": "^7.15.1",
     "react-virtuoso": "^4.18.5",
     "relative-time-format": "^1.1.12",
     "swagger-ui-react": "^5.32.3",
@@ -66,7 +66,7 @@
     "prettier": "^3.8.1",
     "typescript": "^6.0.2",
     "typescript-eslint": "^8.58.1",
-    "vite": "^8.0.16",
+    "vite": "^8.1.0",
     "vitest": "^4.1.4"
   }
 }

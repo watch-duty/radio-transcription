@@ -48,9 +48,9 @@ describe('FeedStatusIndicator', () => {
     expect(screen.getByText('unknown_status')).toBeTruthy();
   });
 
-  it('displays substatus tooltip on hover', async () => {
-    render(<FeedStatusIndicator status="active" substatus="active" />);
-    const statusText = screen.getByText('Active');
+  it('displays substatus tooltip when substatus differs from visible status', async () => {
+    render(<FeedStatusIndicator status="inactive" substatus="active" />);
+    const statusText = screen.getByText('Inactive');
     fireEvent.mouseOver(statusText);
     await waitFor(() => {
       expect(screen.getByText('Active')).toBeTruthy();
@@ -87,12 +87,12 @@ describe('FeedStatusIndicator', () => {
     });
   });
 
-  it('displays quarantineReason in tooltip on hover', async () => {
+  it('displays statusReasonDetail in tooltip on hover', async () => {
     render(
       <FeedStatusIndicator
         status="error"
         substatus="quarantined"
-        quarantineReason="corrupted audio files"
+        statusReasonDetail="corrupted audio files"
       />
     );
     const statusText = screen.getByText('Error');

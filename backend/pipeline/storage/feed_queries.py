@@ -4,60 +4,152 @@ These queries use asyncpg ``$N`` parameters and VM lease fencing fields such as
 ``worker_id`` and ``fencing_token``. Keep lifecycle SQL explicit here so
 quarantine-sensitive transitions remain locally auditable.
 """
+# ruff: noqa: S608
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+
+from backend.pipeline.storage import feed_audit_sql
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from backend.pipeline.storage.feed_store import SourceType
 
-UPDATE_PROGRESS_SQL = """\
-UPDATE feeds
-SET last_processed_filename = $1,
-    last_bookmark_time = COALESCE($5, last_bookmark_time),
-    failure_count = 0,
-    status_reason_updated_at = CASE
-        WHEN status_reason IS NOT NULL THEN NOW()
-        ELSE status_reason_updated_at
-    END,
-    status_reason = NULL
-WHERE id = $2 AND worker_id = $3 AND fencing_token = $4
+
+_AUDIT_BEFORE_SNAPSHOT_SQL = feed_audit_sql.audit_snapshot_sql("before_row")
+_AUDIT_AFTER_SNAPSHOT_SQL = feed_audit_sql.audit_snapshot_sql("after_row")
+
+UPDATE_PROGRESS_SQL = f"""\
+WITH before_row AS (
+    SELECT
+{feed_audit_sql.audit_source_projection("f")}
+    FROM feeds f
+    JOIN feed_properties fp ON fp.feed_id = f.id
+    WHERE f.id = $2 AND f.worker_id = $3 AND f.fencing_token = $4
+    FOR UPDATE
+),
+updated AS (
+    UPDATE feeds
+    SET last_processed_filename = $1,
+        last_bookmark_time = COALESCE($5, feeds.last_bookmark_time),
+        audit_revision = CASE
+            WHEN feeds.failure_count <> 0 OR feeds.status_reason IS NOT NULL THEN feeds.audit_revision + 1
+            ELSE feeds.audit_revision
+        END,
+        failure_count = 0,
+        status_reason_updated_at = CASE
+            WHEN feeds.status_reason IS NOT NULL OR feeds.status_reason_detail IS NOT NULL THEN NOW()
+            ELSE feeds.status_reason_updated_at
+        END,
+        status_reason_detail = NULL,
+        status_reason = NULL
+    FROM before_row
+    WHERE feeds.id = before_row.id
+    RETURNING feeds.*, feeds.audit_revision AS feed_revision
+),
+after_row AS (
+    SELECT u.*, fp.source_feed_id, COALESCE(fp.tags, '[]'::jsonb) AS tags
+    FROM updated u
+    JOIN feed_properties fp ON fp.feed_id = u.id
+),
+{feed_audit_sql.recovery_audit_action_cte(before_alias="before_row")},
+{
+    feed_audit_sql.insert_feed_audit_event_cte(
+        feed_id_sql="after_row.id",
+        action_sql="audit_action.action",
+        actor_id_sql="$6::text",
+        feed_revision_sql="after_row.feed_revision",
+        before_values_sql=_AUDIT_BEFORE_SNAPSHOT_SQL,
+        after_values_sql=_AUDIT_AFTER_SNAPSHOT_SQL,
+        from_sql=(
+            "FROM before_row\n"
+            "    JOIN after_row ON after_row.id = before_row.id\n"
+            "    CROSS JOIN audit_action"
+        ),
+        where_sql="audit_action.action IS NOT NULL",
+    )
+}
+SELECT after_row.*
+FROM after_row
 """
 
-RECORD_SOURCE_OBSERVATION_SQL = """\
+RECORD_SOURCE_OBSERVATION_SQL = f"""\
 WITH current_state AS (
-    SELECT id, worker_id, status, fencing_token
-    FROM feeds
-    WHERE id = $1
+    SELECT
+{feed_audit_sql.audit_source_projection("f")}
+    FROM feeds f
+    JOIN feed_properties fp ON fp.feed_id = f.id
+    WHERE f.id = $1
     FOR UPDATE
 ),
 do_update AS (
     UPDATE feeds
     SET failure_count = 0,
-        last_bookmark_time = GREATEST(last_bookmark_time, $4),
-        status_reason_updated_at = CASE
-            WHEN status_reason IS NOT NULL THEN NOW()
-            ELSE status_reason_updated_at
+        last_bookmark_time = GREATEST(feeds.last_bookmark_time, $4),
+        audit_revision = CASE
+            WHEN feeds.failure_count <> 0 OR feeds.status_reason IS NOT NULL THEN feeds.audit_revision + 1
+            ELSE feeds.audit_revision
         END,
+        status_reason_updated_at = CASE
+            WHEN feeds.status_reason IS NOT NULL OR feeds.status_reason_detail IS NOT NULL THEN NOW()
+            ELSE feeds.status_reason_updated_at
+        END,
+        status_reason_detail = NULL,
         status_reason = NULL
     FROM current_state
     WHERE feeds.id = current_state.id
       AND current_state.worker_id = $2
       AND current_state.fencing_token = $3
       AND current_state.status = 'active'::feed_status
-    RETURNING feeds.id
-)
+    RETURNING feeds.*, feeds.audit_revision AS feed_revision
+),
+after_row AS (
+    SELECT do_update.*, fp.source_feed_id, COALESCE(fp.tags, '[]'::jsonb) AS tags
+    FROM do_update
+    JOIN feed_properties fp ON fp.feed_id = do_update.id
+),
+{feed_audit_sql.recovery_audit_action_cte(before_alias="current_state")},
+{
+    feed_audit_sql.insert_feed_audit_event_cte(
+        feed_id_sql="after_row.id",
+        action_sql="audit_action.action",
+        actor_id_sql="$5::text",
+        feed_revision_sql="after_row.feed_revision",
+        before_values_sql=feed_audit_sql.audit_snapshot_sql("current_state"),
+        after_values_sql=_AUDIT_AFTER_SNAPSHOT_SQL,
+        from_sql=(
+            "FROM current_state\n"
+            "    JOIN after_row ON after_row.id = current_state.id\n"
+            "    CROSS JOIN audit_action"
+        ),
+        where_sql="audit_action.action IS NOT NULL",
+    )
+}
 SELECT
     current_state.id,
     current_state.worker_id AS current_worker,
     current_state.status::text AS current_status,
     current_state.fencing_token AS current_fencing_token,
-    (do_update.id IS NOT NULL) AS recorded
+    (do_update.id IS NOT NULL) AS recorded,
+    do_update.name,
+    do_update.source_type,
+    do_update.status,
+    do_update.failure_count,
+    do_update.retry_after,
+    do_update.status_reason,
+    do_update.status_reason_updated_at,
+    do_update.status_reason_detail,
+    do_update.quarantine_reason,
+    do_update.last_bookmark_time,
+    do_update.created_at,
+    do_update.feed_revision,
+    after_row.source_feed_id,
+    after_row.tags
 FROM current_state
-LEFT JOIN do_update ON current_state.id = do_update.id;
+LEFT JOIN do_update ON current_state.id = do_update.id
+LEFT JOIN after_row ON after_row.id = do_update.id;
 """
 
 RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL = """\
@@ -201,11 +293,10 @@ def _build_claim_query(
     """
     branches_sql = ",\n".join(branches) + ","
     union_sql = "\n        UNION ALL\n".join(
-        f"        SELECT id FROM {n}"  # noqa: S608
-        for n in branch_names
+        f"        SELECT id FROM {n}" for n in branch_names
     )
     return (
-        "WITH\n"  # noqa: S608
+        "WITH\n"
         f"{branches_sql}\n"
         f"    {combined_cte_name} AS MATERIALIZED (\n"
         f"{union_sql}\n"
@@ -227,7 +318,8 @@ def _build_claim_query(
         "SELECT leased.id, leased.name, leased.source_type,\n"
         "       leased.last_processed_filename, leased.last_bookmark_time,\n"
         "       leased.fencing_token, leased.failure_count,\n"
-        "       leased.status_reason, fpi.source_feed_id\n"
+        "       leased.status_reason,\n"
+        "       fpi.source_feed_id\n"
         "FROM leased\n"
         "JOIN feed_properties fpi ON fpi.feed_id = leased.id\n"
     )
@@ -253,7 +345,7 @@ def build_acquire_feeds_batch_sql(claim_types: Sequence[SourceType]) -> str:
         cte_name = f"{t.value}_claim"
         branch_names.append(cte_name)
         branches.append(
-            f"    {cte_name} AS MATERIALIZED (\n"  # noqa: S608
+            f"    {cte_name} AS MATERIALIZED (\n"
             f"        SELECT id FROM feeds\n"
             f"        WHERE source_type = '{t.value}' AND status = 'unclaimed'::feed_status\n"
             f"        ORDER BY id\n"
@@ -337,7 +429,7 @@ def build_acquire_feeds_recovery_sql(claim_types: Sequence[SourceType]) -> str:
         cte_name = f"{t.value}_recovery"
         branch_names.append(cte_name)
         branches.append(
-            f"    {cte_name} AS MATERIALIZED (\n"  # noqa: S608
+            f"    {cte_name} AS MATERIALIZED (\n"
             f"        SELECT id FROM feeds\n"
             f"        WHERE source_type = '{t.value}'\n"
             f"          AND (\n"
@@ -352,69 +444,158 @@ def build_acquire_feeds_recovery_sql(claim_types: Sequence[SourceType]) -> str:
     return _build_claim_query(branches, branch_names, "recovered")
 
 
-REPORT_FAILURE_SQL = """\
-UPDATE feeds
-SET status = CASE WHEN failure_count + 1 >= $3
-                  THEN 'quarantined'::feed_status
-                  ELSE 'failing'::feed_status END,
-    failure_count = failure_count + 1,
-    worker_id = NULL,
-    retry_after = CASE WHEN failure_count + 1 < $3
-                       THEN NOW() + LEAST($5 * INTERVAL '1 second',
-                            $6 * INTERVAL '1 second' * POWER(2, failure_count))
-                            + (RANDOM() * INTERVAL '10 seconds')
-                       ELSE NULL END,
-    -- COALESCE protects against an edge call passing reason=None during
-    -- the quarantine transition: keep the previously-recorded reason
-    -- rather than overwriting it with NULL. A real reason still wins.
-    quarantine_reason = CASE WHEN failure_count + 1 >= $3 THEN COALESCE($7, quarantine_reason) ELSE quarantine_reason END,
-    status_reason = COALESCE($8, 'system_unexpected_error'),
-    status_reason_updated_at = CASE
-        WHEN status_reason IS DISTINCT FROM COALESCE($8, 'system_unexpected_error')
-            THEN NOW()
-        ELSE status_reason_updated_at
-    END
-WHERE id = $1 AND worker_id = $2 AND fencing_token = $4
-  AND status = 'active'::feed_status
-RETURNING status::text, failure_count, retry_after
+# Failure writes always update current failure state and advance
+# feeds.audit_revision. feed_audit_events rows are intentionally suppressed for
+# repeated failures with the same status/status_reason, so event revisions can
+# have gaps.
+REPORT_FAILURE_SQL = f"""\
+WITH before_row AS (
+    SELECT
+{feed_audit_sql.audit_source_projection("f")}
+    FROM feeds f
+    JOIN feed_properties fp ON fp.feed_id = f.id
+    WHERE f.id = $1
+      AND f.worker_id = $2
+      AND f.fencing_token = $4
+      AND f.status = 'active'::feed_status
+    FOR UPDATE
+),
+updated AS (
+    UPDATE feeds
+    SET status = CASE WHEN feeds.failure_count + 1 >= $3
+                      THEN 'quarantined'::feed_status
+                      ELSE 'failing'::feed_status END,
+        audit_revision = feeds.audit_revision + 1,
+        failure_count = feeds.failure_count + 1,
+        worker_id = NULL,
+        retry_after = CASE WHEN feeds.failure_count + 1 < $3
+                           THEN NOW() + LEAST($5 * INTERVAL '1 second',
+                                $6 * INTERVAL '1 second' * POWER(2, feeds.failure_count))
+                                + (RANDOM() * INTERVAL '10 seconds')
+                           ELSE NULL END,
+        status_reason = COALESCE($7, 'system_unexpected_error'),
+        status_reason_detail = $8,
+        status_reason_updated_at = CASE
+            WHEN feeds.status_reason IS DISTINCT FROM COALESCE($7, 'system_unexpected_error')
+                THEN NOW()
+            ELSE feeds.status_reason_updated_at
+        END
+    FROM before_row
+    WHERE feeds.id = before_row.id
+    RETURNING feeds.*, feeds.audit_revision AS feed_revision
+),
+after_row AS (
+    SELECT u.*, fp.source_feed_id, COALESCE(fp.tags, '[]'::jsonb) AS tags
+    FROM updated u
+    JOIN feed_properties fp ON fp.feed_id = u.id
+),
+{feed_audit_sql.failure_audit_action_cte()},
+{
+    feed_audit_sql.insert_feed_audit_event_cte(
+        feed_id_sql="after_row.id",
+        action_sql="audit_action.action",
+        actor_id_sql="$9::text",
+        feed_revision_sql="after_row.feed_revision",
+        before_values_sql=_AUDIT_BEFORE_SNAPSHOT_SQL,
+        after_values_sql=_AUDIT_AFTER_SNAPSHOT_SQL,
+        from_sql=(
+            "FROM before_row\n"
+            "    JOIN after_row ON after_row.id = before_row.id\n"
+            "    CROSS JOIN audit_action"
+        ),
+        where_sql="audit_action.action IS NOT NULL",
+    )
+}
+SELECT after_row.*
+FROM after_row
 """
 
-RELEASE_NON_BUDGETED_FAILURE_SQL = """\
-UPDATE feeds
-SET status = 'failing'::feed_status,
-    failure_count = 0,
-    worker_id = NULL,
-    retry_after = $4,
-    unclaimed_since = NOW(),
-    status_reason = $5,
-    status_reason_updated_at = CASE
-        WHEN status_reason IS DISTINCT FROM $5 THEN NOW()
-        ELSE status_reason_updated_at
-    END
-WHERE id = $1 AND worker_id = $2
-  AND fencing_token = $3
-  AND status = 'active'::feed_status
-RETURNING status::text, failure_count, retry_after
+RELEASE_NON_BUDGETED_FAILURE_SQL = f"""\
+WITH before_row AS (
+    SELECT
+{feed_audit_sql.audit_source_projection("f")}
+    FROM feeds f
+    JOIN feed_properties fp ON fp.feed_id = f.id
+    WHERE f.id = $1
+      AND f.worker_id = $2
+      AND f.fencing_token = $3
+      AND f.status = 'active'::feed_status
+    FOR UPDATE
+),
+updated AS (
+    UPDATE feeds
+    SET status = 'failing'::feed_status,
+        audit_revision = feeds.audit_revision + 1,
+        failure_count = 0,
+        worker_id = NULL,
+        retry_after = $4,
+        unclaimed_since = NOW(),
+        status_reason = $5,
+        status_reason_detail = $6,
+        status_reason_updated_at = CASE
+            WHEN feeds.status_reason IS DISTINCT FROM $5 THEN NOW()
+            ELSE feeds.status_reason_updated_at
+        END
+    FROM before_row
+    WHERE feeds.id = before_row.id
+    RETURNING feeds.*, feeds.audit_revision AS feed_revision
+),
+after_row AS (
+    SELECT u.*, fp.source_feed_id, COALESCE(fp.tags, '[]'::jsonb) AS tags
+    FROM updated u
+    JOIN feed_properties fp ON fp.feed_id = u.id
+),
+{feed_audit_sql.failure_audit_action_cte()},
+{
+    feed_audit_sql.insert_feed_audit_event_cte(
+        feed_id_sql="after_row.id",
+        action_sql="audit_action.action",
+        actor_id_sql="$7::text",
+        feed_revision_sql="after_row.feed_revision",
+        before_values_sql=_AUDIT_BEFORE_SNAPSHOT_SQL,
+        after_values_sql=_AUDIT_AFTER_SNAPSHOT_SQL,
+        from_sql=(
+            "FROM before_row\n"
+            "    JOIN after_row ON after_row.id = before_row.id\n"
+            "    CROSS JOIN audit_action"
+        ),
+        where_sql="audit_action.action IS NOT NULL",
+    )
+}
+SELECT after_row.*
+FROM after_row
 """
 
-CREATE_FEED_SQL = """\
+CREATE_FEED_SQL = f"""\
 WITH new_feed AS (
-    INSERT INTO feeds (name, source_type)
-    VALUES ($1, $2)
-    RETURNING id, name, source_type, status, status_reason,
-              status_reason_updated_at, failure_count, worker_id,
-              last_heartbeat, last_processed_filename,
-              last_bookmark_time, created_at, quarantine_reason
+    INSERT INTO feeds (name, source_type, audit_revision)
+    VALUES ($1, $2, 1)
+    RETURNING feeds.*, feeds.audit_revision AS feed_revision
 ),
 new_props AS (
     INSERT INTO feed_properties (feed_id, source_feed_id, source_type, tags)
     SELECT id, $3, source_type, $4 FROM new_feed
     RETURNING source_feed_id, tags
-)
-SELECT nf.*, np.source_feed_id, np.tags,
-       NULL::timestamptz AS last_speech_segment_timestamp
-FROM new_feed nf
-JOIN new_props np ON TRUE;
+),
+after_row AS (
+    SELECT nf.*, np.source_feed_id, COALESCE(np.tags, '[]'::jsonb) AS tags,
+           NULL::timestamptz AS last_speech_segment_timestamp
+    FROM new_feed nf
+    JOIN new_props np ON TRUE
+),
+{
+    feed_audit_sql.insert_feed_audit_event_cte(
+        feed_id_sql="after_row.id",
+        action_sql="'feed.created'",
+        actor_id_sql="$5::text",
+        feed_revision_sql="after_row.feed_revision",
+        before_values_sql="        '{}'::jsonb",
+        after_values_sql=_AUDIT_AFTER_SNAPSHOT_SQL,
+        from_sql="FROM after_row",
+    )
+}
+SELECT after_row.*
+FROM after_row;
 """
 
 GET_FEED_SQL = """\
@@ -422,6 +603,7 @@ SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
        f.last_bookmark_time, f.created_at, f.quarantine_reason,
+       f.status_reason_detail,
        fp.source_feed_id, fp.tags,
        (
            SELECT s.end_timestamp
@@ -441,6 +623,7 @@ SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
        f.last_bookmark_time, f.created_at, f.quarantine_reason,
+       f.status_reason_detail,
        fp.source_feed_id, fp.tags,
        (
            SELECT s.end_timestamp
@@ -466,6 +649,7 @@ SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
        f.last_bookmark_time, f.created_at, f.quarantine_reason,
+       f.status_reason_detail,
        fp.source_feed_id, fp.tags,
        (
            SELECT s.end_timestamp
@@ -487,86 +671,235 @@ LIMIT $7
 """
 
 
-DEACTIVATE_FEED_SQL = """\
-UPDATE feeds
-SET status = 'deactivated'::feed_status
-WHERE id = $1
+DEACTIVATE_FEED_SQL = f"""\
+WITH before_row AS (
+    SELECT
+{feed_audit_sql.audit_source_projection("f")}
+    FROM feeds f
+    JOIN feed_properties fp ON fp.feed_id = f.id
+    WHERE f.id = $1
+    FOR UPDATE
+),
+updated AS (
+    UPDATE feeds
+    SET status = 'deactivated'::feed_status,
+        audit_revision = feeds.audit_revision + 1
+    FROM before_row
+    WHERE feeds.id = before_row.id
+      AND before_row.status <> 'deactivated'::feed_status
+    RETURNING feeds.*, feeds.audit_revision AS feed_revision
+),
+after_row AS (
+    SELECT u.*, fp.source_feed_id, COALESCE(fp.tags, '[]'::jsonb) AS tags
+    FROM updated u
+    JOIN feed_properties fp ON fp.feed_id = u.id
+),
+{
+    feed_audit_sql.insert_feed_audit_event_cte(
+        feed_id_sql="after_row.id",
+        action_sql="'feed.deactivated'",
+        actor_id_sql="$2::text",
+        feed_revision_sql="after_row.feed_revision",
+        before_values_sql=_AUDIT_BEFORE_SNAPSHOT_SQL,
+        after_values_sql=_AUDIT_AFTER_SNAPSHOT_SQL,
+        from_sql="FROM before_row\n    JOIN after_row ON after_row.id = before_row.id",
+    )
+}
+SELECT before_row.id
+FROM before_row
+LEFT JOIN write_audit ON TRUE
 """
 # TODO(hard-delete): remove transcripts PR https://linear.app/watchduty/issue/GOO-458/remaining-legacy-cleanup
-DELETE_FEED_SQL = """\
-WITH deleted_audio_segments AS (
+DELETE_FEED_SQL = f"""\
+WITH target_feed AS (
+    SELECT id, status
+    FROM feeds
+    WHERE id = $1
+    FOR UPDATE
+),
+before_row AS (
+    SELECT
+{feed_audit_sql.audit_source_projection("f")}
+    FROM feeds f
+    JOIN feed_properties fp ON fp.feed_id = f.id
+    JOIN target_feed target ON target.id = f.id
+    WHERE target.status <> 'active'::feed_status
+),
+{
+    feed_audit_sql.insert_feed_audit_event_cte(
+        feed_id_sql="before_row.id",
+        action_sql="'feed.deleted'",
+        actor_id_sql="$2::text",
+        feed_revision_sql="before_row.audit_revision + 1",
+        before_values_sql=_AUDIT_BEFORE_SNAPSHOT_SQL,
+        after_values_sql="        '{}'::jsonb",
+        from_sql="FROM before_row",
+        returning_sql="feed_id",
+    )
+},
+deleted_audio_segments AS (
     DELETE FROM audio_segments
-    WHERE feed_id = $1
+    WHERE feed_id IN (SELECT feed_id FROM write_audit)
+    RETURNING 1
 ),
 deleted_transcripts AS (
     DELETE FROM transcripts
-    WHERE feed_id = $1
+    WHERE feed_id IN (SELECT feed_id FROM write_audit)
+    RETURNING 1
+),
+deleted_feed AS (
+    DELETE FROM feeds
+    WHERE id IN (SELECT feed_id FROM write_audit)
+      -- Force child-delete CTE evaluation before deleting the parent feed row.
+      AND (SELECT COUNT(*) FROM deleted_audio_segments) >= 0
+      AND (SELECT COUNT(*) FROM deleted_transcripts) >= 0
+    RETURNING id
 )
-DELETE FROM feeds
-WHERE id = $1
+SELECT target_feed.id,
+       target_feed.status::text AS current_status,
+       target_feed.status = 'active'::feed_status AS blocked_active,
+       deleted_feed.id IS NOT NULL AS deleted
+FROM target_feed
+LEFT JOIN deleted_feed ON deleted_feed.id = target_feed.id
 """
 
 
-RESET_FEED_SQL = """\
-WITH updated AS (
+RESET_FEED_SQL = f"""\
+WITH target_feed AS (
+    SELECT id, status
+    FROM feeds
+    WHERE id = $1
+    FOR UPDATE
+),
+before_row AS (
+    SELECT
+{feed_audit_sql.audit_source_projection("f")}
+    FROM feeds f
+    JOIN feed_properties fp ON fp.feed_id = f.id
+    JOIN target_feed target ON target.id = f.id
+    WHERE target.status <> 'active'::feed_status
+),
+updated AS (
     UPDATE feeds
     SET status = 'unclaimed'::feed_status,
         failure_count = 0,
         worker_id = NULL,
         unclaimed_since = NOW(),
         quarantine_reason = NULL,
+        status_reason_detail = NULL,
         last_heartbeat = NOW(),
+        audit_revision = feeds.audit_revision + 1,
         status_reason_updated_at = CASE
-            WHEN status_reason IS NOT NULL THEN NOW()
-            ELSE status_reason_updated_at
+            WHEN feeds.status_reason IS NOT NULL OR feeds.status_reason_detail IS NOT NULL THEN NOW()
+            ELSE feeds.status_reason_updated_at
         END,
         status_reason = NULL
-    WHERE id = $1
-    RETURNING id, name, source_type, status, failure_count, worker_id,
-              status_reason, status_reason_updated_at, last_heartbeat,
-              last_processed_filename, last_bookmark_time, created_at,
-              quarantine_reason
-)
-SELECT u.*, fp.source_feed_id, fp.tags,
-       (
-           SELECT s.end_timestamp
-           FROM audio_segments s
-           WHERE s.feed_id = u.id
-             AND s.classification = 'SPEECH'::audio_classification
-           ORDER BY s.end_timestamp DESC, s.id DESC
-           LIMIT 1
-       ) AS last_speech_segment_timestamp
-FROM updated u
-JOIN feed_properties fp ON fp.feed_id = u.id
+    FROM before_row
+    WHERE feeds.id = before_row.id
+    RETURNING feeds.*, feeds.audit_revision AS feed_revision
+),
+after_row AS (
+    SELECT u.*, fp.source_feed_id, COALESCE(fp.tags, '[]'::jsonb) AS tags,
+           (
+               SELECT s.end_timestamp
+               FROM audio_segments s
+               WHERE s.feed_id = u.id
+                 AND s.classification = 'SPEECH'::audio_classification
+               ORDER BY s.end_timestamp DESC, s.id DESC
+               LIMIT 1
+           ) AS last_speech_segment_timestamp
+    FROM updated u
+    JOIN feed_properties fp ON fp.feed_id = u.id
+),
+{
+    feed_audit_sql.insert_feed_audit_event_cte(
+        feed_id_sql="after_row.id",
+        action_sql="'feed.reset'",
+        actor_id_sql="$2::text",
+        feed_revision_sql="after_row.feed_revision",
+        before_values_sql=_AUDIT_BEFORE_SNAPSHOT_SQL,
+        after_values_sql=_AUDIT_AFTER_SNAPSHOT_SQL,
+        from_sql="FROM before_row\n    JOIN after_row ON after_row.id = before_row.id",
+    )
+}
+SELECT target_feed.status::text AS current_status,
+       target_feed.status = 'active'::feed_status AS blocked_active,
+       after_row.*
+FROM target_feed
+LEFT JOIN after_row ON after_row.id = target_feed.id
 """
 
-UPDATE_FEED_SQL = """\
-WITH updated_feed AS (
+UPDATE_FEED_SQL = f"""\
+WITH before_row AS (
+    SELECT
+{feed_audit_sql.audit_source_projection("f")}
+    FROM feeds f
+    JOIN feed_properties fp ON fp.feed_id = f.id
+    WHERE f.id = $1
+    FOR UPDATE
+),
+change AS (
+    SELECT
+        before_row.*,
+        (
+            before_row.name IS DISTINCT FROM $2
+            OR before_row.tags IS DISTINCT FROM $3::jsonb
+        ) AS changed
+    FROM before_row
+),
+updated_feed AS (
     UPDATE feeds
-    SET name = $2
-    WHERE id = $1
-    RETURNING id, name, source_type, status, status_reason,
-              status_reason_updated_at, failure_count, worker_id,
-              last_heartbeat, last_processed_filename,
-              last_bookmark_time, created_at, quarantine_reason
+    SET name = $2,
+        audit_revision = feeds.audit_revision + 1
+    FROM change
+    WHERE feeds.id = change.id
+      AND change.changed
+    RETURNING feeds.*
 ),
 updated_props AS (
     UPDATE feed_properties
     SET tags = COALESCE($3::jsonb, tags)
     WHERE feed_id = $1
     RETURNING source_feed_id, tags
-)
-SELECT uf.*, up.source_feed_id, up.tags,
+),
+updated_row AS (
+    SELECT uf.*, up.source_feed_id, COALESCE(up.tags, '[]'::jsonb) AS tags,
+           uf.audit_revision AS feed_revision
+    FROM updated_feed uf
+    JOIN updated_props up ON TRUE
+),
+unchanged_row AS (
+    SELECT before_row.*, before_row.audit_revision AS feed_revision
+    FROM before_row
+    JOIN change ON change.id = before_row.id
+    WHERE NOT change.changed
+),
+result_row AS (
+    SELECT * FROM updated_row
+    UNION ALL
+    SELECT * FROM unchanged_row
+),
+{
+    feed_audit_sql.insert_feed_audit_event_cte(
+        feed_id_sql="updated_row.id",
+        action_sql="'feed.updated'",
+        actor_id_sql="$4::text",
+        feed_revision_sql="updated_row.feed_revision",
+        before_values_sql=_AUDIT_BEFORE_SNAPSHOT_SQL,
+        after_values_sql=feed_audit_sql.audit_snapshot_sql("updated_row"),
+        from_sql="FROM before_row\n    JOIN updated_row ON updated_row.id = before_row.id",
+    )
+}
+SELECT result_row.*,
        (
            SELECT s.end_timestamp
            FROM audio_segments s
-           WHERE s.feed_id = uf.id
+           WHERE s.feed_id = result_row.id
              AND s.classification = 'SPEECH'::audio_classification
            ORDER BY s.end_timestamp DESC, s.id DESC
            LIMIT 1
        ) AS last_speech_segment_timestamp
-FROM updated_feed uf
-JOIN updated_props up ON TRUE;
+FROM result_row;
 """
 
 

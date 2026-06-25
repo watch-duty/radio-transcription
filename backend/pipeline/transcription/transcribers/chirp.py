@@ -1,12 +1,13 @@
 """Google Cloud Speech-to-Text Chirp V3 transcriber implementation."""
 
 import pathlib
+from typing import override
 
 import pydantic
 from google.api_core import client_options
 from google.api_core.retry import Retry
 from google.cloud import speech_v2 as cloud_speech
-from google.cloud.speech_v2 import SpeechClient
+from google.cloud.speech_v2 import SpeechAsyncClient
 
 from backend.pipeline.common.log_helper import get_task_logger
 from backend.pipeline.common.utils import ConfigBase
@@ -95,17 +96,23 @@ class GoogleChirpV3Transcriber(Transcriber):
         self.project_id = project_id
         self.config = config
 
-        self.client: SpeechClient | None = None
+        self.client: SpeechAsyncClient | None = None
 
-    def _init_client(self) -> SpeechClient:
+    def _init_client(self) -> SpeechAsyncClient:
         opts = client_options.ClientOptions(
             api_endpoint=f"{self.config.location}-speech.googleapis.com"
         )
-        return SpeechClient(client_options=opts)
+        return SpeechAsyncClient(client_options=opts)
 
     def setup(self) -> None:
         """Instantiates the Speech-to-Text API gRPC client."""
         self.client = self._init_client()
+
+    @override
+    async def close(self) -> None:
+        """Closes the underlying SpeechAsyncClient connection/channel."""
+        if self.client:
+            await self.client.transport.close()
 
     def _build_adaptation(self) -> cloud_speech.SpeechAdaptation | None:
         """Builds a SpeechAdaptation from the configured phrase hints."""
@@ -125,7 +132,7 @@ class GoogleChirpV3Transcriber(Transcriber):
             ]
         )
 
-    def transcribe(
+    async def transcribe(
         self,
         *,
         audio_data: bytes | None = None,
@@ -133,7 +140,8 @@ class GoogleChirpV3Transcriber(Transcriber):
         duration_ms: int,
     ) -> str | None:
         """Transcribes the given audio payload using GCP Speech V2 API."""
-        if not self.client:
+        client = self.client
+        if not client:
             msg = "Transcriber client used before setup() was called."
             raise RuntimeError(msg)
 
@@ -179,7 +187,8 @@ class GoogleChirpV3Transcriber(Transcriber):
             multiplier=2.0,
             deadline=float(DEFAULT_RETRY_MAX_SECONDS * DEFAULT_MAX_RETRIES),
         )
-        response = self.client.recognize(request=request, retry=retry_policy)
+
+        response = await client.recognize(request=request, retry=retry_policy)
         return self._parse_response(response)
 
     def _parse_response(

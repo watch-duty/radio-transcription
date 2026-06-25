@@ -40,10 +40,10 @@ def test_status_reason_storage_value_rejects_other_enums() -> None:
         )
 
 
-def test_quarantine_reason_storage_value_caps_reason() -> None:
+def test_status_reason_detail_storage_value_caps_reason() -> None:
     long_reason = "x" * (quarantine_reason.MAX_QUARANTINE_REASON_LENGTH + 1)
 
-    result = feed_lifecycle.quarantine_reason_storage_value(long_reason)
+    result = feed_lifecycle.status_reason_detail_storage_value(long_reason)
 
     assert result is not None
     assert len(result) == quarantine_reason.MAX_QUARANTINE_REASON_LENGTH

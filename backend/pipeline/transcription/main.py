@@ -6,9 +6,10 @@ claim-check metadata. Delegates processing to TranscriptionEventProcessor.
 
 import logging
 import os
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 
-import functions_framework
-from cloudevents.http.event import CloudEvent
+from fastapi import FastAPI, HTTPException, Request, Response, status
 from google.cloud import pubsub_v1
 
 from backend.pipeline.common.clients import audio_segments_client
@@ -144,22 +145,43 @@ class TranscriptionServiceContainer:
             )
 
 
-# Global container instance managed by the GCF container instance lifecycle
-container = TranscriptionServiceContainer()
-container.eager_warmup()
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+    """Warms up container services on startup and resets/closes them on shutdown."""
+    container = TranscriptionServiceContainer()
+    try:
+        processor = container.get_processor()
+        app.state.processor = processor
+    except Exception:
+        logger.exception(
+            "Failed to eager warm-up container services on startup"
+        )
+        processor = None
+    yield
+    # Clean up client connection pools/channels on exit
+    if processor and processor.transcriber:
+        try:
+            await processor.transcriber.close()
+        except Exception:
+            logger.exception(
+                "Failed to close transcriber client on lifespan shutdown"
+            )
+    container.reset_clients()
 
 
-@functions_framework.cloud_event
-def transcribe_claim_check(cloud_event: CloudEvent) -> None:
-    """Entry point for Cloud Function Pub/Sub trigger events.
+app = FastAPI(title="Transcription Service ASGI", lifespan=lifespan)
 
-    Args:
-        cloud_event: The triggered Pub/Sub CloudEvent.
-    """
-    setup_tracing(
-        service_name="transcription-service",
-        use_batch=False,
-    )
 
-    processor = container.get_processor()
-    processor.process_event(cloud_event)
+@app.post("/", status_code=status.HTTP_204_NO_CONTENT)
+async def transcribe_claim_check(envelope: dict, request: Request) -> Response:
+    """Entry point for Pub/Sub push HTTP POST requests."""
+    setup_tracing(service_name="transcription-service", use_batch=False)
+
+    processor = getattr(request.app.state, "processor", None)
+    if not processor:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Transcription service is not initialized",
+        )
+    await processor.process_event(envelope)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
