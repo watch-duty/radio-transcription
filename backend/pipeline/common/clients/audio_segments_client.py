@@ -118,8 +118,7 @@ class GCPMetadataAuth(requests.auth.AuthBase):
 
     def __call__(self, r: requests.PreparedRequest) -> requests.PreparedRequest:
         token = get_id_token(self.audience)
-        if r.headers is not None:
-            r.headers["Authorization"] = f"Bearer {token}"
+        r.headers["Authorization"] = f"Bearer {token}"
         return r
 
 
@@ -159,7 +158,7 @@ class AsyncAudioSegmentsClient:
         """
         self.api_url = api_url.rstrip("/")
         self.max_retries = max_retries
-        transport = httpx.AsyncHTTPTransport(retries=max_retries)
+        transport = httpx.AsyncHTTPTransport(retries=0)
         auth = GCPMetadataAsyncAuth(self.api_url) if is_gcp_env() else None
         self.client = httpx.AsyncClient(transport=transport, auth=auth)
 

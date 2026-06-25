@@ -1,6 +1,8 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
+
 from backend.pipeline.common.clients.audio_segments_client import (
     AsyncAudioSegmentsClient,
     AudioSegmentsClient,
@@ -249,6 +251,39 @@ class TestAsyncAudioSegmentsClient(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(Exception):
             await self.client.add_audio_segment(self.segment_payload)
+
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    async def test_add_audio_segment_annotation_retries_on_transient_error(
+        self, mock_sleep
+    ) -> None:
+        self.mock_post.side_effect = httpx.ConnectError("Connection failed")
+
+        with self.assertRaises(httpx.ConnectError):
+            await self.client.add_audio_segment_annotation(
+                audio_segment_id="segment-id-123",
+                annotation_type=AnnotationType.EVALUATION,
+                data={"key": "val"},
+            )
+
+        self.assertEqual(self.mock_post.call_count, 3)
+        self.assertEqual(mock_sleep.call_count, 2)
+
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    async def test_add_audio_segment_retries_on_transient_error(
+        self, mock_sleep
+    ) -> None:
+        self.mock_post.side_effect = httpx.HTTPStatusError(
+            "Too Many Requests",
+            request=MagicMock(spec=httpx.Request),
+            response=MagicMock(status_code=429, spec=httpx.Response),
+        )
+
+        with self.assertRaises(httpx.HTTPStatusError):
+            await self.client.add_audio_segment(self.segment_payload)
+
+        self.assertEqual(self.mock_post.call_count, 3)
+        self.assertEqual(mock_sleep.call_count, 2)
+
 
 
 if __name__ == "__main__":
