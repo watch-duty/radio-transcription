@@ -450,3 +450,74 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         self.assertEqual(
             flush_actions2[1].audio_classification, 2
         )  # OTHER (silence)
+
+    def test_silent_chunk_audio_is_fully_retained(self) -> None:
+        """Verifies that when a completely silent chunk is processed after active speech,
+        the trailing silent audio is fully retained in the state machine buffer and
+        correctly flushed as a separate OTHER segment without any data loss.
+        """
+        # Chunk 1: Speech from 0.0s to 10.0s, chunk duration 15.0s.
+        # Trailing silence: 10.0s to 15.0s (5000ms >= 3000ms significant_gap_ms).
+        # This will trigger a flush of the speech transmission during Chunk 1.
+        chunk1 = mock_audio_chunk(0, 15000, [(0.0, 10.0)])
+        actions1 = self._process(chunk1)
+
+        # Verify that the speech transmission was flushed
+        speech_flush = next(
+            (
+                a
+                for a in actions1
+                if isinstance(a, FlushAction)
+                and a.audio_classification == 1
+            ),
+            None,
+        )
+        self.assertIsNotNone(speech_flush)
+
+        # Chunk 2: Dead air (completely silent), from 15.0s to 30.0s (15000ms duration).
+        # Since the speech transmission was already flushed, this chunk should just buffer the silence.
+        chunk2 = mock_audio_chunk(15000, 15000, [])
+        actions2 = self._process(chunk2)
+
+        # Verify that the silent audio was appended to the buffer
+        append_actions2 = [
+            a for a in actions2 if isinstance(a, AppendBufferAction)
+        ]
+        self.assertTrue(len(append_actions2) > 0)
+
+        # During Chunk 2, only Chunk 2's silence (15.0s = 240,000 samples) should be appended.
+        total_samples = sum(a.audio_buffer.size for a in append_actions2)
+        self.assertEqual(total_samples, 15000 * SAMPLES_PER_MS)
+
+        # Chunk 3: Another completely silent chunk from 30.0s to 80.0s (50000ms duration).
+        # This pushes the non-speech transmission duration to:
+        # 5.0s (from Chunk 1) + 15.0s (from Chunk 2) + 50.0s (from Chunk 3) = 70.0s.
+        # Since 70.0s >= 60.0s (max_transmission_duration_ms), this MUST trigger a
+        # "Maximum non-speech transmission duration exceeded" flush during Chunk 3!
+        chunk3 = mock_audio_chunk(30000, 50000, [])
+        actions3 = self._process(chunk3)
+
+        # Verify that a flush occurred in Chunk 3
+        other_flush = next(
+            (
+                a
+                for a in actions3
+                if isinstance(a, FlushAction)
+                and a.audio_classification == 2
+            ),
+            None,
+        )
+        self.assertIsNotNone(other_flush)
+        assert other_flush is not None
+        self.assertEqual(
+            other_flush.reason,
+            "Maximum non-speech transmission duration exceeded",
+        )
+
+        # Under the correct, non-lossy code, the flushed OTHER segment must fully
+        # retain all silent audio buffered up to the start of Chunk 3:
+        # 5.0s (from Chunk 1) + 15.0s (from Chunk 2) = 20.0s (20000ms).
+        self.assertEqual(
+            other_flush.time_range.end_ms - other_flush.time_range.start_ms,
+            20000,
+        )
