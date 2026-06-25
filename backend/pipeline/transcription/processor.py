@@ -52,7 +52,7 @@ class TranscriptionEventProcessor:
         output_topic: str,
         transcriber: Transcriber,
         publisher: pubsub_v1.PublisherClient,
-        audio_segments_client: audio_segments_client.AudioSegmentsClient
+        audio_segments_client: audio_segments_client.AsyncAudioSegmentsClient
         | None = None,
     ) -> None:
         self.project_id = project_id
@@ -186,8 +186,7 @@ class TranscriptionEventProcessor:
                 errors.append(f"Permanent Failure: {e}")
             finally:
                 if segment_id:
-                    await asyncio.to_thread(
-                        self._write_transcript_annotation,
+                    await self._write_transcript_annotation(
                         segment_id,
                         transcript or "",
                         errors,
@@ -217,7 +216,7 @@ class TranscriptionEventProcessor:
         else:
             return claim
 
-    def _write_transcript_annotation(
+    async def _write_transcript_annotation(
         self, segment_id: str, transcript: str, errors: list[str]
     ) -> None:
         """Writes transcript annotation to audio segments API."""
@@ -229,7 +228,7 @@ class TranscriptionEventProcessor:
                 "text": transcript,
                 "errors": errors,
             }
-            self.audio_segments_client.add_audio_segment_annotation(
+            await self.audio_segments_client.add_audio_segment_annotation(
                 audio_segment_id=segment_id,
                 annotation_type=(
                     audio_segments_models.AnnotationType.TRANSCRIPT

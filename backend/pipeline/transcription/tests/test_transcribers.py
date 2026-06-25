@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import requests
-from google.api_core.retry import Retry
+from google.api_core.retry_async import AsyncRetry
 from google.genai import types
 
 from backend.pipeline.transcription.enums import TranscriberType
@@ -117,7 +117,7 @@ class TestTranscribers(unittest.IsolatedAsyncioTestCase):
             mock_client_instance.recognize.assert_called_once()
             _, kwargs = mock_client_instance.recognize.call_args
             self.assertIn("retry", kwargs)
-            self.assertIsInstance(kwargs["retry"], Retry)
+            self.assertIsInstance(kwargs["retry"], AsyncRetry)
 
     async def test_google_chirp_transcriber_no_phrase_hints_omits_adaptation(
         self,

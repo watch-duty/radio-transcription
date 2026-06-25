@@ -51,6 +51,11 @@ class TranscriptionServiceContainer:
         self._publisher = None
         self._processor = None
 
+    @property
+    def processor(self) -> TranscriptionEventProcessor | None:
+        """Returns the cached processor if it has been warmed up, otherwise None."""
+        return self._processor
+
     @fork_checked
     def get_transcriber(self, project_id: str) -> Transcriber:
         """Warms up and caches the transcriber instance.
@@ -113,9 +118,13 @@ class TranscriptionServiceContainer:
             api_url = os.environ.get("AUDIO_SEGMENTS_API_URL")
             audio_segments_client_instance = None
             if api_url:
-                logger.info("Initializing AudioSegmentsClient at: %s", api_url)
+                logger.info(
+                    "Initializing AsyncAudioSegmentsClient at: %s", api_url
+                )
                 audio_segments_client_instance = (
-                    audio_segments_client.AudioSegmentsClient(api_url=api_url)
+                    audio_segments_client.AsyncAudioSegmentsClient(
+                        api_url=api_url
+                    )
                 )
             else:
                 logger.error(
@@ -149,23 +158,27 @@ class TranscriptionServiceContainer:
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """Warms up container services on startup and resets/closes them on shutdown."""
     container = TranscriptionServiceContainer()
-    try:
-        processor = container.get_processor()
-        app.state.processor = processor
-    except Exception:
-        logger.exception(
-            "Failed to eager warm-up container services on startup"
-        )
-        processor = None
+    container.eager_warmup()
+    if container.processor:
+        app.state.processor = container.processor
     yield
     # Clean up client connection pools/channels on exit
-    if processor and processor.transcriber:
-        try:
-            await processor.transcriber.close()
-        except Exception:
-            logger.exception(
-                "Failed to close transcriber client on lifespan shutdown"
-            )
+    if container.processor:
+        processor = container.processor
+        if processor.transcriber:
+            try:
+                await processor.transcriber.close()
+            except Exception:
+                logger.exception(
+                    "Failed to close transcriber client on lifespan shutdown"
+                )
+        if processor.audio_segments_client:
+            try:
+                await processor.audio_segments_client.close()
+            except Exception:
+                logger.exception(
+                    "Failed to close audio segments client on lifespan shutdown"
+                )
     container.reset_clients()
 
 

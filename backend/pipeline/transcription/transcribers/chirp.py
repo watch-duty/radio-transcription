@@ -5,7 +5,7 @@ from typing import override
 
 import pydantic
 from google.api_core import client_options
-from google.api_core.retry import Retry
+from google.api_core.retry_async import AsyncRetry
 from google.cloud import speech_v2 as cloud_speech
 from google.cloud.speech_v2 import SpeechAsyncClient
 
@@ -181,7 +181,7 @@ class GoogleChirpV3Transcriber(Transcriber):
             uri=uri,
         )
 
-        retry_policy = Retry(
+        retry_policy = AsyncRetry(
             initial=1.0,
             maximum=float(DEFAULT_RETRY_MAX_SECONDS),
             multiplier=2.0,

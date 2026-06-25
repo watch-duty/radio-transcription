@@ -15,6 +15,9 @@ from google.api_core.exceptions import (
 )
 from google.genai import errors as genai_errors
 
+from backend.pipeline.common.clients.audio_segments_client import (
+    AsyncAudioSegmentsClient,
+)
 from backend.pipeline.schema_types.normalized_audio_pb2 import (
     NormalizedAudio,
 )
@@ -55,7 +58,7 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
         mock_publisher.topic_path.return_value = (
             "projects/test-proj/topics/egress"
         )
-        mock_audio_segments_client = MagicMock()
+        mock_audio_segments_client = MagicMock(spec=AsyncAudioSegmentsClient)
 
         # Build dummy claim proto
         claim = NormalizedAudio(
@@ -162,7 +165,7 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
             "projects/test-proj/topics/egress"
         )
 
-        mock_audio_segments_client = MagicMock()
+        mock_audio_segments_client = MagicMock(spec=AsyncAudioSegmentsClient)
 
         # Build dummy claim proto
         claim = NormalizedAudio(
@@ -230,7 +233,7 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
         mock_publisher.topic_path.return_value = (
             "projects/test-proj/topics/egress"
         )
-        mock_audio_segments_client = MagicMock()
+        mock_audio_segments_client = MagicMock(spec=AsyncAudioSegmentsClient)
 
         claim = NormalizedAudio(
             segment_id="tx-1111",
@@ -298,7 +301,7 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
         mock_publisher.topic_path.return_value = (
             "projects/test-proj/topics/egress"
         )
-        mock_audio_segments_client = MagicMock()
+        mock_audio_segments_client = MagicMock(spec=AsyncAudioSegmentsClient)
 
         claim = NormalizedAudio(
             segment_id="tx-1111",
@@ -358,7 +361,7 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
             "Audio payload too long for synchronous API"
         )
         mock_publisher = MagicMock()
-        mock_audio_segments_client = MagicMock()
+        mock_audio_segments_client = MagicMock(spec=AsyncAudioSegmentsClient)
 
         claim = NormalizedAudio(
             segment_id="tx-1111",
@@ -424,7 +427,7 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
         mock_publisher.topic_path.return_value = (
             "projects/test-proj/topics/egress"
         )
-        mock_audio_segments_client = MagicMock()
+        mock_audio_segments_client = MagicMock(spec=AsyncAudioSegmentsClient)
 
         claim = NormalizedAudio(
             segment_id="tx-1111",
@@ -485,7 +488,7 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
         mock_publisher.topic_path.return_value = (
             "projects/test-proj/topics/egress"
         )
-        mock_audio_segments_client = MagicMock()
+        mock_audio_segments_client = MagicMock(spec=AsyncAudioSegmentsClient)
 
         claim = NormalizedAudio(
             segment_id="tx-1111",
@@ -543,7 +546,7 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
         )
 
         mock_publisher = MagicMock()
-        mock_audio_segments_client = MagicMock()
+        mock_audio_segments_client = MagicMock(spec=AsyncAudioSegmentsClient)
 
         claim = NormalizedAudio(
             segment_id="tx-1111",
@@ -600,7 +603,7 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
         )
 
         mock_publisher = MagicMock()
-        mock_audio_segments_client = MagicMock()
+        mock_audio_segments_client = MagicMock(spec=AsyncAudioSegmentsClient)
 
         claim = NormalizedAudio(
             segment_id="tx-1111",
@@ -661,7 +664,7 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
         mock_transcriber.transcribe.side_effect = http_err
 
         mock_publisher = MagicMock()
-        mock_audio_segments_client = MagicMock()
+        mock_audio_segments_client = MagicMock(spec=AsyncAudioSegmentsClient)
 
         claim = NormalizedAudio(
             segment_id="tx-1111",
@@ -722,7 +725,7 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
         mock_transcriber.transcribe.side_effect = http_err
 
         mock_publisher = MagicMock()
-        mock_audio_segments_client = MagicMock()
+        mock_audio_segments_client = MagicMock(spec=AsyncAudioSegmentsClient)
 
         claim = NormalizedAudio(
             segment_id="tx-1111",
