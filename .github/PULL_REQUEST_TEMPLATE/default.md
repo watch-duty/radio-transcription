@@ -1,7 +1,8 @@
 > [!TIP]
 > **Need a different template?**
-> - 💻 For frontend-facing changes, switch to the [Frontend Changes Template](?template=frontend_changes.md).
+> - 💻 For frontend-facing changes, switch to the [Frontend Changes Template](?expand=1&template=frontend_changes.md).
 > *(Note: Please delete this tip block before submitting your PR)*
+
 
 ## Description
 
