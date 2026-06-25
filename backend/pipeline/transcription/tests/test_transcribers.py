@@ -507,8 +507,8 @@ class TestLocalApiTranscriber(unittest.IsolatedAsyncioTestCase):
 
 
 class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
-    async def test_gemini_transcriber_success_bytes(self) -> None:
-        """Verifies that the Gemini transcriber transcribes from raw bytes."""
+    async def test_gemini_transcriber_success(self) -> None:
+        """Verifies that the Gemini transcriber transcribes from GCS URI."""
         with patch(
             "backend.pipeline.transcription.transcribers.gemini.genai.Client"
         ) as mock_client_cls:
@@ -534,10 +534,8 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             )
             transcriber.setup()
 
-            dummy_audio = b"\x00" * 100
-
             transcript = await transcriber.transcribe(
-                audio_data=dummy_audio,
+                uri="gs://test-bucket/audio.flac",
                 duration_ms=2500,
             )
 
@@ -579,7 +577,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             transcriber.setup()
 
             transcript = await transcriber.transcribe(
-                audio_data=b"\x00" * 100,
+                uri="gs://test-bucket/audio.flac",
                 duration_ms=1000,
             )
 

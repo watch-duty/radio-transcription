@@ -93,30 +93,23 @@ class GeminiTranscriber(base.Transcriber):
             msg = "Transcriber client used before setup() was called."
             raise RuntimeError(msg)
 
+        if not uri:
+            logger.error("No GCS URI provided to Gemini transcriber.")
+            return None
+
         logger.info(
-            "Transcribing %.3fs of audio %s",
+            "Transcribing %.3fs of audio from GCS URI: %s",
             duration_ms / 1000,
-            f"from GCS URI: {uri}" if uri else "from in-memory bytes",
+            uri,
         )
 
         # TODO(http://linear.app/watchduty/issue/GOO-580/extend-gemini-transcriber-to-support-context): Support context
-        if not uri and not audio_data:
-            logger.error("No audio_data or uri provided to Gemini transcriber.")
-            return None
-
         mime_type = self.config.mime_type
-        if uri:
-            guessed_mime, _ = mimetypes.guess_type(uri)
-            if guessed_mime:
-                mime_type = guessed_mime
+        guessed_mime, _ = mimetypes.guess_type(uri)
+        if guessed_mime:
+            mime_type = guessed_mime
 
-        parts = []
-        if uri:
-            parts.append(types.Part.from_uri(file_uri=uri, mime_type=mime_type))
-        elif audio_data:
-            parts.append(
-                types.Part.from_bytes(data=audio_data, mime_type=mime_type)
-            )
+        parts = [types.Part.from_uri(file_uri=uri, mime_type=mime_type)]
 
         contents = types.Content(role="user", parts=parts)
 
