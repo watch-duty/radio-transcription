@@ -4,7 +4,7 @@ import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import { useTheme } from '@mui/material/styles';
 
-export interface AudioPlayerProps {
+export interface TranscriptPlayControlProps {
   audioUri: string;
   segmentId: string;
   onToggleAudio: (segmentId: string, audioUri: string) => void;
@@ -13,14 +13,14 @@ export interface AudioPlayerProps {
   hideButton?: boolean;
 }
 
-function AudioPlayer({
+function TranscriptPlayControl({
   audioUri,
   segmentId,
   onToggleAudio,
   isAudioPlaying,
   currentlyPlayingSegmentId,
   hideButton = false,
-}: AudioPlayerProps) {
+}: TranscriptPlayControlProps) {
   const theme = useTheme();
 
   const isPlayingSegment = segmentId === currentlyPlayingSegmentId;
@@ -47,4 +47,4 @@ function AudioPlayer({
   );
 }
 
-export default AudioPlayer;
+export default TranscriptPlayControl;
