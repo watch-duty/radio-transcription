@@ -32,7 +32,7 @@ export function getSegmentDuration(segment: {
  * Finds the adjacent audio segment in the specified direction.
  * Newer segments have lower indices, older segments have higher indices.
  */
-export function findAdjacentAudioSegment(
+export function findNextAudioSegment(
   rawAudioSegments: AudioSegment[],
   currentId: string,
   direction: 'forward' | 'backward'
@@ -41,14 +41,11 @@ export function findAdjacentAudioSegment(
   if (currentIdx === -1) return null;
 
   const step = direction === 'forward' ? -1 : 1; // forward = next newer = index decreasing; backward = next older = index increasing
-  let nextIdx = currentIdx + step;
-
-  while (nextIdx >= 0 && nextIdx < rawAudioSegments.length) {
-    const nextSegment = rawAudioSegments[nextIdx];
+  for (let i = currentIdx + step; i >= 0 && i < rawAudioSegments.length; i += step) {
+    const nextSegment = rawAudioSegments[i];
     if (nextSegment?.playbackAudioUri) {
       return { id: nextSegment.id, uri: nextSegment.playbackAudioUri };
     }
-    nextIdx += step;
   }
   return null;
 }

@@ -6,7 +6,7 @@ import { type AudioSegment } from '@transcription/common';
 import { type PlaybackController } from '../audio/WebAudioPlayer';
 import {
   calculateSkipTimeDestination,
-  findAdjacentAudioSegment,
+  findNextAudioSegment,
   findAdjacentSpeechSegment,
   isWithinSegment,
 } from '../utils/playbackUtils';
@@ -58,7 +58,7 @@ export function useTranscriptPlayback({
     const targetId = getTargetId();
     if (!targetId) return;
 
-    const next = findAdjacentAudioSegment(
+    const next = findNextAudioSegment(
       rawAudioSegments,
       targetId,
       'forward'
@@ -73,7 +73,7 @@ export function useTranscriptPlayback({
     const targetId = getTargetId();
     if (!targetId) return;
 
-    const prev = findAdjacentAudioSegment(
+    const prev = findNextAudioSegment(
       rawAudioSegments,
       targetId,
       'backward'
