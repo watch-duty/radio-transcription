@@ -8,7 +8,12 @@ from unittest.mock import MagicMock, patch
 import grpc
 import requests
 from cloudevents.http.event import CloudEvent
-from google.api_core.exceptions import PermissionDenied, ServiceUnavailable
+from google.api_core.exceptions import (
+    GoogleAPICallError,
+    PermissionDenied,
+    ServiceUnavailable,
+)
+from google.genai import errors as genai_errors
 
 from backend.pipeline.common.clients.audio_segments_client import (
     AsyncAudioSegmentsClient,
@@ -22,6 +27,7 @@ from backend.pipeline.schema_types.transcribed_audio_pb2 import (
 from backend.pipeline.transcription.processor import (
     CHIRP_UNINTELLIGIBLE_MARKER,
     TranscriptionEventProcessor,
+    _is_transient_exception,
 )
 from backend.pipeline.transcription.transcribers.base import Transcriber
 from backend.services.audio_segments import models as audio_segments_models
@@ -765,3 +771,34 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(call_data["text"], "")
         self.assertIn("Permanent Failure", call_data["errors"][0])
+
+
+class IsTransientExceptionTest(unittest.TestCase):
+    """Unit tests for the _is_transient_exception helper."""
+
+    def test_google_api_call_error_transient(self) -> None:
+        e = GoogleAPICallError("Resource exhausted")
+        e.code = 429
+        self.assertTrue(_is_transient_exception(e))
+
+        e = GoogleAPICallError("Internal error")
+        e.code = 500
+        self.assertTrue(_is_transient_exception(e))
+
+        e = GoogleAPICallError("Conflict")
+        e.code = 409
+        self.assertTrue(_is_transient_exception(e))
+
+        e = GoogleAPICallError("Bad request")
+        e.code = 400
+        self.assertFalse(_is_transient_exception(e))
+
+    def test_google_genai_api_error_transient(self) -> None:
+        e = genai_errors.APIError(429, {})
+        self.assertTrue(_is_transient_exception(e))
+
+        e = genai_errors.APIError(503, {})
+        self.assertTrue(_is_transient_exception(e))
+
+        e = genai_errors.APIError(400, {})
+        self.assertFalse(_is_transient_exception(e))
