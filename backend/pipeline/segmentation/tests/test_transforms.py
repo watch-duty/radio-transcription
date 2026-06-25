@@ -19,6 +19,7 @@ from apache_beam.options.pipeline_options import (
 from apache_beam.testing.test_pipeline import TestPipeline as BeamTestPipeline
 from apache_beam.testing.test_stream import TestStream
 from apache_beam.testing.util import assert_that, equal_to
+from apache_beam.transforms.userstate import RuntimeTimer
 from apache_beam.transforms.window import TimestampedValue
 from apache_beam.utils.timestamp import Timestamp
 from google.cloud import storage
@@ -411,11 +412,12 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 feed_id="test-feed",
                 transmission_context_state=mock_state,
                 last_start_ms_state=MagicMock(),
-                stale_timer_event=MagicMock(),
-                stale_timer_proc=MagicMock(),
+                stale_timer_event=MagicMock(spec=RuntimeTimer),
+                stale_timer_proc=MagicMock(spec=RuntimeTimer),
                 timestamp=Timestamp(100),
-                gap_timer_event=MagicMock(),
-                gap_timer_proc=MagicMock(),
+                gap_timer_event=MagicMock(spec=RuntimeTimer),
+                gap_timer_event_v2=MagicMock(spec=RuntimeTimer),
+                gap_timer_proc=MagicMock(spec=RuntimeTimer),
             )
         )
 

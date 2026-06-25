@@ -4,7 +4,8 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import requests
-from google.api_core.retry import Retry
+from google.api_core.retry_async import AsyncRetry
+from google.genai import types
 
 from backend.pipeline.transcription.enums import TranscriberType
 from backend.pipeline.transcription.transcribers.chirp import (
@@ -116,7 +117,7 @@ class TestTranscribers(unittest.IsolatedAsyncioTestCase):
             mock_client_instance.recognize.assert_called_once()
             _, kwargs = mock_client_instance.recognize.call_args
             self.assertIn("retry", kwargs)
-            self.assertIsInstance(kwargs["retry"], Retry)
+            self.assertIsInstance(kwargs["retry"], AsyncRetry)
 
     async def test_google_chirp_transcriber_no_phrase_hints_omits_adaptation(
         self,
@@ -503,6 +504,86 @@ class TestLocalApiTranscriber(unittest.IsolatedAsyncioTestCase):
             "LOCAL_ASR_API_URL environment variable is not set",
             str(ctx.exception),
         )
+
+
+class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
+    async def test_gemini_transcriber_success_bytes(self) -> None:
+        """Verifies that the Gemini transcriber transcribes from raw bytes."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            # Mock generate_content response
+            mock_response = MagicMock()
+            mock_candidate = MagicMock()
+            mock_candidate.finish_reason = types.FinishReason.STOP
+            mock_candidate.content.parts = [MagicMock(text="Hello from Gemini")]
+            mock_response.candidates = [mock_candidate]
+            mock_response.text = "Hello from Gemini"
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                return_value=mock_response
+            )
+
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-central1", "prompt": "Test Prompt"}',
+            )
+            transcriber.setup()
+
+            dummy_audio = b"\x00" * 100
+
+            transcript = await transcriber.transcribe(
+                audio_data=dummy_audio,
+                duration_ms=2500,
+            )
+
+            self.assertEqual(transcript, "Hello from Gemini")
+            mock_client_instance.aio.models.generate_content.assert_called_once()
+            _, kwargs = (
+                mock_client_instance.aio.models.generate_content.call_args
+            )
+            self.assertEqual(kwargs["model"], "gemini-3.1-flash-lite")
+
+            config = kwargs["config"]
+            self.assertEqual(config.system_instruction, "Test Prompt")
+            self.assertIsNotNone(config.safety_settings)
+
+    async def test_gemini_transcriber_unintelligible(self) -> None:
+        """Verifies that [UNINTELLIGIBLE] response maps to None."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            mock_response = MagicMock()
+            mock_candidate = MagicMock()
+            mock_candidate.finish_reason = types.FinishReason.STOP
+            mock_candidate.content.parts = [MagicMock(text="[UNINTELLIGIBLE]")]
+            mock_response.candidates = [mock_candidate]
+            mock_response.text = "[UNINTELLIGIBLE]"
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                return_value=mock_response
+            )
+
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-central1"}',
+            )
+            transcriber.setup()
+
+            transcript = await transcriber.transcribe(
+                audio_data=b"\x00" * 100,
+                duration_ms=1000,
+            )
+
+            self.assertIsNone(transcript)
 
 
 if __name__ == "__main__":
