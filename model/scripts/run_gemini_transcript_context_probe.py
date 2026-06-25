@@ -207,7 +207,7 @@ def row_identity(row: dict[str, Any]) -> str:
 
 
 def load_resume_rows(path: str) -> dict[str, dict[str, Any]]:
-    """Load complete prior output rows keyed by row identity."""
+    """Load complete successful prior output rows keyed by row identity."""
     output_path = Path(path)
     if not output_path.exists():
         return {}
@@ -218,7 +218,9 @@ def load_resume_rows(path: str) -> dict[str, dict[str, Any]]:
                 continue
             row = json.loads(raw_line)
             identity = str(row.get("row_identity") or row_identity(row))
-            if row.get(f"pred_text_{MODEL_KEY}") is not None:
+            if row.get(f"pred_text_{MODEL_KEY}") is not None and not row.get(
+                f"error_{MODEL_KEY}"
+            ):
                 rows[identity] = row
     return rows
 
@@ -418,7 +420,15 @@ async def generate_with_retries(
                 finish_reason = str(
                     getattr(response.candidates[0], "finish_reason", "UNKNOWN")
                 )
-            return "", f"Response blocked/empty. Reason: {finish_reason}"
+            last_error = f"Response blocked/empty. Reason: {finish_reason}"
+            LOGGER.warning(
+                "Gemini attempt %d/%d returned no text: %s",
+                attempt,
+                max_retries,
+                last_error,
+            )
+            if attempt < max_retries:
+                await asyncio.sleep(retry_sleep_seconds * attempt)
     return "", last_error
 
 
