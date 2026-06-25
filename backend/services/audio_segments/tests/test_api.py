@@ -17,6 +17,8 @@ from backend.services.audio_segments.models import (
     ListAudioSegmentsResponse,
     TranscriptAnnotation,
     TranscriptAnnotationData,
+    WaveformAnnotation,
+    WaveformAnnotationData,
 )
 
 _SEGMENT_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -216,6 +218,32 @@ class TestAudioSegmentsAPI(unittest.TestCase):
         self.assertEqual(data["audio_segment_id"], _SEGMENT_ID)
         self.assertEqual(data["type"], "EVALUATION")
         self.assertEqual(data["data"]["decisions"], ["rule-1"])
+        self.mock_service.add_annotation.assert_called_once()
+
+    def test_add_waveform_annotation_success(self) -> None:
+        """Test adding a waveform annotation successfully."""
+        payload = {
+            "type": "WAVEFORM",
+            "data": {"peaks": [[0.0, 0.5, 0.25, 1.0]], "duration_seconds": 4.0},
+        }
+        mock_annotation = WaveformAnnotation(
+            audio_segment_id=_SEGMENT_ID,
+            type=AnnotationType.WAVEFORM,
+            data=WaveformAnnotationData(
+                peaks=[[0.0, 0.5, 0.25, 1.0]], duration_seconds=4.0
+            ),
+            created_at=datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+        )
+        self.mock_service.add_annotation.return_value = mock_annotation
+
+        response = self.client.post(
+            f"/v1/audio_segments/{_SEGMENT_ID}/annotations", json=payload
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        data = response.json()
+        self.assertEqual(data["type"], "WAVEFORM")
+        self.assertEqual(data["data"]["peaks"], [[0.0, 0.5, 0.25, 1.0]])
+        self.assertEqual(data["data"]["duration_seconds"], 4.0)
         self.mock_service.add_annotation.assert_called_once()
 
     def test_add_annotation_segment_not_found(self) -> None:

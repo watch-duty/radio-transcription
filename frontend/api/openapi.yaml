@@ -246,13 +246,13 @@ components:
           items:
             $ref: "#/components/schemas/Tag"
           type: array
-        quarantineReason:
-          type: string
         statusReason:
           $ref: "#/components/schemas/BackendFeedStatusReason"
         lastSpeechSegmentTimestamp:
           type: number
           format: double
+        statusReasonDetail:
+          type: string
       required:
         - name
         - sourceType
@@ -968,6 +968,17 @@ paths:
                 required:
                   - message
                 type: object
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
         "500":
           description: Internal Server Error
           content:
@@ -1098,6 +1109,17 @@ paths:
                 required:
                   - message
                 type: object
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
         "500":
           description: Internal Server Error
           content:
@@ -1167,6 +1189,17 @@ paths:
                 required:
                   - message
                 type: object
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
         "500":
           description: Internal Server Error
           content:
@@ -1226,6 +1259,17 @@ paths:
                 type: object
         "404":
           description: Not Found
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "409":
+          description: Conflict
           content:
             application/json:
               schema:

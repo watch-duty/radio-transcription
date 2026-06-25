@@ -388,14 +388,64 @@ jobs:
           PGDATABASE: postgres
         run: |
           set -euo pipefail
-          violations=$(psql -v ON_ERROR_STOP=1 -t -A \
-            -f terraform/modules/alloydb/sql/ci/hot_protection_check.sql)
-          if [ -n "$violations" ]; then
-            echo "::error::HOT-protection violation(s) detected:"
-            echo "$violations"
-            echo "An index on the feeds table references a mutated hot-path"
-            echo "column. This will defeat HOT updates and cause table bloat."
-            echo "See sql/ci/hot_protection_check.sql for the guarded column list."
-            exit 1
-          fi
+
+          guard_sql="terraform/modules/alloydb/sql/ci/hot_protection_check.sql"
+
+          cleanup_hot_guard_fixtures() {
+            psql -v ON_ERROR_STOP=1 \
+              -c "DROP INDEX IF EXISTS hot_guard_direct_fixture" \
+              -c "DROP INDEX IF EXISTS hot_guard_predicate_fixture" \
+              -c "DROP INDEX IF EXISTS hot_guard_expression_fixture" \
+              >/dev/null
+          }
+          trap cleanup_hot_guard_fixtures EXIT
+
+          run_hot_guard() {
+            psql -v ON_ERROR_STOP=1 -t -A -f "$guard_sql"
+          }
+
+          assert_hot_guard_clean() {
+            local violations
+            violations=$(run_hot_guard)
+            if [ -n "$violations" ]; then
+              echo "::error::HOT-protection violation(s) detected:"
+              echo "$violations"
+              echo "An index on the feeds table references a mutated hot-path"
+              echo "column. This will defeat HOT updates and cause table bloat."
+              echo "See sql/ci/hot_protection_check.sql for the guarded column list."
+              exit 1
+            fi
+          }
+
+          assert_hot_guard_reports() {
+            local expected="$1"
+            local violations
+            violations=$(run_hot_guard)
+            if [ "$violations" != "$expected" ]; then
+              echo "::error::HOT-protection fixture did not report expected violation:"
+              echo "Expected: $expected"
+              echo "Actual:"
+              echo "$violations"
+              exit 1
+            fi
+          }
+
+          assert_hot_guard_clean
+
+          psql -v ON_ERROR_STOP=1 \
+            -c "CREATE INDEX hot_guard_direct_fixture ON feeds (last_heartbeat)"
+          assert_hot_guard_reports "hot_guard_direct_fixture|last_heartbeat|direct"
+          psql -v ON_ERROR_STOP=1 -c "DROP INDEX hot_guard_direct_fixture"
+
+          psql -v ON_ERROR_STOP=1 \
+            -c "CREATE INDEX hot_guard_predicate_fixture ON feeds (id) WHERE last_heartbeat IS NOT NULL"
+          assert_hot_guard_reports "hot_guard_predicate_fixture|last_heartbeat|derived"
+          psql -v ON_ERROR_STOP=1 -c "DROP INDEX hot_guard_predicate_fixture"
+
+          psql -v ON_ERROR_STOP=1 \
+            -c "CREATE INDEX hot_guard_expression_fixture ON feeds ((COALESCE(worker_id::text, 'missing')))"
+          assert_hot_guard_reports "hot_guard_expression_fixture|worker_id|derived"
+          psql -v ON_ERROR_STOP=1 -c "DROP INDEX hot_guard_expression_fixture"
+
+          assert_hot_guard_clean
           echo "HOT-protection check passed: no index references a guarded column."

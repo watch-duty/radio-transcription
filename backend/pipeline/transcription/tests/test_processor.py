@@ -2,6 +2,7 @@
 
 import base64
 import unittest
+from concurrent.futures import Future
 from unittest.mock import MagicMock, patch
 
 import grpc
@@ -25,10 +26,11 @@ from backend.pipeline.transcription.processor import (
     TranscriptionEventProcessor,
     _is_transient_exception,
 )
+from backend.pipeline.transcription.transcribers.base import Transcriber
 from backend.services.audio_segments import models as audio_segments_models
 
 
-class TranscriptionEventProcessorTest(unittest.TestCase):
+class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.record_pipeline_stage_patch = patch(
             "backend.pipeline.transcription.processor.record_pipeline_stage"
@@ -40,15 +42,15 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.record_pipeline_stage_patch.stop()
 
-    def test_process_event_success(self) -> None:
+    async def test_process_event_success(self) -> None:
         """Verifies successful end-to-end claim-check Pub/Sub CloudEvent processing."""
         # Setup mocks
-        mock_transcriber = MagicMock()
+        mock_transcriber = MagicMock(spec=Transcriber)
         mock_transcriber.transcribe.return_value = "Hello world"
 
         mock_publisher = MagicMock()
-        mock_future = MagicMock()
-        mock_future.result.return_value = "msg-12345"
+        mock_future = Future()
+        mock_future.set_result("msg-12345")
         mock_publisher.publish.return_value = mock_future
         mock_publisher.topic_path.return_value = (
             "projects/test-proj/topics/egress"
@@ -100,7 +102,7 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         )
 
         # Run process_event
-        processor.process_event(cloud_event)
+        await processor.process_event(cloud_event)
 
         # Verify transcriber was invoked with GCS reference
         mock_transcriber.transcribe.assert_called_once_with(
@@ -146,15 +148,15 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             },
         )
 
-    def test_process_event_empty_transcription(self) -> None:
+    async def test_process_event_empty_transcription(self) -> None:
         """Verifies behavior when speech API returns empty transcription."""
         # Setup mocks
-        mock_transcriber = MagicMock()
+        mock_transcriber = MagicMock(spec=Transcriber)
         mock_transcriber.transcribe.return_value = ""
 
         mock_publisher = MagicMock()
-        mock_future = MagicMock()
-        mock_future.result.return_value = "msg-12345"
+        mock_future = Future()
+        mock_future.set_result("msg-12345")
         mock_publisher.publish.return_value = mock_future
         mock_publisher.topic_path.return_value = (
             "projects/test-proj/topics/egress"
@@ -205,7 +207,7 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         )
 
         # Run process_event
-        processor.process_event(cloud_event)
+        await processor.process_event(cloud_event)
 
         # Verify add_audio_segment_annotation was called with error
         mock_audio_segments_client.add_audio_segment_annotation.assert_called_once_with(
@@ -217,9 +219,9 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             },
         )
 
-    def test_process_event_transcribe_error_silent_drop(self) -> None:
+    async def test_process_event_transcribe_error_silent_drop(self) -> None:
         """Verifies that a permanent exception raised during transcription is caught and silently dropped."""
-        mock_transcriber = MagicMock()
+        mock_transcriber = MagicMock(spec=Transcriber)
         mock_transcriber.transcribe.side_effect = ValueError(
             "Audio payload too long for synchronous API"
         )
@@ -266,7 +268,7 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         )
 
         # Permanent transcription exception must be caught gracefully without propagating
-        processor.process_event(cloud_event)
+        await processor.process_event(cloud_event)
 
         # Egress publishing must never be called (event silently dropped)
         mock_publisher.publish.assert_not_called()
@@ -279,7 +281,7 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         self.assertEqual(call_data["text"], "")
         self.assertIn("Permanent Failure", call_data["errors"][0])
 
-    def test_process_event_transient_error_propagates(self) -> None:
+    async def test_process_event_transient_error_propagates(self) -> None:
         """Verifies that a transient exception raised during transcription propagates so Pub/Sub retries."""
 
         class MockGrpcCallError(grpc.RpcError, grpc.Call):
@@ -288,7 +290,7 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             def code(self) -> grpc.StatusCode:
                 return grpc.StatusCode.UNAVAILABLE
 
-        mock_transcriber = MagicMock()
+        mock_transcriber = MagicMock(spec=Transcriber)
         grpc_err = MockGrpcCallError()
         mock_transcriber.transcribe.side_effect = grpc_err
 
@@ -335,7 +337,7 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
 
         # Transient error must be propagated/raised to trigger retry
         with self.assertRaises(grpc.RpcError):
-            processor.process_event(cloud_event)
+            await processor.process_event(cloud_event)
 
         # Egress publishing must never be called
         mock_publisher.publish.assert_not_called()
@@ -347,11 +349,11 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         ]
         self.assertIn("Transient Failure", call_data["errors"][0])
 
-    def test_process_event_audio_too_long_permanent_failure(self) -> None:
+    async def test_process_event_audio_too_long_permanent_failure(self) -> None:
         """Verifies that when audio duration exceeds the transcriber's limit,
         the transcriber raises ValueError and it is treated as a permanent failure.
         """
-        mock_transcriber = MagicMock()
+        mock_transcriber = MagicMock(spec=Transcriber)
         mock_transcriber.transcribe.side_effect = ValueError(
             "Audio payload too long for synchronous API"
         )
@@ -394,7 +396,7 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         )
 
         # Must return cleanly without raising, acknowledging the message
-        processor.process_event(cloud_event)
+        await processor.process_event(cloud_event)
 
         # Transcriber is called and raises the ValueError
         mock_transcriber.transcribe.assert_called_once()
@@ -409,9 +411,11 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         self.assertIn("Permanent Failure", call_data["errors"][0])
         self.assertIn("Audio payload too long", call_data["errors"][0])
 
-    def test_process_event_google_api_transient_error_propagates(self) -> None:
+    async def test_process_event_google_api_transient_error_propagates(
+        self,
+    ) -> None:
         """Verifies that a transient GoogleAPICallError propagates to trigger a retry."""
-        mock_transcriber = MagicMock()
+        mock_transcriber = MagicMock(spec=Transcriber)
         mock_transcriber.transcribe.side_effect = ServiceUnavailable(
             "Transient backend error"
         )
@@ -459,7 +463,7 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
 
         # ServiceUnavailable (GoogleAPICallError with code 503) must propagate
         with self.assertRaises(ServiceUnavailable):
-            processor.process_event(cloud_event)
+            await processor.process_event(cloud_event)
 
         mock_publisher.publish.assert_not_called()
         mock_audio_segments_client.add_audio_segment_annotation.assert_called_once()
@@ -468,9 +472,11 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         ]
         self.assertIn("Transient Failure", call_data["errors"][0])
 
-    def test_process_event_google_api_permanent_error_silent_drop(self) -> None:
+    async def test_process_event_google_api_permanent_error_silent_drop(
+        self,
+    ) -> None:
         """Verifies that a permanent GoogleAPICallError is caught and acknowledged without retry."""
-        mock_transcriber = MagicMock()
+        mock_transcriber = MagicMock(spec=Transcriber)
         mock_transcriber.transcribe.side_effect = PermissionDenied(
             "GCP Permission Denied"
         )
@@ -517,7 +523,7 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         )
 
         # PermissionDenied (GoogleAPICallError with code 403) must be caught and swallowed cleanly
-        processor.process_event(cloud_event)
+        await processor.process_event(cloud_event)
 
         mock_publisher.publish.assert_not_called()
         mock_audio_segments_client.add_audio_segment_annotation.assert_called_once()
@@ -527,11 +533,11 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         self.assertEqual(call_data["text"], "")
         self.assertIn("Permanent Failure", call_data["errors"][0])
 
-    def test_process_event_requests_timeout_transient_error_propagates(
+    async def test_process_event_requests_timeout_transient_error_propagates(
         self,
     ) -> None:
         """Verifies that requests.exceptions.Timeout during transcription propagates to trigger a retry."""
-        mock_transcriber = MagicMock()
+        mock_transcriber = MagicMock(spec=Transcriber)
         mock_transcriber.transcribe.side_effect = requests.exceptions.Timeout(
             "Request timed out"
         )
@@ -575,7 +581,7 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         )
 
         with self.assertRaises(requests.exceptions.Timeout):
-            processor.process_event(cloud_event)
+            await processor.process_event(cloud_event)
 
         mock_publisher.publish.assert_not_called()
         mock_audio_segments_client.add_audio_segment_annotation.assert_called_once()
@@ -584,11 +590,11 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         ]
         self.assertIn("Transient Failure", call_data["errors"][0])
 
-    def test_process_event_requests_connection_error_transient_error_propagates(
+    async def test_process_event_requests_connection_error_transient_error_propagates(
         self,
     ) -> None:
         """Verifies that requests.exceptions.ConnectionError during transcription propagates to trigger a retry."""
-        mock_transcriber = MagicMock()
+        mock_transcriber = MagicMock(spec=Transcriber)
         mock_transcriber.transcribe.side_effect = (
             requests.exceptions.ConnectionError("Connection refused")
         )
@@ -632,7 +638,7 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         )
 
         with self.assertRaises(requests.exceptions.ConnectionError):
-            processor.process_event(cloud_event)
+            await processor.process_event(cloud_event)
 
         mock_publisher.publish.assert_not_called()
         mock_audio_segments_client.add_audio_segment_annotation.assert_called_once()
@@ -641,11 +647,11 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         ]
         self.assertIn("Transient Failure", call_data["errors"][0])
 
-    def test_process_event_requests_http_500_transient_error_propagates(
+    async def test_process_event_requests_http_500_transient_error_propagates(
         self,
     ) -> None:
         """Verifies that requests.exceptions.HTTPError (500) during transcription propagates to trigger a retry."""
-        mock_transcriber = MagicMock()
+        mock_transcriber = MagicMock(spec=Transcriber)
 
         mock_resp = MagicMock()
         mock_resp.status_code = 500
@@ -693,7 +699,7 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         )
 
         with self.assertRaises(requests.exceptions.HTTPError):
-            processor.process_event(cloud_event)
+            await processor.process_event(cloud_event)
 
         mock_publisher.publish.assert_not_called()
         mock_audio_segments_client.add_audio_segment_annotation.assert_called_once()
@@ -702,11 +708,11 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
         ]
         self.assertIn("Transient Failure", call_data["errors"][0])
 
-    def test_process_event_requests_http_400_permanent_error_silent_drop(
+    async def test_process_event_requests_http_400_permanent_error_silent_drop(
         self,
     ) -> None:
         """Verifies that requests.exceptions.HTTPError (400) during transcription is caught and silently dropped."""
-        mock_transcriber = MagicMock()
+        mock_transcriber = MagicMock(spec=Transcriber)
 
         mock_resp = MagicMock()
         mock_resp.status_code = 400
@@ -753,7 +759,7 @@ class TranscriptionEventProcessorTest(unittest.TestCase):
             audio_segments_client=mock_audio_segments_client,
         )
 
-        processor.process_event(cloud_event)
+        await processor.process_event(cloud_event)
 
         mock_publisher.publish.assert_not_called()
         mock_audio_segments_client.add_audio_segment_annotation.assert_called_once()

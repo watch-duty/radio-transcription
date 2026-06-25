@@ -8,7 +8,7 @@ import random
 import uuid
 from typing import TYPE_CHECKING
 
-from backend.pipeline.common.audio import get_audio_duration
+from backend.pipeline.common.audio import probe_audio_metadata
 from backend.pipeline.ingestion import quarantine_reason
 from backend.pipeline.ingestion.collectors import (
     control_flow,
@@ -30,7 +30,6 @@ from backend.pipeline.ingestion.failure_classifiers import (
     ffmpeg as ffmpeg_classifier,
 )
 from backend.pipeline.ingestion.models import (
-    AudioMimeType,
     CapturedChunk,
     CaptureEvent,
     FeedFailure,
@@ -60,7 +59,7 @@ async def _process_file_list(
     processed_uuids: collections.deque[str],
     source_feed_id: str,
     outcome: ItemBatchOutcome,
-) -> AsyncIterator[CapturedChunk]:
+) -> AsyncIterator[CaptureEvent]:
     """Filter, sort and process audio files, yielding CapturedChunks."""
     # A Fire Notifications file-list response is the observation boundary:
     # all eligible attempted MP3s failing is meaningful, but isolated stale or
@@ -95,26 +94,72 @@ async def _process_file_list(
                     source_type=feed["source_type"],
                 )
             continue
-        mp3_bytes = audio_result
+        audio_bytes = audio_result
 
         try:
-            # to_thread: get_audio_duration shells out to ffprobe — keep it off the event loop.
-            duration_ms = await asyncio.to_thread(
-                get_audio_duration, mp3_bytes, input_format="mp3"
+            # to_thread: probe_audio_metadata shells out to ffprobe — keep
+            # it off the event loop.
+            duration_ms, mime_type = await asyncio.to_thread(
+                probe_audio_metadata, audio_bytes, input_format="mp3"
             )
         except Exception as exc:
+            info = ffmpeg_classifier.classify_ffprobe_exception(exc)
             reason = ffmpeg_classifier.ffprobe_exception_failure_reason(exc)
-            logger.warning(
-                "Failed to compute duration for uuid=%s: %s",
-                f.uuid,
-                reason,
+
+            # Permanently skip only if the exception indicates that ffprobe ran,
+            # inspected the downloaded MP3 bytes, and exited with a positive exit code.
+            is_permanent = (
+                info is not None
+                and info.kind
+                is ffmpeg_classifier.FfmpegFailureKind.PROCESS_EXIT
+                and info.exit_code is not None
+                and info.exit_code > 0
             )
-            outcome.record_failure(
-                ItemFailure(
-                    feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+
+            if is_permanent:
+                logger.warning(
+                    "Failed to compute duration for corrupt audio file in feed %s (%s): "
+                    "uuid=%s filename=%s size=%s start_time=%s reason=%s. "
+                    "Permanently skipping corrupt audio file.",
+                    feed["id"],
+                    feed.get("name", "Unknown"),
+                    f.uuid,
+                    f.filename,
+                    f.size if f.size is not None else "unknown",
+                    f.start_time,
                     reason,
                 )
-            )
+                outcome.record_failure(
+                    ItemFailure(
+                        feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                        reason,
+                    )
+                )
+                yield SourceObservation(resume_position=f.start_time)
+            else:
+                logger.warning(
+                    "Failed to compute duration for audio file in feed %s (%s): "
+                    "uuid=%s filename=%s size=%s start_time=%s reason=%s. "
+                    "This failure is retryable.",
+                    feed["id"],
+                    feed.get("name", "Unknown"),
+                    f.uuid,
+                    f.filename,
+                    f.size if f.size is not None else "unknown",
+                    f.start_time,
+                    reason,
+                )
+                status_reason = (
+                    info.status_reason
+                    if info is not None
+                    else feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR
+                )
+                outcome.record_failure(
+                    ItemFailure(
+                        status_reason,
+                        reason,
+                    )
+                )
             continue
 
         end_time = f.start_time + datetime.timedelta(milliseconds=duration_ms)
@@ -123,16 +168,16 @@ async def _process_file_list(
             "FN Audio ready: source_feed_id=%s uuid=%s size=%d duration_ms=%d",
             source_feed_id,
             f.uuid,
-            len(mp3_bytes),
+            len(audio_bytes),
             duration_ms,
         )
         yield CapturedChunk(
-            audio_bytes=mp3_bytes,
+            audio_bytes=audio_bytes,
             chunk_start_time=f.start_time,
             chunk_end_time=end_time,
             session_id=connection_session_id,
             receipt_time=receipt_time,
-            mime_type=AudioMimeType.MPEG,
+            mime_type=mime_type,
             resume_position=f.start_time,
             external_audio_segment_id=f"{f.uuid}|{f.filename}",
         )

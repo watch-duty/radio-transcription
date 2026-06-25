@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import time
@@ -46,26 +47,29 @@ class LocalApiTranscriber(Transcriber):
         msg = f"Failed to connect to local asr API health check at {health_url} after {max_retries} attempts."
         raise RuntimeError(msg)
 
-    def transcribe(
+    async def transcribe(
         self,
         *,
         audio_data: bytes | None = None,
         uri: str | None = None,
         duration_ms: int,
     ) -> str | None:
-        if uri:
-            # Prefer sending URI if available, let the API download it
-            logger.info(f"Calling local whisper API with URI: {uri}")
-            params = {"uri": uri}
-            resp = requests.post(self.api_url, params=params, timeout=60)
-        elif audio_data:
-            logger.info("Calling local whisper API with raw audio data")
-            files = {"file": ("audio.flac", audio_data, "audio/flac")}
-            resp = requests.post(self.api_url, files=files, timeout=60)
-        else:
+        def _call_api() -> requests.Response | None:
+            if uri:
+                logger.info(f"Calling local whisper API with URI: {uri}")
+                params = {"uri": uri}
+                return requests.post(self.api_url, params=params, timeout=60)
+            if audio_data:
+                logger.info("Calling local whisper API with raw audio data")
+                files = {"file": ("audio.flac", audio_data, "audio/flac")}
+                return requests.post(self.api_url, files=files, timeout=60)
             logger.warning(
                 "No audio_data or uri provided to LocalApiTranscriber."
             )
+            return None
+
+        resp = await asyncio.to_thread(_call_api)
+        if resp is None:
             return None
 
         try:
