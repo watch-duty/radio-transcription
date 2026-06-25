@@ -506,8 +506,8 @@ class TestLocalApiTranscriber(unittest.IsolatedAsyncioTestCase):
         )
 
 
-class TestGeminiTranscriber(unittest.TestCase):
-    def test_gemini_transcriber_success_bytes(self) -> None:
+class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
+    async def test_gemini_transcriber_success_bytes(self) -> None:
         """Verifies that the Gemini transcriber transcribes from raw bytes."""
         with patch(
             "backend.pipeline.transcription.transcribers.gemini.genai.Client"
@@ -522,8 +522,9 @@ class TestGeminiTranscriber(unittest.TestCase):
             mock_candidate.content.parts = [MagicMock(text="Hello from Gemini")]
             mock_response.candidates = [mock_candidate]
             mock_response.text = "Hello from Gemini"
-            mock_client_instance.models.generate_content.return_value = (
-                mock_response
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                return_value=mock_response
             )
 
             transcriber = get_transcriber(
@@ -535,21 +536,23 @@ class TestGeminiTranscriber(unittest.TestCase):
 
             dummy_audio = b"\x00" * 100
 
-            transcript = transcriber.transcribe(
+            transcript = await transcriber.transcribe(
                 audio_data=dummy_audio,
                 duration_ms=2500,
             )
 
             self.assertEqual(transcript, "Hello from Gemini")
-            mock_client_instance.models.generate_content.assert_called_once()
-            _, kwargs = mock_client_instance.models.generate_content.call_args
+            mock_client_instance.aio.models.generate_content.assert_called_once()
+            _, kwargs = (
+                mock_client_instance.aio.models.generate_content.call_args
+            )
             self.assertEqual(kwargs["model"], "gemini-3.1-flash-lite")
 
             config = kwargs["config"]
             self.assertEqual(config.system_instruction, "Test Prompt")
             self.assertIsNotNone(config.safety_settings)
 
-    def test_gemini_transcriber_unintelligible(self) -> None:
+    async def test_gemini_transcriber_unintelligible(self) -> None:
         """Verifies that [UNINTELLIGIBLE] response maps to None."""
         with patch(
             "backend.pipeline.transcription.transcribers.gemini.genai.Client"
@@ -563,8 +566,9 @@ class TestGeminiTranscriber(unittest.TestCase):
             mock_candidate.content.parts = [MagicMock(text="[UNINTELLIGIBLE]")]
             mock_response.candidates = [mock_candidate]
             mock_response.text = "[UNINTELLIGIBLE]"
-            mock_client_instance.models.generate_content.return_value = (
-                mock_response
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                return_value=mock_response
             )
 
             transcriber = get_transcriber(
@@ -574,7 +578,7 @@ class TestGeminiTranscriber(unittest.TestCase):
             )
             transcriber.setup()
 
-            transcript = transcriber.transcribe(
+            transcript = await transcriber.transcribe(
                 audio_data=b"\x00" * 100,
                 duration_ms=1000,
             )
