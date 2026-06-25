@@ -168,7 +168,7 @@ export function FeedStatusIndicator({
           </Box>
         </Tooltip>
         <RelativeTimeDisplay
-          label="Latest"
+          label="Last activity"
           timestamp={lastSpeechSegmentTimestamp}
         />
       </Box>
