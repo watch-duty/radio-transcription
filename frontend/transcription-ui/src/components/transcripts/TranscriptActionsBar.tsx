@@ -49,12 +49,21 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
     null
   );
   const [localDateTime, setLocalDateTime] = useState<Date | null>(dateTime);
-  const [localAlertFilter, setLocalAlertFilter] = useState<AlertFilter>('all');
+  const [localAlertFilter, setLocalAlertFilter] =
+    useState<AlertFilter>(alertFilter);
 
-  React.useEffect(() => {
+  const [prevDateTime, setPrevDateTime] = useState<Date | null>(dateTime);
+  const [prevAlertFilter, setPrevAlertFilter] =
+    useState<AlertFilter>(alertFilter);
+
+  if (dateTime !== prevDateTime) {
+    setPrevDateTime(dateTime);
     setLocalDateTime(dateTime);
+  }
+  if (alertFilter !== prevAlertFilter) {
+    setPrevAlertFilter(alertFilter);
     setLocalAlertFilter(alertFilter);
-  }, [dateTime, alertFilter]);
+  }
 
   const handleFilterOpen = (event: React.MouseEvent<HTMLElement>) => {
     setFilterAnchorEl(event.currentTarget);
