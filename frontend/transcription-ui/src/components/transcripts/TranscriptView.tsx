@@ -10,9 +10,7 @@ import { useSearchParams } from 'react-router';
 import type { VirtuosoHandle } from 'react-virtuoso';
 
 import Box from '@mui/material/Box';
-import Checkbox from '@mui/material/Checkbox';
 import CircularProgress from '@mui/material/CircularProgress';
-import FormControlLabel from '@mui/material/FormControlLabel';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import { useQuery } from '@tanstack/react-query';
@@ -24,13 +22,13 @@ import {
   type AlertFilter,
   useAudioSegments,
 } from '../../hooks/useAudioSegments';
-import {
-  type RenderableAudioSegment,
-  useConsolidatedAudioSegments,
-} from '../../hooks/useConsolidatedAudioSegments';
+import { useConsolidatedAudioSegments } from '../../hooks/useConsolidatedAudioSegments';
+import { useTranscriptPlayback } from '../../hooks/useTranscriptPlayback';
 import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
+import { isWithinSegment } from '../../utils/playbackUtils';
+import { AudioControl } from '../audio/AudioControl';
 import AudioDisplay from '../audio/AudioDisplay';
 import FeedSearchView from '../feeds/FeedSearchView';
 import FeedHeader from './FeedHeader';
@@ -49,17 +47,6 @@ const FEED_POLLING_INTERVAL_MS = 15000; // 15 seconds
 // items, which lets Virtuoso preserve the user's scroll position instead of
 // jumping to the top. Starts high so it stays positive across many prepends.
 const VIRTUOSO_START_INDEX = 1_000_000;
-
-// Matches a consolidated segment by its own id or, for silence bundles, by any
-// of the raw segment ids it contains.
-function matchesSegmentId(
-  segment: RenderableAudioSegment,
-  id: string
-): boolean {
-  return (
-    segment.id === id || (segment.bundledSegmentIds?.includes(id) ?? false)
-  );
-}
 
 export function TranscriptView({
   triggerSnackbar,
@@ -80,33 +67,11 @@ export function TranscriptView({
     [targetTimestampParam]
   );
 
-  const [searchedFeedId, setSearchedFeedId] = useState<string>(
-    targetFeedId || ''
-  );
-  const [searchedTimestamp, setSearchedTimestamp] = useState<Date | null>(
-    targetTimestamp
-  );
+  const searchedFeedId = targetFeedId || '';
+  const searchedTimestamp = targetTimestamp;
 
   const [newMessageCount, setNewMessageCount] = useState(0);
   const [playLatestAudio, setPlayLatestAudio] = useState(true);
-
-  // Effect which sets the searched feed ID based on the search params changing.
-  useEffect(() => {
-    if (targetFeedId) {
-      setSearchedFeedId(targetFeedId);
-    } else {
-      setSearchedFeedId('');
-    }
-  }, [targetFeedId]);
-
-  // Effect which sets the searched timestamp based on the search params changing.
-  useEffect(() => {
-    if (targetTimestamp) {
-      setSearchedTimestamp(targetTimestamp);
-    } else {
-      setSearchedTimestamp(null);
-    }
-  }, [targetTimestamp]);
 
   const [redactTranscripts, setRedactTranscripts] = useState(false);
   const [alertFilter, setAlertFilter] = useState<AlertFilter>('all');
@@ -272,6 +237,23 @@ export function TranscriptView({
     audioSegmentsRef.current = audioSegments;
   }, [audioSegments]);
 
+  const {
+    skipToNext,
+    skipToPrevious,
+    skipToNextSpeech,
+    skipToPreviousSpeech,
+    skipTime,
+  } = useTranscriptPlayback({
+    rawAudioSegments,
+    audioSegments,
+    currentlyPlayingSegmentId,
+    highlightedSegmentId,
+    isAudioPlaying,
+    currentAudioRef,
+    virtuosoRef,
+    toggleAudio,
+  });
+
   // Handles continuous auto-play by advancing to the next newer audio segment when the current audio finishes.
   // Since the audio segment list is sorted newest-first, the next transmission in time is at `currentIndex - 1`.
   useEffect(() => {
@@ -304,7 +286,7 @@ export function TranscriptView({
 
     // 2. If it was a Speech segment, or the last segment in a silence bundle, advance to the next newer audio segment row
     const currentIndex = audioSegments.findIndex((t) =>
-      matchesSegmentId(t, playbackEndedForId)
+      isWithinSegment(t, playbackEndedForId)
     );
 
     if (currentIndex > 0) {
@@ -410,7 +392,7 @@ export function TranscriptView({
       !hasScrolledToTarget.current
     ) {
       const index = audioSegments.findIndex((t) =>
-        matchesSegmentId(t, targetSegmentId)
+        isWithinSegment(t, targetSegmentId)
       );
       if (index !== -1) {
         const timer = setTimeout(() => {
@@ -427,9 +409,7 @@ export function TranscriptView({
   }, [isAudioSegmentsSuccess, targetSegmentId, audioSegments]);
 
   const handleClipClick = (segmentId: string) => {
-    const index = audioSegments.findIndex((t) =>
-      matchesSegmentId(t, segmentId)
-    );
+    const index = audioSegments.findIndex((t) => isWithinSegment(t, segmentId));
     if (index !== -1) {
       virtuosoRef.current?.scrollToIndex({
         index,
@@ -455,7 +435,7 @@ export function TranscriptView({
     }
 
     const audioSegment = audioSegments.find((t) =>
-      matchesSegmentId(t, targetId)
+      isWithinSegment(t, targetId)
     );
     if (audioSegment && audioSegment.playbackAudioUri) {
       toggleAudio(audioSegment.id, audioSegment.playbackAudioUri);
@@ -504,7 +484,7 @@ export function TranscriptView({
     if (!anchorId) return;
 
     const prependedCount = audioSegments.findIndex((s) =>
-      matchesSegmentId(s, anchorId)
+      isWithinSegment(s, anchorId)
     );
     if (prependedCount > 0) {
       setFirstItemIndex((prev) => prev - prependedCount);
@@ -513,14 +493,28 @@ export function TranscriptView({
 
   // A different feed / timestamp / alert filter replaces the list wholesale
   // rather than prepending, so reset the anchoring baseline.
-  useEffect(() => {
+  const [prevFeedId, setPrevFeedId] = useState(searchedFeedId);
+  const [prevTimestamp, setPrevTimestamp] = useState(searchedTimestamp);
+  const [prevAlertFilter, setPrevAlertFilter] = useState(alertFilter);
+
+  if (
+    searchedFeedId !== prevFeedId ||
+    searchedTimestamp?.getTime() !== prevTimestamp?.getTime() ||
+    alertFilter !== prevAlertFilter
+  ) {
+    setPrevFeedId(searchedFeedId);
+    setPrevTimestamp(searchedTimestamp);
+    setPrevAlertFilter(alertFilter);
     setFirstItemIndex(VIRTUOSO_START_INDEX);
+  }
+
+  // Reset refs inside an effect since they should not be modified during render
+  useEffect(() => {
     newerLoadAnchorId.current = null;
     hasScrolledAwayFromTop.current = false;
   }, [searchedFeedId, searchedTimestamp, alertFilter]);
 
   const handleFilterByDateTime = (date: Date | null) => {
-    setSearchedTimestamp(date);
     setSearchParams((prev) => {
       if (date) {
         prev.set('timestamp', date.getTime().toString());
@@ -547,7 +541,6 @@ export function TranscriptView({
   };
 
   const handleFeedSelect = (feedId: string) => {
-    setSearchedFeedId(feedId);
     stopPlayback();
     // Reset all state
     handleFilterByDateTime(null);
@@ -606,28 +599,20 @@ export function TranscriptView({
         onError={onError}
       />
 
-      <Box
-        sx={{
-          display: 'flex',
-          justifyContent: 'flex-end',
-          alignItems: 'center',
-          gap: 2,
-          // This space allows room for the alert icon which hovers above the AudioDisplay.
-          mb: 2.5,
-        }}
-      >
-        <FormControlLabel
-          control={
-            <Checkbox
-              checked={playLatestAudio}
-              onChange={(e) => setPlayLatestAudio(e.target.checked)}
-              disabled={!searchedFeed}
-            />
-          }
-          label="Always play latest audio"
-          slotProps={{ typography: { variant: 'body2' } }}
-        />
-      </Box>
+      <AudioControl
+        sx={{ mt: 1 }}
+        isAudioPlaying={isAudioPlaying}
+        onTogglePlayPause={handleTogglePlayPause}
+        onSkipToNext={skipToNext}
+        onSkipToPrevious={skipToPrevious}
+        onFastForward={skipToNextSpeech}
+        onFastRewind={skipToPreviousSpeech}
+        onSkipTime={skipTime}
+        playLatestAudio={playLatestAudio}
+        togglePlayLatestAudio={setPlayLatestAudio}
+        disableControls={rawAudioSegments.length === 0}
+        disableCheckbox={!searchedFeed}
+      />
 
       <AudioDisplay
         audioSegments={rawAudioSegments}
@@ -635,7 +620,6 @@ export function TranscriptView({
         highlightedSegmentId={highlightedSegmentId}
         onClipClick={handleClipClick}
         isAudioPlaying={isAudioPlaying}
-        onTogglePlayPause={handleTogglePlayPause}
         currentAudioRef={currentAudioRef}
       />
 
