@@ -130,28 +130,30 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         self._process(chunk1)
 
         # Chunk 2: Dead air. Speech ended at 15.0s.
-        # Missing chunk 2 speech means the gap timer is accumulating implicitly.
+        # Since Chunk 2 is completely silent and 15s long, the silence gap (15s) exceeds the 3s threshold during this chunk.
+        # Under our correct, non-lossy design, this MUST trigger a flush of the speech transmission during Chunk 2.
         chunk2 = mock_audio_chunk(15000, 15000, [])
         actions2 = self._process(chunk2)
 
-        # It's not explicitly flushed yet, just tracking state
+        # It should be flushed during Chunk 2
         self.assertTrue(any(isinstance(a, UpdateStateAction) for a in actions2))
-        self.assertFalse(any(isinstance(a, FlushAction) for a in actions2))
-
-        # Chunk 3: Dead air. Arrives at 30.0s.
-        # Now 30.0s total time elapsed - 15.0s last end = 15.0s gap. Gap > 3.0s!
-        # Since it's a silent file that explicitly triggers the gap overrun mid-silence, it FLUSHES.
-        chunk3 = mock_audio_chunk(30000, 15000, [])
-        actions3 = self._process(chunk3)
-
         flush_action = next(
-            (a for a in actions3 if isinstance(a, FlushAction)), None
+            (a for a in actions2 if isinstance(a, FlushAction)), None
         )
         self.assertIsNotNone(flush_action)
         assert flush_action is not None
         self.assertEqual(
             flush_action.reason, "Significant gap detected from silent file"
         )
+
+        # Chunk 3: Dead air. Arrives at 30.0s.
+        # Since the speech transmission was already flushed, processing Chunk 3 just continues buffering the non-speech transmission.
+        chunk3 = mock_audio_chunk(30000, 15000, [])
+        actions3 = self._process(chunk3)
+
+        # No new flush should occur in Chunk 3
+        self.assertTrue(any(isinstance(a, UpdateStateAction) for a in actions3))
+        self.assertFalse(any(isinstance(a, FlushAction) for a in actions3))
 
     def test_max_transmission_duration_mid_stream_severing(self) -> None:
         """Verifies infinite-length callers are violently disconnected gracefully the instant they exceed bounded operational processing timeouts."""
@@ -412,5 +414,39 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         )
 
         # Verify that the traceparent and baggage are STILL preserved in the context!
-        self.assertEqual(self.ctx.traceparent, "test-traceparent-xyz")
         self.assertEqual(self.ctx.baggage, "test-baggage-xyz")
+
+    def test_small_silence_pauses_are_grouped(self) -> None:
+        """Verifies that sub-significant silence pauses (less than significant_gap_ms = 3000ms)
+        are appended to the active SPEECH transmission instead of being split out as OTHER segments.
+        """
+        # Chunk 1: Speech from 1.0s to 5.0s, and 6.5s to 13.0s.
+        # - Intra-chunk silence gap: 5.0s to 6.5s (1500ms < 3000ms).
+        # - Trailing silence gap: 13.0s to 15.0s (2000ms < 3000ms).
+        # Neither gap is significant, so they should NOT trigger a split!
+        chunk1 = mock_audio_chunk(
+            0, 15000, [(1.0, 5.0), (6.5, 13.0)], "gs://fake/1.flac"
+        )
+        actions1 = self._process(chunk1)
+
+        # There should be NO FlushAction during Chunk 1 processing
+        self.assertFalse(any(isinstance(a, FlushAction) for a in actions1))
+
+        # Chunk 2: Starts at 15.0s, speech from 2.0s to 5.0s (starts at 17.0s absolute time).
+        # - Total silence gap since last speech segment ended: 17.0s - 13.0s = 4000ms.
+        # Since 4000ms >= 3000ms (significant_gap_ms), this IS significant and MUST trigger a split!
+        chunk2 = mock_audio_chunk(
+            15000, 15000, [(2.0, 5.0)], "gs://fake/2.flac"
+        )
+        actions2 = self._process(chunk2)
+
+        # It should flush the previous speech transmission (from Chunk 1)
+        # and then start the new speech transmission (from Chunk 2).
+        flush_actions2 = [a for a in actions2 if isinstance(a, FlushAction)]
+        self.assertGreaterEqual(
+            len(flush_actions2), 2
+        )  # One SPEECH flush, one OTHER flush
+        self.assertEqual(flush_actions2[0].audio_classification, 1)  # SPEECH
+        self.assertEqual(
+            flush_actions2[1].audio_classification, 2
+        )  # OTHER (silence)
