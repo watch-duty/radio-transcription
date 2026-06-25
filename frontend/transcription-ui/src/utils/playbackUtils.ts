@@ -6,7 +6,7 @@ import { type RenderableAudioSegment } from '../hooks/useConsolidatedAudioSegmen
  * Matches a consolidated segment by its own id or, for silence bundles, by any
  * of the raw segment ids it contains.
  */
-export function matchesSegmentId(
+export function isWithinSegment(
   segment: RenderableAudioSegment,
   id: string
 ): boolean {
@@ -62,7 +62,7 @@ export function findAdjacentSpeechSegment(
   direction: 'forward' | 'backward'
 ): { id: string; uri: string; index: number } | null {
   const currentConsolidatedIdx = audioSegments.findIndex((t) =>
-    matchesSegmentId(t, currentId)
+    isWithinSegment(t, currentId)
   );
   if (currentConsolidatedIdx === -1) return null;
 

@@ -27,7 +27,7 @@ import { useTranscriptPlayback } from '../../hooks/useTranscriptPlayback';
 import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
-import { matchesSegmentId } from '../../utils/playbackUtils';
+import { isWithinSegment } from '../../utils/playbackUtils';
 import { AudioControl } from '../audio/AudioControl';
 import AudioDisplay from '../audio/AudioDisplay';
 import FeedSearchView from '../feeds/FeedSearchView';
@@ -286,7 +286,7 @@ export function TranscriptView({
 
     // 2. If it was a Speech segment, or the last segment in a silence bundle, advance to the next newer audio segment row
     const currentIndex = audioSegments.findIndex((t) =>
-      matchesSegmentId(t, playbackEndedForId)
+      isWithinSegment(t, playbackEndedForId)
     );
 
     if (currentIndex > 0) {
@@ -392,7 +392,7 @@ export function TranscriptView({
       !hasScrolledToTarget.current
     ) {
       const index = audioSegments.findIndex((t) =>
-        matchesSegmentId(t, targetSegmentId)
+        isWithinSegment(t, targetSegmentId)
       );
       if (index !== -1) {
         const timer = setTimeout(() => {
@@ -410,7 +410,7 @@ export function TranscriptView({
 
   const handleClipClick = (segmentId: string) => {
     const index = audioSegments.findIndex((t) =>
-      matchesSegmentId(t, segmentId)
+      isWithinSegment(t, segmentId)
     );
     if (index !== -1) {
       virtuosoRef.current?.scrollToIndex({
@@ -437,7 +437,7 @@ export function TranscriptView({
     }
 
     const audioSegment = audioSegments.find((t) =>
-      matchesSegmentId(t, targetId)
+      isWithinSegment(t, targetId)
     );
     if (audioSegment && audioSegment.playbackAudioUri) {
       toggleAudio(audioSegment.id, audioSegment.playbackAudioUri);
@@ -486,7 +486,7 @@ export function TranscriptView({
     if (!anchorId) return;
 
     const prependedCount = audioSegments.findIndex((s) =>
-      matchesSegmentId(s, anchorId)
+      isWithinSegment(s, anchorId)
     );
     if (prependedCount > 0) {
       setFirstItemIndex((prev) => prev - prependedCount);

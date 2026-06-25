@@ -8,7 +8,7 @@ import {
   calculateSkipTimeDestination,
   findAdjacentAudioSegment,
   findAdjacentSpeechSegment,
-  matchesSegmentId,
+  isWithinSegment,
 } from '../utils/playbackUtils';
 import { type RenderableAudioSegment } from './useConsolidatedAudioSegments';
 
@@ -43,7 +43,7 @@ export function useTranscriptPlayback({
 
   const scrollSegmentIntoView = (segmentId: string) => {
     const displayIdx = audioSegments.findIndex((t) =>
-      matchesSegmentId(t, segmentId)
+      isWithinSegment(t, segmentId)
     );
     if (displayIdx !== -1) {
       virtuosoRef.current?.scrollToIndex({
