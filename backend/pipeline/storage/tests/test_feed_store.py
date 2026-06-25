@@ -665,14 +665,8 @@ class TestReportFailureSqlStatusReason(unittest.TestCase):
             sql,
         )
         self.assertIn("status_reason_detail = $8", sql)
-        self.assertRegex(
-            sql,
-            r"status_reason_updated_at = CASE\s+"
-            r"WHEN feeds.status_reason IS DISTINCT FROM COALESCE"
-            r"\(\$7, 'system_unexpected_error'\)\s+"
-            r"THEN NOW\(\)\s+"
-            r"ELSE feeds.status_reason_updated_at\s+END",
-        )
+        self.assertIn("status_reason_updated_at = NOW()", sql)
+        self.assertNotIn("status_reason_updated_at = CASE", sql)
         self.assertIn("WHERE f.id = $1", sql)
         self.assertIn("AND f.worker_id = $2", sql)
         self.assertIn("AND f.fencing_token = $4", sql)
@@ -712,19 +706,15 @@ class TestNonBudgetedFailureSql(unittest.TestCase):
         self.assertIn("retry_after", sql)
         self.assertIn("audit_revision AS feed_revision", sql)
 
-    def test_non_budgeted_failure_sql_preserves_reason_change_time(
+    def test_non_budgeted_failure_sql_stamps_failure_write_time(
         self,
     ) -> None:
         sql = _sql_without_comments(
             feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL
         )
 
-        self.assertRegex(
-            sql,
-            r"status_reason_updated_at = CASE\s+"
-            r"WHEN feeds.status_reason IS DISTINCT FROM \$5 THEN NOW\(\)\s+"
-            r"ELSE feeds.status_reason_updated_at\s+END",
-        )
+        self.assertIn("status_reason_updated_at = NOW()", sql)
+        self.assertNotIn("status_reason_updated_at = CASE", sql)
 
     def test_failure_count_increment_isolated_to_report_failure_sql(
         self,

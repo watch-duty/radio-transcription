@@ -474,11 +474,7 @@ updated AS (
                            ELSE NULL END,
         status_reason = COALESCE($7, 'system_unexpected_error'),
         status_reason_detail = $8,
-        status_reason_updated_at = CASE
-            WHEN feeds.status_reason IS DISTINCT FROM COALESCE($7, 'system_unexpected_error')
-                THEN NOW()
-            ELSE feeds.status_reason_updated_at
-        END
+        status_reason_updated_at = NOW()
     FROM before_row
     WHERE feeds.id = before_row.id
     RETURNING feeds.*, feeds.audit_revision AS feed_revision
@@ -531,10 +527,7 @@ updated AS (
         unclaimed_since = NOW(),
         status_reason = $5,
         status_reason_detail = $6,
-        status_reason_updated_at = CASE
-            WHEN feeds.status_reason IS DISTINCT FROM $5 THEN NOW()
-            ELSE feeds.status_reason_updated_at
-        END
+        status_reason_updated_at = NOW()
     FROM before_row
     WHERE feeds.id = before_row.id
     RETURNING feeds.*, feeds.audit_revision AS feed_revision

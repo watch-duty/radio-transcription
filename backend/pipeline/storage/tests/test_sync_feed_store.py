@@ -274,11 +274,8 @@ class TestRecordNonBudgetedFailure:
         sql, params = conn.execute.call_args[0]
         assert "failure_count = 0" in sql
         assert "retry_after = NULL" in sql
-        assert "status_reason_updated_at = CASE" in sql
-        assert (
-            "WHEN feeds.status_reason IS DISTINCT FROM "
-            "status_reason_input.status_reason THEN NOW()"
-        ) in sql
+        assert "status_reason_updated_at = NOW()" in sql
+        assert "status_reason_updated_at = CASE" not in sql
         assert (
             "status NOT IN ('quarantined'::feed_status, "
             "'deactivated'::feed_status)"

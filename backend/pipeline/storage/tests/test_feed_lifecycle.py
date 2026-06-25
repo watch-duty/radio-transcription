@@ -50,3 +50,21 @@ def test_status_reason_detail_storage_value_caps_reason() -> None:
     assert result is not None
     assert len(result) == status_reason_detail.MAX_STATUS_REASON_DETAIL_LENGTH
     assert result.endswith("[truncated]")
+
+
+def test_status_reason_detail_storage_value_normalizes_storage_controls() -> (
+    None
+):
+    raw_reason = (
+        "capture timed out\rprogress=N/A"
+        "\nprovider body follows"
+        "\x00hidden\x1fcontrol\x7fchars\tend"
+    )
+
+    result = feed_lifecycle.status_reason_detail_storage_value(raw_reason)
+
+    assert result == (
+        "capture timed out progress=N/A"
+        "\nprovider body follows"
+        " hidden control chars end"
+    )

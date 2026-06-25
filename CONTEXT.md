@@ -299,8 +299,13 @@ operators and is the v1 routing key for failure policy decisions.
 ### Status Reason Detail
 
 The bounded explanatory text stored as `status_reason_detail` for current feed
-state and Feed Audit Events. It gives diagnostic context, does not drive
-control flow, and is not a stable machine-readable code.
+state and Feed Audit Events. It is current-state debug context, not a full
+forensic record. It may be multi-line when the direct evidence is naturally
+multi-line. Stores preserve raw collector/runtime diagnostics until the write
+boundary, then cap the stored value and normalize carriage returns and unsafe
+control characters to spaces while preserving line feeds. It does not drive
+control flow, and is not a stable machine-readable code. Cloud Logs remain the
+raw forensic channel for full failure evidence.
 
 ### Status Reason Owner
 

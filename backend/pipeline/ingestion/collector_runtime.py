@@ -693,6 +693,7 @@ class CollectorRuntime:
         retry_after: datetime.datetime | None = None,
         replay_missing: bool = False,
         data_gap_known: bool = False,
+        failure_cause: BaseException | None = None,
     ) -> None:
         """Emit the canonical policy-decision telemetry event."""
         action = failure_policy.classify_failure_policy(status_reason)
@@ -706,6 +707,13 @@ class CollectorRuntime:
             "data_gap_known": data_gap_known,
             "executed_action": action.value,
         }
+        if failure_cause is not None:
+            payload["failure_cause_type"] = type(failure_cause).__name__
+            payload["failure_cause_detail"] = (
+                status_reason_detail.cap_status_reason_detail_for_storage(
+                    status_reason_detail.exception_text(failure_cause)
+                )
+            )
         if retry_after is not None:
             payload["retry_after"] = retry_after.isoformat()
         logger.info(
@@ -920,6 +928,7 @@ class CollectorRuntime:
         status_reason: FeedStatusReason,
         replay_missing: bool = False,
         data_gap_known: bool = False,
+        failure_cause: BaseException | None = None,
     ) -> None:
         """Persist a classified feed failure through the fenced store path."""
         self._emit_policy_decision(
@@ -928,6 +937,7 @@ class CollectorRuntime:
             status_reason=status_reason,
             replay_missing=replay_missing,
             data_gap_known=data_gap_known,
+            failure_cause=failure_cause,
         )
         extra: dict[str, object] = {
             "json_fields": {
@@ -999,6 +1009,7 @@ class CollectorRuntime:
         status_reason: FeedStatusReason,
         replay_missing: bool = False,
         data_gap_known: bool = False,
+        failure_cause: BaseException | None = None,
     ) -> None:
         """Release a failure that must not consume the feed quarantine budget."""
         retry_after = self._non_budgeted_retry_after()
@@ -1009,6 +1020,7 @@ class CollectorRuntime:
             retry_after=retry_after,
             replay_missing=replay_missing,
             data_gap_known=data_gap_known,
+            failure_cause=failure_cause,
         )
         if replay_missing and data_gap_known:
             self._emit_post_bookmark_publish_failure(
@@ -1360,6 +1372,7 @@ class CollectorRuntime:
                     status_reason=e.status_reason,
                     replay_missing=replay_missing,
                     data_gap_known=replay_missing,
+                    failure_cause=e.__cause__,
                 )
             else:
                 await self._record_non_budgeted_failure(
@@ -1370,6 +1383,7 @@ class CollectorRuntime:
                     status_reason=e.status_reason,
                     replay_missing=replay_missing,
                     data_gap_known=replay_missing,
+                    failure_cause=e.__cause__,
                 )
             return
 

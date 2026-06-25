@@ -2096,7 +2096,8 @@ async def test_same_status_reason_failure_retry_writes_no_audit_event(
     db_pool: asyncpg.Pool,
     store: FeedStore,
 ) -> None:
-    """Repeating the same failing status/reason combination stays quiet."""
+    """Same status/reason retry updates row diagnostics without audit noise."""
+    old_reason_ts = datetime.datetime(2026, 5, 29, 12, 0, tzinfo=datetime.UTC)
     worker = uuid.uuid4()
     feed_id = await _insert_feed(
         db_pool,
@@ -2106,8 +2107,12 @@ async def test_same_status_reason_failure_retry_writes_no_audit_event(
         failure_count=1,
     )
     await db_pool.execute(
-        "UPDATE feeds SET status_reason = $1 WHERE id = $2",
+        "UPDATE feeds SET status_reason = $1,"
+        " status_reason_detail = $2,"
+        " status_reason_updated_at = $3 WHERE id = $4",
         FeedStatusReason.SOURCE_UNREACHABLE.value,
+        "old detail",
+        old_reason_ts,
         feed_id,
     )
 
@@ -2121,6 +2126,10 @@ async def test_same_status_reason_failure_retry_writes_no_audit_event(
     )
 
     assert result == "failing"
+    row = await _get_feed_diagnostics(db_pool, feed_id)
+    assert row["status_reason"] == "source_unreachable"
+    assert row["status_reason_detail"] == "new detail"
+    assert row["status_reason_updated_at"] > old_reason_ts
     assert await _fetch_audit_events(db_pool, feed_id) == []
 
 

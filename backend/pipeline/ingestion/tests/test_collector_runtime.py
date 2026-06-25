@@ -2769,6 +2769,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             kwargs["status_reason"],
             FeedStatusReason.SYSTEM_PIPELINE_ERROR,
         )
+        self.assertEqual(kwargs["reason"], "bookmark_write_failed")
         self.assertEqual(kwargs["retry_after"], retry_after)
         records = [
             cast("dict[str, Any]", r.__dict__.get("json_fields"))
@@ -2778,6 +2779,21 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         event_types = {r["event_type"] for r in records}
         self.assertIn("feed_failure_policy_decision", event_types)
         self.assertNotIn("post_bookmark_publish_failure", event_types)
+        policy_record = next(
+            r
+            for r in records
+            if r["event_type"] == "feed_failure_policy_decision"
+        )
+        self.assertEqual(policy_record["reason"], "bookmark_write_failed")
+        self.assertEqual(
+            policy_record["status_reason"],
+            "system_pipeline_error",
+        )
+        self.assertEqual(policy_record["failure_cause_type"], "RuntimeError")
+        self.assertEqual(
+            policy_record["failure_cause_detail"],
+            "RuntimeError: bookmark boom",
+        )
 
     async def test_failure_log_includes_runtime_reason_fields(self) -> None:
         """Runtime failure logs include status and status reason detail fields."""

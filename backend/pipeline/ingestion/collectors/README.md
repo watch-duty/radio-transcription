@@ -47,6 +47,9 @@ publish failures after a successful bookmark use
 `pipeline_publish_after_bookmark_failed`, record `replay_missing=true` and
 `data_gap_known=true`, and remain outside the feed quarantine budget because
 the source feed did not cause the already-advanced bookmark/publish gap.
+GCS upload and bookmark-write failures persist only their stage tag in
+`status_reason_detail` (`gcs_upload_failed` or `bookmark_write_failed`);
+structured policy-decision logs carry the underlying exception cause.
 
 Echo is the exception to the VM runtime shape: it runs as a synchronous Cloud
 Function. It writes the same canonical status-reason field through
@@ -65,10 +68,12 @@ is a nullable, current abnormal-condition label that helps operators answer:
 async progress, successful Echo heartbeat/progress, and manual reset clear
 stale status reasons.
 
-`status_reason_detail` is different. It preserves bounded diagnostic text
-for the current abnormal condition. Do not
-parse it for canonical ownership, do not treat it as a stable code, and do not
-replace it with `status_reason`.
+`status_reason_detail` is different. It preserves bounded current-state debug
+context for the current abnormal condition. It may be multi-line when the
+direct evidence is naturally multi-line. Do not parse it for canonical
+ownership, do not treat it as a stable code, and do not replace it with
+`status_reason`. Cloud Logs remain the raw forensic channel for full failure
+evidence.
 
 Status-reason prefixes are semantic owner namespaces: `source_` for external
 source/provider conditions, `system_` for Watch Duty-owned system conditions,
@@ -178,8 +183,8 @@ render bounded process evidence; collectors should log the source-scoped
 operation context and decide whether that evidence is item-scoped or
 feed-scoped.
 `backend.pipeline.ingestion.status_reason_detail` owns only shared storage-boundary
-helpers: exception detail formatting and the database storage cap. It must not
-grow source-specific message construction helpers.
+helpers: exception detail formatting plus database storage cap and control
+normalization. It must not grow source-specific message construction helpers.
 Collectors still own:
 
 - retry and backoff policy;
@@ -202,8 +207,11 @@ Collectors render source-specific operations, such as stream capture and
 same-stream probes.
 
 Do not truncate status reason detail in collectors or failure objects.
-`FeedFailure` and runtime `_PipelineFailure` carry full diagnostics; async and
-sync feed stores cap the text immediately before persisting it.
+`FeedFailure` carries raw source diagnostics to the runtime; async and sync feed
+stores cap the text immediately before persisting it. At that same storage
+boundary, stores normalize carriage returns and unsafe control characters to
+spaces while preserving line feeds. Runtime `_PipelineFailure` may intentionally
+persist a stage tag when the raw exception cause belongs in structured logs.
 
 Do not branch on status reason detail. If later behavior depends on a
 classification, carry typed information such as HTTP status, ffmpeg failure
@@ -224,7 +232,8 @@ explain why policies are scoped by endpoint/stage, not restate every mapping.
 Do not append raw HTTP response bodies, full ffmpeg stderr, stack traces, or
 large request/response bodies. Exception text and bounded stderr tails may be
 preserved when they are the direct diagnostic evidence for the failure episode;
-storage applies the final status-reason-detail cap immediately before persistence.
+storage applies the final status-reason-detail cap and control normalization
+immediately before persistence.
 
 ## Shared Collector Helpers
 

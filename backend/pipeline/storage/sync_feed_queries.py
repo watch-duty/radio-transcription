@@ -118,11 +118,7 @@ updated AS (
                            ELSE NULL END,
         status_reason = COALESCE(status_reason_input.status_reason, 'system_unexpected_error'),
         status_reason_detail = %s,
-        status_reason_updated_at = CASE
-            WHEN feeds.status_reason IS DISTINCT FROM COALESCE(status_reason_input.status_reason, 'system_unexpected_error')
-                THEN NOW()
-            ELSE feeds.status_reason_updated_at
-        END
+        status_reason_updated_at = NOW()
     FROM before_row
     CROSS JOIN status_reason_input
     WHERE feeds.id = before_row.id
@@ -176,10 +172,7 @@ updated AS (
         retry_after = NULL,
         status_reason = status_reason_input.status_reason,
         status_reason_detail = %s,
-        status_reason_updated_at = CASE
-            WHEN feeds.status_reason IS DISTINCT FROM status_reason_input.status_reason THEN NOW()
-            ELSE feeds.status_reason_updated_at
-        END
+        status_reason_updated_at = NOW()
     FROM before_row
     CROSS JOIN status_reason_input
     WHERE feeds.id = before_row.id
