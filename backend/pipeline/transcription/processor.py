@@ -4,6 +4,7 @@ Extracts logic from the entry point, making it framework-independent
 and highly unit-testable.
 """
 
+import asyncio
 import base64
 import logging
 
@@ -50,7 +51,7 @@ class TranscriptionEventProcessor:
         output_topic: str,
         transcriber: Transcriber,
         publisher: pubsub_v1.PublisherClient,
-        audio_segments_client: audio_segments_client.AudioSegmentsClient
+        audio_segments_client: audio_segments_client.AsyncAudioSegmentsClient
         | None = None,
     ) -> None:
         self.project_id = project_id
@@ -59,8 +60,8 @@ class TranscriptionEventProcessor:
         self.publisher = publisher
         self.audio_segments_client = audio_segments_client
 
-    def process_event(self, cloud_event: CloudEvent) -> None:
-        """Decodes, processes, and transcribes the given CloudEvent."""
+    async def process_event(self, cloud_event: CloudEvent | dict) -> None:
+        """Decodes, processes, and transcribes the given CloudEvent or raw dictionary."""
         record_pipeline_stage("transcription", "start")
         try:
             combined_attributes, raw_data = parse_pubsub_cloudevent(cloud_event)
@@ -107,7 +108,7 @@ class TranscriptionEventProcessor:
                 duration_ms = self._get_duration_ms(claim)
 
                 # Retrieve active transcriber and run Speech API on ephemeral mono FLAC link
-                transcript = self.transcriber.transcribe(
+                transcript = await self.transcriber.transcribe(
                     uri=claim.transcription_audio_uri
                     or claim.canonical_audio_uri,
                     duration_ms=duration_ms,
@@ -153,7 +154,7 @@ class TranscriptionEventProcessor:
                     ordering_key=feed_id,
                     **attrs,
                 )
-                message_id = future.result()
+                message_id = await asyncio.wrap_future(future)
                 record_pipeline_stage("transcription", "success")
                 logger.info(
                     "Successfully transcribed and published egress message %s for transmission %s (feed %s)",
@@ -184,7 +185,7 @@ class TranscriptionEventProcessor:
                 errors.append(f"Permanent Failure: {e}")
             finally:
                 if segment_id:
-                    self._write_transcript_annotation(
+                    await self._write_transcript_annotation(
                         segment_id,
                         transcript or "",
                         errors,
@@ -214,7 +215,7 @@ class TranscriptionEventProcessor:
         else:
             return claim
 
-    def _write_transcript_annotation(
+    async def _write_transcript_annotation(
         self, segment_id: str, transcript: str, errors: list[str]
     ) -> None:
         """Writes transcript annotation to audio segments API."""
@@ -226,7 +227,7 @@ class TranscriptionEventProcessor:
                 "text": transcript,
                 "errors": errors,
             }
-            self.audio_segments_client.add_audio_segment_annotation(
+            await self.audio_segments_client.add_audio_segment_annotation(
                 audio_segment_id=segment_id,
                 annotation_type=(
                     audio_segments_models.AnnotationType.TRANSCRIPT
