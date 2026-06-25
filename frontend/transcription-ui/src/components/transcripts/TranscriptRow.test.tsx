@@ -13,16 +13,16 @@ import {
 import { type RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
 import TranscriptRow from './TranscriptRow';
 
-// Mocking AudioPlayer to verify it's being called with the correct props.
+// Mocking TranscriptPlayControl to verify it's being called with the correct props.
 // We do not need to test the actual audio player functionality here
-// as that is tested separately in AudioPlayer.test.tsx
-vi.mock('../audio/AudioPlayer', () => ({
+// as that is tested separately in TranscriptPlayControl.test.tsx
+vi.mock('../audio/TranscriptPlayControl', () => ({
   default: (props: { audioUri: string; segmentId: string }) => (
     <div
       data-testid={`audio-player-${props.segmentId}`}
       data-audio-uri={props.audioUri}
     >
-      AudioPlayer Mock
+      TranscriptPlayControl Mock
     </div>
   ),
 }));
