@@ -52,13 +52,13 @@ export function useAudioPlayback({
   const playerRef = useRef<WebAudioPlayer | null>(null);
   const currentAudio = useRef<PlaybackController | null>(null);
 
-  // Latest control values, read inside `toggle` so its identity stays stable.
+  // Refs keep these out of `togglePlay`'s deps so its identity stays stable.
   const volumeDbRef = useRef(volumeDb);
   const panRef = useRef(pan);
   const speedRef = useRef(speed);
 
   // Push control changes into the engine; the player is created lazily on first
-  // play, so before then these only update the refs that `toggle` reads.
+  // play, so before then these only update the refs that `togglePlay` reads.
   useEffect(() => {
     volumeDbRef.current = volumeDb;
     playerRef.current?.setVolumeDb(volumeDb);

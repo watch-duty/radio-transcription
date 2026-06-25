@@ -34,15 +34,15 @@ describe('useAudioControls', () => {
       result.current.setSpeed(1.5);
     });
 
-    expect(localStorage.getItem('rt.audio.volumeDb.feed-1')).toBe('6');
-    expect(localStorage.getItem('rt.audio.pan.feed-1')).toBe('-1');
-    expect(localStorage.getItem('rt.audio.speed.feed-1')).toBe('1.5');
+    expect(localStorage.getItem('radio.audio.volumeDb.feed-1')).toBe('6');
+    expect(localStorage.getItem('radio.audio.pan.feed-1')).toBe('-1');
+    expect(localStorage.getItem('radio.audio.speed.feed-1')).toBe('1.5');
   });
 
   it('restores a feed’s persisted values on mount', () => {
-    localStorage.setItem('rt.audio.volumeDb.feed-1', '12');
-    localStorage.setItem('rt.audio.pan.feed-1', '1');
-    localStorage.setItem('rt.audio.speed.feed-1', '2');
+    localStorage.setItem('radio.audio.volumeDb.feed-1', '12');
+    localStorage.setItem('radio.audio.pan.feed-1', '1');
+    localStorage.setItem('radio.audio.speed.feed-1', '2');
 
     const { result } = renderHook(() => useAudioControls(FEED));
 
@@ -52,8 +52,8 @@ describe('useAudioControls', () => {
   });
 
   it('keeps settings independent across feeds', () => {
-    localStorage.setItem('rt.audio.volumeDb.feed-1', '6');
-    localStorage.setItem('rt.audio.volumeDb.feed-2', '-12');
+    localStorage.setItem('radio.audio.volumeDb.feed-1', '6');
+    localStorage.setItem('radio.audio.volumeDb.feed-2', '-12');
 
     const a = renderHook(() => useAudioControls('feed-1'));
     const b = renderHook(() => useAudioControls('feed-2'));
@@ -63,7 +63,7 @@ describe('useAudioControls', () => {
   });
 
   it('falls back to the global default when a feed has no stored value', () => {
-    localStorage.setItem('rt.audio.volumeDb', '9');
+    localStorage.setItem('radio.audio.volumeDb', '9');
 
     const { result } = renderHook(() => useAudioControls(FEED));
 
@@ -71,8 +71,8 @@ describe('useAudioControls', () => {
   });
 
   it('prefers the per-feed value over the global default', () => {
-    localStorage.setItem('rt.audio.volumeDb', '9');
-    localStorage.setItem('rt.audio.volumeDb.feed-1', '3');
+    localStorage.setItem('radio.audio.volumeDb', '9');
+    localStorage.setItem('radio.audio.volumeDb.feed-1', '3');
 
     const { result } = renderHook(() => useAudioControls(FEED));
 
@@ -80,8 +80,8 @@ describe('useAudioControls', () => {
   });
 
   it('reloads stored settings when the feed changes', () => {
-    localStorage.setItem('rt.audio.volumeDb.feed-1', '6');
-    localStorage.setItem('rt.audio.volumeDb.feed-2', '-12');
+    localStorage.setItem('radio.audio.volumeDb.feed-1', '6');
+    localStorage.setItem('radio.audio.volumeDb.feed-2', '-12');
 
     const { result, rerender } = renderHook(
       ({ feedId }) => useAudioControls(feedId),
@@ -94,30 +94,30 @@ describe('useAudioControls', () => {
   });
 
   it('does not write a per-feed key just by switching to a feed', () => {
-    localStorage.setItem('rt.audio.volumeDb', '9');
+    localStorage.setItem('radio.audio.volumeDb', '9');
 
     const { result } = renderHook(() => useAudioControls(FEED));
 
     // Inherited the global default without capturing it as a per-feed override.
     expect(result.current.volumeDb).toBe(9);
-    expect(localStorage.getItem('rt.audio.volumeDb.feed-1')).toBeNull();
+    expect(localStorage.getItem('radio.audio.volumeDb.feed-1')).toBeNull();
   });
 
   it('reset clears the feed overrides and re-inherits the global default', () => {
-    localStorage.setItem('rt.audio.volumeDb', '9'); // global default
-    localStorage.setItem('rt.audio.volumeDb.feed-1', '3'); // this feed's override
+    localStorage.setItem('radio.audio.volumeDb', '9'); // global default
+    localStorage.setItem('radio.audio.volumeDb.feed-1', '3'); // this feed's override
 
     const { result } = renderHook(() => useAudioControls(FEED));
     expect(result.current.volumeDb).toBe(3);
 
     act(() => result.current.reset());
 
-    expect(localStorage.getItem('rt.audio.volumeDb.feed-1')).toBeNull();
+    expect(localStorage.getItem('radio.audio.volumeDb.feed-1')).toBeNull();
     expect(result.current.volumeDb).toBe(9); // falls back to the global default
   });
 
   it('clamps an out-of-range stored volume', () => {
-    localStorage.setItem('rt.audio.volumeDb.feed-1', '999');
+    localStorage.setItem('radio.audio.volumeDb.feed-1', '999');
     const { result } = renderHook(() => useAudioControls(FEED));
     expect(result.current.volumeDb).toBe(20);
   });
@@ -127,7 +127,7 @@ describe('useAudioControls', () => {
       userAgent:
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
     });
-    localStorage.setItem('rt.audio.speed.feed-1', '2');
+    localStorage.setItem('radio.audio.speed.feed-1', '2');
 
     const { result } = renderHook(() => useAudioControls(FEED));
 
@@ -135,9 +135,9 @@ describe('useAudioControls', () => {
   });
 
   it('falls back to defaults for invalid stored pan/speed', () => {
-    localStorage.setItem('rt.audio.pan.feed-1', '0.4');
-    localStorage.setItem('rt.audio.speed.feed-1', '3');
-    localStorage.setItem('rt.audio.volumeDb.feed-1', 'not-a-number');
+    localStorage.setItem('radio.audio.pan.feed-1', '0.4');
+    localStorage.setItem('radio.audio.speed.feed-1', '3');
+    localStorage.setItem('radio.audio.volumeDb.feed-1', 'not-a-number');
 
     const { result } = renderHook(() => useAudioControls(FEED));
 

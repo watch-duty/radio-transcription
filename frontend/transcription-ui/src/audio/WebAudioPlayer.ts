@@ -1,21 +1,14 @@
+import {
+  DEFAULT_VOLUME_DB,
+  VOLUME_MIN_DB,
+  VOLUME_SNAP_DB,
+} from './audioSettings';
+
 declare global {
   interface Window {
     webkitAudioContext?: typeof AudioContext;
   }
 }
-
-export const VOLUME_MIN_DB = -30;
-export const VOLUME_MAX_DB = 20;
-
-export const SPEED_OPTIONS = [0.5, 1.0, 1.25, 1.5, 2.0] as const;
-export const PAN_OPTIONS = [-1, 0, 1] as const;
-
-// The single source of truth for "default" audio settings. A future global
-// settings UI replaces these, and both persistence and the off-default badges
-// on the speaker button follow automatically.
-export const DEFAULT_VOLUME_DB = 0;
-export const DEFAULT_PAN = 0;
-export const DEFAULT_SPEED = 1;
 
 // Below this, snap to silence instead of an inaudible-but-nonzero gain.
 const MUTE_THRESHOLD_DB = VOLUME_MIN_DB + 1;
@@ -34,12 +27,8 @@ export function formatVolumeDb(db: number): string {
   return rounded > 0 ? `+${rounded} dB` : `${rounded} dB`;
 }
 
-// Default width of the snap zone: a value within this many dB of the default is
-// pulled to exactly the default so the slider settles there when dragged near
-// it. Both the snap center (`defaultDb`) and width (`snapDb`) are parameters so
-// a future global settings UI can drive them; passing snapDb 0 disables snapping.
-export const VOLUME_SNAP_DB = 1;
-
+// Both the snap center (`defaultDb`) and width (`snapDb`) are parameters so a
+// future global settings UI can drive them; passing snapDb 0 disables snapping.
 export function snapVolumeToDefault(
   db: number,
   defaultDb: number = DEFAULT_VOLUME_DB,

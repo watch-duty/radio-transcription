@@ -8,17 +8,17 @@ import {
   SPEED_OPTIONS,
   VOLUME_MAX_DB,
   VOLUME_MIN_DB,
-} from '../audio/WebAudioPlayer';
+} from '../audio/audioSettings';
 import { isSafari } from '../utils/browser';
 
 // Base keys hold the global default; a future global-settings UI writes these.
 // Per-feed adjustments are stored under `<base>.<feedId>` and a read falls back
 // to the base key, so an unvisited feed inherits the global default.
 const STORAGE_KEYS = {
-  volumeDb: 'rt.audio.volumeDb',
-  pan: 'rt.audio.pan',
-  speed: 'rt.audio.speed',
-} as const;
+  volumeDb: 'radio.audio.volumeDb',
+  pan: 'radio.audio.pan',
+  speed: 'radio.audio.speed',
+};
 
 export interface AudioControls {
   volumeDb: number;

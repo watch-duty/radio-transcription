@@ -2,14 +2,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  VOLUME_MAX_DB,
-  VOLUME_MIN_DB,
   WebAudioPlayer,
   dbToGain,
   formatVolumeDb,
   gainToDb,
   snapVolumeToDefault,
 } from './WebAudioPlayer';
+import { VOLUME_MAX_DB, VOLUME_MIN_DB } from './audioSettings';
 
 describe('audioMath', () => {
   describe('dbToGain', () => {

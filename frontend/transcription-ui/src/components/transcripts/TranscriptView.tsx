@@ -32,6 +32,7 @@ import { isWithinSegment } from '../../utils/playbackUtils';
 import { AudioControl } from '../audio/AudioControl';
 import AudioDisplay from '../audio/AudioDisplay';
 import FeedSearchView from '../feeds/FeedSearchView';
+import AudioControlsButton from './AudioControlsButton';
 import FeedHeader from './FeedHeader';
 import TranscriptActionsBar from './TranscriptActionsBar';
 import TranscriptDisplay from './TranscriptDisplay';
@@ -606,20 +607,40 @@ export function TranscriptView({
         onError={onError}
       />
 
-      <AudioControl
-        sx={{ mt: 1 }}
-        isAudioPlaying={isAudioPlaying}
-        onTogglePlayPause={handleTogglePlayPause}
-        onSkipToNext={skipToNext}
-        onSkipToPrevious={skipToPrevious}
-        onFastForward={skipToNextSpeech}
-        onFastRewind={skipToPreviousSpeech}
-        onSkipTime={skipTime}
-        playLatestAudio={playLatestAudio}
-        togglePlayLatestAudio={setPlayLatestAudio}
-        disableControls={rawAudioSegments.length === 0}
-        disableCheckbox={!searchedFeed}
-      />
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1,
+          mt: 1,
+          // Space for the alert icon that hovers above the AudioDisplay.
+          mb: 2.5,
+        }}
+      >
+        <AudioControl
+          sx={{ flex: 1, mb: 0 }}
+          isAudioPlaying={isAudioPlaying}
+          onTogglePlayPause={handleTogglePlayPause}
+          onSkipToNext={skipToNext}
+          onSkipToPrevious={skipToPrevious}
+          onFastForward={skipToNextSpeech}
+          onFastRewind={skipToPreviousSpeech}
+          onSkipTime={skipTime}
+          playLatestAudio={playLatestAudio}
+          togglePlayLatestAudio={setPlayLatestAudio}
+          disableControls={rawAudioSegments.length === 0}
+          disableCheckbox={!searchedFeed}
+        />
+        <AudioControlsButton
+          volumeDb={volumeDb}
+          setVolumeDb={setVolumeDb}
+          pan={pan}
+          setPan={setPan}
+          speed={speed}
+          setSpeed={setSpeed}
+          onReset={reset}
+        />
+      </Box>
 
       <AudioDisplay
         audioSegments={rawAudioSegments}
@@ -648,13 +669,6 @@ export function TranscriptView({
           alertFilter={alertFilter}
           setAlertFilter={setAlertFilter}
           onClickViewLatest={() => handleFilterByDateTime(null)}
-          volumeDb={volumeDb}
-          setVolumeDb={setVolumeDb}
-          pan={pan}
-          setPan={setPan}
-          speed={speed}
-          setSpeed={setSpeed}
-          onResetAudio={reset}
         />
         {audioSegments.length > 0 ? (
           <TranscriptDisplay
