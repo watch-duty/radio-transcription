@@ -115,6 +115,9 @@ export function useAudioPlayback({
     currentAudio.current = null;
     setCurrentlyPlayingSegmentId(null);
     setPlaybackEndedForId(null);
+    // Set explicitly: WebAudioPlayer.stop() detaches its listeners before the
+    // async `pause` event fires, so `onPause` can't drive this off.
+    setIsAudioPlaying(false);
   }, []);
 
   return {

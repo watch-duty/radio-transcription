@@ -30,6 +30,10 @@ import { listRules } from '../../service/listRules';
 import { isWithinSegment } from '../../utils/playbackUtils';
 import { AudioControl } from '../audio/AudioControl';
 import AudioDisplay from '../audio/AudioDisplay';
+import {
+  isSegmentOutsideWindow,
+  useAudioTimelineWindow,
+} from '../audio/useAudioTimelineWindow';
 import FeedSearchView from '../feeds/FeedSearchView';
 import FeedHeader from './FeedHeader';
 import TranscriptActionsBar from './TranscriptActionsBar';
@@ -102,6 +106,10 @@ export function TranscriptView({
   // rather than a stale closure when deciding whether to auto-advance.
   const audioSegmentsRef = useRef<AudioSegment[]>([]);
 
+  // Read inside the poll callback below; only autoplay incoming clips while the
+  // window is at the live edge, so viewing the past isn't yanked forward.
+  const isLatestTimeWindowRef = useRef(true);
+
   const {
     isAudioPlaying,
     currentlyPlayingSegmentId,
@@ -135,7 +143,7 @@ export function TranscriptView({
         }
       }
 
-      if (!isAudioPlaying && playLatestAudio) {
+      if (!isAudioPlaying && playLatestAudio && isLatestTimeWindowRef.current) {
         const audioToPlay = newAudioSegments[newAudioSegments.length - 1];
         if (audioToPlay.playbackAudioUri) {
           toggleAudio(audioToPlay.id, audioToPlay.playbackAudioUri);
@@ -231,6 +239,32 @@ export function TranscriptView({
   });
 
   const audioSegments = useConsolidatedAudioSegments(rawAudioSegments);
+
+  // Single source of truth for the audio timeline's visible window, shared by
+  // the waveform display and the date/time chip / jump-to-live control.
+  const { windowEndTime, windowDurationMs, isLatestTimeWindow, jumpToLive } =
+    useAudioTimelineWindow({
+      audioSegments: rawAudioSegments,
+      currentlyPlayingSegmentId,
+      highlightedSegmentId,
+    });
+  isLatestTimeWindowRef.current = isLatestTimeWindow;
+
+  // A user pick pauses playback only when it will move the display window — i.e.
+  // the picked segment isn't already visible in the current window.
+  const willMoveWindowTo = (segmentId: string): boolean => {
+    const target = rawAudioSegments.find((s) => s.id === segmentId);
+    if (!target) return false;
+    const liveEnd = rawAudioSegments[0]
+      ? new Date(rawAudioSegments[0].endTimestamp).getTime()
+      : 0;
+    return isSegmentOutsideWindow(
+      new Date(target.startTimestamp).getTime(),
+      new Date(target.endTimestamp).getTime(),
+      windowEndTime ?? liveEnd,
+      windowDurationMs
+    );
+  };
 
   // Keep the ref in sync with the audio segments so that audio lifecycle callbacks can access the latest list.
   useEffect(() => {
@@ -409,6 +443,7 @@ export function TranscriptView({
   }, [isAudioSegmentsSuccess, targetSegmentId, audioSegments]);
 
   const handleClipClick = (segmentId: string) => {
+    if (willMoveWindowTo(segmentId)) stopPlayback();
     const index = audioSegments.findIndex((t) => isWithinSegment(t, segmentId));
     if (index !== -1) {
       virtuosoRef.current?.scrollToIndex({
@@ -443,6 +478,7 @@ export function TranscriptView({
   };
 
   const handleRowClick = (segmentId: string) => {
+    if (willMoveWindowTo(segmentId)) stopPlayback();
     setHighlightedSegmentId(segmentId);
   };
 
@@ -515,6 +551,10 @@ export function TranscriptView({
   }, [searchedFeedId, searchedTimestamp, alertFilter]);
 
   const handleFilterByDateTime = (date: Date | null) => {
+    // Navigating the window (filtering / jumping to live) pauses playback and
+    // drops the selection so playback doesn't drag the view back.
+    stopPlayback();
+    setHighlightedSegmentId(null);
     setSearchParams((prev) => {
       if (date) {
         prev.set('timestamp', date.getTime().toString());
@@ -540,12 +580,17 @@ export function TranscriptView({
     hasScrolledAwayFromTop.current = false;
   };
 
+  // Jump to live: move the window to live and clear any date filter;
+  // handleFilterByDateTime stops playback and clears the selection.
+  const handleJumpToLive = () => {
+    jumpToLive();
+    handleFilterByDateTime(null);
+  };
+
   const handleFeedSelect = (feedId: string) => {
-    stopPlayback();
-    // Reset all state
+    // Resets to live: stops playback and clears the selection + date filter.
     handleFilterByDateTime(null);
     setNewMessageCount(0);
-    setHighlightedSegmentId(null);
     setIsViewAtTopOfAudioSegments(true);
     // Update URL params
     setSearchParams((prev) => {
@@ -619,6 +664,8 @@ export function TranscriptView({
         currentlyPlayingSegmentId={currentlyPlayingSegmentId}
         highlightedSegmentId={highlightedSegmentId}
         onClipClick={handleClipClick}
+        windowEndTime={windowEndTime}
+        windowDurationMs={windowDurationMs}
         isAudioPlaying={isAudioPlaying}
         currentAudioRef={currentAudioRef}
       />
@@ -632,15 +679,16 @@ export function TranscriptView({
         }}
       >
         <TranscriptActionsBar
-          searchedTimestamp={searchedTimestamp}
           hasNewerAudioSegments={hasNewerAudioSegments}
+          isLatestTimeWindow={isLatestTimeWindow}
+          activeWindowTime={isLatestTimeWindow ? null : windowEndTime}
           redactTranscripts={redactTranscripts}
           setRedactTranscripts={setRedactTranscripts}
           dateTime={searchedTimestamp}
           setDateTime={handleFilterByDateTime}
           alertFilter={alertFilter}
           setAlertFilter={setAlertFilter}
-          onClickViewLatest={() => handleFilterByDateTime(null)}
+          onClickViewLatest={handleJumpToLive}
         />
         {audioSegments.length > 0 ? (
           <TranscriptDisplay

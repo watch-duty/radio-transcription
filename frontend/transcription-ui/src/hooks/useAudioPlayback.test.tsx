@@ -175,6 +175,8 @@ describe('useAudioPlayback', () => {
     expect(result.current.currentlyPlayingSegmentId).toBeNull();
     expect(result.current.playbackEndedForId).toBeNull();
     expect(result.current.currentAudioRef.current).toBeNull();
+    // stop() must clear this directly (the engine's async pause event can't).
+    expect(result.current.isAudioPlaying).toBe(false);
   });
 
   it('closes the AudioContext on unmount', () => {

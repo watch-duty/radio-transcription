@@ -15,11 +15,15 @@ import Tooltip from '@mui/material/Tooltip';
 import { useTheme } from '@mui/material/styles';
 
 import type { AlertFilter } from '../../hooks/useAudioSegments';
+import { formatClockTime } from '../../utils/timeUtils';
 import { DateTimePicker } from '../common/DateTimePicker';
 
 export interface TranscriptActionsBarProps {
   hasNewerAudioSegments: boolean;
-  searchedTimestamp: Date | null;
+  // True when the audio window is at the most recent loaded audio.
+  isLatestTimeWindow?: boolean;
+  // The window's right edge (ms) when viewing back, shown in the chip; null when latest.
+  activeWindowTime?: number | null;
   redactTranscripts: boolean;
   setRedactTranscripts: (redact: boolean) => void;
   dateTime: Date | null;
@@ -34,6 +38,8 @@ const DEFAULT_FILTER_BG_COLOR = '#f9bf90';
 
 export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   hasNewerAudioSegments,
+  isLatestTimeWindow = true,
+  activeWindowTime = null,
   redactTranscripts,
   setRedactTranscripts,
   dateTime,
@@ -104,6 +110,16 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
     badgeContent++;
   }
 
+  const formatDateClock = (ms: number) =>
+    `${new Date(ms).toLocaleDateString()} ${formatClockTime(ms)}`;
+  const dateTimeLabel = dateTime ? formatDateClock(dateTime.getTime()) : null;
+  // A past window (without a date filter) shows where you're viewing.
+  const pastWindowLabel =
+    !dateTime && activeWindowTime != null
+      ? formatDateClock(activeWindowTime)
+      : null;
+  const isViewingPast = Boolean(dateTimeLabel || pastWindowLabel);
+
   return (
     <Box
       sx={{
@@ -117,7 +133,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
           variant="contained"
           sx={{ textTransform: 'none', gap: 1 }}
           onClick={onClickViewLatest}
-          disabled={!hasNewerAudioSegments}
+          disabled={!hasNewerAudioSegments && isLatestTimeWindow && !dateTime}
         >
           Jump to live
         </Button>
@@ -213,7 +229,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
           sx={
             isDarkTheme
               ? {
-                  backgroundColor: dateTime
+                  backgroundColor: isViewingPast
                     ? theme.palette.primary.main
                     : '#f9bf90',
                   color: 'black',
@@ -222,17 +238,20 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
                   },
                 }
               : {
-                  backgroundColor: dateTime
+                  backgroundColor: isViewingPast
                     ? APPLIED_FILTER_BG_COLOR
                     : DEFAULT_FILTER_BG_COLOR,
                   color: 'black',
                 }
           }
           label={
-            dateTime ? (
+            dateTimeLabel ? (
               <Box>
-                <b>Date/time:</b>{' '}
-                {`${dateTime.toLocaleDateString()} ${dateTime.toLocaleTimeString()}`}
+                <b>Date/time:</b> {dateTimeLabel}
+              </Box>
+            ) : pastWindowLabel ? (
+              <Box>
+                <b>Viewing:</b> {pastWindowLabel}
               </Box>
             ) : (
               <Box>

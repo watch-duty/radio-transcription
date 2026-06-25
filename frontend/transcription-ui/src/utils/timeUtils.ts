@@ -1,10 +1,21 @@
 import RelativeTimeFormat from 'relative-time-format';
 import en from 'relative-time-format/locale/en';
 
-export const MAX_WINDOW_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+export const AUDIO_WINDOW_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 
 RelativeTimeFormat.addLocale(en);
 const rtf = new RelativeTimeFormat('en');
+
+// 24-hour HH:MM, used by the audio timeline labels and the date/time chip so
+// they stay consistent regardless of locale AM/PM conventions. Single choke
+// point for clock rendering — route a future user 12h/24h setting through here.
+export function formatClockTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
 
 export function getRelativeTimeString(
   dateValue?: string | Date | number,

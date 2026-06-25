@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
+import { formatClockTime } from '../../utils/timeUtils';
 import { TranscriptActionsBar } from './TranscriptActionsBar';
 
 // Mock the DateTimePicker because Material UI's modern segment-based picker inputs
@@ -43,7 +44,6 @@ describe('TranscriptActionsBar', () => {
   it('renders the redact switch and toggles state when changed', () => {
     render(
       <TranscriptActionsBar
-        searchedTimestamp={null}
         hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
@@ -69,7 +69,6 @@ describe('TranscriptActionsBar', () => {
     const onClickViewLatest = vi.fn();
     render(
       <TranscriptActionsBar
-        searchedTimestamp={null}
         hasNewerAudioSegments={true}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
@@ -89,10 +88,9 @@ describe('TranscriptActionsBar', () => {
     expect(onClickViewLatest).toHaveBeenCalledTimes(1);
   });
 
-  it('renders disabled "Jump to live" button when hasNewerAudioSegments is false', () => {
+  it('renders disabled "Jump to live" button when at the live edge', () => {
     render(
       <TranscriptActionsBar
-        searchedTimestamp={null}
         hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
@@ -109,12 +107,91 @@ describe('TranscriptActionsBar', () => {
     expect(button).toBeDisabled();
   });
 
+  it('enables "Jump to live" when viewing back, even without newer segments', () => {
+    render(
+      <TranscriptActionsBar
+        hasNewerAudioSegments={false}
+        isLatestTimeWindow={false}
+        activeWindowTime={new Date('2026-05-14T13:05:00Z').getTime()}
+        redactTranscripts={false}
+        setRedactTranscripts={mockSetRedactTranscripts}
+        dateTime={null}
+        setDateTime={vi.fn()}
+        alertFilter="all"
+        setAlertFilter={vi.fn()}
+        onClickViewLatest={vi.fn()}
+      />
+    );
+
+    expect(
+      screen.getByRole('button', { name: /Jump to live/i })
+    ).not.toBeDisabled();
+  });
+
+  it('enables "Jump to live" when a date filter is active', () => {
+    render(
+      <TranscriptActionsBar
+        hasNewerAudioSegments={false}
+        redactTranscripts={false}
+        setRedactTranscripts={mockSetRedactTranscripts}
+        dateTime={new Date('2026-05-14T13:05:00Z')}
+        setDateTime={vi.fn()}
+        alertFilter="all"
+        setAlertFilter={vi.fn()}
+        onClickViewLatest={vi.fn()}
+      />
+    );
+
+    expect(
+      screen.getByRole('button', { name: /Jump to live/i })
+    ).not.toBeDisabled();
+  });
+
+  it('shows the past window time in the chip when viewing back without a date filter', () => {
+    const windowMs = new Date('2026-05-14T13:05:00Z').getTime();
+    const { container } = render(
+      <TranscriptActionsBar
+        hasNewerAudioSegments={false}
+        isLatestTimeWindow={false}
+        activeWindowTime={windowMs}
+        redactTranscripts={false}
+        setRedactTranscripts={mockSetRedactTranscripts}
+        dateTime={null}
+        setDateTime={vi.fn()}
+        alertFilter="all"
+        setAlertFilter={vi.fn()}
+        onClickViewLatest={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('Viewing:')).toBeTruthy();
+    expect(container.textContent).toContain(formatClockTime(windowMs));
+  });
+
+  it('formats the date/time chip in 24-hour time (no AM/PM)', () => {
+    const dt = new Date('2026-05-14T13:05:00Z');
+    const { container } = render(
+      <TranscriptActionsBar
+        hasNewerAudioSegments={false}
+        redactTranscripts={false}
+        setRedactTranscripts={mockSetRedactTranscripts}
+        dateTime={dt}
+        setDateTime={vi.fn()}
+        alertFilter="all"
+        setAlertFilter={vi.fn()}
+        onClickViewLatest={vi.fn()}
+      />
+    );
+
+    expect(container.textContent).toContain(formatClockTime(dt.getTime()));
+    expect(container.textContent).not.toMatch(/\b[AP]M\b/);
+  });
+
   it('opens the filter menu, clears local value, and applies new value on Apply', () => {
     const mockSetDateTime = vi.fn();
     const mockSetAlertFilter = vi.fn();
     render(
       <TranscriptActionsBar
-        searchedTimestamp={null}
         hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
@@ -148,7 +225,6 @@ describe('TranscriptActionsBar', () => {
     const mockSetAlertFilter = vi.fn();
     render(
       <TranscriptActionsBar
-        searchedTimestamp={null}
         hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
@@ -187,7 +263,6 @@ describe('TranscriptActionsBar', () => {
     const mockSetDateTime = vi.fn();
     const { rerender } = render(
       <TranscriptActionsBar
-        searchedTimestamp={null}
         hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
@@ -219,7 +294,6 @@ describe('TranscriptActionsBar', () => {
     // Simulate the parent component updating the prop in response to the setDateTime call
     rerender(
       <TranscriptActionsBar
-        searchedTimestamp={null}
         hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
@@ -242,7 +316,6 @@ describe('TranscriptActionsBar', () => {
     const mockSetAlertFilter = vi.fn();
     render(
       <TranscriptActionsBar
-        searchedTimestamp={null}
         hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
@@ -280,7 +353,6 @@ describe('TranscriptActionsBar', () => {
     const mockSetAlertFilter = vi.fn();
     render(
       <TranscriptActionsBar
-        searchedTimestamp={null}
         hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
@@ -319,7 +391,6 @@ describe('TranscriptActionsBar', () => {
     const mockSetAlertFilter = vi.fn();
     render(
       <TranscriptActionsBar
-        searchedTimestamp={null}
         hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
@@ -347,7 +418,6 @@ describe('TranscriptActionsBar', () => {
     const mockSetAlertFilter = vi.fn();
     render(
       <TranscriptActionsBar
-        searchedTimestamp={null}
         hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
@@ -372,7 +442,6 @@ describe('TranscriptActionsBar', () => {
   it('updates the filter badge content correctly based on active filters count', () => {
     const { rerender } = render(
       <TranscriptActionsBar
-        searchedTimestamp={null}
         hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
@@ -392,7 +461,6 @@ describe('TranscriptActionsBar', () => {
     // Rerender with date filter only
     rerender(
       <TranscriptActionsBar
-        searchedTimestamp={null}
         hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
@@ -410,7 +478,6 @@ describe('TranscriptActionsBar', () => {
     // Rerender with alerts filter only
     rerender(
       <TranscriptActionsBar
-        searchedTimestamp={null}
         hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
@@ -428,7 +495,6 @@ describe('TranscriptActionsBar', () => {
     // Rerender with both filters active
     rerender(
       <TranscriptActionsBar
-        searchedTimestamp={null}
         hasNewerAudioSegments={false}
         redactTranscripts={false}
         setRedactTranscripts={mockSetRedactTranscripts}
