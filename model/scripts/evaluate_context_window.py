@@ -528,15 +528,20 @@ async def main_async(args: argparse.Namespace) -> None:
             filepath = entry["audio_filepath"]
             filename = Path(filepath).name
 
-            # Robust extraction of the channel name from the standardized filename prefix:
-            # Matches '{channel_name}_{YYYYMMDD}_{HH}__seg', '{channel_name}__seg', or '{channel_name}-row-...'
-            match = re.match(
-                r"^(.*?)(?:_\d{8}_\d{2})?(?:__seg|-row-)", filename
-            )
-            if match:
-                channel_id = match.group(1)
-            else:
-                channel_id = Path(filepath).parent.name
+            # Grouping key priority: source_group -> example_id -> filename regex -> parent path
+            channel_id = entry.get("source_group")
+            if not channel_id:
+                eid = entry.get("example_id")
+                if eid and "-row-" not in str(eid):
+                    channel_id = eid
+            if not channel_id:
+                match = re.match(
+                    r"^(.*?)(?:_\d{8}_\d{2})?(?:__seg|-row-)", filename
+                )
+                if match:
+                    channel_id = match.group(1)
+                else:
+                    channel_id = Path(filepath).parent.name
 
             entry["example_id"] = channel_id
             channels[channel_id].append(entry)
@@ -545,9 +550,9 @@ async def main_async(args: argparse.Namespace) -> None:
     for cid in channels:
         channels[cid].sort(
             key=lambda x: (
-                x.get("offset", 0),
+                x.get("original_audio_uri") or x.get("audio_uri") or x.get("audio_filepath", ""),
+                x.get("original_offset") if x.get("original_offset") is not None else x.get("offset", 0),
                 x.get("start_time", 0),
-                x.get("audio_filepath", ""),
             )
         )
 
