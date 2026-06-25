@@ -3,9 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
-import { AudioControlsButton } from './AudioControlsButton';
+import { AudioSettingsButton } from './AudioSettingsButton';
 
-describe('AudioControlsButton', () => {
+describe('AudioSettingsButton', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -25,7 +25,7 @@ describe('AudioControlsButton', () => {
   };
 
   const renderButton = (overrides = {}) =>
-    render(<AudioControlsButton {...defaultProps} {...overrides} />);
+    render(<AudioSettingsButton {...defaultProps} {...overrides} />);
 
   it('opens the audio controls popover with volume, pan, and speed', () => {
     renderButton({ volumeDb: -6 });
@@ -71,7 +71,7 @@ describe('AudioControlsButton', () => {
     // A cut still shows the volume icon — the icon scale conveys direction.
     expect(screen.getByTestId('VolumeUpIcon')).toBeTruthy();
 
-    rerender(<AudioControlsButton {...defaultProps} volumeDb={-30} />);
+    rerender(<AudioSettingsButton {...defaultProps} volumeDb={-30} />);
     expect(screen.getByTestId('VolumeOffIcon')).toBeTruthy();
   });
 

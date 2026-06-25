@@ -41,7 +41,7 @@ function volumeIconScaleFor(volumeDb: number): number {
   return 1;
 }
 
-export interface AudioControlsButtonProps {
+export interface AudioSettingsButtonProps {
   volumeDb: number;
   setVolumeDb: (db: number) => void;
   pan: number;
@@ -51,7 +51,7 @@ export interface AudioControlsButtonProps {
   onReset: () => void;
 }
 
-export const AudioControlsButton: React.FC<AudioControlsButtonProps> = ({
+export const AudioSettingsButton: React.FC<AudioSettingsButtonProps> = ({
   volumeDb,
   setVolumeDb,
   pan,
@@ -266,4 +266,4 @@ export const AudioControlsButton: React.FC<AudioControlsButtonProps> = ({
   );
 };
 
-export default AudioControlsButton;
+export default AudioSettingsButton;

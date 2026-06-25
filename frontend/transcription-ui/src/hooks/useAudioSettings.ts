@@ -20,7 +20,7 @@ const STORAGE_KEYS = {
   speed: 'radio.audio.speed',
 };
 
-export interface AudioControls {
+export interface AudioSettings {
   volumeDb: number;
   setVolumeDb: (db: number) => void;
   pan: number;
@@ -76,7 +76,7 @@ function initSpeed(feedId: string): number {
   );
 }
 
-export function useAudioControls(feedId: string): AudioControls {
+export function useAudioSettings(feedId: string): AudioSettings {
   const [volumeDb, setVolumeDbState] = useState(() => initVolumeDb(feedId));
   const [pan, setPanState] = useState(() =>
     initFromOptions(STORAGE_KEYS.pan, feedId, PAN_OPTIONS, DEFAULT_PAN)

@@ -17,12 +17,12 @@ import { useQuery } from '@tanstack/react-query';
 import { AudioClassification, type AudioSegment } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
-import { useAudioControls } from '../../hooks/useAudioControls';
 import { useAudioPlayback } from '../../hooks/useAudioPlayback';
 import {
   type AlertFilter,
   useAudioSegments,
 } from '../../hooks/useAudioSegments';
+import { useAudioSettings } from '../../hooks/useAudioSettings';
 import { useConsolidatedAudioSegments } from '../../hooks/useConsolidatedAudioSegments';
 import { useTranscriptPlayback } from '../../hooks/useTranscriptPlayback';
 import { getFeed } from '../../service/getFeed';
@@ -32,7 +32,7 @@ import { isWithinSegment } from '../../utils/playbackUtils';
 import { AudioControl } from '../audio/AudioControl';
 import AudioDisplay from '../audio/AudioDisplay';
 import FeedSearchView from '../feeds/FeedSearchView';
-import AudioControlsButton from './AudioControlsButton';
+import AudioSettingsButton from './AudioSettingsButton';
 import FeedHeader from './FeedHeader';
 import TranscriptActionsBar from './TranscriptActionsBar';
 import TranscriptDisplay from './TranscriptDisplay';
@@ -101,7 +101,7 @@ export function TranscriptView({
   const wasFetchingNewer = useRef(false);
 
   const { volumeDb, setVolumeDb, pan, setPan, speed, setSpeed, reset } =
-    useAudioControls(searchedFeedId);
+    useAudioSettings(searchedFeedId);
 
   // Passed to useAudioPlayback so its `onEnd` callback reads the current list
   // rather than a stale closure when deciding whether to auto-advance.
@@ -631,7 +631,7 @@ export function TranscriptView({
           disableControls={rawAudioSegments.length === 0}
           disableCheckbox={!searchedFeed}
         />
-        <AudioControlsButton
+        <AudioSettingsButton
           volumeDb={volumeDb}
           setVolumeDb={setVolumeDb}
           pan={pan}
