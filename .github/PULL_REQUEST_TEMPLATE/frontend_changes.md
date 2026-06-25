@@ -1,7 +1,8 @@
 > [!TIP]
 > **Need a different template?**
-> - 📄 For standard changes, switch back to the [Default Template](?expand=1&template=default.md).
+> - 📄 For standard changes, switch back to the [Default Template](?expand=1).
 > *(Note: Please delete this tip block before submitting your PR)*
+
 
 
 ## Description
